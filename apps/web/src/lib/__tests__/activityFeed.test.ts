@@ -132,6 +132,24 @@ const HANDLED: Array<[string, SseEvent]> = [
     },
   ],
   ['message_persisted', { type: 'message_persisted', messageId: 'm1', role: 'assistant' }],
+  [
+    'decision',
+    {
+      type: 'decision',
+      id: 'd1',
+      phase: 'settled',
+      site: 'injection',
+      provider: 'typesafe',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'clean',
+      confidence: 0.94,
+      latencyMs: 38,
+      personalityId: 'agent-a',
+      toolCallId: 'tc1',
+    },
+  ],
 ];
 
 // Per-token / per-connection plumbing. Surfacing these would bury every real
@@ -487,5 +505,66 @@ describe('groupMatchesFilter', () => {
     expect(errorGroup && groupMatchesFilter(errorGroup, 'errors')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'cron')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'tools')).toBe(false);
+  });
+});
+
+// plan decision-provider-personality N7d — the feed draws a decision in the
+// trail's own words, and a `started` collapses into its `settled`.
+describe('convertSseEvent — decision', () => {
+  const base = {
+    type: 'decision' as const,
+    id: 'd1',
+    site: 'injection' as const,
+    provider: 'typesafe',
+    personalityId: 'agent-a',
+    toolCallId: 'tc1',
+  };
+
+  it('summarises a settled decision with glyph, word, tag and subject', () => {
+    const row = live({
+      ...base,
+      phase: 'settled',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'clean',
+      confidence: 0.94,
+      latencyMs: 38,
+    });
+    expect(row.summary).toBe('✓ decided · jev injection · clean · conf 0.94');
+    expect(row.label).toBe('decision');
+    expect(row.kind).toBe('tool_end');
+    expect(row.endedAt).toBe(CTX.timestamp);
+  });
+
+  it('keys started and settled identically so the merge keeps the settled row', () => {
+    const started = live({ ...base, phase: 'started', mode: 'on' });
+    const settled = live(
+      { ...base, phase: 'settled', mode: 'on', outcome: 'timeout', latencyMs: 1200 },
+      { seq: 2, timestamp: 6_000 },
+    );
+    expect(started.key).toBe(settled.key);
+    expect(started.endedAt).toBeNull();
+    const merged = mergeRows(new Map([[started.key, started]]), [settled]);
+    expect(merged.get(settled.key)?.summary).toBe(
+      '✗ unavailable → LLM check · jev injection · timeout',
+    );
+    expect(merged.get(settled.key)?.kind).toBe('error');
+  });
+
+  it('marks a shadow disagreement as a warning row', () => {
+    const row = live({
+      ...base,
+      phase: 'settled',
+      mode: 'shadow',
+      outcome: 'ok',
+      verdict: 'flagged',
+      todayVerdict: 'clean',
+      disagreed: true,
+      latencyMs: 29,
+      todayLatencyMs: 1300,
+    });
+    expect(row.summary).toBe('⚠ observed · jev injection · flagged');
+    expect(row.kind).toBe('approval');
   });
 });

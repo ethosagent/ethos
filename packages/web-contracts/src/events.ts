@@ -466,10 +466,9 @@ export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
  * buffer down in seconds, collapsing the resume window for everything real.
  * `credential_required` is excluded too: it is a prompt answered in the chat
  * pane that asked, and it carries that user's pending message text.
- * `decision` (plan decision-provider-personality §15.2) is excluded until the
- * web converter renders it (milestone N7d): admitting a type `convertSseEvent`
- * has no case for is exactly the unrendered fan-out described above
- * (`apps/web/src/lib/__tests__/activityFeed.test.ts` pins the two together).
+ * `decision` (plan decision-provider-personality §15.2) is admitted together
+ * with the `convertSseEvent` case that renders it (milestone N7d;
+ * `apps/web/src/lib/__tests__/activityFeed.test.ts` pins the two together).
  */
 export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventType>([
   'tool_start',
@@ -491,4 +490,5 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventT
   'notification',
   'memory.captured',
   'dry_run_summary',
+  'decision',
 ]);

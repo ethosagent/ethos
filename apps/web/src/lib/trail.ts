@@ -1,4 +1,5 @@
-import type { SseEvent } from '@ethosagent/web-contracts';
+import type { DecisionEvent, SseEvent } from '@ethosagent/web-contracts';
+import { resolveDecisionProvider } from './decision-providers';
 
 // The trail — one derivation of "what the agent did on this turn", rendered by
 // two surfaces (the per-turn footer under the bubble, and the right drawer).
@@ -54,7 +55,20 @@ export interface TrailFinding {
   citesToolCallId?: string;
 }
 
-export type TrailEntry = TrailAction | TrailFinding;
+/**
+ * A decision site ran (plan decision-provider-personality §15.1): the router
+ * before the turn's first call, the approver before its call, the injection
+ * classifier after its call's result. The row holds the latest event for its
+ * `id` — `started` (on mode, the loop waiting) until its `settled` replaces it.
+ */
+export interface TrailDecision {
+  kind: 'decision';
+  /** `DecisionEvent.id` — a `started` and its `settled` share it. */
+  id: string;
+  event: DecisionEvent;
+}
+
+export type TrailEntry = TrailAction | TrailFinding | TrailDecision;
 
 /** turnId -> ordered entries */
 export type TrailState = Record<string, TrailEntry[]>;
@@ -239,6 +253,8 @@ export function applyTrailEvent(
         ...parseGroundingMessage(event.message),
       });
     }
+    case 'decision':
+      return applyDecision(trail, turnId, event);
     default:
       return trail;
   }
@@ -251,7 +267,126 @@ function upsertAction(trail: TrailState, turnId: string, action: TrailAction): T
     status: action.status,
     ...(action.reason ? { reason: action.reason } : {}),
   });
-  return flipped !== trail ? flipped : appendTrailEntry(trail, turnId, action);
+  return flipped !== trail ? flipped : appendAction(trail, turnId, action);
+}
+
+/**
+ * Append a new action, with this call's approver decision rows moved to sit
+ * immediately before it. Live, every approver decision of a parallel batch
+ * arrives before any `tool_start`; history places each one before its own call
+ * (`placeDecision`). Without the move, live and reload would order the same
+ * turn differently (DESIGN.md "One trail, two renderers").
+ */
+function appendAction(trail: TrailState, turnId: string, action: TrailAction): TrailState {
+  const entries = trail[turnId] ?? [];
+  const ownApprover = (e: TrailEntry): boolean =>
+    e.kind === 'decision' &&
+    e.event.site === 'approver' &&
+    e.event.toolCallId === action.toolCallId;
+  const approvals = entries.filter(ownApprover);
+  if (approvals.length === 0) return appendTrailEntry(trail, turnId, action);
+  return {
+    ...trail,
+    [turnId]: [...entries.filter((e) => !ownApprover(e)), ...approvals, action],
+  };
+}
+
+/**
+ * Where a decision row goes in a turn — the ONE placement rule, used by the
+ * live event and by history replay (`parseHistory`), so the two cannot order a
+ * turn differently:
+ *   router    → first (the trail's first row; no model-line chrome, §15.1)
+ *   approver  → immediately before its call, when the call's row exists
+ *   injection → after its call and any decision rows already following it
+ *   otherwise → the end
+ */
+function decisionIndex(entries: TrailEntry[], event: DecisionEvent): number {
+  if (event.site === 'router') {
+    let i = 0;
+    while (entries[i]?.kind === 'decision' && isRouterRow(entries[i])) i++;
+    return i;
+  }
+  const call = event.toolCallId;
+  if (call !== undefined) {
+    const at = entries.findIndex((e) => e.kind === 'action' && e.toolCallId === call);
+    if (at >= 0) {
+      if (event.site === 'approver') return at;
+      let i = at + 1;
+      while (isDecisionFor(entries[i], call)) i++;
+      return i;
+    }
+  }
+  return entries.length;
+}
+
+function isRouterRow(entry: TrailEntry | undefined): boolean {
+  return entry?.kind === 'decision' && entry.event.site === 'router';
+}
+
+function isDecisionFor(entry: TrailEntry | undefined, toolCallId: string): boolean {
+  return entry?.kind === 'decision' && entry.event.toolCallId === toolCallId;
+}
+
+function placeDecision(trail: TrailState, turnId: string, event: DecisionEvent): TrailState {
+  const entries = trail[turnId] ?? [];
+  const next = [...entries];
+  next.splice(decisionIndex(entries, event), 0, { kind: 'decision', id: event.id, event });
+  return { ...trail, [turnId]: next };
+}
+
+/**
+ * The turn a decision belongs to by its own anchors, newest first: the turn
+ * holding its call (approver / injection), else the turn already holding a
+ * decision of the same trace. `undefined` → the caller's turn.
+ *
+ * This is how a row that settles after `done` finds its turn — the
+ * `updateTrailActionAnywhere` precedent (§15.3, PD17).
+ */
+function anchoredTurn(trail: TrailState, event: DecisionEvent): string | undefined {
+  const turnIds = Object.keys(trail).reverse();
+  if (event.toolCallId !== undefined) {
+    const call = event.toolCallId;
+    const hit = turnIds.find((id) =>
+      trail[id]?.some((e) => e.kind === 'action' && e.toolCallId === call),
+    );
+    if (hit !== undefined) return hit;
+  }
+  if (event.traceId !== undefined) {
+    const trace = event.traceId;
+    return turnIds.find((id) =>
+      trail[id]?.some((e) => e.kind === 'decision' && e.event.traceId === trace),
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Replace the row carrying `event.id`, wherever it lives. A `settled` never
+ * regresses to `started` (a replayed `started` after its `settled`). `null`
+ * when no row carries the id.
+ */
+function updateDecisionAnywhere(trail: TrailState, event: DecisionEvent): TrailState | null {
+  for (const [turnId, entries] of Object.entries(trail)) {
+    const idx = entries.findIndex((e) => e.kind === 'decision' && e.id === event.id);
+    if (idx < 0) continue;
+    const current = entries[idx];
+    if (current?.kind !== 'decision') return trail;
+    if (current.event.phase === 'settled' && event.phase === 'started') return trail;
+    const next = [...entries];
+    next[idx] = { kind: 'decision', id: event.id, event };
+    return { ...trail, [turnId]: next };
+  }
+  return null;
+}
+
+/** Apply one decision event: resolve its row in place, or place a new one. */
+function applyDecision(trail: TrailState, turnId: string, event: DecisionEvent): TrailState {
+  const updated = updateDecisionAnywhere(trail, event);
+  if (updated !== null) return updated;
+  const target = anchoredTurn(trail, event) ?? turnId;
+  // No turn to join — an untraced row whose turn this surface never saw.
+  if (!target) return trail;
+  return placeDecision(trail, target, event);
 }
 
 /** Keep a readable head of the result and SAY the rest was cut, never drop it silently. */
@@ -310,6 +445,22 @@ export interface TrailSummary {
   unsettled: number;
   /** Null when NO action carries a duration — history without durations. */
   totalDurationMs: number | null;
+  /**
+   * Decision rows, counted apart from actions (§15.1): `on` rows (decided,
+   * unsure, unavailable, skipped, or still checking) and `shadow` rows
+   * (observed). The ms totals sum measured `latencyMs` only — null when no
+   * row of that mode has one. `disagreements` counts shadow rows with
+   * `disagreed === true`.
+   */
+  decisions: DecisionTally;
+}
+
+export interface DecisionTally {
+  on: number;
+  onMs: number | null;
+  shadow: number;
+  shadowMs: number | null;
+  disagreements: number;
 }
 
 export function summariseTrail(entries: TrailEntry[]): TrailSummary {
@@ -320,9 +471,29 @@ export function summariseTrail(entries: TrailEntry[]): TrailSummary {
   let unrecorded = 0;
   let unsettled = 0;
   let total: number | null = null;
+  const decisions: DecisionTally = {
+    on: 0,
+    onMs: null,
+    shadow: 0,
+    shadowMs: null,
+    disagreements: 0,
+  };
   for (const entry of entries) {
     if (entry.kind === 'finding') {
       findings++;
+      continue;
+    }
+    if (entry.kind === 'decision') {
+      const e = entry.event;
+      const ms = e.phase === 'settled' ? e.latencyMs : undefined;
+      if (e.mode === 'on') {
+        decisions.on++;
+        if (ms !== undefined) decisions.onMs = (decisions.onMs ?? 0) + ms;
+      } else {
+        decisions.shadow++;
+        if (ms !== undefined) decisions.shadowMs = (decisions.shadowMs ?? 0) + ms;
+        if (e.disagreed === true) decisions.disagreements++;
+      }
       continue;
     }
     actions++;
@@ -332,7 +503,185 @@ export function summariseTrail(entries: TrailEntry[]): TrailSummary {
     if (entry.status === 'running' || entry.status === 'pending-approval') unsettled++;
     if (entry.durationMs !== undefined) total = (total ?? 0) + entry.durationMs;
   }
-  return { actions, findings, ok, failed, unrecorded, unsettled, totalDurationMs: total };
+  return {
+    actions,
+    findings,
+    ok,
+    failed,
+    unrecorded,
+    unsettled,
+    totalDurationMs: total,
+    decisions,
+  };
+}
+
+/**
+ * The footer's decision segment (§15.1), or null with no decision rows:
+ *   on only      `3 decisions 118 ms`
+ *   shadow only  `3 decisions observed 104 ms`
+ *   mixed        `2 decisions 80 ms · 1 observed 38 ms`
+ * The ms figure is dropped when nothing of that mode was measured yet.
+ * `observed` never reads as `decided` (K8): the shadow count always says so.
+ */
+export function decisionFooterSegment(tally: DecisionTally): string | null {
+  const ms = (value: number | null): string =>
+    value === null ? '' : ` ${formatDecisionMs(value)}`;
+  const noun = (n: number): string => (n === 1 ? 'decision' : 'decisions');
+  if (tally.on > 0 && tally.shadow > 0) {
+    return `${tally.on} ${noun(tally.on)}${ms(tally.onMs)} · ${tally.shadow} observed${ms(tally.shadowMs)}`;
+  }
+  if (tally.on > 0) return `${tally.on} ${noun(tally.on)}${ms(tally.onMs)}`;
+  if (tally.shadow > 0)
+    return `${tally.shadow} ${noun(tally.shadow)} observed${ms(tally.shadowMs)}`;
+  return null;
+}
+
+/** `⚠ 1 disagreement` / `⚠ 2 disagreements`, or null with none. */
+export function disagreementSegment(tally: DecisionTally): string | null {
+  const n = tally.disagreements;
+  if (n === 0) return null;
+  return `⚠ ${n} ${n === 1 ? 'disagreement' : 'disagreements'}`;
+}
+
+/** Decision latencies read `118 ms` / `1.3s` — the approved design's spelling. */
+export function formatDecisionMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Every state a decision row can be in (§15.1). `observed` is a shadow reading
+ * with no comparison (today's path threw), so it claims neither agreement nor
+ * disagreement.
+ */
+export type DecisionRowState =
+  | 'checking'
+  | 'decided'
+  | 'unsure'
+  | 'observed-agreed'
+  | 'observed-disagreed'
+  | 'observed'
+  | 'unavailable'
+  | 'skipped';
+
+export function decisionRowState(e: DecisionEvent): DecisionRowState {
+  if (e.phase === 'started') return 'checking';
+  // PD19: the breaker refused without sending a request — not an outage.
+  if (e.outcome === 'breaker_open') return 'skipped';
+  if (e.outcome !== undefined && e.outcome !== 'ok') return 'unavailable';
+  if (e.mode === 'on') return e.acted === true ? 'decided' : 'unsure';
+  if (e.disagreed === true) return 'observed-disagreed';
+  if (e.disagreed === false) return 'observed-agreed';
+  return 'observed';
+}
+
+/**
+ * What each site does when the decision model does not decide — today's path.
+ * The router's is "no routing" (`decision-router.ts` header), so the turn runs
+ * on the default model.
+ */
+const TODAY_PATH: Record<DecisionEvent['site'], string> = {
+  injection: 'LLM check',
+  approver: 'LLM review',
+  router: 'default model',
+};
+
+export type DecisionTone = 'ok' | 'warning' | 'failed' | 'running' | 'neutral';
+
+/** A decision row as every surface draws it — glyph + word, never colour alone. */
+export interface DecisionRowView {
+  state: DecisionRowState;
+  tone: DecisionTone;
+  glyph: string;
+  /** The state word, with its fallback where the row fell back: `unsure → LLM check`. */
+  word: string;
+  /** Mono provider tag (`jev`), from the identity map. */
+  tag: string;
+  /** `injection · clean · conf 0.94`. */
+  subject: string;
+  /** Returned model and what happened: `jev-1.13.0 · agreed with LLM check`. */
+  detail: string;
+  /** `38 ms`, `29 ms vs 1.3s` (shadow, both measured), or `—` while checking. */
+  duration: string;
+}
+
+export function decisionRowView(e: DecisionEvent): DecisionRowView {
+  const state = decisionRowState(e);
+  const provider = resolveDecisionProvider(e.provider);
+  const today = TODAY_PATH[e.site];
+  const fellBack = e.mode === 'on' ? ` → ${today}` : '';
+
+  const subject: string[] = [e.site];
+  if (state === 'unavailable') subject.push(e.outcome ?? 'unavailable');
+  else if (e.verdict !== undefined) subject.push(e.verdict);
+  if (e.confidence !== undefined && state !== 'unavailable' && state !== 'skipped') {
+    subject.push(`conf ${e.confidence.toFixed(2)}`);
+  }
+
+  const detail: string[] = [];
+  if (e.model !== undefined) detail.push(e.model);
+  if (state === 'observed-agreed') detail.push(`agreed with ${today}`);
+  if (state === 'observed-disagreed') {
+    detail.push(
+      e.todayVerdict !== undefined ? `${today} said ${e.todayVerdict}` : `disagreed with ${today}`,
+    );
+  }
+  if (state === 'skipped') detail.push(`${provider.label} paused after repeated failures`);
+  if (state === 'checking') detail.push(`waiting for ${provider.label}`);
+
+  let duration = '—';
+  if (e.latencyMs !== undefined) {
+    duration = formatDecisionMs(e.latencyMs);
+    // §15.1: the comparison only when both paths were measured on this input.
+    if (e.mode === 'shadow' && e.todayLatencyMs !== undefined) {
+      duration = `${duration} vs ${formatDecisionMs(e.todayLatencyMs)}`;
+    }
+  }
+
+  const look: Record<DecisionRowState, { tone: DecisionTone; glyph: string; word: string }> = {
+    checking: { tone: 'running', glyph: '·', word: 'checking' },
+    decided: { tone: 'ok', glyph: '✓', word: 'decided' },
+    unsure: { tone: 'warning', glyph: '⚠', word: `unsure${fellBack}` },
+    'observed-agreed': { tone: 'ok', glyph: '✓', word: 'observed' },
+    'observed-disagreed': { tone: 'warning', glyph: '⚠', word: 'observed' },
+    observed: { tone: 'neutral', glyph: '·', word: 'observed' },
+    // Shadow: today's check ran anyway, so there is nothing to fall back to.
+    unavailable: { tone: 'failed', glyph: '✗', word: `unavailable${fellBack}` },
+    skipped: { tone: 'failed', glyph: '✗', word: 'skipped' },
+  };
+
+  return {
+    state,
+    ...look[state],
+    tag: provider.tag,
+    subject: subject.join(' · '),
+    detail: detail.join(' · '),
+    duration,
+  };
+}
+
+/**
+ * The status line's label while an `on` decision holds the loop (PD20):
+ * `jev checking read_file result`. Null when no `on` decision in `entries` is
+ * still `started` — shadow never blocks, so it never gets a label.
+ */
+export function decisionStatusLabel(entries: TrailEntry[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry?.kind !== 'decision') continue;
+    const e = entry.event;
+    if (e.phase !== 'started' || e.mode !== 'on') continue;
+    const tag = resolveDecisionProvider(e.provider).tag;
+    if (e.site === 'router') return `${tag} choosing a model`;
+    const call = entries.find((x) => x.kind === 'action' && x.toolCallId === e.toolCallId);
+    // The approver runs before its call's `tool_start`, so its row has no
+    // tool name to borrow yet.
+    const tool = call?.kind === 'action' ? call.toolName : 'a tool';
+    return e.site === 'injection'
+      ? `${tag} checking ${tool} result`
+      : `${tag} checking ${tool} call`;
+  }
+  return null;
 }
 
 /** Deterministic DOM id, so a finding row can move focus to the row it cites. */

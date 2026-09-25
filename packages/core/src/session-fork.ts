@@ -55,7 +55,9 @@ export interface ForkSessionResult {
  * usage. History is replayed in order with no limit, and every `StoredMessage`
  * field is carried over except the three the store owns (`id`, `sessionId`,
  * `timestamp`) — copied generically, so a field added to `StoredMessage` later
- * is not silently dropped. Pinned by packages/core/src/__tests__/session-fork.test.ts.
+ * is not silently dropped. The decision rows the copied history anchors come
+ * along (`copyDecisions`), as web-api copies a fork's cards. Pinned by
+ * packages/core/src/__tests__/session-fork.test.ts.
  *
  * On a failure after the child session exists, the half-built child is deleted
  * before the error is rethrown.
@@ -106,12 +108,45 @@ export async function forkSession(
       const { id, sessionId: _sessionId, timestamp: _timestamp, ...fields } = message;
       idMap.set(id, await store.appendMessage({ ...fields, sessionId: session.id }));
     }
+    await copyDecisions(store, source.id, session.id, history);
   } catch (err) {
     await store.deleteSession(session.id).catch(() => {});
     throw err;
   }
 
   return { session, idMap };
+}
+
+/**
+ * Copy the decision rows the copied history anchors (plan
+ * decision-provider-personality §15.5): a row whose `toolCallId` is a copied
+ * call, or whose `traceId` a copied message carries — the same anchors
+ * `sessions.messages` pages them by. A copied message keeps its `toolCalls`,
+ * `toolCallId` and `traceId`, so the copied rows' anchors still resolve in the
+ * fork and its reload shows the same trail. A cut fork leaves behind the rows
+ * of the turns it cut. A store without the optional decision methods has no
+ * rows to copy.
+ */
+async function copyDecisions(
+  store: SessionStore,
+  sourceId: string,
+  forkId: string,
+  history: StoredMessage[],
+): Promise<void> {
+  if (!store.getDecisions || !store.appendDecision) return;
+  const toolCallIds = new Set<string>();
+  const traceIds = new Set<string>();
+  for (const m of history) {
+    if (m.toolCallId) toolCallIds.add(m.toolCallId);
+    for (const call of m.toolCalls ?? []) toolCallIds.add(call.id);
+    if (m.traceId) traceIds.add(m.traceId);
+  }
+  if (toolCallIds.size === 0 && traceIds.size === 0) return;
+  const rows = await store.getDecisions(sourceId, {
+    toolCallIds: [...toolCallIds],
+    traceIds: [...traceIds],
+  });
+  for (const row of rows) await store.appendDecision(forkId, row.event);
 }
 
 function cutHistory(all: StoredMessage[], upToMessageId: string): StoredMessage[] {

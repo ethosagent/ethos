@@ -34,14 +34,17 @@ function phaseWord(phase: TurnPhase): string {
   if (phase === 'received') return 'received';
   if (phase === 'thinking') return 'thinking';
   if (phase === 'writing') return 'writing';
+  if (phase === 'decision') return 'checking';
   return 'working';
 }
 
 export function StatusLine({ phase, label, elapsedMs, stalled }: StatusLineProps) {
   // A running tool is the only pulsing state; `received` and `thinking` are
   // steady.
-  const text =
-    phase === null ? '' : phase === 'tool' ? (label ?? phaseWord(phase)) : phaseWord(phase);
+  // An `on` decision holding the loop (`jev checking read_file result`) is
+  // steady: the loop is waiting, not running a tool.
+  const labelled = phase === 'tool' || phase === 'decision';
+  const text = phase === null ? '' : labelled ? (label ?? phaseWord(phase)) : phaseWord(phase);
   // A new turn is never made to wait behind the previous turn's throttle
   // window: `received` IS the acknowledgement the contract promises within the
   // first second. `phase === null` is the turn ending, which re-arms the
@@ -53,7 +56,9 @@ export function StatusLine({ phase, label, elapsedMs, stalled }: StatusLineProps
   return (
     <div className="status-line activity-slot">
       <span
-        className={`sb-dot status-line-dot${phase === 'tool' ? ' sb-dot--pulse' : ''}`}
+        className={`sb-dot status-line-dot${phase === 'tool' ? ' sb-dot--pulse' : ''}${
+          phase === 'decision' ? ' status-line-dot--decision' : ''
+        }`}
         aria-hidden="true"
       />
       <span className="status-line-label" aria-hidden="true">

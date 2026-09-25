@@ -134,6 +134,7 @@ describe('summariseTrail', () => {
       unrecorded: 0,
       unsettled: 0,
       totalDurationMs: 1_500,
+      decisions: { on: 0, onMs: null, shadow: 0, shadowMs: null, disagreements: 0 },
     });
   });
 
@@ -157,6 +158,7 @@ describe('summariseTrail', () => {
       unrecorded: 0,
       unsettled: 0,
       totalDurationMs: null,
+      decisions: { on: 0, onMs: null, shadow: 0, shadowMs: null, disagreements: 0 },
     });
   });
 

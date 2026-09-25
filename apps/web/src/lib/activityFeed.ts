@@ -1,5 +1,6 @@
 import type { ActivityHistoryItemWire, SseEvent } from '@ethosagent/web-contracts';
 import { ACTIVITY_EVENT_TYPES } from '@ethosagent/web-contracts';
+import { decisionRowView } from './trail';
 
 // Pure logic behind `pages/Activity.tsx` — the feed has two sources with two
 // different shapes (durable rows from `activity.history`, live envelopes from
@@ -406,6 +407,39 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
           { key: 'plan', kind: 'args', args: event.plan },
         ],
       };
+
+    case 'decision': {
+      // plan decision-provider-personality §15.1 — the same row vocabulary the
+      // trail draws (`decisionRowView`). A `started` and its `settled` share
+      // `id`, so they collapse onto one row and the settled one wins the merge.
+      const view = decisionRowView(event);
+      const settled = event.phase === 'settled';
+      return {
+        ...base,
+        key: `decision:${ctx.sessionId}:${event.id}`,
+        kind: !settled
+          ? 'tool_start'
+          : view.tone === 'failed'
+            ? 'error'
+            : view.tone === 'warning'
+              ? 'approval'
+              : 'tool_end',
+        label: 'decision',
+        endedAt: settled ? ctx.timestamp : null,
+        summary: `${view.glyph} ${view.word} · ${view.tag} ${view.subject}`,
+        details: [
+          { key: 'site', kind: 'text', value: event.site },
+          { key: 'mode', kind: 'text', value: event.mode },
+          { key: 'personality', kind: 'text', value: event.personalityId },
+          ...(view.detail === ''
+            ? []
+            : ([{ key: 'detail', kind: 'text', value: view.detail }] as ActivityDetail[])),
+          ...(settled
+            ? ([{ key: 'duration', kind: 'text', value: view.duration }] as ActivityDetail[])
+            : []),
+        ],
+      };
+    }
 
     case 'message_persisted':
       return {

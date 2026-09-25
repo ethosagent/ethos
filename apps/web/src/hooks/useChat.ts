@@ -283,7 +283,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         resetPaging(sessionId, page.nextCursor);
         dispatch({
           kind: 'action',
-          action: { type: 'history-loaded', messages: page.messages, cards: page.cards },
+          action: {
+            type: 'history-loaded',
+            messages: page.messages,
+            cards: page.cards,
+            decisions: page.decisions,
+          },
         });
         // Chained off the history load rather than run as its own effect for
         // one reason: `history-loaded` REPLACES `state.messages`, so a restore
@@ -330,7 +335,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         page.nextCursor !== null ? { sessionId: from.sessionId, cursor: page.nextCursor } : null;
       dispatch({
         kind: 'action',
-        action: { type: 'history-older-loaded', messages: page.messages, cards: page.cards },
+        action: {
+          type: 'history-older-loaded',
+          messages: page.messages,
+          cards: page.cards,
+          decisions: page.decisions,
+        },
       });
       setHasOlder(page.nextCursor !== null);
       setOlderStatus('idle');
@@ -365,7 +375,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         if (!contiguous) resetPaging(sessionId, page.nextCursor);
         dispatch({
           kind: 'action',
-          action: { type: 'history-newest-merged', messages: page.messages, cards: page.cards },
+          action: {
+            type: 'history-newest-merged',
+            messages: page.messages,
+            cards: page.cards,
+            decisions: page.decisions,
+          },
         });
       } catch {
         // best-effort

@@ -7,6 +7,7 @@
 
 import { type AgentEvent, describeDeviation } from '@ethosagent/core';
 import { answerSuffix } from '@ethosagent/types';
+import { decisionLine, decisionLineText } from './decision-line';
 
 export type Verbosity = 'quiet' | 'default' | 'verbose' | 'debug';
 
@@ -40,7 +41,8 @@ export interface RenderedLine {
     | 'usage'
     | 'error'
     | 'debug'
-    | 'run_start';
+    | 'run_start'
+    | 'decision';
 }
 
 /**
@@ -159,11 +161,15 @@ export function projectEvent(
       // Not surfaced at any verbosity in the line projection; `context_meta` is
       // internal.
       break;
-    case 'decision':
-      // Not rendered yet: the CLI decision line is milestone N7d (plan
-      // decision-provider-personality §15.6). Listed so the consumer audit
-      // for the `decision` variant (N7a, §15.2) is visible here.
+    case 'decision': {
+      // plan decision-provider-personality §15.6 — one line per SETTLED
+      // decision, gated like `tool_end`: shown from `default` up, hidden in
+      // `quiet` (returned above). A `started` has no line: the CLI has no
+      // reserved status slot to put "checking" in.
+      const line = decisionLine(event);
+      if (line) out.push({ text: decisionLineText(line), kind: 'decision' });
       break;
+    }
   }
 
   if (verbosity === 'debug') {
