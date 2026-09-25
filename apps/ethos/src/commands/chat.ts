@@ -10,6 +10,7 @@ import {
   type AgentLoop,
   clarifyUnresolvedMessage,
   describeDeviation,
+  haltNotice,
   stripAnsiEscapes,
 } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
@@ -1111,6 +1112,15 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       out(`\n${c.red}[${event.code}] ${event.error}${c.reset}`);
       break;
 
+    case 'halt': {
+      // S4/U1 — the cap and the reset command (`haltNotice`, via projectEvent).
+      const notice = lines.find((line) => line.kind === 'halt');
+      if (!notice) break;
+      if (ctx.hasText) out('\n');
+      out(`${c.yellow}${stripAnsiEscapes(notice.text)}${c.reset}\n`);
+      break;
+    }
+
     case 'run_start': {
       // D17 — a deviation renders at EVERY verbosity, `quiet` included: the
       // moment a person needs to know the turn is not running on what was
@@ -1224,6 +1234,10 @@ async function runSingleQuery(
     if (doneAnswer) {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
       out(doneAnswer);
+    }
+    if (event.type === 'halt') {
+      const notice = haltNotice(event);
+      if (notice) out(`\n${c.yellow}${notice}${c.reset}\n`);
     }
     if (event.type === 'tool_end') toolDurations.push(event.durationMs);
     if (event.type === 'usage') {

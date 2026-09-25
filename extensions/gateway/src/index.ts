@@ -7,6 +7,7 @@ import {
   deriveBotKey,
   forkSession,
   forkSessionKey,
+  haltNotice,
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
@@ -4783,7 +4784,18 @@ export class Gateway {
         // in @ethosagent/types) — delivered as ONE final: the streamed draft is
         // finalized in place with it, or it is the one send. Pinned by
         // `__tests__/turn-tail.test.ts` ('returnDirect').
-        const responseText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        const answerText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        // S4/U1 — a budget halt reaches the lane folded into the reply, so the
+        // answer and the reason it stopped are ONE message (`haltNotice` in
+        // @ethosagent/core owns the wording and the reset command). Not for a
+        // review turn: its empty answer must still fall back to the wake
+        // notice below. Pinned by `__tests__/budget-halt.test.ts`.
+        const halted = !review && translator.halt ? haltNotice(translator.halt) : null;
+        const responseText = halted
+          ? answerText.trim().length > 0
+            ? `${answerText}\n\n${halted}`
+            : halted
+          : answerText;
         const errored = translator.error;
 
         // Did the live streamer already deliver (at least a first chunk)? If so,

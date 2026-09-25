@@ -174,6 +174,30 @@ describe('FW-10 verbosity projection', () => {
     });
   });
 
+  describe('budget halt (S4/U1)', () => {
+    const halt: AgentEvent = {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'cost-cap',
+      toolName: '_budget',
+      message: 'Stopped: hit $1.00 budget cap for this session ($1.0100 spent)',
+    };
+
+    it('renders the cap and the reset command at every verbosity, quiet included', () => {
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = projectEvent(halt, level).filter((l) => l.kind === 'halt');
+        expect(lines).toHaveLength(1);
+        expect(lines[0]?.text).toContain('$1.00 budget cap');
+        expect(lines[0]?.text).toContain('/budget reset');
+      }
+    });
+
+    it('a watcher halt renders no halt line — its pause ends with a reply', () => {
+      const watcher: AgentEvent = { type: 'halt', kind: 'watcher', rule: 'r', message: 'm' };
+      expect(projectEvent(watcher, 'default').filter((l) => l.kind === 'halt')).toEqual([]);
+    });
+  });
+
   describe('/verbose cycle order', () => {
     it('cycles default → verbose → debug → quiet → default', () => {
       expect(nextVerbosity('default')).toBe('verbose');
