@@ -1706,6 +1706,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1758,6 +1761,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

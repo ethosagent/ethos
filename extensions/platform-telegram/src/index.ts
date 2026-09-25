@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { ChannelOverrideStore, evaluateChannelMode } from '@ethosagent/core';
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import type {
   AdapterCapabilities,
   AdapterVoiceCaps,
@@ -562,6 +563,23 @@ function toTelegramInputFile(att: Attachment): InputFile {
   return new InputFile(att.url, name);
 }
 
+/**
+ * The built-in half of Telegram's `/` menu, derived from the shared registry's
+ * `gateway` surface (`SLASH_COMMANDS` in @ethosagent/surface-kit) — the same
+ * list the gateway executes (`PLATFORM_COMMANDS`, pinned by
+ * extensions/gateway/src/__tests__/slash-registry-drift.test.ts), so a newly
+ * registered channel command appears here without a second edit. Aliases
+ * (`/reset`) and the owner's pairing commands (`/allow`, `/deny`,
+ * `/communications`) stay out of a menu every chat member sees; they still run
+ * when typed. Pinned by `__tests__/phase1.test.ts` ('Commands menu').
+ */
+const MENU_EXCLUDED = new Set(['allow', 'deny', 'communications']);
+function telegramMenuCommands(): Array<{ command: string; description: string }> {
+  return slashCommandsForSurface('gateway')
+    .filter((c) => !c.aliasOf && !MENU_EXCLUDED.has(c.name))
+    .map((c) => ({ command: c.name, description: c.description }));
+}
+
 export class TelegramAdapter
   implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
 {
@@ -823,16 +841,7 @@ export class TelegramAdapter
     }
 
     // --- Commands menu (best-effort) ---
-    await this.bot.api
-      .setMyCommands([
-        { command: 'start', description: 'Introduce the bot' },
-        { command: 'new', description: 'Start a fresh session' },
-        { command: 'help', description: 'Show available commands' },
-        { command: 'personality', description: 'Show the bound personality' },
-        { command: 'usage', description: 'Session tokens + cost' },
-        { command: 'stop', description: 'Abort the current reply' },
-      ])
-      .catch(() => {});
+    await this.bot.api.setMyCommands(telegramMenuCommands()).catch(() => {});
 
     // --- Load persistence stores (Gap 4) ---
     await this.channelOverrides?.load();
@@ -1744,14 +1753,7 @@ export class TelegramAdapter
   }
 
   async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {
-    const builtins = [
-      { command: 'start', description: 'Introduce the bot' },
-      { command: 'new', description: 'Start a fresh session' },
-      { command: 'help', description: 'Show available commands' },
-      { command: 'personality', description: 'Show the bound personality' },
-      { command: 'usage', description: 'Session tokens + cost' },
-      { command: 'stop', description: 'Abort the current reply' },
-    ];
+    const builtins = telegramMenuCommands();
     const pluginEntries = cmds.map((c) => ({
       command: c.name
         .toLowerCase()

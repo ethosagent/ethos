@@ -377,3 +377,53 @@ describe('EmailAdapter messageId', () => {
     expect(received[1].messageId).toBe('uid:2:INBOX');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slash commands — first line of the body (U2)
+// ---------------------------------------------------------------------------
+
+describe('EmailAdapter slash commands', () => {
+  async function inboundText(text: string): Promise<string | undefined> {
+    const raw = buildRawEmail({ from: 'alice@example.com', subject: 'Re: Project', text });
+    const imap = makeImapMock([{ uid: 1, raw }]);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const received: string[] = [];
+    adapter.onMessage((msg) => received.push(msg.text));
+    await adapter.poll();
+    return received[0];
+  }
+
+  it('a gateway command on the first line is the whole message; quoted reply and signature are dropped', async () => {
+    expect(
+      await inboundText(
+        '/personality engineer\r\n\r\nOn Tue, Bob wrote:\r\n> earlier text\r\n\r\n-- \r\nAlice',
+      ),
+    ).toBe('/personality engineer');
+    expect(await inboundText('/stop\r\n\r\nSent from my phone')).toBe('/stop');
+  });
+
+  it('a first line that is not a gateway command leaves the body untouched', async () => {
+    expect(await inboundText('/etc/hosts is wrong\r\n\r\nsee above')).toBe(
+      '/etc/hosts is wrong\n\nsee above',
+    );
+    expect(await inboundText('/notacommand now\r\n\r\nbody')).toBe('/notacommand now\n\nbody');
+  });
+
+  it('an unverified sender is never read as a command — the sender warning leads the text', async () => {
+    const raw = buildRawEmail({ from: 'alice@example.com', subject: 'Project', text: '/stop' });
+    const imap = makeImapMock([{ uid: 1, raw }]);
+    const { trustedAuthservId: _unset, ...unverified } = BASE_CONFIG;
+    const adapter = new EmailAdapter(unverified, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const received: string[] = [];
+    adapter.onMessage((msg) => received.push(msg.text));
+    await adapter.poll();
+    expect(received[0]?.startsWith('/')).toBe(false);
+    expect(received[0]).toContain('/stop');
+  });
+});
