@@ -3,7 +3,7 @@
 // actionable line, instead of letting every child crash-loop on a raw EACCES.
 
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -52,5 +52,7 @@ describe.skipIf(process.getuid?.() === 0)('docker-entrypoint.sh state-dir check'
     expect(code).toBe(1);
     expect(stderr).toContain('Unknown ETHOS_MODE: nope');
     expect(stderr).not.toContain('not writable');
+    // The write probe cleans up after itself.
+    expect(readdirSync(dir)).toEqual([]);
   });
 });
