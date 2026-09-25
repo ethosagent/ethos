@@ -1020,12 +1020,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // operator set `allowUnattendedDangerousTools: true`. The same predicate's
   // spoken-confirmation wrapper refuses a SIP far-end caller's consequential
   // request. Pinned by `../__tests__/unattended-approval-gate.test.ts`.
+  //
+  // With no bot configured this loop is also the idle gateway bot's, so plugin
+  // channel turns (remote senders) run here too. Those never get the opt-in:
+  // `isRemoteSenderTurn` is true exactly while the gateway holds an approval
+  // route for the session — set by `Gateway.runTurn` for its own channel turns
+  // only — and the gate then refuses with the bot loops' no-surface text
+  // (`createNoApprovalSurfaceGate`). `gatewayRef` is null only before the
+  // gateway exists, when no channel turn can be running.
   wireUnattendedApprovalGate(systemLoopReady.hooks, {
     personalities: seamPersonalities,
     reload: () => seamPersonalities.loadFromDirectory(personalitiesDir),
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    isRemoteSenderTurn: (sessionId) => gatewayRef?.resolveApprovalRoute(sessionId) !== undefined,
   });
   // Say so at boot, once, for every personality whose cron jobs can reach a
   // tool that gate refuses — before the first job fails.
@@ -2757,7 +2766,12 @@ const APPROVAL_SHUTDOWN_DRAIN_MS = 5_000;
  *      so the systemLoop's D12 opt-in (`approvalMode: off` +
  *      `allowUnattendedDangerousTools`) is never honoured here. This includes
  *      the case where no adapter at all is approval-capable, which returns
- *      right after.
+ *      right after. The idle gateway bot (no bot configured) is not in
+ *      `bots` and is not gated here: its turns run on the systemLoop, where
+ *      `wireUnattendedApprovalGate`'s `isRemoteSenderTurn` split hands them to
+ *      this same no-surface gate, so the rule is identical — a remote-sender
+ *      turn never gets the opt-in (pinned by
+ *      `../__tests__/unattended-approval-gate.test.ts`, 'idle gateway').
  *   1. `before_tool_call` hook on every approval-capable bot loop →
  *      `ApprovalCoordinator` suspends dangerous calls. A turn on such a loop
  *      that arrived through an adapter that cannot post a card is handed to

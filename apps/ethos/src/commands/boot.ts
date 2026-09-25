@@ -628,6 +628,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // flagged call posts a modal card a human can answer (denied at the approval
   // timeout) — the same shape as `ethos serve`. The unattended gate would
   // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
+  // That web hook's predicate (`buildServeDangerPredicate`, ./serve) never
+  // takes the D12 opt-in, so with no bot configured the idle gateway bot's
+  // channel turns (remote senders) on this loop cannot be auto-approved by
+  // `allowUnattendedDangerousTools` either. Pinned by
+  // `./__tests__/gateway-unattended-gate-wiring.test.ts` ('ethos boot').
   const systemLoop = shared.loop;
 
   // Personality-directory seam for hot-reload, shared by the Gateway and by

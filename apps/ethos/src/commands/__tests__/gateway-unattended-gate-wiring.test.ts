@@ -8,7 +8,8 @@
 //  - runtime: `wireUnattendedApprovalGate` registers exactly one modifying
 //    `before_tool_call` handler on the registry it is handed, and it refuses;
 //  - source text: `runGatewayStart` hands it the systemLoop's hooks, before
-//    the cron scheduler starts. `runGatewayStart` boots a whole process and
+//    the cron scheduler starts, with the gateway's channel-turn route as its
+//    remote-sender test. `runGatewayStart` boots a whole process and
 //    cannot be invoked from a unit test.
 
 import { readFile } from 'node:fs/promises';
@@ -39,6 +40,7 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
       },
       model: 'm',
       allowUnattendedDangerousTools: false,
+      isRemoteSenderTurn: () => false,
     });
 
     expect(registerModifying).toHaveBeenCalledTimes(1);
@@ -62,7 +64,27 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
     expect(call).toContain(
       'allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true',
     );
+    // A remote-sender (idle gateway channel) turn is told apart by the route
+    // the gateway holds for its own channel turns, never by the opt-in.
+    expect(call).toContain(
+      'isRemoteSenderTurn: (sessionId) => gatewayRef?.resolveApprovalRoute(sessionId) !== undefined',
+    );
     // And the boot-time exposure warning runs beside it.
     expect(src.indexOf('reportUnattendedCronExposure({')).toBeGreaterThan(wired);
+  });
+
+  it('ethos boot: the idle bot shares the web loop, which never takes the D12 opt-in', async () => {
+    const boot = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
+    const serve = await readFile(join(ROOT, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+    // No unattended gate, and no opt-in threaded anywhere in boot…
+    expect(boot).not.toContain('wireUnattendedApprovalGate(');
+    expect(boot).not.toContain('allowAutoApproveDangerousTools');
+    expect(boot).not.toMatch(/allowUnattendedDangerousTools:/);
+    // …and the web approval hook's predicate is built without it.
+    const start = serve.indexOf('export function buildServeDangerPredicate(');
+    expect(start).toBeGreaterThan(-1);
+    const body = serve.slice(start, serve.indexOf('\n}\n', start));
+    expect(body).toContain('createApprovalDangerPredicate({');
+    expect(body).not.toContain('allowAutoApproveDangerousTools');
   });
 });
