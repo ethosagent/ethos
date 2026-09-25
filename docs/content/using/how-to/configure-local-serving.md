@@ -126,14 +126,21 @@ Close the loop against your actual personality, not a synthetic prompt.
 
 Measure what one turn really costs on your setup:
 
+Run it from the project directory your agent works in, or name that directory with `--cwd`:
+
 ```bash
-ethos bench context
+ethos bench context --cwd ~/code/my-repo
 ```
 
 ```
-personality      static-context   per-turn tax
-researcher       11,842 tokens    13,205 tokens
+Static context tax per personality (chars/4 token estimate)
+  project context measured in /Users/you/code/my-repo
+  personality               soul ch  tools  schema ch  tool_loading_chars  project ch  ~tokens
+  engineer                     1184     30      25580                9693      105052    33247
+  researcher                   1267     20      16467               16994      105052    30989
 ```
+
+`project ch` is the `AGENTS.md`/`CLAUDE.md` block a turn launched in that directory sends. A personality that declares its own `fs_reach.workdir` is measured in that directory instead. `~tokens` is the whole static prefix, project context included. Compare it with the window: a prefix above 40% of it puts that personality in small-window mode.
 
 Then check the personality against the window you just configured:
 
@@ -141,7 +148,21 @@ Then check the personality against the window you just configured:
 ethos personality show researcher
 ```
 
-The character sheet ([`ethos personality`](../reference/cli#ethos-personality) in the CLI reference) prints the personality's identity, routing, memory scope, and toolset — the inputs that make up the static context you just sized the server for. If you raised `OLLAMA_CONTEXT_LENGTH` for a personality that didn't fit, `ethos bench context` followed by `ethos personality show <id>` is the "does it fit now?" answer.
+```
+## Prompt size
+- System-prompt tokens: ~4726 (measured static floor — serialized tool schemas included)
+- Project context (AGENTS.md/CLAUDE.md): depends on the working directory — no fs_reach workdir declared, not included above
+```
+
+The character sheet ([`ethos personality`](../reference/cli#ethos-personality) in the CLI reference) prints the personality's identity, routing, memory scope, and toolset — the inputs that make up the static context you just sized the server for. Its `## Prompt size` section adds the project context for a personality with a declared `fs_reach.workdir`. For one without, run `ethos bench context` in the directory you work in. If you raised `OLLAMA_CONTEXT_LENGTH` for a personality that didn't fit, `ethos bench context` followed by `ethos personality show <id>` is the "does it fit now?" answer.
+
+Small-window mode is decided per personality, on each turn, from that personality's own static prefix in the directory its turns run in. The same measurement sets its tool-result budget and the history a manual `/compact` reads. One personality can run in small-window mode while another in the same process does not. When a personality engages it, the log says so once:
+
+```
+small-window mode on for personality `bigctx` (static prefix above 40% of the window): static prefix ~27,537 tokens is 43% of the 64,000-token window. Largest: project context (AGENTS.md/CLAUDE.md) (~26,263 tokens). …
+```
+
+Sub-directory context files found later in progressive mode are not part of that prefix. The per-turn compaction gate counts them with the rest of the prompt.
 
 ## Troubleshoot
 
@@ -149,6 +170,7 @@ The character sheet ([`ethos personality`](../reference/cli#ethos-personality) i
 - **Every turn is slow, even short ones (llama.cpp).** `--cache-reuse` is unset (defaults to 0) or turns are shorter than `--checkpoint-min-step` (defaults to 8192). Set both.
 - **`ollama ps` shows `CONTEXT 4096` after configuring 64000.** The env var was set in the client shell, not the server's. Stop the server, `export OLLAMA_CONTEXT_LENGTH=64000`, start `ollama serve` in that shell (or set it in the service unit).
 - **`[context_window_too_small] context window too small: … The message was NOT sent.`** The system prompt and tool schemas, plus your message, do not fit the window Ethos is using for this model, so the turn stopped before any request went out. Ethos sizes an Ollama model from `ollama ps` when the model is loaded. When the model is not loaded, or `ollama ps` shows no context, Ethos falls back to the model's catalog window, capped at 32,768 tokens, and the startup log says so. If the server really serves more, set `OLLAMA_CONTEXT_LENGTH` as in step 2, then either load the model before starting Ethos or set `contextWindow: <tokens>` in `~/.ethos/config.yaml` to match. If the window really is that small, shrink the static prefix instead: `tool_loading: on` in `config.yaml`, a `small_window_toolset` in the personality's `context_engine_options`, or a smaller `AGENTS.md`/`CLAUDE.md` in the working directory. `ethos bench context` prints the static size to compare.
+- **`small-window mode on for personality <id>` appears after a `/personality` switch or a web or gateway turn.** That personality's static prefix, usually its project context, is over 40% of the window, so its turns use the compact prelude, index-only memory and skills, a shorter history, and a smaller tool-result budget. Other personalities are unaffected. To keep it out of small-window mode, trim the `AGENTS.md`/`CLAUDE.md` in its working directory or `fs_reach.workdir`, or raise the window. `ethos bench context --cwd <dir>` shows the `project ch` figure to compare.
 - **Garbage output after enabling KV quantization.** You quantized K below q8 (`-ctk q4_0`). Keep K at `q8_0` or above; push V down instead.
 - **Model answers degrade on long sessions despite a 131k window.** You are past the model's *native* window (step 1). Reduce the configured context to the native value, or pick a model whose native window fits your workload.
 
