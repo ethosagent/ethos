@@ -7,11 +7,12 @@
 //     registry factories compose the same history + pending-gate stack;
 //     `vector` composes the gate alone, `composeGatedVectorMemory`);
 //   - build-agent-loop — proactive capture's undecorated base + history;
-//   - createMemoryProviderFromConfig — nightly consolidation/decay and other
-//     out-of-loop writers that must target the configured backend;
+//   - createMemoryProviderFromConfig — out-of-loop file-memory surfaces that
+//     must target the configured backend (CLI memory commands, MCP export);
 //   - createMemoryBundle — the editor / Timeline / restore / approve surfaces
 //     a host hands the web API (F04, plan architecture-suggestions-2026-09-10),
-//     built by build-agent-loop from the loop's own config.
+//     built by build-agent-loop from the loop's own config, and the nightly
+//     pass's gated consolidation handle (`MemoryEditing.consolidation`).
 //
 // Placement decision (deliberate, §3b): memory CONTENT and its provenance
 // history follow the backend — for a vault that means history JSONL + blobs
@@ -222,8 +223,7 @@ export function buildVaultBackend(opts: {
 
 /**
  * Resolve the undecorated provider + history for the configured backend.
- * `markdown` (and, for out-of-loop writers, `vector` — nightly consolidation
- * has always operated on the markdown store beside the vector index) root at
+ * `markdown` (and, when a caller does not refuse it first, `vector`) root at
  * `dataDir`; `vault` roots at `<vaultRoot>/<agentDir>` with `.ethos-meta`
  * history.
  */
@@ -404,11 +404,12 @@ export interface ConfiguredMemoryBackend {
  * Returns a history-decorated handle for the CONFIGURED backend (`memory:
  * vault` → the vault, everything else → markdown at dataDir), plus the pieces
  * out-of-loop writers need — the history store for rotation and the sidecar
- * root/storage. Used by the nightly pass so consolidation/decay target the
- * same store the agent reads from, and by the CLI/Slack file-memory surfaces
+ * root/storage. Used by the CLI/Slack file-memory surfaces
  * (`apps/ethos/src/lib/file-memory.ts`, which first refuses a backend with no
  * file memory via `fileMemoryUnsupportedReason` — this function itself maps
- * `vector` to markdown at dataDir, the store nightly has always consolidated).
+ * `vector` to markdown at dataDir). The nightly pass does NOT use it: it takes
+ * the gated `MemoryEditing.consolidation` from `createMemoryBundle`
+ * (`nightlyMemory`, apps/ethos/src/commands/nightly.ts).
  */
 export function createMemoryProviderFromConfig(
   opts: CreateMemoryProviderFromConfigOptions,
@@ -535,6 +536,18 @@ export interface MemoryEditing {
   restore: MemoryProvider & GlobalMemoryStore;
   /** The backend's own history (vault: `.ethos-meta`; markdown: dataDir). */
   history: HistoryStore;
+  /**
+   * `consolidation`-labelled handle for the nightly pass, behind the approval
+   * gate: under `memoryApproval.mode: all` its writes park in `pending` (this
+   * bundle's queue) as `consolidation` entries (`isGated`); otherwise they
+   * write through. Pinned by
+   * `apps/ethos/src/commands/__tests__/nightly-memory-gate.test.ts`.
+   */
+  consolidation: MemoryProvider & GlobalMemoryStore;
+  /** Root for per-scope memory files + the `memory-meta.json` sidecar. */
+  memoryRoot: string;
+  /** Storage for sidecar I/O under `memoryRoot` (the vault's scope under vault). */
+  storage: Storage;
 }
 
 /** The configured backend has no file-style editing surface. */
@@ -610,11 +623,18 @@ export function createMemoryBundle(opts: CreateMemoryBundleOptions): MemoryBundl
   if (unsupported) {
     return { backend, editing: { supported: false, reason: unsupported }, pending, teamMemory };
   }
-  const { base, history } = createUndecoratedBackend({
+  const { base, history, memoryRoot, storage } = createUndecoratedBackend({
     selection: opts.config,
     dataDir: opts.dataDir,
     storage: opts.storage,
     ...(opts.logger ? { logger: opts.logger } : {}),
+  });
+  // History outside the gate, as in `composeGatedMemory`: a parked write
+  // records nothing; approve records it once, via `pending`'s replay.
+  const consolidationGate = withPendingGate(base, {
+    store: pending,
+    mode: opts.config.memoryApproval?.mode ?? 'off',
+    source: 'consolidation',
   });
   return {
     backend,
@@ -623,6 +643,9 @@ export function createMemoryBundle(opts: CreateMemoryBundleOptions): MemoryBundl
       editor: withHistory(base, history, { source: 'web-editor' }),
       restore: withHistory(base, history, { source: 'restore' }),
       history,
+      consolidation: withHistory(consolidationGate, history, { source: 'consolidation' }),
+      memoryRoot,
+      storage,
     },
     pending,
     teamMemory,

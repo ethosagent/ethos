@@ -131,6 +131,7 @@ memoryApproval.ttlDays: 30
 Notes:
 
 - Cap and TTL apply to every queue over one deployment — the runtime gate, `ethos memory pending`, and the web Pending tab.
+- `all` also gates consolidation: both the inline fallback and the nightly pass's MEMORY.md / USER.md rewrite wait in the queue as `consolidation` entries (`MemoryEditing.consolidation` in [packages/wiring/src/memory-backend.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/memory-backend.ts)). The nightly pass still updates its `memory-meta.json` decay sidecar straight away.
 - Every backend is gated, `memory: vector` included. Under vector an approved candidate is written into `memory.db` and records no history entry, because vector keeps no history. (`composeGatedVectorMemory` and `createPendingMemoryStore` in [packages/wiring/src/memory-backend.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/memory-backend.ts).)
 - A change takes effect on restart, like `memory` itself.
 
