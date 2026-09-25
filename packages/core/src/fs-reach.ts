@@ -194,9 +194,12 @@ export function deriveFsReachPaths(
  *
  * LIMITATION: on LOCAL execution a personality with `terminal` can still edit
  * its own definition — `sh -c` runs as the Ethos user and no Storage mediates
- * it. Use `execution: docker` if that matters. There is no command-string
- * grep for these names in the terminal guard: it would be trivially defeated
- * (`cd ..; sed -i`) and would read as a guarantee it is not.
+ * it. Use `execution: docker` if that matters. The terminal and process
+ * guards refuse a command that names the state dir literally
+ * (`stateDirReference` in `extensions/tools-terminal/src/guard.ts` and
+ * `extensions/tools-process/src/guard.ts`, S16), which catches the lazy
+ * `sed -i ~/.ethos/personalities/<self>/toolset.yaml` and nothing more: a
+ * relative path (`cd ~; sed -i .ethos/…`) or a computed one passes.
  */
 export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
   'SOUL.md',

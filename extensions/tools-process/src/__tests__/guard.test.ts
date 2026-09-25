@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkCommand, createProcessGuardHook } from '../guard';
 
 // ---------------------------------------------------------------------------
@@ -334,5 +335,46 @@ describe('createProcessGuardHook', () => {
       args: {},
     });
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S16 — the Ethos state dir on the argv floor
+// ---------------------------------------------------------------------------
+
+describe('checkCommand — Ethos state dir (S16)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    'sed -i s/x/y/ ~/.ethos/personalities/a/toolset.yaml',
+    'cat $HOME/.ethos/sessions.db',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell variable
+    'echo "allowLocalFallback: true" >> ${HOME}/.ethos/config.yaml',
+    `cp evil.json ${homedir()}/.ethos/mcp.json`,
+    'cd ~/.ethos && ls',
+    'ls ~/.ethos',
+  ])('blocks: %s', (cmd) => {
+    const result = checkCommand(cmd);
+    expect(result.dangerous).toBe(true);
+    if (result.dangerous) expect(result.reason).toMatch(/Ethos state dir/);
+  });
+
+  it('blocks the ETHOS_STATE_DIR override, by value and by variable', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', '/srv/ethos-state');
+    expect(checkCommand('cat /srv/ethos-state/keys.json').dangerous).toBe(true);
+    expect(checkCommand('ls "$ETHOS_STATE_DIR"').dangerous).toBe(true);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell variable
+    expect(checkCommand('ls ${ETHOS_STATE_DIR}/plugins').dangerous).toBe(true);
+  });
+
+  it.each([
+    'cat ./project/.ethos-notes.md',
+    'ls docs/.ethos/example',
+    'cat ~/.ethosrc',
+    'grep -r ethos src/',
+  ])('does not flag: %s', (cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(false);
   });
 });

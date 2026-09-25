@@ -1,4 +1,6 @@
-import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ethosStateDirs, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,35 @@ export const ARGV_FS_DENY_PATTERNS: Array<{ test: (cmd: string) => boolean; path
   },
 ];
 
+// S16 — the Ethos state dir on the argv floor. A command that names a state
+// dir at all is refused: on local posture the shell runs as the Ethos user and
+// no Storage mediates it, so this is the only check between the agent and its
+// own `toolset.yaml` (hot-reloaded next turn), `config.yaml`, `mcp.json` and
+// every personality's `sessions.db`. The dirs come from `ethosStateDirs()` —
+// the same roster module (`packages/storage-fs/src/sensitive-paths.ts`) whose
+// entries ScopedStorage and ScopedFs deny — so the two cannot drift.
+//
+// Wider than the always-deny roster on purpose: the roster must leave the
+// personality's own directory reachable (MEMORY.md), but a shell that reaches
+// the state dir can edit the definition files beside it, which only Storage's
+// write-deny list protects. Same honest scope as everything above: `cd ~;
+// sed -i … .ethos/…`, `$(printf ~)/.ethos` or a variable holding the path all
+// pass. `execution: docker` is the boundary.
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A path ends at `/`, whitespace, a quote, a shell operator or end of string.
+const PATH_END = '(?=[/\\s\'"`;|&)]|$)';
+
+export function stateDirReference(cmd: string): string | null {
+  const defaultDir = join(homedir(), '.ethos');
+  for (const dir of ethosStateDirs()) {
+    const spellings = [escapeRegExp(dir)];
+    if (dir === defaultDir) spellings.push(String.raw`(?:~|\$HOME|\$\{HOME\})/\.ethos`);
+    if (new RegExp(`(?:${spellings.join('|')})${PATH_END}`).test(cmd)) return dir;
+  }
+  if (/\$\{?ETHOS_STATE_DIR\b/.test(cmd)) return '$ETHOS_STATE_DIR';
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -156,6 +187,9 @@ export function checkCommand(command: string): DangerResult {
       return { dangerous: true, reason: `command targets always-deny path '${paths.join(', ')}'` };
     }
   }
+  const stateDir = stateDirReference(command);
+  if (stateDir)
+    return { dangerous: true, reason: `command names the Ethos state dir '${stateDir}'` };
   return { dangerous: false };
 }
 
