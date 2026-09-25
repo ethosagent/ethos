@@ -49,7 +49,13 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-healthche
 # chowned before dropping privileges so the unprivileged runtime user can write
 # there; WORKDIR points at it so `process.cwd()` lands on a mounted, persistent
 # path instead of the (read-only, in compose) root filesystem.
-RUN mkdir -p /home/ethos/workspace && chown ethos:ethos /home/ethos/workspace
+# The state dir is created and chowned for the same reason: Docker initialises
+# a fresh NAMED volume from the image's directory at the mount point, ownership
+# included. Without it the volume came up root:root and every boot crash-looped
+# on `EACCES: mkdir '/home/ethos/.ethos/secrets'`. (A bind mount keeps the host
+# directory's ownership — docker-entrypoint.sh refuses that case by name.)
+RUN mkdir -p /home/ethos/workspace /home/ethos/.ethos \
+  && chown ethos:ethos /home/ethos/workspace /home/ethos/.ethos
 
 USER ethos
 WORKDIR /home/ethos/workspace

@@ -1,6 +1,17 @@
 #!/bin/sh
 set -e
 
+# The state dir must be writable by the runtime user. A fresh named volume is
+# (the Dockerfile chowns /home/ethos/.ethos, which Docker copies into it); a
+# bind-mounted host directory keeps the HOST's ownership, and a root-owned one
+# used to crash-loop every child with a raw `EACCES: mkdir …` stack. Refuse it
+# once, by name, with the fix.
+STATE_DIR="${ETHOS_STATE_DIR:-$HOME/.ethos}"
+if [ -d "$STATE_DIR" ] && [ ! -w "$STATE_DIR" ]; then
+  echo "ethos: state dir $STATE_DIR (owner $(stat -c '%u:%g' "$STATE_DIR" 2>/dev/null || echo '?')) is not writable by uid $(id -u) — on the host, run: sudo chown -R $(id -u):$(id -g) <the directory you mounted there>" >&2
+  exit 1
+fi
+
 # Single-service profile provisions config from env at boot (W1.3). The CLI
 # `ethos setup --from-env` is idempotent by contract: config.yaml is written
 # once (skip-if-exists), secrets re-sync from env every boot, and it emits the
