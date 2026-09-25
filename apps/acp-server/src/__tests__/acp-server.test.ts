@@ -359,13 +359,9 @@ describe('AcpServer', () => {
     expect(forked.parentSessionId).toBe(src.id);
     expect(forked.title).toBe('Kept title');
     expect(forked.metadata).toEqual({ tag: 'kept' });
-    expect(msgs[1].usage).toEqual({
-      inputTokens: 7,
-      outputTokens: 3,
-      cacheReadTokens: 1,
-      cacheCreationTokens: 2,
-      estimatedCostUsd: 0.01,
-    });
+    // A copy is history, not spend: usage stays on the source's row only
+    // (forkSession, packages/core/src/session-fork.ts).
+    expect(msgs[1].usage).toBeUndefined();
   });
 
   // 10

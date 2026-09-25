@@ -1,3 +1,4 @@
+import { forkSession } from '@ethosagent/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
 
@@ -131,6 +132,19 @@ describe('usageAggregate', () => {
       keyPrefix: 'telegram:bot_1:',
     });
     expect(rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0)).toBe(3);
+  });
+
+  // A fork replays its source's history with fresh timestamps. The copies are
+  // history, not spend: counting them bills the source's turns twice in
+  // `ethos usage`, the per-bot daily cap and the web Usage view.
+  it("does not count a fork's copied history as new spend", async () => {
+    await seed();
+    const [source] = await store.listSessions({});
+    if (!source) throw new Error('no source session');
+    const before = await store.usageAggregate({ ...window, dimension: 'day' });
+    await forkSession(store, source.id, { key: `${source.key}:fork` });
+    const after = await store.usageAggregate({ ...window, dimension: 'day' });
+    expect(after).toEqual(before);
   });
 
   it('ignores rows with no token counts', async () => {
