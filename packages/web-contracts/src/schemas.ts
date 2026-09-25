@@ -777,6 +777,13 @@ export const PluginInfoSchema = z.object({
   error: z.string().nullable(),
   /** Safety-scan findings retained from the load. Omitted when the scan was clean. */
   scanFindings: z.array(PluginScanFindingSchema).optional(),
+  /**
+   * Trust tier from the plugin's install grant (`plugins/grants.json`
+   * `scan.tier`, what `ethos plugin grants` prints), read by
+   * `PluginsService.list`. Null when no grant is recorded (a manual drop, a
+   * project plugin) or the grant file is unreadable.
+   */
+  trustTier: z.enum(['builtin', 'trusted-repo', 'community', 'untrusted']).nullable().optional(),
 });
 export type PluginInfo = z.infer<typeof PluginInfoSchema>;
 
