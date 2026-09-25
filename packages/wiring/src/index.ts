@@ -171,6 +171,8 @@ export interface WiringConfig {
   execution?: {
     /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput` (S6 / D3). */
     allowLocalFallback?: boolean;
+    /** `execution.containerized` — `detectContainerized`'s explicit config signal. */
+    containerized?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   };
