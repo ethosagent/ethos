@@ -407,6 +407,20 @@ function laneKeyOf(
 export const INTERRUPTED_RETRY_NOTICE =
   '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.';
 
+/**
+ * Sent once when a message's turn fails for the last allowed time and its spool
+ * row is dead-lettered (plan openclaw-2026.9.6-gaps R7) — the user otherwise
+ * sees only the per-attempt error replies and never learns nothing will retry.
+ * Names the row so an operator can re-run it; the body is kept 30 days
+ * (`INBOUND_SPOOL_DEAD_RETENTION_MS`, apps/ethos/src/lib/gateway-inbound-durability.ts).
+ */
+export function deadLetteredNotice(spoolId: string): string {
+  return (
+    '⚠ Your message failed repeatedly and will not be retried automatically. ' +
+    `An operator can re-run it with \`ethos gateway spool replay ${spoolId}\`.`
+  );
+}
+
 /** How long an interrupted row answers to `retry` (plan D5). */
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -3934,7 +3948,8 @@ export class Gateway {
    *   (D5/D19).
    * - Threw before answering → `markFailed`: back to `received` for the next
    *   boot, `interrupted` (+ the retry notice) if a tool had started, or
-   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`).
+   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`, plus one
+   *   tracked notice naming the row — {@link notifyDeadLettered}).
    * - Otherwise → `done`, absorbed rows included. An answered turn is `done`
    *   even if its tail failed or shutdown cut it: the user has the reply.
    *
@@ -3980,7 +3995,7 @@ export class Gateway {
         } else if (err !== undefined && !state.answered) {
           const error = err instanceof Error ? err.message : String(err);
           const outcome = spool.markFailed(state.id, error, this.spoolMaxAttempts);
-          if (outcome === 'dead') this.recordSpoolDeadLettered(state.id, error);
+          if (outcome === 'dead') await this.notifyDeadLettered(state.id, error, target);
           else if (outcome === 'interrupted') await this.notifyInterrupted(state.id, target);
         } else {
           spool.markDone(state.id);
@@ -4013,6 +4028,31 @@ export class Gateway {
         ...(target.threadId ? { threadId: target.threadId } : {}),
       },
       INTERRUPTED_RETRY_NOTICE,
+    ).catch(() => false);
+  }
+
+  /**
+   * An `inbound` row's turn just failed at the attempt cap and the row is
+   * `dead`: record it and tell the lane ONCE, through the ledger-backed path on
+   * the row's own bot ({@link deadLetteredNotice}, `notifyTracked` →
+   * `adapterForBot`). Called only from the attempt-cap branch of
+   * `finishSpoolTurn`; the stale path sends its own per-lane notice. Never throws.
+   */
+  private async notifyDeadLettered(
+    spoolId: string,
+    reason: string,
+    target: SpoolTurnTarget,
+  ): Promise<void> {
+    this.recordSpoolDeadLettered(spoolId, reason);
+    await this.notifyTracked(
+      {
+        platform: target.platform,
+        chatId: target.chatId,
+        botKey: target.botKey,
+        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+      },
+      deadLetteredNotice(spoolId),
     ).catch(() => false);
   }
 

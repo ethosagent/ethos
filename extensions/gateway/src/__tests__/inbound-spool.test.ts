@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ATTACHMENT_NOT_RECOVERED_NOTE,
   createCapturingAdapter,
+  deadLetteredNotice,
   Gateway,
   type GatewayConfig,
   INTERRUPTED_RETRY_NOTICE,
@@ -411,6 +412,41 @@ describe('inbound spool — poison message', () => {
     const after = scriptedLoop();
     await gateway(after.loop, out.adapter, spool).replayInboundSpool();
     expect(after.texts).toHaveLength(0);
+  });
+
+  // Plan openclaw-2026.9.6-gaps R7: before this the user got three `⚠ Error:`
+  // replies and never learned the message would not be retried.
+  it('the attempt that dead-letters the row sends exactly one tracked notice naming it', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    const poison = (): ReturnType<typeof scriptedLoop> =>
+      scriptedLoop(async function* () {
+        yield* [];
+        throw new Error('tool exploded');
+      });
+
+    await gateway(poison().loop, out.adapter, spool, { deliveryLedger: ledger })
+      .handleMessage(msg('poison'), out.adapter)
+      .catch(() => {});
+    const id = rows(spool)[0]?.id ?? '';
+    const notices = () => out.sends.filter((s) => s.text.includes('ethos gateway spool replay'));
+    expect(notices()).toHaveLength(0);
+
+    for (const attempts of [2, 3]) {
+      await gateway(poison().loop, out.adapter, spool, {
+        deliveryLedger: ledger,
+      }).replayInboundSpool();
+      await waitUntil(() => rows(spool)[0]?.attempts === attempts);
+      await settle();
+    }
+    expect(rows(spool)[0]).toMatchObject({ status: 'dead', attempts: 3 });
+    expect(notices().map((s) => s.text)).toEqual([deadLetteredNotice(id)]);
+    expect(deadLetteredNotice(id)).toContain(`ethos gateway spool replay ${id}`);
+    // Tracked: it went through the ledger, not a bare send.
+    expect((await ledger.findBySession('telegram:bot-a:chat-1')).map((o) => o.content)).toContain(
+      deadLetteredNotice(id),
+    );
   });
 });
 
