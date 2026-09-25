@@ -33,7 +33,8 @@ import {
 } from './decisions';
 
 // Plan decision-provider-jev §7 — the operator's `decisions.*` keys and their
-// resolver (defaults, per-site budgets, R6's `on` → `shadow` downgrade).
+// resolver (defaults, per-site budgets); plan decision-provider-personality
+// §4.4 — the one per-personality site resolver (R6's `on` → `shadow` included).
 export {
   DECISION_PROVIDERS,
   DECISION_SITE_DEFAULT_TIMEOUT_MS,
@@ -48,10 +49,15 @@ export {
   type DecisionSiteMode,
   type DecisionsConfig,
   describeDecisionSiteDowngrade,
+  describeLegacyDecisionSite,
+  missingThresholdKeys,
+  type PersonalityDecisionSiteReason,
+  type PersonalityDecisionsInput,
   type ResolvedDecisionSite,
   type ResolvedDecisionsConfig,
   resolveDecisionSiteMode,
   resolveDecisionsConfig,
+  resolvePersonalityDecisionSite,
 } from './decisions';
 // D11(a) — the ONE chain-model importer (`ethos migrate models`,
 // `modelRegistry.importChain` / `list.chainModels`, `config.update` adopt-on-save).
@@ -3170,13 +3176,15 @@ export interface EthosConfig {
   /**
    * The decision provider (plan/phases/decision-provider-jev.md §7). Absent =
    * no decision layer: every site runs today's path. Holds only the keys the
-   * file states; read it through `resolveDecisionsConfig` for defaults,
-   * per-site budgets and each site's effective mode (R6). Operator-level, never
-   * `PersonalityConfig`: whether data goes to a third party is a setting.
+   * file states; read it through `resolveDecisionsConfig` for defaults and
+   * per-site budgets. Operator-level: provider, key, endpoint, model pin,
+   * budgets and thresholds. WHICH sites run is declared per personality
+   * (`PersonalityConfig.decisions`) and resolved per call by
+   * `resolvePersonalityDecisionSite` (./decisions); a global
+   * `decisions.sites.*` line is warned about and never read (PD5).
    *
    * Config format:
    *   decisions.provider: typesafe
-   *   decisions.sites.injection: shadow
    *   decisions.thresholds.injection: 0.9
    */
   decisions?: DecisionsConfig;

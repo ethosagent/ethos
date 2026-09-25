@@ -24,9 +24,7 @@ import { join } from 'node:path';
 import {
   configParseNotices,
   DECISIONS_API_KEY_REF,
-  type DecisionSiteMode,
   deriveBotKey,
-  describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
   readConfig,
@@ -946,11 +944,13 @@ export function providerChainLines(config: EthosConfig): string[] {
 
 /**
  * The decision layer as `ethos doctor` reports it (plan decision-provider-jev
- * §7 / D7 / C4): which provider, which HOST data is sent to, and which sites
- * send it. `configured: false` when there is no `decisions.provider`, and the
- * text form then prints nothing. Only `shadow`/`on` sites are listed — an `off`
- * site sends nothing — and an R6-downgraded site carries the threshold keys
- * whose absence downgraded it (`resolveDecisionSiteMode` in packages/config).
+ * §7 / D7 / C4): which provider and which HOST data is sent to.
+ * `configured: false` when there is no `decisions.provider`, and the text form
+ * then prints nothing. Which sites send it is declared per personality (plan
+ * decision-provider-personality §3); the per-personality lines are milestone
+ * N4 (§8). Limitation until then: doctor does not name enabled sites. A global
+ * `decisions.sites.*` line is reported by the config-notice warnings
+ * (`describeLegacyDecisionSite`, packages/config/src/decisions.ts).
  */
 export interface DecisionLayerReport {
   configured: boolean;
@@ -958,12 +958,6 @@ export interface DecisionLayerReport {
   /** `new URL(decisions.baseUrl).host` — where request bodies go. */
   host?: string;
   model?: string;
-  sites?: Array<{
-    site: string;
-    requested: DecisionSiteMode;
-    effective: DecisionSiteMode;
-    missingThresholds?: string[];
-  }>;
   /** The vault ref the API key is read from, and whether a value is stored there. */
   apiKeyRef?: string;
   apiKeyPresent?: boolean;
@@ -982,14 +976,6 @@ export async function checkDecisionLayer(
     // `buildDecisionsConfig` only keeps a baseUrl `new URL` accepts.
     host: new URL(r.baseUrl).host,
     model: r.model,
-    sites: Object.entries(r.sites)
-      .filter(([, s]) => s.effective !== 'off')
-      .map(([site, s]) => ({
-        site,
-        requested: s.requested,
-        effective: s.effective,
-        ...(s.missingThresholds.length > 0 ? { missingThresholds: s.missingThresholds } : {}),
-      })),
     apiKeyRef: DECISIONS_API_KEY_REF,
     apiKeyPresent: key !== null && key.trim().length > 0,
   };
@@ -998,14 +984,8 @@ export async function checkDecisionLayer(
 /** The Config-section lines for {@link checkDecisionLayer}; empty when not configured. */
 export function decisionLayerLines(report: DecisionLayerReport): string[] {
   if (!report.configured) return [];
-  const sites = (report.sites ?? []).map((s) =>
-    s.missingThresholds
-      ? `${s.site} ${c.yellow}${describeDecisionSiteDowngrade(s.missingThresholds)}${c.reset}`
-      : `${s.site} ${s.effective}`,
-  );
   const lines = [
-    `     decisions:   ${report.provider} → ${report.host}` +
-      ` · ${sites.length > 0 ? sites.join(' · ') : 'every site off'}`,
+    `     decisions:   ${report.provider} → ${report.host} · sites enabled per personality`,
   ];
   // plan §7: with no key stored every site runs today's path — say which ref.
   if (!report.apiKeyPresent) {

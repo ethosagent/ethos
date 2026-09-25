@@ -12,9 +12,12 @@
 // `keyRef`; today `providers/typesafe/apiKey`, `DECISIONS_API_KEY_REF`,
 // @ethosagent/config) — the only place that can MINT it. Once stored, the Keys pane's `custom` row
 // can also replace or delete it (the limitation keys-catalog.ts records).
-// Per-site modes and thresholds are NOT written here: they stay config.yaml
-// lines the operator sets deliberately, and `list` reports them read-only as
-// `resolveDecisionsConfig` resolves them (R6).
+// Per-site modes are NOT global any more: they are enabled per personality
+// (`PersonalityConfig.decisions`, plan decision-provider-personality §3) and a
+// global `decisions.sites.*` line is never read (PD5). Until that plan's N5
+// replaces `sites` with `calibration` / `usedBy`, `list` reports every global
+// site as `off` — which is what the global config now enables. Thresholds are
+// NOT written here: they stay config.yaml lines the operator sets deliberately.
 //
 // What each call guarantees, pinned by `__tests__/services/decisions.service.test.ts`:
 // - `setKey` never echoes the value: the answer carries `redactSecretValue`'s
@@ -23,14 +26,14 @@
 // - `setKey` writes `decisions.provider: typesafe` when the line is absent —
 //   through `ConfigRepository.transform`, the single config.yaml writer, with
 //   the absence checked inside its lock — and writes NO `decisions.sites.*`
-//   line, so this call enables nothing. Site lines an earlier `remove` left
-//   behind apply as written once the provider line is back — the Add drawer
-//   and the saved-key notice say so (apps/web settings/lib/decision-models.ts). A missing config.yaml is not created (that would read
-//   as a finished onboarding).
+//   line, so this call enables nothing: a site runs only when a personality
+//   enables it (`resolvePersonalityDecisionSite`, @ethosagent/config). A
+//   missing config.yaml is not created (that would read as a finished
+//   onboarding).
 // - `clearKey` deletes the ref and leaves config.yaml alone. Idempotent.
 // - `remove` deletes the ref AND, through the same `transform`, the
 //   `decisions.provider` line when it names this provider — only that line:
-//   `decisions.sites.*` and the rest stay, inert, because
+//   `decisions.thresholds.*` and the rest stay, inert, because
 //   `buildDecisionsConfig` builds no layer without a provider. Idempotent.
 // - `test` asks nothing of the provider without a stored key (`no_key`), a
 //   blank message or one over `DECISION_TEST_MAX_CHARS` (`invalid`); then one
@@ -103,15 +106,13 @@ export class DecisionsService {
         model: resolved.model,
         baseUrl: resolved.baseUrl,
         host: hostOf(resolved.baseUrl),
-        sites: DECISION_SITES.map((site) => {
-          const s = resolved.sites[site];
-          return {
-            site,
-            requested: s.requested,
-            effective: s.effective,
-            missingThresholds: s.missingThresholds,
-          };
-        }),
+        // PD5: no global site mode is read, so each global site is `off`.
+        sites: DECISION_SITES.map((site) => ({
+          site,
+          requested: 'off' as const,
+          effective: 'off' as const,
+          missingThresholds: [],
+        })),
       });
     }
     return { catalog: [...DECISION_PROVIDER_CATALOG], providers };

@@ -85,7 +85,7 @@ export async function testDecisionProvider(
     const result = await provider.decide({
       state,
       questions: INJECTION_QUESTIONS,
-      timeoutMs: resolved.sites.injection.timeoutMs,
+      timeoutMs: resolved.timeouts.injection,
     });
     const latencyMs = now() - started;
     if (!result.ok) return { ok: false, code: result.code, message: result.message };

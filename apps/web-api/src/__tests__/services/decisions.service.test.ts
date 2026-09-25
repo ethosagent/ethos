@@ -124,7 +124,7 @@ describe('list', () => {
     expect(p?.keyPresent).toBe(false);
   });
 
-  it('masks the key and reports the R6 downgrade and the configured host', async () => {
+  it('masks the key, reports the configured host, and reads no global site line (PD5)', async () => {
     const { service } = await harness({
       key: KEY,
       lines: [
@@ -145,11 +145,11 @@ describe('list', () => {
     expect(p?.model).toBe('jev-1.13.0');
     expect(p?.sites[0]).toEqual({
       site: 'injection',
-      requested: 'on',
-      effective: 'shadow',
-      missingThresholds: ['decisions.thresholds.injection'],
+      requested: 'off',
+      effective: 'off',
+      missingThresholds: [],
     });
-    expect(p?.sites[1]?.effective).toBe('shadow');
+    expect(p?.sites[1]?.effective).toBe('off');
   });
 });
 
