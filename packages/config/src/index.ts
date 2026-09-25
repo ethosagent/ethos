@@ -2136,9 +2136,20 @@ export interface EthosConfig {
    * (`resolveExecutionPosture`, packages/wiring/src/resolve-execution-posture.ts;
    * S6 / D3, plan openclaw-2026.9.6-gaps). Only the literal `true` opts in:
    *   execution.allowLocalFallback: true
+   *
+   * `containerized` — the operator's statement that Ethos itself runs inside a
+   * container that auto-detection (`/.dockerenv`, `/proc/1/cgroup`,
+   * `KUBERNETES_SERVICE_HOST`) cannot see, so that container is already the
+   * isolation boundary and exec personalities run `local` in it. It is
+   * `detectContainerized`'s explicit config signal
+   * (packages/wiring/src/resolve-execution-posture.ts), forwarded by the
+   * compose path (`createExecutionRouting`'s `containerizedConfig`). Only the
+   * literal `true` sets it; the env equivalent is `ETHOS_EXECUTION_BACKEND=local`:
+   *   execution.containerized: true
    */
   execution?: {
     allowLocalFallback?: boolean;
+    containerized?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: {
       /** Hostname or IP of the remote target. Non-empty; its presence is the switch. */
@@ -3924,6 +3935,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   }
   if (config.execution?.allowLocalFallback === true) {
     lines.push('execution.allowLocalFallback: true');
+  }
+  if (config.execution?.containerized === true) {
+    lines.push('execution.containerized: true');
   }
   if (config.execution?.docker) {
     if (config.execution.docker.cpu !== undefined) {
@@ -5990,6 +6004,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       executionFlagsKv.allowLocalFallback = parseConfigScalar(exl[1]);
       continue;
     }
+    // execution.containerized: <bool>  (this deployment is itself the boundary).
+    const exc = line.match(/^execution\.containerized:\s*(.+)$/);
+    if (exc) {
+      executionFlagsKv.containerized = parseConfigScalar(exc[1]);
+      continue;
+    }
     // execution.ssh.<field>: <value>  (the single remote execution target).
     // The field list is an alternation, so an unrecognised `execution.ssh.*`
     // key falls through to the generic `key: value` catch-all below and is
@@ -6197,6 +6217,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     executionDockerKv,
     executionSshKv,
     executionFlagsKv.allowLocalFallback,
+    executionFlagsKv.containerized,
   );
   const execution = executionResult.execution;
   const restartLoopGuard = buildRestartLoopGuard(restartLoopGuardKv);
@@ -7449,6 +7470,7 @@ function buildExecutionConfig(
   dockerKv: Record<string, string>,
   sshKv: Record<string, string>,
   rawAllowLocalFallback?: string,
+  rawContainerized?: string,
 ): { execution: EthosConfig['execution'] | undefined; errors: string[] } {
   const docker: NonNullable<NonNullable<EthosConfig['execution']>['docker']> = {};
   const cpu = Number(dockerKv.cpu);
@@ -7518,6 +7540,7 @@ function buildExecutionConfig(
   const execution: NonNullable<EthosConfig['execution']> = {};
   // Only the literal `true` opts in: anything else keeps the refusal.
   if (rawAllowLocalFallback === 'true') execution.allowLocalFallback = true;
+  if (rawContainerized === 'true') execution.containerized = true;
   if (Object.keys(docker).length > 0) execution.docker = docker;
   if (ssh) execution.ssh = ssh;
   return { execution: Object.keys(execution).length > 0 ? execution : undefined, errors };

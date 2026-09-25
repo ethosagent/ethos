@@ -23,6 +23,11 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   // GitHub OAuth (gho_), user-to-server (ghu_) and server-to-server (ghs_)
   // tokens share ghp_'s 36-char body.
   { label: 'GitHub token', tag: '[REDACTED:github-token]', regex: /\bgh[sou]_[A-Za-z0-9]{36}\b/g },
+  // Refresh tokens (ghr_): the same prefix + base62 body + word boundaries,
+  // with the family's 36-char body as a FLOOR rather than an exact length —
+  // the refresh-token body length is not pinned here, and a floor cannot miss
+  // a longer one. The `\b` pair keeps `ghrelin` and `ghr_short` out.
+  { label: 'GitHub token', tag: '[REDACTED:github-token]', regex: /\bghr_[A-Za-z0-9]{36,}\b/g },
   {
     label: 'Google API key',
     tag: '[REDACTED:google-api-key]',

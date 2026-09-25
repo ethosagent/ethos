@@ -99,6 +99,30 @@ export async function readSharedVoiceAndCallCaptureConfig(
 }
 
 /**
+ * The operator's execution flags from the shared `~/.ethos/config.yaml`, in
+ * the shape `WiringConfig.execution` takes, so each means on the desktop what
+ * it means for every other host (`createExecutionRouting`,
+ * packages/wiring/src/compose-tools.ts):
+ *   - `execution.allowLocalFallback` — run exec personalities on the host
+ *     although this process cannot build Docker (S6 / D3);
+ *   - `execution.containerized` — this deployment is itself the isolation
+ *     boundary (`detectContainerized`'s explicit config signal).
+ * Only these two are forwarded — the desktop's other settings stay sourced
+ * from the Electron store. `{}` when neither is set or the file is absent.
+ */
+export async function readSharedExecutionFlags(
+  storage: Storage,
+  secrets: SecretsResolver,
+): Promise<Pick<WiringConfig, 'execution'>> {
+  const execution = (await readConfig(storage, secrets))?.execution;
+  const flags = {
+    ...(execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
+    ...(execution?.containerized === true ? { containerized: true } : {}),
+  };
+  return Object.keys(flags).length > 0 ? { execution: flags } : {};
+}
+
+/**
  * The `learningReplay` option `createWebApi` takes — the on-demand replay
  * behind the `learning.replay` RPC (plan `trust-before-reach.md` L-D9). The same settings `ethos serve`
  * passes (`apps/ethos/src/commands/serve.ts`): two real dry-run loops built from
@@ -245,10 +269,9 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   // on the host only with the operator's `execution.allowLocalFallback: true`
   // from the shared `~/.ethos/config.yaml`; otherwise its exec tools are
   // refused (`resolveExecutionPosture`). An unreadable config keeps the refusal.
-  let allowLocalFallback = false;
+  let sharedExecution: Pick<WiringConfig, 'execution'> = {};
   try {
-    allowLocalFallback =
-      (await readConfig(new FsStorage(), secretsResolver))?.execution?.allowLocalFallback === true;
+    sharedExecution = await readSharedExecutionFlags(new FsStorage(), secretsResolver);
   } catch {
     // keep the refusal
   }
@@ -269,7 +292,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
         ? { callCapture: sharedCallCapture }
         : {}),
     ...sharedVoiceConfig,
-    ...(allowLocalFallback ? { execution: { allowLocalFallback: true } } : {}),
+    ...sharedExecution,
     secretsResolver,
   };
 

@@ -821,6 +821,12 @@ export interface ExecutionRoutingInput {
    * whether the machine running it happens to be a container.
    */
   containerized?: ContainerizedDetectionInput;
+  /**
+   * `execution.containerized: true` from `~/.ethos/config.yaml` — merged into
+   * the detection input as `detectContainerized`'s explicit config signal, so
+   * the operator can declare a container auto-detection cannot see.
+   */
+  containerizedConfig?: boolean;
 }
 
 /** What a turn's personality resolved to: its posture, and the backend (if any) that will run it. */
@@ -894,7 +900,10 @@ export async function createExecutionRouting(
     resolveExecutionPosture({
       personality: person,
       ...(constitution ? { constitution } : {}),
-      containerized: input.containerized ?? { env: process.env },
+      containerized: {
+        ...(input.containerized ?? { env: process.env }),
+        ...(input.containerizedConfig === true ? { containerizedConfig: true } : {}),
+      },
       dockerBuildable: !input.disableDocker,
       ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
       // `execution.ssh.host`'s presence is the switch for the whole remote
@@ -1264,6 +1273,7 @@ export async function composeAllTools(
     substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
     disableDocker: opts.disableDocker === true,
     ...(config.execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
+    ...(config.execution?.containerized === true ? { containerizedConfig: true } : {}),
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });

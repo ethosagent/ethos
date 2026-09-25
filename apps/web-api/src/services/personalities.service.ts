@@ -447,6 +447,10 @@ export class PersonalitiesService {
       ...(passthrough['execution.allowLocalFallback'] === 'true'
         ? { allowLocalFallback: true }
         : {}),
+      // `execution.containerized` — the compose path's explicit detection signal.
+      ...(passthrough['execution.containerized'] === 'true'
+        ? { containerized: { containerizedConfig: true } }
+        : {}),
       sshConfigured: sshHost !== undefined && sshHost.length > 0,
       ...(sshHost
         ? {

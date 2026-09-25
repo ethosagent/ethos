@@ -173,7 +173,7 @@ export class BackupService {
         snapshot: 'backup',
         secrets: this.opts.secrets,
         // `memory: vault` keeps memory outside dataDir, which no scope covers
-        // (F04) — read from the same flat map every other setting here is.
+        // (F04) — read through the same repository every other setting here is.
         memory: await this.memorySelection(),
       });
       this.lastFailure = null;
@@ -312,13 +312,17 @@ export class BackupService {
    * scheduled job would use, which is what the pane should show.
    */
   /**
-   * The `memory` / `memoryVault.*` slice, from the same flat passthrough map
-   * `settings()` reads `backup.*` from — the repository rooted at THIS
-   * service's dataDir, never the process-global config.
+   * The `memory` / `memoryVault.*` slice, from the repository rooted at THIS
+   * service's dataDir, never the process-global config. `memory` is a key
+   * `ConfigRepository.read` models (`RawConfig.memory`), so it is never on
+   * `passthrough`; `memoryVault.*` is unmodelled and is. Pinned by
+   * `__tests__/services/backup.service.test.ts`, "passes the `memory: vault`
+   * selection from config to createBackup".
    */
   private async memorySelection(): Promise<MemoryBackendSelection> {
-    const passthrough = (await this.opts.config.read())?.passthrough ?? {};
-    const backend = passthrough.memory;
+    const raw = await this.opts.config.read();
+    const passthrough = raw?.passthrough ?? {};
+    const backend = raw?.memory;
     if (backend !== 'markdown' && backend !== 'vector' && backend !== 'vault') return {};
     const path = passthrough['memoryVault.path'];
     const agentDir = passthrough['memoryVault.agentDir'];

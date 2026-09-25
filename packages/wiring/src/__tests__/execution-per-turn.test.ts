@@ -423,3 +423,29 @@ describe('routing edges', () => {
     expect((await routing.exec(undefined)).personality?.id).toBe('solo');
   });
 });
+
+// `execution.containerized: true` in ~/.ethos/config.yaml is the operator's
+// explicit "this deployment is itself the boundary" — `detectContainerized`'s
+// config signal. The compose path forwards it as `containerizedConfig`; the
+// danger predicate and the unattended gate read the SAME `resolvePosture`, so
+// what they treat as containerized is what execution does.
+describe('execution.containerized from operator config', () => {
+  it('marks every turn’s posture containerized, with no auto-detect signal present', async () => {
+    const only = person({ id: 'solo' });
+    const routing = await makeRouting({
+      personalities: registryOf(only),
+      activePerson: only,
+      containerizedConfig: true,
+    });
+
+    expect(routing.posture.containerized).toBe(true);
+    expect(routing.resolvePosture('solo')).toMatchObject({ backend: 'local', containerized: true });
+  });
+
+  it('leaves the posture un-containerized when the key is absent', async () => {
+    const only = person({ id: 'solo' });
+    const routing = await makeRouting({ personalities: registryOf(only), activePerson: only });
+
+    expect(routing.resolvePosture('solo')?.containerized).toBe(false);
+  });
+});

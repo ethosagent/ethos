@@ -21,6 +21,9 @@ const PEM = [
 ].join('\n');
 const ASIA = 'ASIAQX7EXAMPLE4ZK2M9';
 const GITHUB_OAUTH = `gho_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`;
+// A refresh token's body length is not pinned here, so the fixture is longer
+// than the 36-char floor its pattern shares with gh[sou]_.
+const GITHUB_REFRESH = `ghr_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'.repeat(2)}`;
 const GOOGLE = 'AIzaSyD3xAmPlE-kEy_0123456789abcdefghij';
 const BEARER = 'Bearer 9f8e7d6c5b4a39281706f5e4d3c2b1a0ZZyy';
 
@@ -67,6 +70,13 @@ const CASES: Array<{
     nearMiss: 'ghost_writer and gho_short and ghs_ alone',
   },
   {
+    name: 'GitHub refresh token (ghr_)',
+    secret: GITHUB_REFRESH,
+    tag: '[REDACTED:github-token]',
+    label: 'GitHub token',
+    nearMiss: 'ghrelin levels, ghr_short, ghr_ alone, and ghr_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7_x',
+  },
+  {
     name: 'Google API key (AIza)',
     secret: GOOGLE,
     tag: '[REDACTED:google-api-key]',
@@ -95,6 +105,11 @@ describe('redactString — S13 roster additions', () => {
   it.each(CASES)('leaves ordinary text near a $name alone', ({ nearMiss }) => {
     expect(redactString(nearMiss)).toBe(nearMiss);
     expect(detectSecrets(nearMiss)).toEqual([]);
+  });
+
+  it('redacts a ghr_ token at the 36-char floor gh[sou]_ uses', () => {
+    const atFloor = `ghr_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`;
+    expect(redactString(`see ${atFloor} here`)).toBe('see [REDACTED:github-token] here');
   });
 
   it('redacts a Telegram token inside a Bot API URL', () => {
