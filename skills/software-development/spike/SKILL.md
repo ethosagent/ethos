@@ -1,6 +1,6 @@
 ---
 name: spike
-description: Throwaway exploration to validate an idea before committing to a real implementation. Time-boxed; isolated under ~/.ethos/spikes/ so it never pollutes the project. Use when the question is "is this even feasible?".
+description: Throwaway exploration to validate an idea before committing to a real implementation. Time-boxed; isolated under the workspace's .ethos-work/spikes/ so it never pollutes the project's source. Use when the question is "is this even feasible?".
 version: 1.0.0
 author: ethosagent
 tags: [coding, planning, prototyping]
@@ -36,7 +36,7 @@ When the answer is already known, write real code. Do not spike.
 
 ## What this skill writes
 
-Spikes live under `~/.ethos/spikes/<personality>/<slug>/`. They never go inside the project working directory. This is deliberate — spikes are throwaway, and putting them in the project would invite "but it works in the spike" arguments.
+Spikes live under `.ethos-work/spikes/<slug>/` in the workspace. They never go inside the project's source tree: `.ethos-work/` is scratch space, kept out of git by adding `.ethos-work/` to `.git/info/exclude`. (Not under `~/.ethos`: the terminal guard refuses any command that names the Ethos state dir.) This is deliberate — spikes are throwaway, and putting them in the project would invite "but it works in the spike" arguments.
 
 Spikes auto-expire after 14 days unless explicitly kept (see "Outcome" below).
 
@@ -48,7 +48,7 @@ Spikes auto-expire after 14 days unless explicitly kept (see "Outcome" below).
 
 3. **Set up the spike directory:**
    ```
-   ~/.ethos/spikes/<personality>/<slug>/
+   .ethos-work/spikes/<slug>/
    ├── README.md          # the question, the approach, the result
    └── <code, scripts, fixtures>
    ```
@@ -62,7 +62,7 @@ Spikes auto-expire after 14 days unless explicitly kept (see "Outcome" below).
 
 ## Hard rules
 
-- Spikes never touch the project working directory. If you want to spike with the project's code, copy the relevant files into the spike directory first.
+- Spikes never touch the project's source files. If you want to spike with the project's code, copy the relevant files into the spike directory first.
 - A spike that grows past ~200 lines is no longer a spike — it has become a proto-implementation. Stop, write a plan, then start over.
 - Output a recommendation. A spike with no recommendation is not a finished spike.
 

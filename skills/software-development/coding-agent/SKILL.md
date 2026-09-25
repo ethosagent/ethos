@@ -41,7 +41,7 @@ ethos:
 
 # Coding Agent (delegation)
 
-When the work is "implement this feature, here are the files," delegate to a specialized coding CLI. This skill runs the chosen CLI inside the `process` tool so the user has full audit + kill control, and records the delegation under `~/.ethos/delegations/<id>/` for replay.
+When the work is "implement this feature, here are the files," delegate to a specialized coding CLI. This skill runs the chosen CLI inside the `process` tool so the user has full audit + kill control, and records the delegation under the workspace's `.ethos-work/delegations/<id>/` for replay.
 
 ## When to use this skill
 
@@ -101,7 +101,7 @@ Never silently let a delegated process run forever. Set a time-box up front and 
 When the delegated CLI exits:
 
 1. Capture exit code, total runtime, and the final log lines.
-2. Record the session under `~/.ethos/delegations/<slug>/`:
+2. Record the session under `.ethos-work/delegations/<slug>/` in the project root (add `.ethos-work/` to `.git/info/exclude`; not `~/.ethos`, which the terminal guard refuses):
    ```
    <slug>/
    ├── command.txt          # the exact command spawned

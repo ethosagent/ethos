@@ -49,8 +49,6 @@ A server has to be both configured *and* attached to the active personality befo
 ## Step 1 — see what's configured
 
 ```bash
-cat ~/.ethos/mcp.yaml 2>/dev/null
-# or
 ethos mcp list
 ```
 
