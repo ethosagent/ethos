@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 Most controls on this page are shipped — code in `packages/` and `extensions/`, tests next to it, audit trail in `observability.db`. A small number are **partial** or **planned** with a designed interface but the enforcement not yet wired; those are tagged inline so customers can plan around them.
@@ -113,7 +113,8 @@ When any of the previous checks flag a call, the request is held in front of the
 
 - Source: `apps/web-api/src/services/approval-hook.ts`
 - Audit category: `audit.approval`
-- Per-personality knob: `safety.approvalMode` — `auto` | `safe-auto` | `manual` | `off`. Default is `safe-auto`.
+- Per-personality knob: `safety.approvalMode` — `manual` | `smart` | `off` (`packages/types/src/personality.ts`). Default is `manual`. `off` auto-approves only on the unattended systemLoop when the operator sets `allowUnattendedDangerousTools: true`; everywhere else it behaves as `manual`.
+- What is flagged: `createDangerPredicate` in `packages/wiring/src/danger-predicate.ts`. Every mode flags `APPROVAL_SURFACE_ALWAYS_ASK`; `smart` adds `SMART_MODE_CONSEQUENTIAL_TOOLS`; and when the personality runs on a host-local, non-containerized execution posture, every mode adds `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS` (`terminal`, `process_start`, `run_tests`, `lint`).
 
 ## Filesystem controls {#filesystem-controls}
 
