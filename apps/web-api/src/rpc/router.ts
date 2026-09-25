@@ -27,6 +27,7 @@ import { contextRouter, filesRouter } from './context-resolve';
 import { credentialsRouter } from './credentials';
 import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
+import { decisionsRouter } from './decisions';
 import { deliveriesRouter } from './deliveries';
 import { digestRouter } from './digest';
 import { documentsRouter } from './documents';
@@ -112,6 +113,7 @@ export const apiRouter = {
   meta: metaRouter,
   models: modelsRouter,
   modelRegistry: modelRegistryRouter,
+  decisions: decisionsRouter,
   dashboards: dashboardsRouter,
   admin: adminRouter,
   context: contextRouter,

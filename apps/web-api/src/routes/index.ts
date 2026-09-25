@@ -121,6 +121,7 @@ export interface ServiceContainer {
   documents: import('../services/documents.service').DocumentsService;
   /** On-demand model probe (T1.24). */
   modelRegistry: import('../services/model-registry.service').ModelRegistryService;
+  decisions: import('../services/decisions.service').DecisionsService;
   namedSecrets: import('../services/named-secrets.service').NamedSecretsService;
   credentials: import('../services/credentials.service').CredentialsService;
   /** Masked inventory of the whole secrets vault, by category. */

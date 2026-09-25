@@ -204,6 +204,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'building/explanation/personality-as-architecture',
             'building/explanation/personality-governance',
+            'building/explanation/decision-provider-governance',
             'building/explanation/tool-shape',
             'building/explanation/injection-at-construction',
             'building/explanation/hook-execution-models',

@@ -25,7 +25,34 @@ import {
   MODEL_ROLE_NAMES,
   SECRET_NAME_RE,
 } from '@ethosagent/types';
+import {
+  buildDecisionsConfig,
+  DECISIONS_LINE_RE,
+  type DecisionsConfig,
+  serializeDecisionsLines,
+} from './decisions';
 
+// Plan decision-provider-jev §7 — the operator's `decisions.*` keys and their
+// resolver (defaults, per-site budgets, R6's `on` → `shadow` downgrade).
+export {
+  DECISION_PROVIDERS,
+  DECISION_SITE_DEFAULT_TIMEOUT_MS,
+  DECISION_SITE_MODES,
+  DECISION_SITES,
+  DECISIONS_API_KEY_REF,
+  DECISIONS_DEFAULT_BASE_URL,
+  DECISIONS_DEFAULT_MODEL,
+  DECISIONS_DEFAULT_TIMEOUT_MS,
+  type DecisionProviderName,
+  type DecisionSiteId,
+  type DecisionSiteMode,
+  type DecisionsConfig,
+  describeDecisionSiteDowngrade,
+  type ResolvedDecisionSite,
+  type ResolvedDecisionsConfig,
+  resolveDecisionSiteMode,
+  resolveDecisionsConfig,
+} from './decisions';
 // D11(a) — the ONE chain-model importer (`ethos migrate models`,
 // `modelRegistry.importChain` / `list.chainModels`, `config.update` adopt-on-save).
 export {
@@ -3141,6 +3168,19 @@ export interface EthosConfig {
     };
   };
   /**
+   * The decision provider (plan/phases/decision-provider-jev.md §7). Absent =
+   * no decision layer: every site runs today's path. Holds only the keys the
+   * file states; read it through `resolveDecisionsConfig` for defaults,
+   * per-site budgets and each site's effective mode (R6). Operator-level, never
+   * `PersonalityConfig`: whether data goes to a third party is a setting.
+   *
+   * Config format:
+   *   decisions.provider: typesafe
+   *   decisions.sites.injection: shadow
+   *   decisions.thresholds.injection: 0.9
+   */
+  decisions?: DecisionsConfig;
+  /**
    * Team-supervisor knobs. Named `teamSupervisor` rather than `gateway`
    * because the gateway process does not restart itself — member auto-restart
    * is owned by the supervisor that spawned them.
@@ -4451,6 +4491,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       `gateway.inboundSpool.maxReplayAgeMs: ${config.gateway.inboundSpool.maxReplayAgeMs}`,
     );
   }
+  if (config.decisions) lines.push(...serializeDecisionsLines(config.decisions));
   if (config.teamSupervisor?.restartLoopGuard) {
     const rg = config.teamSupervisor.restartLoopGuard;
     if (rg.maxRestarts !== undefined)
@@ -4784,6 +4825,9 @@ export function parseConfigYaml(src: string): EthosConfig {
   const browserKv: Record<string, string> = {};
   // gateway.<field>: <value> — gateway-wide, non-credential knobs.
   const gatewayKv: Record<string, string> = {};
+  // decisions.<field>: <value> — the decision provider, stored under the
+  // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
+  const decisionsKv: Record<string, string> = {};
   // teamSupervisor.restartLoopGuard.<field>: <n> — member auto-restart brake.
   // Unset = 5 respawns in 60s (one more than the old hardcoded four).
   const restartLoopGuardKv: Record<string, string> = {};
@@ -5584,6 +5628,14 @@ export function parseConfigYaml(src: string): EthosConfig {
       gatewayKv[gwy[1]] = parseConfigScalar(gwy[2]);
       continue;
     }
+    // decisions.<field>: <value>  (decision provider). An ALLOWLIST like
+    // `browser.*`: an unlisted `decisions.*` key is dropped here and kept
+    // verbatim by `writeConfig`'s `unexpressibleLines`.
+    const dcs = line.match(DECISIONS_LINE_RE);
+    if (dcs) {
+      decisionsKv[dcs[1]] = parseConfigScalar(dcs[2]);
+      continue;
+    }
     // teamSupervisor.restartLoopGuard.<field>: <n>  (member auto-restart brake).
     const trg = line.match(
       /^teamSupervisor\.restartLoopGuard\.(maxRestarts|windowSeconds):\s*(.+)$/,
@@ -5948,6 +6000,9 @@ export function parseConfigYaml(src: string): EthosConfig {
   const groundingResult = buildGrounding(groundingKv, groundingKanbanKv);
   const browserResult = buildBrowser(browserKv);
   const toolLoadingResult = parseToolLoading(kv.tool_loading);
+  // Warnings, never errors: a `decisions.*` line must not stop boot (plan R6).
+  const decisionsWarnings: string[] = [];
+  const decisions = buildDecisionsConfig(decisionsKv, decisionsWarnings);
   const parseErrors = [
     ...toolLoadingResult.errors,
     ...groundingResult.errors,
@@ -6189,6 +6244,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     grounding: groundingResult.grounding,
     browser: browserResult.browser,
     gateway: buildGateway(gatewayKv),
+    decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
       discordBackfill || discordModeResult.mode
@@ -6227,6 +6283,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...retentionWarnings,
     ...providerNotices,
     ...modelRegistryNotices,
+    ...decisionsWarnings,
   ]);
   return config;
 }

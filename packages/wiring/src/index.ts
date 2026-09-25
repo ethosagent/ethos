@@ -486,6 +486,13 @@ export interface WiringConfig {
   nightlyPass?: { enabled?: boolean; cron?: string };
   /** Per-surface capture-notice opt-in (§3.3), mapped from display.memory_notices. */
   displayMemoryNotices?: boolean;
+  /**
+   * The operator's `decisions.*` keys (mapped from `EthosConfig.decisions`,
+   * carried by the `...config` spread in apps/ethos/src/wiring.ts). Absent →
+   * no decision layer: every decision site runs today's path and no provider
+   * is constructed (`buildDecisionProvider`, ./decision-provider).
+   */
+  decisions?: import('@ethosagent/config').DecisionsConfig;
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
@@ -1507,6 +1514,15 @@ export interface CreateAgentLoopResult {
    *  `ethos bench context` uses it as the schema-budget denominator so the
    *  bench table and the startup warning read the same numbers (D8). */
   contextWindow: number;
+  /**
+   * The smart approver's decision site (plan decision-provider-jev §8.2),
+   * carrying THIS build's one decision provider so the approver and the
+   * injection classifier share a breaker. Present only when `decisions.provider`
+   * is configured with a stored key and `decisions.sites.approver` is `shadow`
+   * or `on`. Hosts forward it as `decision` to `createApprovalDangerPredicate`;
+   * absent, the approver is exactly the LLM reviewer.
+   */
+  approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
   /** The McpManager instance from tool composition. Pass to createWebApi so
    *  re-auth via the web UI hits the live manager and updates the tool registry. */
   mcpManager: McpManager;
@@ -1947,6 +1963,29 @@ export {
   type SmartApprovalCallback,
   type SmartVerdict,
 } from './danger-predicate';
+// The questions and digest each decision site sends — exported so a
+// calibration run (`runDecisionCalibration`, @ethosagent/eval-harness) measures
+// against exactly what the live sites ask.
+export {
+  APPROVER_CHOICES,
+  APPROVER_QUESTIONS,
+  type ApproverChoice,
+  type ApproverDigestInput,
+  approverDigest,
+  DECISION_QUESTION_IDS,
+  INJECTION_QUESTIONS,
+  ROUTER_CHOICES,
+  ROUTER_QUESTIONS,
+  type RouterChoice,
+} from './decision-questions';
+// The Settings Test button's one decision call — a fresh provider, the
+// injection question, redacted state (./decision-test). Apps reach the provider
+// extension only through here (Law 5).
+export {
+  type DecisionTestOutcome,
+  type TestDecisionProviderOptions,
+  testDecisionProvider,
+} from './decision-test';
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
@@ -1981,7 +2020,11 @@ export {
   type ProbeProviderOutcome,
   probeProvider,
 } from './probe-provider';
-export { type CreateSmartApproverOptions, createSmartApprover } from './smart-approver';
+export {
+  type CreateSmartApproverOptions,
+  createSmartApprover,
+  type SmartApproverDecisionSite,
+} from './smart-approver';
 export {
   farEndRefusalReason,
   SPOKEN_CONFIRMATION_TOOLS,

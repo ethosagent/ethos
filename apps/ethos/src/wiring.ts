@@ -775,6 +775,9 @@ export interface TeamLoopInfo {
   dispose: import('@ethosagent/wiring').CreateAgentLoopResult['dispose'];
   /** `CreateAgentLoopResult.drain` of the coordinator loop (F06). */
   drain: import('@ethosagent/wiring').CreateAgentLoopResult['drain'];
+  /** `CreateAgentLoopResult.approverDecision` of the coordinator's build (plan
+   *  decision-provider-jev §8.2) — absent unless the approver site is on. */
+  approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -841,6 +844,7 @@ export async function createTeamAgentLoop(
     memoryBundle,
     dispose,
     drain,
+    approverDecision,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -881,6 +885,7 @@ export async function createTeamAgentLoop(
     memoryBundle,
     dispose,
     drain,
+    ...(approverDecision ? { approverDecision } : {}),
   };
 }
 

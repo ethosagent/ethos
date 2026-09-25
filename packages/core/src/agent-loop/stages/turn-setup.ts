@@ -13,6 +13,7 @@ import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
+import { routeTurnTier } from '../tier-router';
 import { resolveToolLoading } from '../tool-loading';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
@@ -221,7 +222,45 @@ export async function* setupTurn(
     });
   }
 
-  const activeTier = turnTierOverride ?? 'default';
+  // plan decision-provider-jev §8.3 (D15, R1) — with no user override, an
+  // injected tier router may downgrade the turn to `trivial`, and only when
+  // `trivial` and `default` resolve to different models this turn
+  // (`routeTurnTier`, ../tier-router). No router configured → `undefined`, so
+  // this line is exactly `turnTierOverride ?? 'default'`. Routing adds nothing
+  // to the prompt: it changes the model, never the text sent.
+  const routedTier = turnTierOverride
+    ? undefined
+    : await routeTurnTier({
+        router: deps.tierRouter,
+        message: text,
+        ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
+        ...(traceId ? { traceId } : {}),
+        resolve: (role) => {
+          const resolved = resolveTurnModel({
+            personality,
+            role,
+            ctx: deps.modelResolution,
+            ...(opts.modelOverride ? { runOverride: opts.modelOverride } : {}),
+            llmName: deps.llm.name,
+            llmModel: deps.llm.model,
+          });
+          if (resolved.ok === false) return null;
+          // A model this loop cannot reach would refuse the turn: not a
+          // downgrade target.
+          if (!routeTurnModel(deps.llm, resolved, deps.modelResolution).ok) return null;
+          return { provider: resolved.provider, model: resolved.model };
+        },
+      });
+  if (routedTier) {
+    deps.observability?.recordTierOverride({
+      traceId: traceId ?? '',
+      actor: 'framework',
+      tier: routedTier,
+      personalityId: personality.id,
+    });
+  }
+
+  const activeTier = turnTierOverride ?? routedTier ?? 'default';
   // An explicit per-run model pin is rung 0 — it outranks the manifest, the
   // routing override, the personality's own declaration and the deployment
   // default. A caller naming a model for one turn knows something no static

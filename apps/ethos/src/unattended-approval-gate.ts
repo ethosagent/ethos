@@ -57,6 +57,7 @@ import {
   createApprovalDangerPredicate,
   type DangerPredicate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
+  type SmartApproverDecisionSite,
 } from '@ethosagent/wiring';
 
 /**
@@ -112,6 +113,9 @@ export interface WireUnattendedApprovalGateOptions {
    * `() => false`. A throw counts as `true`.
    */
   isRemoteSenderTurn: (sessionId: string) => boolean;
+  /** The smart reviewer's decision site (plan decision-provider-jev §8.2),
+   *  forwarded to `createApprovalDangerPredicate`. Absent → the LLM reviewer only. */
+  decision?: SmartApproverDecisionSite;
 }
 
 /**
@@ -139,6 +143,7 @@ export function wireUnattendedApprovalGate(
     model: opts.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     allowAutoApproveDangerousTools: opts.allowUnattendedDangerousTools,
+    ...(opts.decision ? { decision: opts.decision } : {}),
   });
   const unattended = createUnattendedApprovalGate(danger, unattendedApprovalRejection);
   const remote = createNoApprovalSurfaceGate([hooks], opts);
@@ -172,6 +177,8 @@ export interface NoApprovalSurfaceGateOptions {
   personalities: PersonalityRegistry;
   getProvider: () => Promise<LLMProvider>;
   model: string;
+  /** Same as `WireUnattendedApprovalGateOptions.decision`. */
+  decision?: SmartApproverDecisionSite;
 }
 
 /**
@@ -199,6 +206,7 @@ export function createNoApprovalSurfaceGate(
     getProvider: opts.getProvider,
     model: opts.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+    ...(opts.decision ? { decision: opts.decision } : {}),
   });
   return createUnattendedApprovalGate(danger, noApprovalSurfaceRejection);
 }

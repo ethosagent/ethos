@@ -191,7 +191,15 @@ describe('Orchestrator guardrails', () => {
     // Merged 1038 + 2 -> 1040 (openclaw-9.5-adoption integration): lanes A and
     // F (1033 -> 1038) and lane D (1033 -> 1035) each ratcheted from 1033; the
     // cap is their sum.
-    expect(lineCount).toBeLessThanOrEqual(1040);
+    // Bumped 1033 -> 1039 (decision-provider-jev §8.3, tier router): the
+    // optional `tierRouter` config field and its 2-line doc, its private field,
+    // the one-line constructor assignment and deps-getter line. 6 pass-through
+    // lines; the call condition and the downgrade-only rule live in
+    // agent-loop/tier-router.ts, called from agent-loop/stages/turn-setup.ts.
+    // Merged 1040 + 6 -> 1046 (decision-provider-jev integration): the
+    // openclaw-9.5-adoption cap (1040) plus the tier router's 6 pass-through
+    // lines, each ratcheted independently; the cap is their sum.
+    expect(lineCount).toBeLessThanOrEqual(1046);
   });
 
   it('no stage file exceeds 700 lines', () => {

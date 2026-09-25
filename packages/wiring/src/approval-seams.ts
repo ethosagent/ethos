@@ -20,7 +20,7 @@ import type {
   PersonalityRegistry,
 } from '@ethosagent/types';
 import { createDangerPredicate, type DangerPredicate } from './danger-predicate';
-import { createSmartApprover } from './smart-approver';
+import { createSmartApprover, type SmartApproverDecisionSite } from './smart-approver';
 import { type SpokenConfirmationRecord, withSpokenConfirmation } from './spoken-confirmation';
 
 /**
@@ -103,6 +103,13 @@ export interface CreateApprovalDangerPredicateOptions {
    * `manual` there.
    */
   allowAutoApproveDangerousTools?: boolean;
+  /**
+   * The smart reviewer's decision site (plan decision-provider-jev §8.2) —
+   * `CreateAgentLoopResult.approverDecision` of the build whose loops these
+   * are, so the approver shares that build's one provider. Absent → the
+   * reviewer is exactly the LLM path.
+   */
+  decision?: SmartApproverDecisionSite;
 }
 
 /**
@@ -154,7 +161,11 @@ export function createApprovalDangerPredicate(
         return id === undefined ? undefined : opts.personalities.get(id);
       },
       smartApprove: (payload, reason) => {
-        approver ??= createSmartApprover({ getProvider: opts.getProvider, model: opts.model });
+        approver ??= createSmartApprover({
+          getProvider: opts.getProvider,
+          model: opts.model,
+          ...(opts.decision ? { decision: opts.decision } : {}),
+        });
         return approver(payload, reason);
       },
     }),

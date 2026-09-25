@@ -288,7 +288,7 @@ describe('LedgerStore', () => {
     for (const id of ['a', 'b', 'c']) ledgers.append(id, record);
 
     // Touching `a` again must NOT move it: the bound is insertion-order FIFO,
-    // not LRU (approval-seams.ts:109-122).
+    // not LRU (approval-seams.ts:116-129).
     ledgers.append('a', record);
     ledgers.append('d', record);
 

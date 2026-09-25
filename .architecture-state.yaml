@@ -84,6 +84,8 @@ layers:
       - packages/wiring/src/danger-predicate.ts
       - packages/wiring/src/approval-seams.ts
       - packages/wiring/src/smart-approver.ts
+      - packages/wiring/src/decision-site.ts
+      - packages/wiring/src/decision-injection-classifier.ts
       - packages/wiring/src/resolve-execution-posture.ts
       - packages/wiring/src/skill-passthrough.ts
 
@@ -257,9 +259,13 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 457, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 693, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop.ts, line: 699, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 763, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 26, contains: "export async function handleUntrustedResult" }
+    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 80, contains: "export function createDecisionInjectionClassifier" }
+    - { path: packages/wiring/src/decision-site.ts, line: 176, contains: "export function meetsThreshold" }
+    - { path: packages/wiring/src/decision-site.ts, line: 185, contains: "export async function runDecisionSite" }
+    - { path: packages/core/src/agent-loop/result-defense.ts, line: 74, contains: "const containsInstructions = tier1Hit ||" }
 
   G-SEC:
     - { path: packages/types/src/secrets.ts, line: 18, contains: "export interface SecretsResolver" }
@@ -280,12 +286,13 @@ register_anchors:
   G-APP:
     - { path: packages/wiring/src/danger-predicate.ts, line: 282, contains: "mode === 'smart' && opts.smartApprove" }
     - { path: packages/wiring/src/danger-predicate.ts, line: 259, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 144, contains: "reviewer gave no usable verdict" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 149, contains: "reviewer error (fail-closed)" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 282, contains: "reviewer gave no usable verdict" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 290, contains: "reviewer error (fail-closed)" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 120, contains: "export function approverVerdictFrom" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 60, contains: "export async function enforceBeforeToolCall" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 64, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
-    - { path: packages/wiring/src/approval-seams.ts, line: 116, contains: "export function createApprovalDangerPredicate" }
+    - { path: packages/wiring/src/approval-seams.ts, line: 123, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
 
   G-EXEC:
@@ -317,7 +324,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 147 packages: 11 at Tier 0, 27 at Tier 1, 109 at Tier 2.
+# apps/ carries a tier. 148 packages: 11 at Tier 0, 27 at Tier 1, 110 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -441,6 +448,8 @@ tiers:
       - packages/wiring/src/danger-predicate.ts
       - packages/wiring/src/approval-seams.ts
       - packages/wiring/src/smart-approver.ts
+      - packages/wiring/src/decision-site.ts
+      - packages/wiring/src/decision-injection-classifier.ts
       - packages/wiring/src/resolve-execution-posture.ts
       - packages/wiring/src/skill-passthrough.ts
 
@@ -728,6 +737,14 @@ tiers:
     package: "@ethosagent/dashboard"
     tier: 2
     assigned: 2026-08-12
+
+  # The Jev decision provider (plan decision-provider-jev §11): calls a third
+  # party, like extensions/llm-anthropic. Its verdicts carry only the authority
+  # the Tier 0 wiring composition grants them (packages/wiring/src/decision-site.ts).
+  extensions/decision-typesafe:
+    package: "@ethosagent/decision-typesafe"
+    tier: 2
+    assigned: 2026-09-24
 
   extensions/digest:
     package: "@ethosagent/digest"

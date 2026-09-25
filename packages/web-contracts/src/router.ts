@@ -3902,6 +3902,191 @@ const modelRegistry = {
 };
 
 // ---------------------------------------------------------------------------
+// Decisions — Settings › Models › decision models
+// (plan/phases/decision-provider-jev.md §7, §12). Where Settings sets the
+// decision provider's vault key (`providers/<id>/apiKey`); per-site modes and
+// thresholds stay in config.yaml and are shown read-only here. Served by
+// `DecisionsService` (apps/web-api), cookie-only: `decisions` is absent from
+// `SCOPE_MAP` (apps/web-api/src/middleware/dual-auth.ts), so a bearer key is
+// refused the whole namespace.
+// ---------------------------------------------------------------------------
+
+/**
+ * The decision providers the layer knows. Lockstep with `DECISION_PROVIDERS`
+ * (@ethosagent/config) and with `DECISION_PROVIDER_CATALOG`
+ * (apps/web-api/src/services/decision-catalog.ts) — this package cannot import
+ * either, so the three are pinned equal by
+ * apps/web-api/src/__tests__/services/decisions.service.test.ts ("catalog").
+ */
+export const DecisionProviderIdSchema = z.enum(['typesafe']);
+
+/**
+ * One KIND of decision model the operator can add — an entry of
+ * `DECISION_PROVIDER_CATALOG`. The Add decision model drawer lists these; a
+ * new provider is a new catalog entry, not a new pane.
+ */
+export const DecisionProviderTypeSchema = z.object({
+  id: DecisionProviderIdSchema,
+  /** The model family, e.g. `Jev`. */
+  label: z.string(),
+  /** Who runs it, e.g. `TypeSafe`. */
+  vendor: z.string(),
+  /** One or two sentences for the Add drawer. */
+  description: z.string(),
+  getKeyUrl: z.string(),
+  /** The vault ref its key is stored at. */
+  keyRef: z.string(),
+  /** The model used when `decisions.model` is unset. */
+  defaultModel: z.string(),
+  /** The endpoint used when `decisions.baseUrl` is unset. */
+  defaultBaseUrl: z.string(),
+});
+export type DecisionProviderType = z.infer<typeof DecisionProviderTypeSchema>;
+
+const DecisionSiteModeSchema = z.enum(['off', 'shadow', 'on']);
+
+/** One decision site as `resolveDecisionsConfig` reads it (R6). */
+export const DecisionSiteViewSchema = z.object({
+  site: z.enum(['injection', 'approver', 'router']),
+  /** `decisions.sites.<site>`; `off` when unset. */
+  requested: DecisionSiteModeSchema,
+  /** What runs: `on` with a missing threshold runs `shadow`. */
+  effective: DecisionSiteModeSchema,
+  /** Full key names whose absence caused that downgrade. */
+  missingThresholds: z.array(z.string()),
+});
+
+export const DecisionProviderViewSchema = z.object({
+  id: DecisionProviderIdSchema,
+  /** The model family, e.g. `Jev`. */
+  label: z.string(),
+  /** Who runs it, e.g. `TypeSafe`. */
+  vendor: z.string(),
+  /** `decisions.provider` names this provider — the ACTIVE one (config allows one). */
+  configured: z.boolean(),
+  /** The vault ref the key is read from. */
+  keyRef: z.string(),
+  keyPresent: z.boolean(),
+  /** Masked (`redactSecretValue`) — never the raw value. */
+  keyPreview: z.string(),
+  /** `decisions.model`, else the default alias. */
+  model: z.string(),
+  baseUrl: z.string(),
+  /** The host data is sent to — the host of `baseUrl`. */
+  host: z.string(),
+  getKeyUrl: z.string(),
+  sites: z.array(DecisionSiteViewSchema),
+});
+export type DecisionProviderView = z.infer<typeof DecisionProviderViewSchema>;
+
+export const DecisionsListOutput = z.object({
+  /** Every kind of decision model this build knows, added or not. */
+  catalog: z.array(DecisionProviderTypeSchema),
+  /** Only the ADDED ones: a key is stored, or `decisions.provider` names it. */
+  providers: z.array(DecisionProviderViewSchema),
+});
+export type DecisionsListResult = z.infer<typeof DecisionsListOutput>;
+
+/**
+ * `DecisionErrorCode` (@ethosagent/types) plus `no_key`, which the service
+ * answers before any call when nothing is stored. The handler's return type is
+ * checked against this enum, so a provider code missing here fails typecheck.
+ */
+export const DecisionTestErrorCodeSchema = z.enum([
+  'auth',
+  'invalid',
+  'rate_limited',
+  'overloaded',
+  'timeout',
+  'aborted',
+  'malformed',
+  'too_large',
+  'unavailable',
+  'no_key',
+]);
+export type DecisionTestErrorCode = z.infer<typeof DecisionTestErrorCodeSchema>;
+
+export const DecisionsTestInput = z.object({
+  providerId: DecisionProviderIdSchema,
+  // A transport bound only. The service refuses anything over its own
+  // 8,000-character cap as `invalid`, as data the pane renders, rather than
+  // letting a schema error stand in for the answer.
+  message: z.string().max(65_536),
+});
+
+/**
+ * One test call's outcome — `testDecisionProvider` (@ethosagent/wiring) plus
+ * the service's own refusals. `rate_limited` with `retryAfterSeconds` is the
+ * service's 10s per-caller window (the model Test's D19 policy); without it,
+ * the vendor said 429.
+ */
+export const DecisionsTestOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    providerName: z.string(),
+    /** The model id the provider RETURNED, not the one requested (D8). */
+    model: z.string(),
+    answer: z.object({
+      p: z.number().min(0).max(1),
+      confidence: z.number().min(0).max(1),
+      /** `p ≥ 0.5` — the reading shadow mode records. */
+      containsInstructions: z.boolean(),
+    }),
+    latencyMs: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    estimatedCostUsd: z.number().nonnegative(),
+    /** Present only when redaction changed the message: what was actually sent. */
+    redactedMessage: z.string().optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: DecisionTestErrorCodeSchema,
+    message: z.string(),
+    retryAfterSeconds: z.number().int().nonnegative().optional(),
+  }),
+]);
+export type DecisionsTestResult = z.infer<typeof DecisionsTestOutput>;
+
+/** @experimental */
+const decisions = {
+  list: oc.output(DecisionsListOutput),
+  /** Writes the vault key; also writes `decisions.provider` when it is absent.
+   *  Never enables a site. */
+  setKey: oc
+    .input(
+      z.object({
+        providerId: DecisionProviderIdSchema,
+        // 8 KiB cap, the named-secrets bound — real keys are far under it.
+        value: z.string().min(1).max(8192),
+      }),
+    )
+    .output(
+      z.object({
+        ok: z.literal(true),
+        preview: z.string(),
+        /** `decisions.provider` was absent and this call wrote it. */
+        providerWritten: z.boolean(),
+      }),
+    ),
+  /** Deletes the vault key. Idempotent; config.yaml is left alone. */
+  clearKey: oc
+    .input(z.object({ providerId: DecisionProviderIdSchema }))
+    .output(z.object({ ok: z.literal(true) })),
+  /** Removes the provider from the list: deletes the vault key AND the
+   *  `decisions.provider` line when it names this provider. `decisions.sites.*`
+   *  and the other `decisions.*` lines stay (inert without a provider).
+   *  Idempotent. */
+  remove: oc.input(z.object({ providerId: DecisionProviderIdSchema })).output(
+    z.object({
+      ok: z.literal(true),
+      /** `decisions.provider` named this provider and this call removed it. */
+      providerRemoved: z.boolean(),
+    }),
+  ),
+  test: oc.input(DecisionsTestInput).output(DecisionsTestOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Dashboards — widget templates from plugins + dashboard/panel CRUD
 // ---------------------------------------------------------------------------
 
@@ -6099,6 +6284,7 @@ export const contract = {
   meta,
   models,
   modelRegistry,
+  decisions,
   dashboards,
   admin,
   context,

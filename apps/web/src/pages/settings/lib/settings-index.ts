@@ -138,6 +138,41 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       stateBacked: true,
     },
   ]),
+  // Decision models (plan decision-provider-jev §7, §12): a list of added
+  // decision models, each saving on its own through `decisions.setKey` /
+  // `clearKey` / `remove`; a site's mode is listed read-only, and Test sends
+  // one call. None is on the page Save.
+  ...group('models', 'decision-models', [
+    {
+      key: null,
+      label: 'Add or remove a decision model',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Add: rpc.decisions.setKey (writes decisions.provider when absent). Remove: rpc.decisions.remove (deletes the key and that decisions.provider line; site lines stay).',
+    },
+    {
+      key: null,
+      label: 'Decision model API key (Jev by TypeSafe)',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Secrets vault ref providers/typesafe/apiKey (rpc.decisions.setKey); also writes decisions.provider when absent.',
+    },
+    {
+      key: 'decisions.sites.injection | .approver | .router',
+      label: 'Decision sites (read-only)',
+      saves: 'self',
+      stateBacked: true,
+    },
+    {
+      key: null,
+      label: 'Test decision model (Jev)',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Action button (rpc.decisions.test); writes nothing.',
+    },
+  ]),
   ...group('models', 'catalog-and-backends', [
     {
       key: 'modelCatalog.enabled',

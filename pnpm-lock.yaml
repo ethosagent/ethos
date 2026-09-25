@@ -1060,6 +1060,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
 
+  extensions/decision-typesafe:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/delivery-ledger:
     dependencies:
       '@ethosagent/sqlite':
@@ -1103,6 +1112,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -2696,6 +2708,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/decision-typesafe':
+        specifier: workspace:*
+        version: link:../../extensions/decision-typesafe
       '@ethosagent/document-extractors':
         specifier: workspace:*
         version: link:../../extensions/document-extractors
@@ -2822,6 +2837,9 @@ importers:
       '@ethosagent/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      '@ethosagent/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       '@ethosagent/request-dump':
         specifier: workspace:*
         version: link:../../extensions/request-dump
@@ -2837,6 +2855,9 @@ importers:
       '@ethosagent/safety-network':
         specifier: workspace:*
         version: link:../safety/network
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
       '@ethosagent/safety-scanner':
         specifier: workspace:*
         version: link:../safety/scanner

@@ -313,6 +313,9 @@ async function runServeExport(opts: {
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+    // The smart reviewer's decision site from THIS build (plan
+    // decision-provider-jev §8.2); absent → the LLM reviewer only.
+    ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
   });
   runtime.loop.hooks.registerModifying('before_tool_call', createExportApprovalGate(danger));
 

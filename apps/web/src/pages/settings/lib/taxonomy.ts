@@ -55,6 +55,9 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // separate models table and provider-chain table. The slug stays
       // `models` so existing links still land here.
       section('models', 'providers & models'),
+      // The decision layer's providers (plan decision-provider-jev §7): a key
+      // and a Test here; each site's mode stays a config.yaml line.
+      section('decision-models', 'decision models'),
       section('catalog-and-backends', 'catalog & backends'),
       section('auxiliary-models', 'auxiliary models'),
       section('per-personality-routing', 'per-personality routing'),
