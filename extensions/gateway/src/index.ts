@@ -6388,7 +6388,15 @@ export class Gateway {
     return released;
   }
 
-  /** `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it. */
+  /**
+   * `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it.
+   *
+   * Both change the lane for everyone in it, so they take `/personality`'s
+   * group rule (plan openclaw-advisory-fixes D20/D21), as `/budget reset` does:
+   * in a group only `channel_filter.<platform>.ownerUserId` may change the
+   * mute, and a group on a platform with no owner refuses outright. DMs and the
+   * read-only `/mute` stay open. Pinned by `__tests__/mute-owner.test.ts`.
+   */
   private async handleMuteCommand(
     text: string,
     laneKey: string,
@@ -6399,7 +6407,13 @@ export class Gateway {
     const arg = text.split(/\s+/).slice(1).join(' ');
     const parsed = parseMuteDuration(arg);
     let reply: string;
-    if (parsed === null) {
+    if (parsed !== null && !message.isDm && !this.isOwner(message)) {
+      reply =
+        this.channelFilter?.[message.platform]?.ownerUserId === undefined
+          ? `Muting notices in a group needs an owner. ` +
+            `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+          : 'Only the bot owner can mute notices in a group.';
+    } else if (parsed === null) {
       const until = this.laneMutes.get(laneKey);
       reply =
         until !== undefined && until > Date.now()

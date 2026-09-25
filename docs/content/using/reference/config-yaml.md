@@ -653,7 +653,7 @@ notifications.timezone: Europe/London
 notifications.bots.work-slack.quietHours: off
 ```
 
-In any chat, `/mute <30m|2h|1d>` holds that chat's notices for the given time, outside quiet hours too, and `/mute off` ends it early. A mute lasts at most 30 days, is stored beside the chat's session in `~/.ethos/gateway/lanes/<botKey>.json`, and survives a restart.
+In any chat, `/mute <30m|2h|1d>` holds that chat's notices for the given time, outside quiet hours too, and `/mute off` ends it early. A mute lasts at most 30 days, is stored beside the chat's session in `~/.ethos/gateway/lanes/<botKey>.json`, and survives a restart. In a group chat only the owner set in `channel_filter.<platform>.ownerUserId` can mute or unmute; a group on a platform with no owner refuses it (`Gateway.handleMuteCommand`). Plain `/mute`, which shows the current mute, stays open to everyone.
 
 Notes:
 
