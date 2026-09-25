@@ -1,5 +1,5 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   chunkText,
   downloadTelegramFile,
@@ -7,6 +7,12 @@ import {
   reflowChunks,
   TelegramAdapter,
 } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 const cache = new InMemoryAttachmentCache();
 

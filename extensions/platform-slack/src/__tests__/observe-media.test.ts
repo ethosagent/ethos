@@ -10,9 +10,15 @@
 // adapter's `start()` wiring calls, and the only one a test can reach.
 
 import type { AttachmentCache, InboundMessage } from '@ethosagent/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
+import { loadSlackSdk } from '../sdk';
 import { stubSlackWebApi } from './stub-slack-web-api';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 stubSlackWebApi();
 

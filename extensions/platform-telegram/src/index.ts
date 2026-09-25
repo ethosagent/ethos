@@ -17,9 +17,10 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
-import { Bot, InlineKeyboard, InputFile, webhookCallback } from 'grammy';
+import type { Bot, InputFile } from 'grammy';
 import { CHANNEL_MODES, type ChannelMode, ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
+import { grammy } from './sdk';
 import { ThreadStateStore } from './store/thread-state';
 
 // ---------------------------------------------------------------------------
@@ -556,9 +557,11 @@ function toTelegramInputFile(att: Attachment): InputFile {
   const m = att.url.match(/^data:[^;,]+;base64,(.*)$/s);
   const name = att.filename ?? att.ref;
   if (m?.[1] !== undefined) {
+    const { InputFile } = grammy();
     return new InputFile(Buffer.from(m[1], 'base64'), name);
   }
   // Local path — grammy streams it lazily.
+  const { InputFile } = grammy();
   return new InputFile(att.url, name);
 }
 
@@ -645,6 +648,7 @@ export class TelegramAdapter
   private webhookCb?: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
   constructor(config: TelegramAdapterConfig) {
+    const { Bot } = grammy();
     this.bot = new Bot(config.token);
     this.cache = config.cache;
     this.config = config;
@@ -1134,7 +1138,7 @@ export class TelegramAdapter
       await this.bot.api.setWebhook(this.config.webhookUrl, {
         secret_token: this.config.webhookSecretToken,
       });
-      this.webhookCb = webhookCallback(this.bot, 'http', {
+      this.webhookCb = grammy().webhookCallback(this.bot, 'http', {
         secretToken: this.config.webhookSecretToken,
       });
     } else {
@@ -1396,6 +1400,7 @@ export class TelegramAdapter
       ...(opts.caption ? { caption: opts.caption } : {}),
       ...(opts.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
     };
+    const { InputFile } = grammy();
     const input = new InputFile(audio, opts.filename);
     try {
       const sent =
@@ -1440,6 +1445,7 @@ export class TelegramAdapter
     opts?: { threadId?: string; caption?: string; mimeType?: string },
   ): Promise<DeliveryResult> {
     try {
+      const { InputFile } = grammy();
       const sent = await this.bot.api.sendAudio(Number(chatId), new InputFile(audio, filename), {
         ...(opts?.caption ? { caption: opts.caption } : {}),
         ...(opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
@@ -1526,6 +1532,7 @@ export class TelegramAdapter
     rows: InlineButton[][],
   ): Promise<DeliveryResult> {
     try {
+      const { InlineKeyboard } = grammy();
       const kb = new InlineKeyboard();
       for (let r = 0; r < rows.length; r++) {
         const row = rows[r];
@@ -1607,6 +1614,7 @@ export class TelegramAdapter
     const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
 
     try {
+      const { InlineKeyboard } = grammy();
       const kb = new InlineKeyboard();
       for (const btn of rows[0]) kb.text(btn.label, btn.data);
       const sent = await this.bot.api.sendMessage(Number(input.chatId), text, {
@@ -1694,6 +1702,7 @@ export class TelegramAdapter
     const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
 
     try {
+      const { InlineKeyboard } = grammy();
       const kb = new InlineKeyboard();
       for (const btn of rows[0] ?? []) kb.text(btn.label, btn.data);
       const sent = await this.bot.api.sendMessage(Number(input.chatId), text, {
@@ -1758,3 +1767,5 @@ export class TelegramAdapter
     await this.bot.api.setMyCommands([...builtins, ...pluginEntries]).catch(() => {});
   }
 }
+
+export { loadTelegramSdk } from './sdk';

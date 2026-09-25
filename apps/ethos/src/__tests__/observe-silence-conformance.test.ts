@@ -190,8 +190,15 @@ vi.mock('@whiskeysockets/baileys', () => ({
 // The adapters
 // ---------------------------------------------------------------------------
 
-const { TelegramAdapter } = await import('../../../../extensions/platform-telegram/src/index');
-const { SlackAdapter } = await import('../../../../extensions/platform-slack/src/index');
+const { TelegramAdapter, loadTelegramSdk } = await import(
+  '../../../../extensions/platform-telegram/src/index'
+);
+const { SlackAdapter, loadSlackSdk } = await import(
+  '../../../../extensions/platform-slack/src/index'
+);
+// The adapters read their SDKs (mocked above) through sdk.ts, as in production.
+await loadTelegramSdk();
+await loadSlackSdk();
 const { WhatsAppAdapter } = await import('../../../../extensions/platform-whatsapp/src/index');
 const { registerMessageHandler } = await import(
   '../../../../extensions/platform-discord/src/events/messages'

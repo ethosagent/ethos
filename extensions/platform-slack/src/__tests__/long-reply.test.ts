@@ -4,9 +4,15 @@
 // becomes a lead message plus the complete text uploaded as `answer.md`. The
 // tests below drive a fully mocked Slack client — no network, no Bolt socket.
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter, type SlackAdapterConfig } from '../adapter';
+import { loadSlackSdk } from '../sdk';
 import { stubSlackWebApi } from './stub-slack-web-api';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 stubSlackWebApi();
 

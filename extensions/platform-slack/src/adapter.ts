@@ -24,7 +24,7 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
-import boltPkg from '@slack/bolt';
+import type { App, HTTPReceiver } from '@slack/bolt';
 import {
   APPROVE_ACTION_ID,
   approvalPendingBlocks,
@@ -69,12 +69,9 @@ import {
 } from './interactions/clarify';
 import { type RawSlackFile, resolveChannelMode } from './routing/triage';
 import { createUsernameResolver, type UsernameResolver } from './routing/usernames';
+import { bolt } from './sdk';
 import { BackfillStateStore } from './store/backfill-state';
 import { ThreadStateStore } from './store/thread-state';
-
-const { App, HTTPReceiver } = boltPkg;
-type App = InstanceType<typeof App>;
-type HTTPReceiver = InstanceType<typeof HTTPReceiver>;
 
 /**
  * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
@@ -475,6 +472,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
       const segment = (config.webhookPath ?? config.botKey).replace(/^\/+|\/+$/g, '');
       this.httpRoute = `/slack/events/${segment}`;
+      const { HTTPReceiver } = bolt();
       this.httpReceiver = new HTTPReceiver({
         signingSecret: config.signingSecret,
         // Bolt matches the request path EXACTLY against this list
@@ -498,6 +496,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
     }
 
+    const { App } = bolt();
     this.app = this.httpReceiver
       ? new App({
           token: config.botToken,
