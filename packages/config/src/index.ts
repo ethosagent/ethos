@@ -694,6 +694,15 @@ export interface PersonalityToolSettings {
  *  prototype-pollution reservoir. */
 const RESERVED_TOOL_SETTINGS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/** The slot `toolSettings[id]` names, created when absent. An OWN lookup: an
+ *  inherited name (`toString`) must yield a fresh slot, never the shared
+ *  builtin it would otherwise read through to and then mutate. */
+function ownToolSettingsSlot(toolSettings: ToolSettingsMap, id: string): PersonalityToolSettings {
+  const slot = (Object.hasOwn(toolSettings, id) ? toolSettings[id] : undefined) ?? {};
+  toolSettings[id] = slot;
+  return slot;
+}
+
 /** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */
 export type ToolSettingsMap = Record<string, PersonalityToolSettings>;
 
@@ -4199,6 +4208,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
   }
   if (config.toolSettings) {
     for (const [id, settings] of Object.entries(config.toolSettings)) {
+      if (RESERVED_TOOL_SETTINGS_KEYS.has(id)) continue;
       const ws = settings.web_search;
       if (ws?.provider) lines.push(`toolSettings.${id}.web_search.provider: ${ws.provider}`);
       if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
@@ -6180,12 +6190,15 @@ export function parseConfigYaml(src: string): EthosConfig {
     const tsMatch = line.match(
       /^toolSettings\.([^.]+)\.web_search\.(provider|secret|recency):\s*(.+)$/,
     );
-    if (tsMatch) {
+    // The id segment becomes a computed own-key on `toolSettings` too, so it is
+    // guarded like the key and field: `toolSettings.__proto__.…` would
+    // otherwise write through to Object.prototype. A refused line falls
+    // through, as a refused key or field does below.
+    if (tsMatch && !RESERVED_TOOL_SETTINGS_KEYS.has(tsMatch[1].trim())) {
       const id = tsMatch[1].trim();
       const field = tsMatch[2];
       const val = parseConfigScalar(tsMatch[3]);
-      const slot = toolSettings[id] ?? {};
-      toolSettings[id] = slot;
+      const slot = ownToolSettingsSlot(toolSettings, id);
       const ws = slot.web_search ?? {};
       slot.web_search = ws;
       if (field === 'provider') {
@@ -6230,12 +6243,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       tsKey &&
       tsField &&
       tsKey !== 'web_search' &&
+      !RESERVED_TOOL_SETTINGS_KEYS.has(tsSecret[1].trim()) &&
       !RESERVED_TOOL_SETTINGS_KEYS.has(tsKey) &&
       !RESERVED_TOOL_SETTINGS_KEYS.has(tsField)
     ) {
       const id = tsSecret[1].trim();
-      const slot = toolSettings[id] ?? {};
-      toolSettings[id] = slot;
+      const slot = ownToolSettingsSlot(toolSettings, id);
       const binding: { [field: string]: string | undefined } = { ...slot[tsKey] };
       binding[tsField] = parseConfigScalar(tsSecret[4]);
       slot[tsKey] = binding;

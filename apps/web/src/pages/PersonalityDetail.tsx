@@ -34,7 +34,12 @@ import {
 import { createAndBindCredential } from '../lib/create-and-bind-credential';
 import { describeCredentialState } from '../lib/credential-state';
 import { canRetirePersonality, retireConfirmCopy } from '../lib/personalityIdentityActions';
-import { groupToolSettings, type ToolSettingsGroup } from '../lib/tool-settings-form';
+import {
+  bindingDisplayValue,
+  clearBindingField,
+  groupToolSettings,
+  type ToolSettingsGroup,
+} from '../lib/tool-settings-form';
 import { buildIdentityRedirectPath } from '../lib/workspaceRoutes';
 import { rpc } from '../rpc';
 import {
@@ -809,10 +814,13 @@ function ToolSettingsSection({
         onSuccess: () => {
           setValues((prev) => {
             const next = { ...prev };
-            const { [fieldKey]: _cleared, ...row } = {
-              ...(next[group.key] ?? {}),
-              ...payload,
-            };
+            // Mirror what the server now stores: the field cleared and, for
+            // `engine_ask.chatgpt`, the legacy `secret` it retired.
+            const row = clearBindingField(
+              group.key,
+              { ...(next[group.key] ?? {}), ...payload },
+              fieldKey,
+            );
             if (Object.keys(row).length === 0) delete next[group.key];
             else next[group.key] = row;
             return next;
@@ -912,7 +920,10 @@ function ToolSettingsSection({
             ) : null}
             <ToolSettingsForm
               schema={group.schema}
-              value={values[group.key] ?? {}}
+              // Display only: `values` keeps the stored row, so the Save
+              // below re-sends a legacy `secret` untouched unless this form
+              // was edited — an edit carries `chatgpt` and rewrites it.
+              value={bindingDisplayValue(group.key, values[group.key] ?? {})}
               onChange={(next) => {
                 setValues((prev) => ({ ...prev, [group.key]: next }));
                 setDirty(true);

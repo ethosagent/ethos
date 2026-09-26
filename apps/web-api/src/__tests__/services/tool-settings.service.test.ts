@@ -657,6 +657,28 @@ describe('ToolSettingsService', () => {
       });
     });
 
+    // `provider` / `recency` are web_search's typed fields. On any other key
+    // tools.yaml's parser skips them (NON_SECRET_FIELDS,
+    // extensions/personalities/src/index.ts), so the write side refuses them
+    // too rather than rendering a line that never reads back.
+    it('refuses provider / recency as binding fields on a non-web_search key', async () => {
+      await service.setForPersonality('mine', {
+        engine_ask: { provider: 'openai', recency: '30d', chatgpt: 'openai-brand' },
+      });
+      expect(await storage.read('/data/personalities/mine/tools.yaml')).toBe(
+        'engine_ask: { chatgpt: openai-brand }\n',
+      );
+      await service.setForPersonality('scout', {
+        x_search: { provider: 'xai', secret: 'xai-main' },
+      });
+      const raw = (await storage.read('/data/config.yaml')) ?? '';
+      expect(raw).toContain('toolSettings.scout.x_search.secret: xai-main');
+      expect(raw).not.toContain('toolSettings.scout.x_search.provider');
+      expect((await service.getForPersonality('scout')).values).toEqual({
+        x_search: { secret: 'xai-main' },
+      });
+    });
+
     it('drops an unsafe per-engine name instead of persisting it', async () => {
       await service.setForPersonality('mine', {
         engine_ask: { chatgpt: 'openai-brand', perplexity: '../openai/apiKey' },

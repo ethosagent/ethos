@@ -103,3 +103,51 @@ export function describeToolSettingsFields(schema: ToolSettingsSchemaWire): Tool
     };
   });
 }
+
+/**
+ * A legacy field that is an alias for another field of the same key's binding.
+ * Client mirror of `LEGACY_FIELD_ALIASES` in
+ * apps/web-api/src/services/tool-settings.service.ts — the two MUST change
+ * together (web does not import web-api). The only entry: `engine_ask`'s
+ * `secret`, which the tool reads as `chatgpt`.
+ */
+const LEGACY_FIELD_ALIASES: Readonly<Record<string, { field: string; alias: string }>> = {
+  engine_ask: { field: 'chatgpt', alias: 'secret' },
+};
+
+/**
+ * The row a settings form DISPLAYS: a legacy alias shown under its canonical
+ * field when that field is absent, so a legacy `engine_ask: { secret }` fills
+ * the ChatGPT picker the probe row already reports as bound. Display only —
+ * the stored row keeps the alias verbatim, so a save that leaves this form
+ * alone re-sends `secret` and rewrites nothing (plan
+ * engine-ask-per-engine-bindings D3). An edit in the form writes `chatgpt`,
+ * which the service stores in place of the alias.
+ */
+export function bindingDisplayValue(
+  key: string,
+  row: Record<string, string>,
+): Record<string, string> {
+  const alias = LEGACY_FIELD_ALIASES[key];
+  if (!alias || Object.hasOwn(row, alias.field)) return row;
+  const legacy = row[alias.alias];
+  return legacy ? { ...row, [alias.field]: legacy } : row;
+}
+
+/**
+ * The row the service stores after `field` is cleared: the field gone, and,
+ * when it is the canonical field of a legacy alias, the alias gone too — the
+ * service retires it on that write (`mergeSecretBinding`). Local state built
+ * any other way still holds the alias, and the next save re-sends it.
+ */
+export function clearBindingField(
+  key: string,
+  row: Record<string, string>,
+  field: string,
+): Record<string, string> {
+  const alias = LEGACY_FIELD_ALIASES[key];
+  const next = { ...row };
+  delete next[field];
+  if (alias?.field === field) delete next[alias.alias];
+  return next;
+}

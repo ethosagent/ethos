@@ -350,6 +350,12 @@ function mergeSlot(
   return next;
 }
 
+/** `web_search`'s typed, non-secret fields. On any other key they are not a
+ *  binding field: `parseToolsYaml` skips them (`NON_SECRET_FIELDS`,
+ *  extensions/personalities/src/index.ts), so accepting one here would render a
+ *  tools.yaml line that never reads back. Refused at this write boundary. */
+const WEB_SEARCH_ONLY_FIELDS = new Set(['provider', 'recency']);
+
 /** Field-level PATCH for a secret-name binding: omitted field → keep; empty or
  *  invalid → clear that field only. Writing a key's canonical field retires
  *  its legacy alias (`LEGACY_FIELD_ALIASES`). */
@@ -361,7 +367,7 @@ function mergeSecretBinding(
   const merged = toSecretBindingMap(existing);
   if (!incoming) return merged;
   for (const [field, raw] of Object.entries(incoming)) {
-    if (!isSafeFieldName(field)) continue;
+    if (!isSafeFieldName(field) || WEB_SEARCH_ONLY_FIELDS.has(field)) continue;
     const value = raw?.trim();
     if (value && isValidSecretName(value)) merged[field] = value;
     else delete merged[field];

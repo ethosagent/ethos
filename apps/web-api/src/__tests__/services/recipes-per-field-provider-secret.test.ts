@@ -85,6 +85,11 @@ const fakeEngineAsk = {
   },
 } as Tool;
 
+// A tool whose settings key IS `engine_ask`, so the legacy `secret` alias rule
+// (`LEGACY_FIELD_ALIASES`, apps/web-api/src/services/tool-settings.service.ts)
+// applies to its binding — `fake_engine_ask` above sits outside it.
+const engineAsk = { ...fakeEngineAsk, name: 'engine_ask' } as Tool;
+
 function keyStore(stored: string[]): RecipesServiceOptions['keys'] {
   const entries = stored.map((ref) => ({
     id: `custom:${ref}`,
@@ -134,7 +139,7 @@ function makeWorld(stored: string[] = []) {
     attachPersonalities: async () => ({ updated: [], failed: [] }),
     delete: async () => ({ ok: true as const }),
   };
-  const toolRegistry = { getAvailable: () => [fakeEngineAsk] };
+  const toolRegistry = { getAvailable: () => [fakeEngineAsk, engineAsk] };
   const toolSettings = new ToolSettingsService({
     config: new ConfigRepository({
       dataDir: DATA,
@@ -163,7 +168,7 @@ function makeWorld(stored: string[] = []) {
     storage,
     dataDir: DATA,
   });
-  return { recipes, registry };
+  return { recipes, registry, storage, toolSettings };
 }
 
 describe('recipes — per-field provider credentials (engine_ask shape)', () => {
@@ -191,5 +196,82 @@ describe('recipes — per-field provider credentials (engine_ask shape)', () => 
     expect(registry.getToolsConfig('engine-tester')).toEqual({
       fake_engine_ask: { chatgpt: 'brand' },
     });
+  });
+});
+
+// A recipe's credential write is patched field by field, and writing `chatgpt`
+// retires the legacy `secret` alias. Its undo must therefore restore the exact
+// prior binding of the key it touched — re-sending the prior values alone
+// leaves the field the write ADDED in place, and a retired alias gone.
+describe('recipes — undo of a credential binding restores the prior binding exactly', () => {
+  type BindSecrets = (
+    bundle: unknown,
+    personalityId: string,
+    bindings: Record<string, { provider: string; secret: string }>,
+  ) => Promise<Array<{ run: () => Promise<void> }>>;
+
+  const bundle = {
+    requires: { secrets: [{ toolName: 'engine_ask', label: 'Key', why: 'Test.' }] },
+  };
+
+  async function bindThenUndo(recipes: RecipesService, personalityId: string): Promise<void> {
+    // The private stage `install` runs; its undo entries are what a failed
+    // install replays. Reached directly so each store can be seeded with a
+    // legacy binding the install path's own preflight never produces.
+    const bindSecrets = (recipes as unknown as { bindSecrets: BindSecrets }).bindSecrets.bind(
+      recipes,
+    );
+    const undo = await bindSecrets(bundle, personalityId, {
+      engine_ask: { provider: 'fake-openai', secret: 'new-key' },
+    });
+    for (const step of undo.reverse()) await step.run();
+  }
+
+  const priors: Array<[string, Record<string, string> | undefined]> = [
+    ['a legacy { secret } binding', { secret: 'openai-key' }],
+    ['a binding with only another engine', { perplexity: 'pplx-key' }],
+    ['a binding that already named chatgpt', { chatgpt: 'old-key', perplexity: 'pplx-key' }],
+    ['no binding at all', undefined],
+  ];
+
+  it.each(priors)('custom personality (tools.yaml): %s', async (_label, prior) => {
+    const { recipes, registry, storage, toolSettings } = makeWorld();
+    await storage.mkdir(`${DATA}/personalities/mine`);
+    await storage.write(`${DATA}/personalities/mine/config.yaml`, 'name: Mine\n');
+    await storage.write(`${DATA}/personalities/mine/SOUL.md`, '# Mine\n');
+    if (prior) {
+      const fields = Object.entries(prior)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(', ');
+      await storage.write(`${DATA}/personalities/mine/tools.yaml`, `engine_ask: { ${fields} }\n`);
+    }
+    await registry.loadFromDirectory(`${DATA}/personalities`);
+
+    const before = (await toolSettings.getForPersonality('mine')).values;
+    expect(before.engine_ask).toEqual(prior);
+    await bindThenUndo(recipes, 'mine');
+    expect((await toolSettings.getForPersonality('mine')).values).toEqual(before);
+  });
+
+  it.each(priors)('built-in personality (config.yaml toolSettings): %s', async (_label, prior) => {
+    const { recipes, registry, storage, toolSettings } = makeWorld();
+    await storage.mkdir('/builtins/scout');
+    await storage.write('/builtins/scout/config.yaml', 'name: Scout\n');
+    await storage.write('/builtins/scout/SOUL.md', '# Scout\n');
+    await registry.loadFromDirectory('/builtins');
+    await storage.mkdir(DATA);
+    await storage.write(
+      `${DATA}/config.yaml`,
+      [
+        'provider: anthropic',
+        ...Object.entries(prior ?? {}).map(([k, v]) => `toolSettings.scout.engine_ask.${k}: ${v}`),
+        '',
+      ].join('\n'),
+    );
+
+    const before = (await toolSettings.getForPersonality('scout')).values;
+    expect(before.engine_ask).toEqual(prior);
+    await bindThenUndo(recipes, 'scout');
+    expect((await toolSettings.getForPersonality('scout')).values).toEqual(before);
   });
 });

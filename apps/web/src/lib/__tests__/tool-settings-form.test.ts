@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bindingDisplayValue,
+  clearBindingField,
   describeToolSettingsFields,
   groupToolSettings,
   type ToolSettingsSchemaWire,
@@ -145,5 +147,53 @@ describe('groupToolSettings', () => {
       { name: 'x_search', settingsSchema: youtubeSchema },
     ]);
     expect(groups.map((g) => g.key)).toEqual(['web_search', 'x_search']);
+  });
+});
+
+// plan engine-ask-per-engine-bindings D3 / §9 M4 — a legacy
+// `engine_ask: { secret }` is the ChatGPT binding. The Tools tab shows it
+// under `chatgpt` (the probe row already says it is bound) without the stored
+// row changing, so a save that leaves this form alone re-sends `secret`
+// verbatim and nothing on disk moves from being viewed.
+describe('legacy engine_ask alias on the Tools tab', () => {
+  it('displays a legacy secret under chatgpt, and changes nothing else', () => {
+    const stored = { secret: 'openai-key', perplexity: 'pplx-key' };
+    expect(bindingDisplayValue('engine_ask', stored)).toEqual({
+      secret: 'openai-key',
+      perplexity: 'pplx-key',
+      chatgpt: 'openai-key',
+    });
+    // The stored row is not mutated: it is what an untouched save sends.
+    expect(stored).toEqual({ secret: 'openai-key', perplexity: 'pplx-key' });
+  });
+
+  it('a chatgpt that is present (even cleared) wins over the alias', () => {
+    expect(bindingDisplayValue('engine_ask', { secret: 'a', chatgpt: 'b' }).chatgpt).toBe('b');
+    expect(bindingDisplayValue('engine_ask', { secret: 'a', chatgpt: '' }).chatgpt).toBe('');
+  });
+
+  it('leaves every other key alone', () => {
+    const row = { secret: 'xai-key' };
+    expect(bindingDisplayValue('x_search', row)).toBe(row);
+    expect(bindingDisplayValue('engine_ask', {})).toEqual({});
+  });
+
+  // The server clears `chatgpt` AND retires `secret` on a Reset
+  // (`mergeSecretBinding`, apps/web-api tool-settings.service.ts). Local state
+  // must match, or the next save re-sends `secret` and re-binds the key.
+  it('clearing chatgpt also drops the legacy secret from local state', () => {
+    expect(
+      clearBindingField('engine_ask', { secret: 'openai-key', perplexity: 'p' }, 'chatgpt'),
+    ).toEqual({ perplexity: 'p' });
+    expect(clearBindingField('engine_ask', { secret: 'a', chatgpt: '' }, 'chatgpt')).toEqual({});
+    // Another engine's field retires nothing.
+    expect(clearBindingField('engine_ask', { secret: 'a', perplexity: 'p' }, 'perplexity')).toEqual(
+      { secret: 'a' },
+    );
+    // A one-provider tool's `secret` is its canonical field, not an alias.
+    expect(clearBindingField('x_search', { secret: 'x' }, 'secret')).toEqual({});
+    expect(clearBindingField('web_search', { provider: 'exa', secret: 'x' }, 'secret')).toEqual({
+      provider: 'exa',
+    });
   });
 });

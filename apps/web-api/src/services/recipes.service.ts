@@ -817,21 +817,41 @@ export class RecipesService {
       // map, and the same read is what the undo entry restores.
       const before = await this.opts.toolSettings.getForPersonality(personalityId);
       const restore = before.values;
+      const written: Record<string, string> = {
+        // A single-provider tool has no provider field: its namespace is
+        // fixed by its own `capabilities.secrets`, so only the NAME is stored.
+        ...(schema.providerKey ? { [schema.providerKey]: binding.provider } : {}),
+        [schema.secretKey]: binding.secret,
+      };
       await this.opts.toolSettings.setForPersonality(personalityId, {
         ...restore,
-        [schema.settingsKey]: {
-          ...restore[schema.settingsKey],
-          // A single-provider tool has no provider field: its namespace is
-          // fixed by its own `capabilities.secrets`, so only the NAME is stored.
-          ...(schema.providerKey ? { [schema.providerKey]: binding.provider } : {}),
-          [schema.secretKey]: binding.secret,
-        },
+        [schema.settingsKey]: { ...restore[schema.settingsKey], ...written },
       });
+      const settingsKey = schema.settingsKey;
+      const prior = restore[settingsKey];
+      // Fields this write ADDED — the prior binding did not carry them.
+      const added = Object.keys(written).filter((f) => !prior || !Object.hasOwn(prior, f));
       undo.push({
         what: `${secret.toolName} key binding on '${personalityId}'`,
         href: `/p/${personalityId}`,
+        // Two writes, because the store PATCHES field by field
+        // (`mergeSecretBinding` / `mergeWebSearch`, tool-settings.service.ts):
+        // re-sending `prior` alone keeps every field it omits, so a field the
+        // write added would survive the undo. First clear the added fields (an
+        // empty value clears one). Clearing `engine_ask.chatgpt` also retires
+        // the legacy `secret` alias (`LEGACY_FIELD_ALIASES`), so `prior` goes in
+        // a SECOND write that carries no `chatgpt` and so retires nothing — it
+        // puts back every field the write replaced or the retirement removed.
+        // Only the touched key is written: the others were never changed.
         run: async () => {
-          await this.opts.toolSettings?.setForPersonality(personalityId, restore);
+          const settings = this.opts.toolSettings;
+          if (!settings) return;
+          if (added.length > 0) {
+            await settings.setForPersonality(personalityId, {
+              [settingsKey]: Object.fromEntries(added.map((f) => [f, ''])),
+            });
+          }
+          if (prior) await settings.setForPersonality(personalityId, { [settingsKey]: prior });
         },
       });
     }

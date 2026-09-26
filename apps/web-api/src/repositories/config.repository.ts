@@ -60,6 +60,15 @@ export interface ConfigRepositoryOptions {
  *  service, which guards the same hazard on the slot id. */
 const RESERVED_TOOL_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/** The slot `toolSettings[pid]` names, created when absent. An OWN lookup: an
+ *  inherited name (`toString`) must yield a fresh slot, never the shared
+ *  builtin it would otherwise read through to and then mutate. */
+function ownSlot(toolSettings: Record<string, ToolSettingsSlot>, pid: string): ToolSettingsSlot {
+  const slot = (Object.hasOwn(toolSettings, pid) ? toolSettings[pid] : undefined) ?? {};
+  toolSettings[pid] = slot;
+  return slot;
+}
+
 /** `${secrets:<ref>}` anywhere in a string. */
 const SECRET_REF_ANYWHERE = /\$\{secrets:([^}]+)\}/g;
 
@@ -265,13 +274,16 @@ export class ConfigRepository {
       const ts = line.match(
         /^toolSettings\.([^.]+)\.web_search\.(provider|secret|recency):\s*(.+)$/,
       );
-      if (ts) {
+      // The id segment becomes a computed own-key too, so it is guarded like
+      // the key and field below: `toolSettings.__proto__.…` would otherwise
+      // write through to Object.prototype. A refused line falls through to
+      // passthrough, as a refused key or field does.
+      if (ts && !RESERVED_TOOL_KEYS.has(ts[1]?.trim() ?? '')) {
         const pid = ts[1]?.trim();
         const field = ts[2];
         const value = ts[3] !== undefined ? parseConfigScalar(ts[3]) : '';
         if (pid && value) {
-          const slot = config.toolSettings[pid] ?? {};
-          config.toolSettings[pid] = slot;
+          const slot = ownSlot(config.toolSettings, pid);
           const ws = slot.web_search ?? {};
           slot.web_search = ws;
           if (field === 'provider') ws.provider = value;
@@ -317,14 +329,14 @@ export class ConfigRepository {
         otherTool &&
         otherField &&
         otherTool !== 'web_search' &&
+        !RESERVED_TOOL_KEYS.has(other[1]?.trim() ?? '') &&
         !RESERVED_TOOL_KEYS.has(otherTool) &&
         !RESERVED_TOOL_KEYS.has(otherField)
       ) {
         const pid = other[1]?.trim();
         const value = other[4] !== undefined ? parseConfigScalar(other[4]) : '';
         if (pid && value) {
-          const slot = config.toolSettings[pid] ?? {};
-          config.toolSettings[pid] = slot;
+          const slot = ownSlot(config.toolSettings, pid);
           slot[otherTool] = { ...slot[otherTool], [otherField]: value };
         }
         continue;
@@ -674,6 +686,7 @@ export class ConfigRepository {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }
     for (const [pid, settings] of Object.entries(config.toolSettings)) {
+      if (RESERVED_TOOL_KEYS.has(pid)) continue;
       const ws = settings.web_search;
       if (ws?.provider) {
         lines.push(

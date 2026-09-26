@@ -248,6 +248,32 @@ describe('ConfigRepository', () => {
     expect(await secrets.get('telegram/token')).toBe('old');
   });
 
+  it('never lets an object-model name in the toolSettings id segment reach toolSettings', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      `${[
+        'provider: anthropic',
+        'toolSettings.__proto__.engine_ask.chatgpt: evil',
+        'toolSettings.__proto__.web_search.secret: evil',
+        'toolSettings.constructor.x_search.secret: evil',
+        'toolSettings.toString.x_search.secret: evil',
+        'toolSettings.scout.dataforseo.secret: seo-ok',
+      ].join('\n')}\n`,
+    );
+
+    const config = await repo.read();
+    expect(Object.hasOwn(Object.prototype, 'engine_ask')).toBe(false);
+    expect(Object.hasOwn(Object.prototype, 'web_search')).toBe(false);
+    expect(Object.hasOwn(Object.prototype.toString, 'x_search')).toBe(false);
+    // An inherited-but-unreserved name is an ordinary own slot, not the builtin.
+    expect(config?.toolSettings).toEqual({
+      toString: { x_search: { secret: 'evil' } },
+      scout: { dataforseo: { secret: 'seo-ok' } },
+    });
+    expect(Object.hasOwn(config?.toolSettings ?? {}, '__proto__')).toBe(false);
+  });
+
   it('preserves open toolSettings keys (search_console) across read-modify-write', async () => {
     await storage.mkdir(DATA);
     await storage.write(

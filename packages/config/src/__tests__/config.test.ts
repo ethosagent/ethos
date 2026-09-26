@@ -206,6 +206,36 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(Object.hasOwn(parsed?.toolSettings?.scout ?? {}, '__proto__')).toBe(false);
   });
 
+  it('refuses __proto__ (and other object-model names) as the toolSettings id segment', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: researcher',
+        'toolSettings.__proto__.engine_ask.chatgpt: evil',
+        'toolSettings.__proto__.web_search.secret: evil',
+        'toolSettings.constructor.x_search.secret: evil',
+        'toolSettings.toString.x_search.secret: evil',
+        'toolSettings.scout.dataforseo.secret: seo-ok',
+        '',
+      ].join('\n'),
+    );
+
+    const parsed = await readRawConfig(storage);
+    expect(Object.hasOwn(Object.prototype, 'engine_ask')).toBe(false);
+    expect(Object.hasOwn(Object.prototype, 'web_search')).toBe(false);
+    expect(Object.hasOwn(Object.prototype.toString, 'x_search')).toBe(false);
+    // An inherited-but-unreserved name is an ordinary own slot, not the builtin.
+    expect(parsed?.toolSettings).toEqual({
+      toString: { x_search: { secret: 'evil' } },
+      scout: { dataforseo: { secret: 'seo-ok' } },
+    });
+    expect(Object.hasOwn(parsed?.toolSettings ?? {}, '__proto__')).toBe(false);
+  });
+
   // plan engine-ask-per-engine-bindings D10 — one flat line per engine, the
   // same widened branch the legacy `.secret` line goes through.
   describe('per-engine engine_ask lines', () => {
