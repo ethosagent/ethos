@@ -1,8 +1,34 @@
-import { describe, expect, it } from 'vitest';
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${secrets:…}` refs are literal config text, not templates
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The B4 test below drives the full runSetupFromEnv path against an in-memory
+// storage, so the CLI wiring singletons are replaced; the pure-helper tests
+// above it never touch them.
+const secretStore = new Map<string, string>();
+const memStorageHolder: { storage?: import('@ethosagent/storage-fs').InMemoryStorage } = {};
+vi.mock('../wiring', () => ({
+  getStorage: () => memStorageHolder.storage,
+  getSecretsResolver: async () => ({
+    get: async (ref: string) => secretStore.get(ref) ?? null,
+    set: async (ref: string, value: string) => {
+      secretStore.set(ref, value);
+    },
+    delete: async (ref: string) => {
+      secretStore.delete(ref);
+    },
+    list: async () => [...secretStore.keys()],
+  }),
+  getFunnelTracker: () => ({ recordSetupCompleted: async () => {} }),
+}));
+
+import { loadConfigStrict } from '@ethosagent/config';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import {
   INIT_SUCCESS_LINE,
   providerRejectedLine,
   resolveProviderFromEnv,
+  runSetupFromEnv,
 } from '../commands/setup-from-env';
 
 describe('resolveProviderFromEnv — W2.4 provider matrix', () => {
@@ -86,5 +112,49 @@ describe('init last-line contract — W1.3', () => {
     const line = providerRejectedLine('AZURE_API_KEY');
     expect(line).not.toContain('!');
     expect(line).toContain('re-run docker compose up');
+  });
+});
+
+// B4 (plan ux-feedback-and-config-clarity) — the from-env bootstrap writes the
+// `telegram.bots.0.*` list form, never the deprecated `telegramToken` scalar.
+describe('runSetupFromEnv — B4 telegram list form', () => {
+  const STATE_DIR = '/tmp/ethos-from-env-b4-test';
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      PATH: ORIGINAL_ENV.PATH,
+      ETHOS_STATE_DIR: STATE_DIR,
+      ETHOS_SKIP_VALIDATION: '1',
+      ANTHROPIC_API_KEY: 'sk-ant-x',
+      TELEGRAM_BOT_TOKEN: '123:ABC',
+    };
+    secretStore.clear();
+    memStorageHolder.storage = new InMemoryStorage();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+    vi.restoreAllMocks();
+  });
+
+  it('writes telegram.bots.0.* with a personality bind and zero deprecations', async () => {
+    await runSetupFromEnv();
+
+    const storage = memStorageHolder.storage;
+    expect(storage).toBeDefined();
+    const text = (await storage?.read(join(STATE_DIR, 'config.yaml'))) ?? '';
+    expect(text).toContain('telegram.bots.0.token: ${secrets:telegram/token}');
+    expect(text).toContain('telegram.bots.0.bind.type: personality');
+    expect(text).toContain('telegram.bots.0.bind.name: researcher');
+    expect(text).not.toContain('telegramToken:');
+    expect(text).not.toContain('123:ABC');
+    expect(secretStore.get('telegram/token')).toBe('123:ABC');
+
+    if (!storage) throw new Error('storage not constructed');
+    const loaded = await loadConfigStrict(storage);
+    expect(loaded?.parseErrors).toEqual([]);
+    expect(loaded?.deprecations).toEqual([]);
   });
 });

@@ -18,6 +18,7 @@ import {
   A2A_REQUEST_POP_CONTEXT,
   A2A_RPC_AUTH_ERROR_CODES,
 } from '../../rpc';
+import { LOOPBACK_PEER_POLICY } from '../a2a-fixtures';
 import {
   approvePeer,
   echoRunner,
@@ -66,7 +67,7 @@ describe('A2A real-socket lifecycle (plan T1.8)', () => {
     // Human-anchor step: approve the initiator on the responder's allowlist.
     await approvePeer(responder, initiator.fingerprint, ['echo']);
 
-    const client = new A2aOutboundClient();
+    const client = new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY });
 
     // --- handshake ---------------------------------------------------------
     const session = await client.connect({

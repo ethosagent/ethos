@@ -41,7 +41,7 @@ DNS-lookup failures fall through and let the underlying `fetch` fail naturally.
 
 - `web_search` is Exa-only. There is no fallback provider; without `ETHOS_EXA_API_KEY` the tool is simply unavailable.
 - `htmlToText` is intentionally naive — no DOM parsing, no readability extraction. JS-rendered SPAs return shell HTML.
-- `checkSsrf` is best-effort: a single DNS lookup is performed before `fetch`, so a determined DNS-rebinding attacker could theoretically race the resolution. Network egress filtering is the only complete defense.
+- `checkSsrf` is only an early refusal: its DNS answer is never the address connected to. The request itself goes through `ctx.scopedFetch` → `safeFetch` (`@ethosagent/safety-network`), which re-validates and pins the socket to the addresses it accepted, on every redirect hop — so a rebinding second answer is never used (pinned by `src/__tests__/web-extract-pinning.test.ts`).
 - `isValidIpv6` is a coarse heuristic (any string containing `:`); do not reuse it outside this module.
 - The `User-Agent` is hardcoded to a fake Mozilla string at `src/index.ts:151`.
 

@@ -135,7 +135,7 @@ The escape hatch, again, is the `MemoryProvider` interface. A backend that suppo
 
 One selection covers every reader and writer: the agent's tools, the web Memory page, `ethos memory`, the nightly consolidation pass. The exception is the approve-before-store queue, which stays in `~/.ethos/` whatever the backend — a parked candidate is gate state, not memory content, and it must survive a backend switch.
 
-Vector mode is the one backend with no files at all. Its entries live in `memory.db`, so the file surfaces — the web editor, the Timeline, `ethos memory restore` — refuse rather than edit bytes no agent reads.
+Vector mode is the one backend with no files at all. Its entries live in `memory.db`, so the file surfaces — the web editor, the Timeline, `ethos memory restore` — refuse rather than edit bytes no agent reads. The nightly pass skips its memory step for the same reason: consolidation and decay work on sections of MEMORY.md and USER.md, which vector does not have (`nightlyMemory` in `apps/ethos/src/commands/nightly.ts`).
 
 ### Memory is not session history
 

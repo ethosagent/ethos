@@ -88,9 +88,14 @@ async function harness(opts: HarnessOptions = {}) {
   });
   const received: InboundMessage[] = [];
   adapter.onMessage((m) => received.push(m));
-  await adapter.start();
-  // `botJid` is only known once the connection opens.
+  // `start()` resolves only once the socket opens (R5), and `botJid` is only
+  // known then — so open it while start() is waiting.
+  const started = adapter.start();
+  await vi.waitFor(() => {
+    if (!evHandlers.has('connection.update')) throw new Error('not registered yet');
+  });
   evHandlers.get('connection.update')?.({ connection: 'open' });
+  await started;
 
   const upsert = evHandlers.get('messages.upsert');
   if (!upsert) throw new Error('adapter registered no messages.upsert handler');

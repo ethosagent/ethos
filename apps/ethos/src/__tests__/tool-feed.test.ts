@@ -25,6 +25,37 @@ describe('FW-11 tool feed formatter', () => {
   });
 });
 
+describe('C2 failed-tool reason line', () => {
+  it('emits a second indented line carrying the first line of the error', () => {
+    const line = formatToolFeedLine({
+      toolName: 'bash',
+      args: { cmd: 'make test' },
+      durationMs: 1_200,
+      error: 'exit 2: tests failed\nstack line 1\nstack line 2',
+    });
+    expect(line).toBe('┊ bash · make test · 1.2s\n      exit 2: tests failed');
+  });
+
+  it('caps the reason line at 120 chars with an ellipsis', () => {
+    const line = formatToolFeedLine({
+      toolName: 'bash',
+      args: {},
+      durationMs: 10,
+      error: 'e'.repeat(200),
+    });
+    const reason = line.split('\n')[1] ?? '';
+    expect(reason.trim()).toHaveLength(120);
+    expect(reason.trim().endsWith('…')).toBe(true);
+  });
+
+  it('no error (or a blank one) keeps the single-line shape', () => {
+    expect(formatToolFeedLine({ toolName: 't', args: {}, durationMs: 5 })).not.toContain('\n');
+    expect(
+      formatToolFeedLine({ toolName: 't', args: {}, durationMs: 5, error: '  \n' }),
+    ).not.toContain('\n');
+  });
+});
+
 describe('FW-11 previewArgs', () => {
   it('uses the cmd/command field for terminal-shaped args', () => {
     expect(previewArgs({ cmd: 'ls -la' })).toBe('ls -la');

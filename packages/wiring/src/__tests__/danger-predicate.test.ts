@@ -1,15 +1,19 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
+import { DefaultHookRegistry, denyRuleReason, matchDenyRule } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
+import type { BeforeToolCallPayload, ExecutionPosture, PersonalityConfig } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  approvalRequiredReason,
   createDangerPredicate,
   hardlineReason,
+  hasHostApprovalGate,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
 } from '../danger-predicate';
 
@@ -80,6 +84,16 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
         /recursive force-delete/,
       );
       expect(hardlineReason(payload('write_file', { command: 'rm -rf /' }))).toBeNull();
+    });
+
+    // EXE-001: `run_tests` / `lint` run their `command` through `bash -c`
+    // exactly as `terminal` does, and used to be outside this check.
+    it('covers run_tests and lint with the terminal rules', () => {
+      expect(hardlineReason(payload('run_tests', { command: 'rm -rf /' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('lint', { command: "bash -c 'id'" }))).toMatch(/sh -c/);
+      expect(hardlineReason(payload('run_tests', { command: 'pnpm test' }))).toBeNull();
     });
 
     it('is null for an ordinary command or a missing / non-string command', () => {
@@ -415,6 +429,148 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(await pred(payload('skills_pending_list', {}))).toBeNull();
       expect(await pred(payload('skills_pending_view', { id: 'x' }))).toBeNull();
     });
+  });
+});
+
+// S6 / D1(a) + EXE-001 (plan openclaw-2026.9.6-gaps): under a LOCAL posture the
+// shell tools run on the host as the Ethos user, so manual mode asks before
+// each one. Under docker (and a containerized local, where the container is the
+// boundary) they stay unflagged, as before.
+describe('LOCAL_POSTURE_CONSEQUENTIAL_TOOLS', () => {
+  const posture = (backend: ExecutionPosture['backend'], containerized = false): ExecutionPosture =>
+    ({ backend, containerized }) as ExecutionPosture;
+
+  it('is exactly terminal, process_start, run_tests and lint', () => {
+    expect([...LOCAL_POSTURE_CONSEQUENTIAL_TOOLS].sort()).toEqual(
+      ['lint', 'process_start', 'run_tests', 'terminal'].sort(),
+    );
+  });
+
+  it('manual + local flags terminal/process_start/run_tests/lint', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('local'),
+    });
+    for (const tool of ['terminal', 'process_start', 'run_tests', 'lint']) {
+      expect(await pred(payload(tool, { command: 'ls' }))).toBe(
+        `${tool} requires explicit approval`,
+      );
+    }
+    expect(await pred(payload('read_file', { path: 'x' }))).toBeNull();
+  });
+
+  it('manual + docker leaves them unflagged', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('docker'),
+    });
+    for (const tool of ['terminal', 'process_start', 'run_tests', 'lint']) {
+      expect(await pred(payload(tool, { command: 'ls' }))).toBeNull();
+    }
+  });
+
+  it('a containerized local posture leaves them unflagged (the container is the boundary)', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('local', true),
+    });
+    expect(await pred(payload('terminal', { command: 'ls' }))).toBeNull();
+  });
+
+  it('off + the unattended capability still auto-approves them', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('off'),
+      getExecutionPosture: () => posture('local'),
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await pred(payload('terminal', { command: 'ls' }))).toBeNull();
+  });
+});
+
+// Command substitution is approval-required, not hardline: D1(b) had made it
+// hardline, refusing `kill $(lsof -t -i:3000)` outright with no approval path.
+describe('command substitution requires approval (not hardline)', () => {
+  const KILL = 'kill $(lsof -t -i:3000)';
+
+  it('is not hardline, for any shell-string tool', () => {
+    for (const tool of ['terminal', 'run_tests', 'lint', 'process_start']) {
+      expect(hardlineReason(payload(tool, { command: KILL }))).toBeNull();
+      expect(approvalRequiredReason(payload(tool, { command: KILL }))).toBe('command substitution');
+    }
+    expect(approvalRequiredReason(payload('read_file', { command: KILL }))).toBeNull();
+    expect(approvalRequiredReason(payload('terminal', { command: 'echo $((1+2))' }))).toBeNull();
+  });
+
+  it('manual mode asks, with no posture and no alwaysAsk', async () => {
+    const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+    expect(await pred(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    expect(await pred(payload('terminal', { command: 'echo `whoami`' }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    expect(await pred(payload('process_start', { command: KILL }))).toBe(
+      'process_start requires explicit approval (command substitution)',
+    );
+  });
+
+  it('asks with no personality resolved (the legacy manual default)', async () => {
+    expect(await createDangerPredicate()(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+  });
+
+  it('smart consults the reviewer, which may approve it', async () => {
+    const reasons: string[] = [];
+    const pred = createDangerPredicate({
+      getPersonality: () => person('smart'),
+      smartApprove: async (_p, reason) => {
+        reasons.push(reason);
+        return { decision: 'approve', reason: 'fine' };
+      },
+    });
+    expect(await pred(payload('terminal', { command: KILL }))).toBeNull();
+    expect(reasons).toEqual(['terminal requires explicit approval (command substitution)']);
+  });
+
+  it('off asks, and the unattended capability does not auto-approve it', async () => {
+    const off = createDangerPredicate({ getPersonality: () => person('off') });
+    expect(await off(payload('terminal', { command: KILL }))).toMatch(/command substitution/);
+    const preAuthorized = createDangerPredicate({
+      getPersonality: () => person('off'),
+      alwaysAsk: ['terminal'],
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await preAuthorized(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    // The capability still pre-authorizes the flagged tool without a substitution.
+    expect(await preAuthorized(payload('terminal', { command: 'ls -la' }))).toBeNull();
+  });
+
+  it('bash -c is still hardline: off + the capability and a smart approve do not skip it', async () => {
+    expect(hardlineReason(payload('terminal', { command: "bash -c 'id'" }))).toMatch(
+      /inline shell eval/,
+    );
+    const pred = createDangerPredicate({
+      getPersonality: () => person('off'),
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await pred(payload('terminal', { command: "bash -c 'id'" }))).toMatch(
+      /inline shell eval/,
+    );
+  });
+});
+
+describe('host approval gate marker', () => {
+  it('is unset for a fresh registry, set by markHostApprovalGate, cleared by its undo', () => {
+    const hooks = new DefaultHookRegistry();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
+    const undo = markHostApprovalGate(hooks);
+    expect(hasHostApprovalGate(hooks)).toBe(true);
+    expect(hasHostApprovalGate(new DefaultHookRegistry())).toBe(false);
+    undo();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
   });
 });
 

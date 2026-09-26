@@ -6,6 +6,7 @@ import {
   measureStaticFloor,
   projectContextAtStartup,
 } from '@ethosagent/wiring';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 
 // `ethos bench context` — context-economy Phase 0 (plan/phases/gap-context-economy.md §4).
@@ -319,6 +320,7 @@ export async function runBench(args: string[]): Promise<void> {
     // Lane 0 (D16) — bench context probes the served window LIVE and rewrites
     // the probe cache; the tuning loop must never show stale numbers.
     const result = await createAgentLoop(config, { probeWindowRefresh: true });
+    gateNonInteractiveLoop(result, config, '`ethos bench` has no prompt to answer it');
     toolRegistry = result.toolRegistry;
     loop = result.loop;
     activePersonalityId = result.activePersonality.id;

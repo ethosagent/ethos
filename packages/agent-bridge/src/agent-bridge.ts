@@ -18,6 +18,7 @@ import type {
   DryRunToolPlan,
   ModelDeviation,
   ModelResolutionSource,
+  ToolProgressAudience,
 } from '@ethosagent/types';
 import { InMemorySteerSink } from './in-memory-steer-sink';
 
@@ -51,6 +52,38 @@ export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
  */
 export const DEFAULT_TURN_TIMEOUT_MS = 1_200_000;
 
+/**
+ * A tool call suspended in `before_tool_call`, waiting for this surface's
+ * Allow / Deny. Built by the host (`createTerminalApprovalSource`,
+ * apps/ethos/src/terminal-approval.ts), which redacts and truncates the
+ * arguments — the surface renders `argsPreview` as-is.
+ */
+export interface BridgeApprovalRequest {
+  approvalId: string;
+  toolName: string;
+  /** Why the call was flagged — the danger predicate's reason. */
+  reason: string;
+  /** The call's arguments, redacted and truncated by the host. */
+  argsPreview: string;
+}
+
+/**
+ * Where a surface's approval prompts come from and where its answers go. An
+ * approval is a host concern (the `before_tool_call` gate on the loop), not an
+ * `AgentEvent`: the call is suspended INSIDE the loop, so nothing is yielded
+ * while it waits. The bridge only relays — see `AgentBridge.setApprovalSource`.
+ */
+export interface BridgeApprovalSource {
+  /** A call is waiting. Several can be pending at once; the surface queues them. */
+  onRequest(listener: (request: BridgeApprovalRequest) => void): () => void;
+  /** A pending call was decided — by this surface, a timeout, or a cancel. */
+  onSettled(
+    listener: (approvalId: string, decision: 'allow' | 'deny', decidedBy: string) => void,
+  ): () => void;
+  /** Answer one pending call. Unknown or already-settled ids are ignored. */
+  decide(approvalId: string, decision: 'allow' | 'deny'): void;
+}
+
 export interface BridgeOptions {
   /** Max concurrent-send queue depth before new sends are rejected with BUSY. */
   queueCap?: number;
@@ -73,7 +106,18 @@ interface BridgeEventMap {
     args: unknown,
     audience: 'internal' | 'user' | 'dashboard' | undefined,
   ];
-  tool_progress: [toolName: string, message: string, percent: number | undefined];
+  // C5 (ux-feedback plan) — the trailing `audience` mirrors the REQUIRED
+  // Phase 30.2 field on the AgentEvent: surfaces render only 'user' progress.
+  // Trailing so 3-arg handlers keep working.
+  tool_progress: [
+    toolName: string,
+    message: string,
+    percent: number | undefined,
+    audience: ToolProgressAudience,
+  ];
+  // C2 (ux-feedback plan) — the trailing `error` mirrors the optional
+  // AgentEvent field: the tool's failure reason, set only when `ok` is false.
+  // Trailing so 7-arg handlers keep working.
   tool_end: [
     toolCallId: string,
     toolName: string,
@@ -82,8 +126,12 @@ interface BridgeEventMap {
     result: string | undefined,
     structured: Record<string, unknown> | undefined,
     audience: 'internal' | 'user' | 'dashboard' | undefined,
+    error: string | undefined,
   ];
   usage: [inputTokens: number, outputTokens: number, estimatedCostUsd: number];
+  /** S4/U1 — an early safety stop (budget or watcher). Forwarded whole; a
+   *  surface renders it with `haltNotice` (@ethosagent/core). A `done` follows. */
+  halt: [halt: Omit<Extract<AgentEvent, { type: 'halt' }>, 'type'>];
   error: [error: string, code: string];
   // B3 — the trailing `traceId` mirrors the optional AgentEvent field: the
   // turn's observability trace id, or undefined when no adapter is wired.
@@ -117,6 +165,11 @@ interface BridgeEventMap {
    *  turn. Forwarded whole (it carries summaries only, K13); a late shadow row
    *  can arrive after `done`, which is why `runTurn` drains to exhaustion. */
   decision: [decision: Omit<Extract<AgentEvent, { type: 'decision' }>, 'type'>];
+  /** A tool call is waiting for this surface's Allow / Deny — relayed from the
+   *  `BridgeApprovalSource` set with `setApprovalSource`. Not an AgentEvent. */
+  approval_request: [request: BridgeApprovalRequest];
+  /** A pending approval was decided (here, by timeout, or by a cancel). */
+  approval_settled: [approvalId: string, decision: 'allow' | 'deny', decidedBy: string];
 }
 
 interface QueuedSend {
@@ -140,6 +193,9 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     | { surfaceType: ClarifySurfaceType; presenter: ClarifyPresenter }
     | undefined;
   private readonly clarifyResolvedListeners = new Set<ClarifyResolvedListener>();
+  // Held on the bridge like the clarify presenter, and host-owned rather than
+  // loop-owned, so it survives `replaceLoop` with no re-binding.
+  private approvalSource: BridgeApprovalSource | undefined;
   private activeSink: InMemorySteerSink | null = null;
   /**
    * One entry per `runTurn` that has not SETTLED — including a turn the stall
@@ -193,6 +249,29 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
       this.clarifyResolvedListeners.delete(listener);
       unsub?.();
     };
+  }
+
+  /**
+   * Relay a host's approval prompts to this surface as `approval_request` /
+   * `approval_settled` events; `respondToApproval` answers them. Returns the
+   * unsubscribe. A bridge with no source never emits either event.
+   */
+  setApprovalSource(source: BridgeApprovalSource): () => void {
+    this.approvalSource = source;
+    const offRequest = source.onRequest((request) => this.emit('approval_request', request));
+    const offSettled = source.onSettled((approvalId, decision, decidedBy) =>
+      this.emit('approval_settled', approvalId, decision, decidedBy),
+    );
+    return () => {
+      offRequest();
+      offSettled();
+      if (this.approvalSource === source) this.approvalSource = undefined;
+    };
+  }
+
+  /** Answer a pending approval relayed by `approval_request`. No source → no-op. */
+  respondToApproval(approvalId: string, decision: 'allow' | 'deny'): void {
+    this.approvalSource?.decide(approvalId, decision);
   }
 
   get queueDepth(): number {
@@ -315,6 +394,10 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
 
   private async runTurnBody(input: string, opts: BridgeOpts): Promise<void> {
     this.controller = new AbortController();
+    // This turn's own controller — `this.controller` is nulled by the stall
+    // guard, but the aborted-error suppression below must keep answering for
+    // THIS turn's signal.
+    const controller = this.controller;
     let timedOut = false;
 
     // Stall guard: if no done/error arrives within turnTimeoutMs, emit an error
@@ -361,7 +444,13 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             this.emit('tool_start', event.toolCallId, event.toolName, event.args, event.audience);
             break;
           case 'tool_progress':
-            this.emit('tool_progress', event.toolName, event.message, event.percent);
+            this.emit(
+              'tool_progress',
+              event.toolName,
+              event.message,
+              event.percent,
+              event.audience,
+            );
             break;
           case 'tool_end':
             this.emit(
@@ -373,14 +462,27 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
               event.result,
               event.structured,
               event.audience,
+              event.error,
             );
             break;
           case 'usage':
             this.emit('usage', event.inputTokens, event.outputTokens, event.estimatedCostUsd);
             break;
+          case 'halt': {
+            const { type: _type, ...halt } = event;
+            this.emit('halt', halt);
+            break;
+          }
           case 'error':
             clearTimeout(timeoutHandle);
             this.flushText();
+            // A2 (ux-feedback plan) — a user Stop (`abortTurn`) makes the loop
+            // yield a normal `error` with code 'aborted'. The surface already
+            // acknowledged the stop, so an error box on top of it is noise.
+            // Suppressed only when THIS turn's controller aborted; an
+            // 'aborted' from any other origin (e.g. a host shutting the loop
+            // down under the bridge) still surfaces.
+            if (event.code === 'aborted' && controller.signal.aborted) break;
             this.emit('error', event.error, event.code);
             break;
           case 'run_start':

@@ -63,9 +63,14 @@ export interface RequestApprovalInput {
   timeoutMs?: number;
 }
 
-/** Decider id used for non-user resolutions (timeout, session cancel). It is
- *  the one value that bypasses the `requesterUserId` binding check. */
-const SYSTEM_DECIDER = '__ethos_system__';
+/** Decider id used for non-user resolutions (timeout, session cancel, the
+ *  gateway's fail-closed deny in `wireApprovalFlow`). It is the one value that
+ *  bypasses the `requesterUserId` binding check (`ApprovalCoordinator.settle`),
+ *  so a caller settling on nobody's behalf must pass this constant, never an
+ *  ad-hoc string — a string like `'system'` is dropped as a bystander click.
+ *  Pinned by `__tests__/approval-coordinator.test.ts` ('a card-post failure
+ *  settles as denied immediately'). */
+export const SYSTEM_DECIDER = '__ethos_system__';
 
 interface PendingEntry {
   resolve: (d: ApprovalDecision) => void;
@@ -339,6 +344,29 @@ export interface CreateSlackApprovalHookOptions {
    * apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts.
    */
   withoutSurface: (payload: BeforeToolCallPayload) => Promise<{ error?: string }>;
+  /**
+   * The hardline reason for a call, or `null` — `hardlineReason` from
+   * `@ethosagent/wiring` (packages/wiring/src/danger-predicate.ts) in
+   * production. A hardline call is refused here with that reason and NO card
+   * is posted: on every gateway loop the terminal/process guard
+   * (`composeAllTools`, non-web profile) refuses it whatever the card says, so
+   * a card would ask a human to Allow something that can never run. Required
+   * so no caller can forget it. Pinned by
+   * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts.
+   */
+  hardlineReason: (payload: BeforeToolCallPayload) => string | null;
+  /**
+   * Why a flagged call will be refused whatever the human says, or `null`.
+   * Consulted only for a call `isDangerous` flagged, before any card: a call
+   * outside the personality's allowlist (`notPermittedRefusal`,
+   * packages/wiring/src/approval-seams.ts) is
+   * refused later by `DefaultToolRegistry.executeParallel`, so asking a human
+   * to Allow it would ask for something that cannot run. Its reason is returned
+   * as the refusal. Absent → every flagged call is asked about. Pinned by
+   * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts and
+   * apps/ethos/src/__tests__/terminal-approval.test.ts.
+   */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
 }
 
 /**
@@ -358,8 +386,17 @@ export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
     const target = opts.resolveApprovalTarget(payload.sessionId);
     if (target === undefined) return opts.withoutSurface(payload);
 
+    // Refused before any card: nobody can approve a hardline call here.
+    const hardline = opts.hardlineReason(payload);
+    if (hardline) return { error: `Command blocked: ${hardline}. No approval can allow it.` };
+
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
+
+    // Refused without a card: another check refuses this call whatever the
+    // human decides (see `refusedAnyway`).
+    const refused = opts.refusedAnyway?.(payload);
+    if (refused) return { error: refused };
 
     const decision = await opts.coordinator.requestApproval({
       sessionId: payload.sessionId,

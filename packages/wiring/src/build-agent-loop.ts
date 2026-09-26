@@ -24,7 +24,7 @@ import { createRouterGate, PI_RUNNER_NAME, PiJobRunner } from '@ethosagent/execu
 import { createLLMCheckJudge, GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor, ETHOS_RUNNER_NAME, EthosJobRunner } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
-import { PendingMemoryStore, TombstoneStore } from '@ethosagent/memory-approval';
+import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
 import {
   type ConsolidateFn,
   MemoryCaptureRunner,
@@ -62,6 +62,7 @@ import {
   InteractionRouter,
   SECRET_KIND,
 } from '@ethosagent/worker-router';
+import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
@@ -188,9 +189,9 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
  * when the job has no recorded origin platform, or that platform has no
  * clarify surface — the bridge's `resolveRouting()` then falls back to the
  * request's own `surfaceType` (today's behaviour). `surfaceContext` reuses
- * the same `chatId`/`botKey`/`threadId` keys the per-platform
- * `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp) write onto a
- * presented row's `surfaceContext`.
+ * the same `chatId`/`botKey`/`threadId`/`originatorUserId` keys the
+ * per-platform `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp)
+ * write onto a presented row's `surfaceContext`.
  *
  * Extracted as a pure function for the same testability reason
  * `isCallCaptureToolsEnabled` above is — `buildAgentLoop` is a full
@@ -199,7 +200,7 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
 export function resolveJobClarifyOrigin(
   job: Pick<
     BackgroundJob,
-    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId'
+    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId' | 'originUserId'
   > | null,
 ): ClarifyOriginLane | null {
   const platform = job?.originPlatform;
@@ -210,6 +211,9 @@ export function resolveJobClarifyOrigin(
       ...(job?.originChatId ? { chatId: job.originChatId } : {}),
       ...(job?.originBotKey ? { botKey: job.originBotKey } : {}),
       ...(job?.originThreadId ? { threadId: job.originThreadId } : {}),
+      // The same key each surface's `gateAnswerer` reads, so an
+      // 'originator' clarify from this job binds to whoever started it.
+      ...(job?.originUserId ? { originatorUserId: job.originUserId } : {}),
     },
   };
 }
@@ -1492,6 +1496,7 @@ export async function buildAgentLoop(
       staleMs: bg.staleMs,
       ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
       ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+      ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     };
 
     // Mesh proxy reconciler — polls peers for background jobs spawned via
@@ -1576,6 +1581,21 @@ export async function buildAgentLoop(
     // fail-closed and time-bounded (createLLMCheckJudge). Not a Jev site yet:
     // goal-judge is deferred in plan/phases/decision-provider-jev.md §16.
     judgeCheck: createLLMCheckJudge({ llm }),
+    // S1 — a goal's `command` acceptance checks run through the same gates
+    // and the same execution route as that personality's `terminal`, never a
+    // raw host shell (`createAcceptanceCheckExecutor`).
+    execAcceptanceCheck: createAcceptanceCheckExecutor({
+      personalities,
+      route: toolsResult.executionRouteFor,
+      postureFor: toolsResult.executionPostureFor,
+      hostBackend: () =>
+        infra.executionBackends.resolve('local', {
+          config: { substitutionVars: { ethosHome: dataDir, cwd: workingDir } },
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        }),
+      workingDir,
+    }),
     runAttempt: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
@@ -1684,25 +1704,6 @@ export async function buildAgentLoop(
       }
     }
 
-    // Inline consolidation fallback (§3.5): only when no macro-loop is
-    // configured. Reuses the pure consolidateMemory(); the consolidation write
-    // is recorded through a history-decorated handle so it lands as
-    // `source: 'consolidation'`.
-    const nightlyConfigured = config.nightlyPass?.enabled === true;
-    const consolidationHandle = withHistory(captureBase, captureHistory, {
-      source: 'consolidation',
-    });
-    const consolidate: ConsolidateFn = async ({ ctx }) => {
-      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
-      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
-      const result = await consolidateMemory(
-        { memory: memBefore, user: userBefore, recentContext: '' },
-        llm,
-      );
-      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
-      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
-    };
-
     // Approve-before-store gate (memory-lifecycle L2). When approval gates the
     // `capture` source, the runner PROPOSES each fresh fact to the pending queue
     // (with its exact fact-hash) instead of writing durably; approval replays it
@@ -1722,6 +1723,7 @@ export async function buildAgentLoop(
     const evidenceSessions = captureConfig.evidenceSessions ?? 0;
     const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
     let capturePropose: ProposeFn | undefined;
+    let capturePending: PendingMemoryStore | undefined;
     if (captureGated || evidenceSessions > 0) {
       const pending = new PendingMemoryStore({
         storage: wiringCtx.storage,
@@ -1764,7 +1766,40 @@ export async function buildAgentLoop(
       capturePropose = async (proposal) => {
         await pending.propose(proposal);
       };
+      capturePending = pending;
     }
+
+    // Inline consolidation fallback (§3.5): only when no macro-loop is
+    // configured. Reuses the pure consolidateMemory(); the consolidation write
+    // is recorded through a history-decorated handle so it lands as
+    // `source: 'consolidation'`. Under `memoryApproval.mode: all` it parks in
+    // the capture queue instead (`withPendingGate`, `isGated('consolidation',
+    // mode)`), history outside the gate as in `composeGatedMemory`; approve
+    // replays it through that queue's `apply` under its original source.
+    // `off`/`automated` pass straight through. Pinned by
+    // `__tests__/memory-consolidation-gate.test.ts`.
+    const nightlyConfigured = config.nightlyPass?.enabled === true;
+    const consolidationHandle = withHistory(
+      capturePending
+        ? withPendingGate(captureBase, {
+            store: capturePending,
+            mode: approvalMode,
+            source: 'consolidation',
+          })
+        : captureBase,
+      captureHistory,
+      { source: 'consolidation' },
+    );
+    const consolidate: ConsolidateFn = async ({ ctx }) => {
+      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
+      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
+      const result = await consolidateMemory(
+        { memory: memBefore, user: userBefore, recentContext: '' },
+        llm,
+      );
+      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
+      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
+    };
 
     const captureRunner = new MemoryCaptureRunner({
       provider: captureBase,
@@ -1845,6 +1880,7 @@ export async function buildAgentLoop(
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor: toolsResult.executionPostureFor,
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,

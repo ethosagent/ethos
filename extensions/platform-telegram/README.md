@@ -178,7 +178,7 @@ All best-effort; team bindings skip this.
 
 ### Commands menu
 
-At `start()`, `setMyCommands` registers 6 commands visible in Telegram's slash picker.
+At `start()`, `setMyCommands` registers the gateway commands visible in Telegram's slash picker, derived from the `gateway` surface of the shared registry (`telegramMenuCommands` in `src/index.ts`, over `SLASH_COMMANDS` in `@ethosagent/surface-kit`). Aliases and the owner's pairing commands (`/allow`, `/deny`, `/communications`) are left out of the menu but still run when typed. Plugin commands are appended by `registerCommands`.
 
 ---
 

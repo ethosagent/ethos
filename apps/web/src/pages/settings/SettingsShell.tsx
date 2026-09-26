@@ -22,9 +22,11 @@
 // `__tests__/settings-patch-completeness.test.ts` (behaviour).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Form, Spin, Typography } from 'antd';
+import { App as AntApp, Form, Typography } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { LoadingState } from '../../components/ui/LoadingState';
+import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { isDesktop } from '../../lib/desktop';
 import { errorCode } from '../../lib/recipes';
 import { rpc } from '../../rpc';
@@ -61,6 +63,7 @@ import {
 import { voiceBargeInFromConfig } from './lib/voice-telephony';
 import type { SettingsPaneContext } from './pane-context';
 import { SaveBar } from './SaveBar';
+import './settings-ux.css';
 
 export function SettingsShell() {
   const qc = useQueryClient();
@@ -82,6 +85,9 @@ export function SettingsShell() {
   // The form store mutates outside React, so nothing re-renders when a field
   // changes. This counter is what makes the derived dirty count live.
   const [storeRevision, setStoreRevision] = useState(0);
+  // B2 (web save half): the config parser's warnings for the file as it
+  // stands — seeded from `config.get`, replaced by every save's response.
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
 
   const configQuery = useQuery({
     queryKey: ['config'],
@@ -98,6 +104,10 @@ export function SettingsShell() {
   // through `modelRegistry.*` and are read from `modelRegistry.list`.
   useEffect(() => {
     if (configQuery.data) {
+      // Version skew: an older backend's `config.get` predates `resolved`, and
+      // the contract type being required does not make the wire honest —
+      // feature-detect rather than crash the whole Settings surface.
+      setSaveWarnings(configQuery.data.resolved?.warnings ?? []);
       const hydrated: FormShape = {
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,
@@ -295,7 +305,9 @@ export function SettingsShell() {
 
   const updateMut = useMutation({
     mutationFn: (patch: ConfigUpdatePatch) => rpc.config.update(patch),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // B2: the save response reports the unknown keys the write kept.
+      setSaveWarnings(data.warnings ?? []);
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['meta', 'capabilities'] });
       // The page Save writes no providers, but it rewrites config.yaml, which
@@ -353,6 +365,10 @@ export function SettingsShell() {
     ],
   );
 
+  // N5a — hold in-app navigation and unload while the form differs from what
+  // hydration last wrote. Above the early returns because it is a hook.
+  useUnsavedGuard(dirty.count > 0);
+
   // The rail's active row comes from the URL, not from the child route: a layout
   // route's `useParams` only sees the params its OWN path declares, and
   // `:category` belongs to the child. Computed above the early returns (and
@@ -388,11 +404,7 @@ export function SettingsShell() {
   }, [resolved.category, resolved.section]);
 
   if (configQuery.isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-        <Spin />
-      </div>
-    );
+    return <LoadingState label="Loading config…" />;
   }
   if (configQuery.error) {
     return (
@@ -497,6 +509,7 @@ export function SettingsShell() {
             onSave={() => form.submit()}
             dirty={dirty}
             categories={categories}
+            warnings={saveWarnings}
           />
         </div>
       </div>

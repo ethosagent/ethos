@@ -68,6 +68,7 @@ function wire(route: { isDm: boolean; platform: string }, owner: string | undefi
     }),
   } as unknown as Gateway;
   const flow = wireApprovalFlow(gateway, bots, [adapter], {
+    executionPostureFor: () => undefined,
     personalities: { get: () => undefined } as unknown as PersonalityRegistry,
     getProvider: async () => {
       throw new Error('no provider in this test');
@@ -80,7 +81,7 @@ function wire(route: { isDm: boolean; platform: string }, owner: string | undefi
     sessionId: 'sid-1',
     toolCallId: 'tc-1',
     toolName: 'terminal',
-    args: { command: 'rm -rf /' },
+    args: { command: 'kill $(lsof -t -i:3000)' },
   } satisfies BeforeToolCallPayload);
   let settled = false;
   void result.then(() => {

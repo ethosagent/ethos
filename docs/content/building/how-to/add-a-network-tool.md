@@ -102,7 +102,7 @@ capabilities: {
 },
 ```
 
-When the personality has `safety.network.allow: ['api.github.com', '*.openai.com']`, the tool gets a `ScopedFetchImpl` scoped to exactly those hosts. When no personality network config exists, `*` resolves to an empty set -- the tool can reach nothing. Use `*` for generic tools where the personality defines which APIs are reachable.
+When the personality has `safety.network.allow: ['api.github.com', '*.openai.com']`, the tool gets a `ScopedFetchImpl` scoped to exactly those hosts. When the personality has no `allow` list (absent or `[]`), `*` stays `*` -- the tool can reach any public host, and `safeFetch` still refuses private ranges, cloud-metadata hosts, non-http(s) schemes and the personality's `deny` list. Use `*` for generic tools where the personality defines which APIs are reachable.
 
 ### 5. Understand personality network intersection
 
@@ -115,6 +115,7 @@ When a tool declares specific hosts (not `*`), the framework intersects them wit
 | `['api.exa.ai']` | `['api.openai.com']` | `{}` (tool gets nothing) |
 | `['api.exa.ai']` | undefined (no block) | `{'api.exa.ai'}` (tool's own declaration) |
 | `['*']` | `['api.github.com']` | `{'api.github.com'}` |
+| `['*']` | undefined or `[]` | `{'*'}` (any public host, under the `safeFetch` floor) |
 
 The intersection is computed once per tool execution in `resolveCapabilities()` (`packages/core/src/capability-resolver.ts`). A fetch to a host outside the resolved set throws `HOST_NOT_ALLOWED`.
 

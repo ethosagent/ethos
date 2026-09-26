@@ -20,8 +20,10 @@ import type {
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ABSORBED_STEER_ACK,
   ATTACHMENT_NOT_RECOVERED_NOTE,
   createCapturingAdapter,
+  deadLetteredNotice,
   Gateway,
   type GatewayConfig,
   INTERRUPTED_RETRY_NOTICE,
@@ -246,7 +248,7 @@ describe('inbound spool — rows closed without a turn', () => {
     const turn = gw.handleMessage(msg('first'), out.adapter);
     await waitUntil(() => s.texts.length === 1);
     await gw.handleMessage(msg('and also this'), out.adapter);
-    expect(out.sends.map((x) => x.text)).toContain('↩ noted');
+    expect(out.sends.map((x) => x.text)).toContain(ABSORBED_STEER_ACK);
     // The steer row waits on the absorbing turn.
     expect(rows(spool).map((r) => r.status)).toEqual(['processing', 'received']);
 
@@ -348,6 +350,46 @@ describe('inbound spool — replay ordering', () => {
   });
 });
 
+describe('inbound spool — replay is ack-silent', () => {
+  it('replaying 3 spooled rows sends no H3 queued/absorbed acks; the replies still land', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    for (const t of ['one', 'two', 'three']) seed(spool, msg(t));
+    // A live turn on ANOTHER lane holds the single global slot, so the
+    // replayed lane's rows queue behind each other — the exact shape that
+    // greeted a reconnect with "⏳ queued (Nth)…" per recovered row before
+    // the replay gate.
+    const gates: Array<() => void> = [];
+    let open = false;
+    let n = 0;
+    const s = scriptedLoop(async function* () {
+      if (!open) await new Promise<void>((r) => gates.push(r));
+      // Unique reply per turn — identical texts on one session would be
+      // swallowed by the outbound dedup cache, not by the replay gate.
+      yield { type: 'done', text: `reply ${++n}`, turnCount: 1 };
+    });
+    const gw = gateway(s.loop, out.adapter, spool, { maxConcurrentSessions: 1 });
+    const live = gw.handleMessage(msg('live', { chatId: 'chat-2' }), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+
+    const result = await gw.replayInboundSpool();
+    expect(result.replayed).toBe(3);
+    expect(out.sends.filter((x) => x.text.startsWith('⏳ queued'))).toEqual([]);
+    expect(out.sends.filter((x) => x.text === ABSORBED_STEER_ACK)).toEqual([]);
+
+    open = true;
+    for (const release of gates.splice(0)) release();
+    await live;
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    // Still silent once everything drained — the four replies are the only
+    // outbound traffic (live acks are pinned unchanged in lane-sessions /
+    // turn-tail; this gate is replay-only).
+    expect(out.sends.filter((x) => x.text.startsWith('⏳ queued'))).toEqual([]);
+    expect(out.sends.filter((x) => x.text === ABSORBED_STEER_ACK)).toEqual([]);
+    expect(out.sends.filter((x) => x.text.startsWith('reply '))).toHaveLength(4);
+  });
+});
+
 describe('inbound spool — platform redelivery after restart', () => {
   it('the same messageId after the dedup TTL expired runs no second turn', async () => {
     let now = 1_000_000;
@@ -412,6 +454,41 @@ describe('inbound spool — poison message', () => {
     await gateway(after.loop, out.adapter, spool).replayInboundSpool();
     expect(after.texts).toHaveLength(0);
   });
+
+  // Plan openclaw-2026.9.6-gaps R7: before this the user got three `⚠ Error:`
+  // replies and never learned the message would not be retried.
+  it('the attempt that dead-letters the row sends exactly one tracked notice naming it', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    const poison = (): ReturnType<typeof scriptedLoop> =>
+      scriptedLoop(async function* () {
+        yield* [];
+        throw new Error('tool exploded');
+      });
+
+    await gateway(poison().loop, out.adapter, spool, { deliveryLedger: ledger })
+      .handleMessage(msg('poison'), out.adapter)
+      .catch(() => {});
+    const id = rows(spool)[0]?.id ?? '';
+    const notices = () => out.sends.filter((s) => s.text.includes('ethos gateway spool replay'));
+    expect(notices()).toHaveLength(0);
+
+    for (const attempts of [2, 3]) {
+      await gateway(poison().loop, out.adapter, spool, {
+        deliveryLedger: ledger,
+      }).replayInboundSpool();
+      await waitUntil(() => rows(spool)[0]?.attempts === attempts);
+      await settle();
+    }
+    expect(rows(spool)[0]).toMatchObject({ status: 'dead', attempts: 3 });
+    expect(notices().map((s) => s.text)).toEqual([deadLetteredNotice(id)]);
+    expect(deadLetteredNotice(id)).toContain(`ethos gateway spool replay ${id}`);
+    // Tracked: it went through the ledger, not a bare send.
+    expect((await ledger.findBySession('telegram:bot-a:chat-1')).map((o) => o.content)).toContain(
+      deadLetteredNotice(id),
+    );
+  });
 });
 
 describe('inbound spool — ownership', () => {
@@ -459,8 +536,31 @@ describe('inbound spool — stale rows', () => {
     expect(spool.get(two)).toMatchObject({ status: 'dead', lastError: 'stale' });
     expect(s.texts).toHaveLength(0);
     expect(out.sends.map((x) => x.text)).toEqual([
-      'I restarted and missed 2 message(s) older than a day; resend if still needed.',
+      'I restarted and missed 2 message(s) older than a day; resend if still needed. Missed: "old one", "old two".',
     ]);
+  });
+
+  it('quotes at most 3 messages, 40 chars each, then "and N more" (H6)', async () => {
+    let t = Date.now() - 25 * 60 * 60 * 1000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    const out = recordingAdapter();
+    const long = 'x'.repeat(60);
+    seed(spool, msg(long));
+    seed(spool, msg('two'));
+    seed(spool, msg('three'));
+    seed(spool, msg('four'));
+    t = Date.now();
+    const s = scriptedLoop();
+    const result = await gateway(s.loop, out.adapter, spool).replayInboundSpool();
+    expect(result).toEqual({ replayed: 0, deferred: 0, dead: 4 });
+    const notice = out.sends.map((x) => x.text)[0] ?? '';
+    expect(notice).toContain(`Missed: "${'x'.repeat(40)}…", "two", "three" and 1 more.`);
+  });
+
+  it('the interrupted-retry notice names its 24h window and the discard rule (H6)', () => {
+    expect(INTERRUPTED_RETRY_NOTICE).toContain(
+      'This works for 24 hours; any other message from you discards it.',
+    );
   });
 });
 
@@ -795,7 +895,7 @@ describe('inbound spool — absorbed steer rows', () => {
     if (withTool) await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
     else await waitUntil(() => loop.texts.length === 1);
     await gw.handleMessage(msg('and cc finance on it'), out.adapter);
-    expect(out.sends.map((s) => s.text)).toEqual(['↩ noted']);
+    expect(out.sends.map((s) => s.text)).toEqual([ABSORBED_STEER_ACK]);
     const [primary, steer] = rows(spool);
     expect(steer?.absorbedInto).toBe(primary?.id);
     out.sends.length = 0;

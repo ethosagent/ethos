@@ -8,7 +8,12 @@ export const configRouter = {
   get: os.config.get.handler(({ context }) => context.config.get()),
 
   update: os.config.update.handler(async ({ input, context }) => {
-    const { adoptedModels } = await context.config.update(input);
-    return { ok: true as const, ...(adoptedModels.length > 0 ? { adoptedModels } : {}) };
+    const { adoptedModels, warnings } = await context.config.update(input);
+    return {
+      ok: true as const,
+      ...(adoptedModels.length > 0 ? { adoptedModels } : {}),
+      // B2: unknown-key lines the save kept; the settings save bar shows them.
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   }),
 };

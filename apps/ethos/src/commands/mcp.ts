@@ -47,6 +47,7 @@ import {
   resolveMcpExportScope,
 } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import {
   createAgentLoop,
@@ -184,6 +185,7 @@ async function runServe(argv: string[]): Promise<void> {
     process.exit(1);
   }
   const runtime = await createAgentLoop(config);
+  gateNonInteractiveLoop(runtime, config, 'an MCP client cannot show an approval prompt');
   const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
   // The memory tools read and write through the SAME backend the agent does
   // (`createMemoryProviderFromConfig`, packages/wiring/src/memory-backend.ts);
@@ -316,6 +318,7 @@ async function runServeExport(opts: {
     // The smart reviewer's decision site from THIS build (plan
     // decision-provider-jev §8.2); absent → the LLM reviewer only.
     ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
+    executionPostureFor: runtime.executionPostureFor,
   });
   runtime.loop.hooks.registerModifying('before_tool_call', createExportApprovalGate(danger));
 

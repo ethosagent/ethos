@@ -52,6 +52,9 @@ describe('ACTIVITY_EVENT_TYPES', () => {
       'tool_end',
       'done',
       'error',
+      // A1 (ux-feedback plan) — a safety halt is a discrete action, not
+      // token plumbing: the feed exists to show an agent that stopped early.
+      'halt',
       'cron.fired',
       'decision',
     ] as const) {

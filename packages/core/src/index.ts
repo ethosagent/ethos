@@ -23,6 +23,7 @@ export {
   type CostBudget,
   checkCostBudget,
   checkTurnBudgets,
+  haltNotice,
 } from './agent-loop/budgets';
 // Lane 1(b/c) — the gate's output-reserve constant, shared with wiring's
 // startup floor diagnostic and window-scaled result budget so there is ONE

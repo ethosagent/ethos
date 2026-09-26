@@ -111,6 +111,33 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
 // memory_write
 // ---------------------------------------------------------------------------
 
+/** How much of the written content the user-facing notice quotes. */
+const NOTICE_SNIPPET_CHARS = 60;
+
+/**
+ * W4 (ux-feedback-and-config-clarity) — one user-audience progress line per
+ * successful write, so the person sees `remembered · "…" → USER.md` instead of
+ * silence while the turn continues; a `remove` reads `forgot · …`. Emitted
+ * only AFTER `memory.sync` resolved: a failed write must not claim memory.
+ * The tool's return value to the LLM is unchanged.
+ */
+function emitMemoryNotice(
+  ctx: ToolContext,
+  verb: 'remembered' | 'forgot',
+  content: string,
+  key: string,
+): void {
+  const oneLine = content.trim().replace(/\s+/g, ' ');
+  const snippet =
+    oneLine.length > NOTICE_SNIPPET_CHARS ? `${oneLine.slice(0, NOTICE_SNIPPET_CHARS)}…` : oneLine;
+  ctx.emit({
+    type: 'progress',
+    toolName: 'memory_write',
+    audience: 'user',
+    message: `${verb} · "${snippet}" → ${key}`,
+  });
+}
+
 export function createMemoryWriteTool(memory: MemoryProvider): Tool {
   return {
     name: 'memory_write',
@@ -168,9 +195,11 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
       if (action === 'remove') {
         const match = substring_match ?? content;
         await memory.sync([{ action: 'remove', key, substringMatch: match }], memCtx);
+        emitMemoryNotice(ctx, 'forgot', match, key);
       } else {
         const sanitizedContent = sanitize(content);
         await memory.sync([{ action, key, content: sanitizedContent }], memCtx);
+        emitMemoryNotice(ctx, 'remembered', content, key);
       }
 
       const verb = action === 'add' ? 'Appended to' : action === 'replace' ? 'Replaced' : 'Updated';

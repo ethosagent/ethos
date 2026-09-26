@@ -2,10 +2,11 @@ import type { FenceRendererResolver } from '@ethosagent/ui-components';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useFenceResolver } from '../../features/renderers/resolver';
 import type { OlderHistoryStatus } from '../../hooks/useChat';
-import type { AssistantTurn, ChatMessage } from '../../lib/chat-reducer';
+import type { AssistantTurn, ChatMessage, TurnRunMeta } from '../../lib/chat-reducer';
 import type { TrailEntry, TrailState } from '../../lib/trail';
 import { SaveToDashboardContextMenu } from '../dashboard/SaveToDashboardContextMenu';
 import { SaveToDashboardModal } from '../dashboard/SaveToDashboardModal';
+import { PersonalityMark } from '../ui/PersonalityMark';
 import { TeamRing } from '../ui/TeamRing';
 import { AssistantBubble, UserBubble } from './MessageBubble';
 import type { RunSurface } from './RunCard';
@@ -35,8 +36,16 @@ export interface MessageListProps {
   /** In-flight assistant turn rendered at the tail of the list. */
   currentTurn: AssistantTurn | null;
   personalityId?: string;
+  /** Display name for the empty state; falls back to the id. */
+  personalityName?: string;
   model?: string;
   sessionId?: string;
+  /** A4 — per-turn run meta (`ChatState.turnMeta` plus the live turn's). */
+  turnMeta?: Record<string, TurnRunMeta>;
+  /** W1 — re-send a failed message. Must be referentially stable. */
+  onRetryMessage?: (messageId: string) => void;
+  /** W1 — discard a failed message's bubble. Must be referentially stable. */
+  onDiscardMessage?: (messageId: string) => void;
   /** Puts a suggested prompt in the composer (`recommend_actions` pills).
    *  Must be referentially stable, or every history bubble re-renders. */
   onSuggestPrompt?: (prompt: string) => void;
@@ -62,8 +71,12 @@ export function MessageList({
   messages,
   currentTurn,
   personalityId,
+  personalityName,
   model,
   sessionId,
+  turnMeta,
+  onRetryMessage,
+  onDiscardMessage,
   onSuggestPrompt,
   onTryVoice,
   runSurface,
@@ -200,6 +213,7 @@ export function MessageList({
     return (
       <EmptyState
         personalityId={personalityId}
+        personalityName={personalityName}
         model={model}
         onSuggestPrompt={onSuggestPrompt}
         {...(onTryVoice ? { onTryVoice } : {})}
@@ -207,13 +221,10 @@ export function MessageList({
     );
   }
 
-  // Derived "thinking" state: the user just sent a message, no SSE event
-  // has arrived yet (currentTurn null), and there's no error. Shows a
-  // pulsing placeholder bubble so the user sees the agent is alive even
-  // before the first text_delta lands. The first event clears it (because
-  // currentTurn becomes non-null and the live streaming bubble takes over).
-  const lastMessage = messages[messages.length - 1];
-  const isThinking = lastMessage?.role === 'user' && !currentTurn;
+  // No placeholder bubble before the first token: the status line above the
+  // composer already announces `received` / `thinking` in its reserved slot
+  // (contract §2), and two waiting indicators on one screen is one too many
+  // (ux-feedback W5 — ThinkingBubble removed).
 
   return (
     <div ref={listRef} className="message-list" onScroll={onScroll}>
@@ -244,7 +255,12 @@ export function MessageList({
       ) : null}
       {messages.map((m) =>
         m.role === 'user' ? (
-          <UserBubble key={m.id} message={m} />
+          <UserBubble
+            key={m.id}
+            message={m}
+            {...(onRetryMessage ? { onRetry: onRetryMessage } : {})}
+            {...(onDiscardMessage ? { onDiscard: onDiscardMessage } : {})}
+          />
         ) : (
           <AssistantHistoryRow
             key={m.id}
@@ -256,6 +272,7 @@ export function MessageList({
             {...(runSurface ? { runSurface } : {})}
             {...(trail?.[m.id] ? { trail: trail[m.id] } : {})}
             {...(stoppedTurnIds?.includes(m.id) ? { stopped: true } : {})}
+            {...(turnMeta?.[m.id] ? { runMeta: turnMeta[m.id] } : {})}
           />
         ),
       )}
@@ -269,9 +286,9 @@ export function MessageList({
           {...(runSurface ? { runSurface } : {})}
           {...(trail?.[currentTurn.id] ? { trail: trail[currentTurn.id] } : {})}
           {...(stoppedTurnIds?.includes(currentTurn.id) ? { stopped: true } : {})}
+          {...(turnMeta?.[currentTurn.id] ? { runMeta: turnMeta[currentTurn.id] } : {})}
         />
       ) : null}
-      {isThinking ? <ThinkingBubble /> : null}
       <SaveToDashboardModal
         open={saveModalOpen}
         onClose={() => setSaveModalOpen(false)}
@@ -310,6 +327,7 @@ interface AssistantHistoryRowProps {
   runSurface?: RunSurface;
   trail?: TrailEntry[];
   stopped?: boolean;
+  runMeta?: TurnRunMeta;
 }
 
 /**
@@ -329,22 +347,6 @@ const AssistantHistoryRow = memo(function AssistantHistoryRow({
     </SaveToDashboardContextMenu>
   );
 });
-
-function ThinkingBubble() {
-  return (
-    <div className="message-row message-row-assistant">
-      <div
-        role="status"
-        className="message-assistant message-thinking"
-        aria-label="Agent is thinking"
-      >
-        <span className="thinking-dot" />
-        <span className="thinking-dot" />
-        <span className="thinking-dot" />
-      </div>
-    </div>
-  );
-}
 
 const DEFAULT_PILLS = [
   'Explore a topic',
@@ -393,36 +395,25 @@ function TeamEmptyState({
 
 function EmptyState({
   personalityId,
+  personalityName,
   model,
   onSuggestPrompt,
   onTryVoice,
 }: {
   personalityId?: string;
+  personalityName?: string;
   model?: string;
   onSuggestPrompt?: (prompt: string) => void;
   onTryVoice?: () => void;
 }) {
+  // DESIGN.md § Empty chat state: the agent's own 48px generative mark and
+  // display name — never a hardcoded brand hue or a raw id (ux-feedback W5).
   return (
     <div className="message-list-empty">
-      <div
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: '50%',
-          background: 'rgba(74,158,255,0.08)',
-          border: '1px solid rgba(74,158,255,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <svg aria-hidden="true" width="32" height="32" viewBox="0 0 16 16">
-          <circle cx="8" cy="8" r="7" fill="#4A9EFF" />
-          <circle cx="8" cy="8" r="3" fill="var(--bg-base, #0F0F0F)" />
-        </svg>
-      </div>
-      <div className="empty-state-brand">Ethos</div>
-      {personalityId ? <div className="empty-state-name">{personalityId}</div> : null}
+      {personalityId ? <PersonalityMark personalityId={personalityId} size={48} /> : null}
+      {personalityId || personalityName ? (
+        <div className="empty-state-name">{personalityName ?? personalityId}</div>
+      ) : null}
       {model ? <div className="empty-state-model">{model}</div> : null}
       <div className="empty-state-tagline">Ready to help.</div>
       <div className="empty-state-pills">

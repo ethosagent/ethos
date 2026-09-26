@@ -191,3 +191,90 @@ describe('personality hot-reload — refresh-on-resolve', () => {
     });
   });
 });
+
+// N3 (ux-feedback-and-config-clarity) — resilient loading. One malformed
+// directory no longer blocks its siblings: every successful loadOne is
+// applied before the call settles, the failure lands on `lastLoadReport`
+// with the dir and a file-attributed error, and the call still REJECTS so
+// callers that fail closed today (CLI wiring, gateway first boot) keep doing
+// so. A previously-loaded personality whose reload breaks serves its
+// last-good copy.
+describe('personality load resilience (N3)', () => {
+  // `approvalMode: off` + a channel binding is refused at load
+  // (validateUnsafeCombinations) — a reliable parse-time failure.
+  async function writeBroken(storage: Storage, id: string): Promise<void> {
+    const pdir = join(DIR, id);
+    await storage.mkdir(pdir);
+    await storage.write(
+      join(pdir, 'config.yaml'),
+      'name: Broken\nplatform: telegram\nsafety:\n  approvalMode: off\n',
+    );
+    await storage.write(join(pdir, 'SOUL.md'), '# Broken\n');
+  }
+
+  it('one bad directory does not block the others; the report names the dir and the error', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage);
+    await writePersonality(storage, 'sage', { name: 'Sage' });
+    await writeBroken(storage, 'broken');
+
+    await expect(registry.loadFromDirectory(DIR)).rejects.toThrow(/approvalMode: off/);
+
+    // The sibling loaded despite the rejection.
+    expect(registry.get('sage')?.name).toBe('Sage');
+    expect(registry.get('broken')).toBeUndefined();
+
+    const report = registry.lastLoadReport;
+    expect(report.failures).toHaveLength(1);
+    expect(report.failures[0]?.id).toBe('broken');
+    expect(report.failures[0]?.dir).toBe(join(DIR, 'broken'));
+    // File-level attribution: the error names its source file.
+    expect(report.failures[0]?.error).toMatch(/^config\.yaml: /);
+  });
+
+  it('a previously-loaded personality whose reload now fails keeps serving the last-good copy', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage);
+    await writePersonality(storage, 'sage', { name: 'Sage v1' });
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('sage')?.name).toBe('Sage v1');
+
+    // Breaking edit.
+    await storage.write(
+      join(DIR, 'sage', 'config.yaml'),
+      'name: Sage v2\nplatform: telegram\nsafety:\n  approvalMode: off\n',
+    );
+    await expect(registry.loadFromDirectory(DIR)).rejects.toThrow(/approvalMode: off/);
+
+    // Last-good copy still serves.
+    expect(registry.get('sage')?.name).toBe('Sage v1');
+    expect(registry.lastLoadReport.failures[0]?.id).toBe('sage');
+
+    // The failure is reported once per content change, not once per refresh:
+    // the unchanged broken dir is skipped by the fingerprint fast path.
+    await registry.loadFromDirectory(DIR);
+    expect(registry.lastLoadReport.failures).toHaveLength(0);
+
+    // Fixing the file re-parses and serves the new copy.
+    await storage.write(join(DIR, 'sage', 'config.yaml'), 'name: Sage v3\n');
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('sage')?.name).toBe('Sage v3');
+  });
+
+  it('the report notes reloads with the changed files named', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage);
+    await writePersonality(storage, 'sage', { name: 'Sage' });
+    await registry.loadFromDirectory(DIR);
+    // First sight is not a reload.
+    expect(registry.lastLoadReport.reloaded).toHaveLength(0);
+
+    await storage.write(join(DIR, 'sage', 'SOUL.md'), '# Sage\n\nedited\n');
+    await registry.loadFromDirectory(DIR);
+    expect(registry.lastLoadReport.reloaded).toEqual([{ id: 'sage', changed: ['SOUL.md'] }]);
+
+    // A no-change refresh reports nothing.
+    await registry.loadFromDirectory(DIR);
+    expect(registry.lastLoadReport.reloaded).toHaveLength(0);
+  });
+});

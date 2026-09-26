@@ -184,7 +184,8 @@ describe('the idle gateway bot', () => {
     fire(job('job-1'));
     await waitUntil(() => sends.length > 0);
     expect(sends[0]?.chatId).toBe('chat-bg');
-    expect(sends[0]?.text).toContain('finished — status: done');
+    // H6 wording (plan ux-feedback-and-config-clarity): a human sentence.
+    expect(sends[0]?.text).toContain('background job job-1 "task" finished');
     expect(sends[0]?.text).toContain('child result: 42');
     expect(store.claimDelivery).toHaveBeenCalledWith('job-1');
   });
@@ -198,10 +199,14 @@ describe('the idle gateway bot', () => {
   });
 
   it('stamps the idle bot key as the loop origin bot', () => {
-    const resolve = (key: string) => `t:${key}`;
-    const opts = idleGatewayBotLoopOpts(resolve);
+    const origin = {
+      resolveOriginThreadId: (key: string) => `t:${key}`,
+      resolveOriginUserId: (key: string) => `u:${key}`,
+    };
+    const opts = idleGatewayBotLoopOpts(origin);
     expect(opts.originBotKey).toBe(IDLE_GATEWAY_BOT_KEY);
-    expect(opts.resolveOriginThreadId).toBe(resolve);
+    expect(opts.resolveOriginThreadId).toBe(origin.resolveOriginThreadId);
+    expect(opts.resolveOriginUserId).toBe(origin.resolveOriginUserId);
   });
 
   it('both hosts make the system loop the idle bot only when no bot is configured', async () => {
@@ -209,7 +214,7 @@ describe('the idle gateway bot', () => {
     const boot = await read('apps/ethos/src/commands/boot.ts');
     for (const src of [gw, boot]) {
       expect(src).toMatch(
-        /\.\.\.\(bots\.length === 0\s*\?\s*idleGatewayBotLoopOpts\(\(sessionKey\) => gatewayRef\?\.originThreadIdFor\(sessionKey\)\)\s*: \{\}\),/,
+        /\.\.\.\(bots\.length === 0\s*\?\s*idleGatewayBotLoopOpts\(gatewayTurnOrigin\(\(\) => gatewayRef\)\)\s*: \{\}\),/,
       );
       expect(src).toMatch(/idleBotJobs: \{ jobStore: \w+(\.jobStore)?, backgroundExecutor: /);
     }

@@ -111,7 +111,7 @@ describe('StatusLine — a send that failed', () => {
       }),
     );
     expect(html).toBe('');
-    expect(state.error).toBe('offline');
+    expect(state.error).toEqual({ message: 'offline' });
   });
 });
 

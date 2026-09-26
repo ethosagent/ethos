@@ -149,8 +149,13 @@ export function rotateIfNeeded(filePath: string, config: LogRotationConfig): voi
  * Append one error to `~/.ethos/logs/errors.jsonl`. Best-effort — failures
  * are swallowed so the surface error still renders. Synchronous so the
  * top-level handler can run it before `process.exit(1)`.
+ *
+ * Returns the trace id the entry recorded (N2), so the caller can render it
+ * on `formatError`'s diagnostics line — `undefined` when the error happened
+ * outside a turn and there is no trace to point at. No id is synthesized:
+ * a trace id the `ethos trace` lookup cannot find would be a lie.
  */
-export function appendErrorLog(err: EthosError, ctx: LogContext = {}): void {
+export function appendErrorLog(err: EthosError, ctx: LogContext = {}): string | undefined {
   try {
     mkdirSync(logsDir(), { recursive: true });
     rotateIfNeeded(logPath(), _rotation);
@@ -178,8 +183,10 @@ export function appendErrorLog(err: EthosError, ctx: LogContext = {}): void {
     } catch {
       // Observability is best-effort — never mask the primary log write.
     }
+    return ctx.traceId;
   } catch {
     // Disk full, perms, ENOSPC — drop the entry, surface error still prints.
+    return undefined;
   }
 }
 

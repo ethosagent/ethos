@@ -510,6 +510,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -547,6 +550,9 @@ importers:
       '@ethosagent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -801,6 +807,9 @@ importers:
       '@docusaurus/module-type-aliases':
         specifier: 3.10.1
         version: 3.10.1(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@docusaurus/plugin-content-docs':
+        specifier: 3.10.1
+        version: 3.10.1(@docusaurus/faster@3.10.1(@docusaurus/types@3.10.1(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(@swc/helpers@0.5.15)(esbuild@0.27.7)(postcss@8.5.15))(@mdx-js/react@3.1.1(@types/react@19.2.16)(react@19.2.6))(@rspack/core@1.7.11(@swc/helpers@0.5.15))(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
       '@docusaurus/tsconfig':
         specifier: 3.10.1
         version: 3.10.1
@@ -1252,6 +1261,13 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+    devDependencies:
+      '@ethosagent/memory-approval':
+        specifier: workspace:*
+        version: link:../memory-approval
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
 
   extensions/goal-runner:
     dependencies:
@@ -1705,6 +1721,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1757,6 +1776,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2362,6 +2384,9 @@ importers:
       '@ethosagent/platform-voice':
         specifier: workspace:*
         version: link:../platform-voice
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2375,6 +2400,9 @@ importers:
 
   extensions/tools-watchers:
     dependencies:
+      '@ethosagent/tools-messaging':
+        specifier: workspace:*
+        version: link:../tools-messaging
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2454,6 +2482,12 @@ importers:
 
   packages/a2a:
     dependencies:
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../safety/injection
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety/network
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../sqlite
@@ -3015,6 +3049,9 @@ importers:
         specifier: workspace:*
         version: link:../worker-router
     devDependencies:
+      '@ethosagent/tools-a2a':
+        specifier: workspace:*
+        version: link:../../extensions/tools-a2a
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)

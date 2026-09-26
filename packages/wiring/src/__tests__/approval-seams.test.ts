@@ -10,13 +10,18 @@ import type {
   AgentEvent,
   BeforeToolCallPayload,
   CompletionChunk,
+  ExecutionPosture,
   LLMProvider,
   Message,
   PersonalityConfig,
 } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
-import { createApprovalDangerPredicate, createLazyProvider } from '../approval-seams';
+import {
+  createApprovalDangerPredicate,
+  createLazyProvider,
+  REWRITTEN_ARGS_NOTE,
+} from '../approval-seams';
 import { createSmartApprover } from '../smart-approver';
 
 // The reviewer must not even be CONSTRUCTED on the default path — a
@@ -129,11 +134,93 @@ describe('createLazyProvider', () => {
 // the `manual` default (the flagged reason). Deny rules are no longer this
 // predicate's concern — core refuses them before any hook runs
 // (packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts).
+// S6 / D1(a): the posture comes from the SAME personality the session resolved,
+// via the host-supplied `executionPostureFor`.
+describe('createApprovalDangerPredicate — execution posture', () => {
+  it('asks before terminal when the session personality runs on a host-local posture', async () => {
+    const hooks = new DefaultHookRegistry();
+    const asked: Array<string | undefined> = [];
+    const isDangerous = createApprovalDangerPredicate({
+      hooks: [hooks],
+      personalities: registryWith(person('local-one', {}), person('boxed', {})),
+      getProvider: async () => {
+        throw new Error('provider must not be constructed');
+      },
+      model: 'm',
+      executionPostureFor: (id) => {
+        asked.push(id);
+        return {
+          backend: id === 'local-one' ? 'local' : 'docker',
+          containerized: false,
+        } as ExecutionPosture;
+      },
+    });
+    await hooks.fireVoid('session_start', {
+      sessionId: 's-local',
+      sessionKey: 'k1',
+      platform: 'web',
+      personalityId: 'local-one',
+    });
+    await hooks.fireVoid('session_start', {
+      sessionId: 's-boxed',
+      sessionKey: 'k2',
+      platform: 'web',
+      personalityId: 'boxed',
+    });
+    expect(await isDangerous(payload('terminal', { command: 'ls' }, 's-local'))).toBe(
+      'terminal requires explicit approval',
+    );
+    expect(await isDangerous(payload('terminal', { command: 'ls' }, 's-boxed'))).toBeNull();
+    expect(asked).toEqual(['local-one', 'boxed']);
+  });
+});
+
+// S10 follow-up: when a `before_tool_call` handler rewrites the args, core
+// fires the hook again on the rewritten args (`enforceBeforeToolCall`) with
+// `rewrittenFrom` set, and an approval surface is asked a second time. That
+// second prompt must say why it is being asked again.
+describe('createApprovalDangerPredicate — re-judge of rewritten args', () => {
+  function manual() {
+    return createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
+      hooks: [new DefaultHookRegistry()],
+      personalities: registryWith(),
+      getProvider: async () => {
+        throw new Error('provider must not be constructed');
+      },
+      model: 'm',
+      alwaysAsk: ['shell'],
+    });
+  }
+
+  it('says the arguments were rewritten on the re-judge fire', async () => {
+    const reason = await manual()({
+      ...payload('shell', { command: 'cd /repo && ls' }),
+      rewrittenFrom: { command: 'ls' },
+    });
+    expect(reason).toBe(`shell requires explicit approval${REWRITTEN_ARGS_NOTE}`);
+    expect(reason).toContain('rewrote the arguments');
+  });
+
+  it('leaves the first fire’s reason unchanged', async () => {
+    expect(await manual()(payload('shell', { command: 'ls' }))).toBe(
+      'shell requires explicit approval',
+    );
+  });
+
+  it('stays null for a rewritten call nothing flags', async () => {
+    expect(
+      await manual()({ ...payload('read_file', { path: 'b' }), rewrittenFrom: { path: 'a' } }),
+    ).toBeNull();
+  });
+});
+
 describe('createApprovalDangerPredicate — personality resolution', () => {
   it('resolves the turn personality from session_start', async () => {
     const hooks = new DefaultHookRegistry();
     const { provider, calls } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: async () => provider,
@@ -155,6 +242,7 @@ describe('createApprovalDangerPredicate — personality resolution', () => {
   it('falls back to manual for a session it never saw', async () => {
     const hooks = new DefaultHookRegistry();
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: async () => {
@@ -176,6 +264,7 @@ describe('createApprovalDangerPredicate — personality resolution', () => {
     const hooks = new DefaultHookRegistry();
     const { provider } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: async () => provider,
@@ -206,6 +295,7 @@ describe('createApprovalDangerPredicate — smart mode', () => {
     );
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: createLazyProvider(async () => {
@@ -235,6 +325,7 @@ describe('createApprovalDangerPredicate — smart mode', () => {
     const hooks = new DefaultHookRegistry();
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('plain'), person('explicit', { approvalMode: 'manual' })),
       getProvider: createLazyProvider(async () => {
@@ -270,6 +361,7 @@ describe('createApprovalDangerPredicate — built-in consequential flag set', ()
     const { provider, calls } = verdictProvider(verdictJson);
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('p', safety)),
       getProvider: createLazyProvider(async () => {
@@ -339,6 +431,7 @@ describe('smart mode through a real agent turn', () => {
       '{"decision":"deny","reason":"rewrites tracked source"}',
     );
     const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities,
       getProvider: createLazyProvider(async () => provider),

@@ -656,15 +656,16 @@ export class ChatService {
         ...(audience !== undefined ? { audience } : {}),
       }),
     );
-    bridge.on('tool_progress', (toolName, message, percent) =>
+    bridge.on('tool_progress', (toolName, message, percent, audience) =>
       this.append(sessionId, {
         type: 'tool_progress',
         toolName,
         message,
         ...(percent !== undefined ? { percent } : {}),
-        // The agent loop already gates `audience: 'internal'` events; bridge
-        // events flow only when audience would surface them.
-        audience: 'user',
+        // C5 (ux-feedback plan) — pass the Phase 30.2 audience through as the
+        // bridge forwards it, instead of stamping everything 'user': the
+        // client is the surface, so it must see which events opted in.
+        audience,
       }),
     );
     bridge.on('tool_end', (toolCallId, toolName, ok, durationMs, result, structured, audience) => {
@@ -731,6 +732,10 @@ export class ChatService {
     // it carries summaries only (K13). A late shadow row can arrive after
     // `done`; the bridge drains the loop to exhaustion, so it still lands here.
     bridge.on('decision', (decision) => this.append(sessionId, { type: 'decision', ...decision }));
+    // A1 (ux-feedback plan) — an early safety stop (budget or watcher). The
+    // bridge forwards the event whole; put it on the stream so the client can
+    // mark the reply partial. A normal `done` still follows.
+    bridge.on('halt', (halt) => this.append(sessionId, { type: 'halt', ...halt }));
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount, traceId) => {
       this.append(sessionId, { type: 'done', text, turnCount, ...(traceId ? { traceId } : {}) });

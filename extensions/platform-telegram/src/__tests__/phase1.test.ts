@@ -1,4 +1,5 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -192,7 +193,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
 describe('Commands menu (setMyCommands)', () => {
   beforeEach(resetMocks);
 
-  it('registers 6 slash commands at start()', async () => {
+  it('registers the gateway-surface commands from the shared registry at start() (U2)', async () => {
     const adapter = mk({ token: '1:fake', cache });
     await adapter.start();
 
@@ -201,15 +202,19 @@ describe('Commands menu (setMyCommands)', () => {
       command: string;
       description: string;
     }>;
-    expect(commands).toHaveLength(6);
-
     const names = commands.map((c) => c.command);
-    expect(names).toContain('start');
-    expect(names).toContain('new');
-    expect(names).toContain('help');
-    expect(names).toContain('personality');
-    expect(names).toContain('usage');
-    expect(names).toContain('stop');
+    // Derived from `slashCommandsForSurface('gateway')` minus aliases and the
+    // owner's pairing commands — the same list the gateway executes
+    // (`PLATFORM_COMMANDS`, pinned by slash-registry-drift.test.ts).
+    const expected = slashCommandsForSurface('gateway')
+      .filter((c) => !c.aliasOf && !['allow', 'deny', 'communications'].includes(c.name))
+      .map((c) => c.name);
+    expect(names).toEqual(expected);
+    for (const name of ['start', 'new', 'help', 'personality', 'usage', 'stop', 'budget', 'mute']) {
+      expect(names).toContain(name);
+    }
+    expect(names).not.toContain('reset');
+    expect(names).not.toContain('allow');
   });
 
   it('swallows setMyCommands failures (best-effort)', async () => {

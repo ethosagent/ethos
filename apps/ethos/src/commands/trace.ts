@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
-import type { Span, Trace } from '@ethosagent/types';
+import { EthosError, type Span, type Trace } from '@ethosagent/types';
 
 // ethos trace [id] [--session <id>] [--recent [N]] [--slow [N]]
 
@@ -115,8 +115,13 @@ export async function runTrace(args: string[]): Promise<void> {
       // Show single trace with spans.
       const trace = store.getTrace(flags.traceId);
       if (!trace) {
-        console.error(`Trace not found: ${flags.traceId}`);
-        process.exit(1);
+        // N2 — a bare "Trace not found" left the user nowhere to go; the
+        // envelope names the listing that shows what ids DO exist.
+        throw new EthosError({
+          code: 'NOT_FOUND',
+          cause: `Trace not found: ${flags.traceId}`,
+          action: "Run 'ethos trace' to list recent traces ('ethos trace --recent 50' for more).",
+        });
       }
       const spans = store.getSpans(flags.traceId);
 

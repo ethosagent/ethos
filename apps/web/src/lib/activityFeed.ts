@@ -156,7 +156,25 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         ],
       };
 
-    case 'tool_progress':
+    case 'tool_progress': {
+      // Tool-progress audience boundary (CLAUDE.md, Phase 30.2): only
+      // `'user'`-audience progress surfaces here — the same gate the trail
+      // applies in `applyTrailEvent`.
+      if (event.audience !== 'user') return null;
+      // A loop-level notice (compaction retry, provider fallback — A4) rides
+      // `tool_progress` under the reserved `_loop` name. It is a notice, not a
+      // tool that ran: message only, never a `_loop:` prefix — consistent with
+      // the trail's notice row.
+      if (event.toolName === '_loop') {
+        return {
+          ...base,
+          key: `progress:${ctx.sessionId}:${ctx.seq}`,
+          kind: 'notice',
+          label: 'tool_progress',
+          summary: event.message,
+          details: [{ key: 'message', kind: 'text', value: event.message }],
+        };
+      }
       return {
         ...base,
         key: `progress:${ctx.sessionId}:${ctx.seq}`,
@@ -171,6 +189,7 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
             : ([{ key: 'percent', kind: 'text', value: `${event.percent}%` }] as ActivityDetail[])),
         ],
       };
+    }
 
     case 'done':
       return {
@@ -200,6 +219,29 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         details: [
           { key: 'error', kind: 'text', value: event.error },
           { key: 'code', kind: 'text', value: event.code },
+        ],
+      };
+
+    case 'halt':
+      // A1 (ux-feedback plan) — an early safety stop. Not `error` (the turn
+      // still completes, partial) and not `approval` (nothing is waiting on a
+      // human): a neutral notice whose glyph + word carry the warning.
+      return {
+        ...base,
+        key: `halt:${ctx.sessionId}:${ctx.seq}`,
+        kind: 'notice',
+        label: 'halt',
+        summary: `⚠ stopped early · ${event.kind} · ${event.rule}`,
+        details: [
+          { key: 'kind', kind: 'text', value: event.kind },
+          { key: 'rule', kind: 'text', value: event.rule },
+          ...(event.toolName === undefined
+            ? []
+            : ([{ key: 'tool', kind: 'text', value: event.toolName }] as ActivityDetail[])),
+          ...(event.count === undefined
+            ? []
+            : ([{ key: 'count', kind: 'text', value: String(event.count) }] as ActivityDetail[])),
+          { key: 'message', kind: 'text', value: event.message },
         ],
       };
 

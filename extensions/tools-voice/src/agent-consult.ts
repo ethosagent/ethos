@@ -20,6 +20,7 @@
 // is populated before the loop exists, and this tool needs the loop.
 
 import type { AgentLoop } from '@ethosagent/core';
+import { wrapUntrusted } from '@ethosagent/safety-injection';
 import type {
   RealtimeToolDefinition,
   Tool,
@@ -29,6 +30,23 @@ import type {
   VoiceTurnOrigin,
 } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
+
+/**
+ * INB-002 — fence speech from the far end of a call before it reaches
+ * `AgentLoop.run`. A phone turn never passes through the gateway, whose
+ * `wrapUntrusted` is what fences every channel message, and `AgentLoop` does
+ * not wrap its own `text`. So both far-end paths call this at the point the
+ * text meets the loop: the SIP lane's runner (`createSipInboundHandler`,
+ * apps/ethos/src/sip-inbound-dispatch.ts) and `runConsult` below, whose prompt
+ * the realtime model composes from the caller's words. The owner's own speech
+ * (`speaker: 'owner'`, browser talk-mode) is operator input and is returned
+ * unchanged, as a web chat message is. Pinned by the 'INB-002' cases in
+ * `__tests__/agent-consult.test.ts` and apps/ethos/src/__tests__/sip-inbound-dispatch.test.ts.
+ */
+export function fenceFarEndSpeech(text: string, origin: VoiceTurnOrigin): string {
+  if (origin.speaker !== 'far_end') return text;
+  return wrapUntrusted({ content: text, toolName: 'voice_call', source: origin.transport }).content;
+}
 
 /** Tool name. Exported so the realtime seam never spells it by hand. */
 export const AGENT_CONSULT_TOOL = 'agent_consult';
@@ -311,7 +329,7 @@ function runConsult(
     const turn = (async () => {
       if (prior) await prior;
       let output = '';
-      for await (const event of loop.run(prompt, {
+      for await (const event of loop.run(fenceFarEndSpeech(prompt, opts.voiceOrigin), {
         sessionKey,
         ...(personalityId ? { personalityId } : {}),
         abortSignal: ctx.abortSignal,

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Modal, message, Select, Tabs } from 'antd';
+import { App as AntApp, Button, Input, Modal, Select, Tabs } from 'antd';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../../rpc';
@@ -20,7 +20,9 @@ export function SaveToDashboardModal({ open, onClose, userMessage, sessionId }: 
   const [cronSchedule, setCronSchedule] = useState('');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [messageApi, contextHolder] = message.useMessage();
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message: messageApi } = AntApp.useApp();
 
   const { data: dashboards } = useQuery({
     queryKey: ['dashboards'],
@@ -60,94 +62,91 @@ export function SaveToDashboardModal({ open, onClose, userMessage, sessionId }: 
     (dashboardId || newTitle.trim()) && (prompt.trim() || (tab === 'summary' && summary));
 
   return (
-    <>
-      {contextHolder}
-      <Modal
-        title="Save to Dashboard"
-        open={open}
-        onCancel={onClose}
-        footer={[
-          <Button key="cancel" onClick={onClose}>
-            Cancel
-          </Button>,
-          <Button
-            key="save"
-            type="primary"
-            disabled={!canSave}
-            loading={saveMut.isPending}
-            onClick={() => saveMut.mutate()}
-          >
-            Save & Preview
-          </Button>,
+    <Modal
+      title="Save to Dashboard"
+      open={open}
+      onCancel={onClose}
+      footer={[
+        <Button key="cancel" onClick={onClose}>
+          Cancel
+        </Button>,
+        <Button
+          key="save"
+          type="primary"
+          disabled={!canSave}
+          loading={saveMut.isPending}
+          onClick={() => saveMut.mutate()}
+        >
+          Save & Preview
+        </Button>,
+      ]}
+      width={600}
+    >
+      <Tabs
+        activeKey={tab}
+        onChange={(k) => setTab(k as 'user' | 'summary')}
+        items={[
+          {
+            key: 'user',
+            label: 'User Message',
+            children: (
+              <Input.TextArea
+                rows={6}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Enter the prompt to re-run for this widget..."
+              />
+            ),
+          },
+          {
+            key: 'summary',
+            label: 'Conversation Summary',
+            disabled: !sessionId,
+            children: summaryLoading ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>
+                Generating summary...
+              </div>
+            ) : summaryAvailable ? (
+              <Input.TextArea
+                rows={6}
+                value={editedSummary ?? summary ?? ''}
+                onChange={(e) => setEditedSummary(e.target.value)}
+                placeholder="Conversation summary will appear here..."
+              />
+            ) : (
+              <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>
+                Conversation summary not available yet.
+              </div>
+            ),
+          },
         ]}
-        width={600}
-      >
-        <Tabs
-          activeKey={tab}
-          onChange={(k) => setTab(k as 'user' | 'summary')}
-          items={[
-            {
-              key: 'user',
-              label: 'User Message',
-              children: (
-                <Input.TextArea
-                  rows={6}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Enter the prompt to re-run for this widget..."
-                />
-              ),
-            },
-            {
-              key: 'summary',
-              label: 'Conversation Summary',
-              disabled: !sessionId,
-              children: summaryLoading ? (
-                <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>
-                  Generating summary...
-                </div>
-              ) : summaryAvailable ? (
-                <Input.TextArea
-                  rows={6}
-                  value={editedSummary ?? summary ?? ''}
-                  onChange={(e) => setEditedSummary(e.target.value)}
-                  placeholder="Conversation summary will appear here..."
-                />
-              ) : (
-                <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>
-                  Conversation summary not available yet.
-                </div>
-              ),
-            },
-          ]}
-        />
+      />
 
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Select
-            placeholder="Select dashboard or create new"
-            value={dashboardId}
-            onChange={(v) => {
-              setDashboardId(v);
-              setNewTitle('');
-            }}
-            allowClear
-            options={(dashboards?.dashboards ?? []).map((d) => ({ label: d.title, value: d.id }))}
-            style={{ width: '100%' }}
-          />
-          {!dashboardId && (
-            <Input
-              placeholder="New dashboard name"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-            />
-          )}
+      <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <Select
+          placeholder="Select dashboard or create new"
+          value={dashboardId}
+          onChange={(v) => {
+            setDashboardId(v);
+            setNewTitle('');
+          }}
+          allowClear
+          options={(dashboards?.dashboards ?? []).map((d) => ({ label: d.title, value: d.id }))}
+          style={{ width: '100%' }}
+        />
+        {!dashboardId && (
           <Input
-            placeholder="Cron schedule (optional, e.g. 0 9 * * 1)"
-            value={cronSchedule}
-            onChange={(e) => setCronSchedule(e.target.value)}
+            placeholder="New dashboard name"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
           />
-        </div>
-      </Modal>
-    </>
+        )}
+        <Input
+          placeholder="Cron schedule (optional, e.g. 0 9 * * 1)"
+          value={cronSchedule}
+          onChange={(e) => setCronSchedule(e.target.value)}
+        />
+      </div>
+    </Modal>
   );
 }

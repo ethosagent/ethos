@@ -7,6 +7,7 @@ import {
   deriveBotKey,
   forkSession,
   forkSessionKey,
+  haltNotice,
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
@@ -30,6 +31,7 @@ import {
   getApprovedSenders,
   isSenderAllowed,
   revokeApproval,
+  senderIds,
 } from '@ethosagent/safety-channel';
 import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
@@ -37,6 +39,7 @@ import { SessionLane } from '@ethosagent/session-lane';
 import type Database from '@ethosagent/sqlite';
 import {
   createEventTranslator,
+  describeChatError,
   formatBranchList,
   pickBranch,
   shouldSurfaceProgress,
@@ -71,6 +74,7 @@ import {
   answerSuffix,
   isVoiceOutboundAdapter,
   JOB_ABORTED_BY_SHUTDOWN,
+  resolveModelDisplay,
   voiceAudioExtension,
   voiceAudioMimeType,
 } from '@ethosagent/types';
@@ -91,15 +95,28 @@ import {
 } from './channel-digest';
 import { credentialRequiredReply } from './credential-reply';
 import { MessageDedupCache } from './dedup';
-import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import {
+  beginDelivery,
+  confirmDelivery,
+  type DeliveryBinding,
+  endDelivery,
+  isDeliveryInFlight,
+} from './delivery';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
 import {
   attachmentsFromStructured,
   OUTBOUND_MEDIA_MAX_BYTES,
   type OutboundMediaCaps,
 } from './media';
+import {
+  type GatewayQuietHours,
+  inQuietHours,
+  parseMuteDuration,
+  quietWindowFor,
+} from './quiet-hours';
 import { DraftStreamer } from './streaming';
 import type { TranscodeResult, Transcoder } from './transcode';
+import { TurnFeedback } from './turn-feedback';
 import type { VoiceArtifactStore } from './voice-artifacts';
 import {
   buildTranscriptText,
@@ -119,7 +136,7 @@ export {
   summarizeChannelDigest,
 } from './channel-digest';
 export { MessageDedupCache } from './dedup';
-export { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+export { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 export { DreamExecutor } from './dream-executor';
 export {
   attachmentsFromStructured,
@@ -129,6 +146,15 @@ export {
   type OutboundMediaCaps,
   type OutboundMediaSource,
 } from './media';
+export {
+  type GatewayQuietHours,
+  inQuietHours,
+  MAX_MUTE_MS,
+  minuteOfDay,
+  parseMuteDuration,
+  type QuietHoursWindow,
+  quietWindowFor,
+} from './quiet-hours';
 export {
   closeUnbalancedMarkup,
   DraftStreamer,
@@ -196,6 +222,12 @@ export interface GatewayObservability {
     details?: Record<string, unknown>;
   }): void;
   recordChannelDeny(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
+  /** `channel.pairing` rows — see `Gateway.recordPairing`. */
+  recordChannelPairing?(opts: {
     code?: string;
     cause?: string;
     details?: Record<string, unknown>;
@@ -269,6 +301,32 @@ export const CHANNEL_EXCLUDED_TOOLS: readonly string[] = ['emit_card', 'render_u
 const CLARIFY_ESCALATION_POLL_MS = 5_000;
 
 /**
+ * How long a bot's spend-today read (`GatewayConfig.botSpendSince`) is trusted
+ * before the next turn re-reads it (plan openclaw-2026.9.6-gaps D5). The read
+ * is a SUM over today's message rows, so it is not run per message; between
+ * reads the cached figure is advanced by this process's own `usage` events,
+ * so a burst of turns inside the window still counts. What the window leaves
+ * out is spend by OTHER processes on the same bot (none, under the gateway
+ * singleton lock) and a turn's usage that a re-read replaces before its
+ * message rows land — at most one window's worth of drift.
+ */
+const DAILY_SPEND_REFRESH_MS = 60_000;
+
+/** The one lane message a turn refused by the daily cap gets (D5). */
+function dailyCapNotice(over: { spentUsd: number; capUsd: number }): string {
+  return (
+    `⚠ This bot has reached its daily budget of $${over.capUsd.toFixed(2)} ` +
+    `($${over.spentUsd.toFixed(2)} spent today, UTC). It will answer again after 00:00 UTC.`
+  );
+}
+
+/** 00:00 UTC of the day `now` falls on — the start of a daily-cap window. */
+function utcDayStart(now: number): Date {
+  const d = new Date(now);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/**
  * How long `removeAdapter` waits for one adapter's in-flight work before it
  * stops the adapter anyway. Generous, because the alternative to waiting used
  * to be a process restart, which dropped the turn outright.
@@ -302,6 +360,55 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 const SPOOL_DEFAULT_MAX_ATTEMPTS = 3;
 const SPOOL_DEFAULT_MAX_REPLAY_AGE_MS = 24 * 60 * 60 * 1000;
 const SPOOL_DEFAULT_REPLAY_INTERVAL_MS = 60_000;
+/** Default period of {@link Gateway.startDeliverySweep}'s timer. */
+const DELIVERY_SWEEP_DEFAULT_INTERVAL_MS = 60_000;
+/**
+ * A timer tick skips `pending` rows younger than this. Every reply path writes
+ * its obligation BEFORE the platform call (`beginDelivery`), so a young
+ * `pending` row may be a send still in flight — here or in a peer sharing the
+ * ledger — and redelivering it would double-send. The boot sweep has no live
+ * sends to collide with and takes every row.
+ *
+ * Age is only the PEER guard. A send in THIS process is skipped for as long as
+ * it runs, however long that is (`isDeliveryInFlight` in `./delivery`, checked
+ * in `sweepDeliveriesOnce`). Limitation: a peer process sharing the ledger file
+ * whose send outlasts this grace can still be redelivered here — live sends do
+ * not claim their row, so nothing in the ledger says "in flight". One gateway
+ * per state dir (`acquireGatewayLock`, packages/wiring/src/gateway-lock.ts)
+ * makes such a peer an unusual deployment, not the default one.
+ */
+const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
+/**
+ * A `redelivering` claim older than this is stranded (its claimant died
+ * mid-send) and goes back to `pending` at the top of each sweep
+ * (`DeliveryLedger.reclaimStaleClaims`). A claim spans one adapter call.
+ */
+const DELIVERY_CLAIM_STALE_MS = 5 * 60_000;
+/**
+ * Redelivery backoff (`deliveryRetryDelayMs`, applied in
+ * `sweepDeliveriesOnce`): after the Nth refused redelivery the row is not due
+ * again for `min(BASE * 2^(N-1), MAX)`, ±20% jitter — 1m, 2m, 4m … 32m, then
+ * 1h. Before this a refused row was re-sent on every tick until `abandonStale`,
+ * days later.
+ */
+const DELIVERY_RETRY_BASE_MS = 60_000;
+const DELIVERY_RETRY_MAX_MS = 60 * 60_000;
+/**
+ * Refused redeliveries after which a row is `abandoned` rather than retried
+ * again (`GatewayConfig.deliveryMaxAttempts`). With the schedule above, ten
+ * attempts span roughly four hours.
+ */
+const DELIVERY_DEFAULT_MAX_ATTEMPTS = 10;
+
+/** The delay before a row refused `attempts` times is due again, jittered so
+ *  rows that failed together do not retry together. */
+function deliveryRetryDelayMs(attempts: number): number {
+  const base = Math.min(
+    DELIVERY_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+    DELIVERY_RETRY_MAX_MS,
+  );
+  return Math.round(base * (0.8 + 0.4 * Math.random()));
+}
 
 /**
  * What {@link Gateway.acceptInbound} decided for one inbound message: the
@@ -389,10 +496,73 @@ function laneKeyOf(
  * and only their `retry` (see `isRetryText`) runs it again.
  */
 export const INTERRUPTED_RETRY_NOTICE =
-  '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.';
+  '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again. This works for 24 hours; any other message from you discards it.';
+
+/**
+ * H3 (plan ux-feedback-and-config-clarity) — the ack for a second message that
+ * was folded into the running turn's steer sink. Untracked, like every ack.
+ */
+export const ABSORBED_STEER_ACK = "↩ noted — I'll fold this into the answer I'm writing.";
+
+/**
+ * H3 — the ack for a second message that was queued behind the running turn
+ * (the plain enqueue on a busy lane, and the steer sink's full-rejection path,
+ * which used to drop the message silently). `position` counts the running
+ * turn: the first queued message is "2nd".
+ */
+export function queuedTurnAck(position: number): string {
+  const suffix =
+    position % 10 === 1 && position % 100 !== 11
+      ? 'st'
+      : position % 10 === 2 && position % 100 !== 12
+        ? 'nd'
+        : position % 10 === 3 && position % 100 !== 13
+          ? 'rd'
+          : 'th';
+  return `⏳ queued (${position}${suffix}) — I'll answer after the current reply.`;
+}
+
+/**
+ * H5 — sent once, untracked, AFTER the text reply was delivered, when a voice
+ * reply the lane's mode asked for could not be produced. Never before the
+ * text, never more than once per turn (`deliverVoiceReply` runs at most once
+ * per delivered reply).
+ */
+export const VOICE_FAILURE_NOTICE = "🔇 couldn't produce audio for that reply";
+
+/**
+ * Sent once when a message's turn fails for the last allowed time and its spool
+ * row is dead-lettered (plan openclaw-2026.9.6-gaps R7) — the user otherwise
+ * sees only the per-attempt error replies and never learns nothing will retry.
+ * Names the row so an operator can re-run it; the body is kept 30 days
+ * (`INBOUND_SPOOL_DEAD_RETENTION_MS`, apps/ethos/src/lib/gateway-inbound-durability.ts).
+ */
+export function deadLetteredNotice(spoolId: string): string {
+  return (
+    '⚠ Your message failed repeatedly and will not be retried automatically. ' +
+    `An operator can re-run it with \`ethos gateway spool replay ${spoolId}\`.`
+  );
+}
 
 /** How long an interrupted row answers to `retry` (plan D5). */
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The user-visible text a spool row was made from, for the stale-replay
+ * notice's quotes (H6). Best-effort: an unreadable payload yields nothing.
+ */
+function spooledText(row: SpoolRow): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(row.payload);
+    if (typeof parsed === 'object' && parsed !== null) {
+      const text = (parsed as { text?: unknown }).text;
+      if (typeof text === 'string' && text.trim().length > 0) return text.trim();
+    }
+  } catch {
+    // Fall through — no quote for this row.
+  }
+  return undefined;
+}
 
 /**
  * The whole of a `retry` reply: trimmed, lowercased, nothing else — except
@@ -481,6 +651,18 @@ function spoolMessageId(message: InboundMessage): string {
 /** The one line a replayed message's text gets when an attachment it carried
  *  could not be recovered (its cached file was gone). See `reviveSpooledMessage`. */
 export const ATTACHMENT_NOT_RECOVERED_NOTE = '[attachment could not be recovered]';
+
+/**
+ * Whether `owner` (a `channel_filter.<platform>.ownerUserId`) names this
+ * message's sender: its `userId` or any platform-supplied `alternateUserIds`
+ * (`senderIds` in @ethosagent/safety-channel). A WhatsApp owner configured as
+ * the LID or as the phone JID both match a LID sender that carries its phone
+ * alternate. False when no owner is configured. Every owner check in this
+ * file goes through here; pinned by `__tests__/whatsapp-lid-owner.test.ts`.
+ */
+function senderIsOwner(message: InboundMessage, owner: string | undefined): boolean {
+  return owner !== undefined && owner !== '' && senderIds(message).includes(owner);
+}
 
 /** `raw` is the platform's own object — unused past the adapter, possibly
  *  cyclic, and not ours to keep a second copy of — so it is not spooled. */
@@ -689,6 +871,10 @@ export interface GatewayBotConfig {
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
   /** This bot's job store — present when background is enabled. */
   jobStore?: import('@ethosagent/types').JobStore;
+  /** Operator cap on this bot's spend per UTC day, USD (`<bot entry>.budget.dailyUsd`,
+   *  plan openclaw-2026.9.6-gaps D5). Enforced by `Gateway.enqueueTurn` when
+   *  `GatewayConfig.botSpendSince` is wired; absent = no daily cap. */
+  dailyBudgetUsd?: number;
 }
 
 /**
@@ -772,6 +958,35 @@ export interface PublicationResult {
   refusal?: { code: PublicationRefusalCode; message: string };
 }
 
+/**
+ * One unprompted notice held for quiet hours or a lane mute (U11). Everything
+ * `sendTracked` needs to deliver it later on the same bot, lane and thread.
+ */
+export interface HeldNotice {
+  id: number;
+  botKey: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  laneKey: string;
+  /** Ledger session id the release files the obligation under. */
+  sessionKey: string;
+  text: string;
+  heldAt: number;
+}
+
+/**
+ * Durable store for held notices (`GatewayConfig.heldNotices`). Structural so
+ * the gateway takes no dependency on a concrete store: production wires
+ * `SQLiteNotifyQueue` (`@ethosagent/notify-queue`, its `held_notices` table).
+ */
+export interface HeldNoticeStore {
+  hold(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<void>;
+  /** Every notice not yet released, oldest first. */
+  listHeld(): Promise<HeldNotice[]>;
+  markReleased(id: number): Promise<void>;
+}
+
 export interface GatewayConfig {
   /**
    * Multi-bot routing: one entry per bot. The Gateway keys its lane state
@@ -837,6 +1052,35 @@ export interface GatewayConfig {
    * having its replies delivered.
    */
   deliveryLedger?: DeliveryLedger;
+  /**
+   * U11 — operator quiet hours (`notifications.*` in config.yaml, resolved by
+   * the wiring with an explicit time zone). Inside a bot's window an unprompted
+   * notice — `notifyTracked` without `answersInbound`, a background-job wake —
+   * is held in `heldNotices` and released by the delivery sweep once the window
+   * ends. Absent → nothing is held for quiet hours (`/mute` still applies).
+   */
+  quietHours?: GatewayQuietHours;
+  /**
+   * Where held notices wait (`Gateway.noticeHoldReason`). Absent → nothing is
+   * ever held: a notice inside quiet hours or a mute is sent at once rather
+   * than kept only in memory, where a restart would lose it.
+   */
+  heldNotices?: HeldNoticeStore;
+  /**
+   * Period of the delivery-ledger sweep {@link Gateway.startDeliverySweep}
+   * arms, so an obligation left `pending` by a transient platform failure is
+   * retried on a long-running gateway rather than at the next restart.
+   * Default 60s; 0 disables the timer (the boot sweep still runs).
+   */
+  deliverySweepIntervalMs?: number;
+  /**
+   * Refused redeliveries after which the sweep abandons an obligation (with
+   * the reason recorded and a `gateway.delivery_abandoned` event) instead of
+   * retrying it again. Default 10. Retries back off 1m, 2m, 4m … capped at 1h
+   * (`deliveryRetryDelayMs`). A refusal the adapter marks `permanent` is
+   * abandoned on the first attempt whatever this says.
+   */
+  deliveryMaxAttempts?: number;
   /**
    * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
    * {@link Gateway.deliverPublication} runs before it publishes an approved
@@ -1103,6 +1347,15 @@ export interface GatewayConfig {
    * branches are unavailable.
    */
   sessionStore?: () => SessionStore;
+  /**
+   * USD spent since `since` by every session whose key starts with
+   * `sessionKeyPrefix` — how `Gateway.enqueueTurn` reads one bot's spend today
+   * for its `GatewayBotConfig.dailyBudgetUsd` (plan openclaw-2026.9.6-gaps D5).
+   * The host backs it with the aggregation `ethos usage` reads
+   * (`SQLiteSessionStore.usageAggregate` with `keyPrefix`). Absent → no daily
+   * cap is enforced, whatever the bots say.
+   */
+  botSpendSince?: (sessionKeyPrefix: string, since: Date) => Promise<number>;
   /** STT provider registry for resolving voice transcription providers by name. */
   sttProviderRegistry?: SttProviderRegistry;
   /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
@@ -1220,30 +1473,54 @@ export interface GatewayConfig {
    * every chunk.
    */
   streamingEditIntervalMs?: number;
+  /**
+   * H1 (plan ux-feedback-and-config-clarity, UD3) — ms of silence on a
+   * NON-streaming lane before the one untracked "_working on it …_" ack.
+   * Sourced from `display.slow_turn_notice_ms` (`EthosConfig.
+   * displaySlowTurnNoticeMs`, wired in `buildGateway`). Absent → 8000; `0`
+   * disables the notice — and with it H2's non-streaming fallback message,
+   * which shares the same once-per-turn latch (see ./turn-feedback.ts).
+   * Email lanes never get it (UD9). Pinned by
+   * `__tests__/slow-turn-notice.test.ts`.
+   */
+  slowTurnNoticeMs?: number;
 }
 
 // ---------------------------------------------------------------------------
 // Built-in gateway slash commands (handled before the AgentLoop sees the text)
 // ---------------------------------------------------------------------------
 
-const PLATFORM_COMMANDS: Record<
-  string,
-  | 'new'
-  | 'usage'
-  | 'stop'
-  | 'help'
-  | 'personality'
-  | 'allow'
-  | 'deny'
-  | 'communications'
-  | 'start'
-  | 'queue'
-  | 'background'
-  | 'voice'
-  | 'compact'
-  | 'fork'
-  | 'branches'
-  | 'branch'
+/**
+ * The gateway's executor table: slash token → the branch of
+ * `Gateway.handleMessage` that runs it. Must name exactly the commands the
+ * shared registry advertises for the `gateway` surface (`SLASH_COMMANDS` in
+ * @ethosagent/surface-kit) — pinned by `__tests__/slash-registry-drift.test.ts`,
+ * so registering a channel command is the registry entry, this key, and its
+ * branch in `handleMessage`.
+ */
+export const PLATFORM_COMMANDS: Readonly<
+  Record<
+    string,
+    | 'new'
+    | 'usage'
+    | 'status'
+    | 'budget'
+    | 'stop'
+    | 'help'
+    | 'personality'
+    | 'allow'
+    | 'deny'
+    | 'communications'
+    | 'start'
+    | 'queue'
+    | 'background'
+    | 'voice'
+    | 'mute'
+    | 'compact'
+    | 'fork'
+    | 'branches'
+    | 'branch'
+  >
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -1252,6 +1529,8 @@ const PLATFORM_COMMANDS: Record<
   '/branch': 'branch',
   '/stop': 'stop',
   '/usage': 'usage',
+  '/status': 'status',
+  '/budget': 'budget',
   '/help': 'help',
   '/personality': 'personality',
   '/compact': 'compact',
@@ -1262,6 +1541,7 @@ const PLATFORM_COMMANDS: Record<
   '/queue': 'queue',
   '/background': 'background',
   '/voice': 'voice',
+  '/mute': 'mute',
 };
 
 // ---------------------------------------------------------------------------
@@ -1346,6 +1626,12 @@ export class Gateway {
   private readonly laneRestores = new Map<string, Promise<void>>();
   /** See `GatewayConfig.sessionStore`. */
   private readonly sessionStoreFor: (() => SessionStore) | undefined;
+  /** See `GatewayConfig.botSpendSince`. */
+  private readonly botSpendSince: GatewayConfig['botSpendSince'];
+  /** Today's spend per bot (`dailySpendKey`), read through `botSpendSince` at
+   *  most once per `DAILY_SPEND_REFRESH_MS` and advanced in between by the
+   *  `usage` events this process's own turns yield (`addDailySpend`). */
+  private readonly dailySpend = new Map<string, { day: string; usd: number; readAt: number }>();
   /** Per-lane active personality (overrideable via /personality). */
   private readonly personalityIds = new Map<string, string>();
   /** Per-lane usage accumulator. */
@@ -1369,6 +1655,11 @@ export class Gateway {
   private replayInFlight: Promise<{ replayed: number; deferred: number; dead: number }> | undefined;
   private spoolReplayTimer: ReturnType<typeof setInterval> | undefined;
   private orphansRecovered = false;
+  private readonly deliverySweepIntervalMs: number;
+  private readonly deliveryMaxAttempts: number;
+  private deliverySweepTimer: ReturnType<typeof setInterval> | undefined;
+  /** The sweep running now, shared by every caller so two never overlap. */
+  private deliverySweepInFlight: Promise<{ redelivered: number; failed: number }> | undefined;
   /** Spool bookkeeping for the turn running on each lane (steer absorption). */
   private readonly spoolTurns = new Map<string, SpoolTurnState>();
   /**
@@ -1382,6 +1673,21 @@ export class Gateway {
   private readonly outboundDedup: MessageDedupCache;
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
   private readonly deliveryLedger: DeliveryLedger | undefined;
+  /** See `GatewayConfig.quietHours` / `heldNotices` (U11). */
+  private readonly quietHours: GatewayQuietHours | undefined;
+  private readonly heldNotices: HeldNoticeStore | undefined;
+  /** Per-lane `/mute` expiry (epoch ms), persisted beside the lane's session
+   *  key in its lane file (`LaneSessionEntry.mutedUntil`). */
+  private readonly laneMutes = new Map<string, number>();
+  /**
+   * `deliver: 'parent'` reviews waiting out a hold (U11), by job id. Not
+   * persisted: a parked job's delivery claim is never taken, so after a restart
+   * `sweepUndeliveredJobs` re-owes it. See {@link admitWakeReview}.
+   */
+  private readonly parkedReviews = new Map<
+    string,
+    { bot: GatewayBotConfig; job: BackgroundJob; laneKey: string }
+  >();
   /** Binding re-check for {@link deliverPublication}. Absent → it refuses. */
   private readonly publicationSpeaksFor: PublicationSpeaksFor | undefined;
   /** Accumulated host-pause duration discounted from the stale-obligation
@@ -1392,6 +1698,8 @@ export class Gateway {
   private readonly streamingGroup: boolean;
   /** Minimum ms between draft edits. */
   private readonly streamingEditIntervalMs: number;
+  /** See `GatewayConfig.slowTurnNoticeMs` (H1). 0 = disabled. */
+  private readonly slowTurnNoticeMs: number;
   /** Chats (`${platform}:${chatId}`) where streaming was disabled after
    *  repeated flood-waits — future turns there fall back to non-streaming. */
   private readonly streamingDisabledChats = new Set<string>();
@@ -1401,7 +1709,7 @@ export class Gateway {
    *  in `runTurn`); shutdown's resend notice skips those. */
   private readonly activeTurns = new Map<
     string,
-    { adapter: PlatformAdapter; chatId: string; answered?: boolean }
+    { adapter: PlatformAdapter; chatId: string; threadId?: string; answered?: boolean }
   >();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, SteerSink>();
@@ -1411,8 +1719,8 @@ export class Gateway {
    * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
    * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
    * scope) and consumed by the `session_start` hook below, which is the only
-   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey` and
-   * lacks `threadId`, so it can't serve this — hence a parallel map.
+   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey`,
+   * not `sessionKey`, so it can't serve this — hence a parallel map.
    */
   private readonly sessionRouting = new Map<string, SessionRouting>();
   /**
@@ -1633,6 +1941,12 @@ export class Gateway {
       config.inboundSpoolOptions?.maxReplayAgeMs ?? SPOOL_DEFAULT_MAX_REPLAY_AGE_MS;
     this.spoolReplayIntervalMs =
       config.inboundSpoolOptions?.replayIntervalMs ?? SPOOL_DEFAULT_REPLAY_INTERVAL_MS;
+    this.deliverySweepIntervalMs =
+      config.deliverySweepIntervalMs ?? DELIVERY_SWEEP_DEFAULT_INTERVAL_MS;
+    this.deliveryMaxAttempts = Math.max(
+      1,
+      config.deliveryMaxAttempts ?? DELIVERY_DEFAULT_MAX_ATTEMPTS,
+    );
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
     this.channelToolsets = config.channelToolsets;
@@ -1668,11 +1982,14 @@ export class Gateway {
       },
     });
     this.deliveryLedger = config.deliveryLedger;
+    this.quietHours = config.quietHours;
+    this.heldNotices = config.heldNotices;
     this.publicationSpeaksFor = config.publicationSpeaksFor;
     // Streaming draft edits: DMs on, groups off, unless config overrides.
     this.streamingDm = config.streamingEdits?.dm ?? true;
     this.streamingGroup = config.streamingEdits?.group ?? false;
     this.streamingEditIntervalMs = config.streamingEditIntervalMs ?? 2500;
+    this.slowTurnNoticeMs = config.slowTurnNoticeMs ?? 8000;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.clarifyEscalationDelayMs = config.clarifyEscalationDelayMs ?? DEFAULT_ESCALATION_DELAY_MS;
@@ -1687,6 +2004,7 @@ export class Gateway {
         ? new LaneSessionFiles(config.storage, config.dataDir)
         : undefined;
     this.sessionStoreFor = config.sessionStore;
+    this.botSpendSince = config.botSpendSince;
     this.sttProviderRegistry = config.sttProviderRegistry;
     this.sttProviderName = config.sttProviderName;
     this.ttsProviderRegistry = config.ttsProviderRegistry;
@@ -2608,19 +2926,28 @@ export class Gateway {
       opts.onQueued?.();
     };
     try {
-      await this.dispatchInbound(message, adapter, spoolId, handOff);
+      await this.dispatchInbound(message, adapter, spoolId, handOff, {
+        replay: opts.replaySpoolId !== undefined,
+      });
     } finally {
       if (spoolId && !handedOff) this.closeSpool(spoolId);
       opts.onQueued?.();
     }
   }
 
-  /** `handleMessage`'s body past dedup and the spool write. */
+  /**
+   * `handleMessage`'s body past dedup and the spool write. `ctx.replay` marks
+   * a spool-replay re-entry: the H3 queued/absorbed acks stay silent there —
+   * replay was ack-silent before H3, and a reconnect that greets the user
+   * with "⏳ queued (2nd)…" per recovered row is noise, not feedback. Pinned
+   * by `__tests__/inbound-spool.test.ts` ('replay sends no H3 acks').
+   */
   private async dispatchInbound(
     message: InboundMessage,
     adapter: PlatformAdapter,
     spoolId: string | undefined,
     handOff: () => void,
+    ctx: { replay: boolean },
   ): Promise<void> {
     // Pre-resolution botKey — see the GWA-008 note in `acceptInbound`.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
@@ -2776,7 +3103,14 @@ export class Gateway {
       }
 
       if (filterResult.action === 'pairing_reply') {
-        await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => {});
+        this.recordPairing(message, 'issued');
+        await adapter
+          .send(message.chatId, {
+            text: filterResult.reply ?? '',
+            // H6 — into the thread it was asked in, like every other ack.
+            ...(message.threadId ? { threadId: message.threadId } : {}),
+          })
+          .catch(() => {});
         return;
       }
 
@@ -2937,8 +3271,21 @@ export class Gateway {
     const cmdType = PLATFORM_COMMANDS[cmdToken.toLowerCase()];
 
     if (cmdType === 'stop') {
-      lane.abort();
-      await adapter.send(message.chatId, { text: '✓ Stopped.' }).catch(() => {});
+      // H6 — `✓ Stopped.` only when something is actually running or queued
+      // on this lane. `lane.length` counts the running turn (the lane task is
+      // `processing`) plus everything queued behind it; `activeSinks` /
+      // `activeTurns` cover the turn-end tail, where the sink is unhooked but
+      // the turn still holds the lane.
+      const running =
+        lane.length > 0 || this.activeSinks.has(laneKey) || this.activeTurns.has(laneKey);
+      if (running) {
+        lane.abort();
+        await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
+      } else {
+        await adapter
+          .send(message.chatId, { text: 'nothing is running', threadId })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -2957,12 +3304,14 @@ export class Gateway {
       // recognise. `lastInboundHadAudio` IS per-turn state and still clears.
       this.lastInboundHadAudio.delete(laneKey);
       await this.persistLaneSessions(laneKey);
-      await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
+      await adapter
+        .send(message.chatId, { text: '✓ New session started.', threadId })
+        .catch(() => {});
       return;
     }
 
     if (cmdType === 'fork' || cmdType === 'branches' || cmdType === 'branch') {
-      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter);
+      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter, threadId);
       return;
     }
 
@@ -2983,8 +3332,11 @@ export class Gateway {
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
+        `/status — usage plus personality · model · session\n` +
+        `/budget [reset] — session spend against its cap\n` +
         `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
+        `/mute <30m|2h|1d|off> — hold notices in this chat for a while\n` +
         `/help — this message`;
       const pluginCmds = this.pluginLoader?.getAllSlashCommands() ?? [];
       if (pluginCmds.length > 0) {
@@ -2996,6 +3348,7 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: helpText,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3006,13 +3359,14 @@ export class Gateway {
       if (this.greetingProvider) {
         const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
         if (greeting) {
-          await adapter.send(message.chatId, { text: greeting }).catch(() => {});
+          await adapter.send(message.chatId, { text: greeting, threadId }).catch(() => {});
           return;
         }
       }
       await adapter
         .send(message.chatId, {
           text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3030,7 +3384,7 @@ export class Gateway {
 
       if (!arg) {
         await adapter
-          .send(message.chatId, { text: `Current personality: ${current}` })
+          .send(message.chatId, { text: `Current personality: ${current}`, threadId })
           .catch(() => {});
         return;
       }
@@ -3045,7 +3399,7 @@ export class Gateway {
       ) {
         const card = await this.personalityCardReader.read(current).catch(() => null);
         if (card) {
-          await adapter.send(message.chatId, { text: card.text }).catch(() => {});
+          await adapter.send(message.chatId, { text: card.text, threadId }).catch(() => {});
           return;
         }
       }
@@ -3062,6 +3416,7 @@ export class Gateway {
               `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
               `Switching personalities is disabled for identity-bound bots. ` +
               `To talk to a different agent, message that agent's bot.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3075,7 +3430,7 @@ export class Gateway {
               .map((p) => `${p.id} — ${p.name}${p.isDefault ? ' (default)' : ''}`)
               .join('\n')}\n\nUse /personality <id> to switch.`
           : 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.';
-        await adapter.send(message.chatId, { text: listText }).catch(() => {});
+        await adapter.send(message.chatId, { text: listText, threadId }).catch(() => {});
         return;
       }
 
@@ -3091,7 +3446,7 @@ export class Gateway {
             ? `Switching personalities in a group needs an owner. ` +
               `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
             : `Only the bot owner can switch personalities in a group.`;
-        await adapter.send(message.chatId, { text }).catch(() => {});
+        await adapter.send(message.chatId, { text, threadId }).catch(() => {});
         return;
       }
 
@@ -3111,6 +3466,7 @@ export class Gateway {
         await adapter
           .send(message.chatId, {
             text: `Personality '${arg}' not found — /personality list to see what's available.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3125,7 +3481,10 @@ export class Gateway {
       this.sessionKeys.set(laneKey, fresh);
       await this.persistLaneSessions(laneKey);
       await adapter
-        .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
+        .send(message.chatId, {
+          text: `✓ Switched to ${arg} personality. New session started.`,
+          threadId,
+        })
         .catch(() => {});
       return;
     }
@@ -3135,8 +3494,47 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
+          threadId,
         })
         .catch(() => {});
+      return;
+    }
+
+    // H6/UD5 — a DISTINCT command, not an alias: `/usage` stays the numbers,
+    // `/status` adds where you are (personality · model · session).
+    if (cmdType === 'status') {
+      const u = this.usageStore.get(laneKey) ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+      const personalityId = this.activePersonalityFor(laneKey, bot);
+      // The personality's configured model (a role or registry alias) — the
+      // gateway never resolves provider rungs itself. Stub loops in tests
+      // (and team bindings) fall back to `default`.
+      let model = 'default';
+      try {
+        if (typeof bot.loop.resolvePersonality === 'function') {
+          model = resolveModelDisplay(
+            bot.loop.resolvePersonality(bot.binding.type === 'team' ? undefined : personalityId)
+              .model,
+            'default',
+          );
+        }
+      } catch {
+        // Unknown personality id — keep the fallback label.
+      }
+      const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+      await adapter
+        .send(message.chatId, {
+          text:
+            `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\n` +
+            `Cost: $${u.costUsd.toFixed(5)}\n` +
+            `${personalityId} · ${model} · ${sessionKey}`,
+          threadId,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'budget') {
+      await this.handleBudgetCommand(text, laneKey, bot, message, adapter, threadId);
       return;
     }
 
@@ -3144,7 +3542,7 @@ export class Gateway {
       const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
       if (!code || !this.pairingDb || !this.channelFilter) {
         await adapter
-          .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
+          .send(message.chatId, { text: '✗ Pairing not configured or no code given.', threadId })
           .catch(() => {});
         return;
       }
@@ -3157,17 +3555,17 @@ export class Gateway {
 
       if (codeRow) {
         const codePlatformCfg = this.channelFilter[codeRow.platform];
-        const isOwner =
-          codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
-        if (!isOwner) {
+        if (!senderIsOwner(message, codePlatformCfg?.ownerUserId)) {
+          this.recordPairing(message, 'not_owner', codeRow.platform);
           await adapter
-            .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
+            .send(message.chatId, { text: '✗ Only the owner may approve pairings.', threadId })
             .catch(() => {});
           return;
         }
       }
 
       const result = consumeAndAllow(this.pairingDb, code, message.userId);
+      if (!result.ok) this.recordPairing(message, result.reason, codeRow?.platform);
       if (result.ok) {
         // Update in-memory cache
         const platformCfg = this.channelFilter[result.platform];
@@ -3187,14 +3585,19 @@ export class Gateway {
         });
         await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
         await adapter
-          .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
+          .send(message.chatId, { text: `✓ ${result.senderId} approved.`, threadId })
           .catch(() => {});
       } else if (result.reason === 'owner_paused') {
         await adapter
-          .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
+          .send(message.chatId, {
+            text: '✗ Too many invalid attempts. Pairing paused for 24h.',
+            threadId,
+          })
           .catch(() => {});
       } else {
-        await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Invalid or expired code.', threadId })
+          .catch(() => {});
       }
       return;
     }
@@ -3203,15 +3606,16 @@ export class Gateway {
       const targetUserId = text.split(/\s+/)[1] ?? '';
       const cleanTarget = targetUserId.replace(/^@/, '');
       if (!cleanTarget || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /deny <userId>', threadId })
+          .catch(() => {});
         return;
       }
 
       let removed = false;
       for (const [platform, cfg] of Object.entries(this.channelFilter)) {
         // Only the owner can remove senders.
-        const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
-        if (!isOwner) continue;
+        if (!senderIsOwner(message, cfg.ownerUserId)) continue;
 
         let removedOnPlatform = false;
 
@@ -3241,10 +3645,12 @@ export class Gateway {
       }
 
       if (removed) {
-        await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: `✓ ${cleanTarget} removed.`, threadId })
+          .catch(() => {});
       } else {
         await adapter
-          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
+          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.`, threadId })
           .catch(() => {});
       }
       return;
@@ -3252,15 +3658,16 @@ export class Gateway {
 
     if (cmdType === 'communications') {
       if (!this.pairingDb || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: 'Pairing not configured.', threadId })
+          .catch(() => {});
         return;
       }
 
       const platformCfg = this.channelFilter[message.platform];
-      const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
-      if (!isOwner) {
+      if (!senderIsOwner(message, platformCfg?.ownerUserId)) {
         await adapter
-          .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
+          .send(message.chatId, { text: '✗ Only the owner may use /communications.', threadId })
           .catch(() => {});
         return;
       }
@@ -3271,7 +3678,7 @@ export class Gateway {
         // Scope to platforms where the caller is the configured owner.
         const ownedPlatforms = new Set(
           Object.entries(this.channelFilter)
-            .filter(([, cfg]) => cfg.ownerUserId && message.userId === cfg.ownerUserId)
+            .filter(([, cfg]) => senderIsOwner(message, cfg.ownerUserId))
             .map(([p]) => p),
         );
 
@@ -3292,12 +3699,21 @@ export class Gateway {
                 cfg.recipientAllowlist.push(result.senderId);
               }
             }
+            // Same row as a single `/allow` approval, one per approved sender.
+            this.observability?.recordChannelAllow({
+              code: 'channel.pairing.approved',
+              details: {
+                approvedUserId: result.senderId,
+                approvedPlatform: result.platform,
+                byUserId: message.userId,
+              },
+            });
             await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
           }
         }
 
         await adapter
-          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
+          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).`, threadId })
           .catch(() => {});
         return;
       }
@@ -3309,14 +3725,14 @@ export class Gateway {
 
       if (pending.length === 0) {
         await adapter
-          .send(message.chatId, { text: 'No pending pairing requests.' })
+          .send(message.chatId, { text: 'No pending pairing requests.', threadId })
           .catch(() => {});
         return;
       }
 
       const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
       const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
-      await adapter.send(message.chatId, { text: reply }).catch(() => {});
+      await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
       return;
     }
 
@@ -3325,7 +3741,7 @@ export class Gateway {
       const bgText = text.slice('/background '.length).trim();
       if (!bgText) {
         await adapter
-          .send(message.chatId, { text: '✗ Usage: /background <prompt>' })
+          .send(message.chatId, { text: '✗ Usage: /background <prompt>', threadId })
           .catch(() => {});
         return;
       }
@@ -3369,6 +3785,7 @@ export class Gateway {
         originBotKey: bot.botKey,
         originChatId: message.chatId,
         ...(threadId ? { originThreadId: threadId } : {}),
+        ...(message.userId ? { originUserId: message.userId } : {}),
       });
       executor.nudge();
       // The id is the whole point of the ack: without it the user has nothing to
@@ -3380,6 +3797,11 @@ export class Gateway {
           threadId,
         })
         .catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'mute') {
+      await this.handleMuteCommand(text, laneKey, message, adapter, threadId);
       return;
     }
 
@@ -3450,14 +3872,19 @@ export class Gateway {
     if (cmdType === 'queue') {
       const queueText = text.slice('/queue '.length).trim();
       if (!queueText) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /queue <message>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /queue <message>', threadId })
+          .catch(() => {});
         return;
       }
       if (this.activeSinks.has(laneKey)) {
         void this.enqueueTurn(laneKey, lane, bot, message, adapter, queueText, threadId, spoolId);
         handOff();
+        // One wording for one concept: the same H3 ack the plain busy-lane
+        // enqueue sends (`queuedTurnAck` — the running turn counts, so the
+        // first queued message is "2nd").
         await adapter
-          .send(message.chatId, { text: `✅ queued (position ${lane.length})`, threadId })
+          .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
           .catch(() => {});
         return;
       }
@@ -3615,8 +4042,35 @@ export class Gateway {
           if (!this.linkAbsorbed(spoolId, absorbing)) absorbing.absorbed.push(spoolId);
           handOff();
         }
-        await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
+        if (!ctx.replay) {
+          await adapter
+            .send(message.chatId, { text: ABSORBED_STEER_ACK, threadId })
+            .catch(() => {});
+        }
+        return;
       }
+      // H3 — the steer sink is full. This message used to be dropped with no
+      // ack at all; queue it as its own turn instead and say where it went.
+      // The row (when spooled) follows the queued turn like any plain enqueue —
+      // NOT `markAbsorbed`: nothing absorbed it. The ack is untracked (an
+      // ack, not a reply); the queued turn's reply rides the tracked path.
+      const overflowTurn = this.enqueueTurn(
+        laneKey,
+        lane,
+        bot,
+        message,
+        adapter,
+        text,
+        threadId,
+        spoolId,
+      );
+      handOff();
+      if (!ctx.replay) {
+        await adapter
+          .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
+          .catch(() => {});
+      }
+      await overflowTurn;
       return;
     }
 
@@ -3643,6 +4097,11 @@ export class Gateway {
       return;
     }
 
+    // H3 — a lane that is already busy says so: whenever something is running
+    // or queued ahead of this message, ack where it landed. Ordinal from the
+    // lane depth AFTER enqueue (the running turn counts, so the first queued
+    // message is "2nd"). Idle lane → no ack, the reply itself is the feedback.
+    const laneBusy = lane.length > 0;
     const turn = this.enqueueTurn(
       laneKey,
       lane,
@@ -3654,6 +4113,11 @@ export class Gateway {
       spoolId,
     );
     handOff();
+    if (laneBusy && !ctx.replay) {
+      await adapter
+        .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
+        .catch(() => {});
+    }
     await turn;
   }
 
@@ -3687,6 +4151,34 @@ export class Gateway {
     let started = false;
     const queued = lane.enqueue(async (signal) => {
       started = true;
+      // D5 — the bot's daily cap, checked when the turn reaches the front of
+      // its lane (so the turns queued ahead of it have already counted) and
+      // before it takes a global slot. A refused turn never runs the loop: its
+      // row closes like any consumed message, and a review turn hands the user
+      // the plain wake notice instead (`settleUnstartedSpool`), so a completion
+      // is never swallowed. Pinned by `__tests__/budget-halt.test.ts`.
+      const overCap = await this.dailyCapReached(bot, message.platform);
+      if (overCap) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.daily_budget_refused',
+          details: {
+            platform: message.platform,
+            botKey: bot.botKey,
+            chatId: message.chatId,
+            spentUsd: overCap.spentUsd,
+            capUsd: overCap.capUsd,
+          },
+        });
+        if (review) {
+          if (spoolId) await this.settleUnstartedSpool(spoolId, review, bot, message, threadId);
+          return;
+        }
+        if (spoolId) this.closeSpool(spoolId);
+        await adapter
+          .send(message.chatId, { text: dailyCapNotice(overCap), threadId })
+          .catch(() => {});
+        return;
+      }
       const slotHeld = await this.concurrency.acquire(signal);
       if (!slotHeld) {
         if (spoolId) await this.settleUnstartedSpool(spoolId, review, bot, message, threadId);
@@ -3905,7 +4397,8 @@ export class Gateway {
    *   (D5/D19).
    * - Threw before answering → `markFailed`: back to `received` for the next
    *   boot, `interrupted` (+ the retry notice) if a tool had started, or
-   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`).
+   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`, plus one
+   *   tracked notice naming the row — {@link notifyDeadLettered}).
    * - Otherwise → `done`, absorbed rows included. An answered turn is `done`
    *   even if its tail failed or shutdown cut it: the user has the reply.
    *
@@ -3951,7 +4444,7 @@ export class Gateway {
         } else if (err !== undefined && !state.answered) {
           const error = err instanceof Error ? err.message : String(err);
           const outcome = spool.markFailed(state.id, error, this.spoolMaxAttempts);
-          if (outcome === 'dead') this.recordSpoolDeadLettered(state.id, error);
+          if (outcome === 'dead') await this.notifyDeadLettered(state.id, error, target);
           else if (outcome === 'interrupted') await this.notifyInterrupted(state.id, target);
         } else {
           spool.markDone(state.id);
@@ -3982,8 +4475,35 @@ export class Gateway {
         botKey: target.botKey,
         sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
         ...(target.threadId ? { threadId: target.threadId } : {}),
+        answersInbound: true,
       },
       INTERRUPTED_RETRY_NOTICE,
+    ).catch(() => false);
+  }
+
+  /**
+   * An `inbound` row's turn just failed at the attempt cap and the row is
+   * `dead`: record it and tell the lane ONCE, through the ledger-backed path on
+   * the row's own bot ({@link deadLetteredNotice}, `notifyTracked` →
+   * `adapterForBot`). Called only from the attempt-cap branch of
+   * `finishSpoolTurn`; the stale path sends its own per-lane notice. Never throws.
+   */
+  private async notifyDeadLettered(
+    spoolId: string,
+    reason: string,
+    target: SpoolTurnTarget,
+  ): Promise<void> {
+    this.recordSpoolDeadLettered(spoolId, reason);
+    await this.notifyTracked(
+      {
+        platform: target.platform,
+        chatId: target.chatId,
+        botKey: target.botKey,
+        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+        answersInbound: true,
+      },
+      deadLetteredNotice(spoolId),
     ).catch(() => false);
   }
 
@@ -4024,6 +4544,12 @@ export class Gateway {
    * ledger holds a `pending` obligation (stamped `inboundRef`) that its sweep
    * will retry. `false` = nobody does — no adapter here, or no ledger and an
    * unconfirmed send — so the caller must leave the row for a later attempt.
+   *
+   * U11 — the plain notice is unprompted, so inside quiet hours or a lane
+   * `/mute` it is held ({@link holdNotice}) and `true` is returned: the durable
+   * held-notice store now owns it and {@link releaseHeldNotices} sends it once
+   * the hold ends, so the row can close. Pinned by the U11 fallback case in
+   * `__tests__/parent-review.test.ts`.
    */
   private async sendReviewFallback(
     target: SpoolTurnTarget,
@@ -4032,6 +4558,20 @@ export class Gateway {
   ): Promise<boolean> {
     const adapter = this.adapterForBot(target.botKey, target.platform);
     if (!adapter) return false;
+    const sessionKey = this.sessionKeys.get(target.laneKey) ?? target.laneKey;
+    if (
+      await this.holdNotice({
+        botKey: target.botKey,
+        platform: target.platform,
+        chatId: target.chatId,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+        laneKey: target.laneKey,
+        sessionKey,
+        text,
+      })
+    ) {
+      return true;
+    }
     if (!this.outboundDedup.shouldSend(target.laneKey, text)) return true;
     const confirmed = await this.sendTracked(
       {
@@ -4039,7 +4579,7 @@ export class Gateway {
         botKey: target.botKey,
         platform: target.platform,
         chatId: target.chatId,
-        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        sessionKey,
         ...(inboundRef ? { inboundRef } : {}),
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
@@ -4190,7 +4730,7 @@ export class Gateway {
     // Rows this run has already dealt with (deferred, stale, lost claims) —
     // without it a row with no adapter would be re-listed forever.
     const seen = new Set<string>();
-    const staleByLane = new Map<string, { row: SpoolRow; count: number }>();
+    const staleByLane = new Map<string, { row: SpoolRow; count: number; samples: string[] }>();
     this.replaying = true;
     try {
       for (;;) {
@@ -4223,7 +4763,15 @@ export class Gateway {
     } finally {
       this.replaying = false;
     }
-    for (const { row, count } of staleByLane.values()) {
+    for (const { row, count, samples } of staleByLane.values()) {
+      // H6 — quote what was missed (first 40 chars of each, up to 3), so the
+      // user knows WHICH messages to resend rather than a bare count.
+      const quoted = samples.map((s) => `"${s.length > 40 ? `${s.slice(0, 40)}…` : s}"`);
+      const more = count - quoted.length;
+      const missed =
+        quoted.length > 0
+          ? ` Missed: ${quoted.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`
+          : '';
       await this.notifyTracked(
         {
           platform: row.platform,
@@ -4231,10 +4779,11 @@ export class Gateway {
           botKey: row.botKey,
           sessionKey: row.laneKey,
           ...(row.threadId ? { threadId: row.threadId } : {}),
+          answersInbound: true,
         },
         `I restarted and missed ${count} message(s) older than ${describeReplayAge(
           this.spoolMaxReplayAgeMs,
-        )}; resend if still needed.`,
+        )}; resend if still needed.${missed}`,
       ).catch(() => false);
     }
     return counts;
@@ -4243,7 +4792,7 @@ export class Gateway {
   private async replaySpoolRow(
     spool: InboundSpool,
     row: SpoolRow,
-    staleByLane: Map<string, { row: SpoolRow; count: number }>,
+    staleByLane: Map<string, { row: SpoolRow; count: number; samples: string[] }>,
     counts: { replayed: number; deferred: number; dead: number },
   ): Promise<void> {
     // BY BOT, before the claim — the ledger sweep's rule: a row this process
@@ -4263,9 +4812,14 @@ export class Gateway {
           counts.dead++;
           this.recordSpoolDeadLettered(row.id, 'stale');
           if (adapter) {
-            const entry = staleByLane.get(row.laneKey);
-            if (entry) entry.count++;
-            else staleByLane.set(row.laneKey, { row, count: 1 });
+            const entry = staleByLane.get(row.laneKey) ?? { row, count: 0, samples: [] };
+            entry.count++;
+            // Up to 3 quoted texts per lane; the notice adds "and N more".
+            if (entry.samples.length < 3) {
+              const text = spooledText(row);
+              if (text) entry.samples.push(text);
+            }
+            staleByLane.set(row.laneKey, entry);
           }
         }
       } catch (err) {
@@ -4516,7 +5070,12 @@ export class Gateway {
     const review = spoolTurn?.review;
     if (personalityId && !review) this.onUserTurn?.({ personalityId });
 
-    this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+    this.activeTurns.set(laneKey, {
+      adapter,
+      chatId: message.chatId,
+      // Carried so the shutdown notice returns to the thread the turn is in.
+      ...(threadId ? { threadId } : {}),
+    });
 
     // Flush buffered notifications from previous disconnected period
     if (this.notificationRouter) {
@@ -4561,6 +5120,9 @@ export class Gateway {
     const typingTimer = setInterval(() => {
       void adapter.sendTyping?.(message.chatId).catch(() => {});
     }, 4_000);
+
+    // H1/H2 timers — declared out here so the `finally` can always clear them.
+    let feedback: TurnFeedback | undefined;
 
     try {
       // --- Voice pipeline: auto-transcribe audio attachments ---
@@ -4687,6 +5249,49 @@ export class Gateway {
             })
           : undefined;
 
+      // H1/H2 — silent-lane liveness (see ./turn-feedback.ts for the shared
+      // once-per-turn latch). Not for review turns (they are the agent's own
+      // follow-up, not a user waiting) and never on email lanes (UD9 — a
+      // second email is worse than silence). On a streaming lane H2 edits the
+      // draft's progress line; on a non-streaming lane the one untracked ack
+      // goes out like a slash ack — no dedup, no ledger.
+      //
+      // UD4 — an adapter that posts its own "Thinking…" placeholder from the
+      // `sendTyping` this turn already sent (Discord with
+      // `postsThinkingPlaceholder`) has visible liveness on the lane; arming
+      // H1's `_working on it…_` on top of it double-notices. Omitting
+      // `sendNotice` skips the notice while keeping the H2 per-tool timers
+      // and the shared latch bookkeeping intact. A plain structural property
+      // read, deliberately NOT a PlatformAdapter contract field. Pinned by
+      // `__tests__/slow-turn-notice.test.ts` ('placeholder').
+      const placeholderCoversLane =
+        typeof adapter.sendTyping === 'function' &&
+        (adapter as PlatformAdapter & { postsThinkingPlaceholder?: boolean })
+          .postsThinkingPlaceholder === true;
+      feedback =
+        review || message.platform === 'email'
+          ? undefined
+          : new TurnFeedback({
+              slowTurnNoticeMs: this.slowTurnNoticeMs,
+              ...(streamer
+                ? {
+                    pushProgress: (line: string) => {
+                      if (!signal.aborted) void streamer.pushProgress(line);
+                    },
+                  }
+                : placeholderCoversLane
+                  ? {}
+                  : {
+                      sendNotice: (notice: string) => {
+                        if (!signal.aborted)
+                          void adapter
+                            .send(message.chatId, { text: notice, threadId })
+                            .catch(() => {});
+                      },
+                    }),
+            });
+      feedback?.start();
+
       // Static per-channel toolset narrowing (context-economy Phase 1).
       // Resolved from static config only — never computed per turn — so the
       // tool list stays byte-stable across turns on this lane (plan R1).
@@ -4714,7 +5319,18 @@ export class Gateway {
         // in @ethosagent/types) — delivered as ONE final: the streamed draft is
         // finalized in place with it, or it is the one send. Pinned by
         // `__tests__/turn-tail.test.ts` ('returnDirect').
-        const responseText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        const answerText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        // S4/U1 — a budget halt reaches the lane folded into the reply, so the
+        // answer and the reason it stopped are ONE message (`haltNotice` in
+        // @ethosagent/core owns the wording and the reset command). Not for a
+        // review turn: its empty answer must still fall back to the wake
+        // notice below. Pinned by `__tests__/budget-halt.test.ts`.
+        const halted = !review && translator.halt ? haltNotice(translator.halt) : null;
+        const responseText = halted
+          ? answerText.trim().length > 0
+            ? `${answerText}\n\n${halted}`
+            : halted
+          : answerText;
         const errored = translator.error;
 
         // Did the live streamer already deliver (at least a first chunk)? If so,
@@ -4767,9 +5383,11 @@ export class Gateway {
             markAnswered();
           }
         } else if (errored) {
+          // A3 — the fold uses the shared chat-error map's title, never the
+          // raw provider string (`describeChatError`, @ethosagent/surface-kit).
           const note =
             responseText.trim().length > 0
-              ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
+              ? `${responseText}\n\n⚠ Response interrupted: ${describeChatError(errored.code, errored.error).title}`
               : `⚠ Error: ${errored.error}`;
           const sanitizedNote = stripAnsiEscapes(note);
           if (streamer && streamed) {
@@ -4908,6 +5526,7 @@ export class Gateway {
             u.outputTokens += event.outputTokens;
             u.costUsd += event.estimatedCostUsd;
             this.usageStore.set(laneKey, u);
+            this.addDailySpend(bot, message.platform, event.estimatedCostUsd);
           }
           // From the first tool call on, this turn is never auto-replayed
           // (plan openclaw-9.5-adoption D5). `internal` tool_starts count too:
@@ -4922,6 +5541,9 @@ export class Gateway {
           // answer is already on its way, and anything the tail yields (a
           // turn-end compaction notice) would land after the final.
           if (answer) continue;
+          // H1/H2 — feed the liveness timers before the terminal check below
+          // disposes them, so a tool_end always cancels its own timer.
+          feedback?.onEvent(event);
           translator.push(event);
           // Feed the live draft. Progress folds in only for `audience:'user'`
           // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
@@ -4937,6 +5559,8 @@ export class Gateway {
             // The answer is going out; the tail is maintenance, not the agent
             // composing a reply, so it gets no typing indicator.
             clearInterval(typingTimer);
+            // …and no "working on it" either: nothing may fire after the final.
+            feedback?.dispose();
             // The loop reads its steer sink only between LLM iterations and
             // has none left, so a message pushed now would be acknowledged
             // ("↩ noted") and then read by nobody. Unhooked, the next message
@@ -4975,6 +5599,7 @@ export class Gateway {
       else await deliverAnswer();
     } finally {
       clearInterval(typingTimer);
+      feedback?.dispose();
       this.activeTurns.delete(laneKey);
       this.activeSinks.delete(laneKey);
       // A `removeAdapter` may be parked waiting for exactly this turn.
@@ -5041,6 +5666,26 @@ export class Gateway {
       });
     };
 
+    // H5 — the lane asked for a voice reply and is not getting one: say so,
+    // once, AFTER the text reply (this method only runs once the text is
+    // delivered). Untracked, like an ack — the reply itself already went out
+    // on the tracked path. Only for PRODUCTION failures (no provider, synth,
+    // transcode, format, byte cap): an operator's `ttsOut: false` and an
+    // adapter with no voice caps are policy, not failure, and a send the
+    // platform refused synthesized fine — its artifact is owed by the ledger
+    // sweep, so "couldn't produce audio" would be false there.
+    let voiceFailureNoticed = false;
+    const noticeVoiceFailure = (): void => {
+      if (voiceFailureNoticed) return;
+      voiceFailureNoticed = true;
+      void input.adapter
+        .send(input.chatId, {
+          text: VOICE_FAILURE_NOTICE,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        })
+        .catch(() => {});
+    };
+
     // 1. Operator override. `voice.channels.<platform>.ttsOut: false` outranks
     //    the lane's mode — a deployment decision beats a conversational one.
     if (this.channelVoiceOut?.[input.platform] === false) {
@@ -5069,6 +5714,7 @@ export class Gateway {
         'gateway.voice_no_provider',
         this.voiceProviderErrors.tts ? { error: this.voiceProviderErrors.tts } : {},
       );
+      noticeVoiceFailure();
       return;
     }
 
@@ -5101,6 +5747,7 @@ export class Gateway {
       );
     } catch (err) {
       event('gateway.voice_synth_failed', {}, err instanceof Error ? err.message : String(err));
+      noticeVoiceFailure();
       return;
     }
     event('gateway.voice_synth', {
@@ -5138,6 +5785,7 @@ export class Gateway {
         );
       if (!transcoded.ok) {
         event('gateway.voice_transcode_failed', { code: transcoded.code }, transcoded.error);
+        noticeVoiceFailure();
         return;
       }
       bytes = transcoded.data;
@@ -5147,6 +5795,7 @@ export class Gateway {
       // produces an undownloadable document, not a voice note — so skip and say
       // so, rather than deliver something that looks like a bug to the user.
       event('gateway.voice_format_unsupported', { format: synthesized.format, accepted: targets });
+      noticeVoiceFailure();
       return;
     }
 
@@ -5154,6 +5803,7 @@ export class Gateway {
     const maxBytes = sink.voiceCaps.outbound.maxBytes;
     if (maxBytes !== undefined && bytes.length > maxBytes) {
       event('gateway.voice_too_large', { bytes: bytes.length, maxBytes });
+      noticeVoiceFailure();
       return;
     }
 
@@ -5178,27 +5828,34 @@ export class Gateway {
     });
 
     // 11. Send. A throw folds into `{ ok: false }` exactly as in `sendTracked`.
-    const result = await sink
-      .sendVoiceNote(input.chatId, bytes, {
-        format: finalFormat,
-        mimeType: voiceAudioMimeType(finalFormat),
-        filename: `reply.${voiceAudioExtension(finalFormat)}`,
-        ...(input.threadId ? { threadId: input.threadId } : {}),
-      })
-      .catch(
-        (err: unknown): DeliveryResult => ({
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
+    //     A large upload can outlast the sweep's age grace; the obligation stays
+    //     registered in flight (`endDelivery`) until the send settles.
+    let result: DeliveryResult;
+    try {
+      result = await sink
+        .sendVoiceNote(input.chatId, bytes, {
+          format: finalFormat,
+          mimeType: voiceAudioMimeType(finalFormat),
+          filename: `reply.${voiceAudioExtension(finalFormat)}`,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        })
+        .catch(
+          (err: unknown): DeliveryResult => ({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
 
-    // 12. Confirmed → the obligation is discharged and its artifact is released
-    //     (retention D9: delivering deletes). Otherwise the row stays `pending`
-    //     and the artifact stays on disk for the sweep to re-send.
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      if (ref) await this.voiceArtifacts?.remove(ref);
-      return;
+      // 12. Confirmed → the obligation is discharged and its artifact is released
+      //     (retention D9: delivering deletes). Otherwise the row stays `pending`
+      //     and the artifact stays on disk for the sweep to re-send.
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        if (ref) await this.voiceArtifacts?.remove(ref);
+        return;
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     event(
       'gateway.delivery_unconfirmed',
@@ -5319,6 +5976,16 @@ export class Gateway {
    * empty answer, a tool-started crash, staleness or the attempt cap hand the
    * user the plain wake notice instead (`deliverReviewFallback`). Never lost,
    * never both. A spool write that throws fails open to the plain notice.
+   *
+   * U11 — a review is as unprompted as the plain notice, and it costs a paid
+   * turn. Inside quiet hours or a lane `/mute` ({@link noticeHoldReason}, the
+   * same decision and the same `heldNotices` enablement {@link holdNotice}
+   * uses) nothing is admitted: the job is parked in `parkedReviews` with its
+   * delivery claim NOT taken, and {@link releaseParkedReviews} admits it once
+   * the hold ends. A restart meanwhile loses only the in-memory park; the
+   * unclaimed job is re-owed by `sweepUndeliveredJobs`, which comes back here.
+   * Returns false while parked (nothing delivered yet). Pinned by the U11 cases
+   * in `__tests__/parent-review.test.ts`.
    */
   private async admitWakeReview(
     bot: GatewayBotConfig,
@@ -5330,6 +5997,16 @@ export class Gateway {
     const platform = job.originPlatform;
     const chatId = job.originChatId;
     if (!spool || !platform || !chatId) return false;
+    const hold = this.heldNotices ? this.noticeHoldReason(bot.botKey, laneKey) : null;
+    if (hold) {
+      this.parkedReviews.set(job.id, { bot, job, laneKey });
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.review_held',
+        cause: hold,
+        details: { jobId: job.id, botKey: bot.botKey, platform, chatId },
+      });
+      return false;
+    }
     const threadId = job.originThreadId ? job.originThreadId : undefined;
     const fallbackText = this.buildWakeNotice(job);
     const message: InboundMessage = {
@@ -5461,6 +6138,22 @@ export class Gateway {
     const chatId = job.originChatId;
     if (!platform || !chatId) return false;
     const text = this.buildWakeNotice(job);
+    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    // U11 — a wake notice is unprompted: held for quiet hours or a lane mute.
+    // `true`: the held store now owns it, so the job's delivery claim stays.
+    if (
+      await this.holdNotice({
+        botKey: bot.botKey,
+        platform,
+        chatId,
+        ...(job.originThreadId ? { threadId: job.originThreadId } : {}),
+        laneKey,
+        sessionKey,
+        text,
+      })
+    ) {
+      return true;
+    }
     if (!this.outboundDedup.shouldSend(laneKey, text)) return true;
     return this.sendTracked(
       {
@@ -5468,7 +6161,7 @@ export class Gateway {
         botKey: bot.botKey,
         platform,
         chatId,
-        sessionKey: this.sessionKeys.get(laneKey) ?? laneKey,
+        sessionKey,
       },
       { text, threadId: job.originThreadId },
     );
@@ -5485,9 +6178,16 @@ export class Gateway {
     // Interrupted by its runtime's shutdown: no result to relay, and the error
     // is our own constant — a trusted one-liner, nothing to wrap.
     if (job.status === 'aborted') {
-      return `[background job ${shortId} ${labelPart}interrupted by a restart or config change — ask again to rerun]`;
+      return `background job ${shortId} ${labelPart}was interrupted by a restart or config change — ask again to rerun`;
     }
-    const envelope = `[background job ${shortId} ${labelPart}finished — status: ${job.status}]`;
+    // H6 — a human sentence, not a bracketed record. A failure names where
+    // the detail lives (`ethos process logs <id>`).
+    const envelope =
+      job.status === 'done'
+        ? `background job ${shortId} ${labelPart}finished`
+        : job.status === 'failed'
+          ? `background job ${shortId} ${labelPart}failed — ethos process logs ${shortId}`
+          : `background job ${shortId} ${labelPart}finished — status: ${job.status}`;
     const body =
       job.status === 'done' ? (job.summary ?? '(no summary)') : (job.error ?? 'unknown error');
     const wrapped = wrapUntrusted({ content: body, toolName: 'background_job_summary' });
@@ -5590,7 +6290,15 @@ export class Gateway {
         // Recorded so a message this chat sends during the drain is not told
         // the same thing twice (`refuseWhileClosing` dedups on the lane key).
         this.outboundDedup.record(laneKey, opts.notify);
-        sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
+        sends.push(
+          ctx.adapter
+            .send(ctx.chatId, {
+              text: opts.notify,
+              // H6 — back into the thread the interrupted turn was in.
+              ...(ctx.threadId ? { threadId: ctx.threadId } : {}),
+            })
+            .catch(() => {}),
+        );
       }
       if (sends.length > 0) {
         let pending = sends.length;
@@ -5628,6 +6336,10 @@ export class Gateway {
       clearInterval(this.spoolReplayTimer);
       this.spoolReplayTimer = undefined;
     }
+    if (this.deliverySweepTimer) {
+      clearInterval(this.deliverySweepTimer);
+      this.deliverySweepTimer = undefined;
+    }
     for (const undos of this.botCleanups.values()) for (const undo of undos) undo();
     this.botCleanups.clear();
     this.pendingWakes.clear();
@@ -5635,6 +6347,19 @@ export class Gateway {
       lane.abort();
     }
     await this.awaitInflightTurns(Math.max(0, deadline - Date.now()));
+    // A redelivery mid-send when the caller closes the ledger would leave its
+    // row claimed until `reclaimStaleClaims`; give it what is left of the bound.
+    const sweep = this.deliverySweepInFlight;
+    if (sweep) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        sweep.catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
@@ -5837,15 +6562,22 @@ export class Gateway {
       threadId: message.threadId,
       content: message.text,
     });
-    const result = await target.adapter.send(target.chatId, message).catch(
-      (err: unknown): DeliveryResult => ({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      return { confirmed: true, obligationId };
+    // Registered in flight by `beginDelivery` until the send settles, so the
+    // sweep does not redeliver a send that outlasts its age grace.
+    let result: DeliveryResult;
+    try {
+      result = await target.adapter.send(target.chatId, message).catch(
+        (err: unknown): DeliveryResult => ({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        return { confirmed: true, obligationId };
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     // Leave the row `pending` — the next boot sweep redelivers it. Surface the
     // failure too: before this, a failed send was completely invisible.
@@ -5878,7 +6610,12 @@ export class Gateway {
    *
    * Returns whether the platform CONFIRMED. `false` with a ledger wired means
    * the obligation is still `pending` and will be retried by
-   * {@link sweepPendingDeliveries}.
+   * {@link sweepPendingDeliveries}. `'held'` means the notice was stored for
+   * quiet hours or a lane `/mute` ({@link holdNotice}) and is owed, not failed:
+   * {@link releaseHeldNotices} sends it through the ledger once the hold ends
+   * (pinned by the U11 cases in `__tests__/notify-tracked.test.ts`). It is
+   * truthy on purpose, so a caller that only asks "did this fail?" (`!ok`)
+   * does not report a held notice as a failure.
    *
    * Refuses (returning false, and recording the same unconfirmed event) when
    * the bot cannot be named, or when that bot has no adapter on the platform
@@ -5896,9 +6633,15 @@ export class Gateway {
       /** Ledger session id. Defaults to `<platform>:<chatId>`. */
       sessionKey?: string;
       threadId?: string;
+      /**
+       * The notice answers the user's own message (a dead-letter, interrupted
+       * or missed-while-restarting notice). Never held for quiet hours or a
+       * mute (U11): the user is there, waiting on it.
+       */
+      answersInbound?: boolean;
     },
     text: string,
-  ): Promise<boolean> {
+  ): Promise<boolean | 'held'> {
     const refuse = (cause: string): false => {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_unconfirmed',
@@ -5923,16 +6666,195 @@ export class Gateway {
       return refuse(`no adapter registered for bot "${botKey}" on platform "${target.platform}"`);
     }
 
+    const sessionKey = target.sessionKey ?? `${target.platform}:${target.chatId}`;
+    // U11 — quiet hours / a lane mute hold an unprompted notice. `'held'`:
+    // nothing was sent yet, but it is owed; the release goes through `sendTracked`.
+    if (!target.answersInbound) {
+      const laneKey = laneKeyOf(target.platform, botKey, target.chatId, target.threadId);
+      const held = await this.holdNotice({
+        botKey,
+        platform: target.platform,
+        chatId: target.chatId,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+        laneKey,
+        sessionKey,
+        text,
+      });
+      if (held) return 'held';
+    }
+
     return this.sendTracked(
       {
         adapter,
         botKey,
         platform: target.platform,
         chatId: target.chatId,
-        sessionKey: target.sessionKey ?? `${target.platform}:${target.chatId}`,
+        sessionKey,
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
     );
+  }
+
+  /**
+   * U11 — why an unprompted notice for `laneKey` must wait right now: the
+   * lane's `/mute` has not expired, or `now` is inside the bot's quiet hours
+   * (`GatewayConfig.quietHours`, evaluated in its explicit time zone). Null
+   * when it may go. The ONE decision for every held path: `notifyTracked`,
+   * `deliverCompletion`, `admitWakeReview`, and the releases in
+   * `releaseHeldNotices` and `releaseParkedReviews`.
+   */
+  private noticeHoldReason(
+    botKey: string,
+    laneKey: string,
+    now: number = Date.now(),
+  ): 'muted' | 'quiet_hours' | null {
+    const mutedUntil = this.laneMutes.get(laneKey);
+    if (mutedUntil !== undefined && mutedUntil > now) return 'muted';
+    const window = quietWindowFor(this.quietHours, botKey);
+    if (window && this.quietHours && inQuietHours(window, this.quietHours.timeZone, now)) {
+      return 'quiet_hours';
+    }
+    return null;
+  }
+
+  /**
+   * Hold `notice` when {@link noticeHoldReason} says so. Returns whether it was
+   * held. Without a `heldNotices` store nothing is held — a notice kept only in
+   * memory is lost by a restart, and "never dropped" outranks "not at night".
+   * A store write that throws also sends now, for the same reason.
+   */
+  private async holdNotice(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<boolean> {
+    const store = this.heldNotices;
+    if (!store) return false;
+    const reason = this.noticeHoldReason(notice.botKey, notice.laneKey);
+    if (!reason) return false;
+    try {
+      await store.hold(notice);
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.notice_hold_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { botKey: notice.botKey, platform: notice.platform, reason },
+      });
+      return false;
+    }
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.notice_held',
+      cause: reason,
+      details: { botKey: notice.botKey, platform: notice.platform, chatId: notice.chatId },
+    });
+    return true;
+  }
+
+  /**
+   * U11 — deliver every held notice whose lane is no longer muted and whose
+   * bot is out of quiet hours, through `sendTracked` (ledger `pending` first),
+   * then drop it from the store. A crash between the two re-sends it on the
+   * next pass: at-least-once, like the ledger. A notice whose bot has no
+   * adapter here stays held. Run at the top of every delivery sweep
+   * (`sweepDeliveriesOnce`), so it follows the sweep's boot pass and 60s timer.
+   */
+  async releaseHeldNotices(): Promise<number> {
+    const store = this.heldNotices;
+    if (!store) return 0;
+    let held: HeldNotice[];
+    try {
+      held = await store.listHeld();
+    } catch {
+      return 0;
+    }
+    let released = 0;
+    for (const notice of held) {
+      if (!this.bots.has(notice.botKey)) continue;
+      if (this.noticeHoldReason(notice.botKey, notice.laneKey)) continue;
+      const adapter = this.adapterForBot(notice.botKey, notice.platform);
+      if (!adapter) continue;
+      await this.sendTracked(
+        {
+          adapter,
+          botKey: notice.botKey,
+          platform: notice.platform,
+          chatId: notice.chatId,
+          sessionKey: notice.sessionKey,
+        },
+        { text: notice.text, ...(notice.threadId ? { threadId: notice.threadId } : {}) },
+      );
+      await store.markReleased(notice.id).catch(() => {});
+      released++;
+    }
+    return released;
+  }
+
+  /**
+   * U11 — admit every parked `deliver: 'parent'` review whose hold has ended
+   * ({@link admitWakeReview}). A review whose bot has no adapter here stays
+   * parked. Run beside {@link releaseHeldNotices} at the top of every delivery
+   * sweep, so it follows the sweep's boot pass and 60s timer.
+   */
+  private async releaseParkedReviews(): Promise<number> {
+    let released = 0;
+    for (const [jobId, parked] of [...this.parkedReviews]) {
+      const { bot, job, laneKey } = parked;
+      if (this.noticeHoldReason(bot.botKey, laneKey)) continue;
+      const adapter = job.originPlatform
+        ? this.adapterForBot(bot.botKey, job.originPlatform)
+        : undefined;
+      if (!adapter) continue;
+      this.parkedReviews.delete(jobId);
+      await this.admitWakeReview(bot, job, adapter, laneKey).catch((err: unknown) => {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.review_turn_failed',
+          cause: err instanceof Error ? err.message : String(err),
+          details: { jobId, platform: job.originPlatform },
+        });
+      });
+      released++;
+    }
+    return released;
+  }
+
+  /**
+   * `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it.
+   *
+   * Both change the lane for everyone in it, so they take `/personality`'s
+   * group rule (plan openclaw-advisory-fixes D20/D21), as `/budget reset` does:
+   * in a group only `channel_filter.<platform>.ownerUserId` may change the
+   * mute, and a group on a platform with no owner refuses outright. DMs and the
+   * read-only `/mute` stay open. Pinned by `__tests__/mute-owner.test.ts`.
+   */
+  private async handleMuteCommand(
+    text: string,
+    laneKey: string,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    threadId: string | undefined,
+  ): Promise<void> {
+    const arg = text.split(/\s+/).slice(1).join(' ');
+    const parsed = parseMuteDuration(arg);
+    let reply: string;
+    if (parsed !== null && !message.isDm && !this.isOwner(message)) {
+      reply =
+        this.channelFilter?.[message.platform]?.ownerUserId === undefined
+          ? `Muting notices in a group needs an owner. ` +
+            `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+          : 'Only the bot owner can mute notices in a group.';
+    } else if (parsed === null) {
+      const until = this.laneMutes.get(laneKey);
+      reply =
+        until !== undefined && until > Date.now()
+          ? `Notices muted in this chat until ${new Date(until).toISOString()}.\nUsage: /mute <30m|2h|1d|off>`
+          : 'Usage: /mute <30m|2h|1d|off> — hold background notices in this chat.';
+    } else if (parsed === 'off') {
+      this.laneMutes.delete(laneKey);
+      await this.persistLaneSessions(laneKey);
+      reply = '✓ Unmuted. Held notices arrive within a minute.';
+    } else {
+      const until = Date.now() + parsed;
+      this.laneMutes.set(laneKey, until);
+      await this.persistLaneSessions(laneKey);
+      reply = `✓ Notices muted in this chat until ${new Date(until).toISOString()}. Replies to your messages still arrive.`;
+    }
+    await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
   }
 
   /**
@@ -6055,14 +6977,89 @@ export class Gateway {
    *
    * Must run AFTER `adapter.start()`: a sweep against a cold adapter is a
    * silent no-op that also burns the obligation.
+   *
+   * Never overlaps itself: a call made while a sweep runs (the boot call, a
+   * {@link startDeliverySweep} tick) joins that sweep instead of starting a
+   * second (`deliverySweepInFlight`). Each sweep first returns stranded
+   * `redelivering` claims to `pending` (`DeliveryLedger.reclaimStaleClaims`,
+   * older than `DELIVERY_CLAIM_STALE_MS`).
    */
   async sweepPendingDeliveries(): Promise<{ redelivered: number; failed: number }> {
+    return this.runDeliverySweep(0);
+  }
+
+  /**
+   * Arm the periodic delivery sweep (plan openclaw-2026.9.6-gaps R1): every
+   * `deliverySweepIntervalMs` (default 60s, 0 = never), unref'd. Call AFTER
+   * `adapter.start()`, beside the boot {@link sweepPendingDeliveries} — the
+   * first tick lands one interval later, and a tick that fires while the boot
+   * sweep is still running joins it. Idempotent; {@link shutdown} stops it.
+   *
+   * A tick skips `pending` rows younger than `DELIVERY_SWEEP_MIN_AGE_MS`: they
+   * may be replies still in flight, which the ledger does not claim. Every
+   * sweep also skips a row whose live send is still running in this process
+   * (`isDeliveryInFlight`), whatever its age.
+   */
+  startDeliverySweep(): void {
+    if (this.deliverySweepTimer || this.deliverySweepIntervalMs <= 0 || this.closing) return;
+    if (!this.deliveryLedger) return;
+    this.deliverySweepTimer = setInterval(() => {
+      if (this.closing) return;
+      void this.runDeliverySweep(DELIVERY_SWEEP_MIN_AGE_MS).catch(() => {});
+    }, this.deliverySweepIntervalMs);
+    this.deliverySweepTimer.unref?.();
+  }
+
+  private runDeliverySweep(minAgeMs: number): Promise<{ redelivered: number; failed: number }> {
+    if (this.deliverySweepInFlight) return this.deliverySweepInFlight;
+    const run = this.sweepDeliveriesOnce(minAgeMs).finally(() => {
+      this.deliverySweepInFlight = undefined;
+    });
+    this.deliverySweepInFlight = run;
+    return run;
+  }
+
+  private async sweepDeliveriesOnce(
+    minAgeMs: number,
+  ): Promise<{ redelivered: number; failed: number }> {
+    // U11 — held notices whose window has ended go out first, filing their
+    // obligations before this sweep reads the ledger.
+    await this.releaseHeldNotices().catch(() => 0);
+    await this.releaseParkedReviews().catch(() => 0);
     const ledger = this.deliveryLedger;
     if (!ledger) return { redelivered: 0, failed: 0 };
 
+    try {
+      const reclaimed = await ledger.reclaimStaleClaims(Date.now() - DELIVERY_CLAIM_STALE_MS);
+      if (reclaimed > 0) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.delivery_claims_reclaimed',
+          details: { count: reclaimed },
+        });
+      }
+    } catch (err) {
+      // A failed reclaim costs only the stranded rows; the sweep still runs.
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.delivery_sweep_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { stage: 'reclaimStaleClaims' },
+      });
+    }
+
     let pending: Awaited<ReturnType<DeliveryLedger['listPending']>>;
     try {
-      pending = await ledger.listPending([...this.bots.keys()]);
+      const now = Date.now();
+      const newest = now - minAgeMs;
+      // Two gates. Age guards a live send (see DELIVERY_SWEEP_MIN_AGE_MS; the
+      // boot sweep passes 0). `nextAttemptAt` is the backoff a refused
+      // redelivery set (`settleRefusedRedelivery`), and binds EVERY sweep,
+      // the boot one included — a restart is not a reason to hit a platform
+      // that refused a minute ago.
+      pending = (await ledger.listPending([...this.bots.keys()])).filter(
+        (row) =>
+          (minAgeMs <= 0 || row.createdAt <= newest) &&
+          (row.nextAttemptAt === undefined || row.nextAttemptAt <= now),
+      );
     } catch (err) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_sweep_failed',
@@ -6079,6 +7076,11 @@ export class Gateway {
       // Resolved BEFORE the claim, so a row this process cannot deliver is left
       // exactly as it was — still `pending`, never burned, never held in
       // `redelivering` where a peer that does own the adapter would skip it.
+      // A live reply path in THIS process is still sending it (registered by
+      // `beginDelivery` until `endDelivery`): redelivering now would send it
+      // twice. It is neither a redelivery nor a failure; a later sweep takes it
+      // if that send ends unconfirmed.
+      if (isDeliveryInFlight(ledger, row.id)) continue;
       const adapter = this.adapterForBot(row.botKey, row.platform);
       if (!adapter) {
         failed++;
@@ -6123,7 +7125,7 @@ export class Gateway {
             },
           });
         } else {
-          await ledger.release(row.id);
+          await this.settleRefusedRedelivery(row, ledger, result ?? {});
           failed++;
         }
       } catch (err) {
@@ -6140,6 +7142,51 @@ export class Gateway {
   }
 
   /**
+   * Settle a claimed row whose redelivery the platform refused. The one owner
+   * of the retry policy: a `permanent` refusal (`DeliveryResult.permanent`) or
+   * the `deliveryMaxAttempts`-th refusal abandons the row, with the reason
+   * recorded on it (`DeliveryLedger.abandon`), a voice artifact released, and a
+   * `gateway.delivery_abandoned` event; anything else goes back to `pending`,
+   * not due again until `deliveryRetryDelayMs` has passed
+   * (`DeliveryLedger.deferRetry`). Pinned by the 'redelivery backoff and cap'
+   * cases in `__tests__/delivery-ledger.test.ts`.
+   */
+  private async settleRefusedRedelivery(
+    row: DeliveryObligation,
+    ledger: DeliveryLedger,
+    refusal: { error?: string; permanent?: boolean },
+  ): Promise<void> {
+    const attempts = row.attempts + 1;
+    const error = refusal.error ?? 'unconfirmed';
+    const permanent = refusal.permanent === true;
+    const reason = permanent
+      ? `permanent: ${error}`
+      : attempts >= this.deliveryMaxAttempts
+        ? `gave up after ${attempts} attempts: ${error}`
+        : undefined;
+    if (!reason) {
+      await ledger.deferRetry(row.id, Date.now() + deliveryRetryDelayMs(attempts));
+      return;
+    }
+    const abandoned = await ledger.abandon(row.id, reason);
+    if (!abandoned) return;
+    if (abandoned.artifactRef) await this.voiceArtifacts?.remove(abandoned.artifactRef);
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.delivery_abandoned',
+      cause: reason,
+      details: {
+        platform: row.platform,
+        botKey: row.botKey,
+        chatId: row.chatId,
+        kind: row.kind,
+        attempts,
+        permanent,
+        contentHash: row.contentHash,
+      },
+    });
+  }
+
+  /**
    * Redeliver one claimed `voice` obligation by re-sending its stored artifact.
    *
    * It never re-synthesizes. A second TTS pass is a different recording — the
@@ -6147,8 +7194,9 @@ export class Gateway {
    * since — so the user would receive an answer they can hear is not the one
    * that was lost. The artifact IS the obligation's payload.
    *
-   * Returns whether the platform confirmed. Every failure hands the row back to
-   * the pending pool rather than burning it.
+   * Returns whether the platform confirmed. Every failure goes through
+   * {@link settleRefusedRedelivery}: back to the pending pool on a backoff, or
+   * abandoned at the attempt cap or when the artifact is gone.
    */
   private async redeliverVoiceObligation(
     row: DeliveryObligation,
@@ -6156,10 +7204,17 @@ export class Gateway {
     ledger: DeliveryLedger,
   ): Promise<boolean> {
     const giveBack = async (code: string, details: Record<string, unknown> = {}) => {
-      await ledger.release(row.id);
       this.observability?.recordSafetyBlock({
         code,
         details: { platform: row.platform, botKey: row.botKey, chatId: row.chatId, ...details },
+      });
+      // A vanished artifact can never be re-sent — the bytes ARE the
+      // obligation — so it is permanent; every other refusal backs off. Only
+      // when a store is wired: a process with none cannot see an artifact a
+      // properly configured peer could still send.
+      await this.settleRefusedRedelivery(row, ledger, {
+        error: typeof details.error === 'string' ? details.error : code,
+        permanent: code === 'gateway.voice_artifact_missing' && this.voiceArtifacts !== undefined,
       });
       return false;
     };
@@ -6518,6 +7573,16 @@ export class Gateway {
     return this.sessionRouting.get(sessionKey)?.threadId;
   }
 
+  /**
+   * The platform user whose message started the live turn on `sessionKey`
+   * (`SessionRouting.requesterUserId`), for the same reason as
+   * `originThreadIdFor`: a `delegate_task` job stamps it as `origin_user_id`
+   * so the job's clarify binds to that user. `undefined` once the turn ends.
+   */
+  originUserIdFor(sessionKey: string): string | undefined {
+    return this.sessionRouting.get(sessionKey)?.requesterUserId;
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -6531,10 +7596,32 @@ export class Gateway {
   }
 
   /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False
-   *  when the platform has no owner configured. */
+   *  when the platform has no owner configured. See `senderIsOwner`. */
   private isOwner(message: InboundMessage): boolean {
-    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
-    return owner !== undefined && message.userId === owner;
+    return senderIsOwner(message, this.channelFilter?.[message.platform]?.ownerUserId);
+  }
+
+  /**
+   * One `channel.pairing` audit row: `issued` when the channel filter answers an
+   * unknown DM sender with a pairing code (`checkMessage`'s `pairing_reply`), or
+   * a failed `/allow` redemption — `not_owner`, or `consumeAndAllow`'s reason
+   * (`not_found` | `consumed` | `expired` | `sender_mismatch` | `owner_paused`,
+   * the last being the brute-force pause). `senderId` is whoever sent THIS
+   * message: the requester for `issued`, the redeemer otherwise. The pairing
+   * code is never recorded — it is a bearer credential until it expires. An
+   * approval is `channel.allow` (`channel.pairing.approved`), not this.
+   */
+  private recordPairing(message: InboundMessage, outcome: string, codePlatform?: string): void {
+    this.observability?.recordChannelPairing?.({
+      code: outcome === 'issued' ? 'channel.pairing.issued' : 'channel.pairing.redeem_failed',
+      details: {
+        platform: message.platform,
+        botKey: message.botKey ?? this.defaultBotKey ?? '',
+        senderId: message.userId ?? '',
+        outcome,
+        ...(codePlatform ? { codePlatform } : {}),
+      },
+    });
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and
@@ -6847,6 +7934,7 @@ export class Gateway {
       if (laneKeyBotKey(laneKey) !== botKey || this.sessionKeys.has(laneKey)) continue;
       this.sessionKeys.set(laneKey, entry.sessionKey);
       if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
+      if (entry.mutedUntil !== undefined) this.laneMutes.set(laneKey, entry.mutedUntil);
     }
   }
 
@@ -6871,6 +7959,13 @@ export class Gateway {
       const personalityId = this.personalityIds.get(key);
       lanes[key] = { sessionKey, ...(personalityId ? { personalityId } : {}) };
     }
+    // U11 — a lane's `/mute` rides beside its session key; a muted lane still
+    // on its default session is written with that default (the lane key).
+    const now = Date.now();
+    for (const [key, mutedUntil] of this.laneMutes) {
+      if (laneKeyBotKey(key) !== botKey || mutedUntil <= now) continue;
+      lanes[key] = { ...(lanes[key] ?? { sessionKey: key }), mutedUntil };
+    }
     try {
       await files.save(botKey, lanes);
     } catch (err) {
@@ -6881,6 +7976,122 @@ export class Gateway {
         details: { botKey, laneKey, error: err instanceof Error ? err.message : String(err) },
       });
     }
+  }
+
+  /** Cache key and session-key prefix for one bot's daily spend: its lanes are
+   *  all `buildLaneKey(platform, botKey, …)`, and so are their sessions. */
+  private dailySpendKey(bot: GatewayBotConfig, platform: string): string {
+    return `${buildLaneKey(platform, bot.botKey)}:`;
+  }
+
+  /**
+   * The bot's spend since 00:00 UTC, or `null` when no daily cap applies (no
+   * `dailyBudgetUsd`, no `botSpendSince`) or the read failed. See
+   * `DAILY_SPEND_REFRESH_MS` for when the store is read. Fail-open on a read
+   * that throws — recorded as `gateway.daily_budget_unreadable` — because a
+   * cap that cannot be read refusing every turn would take the bot down over a
+   * locked database; the next turn tries the read again.
+   */
+  private async spentToday(bot: GatewayBotConfig, platform: string): Promise<number | null> {
+    const read = this.botSpendSince;
+    if (bot.dailyBudgetUsd === undefined || !read) return null;
+    const now = Date.now();
+    const start = utcDayStart(now);
+    const day = start.toISOString().slice(0, 10);
+    const key = this.dailySpendKey(bot, platform);
+    const cached = this.dailySpend.get(key);
+    if (cached && cached.day === day && now - cached.readAt < DAILY_SPEND_REFRESH_MS) {
+      return cached.usd;
+    }
+    try {
+      const usd = await read(key, start);
+      this.dailySpend.set(key, { day, usd, readAt: now });
+      return usd;
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.daily_budget_unreadable',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { platform, botKey: bot.botKey },
+      });
+      return null;
+    }
+  }
+
+  /** Fold a `usage` event from this process's own turn into the cached figure. */
+  private addDailySpend(bot: GatewayBotConfig, platform: string, usd: number): void {
+    if (bot.dailyBudgetUsd === undefined || !Number.isFinite(usd) || usd <= 0) return;
+    const cached = this.dailySpend.get(this.dailySpendKey(bot, platform));
+    if (cached && cached.day === utcDayStart(Date.now()).toISOString().slice(0, 10)) {
+      cached.usd += usd;
+    }
+  }
+
+  /** `{ spentUsd, capUsd }` when today's spend meets the bot's daily cap, else null. */
+  private async dailyCapReached(
+    bot: GatewayBotConfig,
+    platform: string,
+  ): Promise<{ spentUsd: number; capUsd: number } | null> {
+    const capUsd = bot.dailyBudgetUsd;
+    if (capUsd === undefined) return null;
+    const spentUsd = await this.spentToday(bot, platform);
+    return spentUsd !== null && spentUsd >= capUsd ? { spentUsd, capUsd } : null;
+  }
+
+  /**
+   * `/budget` and `/budget reset` (plan openclaw-2026.9.6-gaps S4/U1) — the
+   * channel half of the CLI command, over the same `AgentLoop` session-cost
+   * counter `budgetCapUsd` is checked against (`getSessionCost` /
+   * `resetSessionCost`), keyed by the lane's CURRENT session key.
+   *
+   * The reset is lane-wide state, so it takes `/personality`'s group rule
+   * (plan openclaw-advisory-fixes D20/D21): in a group only the configured
+   * `channel_filter.<platform>.ownerUserId` may reset, and a group on a
+   * platform with no owner refuses outright. The read-only form stays open.
+   * Pinned by `__tests__/budget-halt.test.ts`.
+   */
+  private async handleBudgetCommand(
+    text: string,
+    laneKey: string,
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    threadId: string | undefined,
+  ): Promise<void> {
+    const reply = (body: string) =>
+      adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
+    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    const arg = text.split(/\s+/)[1]?.toLowerCase() ?? '';
+
+    if (arg === 'reset') {
+      if (!message.isDm && !this.isOwner(message)) {
+        await reply(
+          this.channelFilter?.[message.platform]?.ownerUserId === undefined
+            ? `Resetting the budget in a group needs an owner. ` +
+                `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+            : 'Only the bot owner can reset the budget in a group.',
+        );
+        return;
+      }
+      bot.loop.resetSessionCost(sessionKey);
+      await reply('✓ Budget counter reset for this session.');
+      return;
+    }
+
+    const personalityId =
+      bot.binding.type === 'team'
+        ? undefined
+        : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+    const spent = bot.loop.getSessionCost(sessionKey);
+    const cap = bot.loop.getPersonalityBudgetCap(personalityId);
+    const today = await this.spentToday(bot, message.platform);
+    await reply(
+      `Session spend: $${spent.toFixed(4)}` +
+        (cap != null ? ` of a $${cap.toFixed(2)} cap` : ' (no session cap set)') +
+        (today !== null && bot.dailyBudgetUsd !== undefined
+          ? `\nBot spend today (UTC): $${today.toFixed(4)} of a $${bot.dailyBudgetUsd.toFixed(2)} daily cap`
+          : '') +
+        `\nUse /budget reset to start a new budget window.`,
+    );
   }
 
   /**
@@ -6899,9 +8110,10 @@ export class Gateway {
     bot: GatewayBotConfig,
     message: InboundMessage,
     adapter: PlatformAdapter,
+    threadId: string | undefined,
   ): Promise<void> {
     const reply = async (body: string): Promise<void> => {
-      await adapter.send(message.chatId, { text: body }).catch(() => {});
+      await adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
     };
     const store = this.sessionStoreFor?.();
     if (!store) {

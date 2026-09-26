@@ -296,7 +296,8 @@ describe('Outbox pane', () => {
   it('says nothing is queued rather than drawing empty sections', async () => {
     listFn.mockResolvedValue({ items: [] });
     await mount();
-    expect(container.querySelector('.outbox-empty')?.textContent).toContain('Nothing queued');
+    // The empty case renders the shared EmptyState (N5c), not `.outbox-empty`.
+    expect(container.querySelector('.state-empty')?.textContent).toContain('Nothing queued');
     expect(container.querySelectorAll('[data-testid^="outbox-section-"]')).toHaveLength(0);
   });
 });

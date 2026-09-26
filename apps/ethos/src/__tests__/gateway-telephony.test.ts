@@ -75,7 +75,7 @@ describe('gateway telephony wiring', () => {
   });
 
   it('closes the listener and the call log on shutdown', () => {
-    const shutdown = GATEWAY.slice(GATEWAY.indexOf('const shutdown = async ()'));
+    const shutdown = GATEWAY.slice(GATEWAY.indexOf('const shutdown = async (exitCode = 0)'));
     expect(shutdown).toMatch(/sipWebhookServer\?\.close\(\);/);
     expect(shutdown).toMatch(/callLog\?\.close\(\);/);
   });

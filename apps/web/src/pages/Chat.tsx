@@ -8,6 +8,7 @@ import { TakeoverMode } from '../components/browser/TakeoverMode';
 import { TakeoverUnavailableNote } from '../components/browser/TakeoverStage';
 import { takeoverStageFits } from '../components/browser/useTakeoverSocket';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
+import { ChatErrorBanner } from '../components/chat/ChatErrorBanner';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
 import { CredentialCard } from '../components/chat/CredentialCard';
@@ -24,6 +25,7 @@ import { useConfig } from '../features/config/api/queries';
 import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { usePersonalityGet } from '../features/personalities/api/queries';
+import { sessionKeys } from '../features/sessions/api/keys';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useRecentSessions, useSessionGet } from '../features/sessions/api/queries';
 import { BranchSwitcher } from '../features/sessions/BranchSwitcher';
@@ -57,6 +59,7 @@ import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
+import { retryTurnText } from '../lib/chat-retry';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import { accentVars, personalityTheme } from '../lib/theme';
@@ -152,6 +155,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     loadOlder,
     hasOlder,
     olderStatus,
+    clearError,
+    retryMessage,
+    discardMessage,
   } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
@@ -170,6 +176,19 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   const sessionQuery = useSessionGet(currentSessionId);
   // undefined = no session; null = session without title; string = titled session
   const sessionTitle = currentSessionId ? (sessionQuery.data?.session.title ?? null) : undefined;
+  // U3 — the session's persisted spend, beside its title. The rollup is
+  // written when a turn's rows land, so the detail query is refreshed each
+  // time a turn stops streaming rather than re-derived from stream events.
+  const sessionCostUsd = currentSessionId
+    ? sessionQuery.data?.session.usage.estimatedCostUsd
+    : undefined;
+  const wasStreaming = useRef(false);
+  useEffect(() => {
+    if (wasStreaming.current && !state.isStreaming && currentSessionId) {
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.detail(currentSessionId) });
+    }
+    wasStreaming.current = state.isStreaming;
+  }, [state.isStreaming, currentSessionId, queryClient]);
 
   const renameMut = useSessionRenameFromChat(currentSessionId);
 
@@ -287,12 +306,54 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
 
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
 
+  // A4 — per-turn run meta for the trail footers: finalised turns from the
+  // reducer's map, plus the live turn's own.
+  const turnMeta = useMemo(() => {
+    if (!state.currentTurn || !state.runMeta) return state.turnMeta;
+    return { ...state.turnMeta, [state.currentTurn.id]: state.runMeta };
+  }, [state.turnMeta, state.currentTurn, state.runMeta]);
+
   // Suggestion pills (empty state + `recommend_actions` cards) fill the
   // composer draft. `seq` makes a repeat pick a distinct event.
-  const [suggestion, setSuggestion] = useState<{ text: string; seq: number } | undefined>();
-  const handleSuggestPrompt = useCallback((text: string) => {
-    setSuggestion((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+  const [suggestion, setSuggestion] = useState<
+    { text: string; seq: number; onlyIfEmpty?: boolean } | undefined
+  >();
+  const handleSuggestPrompt = useCallback((text: string, opts?: { onlyIfEmpty?: boolean }) => {
+    setSuggestion((prev) => ({
+      text,
+      seq: (prev?.seq ?? 0) + 1,
+      ...(opts?.onlyIfEmpty ? { onlyIfEmpty: true as const } : {}),
+    }));
   }, []);
+
+  // W1 — the failed-bubble verbs. Stable identities: UserBubble rows are
+  // memoized against them. Discard puts the text back in the composer through
+  // the same suggestion path a pill uses — but only into an EMPTY composer:
+  // anything typed since the failed send outranks the recovered draft.
+  const handleRetryMessage = useCallback(
+    (messageId: string) => {
+      void retryMessage(messageId);
+    },
+    [retryMessage],
+  );
+  const handleDiscardMessage = useCallback(
+    (messageId: string) => {
+      const draft = discardMessage(messageId);
+      if (draft) handleSuggestPrompt(draft, { onlyIfEmpty: true });
+    },
+    [discardMessage, handleSuggestPrompt],
+  );
+
+  // A3 — the banner's Retry for a retryable turn error: ask the same question
+  // again. `retryTurnText` yields the last user message's text, or null when
+  // that send carried attachments — the bubble holds render-only metadata, not
+  // the bytes, so a text-only resend would silently degrade the question.
+  // Null hides Retry on the banner instead (`lib/chat-retry.ts`).
+  const retryTurnDraft = useMemo(() => retryTurnText(state.messages), [state.messages]);
+  const handleRetryTurn = useCallback(() => {
+    if (retryTurnDraft === null) return;
+    void sendMessage(retryTurnDraft);
+  }, [retryTurnDraft, sendMessage]);
 
   // `?draft=` — a prompt handed over from another surface (today: the recipe
   // post-install panel's "Open chat with …"). It fills the composer through the
@@ -904,6 +965,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         onNewSession={handleNewSession}
         sessionTitle={sessionTitle}
         onRenameSession={handleRenameSession}
+        {...(sessionCostUsd !== undefined ? { sessionCostUsd } : {})}
         {...(teamContext ? { teamContext: { ...teamContext, coordinatorName } } : {})}
         {...(coordinatorOf ? { coordinatorOf } : {})}
         actionsSlot={
@@ -1009,7 +1071,11 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         runSurface={runSurface}
         trail={state.trail}
         stoppedTurnIds={state.stoppedTurnIds}
+        turnMeta={turnMeta}
+        onRetryMessage={handleRetryMessage}
+        onDiscardMessage={handleDiscardMessage}
         personalityId={personalityId}
+        personalityName={coordinatorName}
         model={model}
         sessionId={currentSessionId ?? undefined}
         onSuggestPrompt={handleSuggestPrompt}
@@ -1032,6 +1098,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         label={state.currentOp}
         elapsedMs={elapsedMs}
         stalled={isStalled}
+        thinking={state.thinking}
+        reconnecting={state.connection === 'reconnecting'}
+        connectionLost={state.connection === 'closed'}
       />
       <div>
         {state.pendingCredential ? (
@@ -1043,9 +1112,11 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
           />
         ) : null}
         {state.error ? (
-          <div className="chat-error" role="alert">
-            {state.error}
-          </div>
+          <ChatErrorBanner
+            error={state.error}
+            onDismiss={clearError}
+            {...(retryTurnDraft !== null ? { onRetry: handleRetryTurn } : {})}
+          />
         ) : null}
         <Composer
           personalityId={personalityId}

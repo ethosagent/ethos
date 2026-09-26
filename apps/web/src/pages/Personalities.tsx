@@ -59,6 +59,7 @@ import { TeamRing } from '../components/ui/TeamRing';
 import { useTeamMembership } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useCreateFlag } from '../hooks/useCreateFlag';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { toolAffordance } from '../lib/execution-posture';
 import { wizardFsReach } from '../lib/personalityFsReach';
 import {
@@ -1470,6 +1471,11 @@ export function EditModal({
       plugins: forTab('plugins'),
     };
   }, []);
+
+  // N5a — a navigation (or reload) while a tab holds a draft is the same loss
+  // handleCancel guards against, just through a different exit. A thunk over
+  // the ref: dirty state deliberately does not re-render this component.
+  useUnsavedGuard(() => Object.values(dirtyTabs.current).some(Boolean));
 
   function handleCancel() {
     if (!Object.values(dirtyTabs.current).some(Boolean)) {

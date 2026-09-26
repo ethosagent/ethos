@@ -41,9 +41,10 @@ export const FAR_END_VOICE_ORIGIN: VoiceTurnOrigin = {
 
 export interface FarEndConsultOptions {
   /**
-   * `voice.inbound.receptionist` — the personality a NON-ALLOWLISTED caller's
-   * consult runs as. Omit for an allowlisted caller, whose call already routes
-   * to the bot's own personality and who therefore needs no pin.
+   * `voice.inbound.receptionist` — the personality the caller's consult runs
+   * as. Pass it for EVERY call: caller ID is not identity, so an allowlisted
+   * caller is answered by the receptionist too (INB-001b, `decideInboundCall`).
+   * Omitted, the consult runs as the loop's default personality.
    */
   receptionistPersonalityId?: string;
 }

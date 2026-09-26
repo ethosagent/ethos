@@ -8,12 +8,18 @@
 // Drives a real `AgentLoop`: "refused" and "not run" are separate claims, and
 // only the loop settles the second.
 
-import { AgentLoop, DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultHookRegistry,
+  DefaultPersonalityRegistry,
+  DefaultToolRegistry,
+} from '@ethosagent/core';
 import { Gateway } from '@ethosagent/gateway';
 import type {
   AgentSafety,
   CompletionChunk,
   DeliveryResult,
+  ExecutionPosture,
   LLMProvider,
   Message,
   PersonalityConfig,
@@ -21,7 +27,7 @@ import type {
   Storage,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
-import { FAR_END_VOICE_ORIGIN, farEndRefusalReason } from '@ethosagent/wiring';
+import { FAR_END_VOICE_ORIGIN, farEndRefusalReason, hasHostApprovalGate } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCoordinator } from '../approval-coordinator';
 import { idleGatewayBot } from '../commands/gateway';
@@ -119,6 +125,7 @@ async function runUnattendedTurn(opts: {
 
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
       throw new Error('the smart reviewer must not be constructed');
@@ -199,6 +206,74 @@ describe('systemLoop unattended approval gate', () => {
     expect(r.toolEndErrors).toEqual([]);
   });
 
+  // Command substitution is approval-required, not hardline: with nobody to
+  // ask, the gate refuses it (the systemLoop's terminal guard defers to this
+  // gate because `wireUnattendedApprovalGate` marks the registry).
+  it('refuses command substitution — no human to approve it', async () => {
+    const r = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'kill $(lsof -t -i:3000)' },
+    });
+    expect(r.ran).toBe(false);
+    expect(r.toolEndErrors).toEqual([
+      unattendedApprovalRejection(
+        'terminal',
+        'terminal requires explicit approval (command substitution)',
+      ),
+    ]);
+    expect(r.coordinatorCalls).toBe(0);
+  });
+
+  // The D12 opt-in pre-authorizes flagged TOOLS, not a command whose real
+  // payload is hidden in a substitution: the predicate never auto-approves
+  // one (`createDangerPredicate`), so with nobody to ask it is refused.
+  it('approvalMode off + allowUnattendedDangerousTools still refuses command substitution', async () => {
+    const r = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'kill $(lsof -t -i:3000)' },
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(r.ran).toBe(false);
+    expect(r.toolEndErrors).toEqual([
+      unattendedApprovalRejection(
+        'terminal',
+        'terminal requires explicit approval (command substitution)',
+      ),
+    ]);
+
+    // Other flagged calls under the same settings are still auto-approved.
+    const flagged = await runUnattendedTurn({
+      toolName: 'call',
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(flagged.ran).toBe(true);
+    const plainShell = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'ls -la' },
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(plainShell.ran).toBe(true);
+  });
+
+  it('marks the registry as carrying a host approval gate', () => {
+    const hooks = new DefaultHookRegistry();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
+    wireUnattendedApprovalGate(hooks, {
+      executionPostureFor: () => undefined,
+      personalities: new DefaultPersonalityRegistry(),
+      getProvider: async () => {
+        throw new Error('unused');
+      },
+      model: 'mock-model',
+      allowUnattendedDangerousTools: false,
+      isRemoteSenderTurn: () => false,
+    });
+    expect(hasHostApprovalGate(hooks)).toBe(true);
+  });
+
   it('createUnattendedApprovalGate renders the caller’s rejection text', async () => {
     const gate = createUnattendedApprovalGate(
       async (p) => (p.toolName === 'x' ? 'x is risky' : null),
@@ -269,6 +344,7 @@ function idleGatewayRig(opts: {
   const gateway = new Gateway({ bots: [idleGatewayBot(loop, 'idlebot', undefined)] });
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
       throw new Error('the smart reviewer must not be constructed');
@@ -362,6 +438,7 @@ describe('idle gateway — channel turns on the systemLoop never get the D12 opt
       registerVoid: () => () => {},
     } as unknown as Parameters<typeof wireUnattendedApprovalGate>[0];
     wireUnattendedApprovalGate(hooks, {
+      executionPostureFor: () => undefined,
       personalities,
       getProvider: async () => {
         throw new Error('unused');
@@ -416,6 +493,33 @@ describe('boot-time cron exposure report', () => {
       },
       { personalityId: 'smartWriter', tools: ['write_file'] },
     ]);
+  });
+
+  // S6 / D1(a): under a host-local posture the shell tools are flagged too,
+  // so a cron job that reaches them is refused unattended — report it.
+  it('adds the local-posture shell tools for a host-local personality', () => {
+    const local = {
+      id: 'localShell',
+      name: 'l',
+      toolset: ['terminal', 'read_file'],
+    } as PersonalityConfig;
+    expect(
+      unattendedCronExposure({
+        jobs: [{ personalityId: 'localShell', prompt: 'p' }],
+        getPersonality: () => local,
+        allowUnattendedDangerousTools: false,
+        executionPostureFor: () => ({ backend: 'local', containerized: false }) as ExecutionPosture,
+      }),
+    ).toEqual([{ personalityId: 'localShell', tools: ['terminal'] }]);
+    expect(
+      unattendedCronExposure({
+        jobs: [{ personalityId: 'localShell', prompt: 'p' }],
+        getPersonality: () => local,
+        allowUnattendedDangerousTools: false,
+        executionPostureFor: () =>
+          ({ backend: 'docker', containerized: false }) as ExecutionPosture,
+      }),
+    ).toEqual([]);
   });
 
   it('drops approvalMode off personalities once the operator pre-authorizes', () => {

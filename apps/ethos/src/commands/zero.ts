@@ -4,6 +4,7 @@ import { readConfig } from '@ethosagent/config';
 import { createEventTranslator, credentialInstruction } from '@ethosagent/surface-kit';
 import { answerSuffix, EthosError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
 import {
@@ -183,6 +184,7 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
 
   const withOverrides = await applyCliOverrides(config, cliFlags, storage);
   const runtime = await resolveActiveLoop(withOverrides);
+  gateNonInteractiveLoop(runtime, withOverrides, '`ethos -z` has no prompt to answer it');
   const { loop, personalityId } = runtime;
 
   try {
@@ -278,6 +280,7 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
     }
     const withOverrides = await applyCliOverrides(config, cliFlags, storage);
     runtime = await resolveActiveLoop(withOverrides);
+    gateNonInteractiveLoop(runtime, withOverrides, '`ethos -z` has no prompt to answer it');
   } catch (err) {
     const e = toEthosError(err);
     process.exitCode = 1;

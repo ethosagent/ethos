@@ -9,6 +9,7 @@ import {
   type VoiceBotIdentity,
   type VoiceChannelAdapter,
 } from '@ethosagent/platform-voice';
+import { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 import type { AgentEvent, PersonalityConfig, VoiceTurnOrigin } from '@ethosagent/types';
 import { FAR_END_VOICE_ORIGIN, type VoiceInboundGates } from '@ethosagent/wiring';
 
@@ -74,8 +75,11 @@ export interface SipInboundDispatchDeps {
    * ate is redelivered by the boot sweep rather than silently lost (OpenClaw
    * #77957 — "owner never told about inbound calls"). Returns false when the
    * delivery could not be confirmed; that is a log line, never a throw.
+   * `'held'` means the gateway stored it for quiet hours or a `/mute` and will
+   * deliver it when the hold ends (`Gateway.releaseHeldNotices`) — owed, not
+   * failed, so it is not logged.
    */
-  notifyOwner: (text: string) => Promise<boolean>;
+  notifyOwner: (text: string) => Promise<boolean | 'held'>;
   /** Deduped artifact sink for in-call artifacts. */
   sendArtifact?: (artifact: VoiceArtifact) => void | Promise<void>;
   now?: () => number;
@@ -131,13 +135,15 @@ async function* meterSpend(
 
 /** A refusal the caller chose (who they are) vs. one our capacity forced. */
 function statusForReason(reason: string): Extract<CallStatus, 'screened' | 'refused'> {
-  return reason === 'not_allowlisted' ? 'screened' : 'refused';
+  return reason === 'not_allowlisted' || reason === 'caller_unverified' ? 'screened' : 'refused';
 }
 
 function describeReason(reason: string): string {
   switch (reason) {
     case 'not_allowlisted':
       return 'the caller is not on the inbound allowlist and no receptionist personality is configured';
+    case 'caller_unverified':
+      return 'caller ID matched the inbound allowlist, but caller ID is not verified identity and no receptionist personality is configured';
     case 'over_concurrency':
       return 'the concurrent-call cap was already reached';
     case 'rate_limited':
@@ -160,8 +166,15 @@ function describeReason(reason: string): string {
  *    fix, so "we could not route it" is still news.
  * 2. **The hardening gate** (`decideInboundCall`) — budget, rate limit,
  *    concurrency, allowlist. A refusal releases whatever it took, so a wall of
- *    refused calls leaves `concurrency.active()` at zero.
- * 3. **Personality selection** — `restricted` (not allowlisted) pins the
+ *    refused calls leaves `concurrency.active()` at zero. This is the voice
+ *    lane's admission filter; the gateway's `checkMessage` is deliberately NOT
+ *    applied (INB-002): its only sender input here would be caller ID, which is
+ *    not identity (INB-001b), and its pairing reply is a text send a phone call
+ *    cannot receive. Each turn's transcript is fenced with `fenceFarEndSpeech`
+ *    (see the runner below). LIMITATION: the gateway's tier-1
+ *    `shortPatternCheck` observability flag (`channel.injection_detected`) is
+ *    not recorded for call transcripts; the fence is.
+ * 3. **Personality selection** — `restricted` (always, INB-001b) pins the
  *    receptionist, whose `personality:<id>` memory scope and `toolset` ARE the
  *    restriction.
  * 4. **The call-log row** — `ringing` at dispatch, `live` on answer,
@@ -178,8 +191,8 @@ export function createSipInboundHandler(
 
   const notify = async (text: string): Promise<void> => {
     try {
-      const ok = await deps.notifyOwner(text);
-      if (!ok) report(`owner notification not confirmed: ${text}`);
+      const outcome = await deps.notifyOwner(text);
+      if (outcome === false) report(`owner notification not confirmed: ${text}`);
     } catch (err) {
       report(`owner notification failed: ${String(err)}`);
     }
@@ -269,7 +282,8 @@ export function createSipInboundHandler(
       return { dispatched: false, status, reason: decision.reason };
     }
 
-    // Restricted = not allowlisted = the receptionist answers. Nothing else
+    // Restricted = the receptionist answers — for EVERY accepted call, since
+    // caller ID is not identity (INB-001b, `decideInboundCall`). Nothing else
     // changes: its `personality:<id>` memory scope denies owner memory and its
     // own `toolset` denies privileged tools, both by construction in the turn
     // setup. There is no second restriction system to keep in step.
@@ -304,7 +318,10 @@ export function createSipInboundHandler(
     const runner = {
       run: (text: string, opts?: { abortSignal?: AbortSignal }): AsyncGenerator<AgentEvent> =>
         meterSpend(
-          deps.loop.run(text, {
+          // INB-002: this lane bypasses the gateway, so the transcript is
+          // fenced here (`fenceFarEndSpeech`, @ethosagent/tools-voice) rather
+          // than by the gateway's `wrapUntrusted`.
+          deps.loop.run(fenceFarEndSpeech(text, FAR_END_VOICE_ORIGIN), {
             sessionKey: laneKey,
             ...(personalityId ? { personalityId } : {}),
             voiceOrigin: FAR_END_VOICE_ORIGIN,

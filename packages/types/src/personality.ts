@@ -1,5 +1,14 @@
 export interface PersonalityObservabilityConfig {
   storeToolArgs?: 'none' | 'redacted' | 'full';
+  /**
+   * RESERVED — parsed and validated, but no write path reads it. Nothing
+   * stores a tool's result body at any setting: the tool_call span is closed
+   * with `result_size_bytes` and `durationMs` only (`processTools`,
+   * packages/core/src/agent-loop/stages/tool-processing.ts), pinned by
+   * packages/core/src/__tests__/tool-body-not-stored.test.ts. Kept on the type
+   * so existing personality files that set it still load; the character sheet
+   * labels it reserved.
+   */
   storeToolBodies?: 'none' | 'redacted' | 'full';
   storeLlmPayloads?: 'none' | 'metadata' | 'full';
   redactPatterns?: string[];

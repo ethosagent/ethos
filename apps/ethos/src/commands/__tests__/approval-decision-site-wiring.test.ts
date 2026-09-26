@@ -93,6 +93,7 @@ function wire(decision?: SmartApproverDecisionSite) {
   const cardless = { id: 'whatsapp:plain', botKey: 'plain' } as unknown as PlatformAdapter;
   const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
   return wireApprovalFlow(gateway, [bot('card'), bot('plain')], [card, cardless], {
+    executionPostureFor: () => undefined,
     personalities,
     getProvider,
     model: 'm',
@@ -131,6 +132,7 @@ describe('the unattended and no-surface gates — the decision site', () => {
       model: 'm',
       allowUnattendedDangerousTools: false,
       isRemoteSenderTurn: () => false,
+      executionPostureFor: () => undefined,
     };
     // Each wire builds two predicates: the unattended gate's and the
     // remote-sender turns' no-surface gate's. Both carry the site.
@@ -144,7 +146,7 @@ describe('the unattended and no-surface gates — the decision site', () => {
   });
 
   it('createNoApprovalSurfaceGate forwards it, and omits it when absent', () => {
-    const base = { personalities, getProvider, model: 'm' };
+    const base = { personalities, getProvider, model: 'm', executionPostureFor: () => undefined };
     createNoApprovalSurfaceGate([new DefaultHookRegistry()], { ...base, decision: SITE });
     createNoApprovalSurfaceGate([new DefaultHookRegistry()], base);
     expect(predicateFactory.mock.calls[0]?.[0].decision).toBe(SITE);

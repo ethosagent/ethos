@@ -47,9 +47,64 @@ export interface UsageAggregateRow {
   messages: number;
 }
 
+/** A window's totals over {@link UsageAggregateRow}s, plus the cache hit rate. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  estimatedCostUsd: number;
+  messages: number;
+  /** Share of billable input served from cache, 0–1. See {@link cacheHitRate}. */
+  cacheHitRate: number;
+}
+
+/**
+ * Cached share of input tokens.
+ *
+ * Denominator is every token the model read — fresh input, cache reads, and
+ * cache writes — because a cache write is input the provider still charged for.
+ * Excluding it would make the first turn of a session look like a 0% hit rate
+ * on a smaller base and flatter the number thereafter.
+ */
+export function cacheHitRate(t: {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}): number {
+  const total = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens;
+  return total === 0 ? 0 : t.cacheReadTokens / total;
+}
+
+/**
+ * Fold aggregate rows into one window's totals — the ONE fold behind both
+ * `ethos usage` (apps/ethos/src/commands/usage.ts) and the web `usage.summary`
+ * RPC (apps/web-api/src/rpc/usage.ts), so the two cannot report different
+ * numbers for the same window. Pinned by apps/web-api's `usage-rpc.test.ts`.
+ */
+export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
+  const t = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    messages: 0,
+  };
+  for (const r of rows) {
+    t.inputTokens += r.inputTokens;
+    t.outputTokens += r.outputTokens;
+    t.cacheReadTokens += r.cacheReadTokens;
+    t.cacheCreationTokens += r.cacheCreationTokens;
+    t.estimatedCostUsd += r.estimatedCostUsd;
+    t.messages += r.messages;
+  }
+  return { ...t, cacheHitRate: cacheHitRate(t) };
+}
+
 /** Outcome of {@link SQLiteSessionStore.recomputeMessageCosts}. */
 export interface RecomputeCostsResult {
-  /** Message rows carrying token counts, i.e. rows a cost can be derived for. */
+  /** Non-`tool_result` message rows carrying token counts, i.e. rows a cost can be derived for. */
   messagesScanned: number;
   /** Rows whose stored cost differed from the recomputed one and were rewritten. */
   messagesUpdated: number;
@@ -427,14 +482,18 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    // Key prefixes are literal and case-sensitive: an exact `substr`
+    // comparison, never LIKE, which folds ASCII case (`Sales` / `sales` are
+    // different bots) and reads `%`/`_` as wildcards. Pinned by
+    // `__tests__/key-prefix-filter.test.ts`.
     if (filter?.keyPrefix) {
-      conditions.push("key LIKE ? ESCAPE '\\'");
-      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+      conditions.push('substr(key, 1, length(?)) = ?');
+      values.push(filter.keyPrefix, filter.keyPrefix);
     }
     if (filter?.excludeKeyPrefixes) {
       for (const prefix of filter.excludeKeyPrefixes) {
-        conditions.push("key NOT LIKE ? ESCAPE '\\'");
-        values.push(`${prefix.replace(/[%_\\]/g, '\\$&')}%`);
+        conditions.push('substr(key, 1, length(?)) != ?');
+        values.push(prefix, prefix);
       }
     }
     if (filter?.personalityId) {
@@ -452,10 +511,6 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.since) {
       conditions.push('created_at >= ?');
       values.push(filter.since.toISOString());
-    }
-    if (filter?.keyPrefix) {
-      conditions.push('key LIKE ?');
-      values.push(`${filter.keyPrefix}%`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -828,6 +883,12 @@ export class SQLiteSessionStore implements SessionStore {
    * derived cache of the live `messages` rows. Rewriting message costs without
    * rebuilding it would leave the cache stale — the exact invariant A1's
    * consistency test pins — so both land in one transaction.
+   *
+   * `tool_result` rows are skipped: their cost is a tool-reported `cost_usd`
+   * (zero tokens, written by `processTools` in
+   * packages/core/src/agent-loop/stages/tool-processing.ts), not a function of
+   * tokens, so re-deriving it would erase real spend. They still count in the
+   * rollup sum. Pinned by `__tests__/recompute-costs.test.ts`.
    */
   async recomputeMessageCosts(): Promise<RecomputeCostsResult> {
     const rows = this.db
@@ -836,7 +897,7 @@ export class SQLiteSessionStore implements SessionStore {
                 m.cache_creation_tokens, m.estimated_cost_usd, s.model
          FROM messages m
          JOIN sessions s ON s.id = m.session_id
-         WHERE m.input_tokens IS NOT NULL`,
+         WHERE m.input_tokens IS NOT NULL AND m.role != 'tool_result'`,
       )
       .all() as Array<{
       id: string;
@@ -924,17 +985,27 @@ export class SQLiteSessionStore implements SessionStore {
       .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
       .all(lower) as SessionRow[];
     if (exact.length > 0) return exact.map(rowToSession);
-    // 2. Fragment match (case-insensitive substring)
+    // 2. Fragment match (case-insensitive substring). `instr`, not LIKE, so a
+    //    `%` or `_` in the query matches only itself.
     const fragment = this.db
-      .prepare('SELECT * FROM sessions WHERE LOWER(title) LIKE ?')
-      .all(`%${lower}%`) as SessionRow[];
+      .prepare('SELECT * FROM sessions WHERE instr(LOWER(title), ?) > 0')
+      .all(lower) as SessionRow[];
     return fragment.map(rowToSession);
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {
+    // `updated_at` alone is not "no recent traffic": `appendMessage` does not
+    // bump it, so a session holding a message at or after the cutoff is kept.
+    // Pinned by `__tests__/prune-live-session.test.ts`.
+    const iso = olderThan.toISOString();
     const result = this.db
-      .prepare('DELETE FROM sessions WHERE updated_at < ?')
-      .run(olderThan.toISOString());
+      .prepare(
+        `DELETE FROM sessions WHERE updated_at < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM messages WHERE messages.session_id = sessions.id AND timestamp >= ?
+           )`,
+      )
+      .run(iso, iso);
     // `retention.vacuumAfterPrune` — reclaim the freed pages. Only when the
     // prune actually deleted something: VACUUM rewrites the whole file behind a
     // write lock, so a no-op prune must not pay for it. `minVacuumIntervalDays`
@@ -1010,6 +1081,13 @@ export class SQLiteSessionStore implements SessionStore {
     since: Date;
     until: Date;
     dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
+    /** Only sessions whose key starts with this, literally and case-sensitively:
+     *  an exact `substr` comparison, not `LIKE`, which folds ASCII case and would
+     *  mix the spend of bots whose ids differ only by case. Pinned by
+     *  'keyPrefix is case-sensitive' in `__tests__/usage-aggregate.test.ts`.
+     *  How one channel bot's spend is read: its sessions are keyed under
+     *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
+    keyPrefix?: string;
   }): Promise<UsageAggregateRow[]> {
     const keyExpr = {
       // `substr(timestamp, 1, 10)` over an ISO-8601 string is the UTC date, and
@@ -1034,13 +1112,18 @@ export class SQLiteSessionStore implements SessionStore {
            JOIN sessions s ON s.id = m.session_id
           WHERE m.timestamp >= ? AND m.timestamp < ?
             AND m.input_tokens IS NOT NULL
+            ${opts.keyPrefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
           -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
           -- real column, so \`GROUP BY key\` silently resolves to it and every
           -- dimension collapses to per-session grouping.
           GROUP BY ${keyExpr}
           ORDER BY estimatedCostUsd DESC`,
       )
-      .all(opts.since.toISOString(), opts.until.toISOString()) as UsageAggregateRow[];
+      .all(
+        opts.since.toISOString(),
+        opts.until.toISOString(),
+        ...(opts.keyPrefix !== undefined ? [opts.keyPrefix, opts.keyPrefix] : []),
+      ) as UsageAggregateRow[];
   }
 
   /** Close the database connection (useful in tests). */

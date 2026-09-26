@@ -27,6 +27,27 @@ export interface StatusLineProps {
   elapsedMs: number;
   /** No event for 20 s. Appends `⚠ still working` — glyph AND word. */
   stalled: boolean;
+  /**
+   * A5 — a capped preview of the turn's extended reasoning. While the phase is
+   * `thinking` the line reads `thinking ▸ "<first 60 chars>…"` — the status
+   * slot, never the bubble (DESIGN.md item 1). The live region still announces
+   * only the word `thinking`, so a screen reader is not fed rolling prose.
+   */
+  thinking?: string | null;
+  /** W2 — the SSE stream dropped mid-turn; appends `reconnecting…`. */
+  reconnecting?: boolean;
+  /** W2 — the browser gave up on the stream (`closed`); appends
+   *  `connection lost` — only a reload (fresh subscribe) reopens it. */
+  connectionLost?: boolean;
+}
+
+/** How much of the thinking preview the collapsed line shows. */
+const THINKING_PREVIEW_CHARS = 60;
+
+function thinkingLabel(preview: string): string {
+  const head = preview.slice(0, THINKING_PREVIEW_CHARS);
+  const ellipsis = preview.length > THINKING_PREVIEW_CHARS ? '…' : '';
+  return `thinking ▸ "${head}${ellipsis}"`;
 }
 
 /** The words are the feedback — no spinner vocabulary, no percentages. */
@@ -38,18 +59,29 @@ function phaseWord(phase: TurnPhase): string {
   return 'working';
 }
 
-export function StatusLine({ phase, label, elapsedMs, stalled }: StatusLineProps) {
+export function StatusLine({
+  phase,
+  label,
+  elapsedMs,
+  stalled,
+  thinking,
+  reconnecting,
+  connectionLost,
+}: StatusLineProps) {
   // A running tool is the only pulsing state; `received` and `thinking` are
   // steady.
   // An `on` decision holding the loop (`jev checking read_file result`) is
   // steady: the loop is waiting, not running a tool.
   const labelled = phase === 'tool' || phase === 'decision';
-  const text = phase === null ? '' : labelled ? (label ?? phaseWord(phase)) : phaseWord(phase);
+  const base = phase === null ? '' : labelled ? (label ?? phaseWord(phase)) : phaseWord(phase);
+  // The visible text carries the reasoning preview; announcements never do
+  // (`base` below), so the throttle governs words, not rolling prose.
+  const text = phase === 'thinking' && thinking ? thinkingLabel(thinking) : base;
   // A new turn is never made to wait behind the previous turn's throttle
   // window: `received` IS the acknowledgement the contract promises within the
   // first second. `phase === null` is the turn ending, which re-arms the
   // throttle (and announces nothing — the region is not rendered).
-  const announced = useThrottledAnnouncement(text, phase === null || phase === 'received');
+  const announced = useThrottledAnnouncement(base, phase === null || phase === 'received');
 
   if (phase === null) return null;
 
@@ -64,6 +96,15 @@ export function StatusLine({ phase, label, elapsedMs, stalled }: StatusLineProps
       <span className="status-line-label" aria-hidden="true">
         {text}
       </span>
+      {connectionLost ? (
+        <span className="status-line-stall" aria-hidden="true">
+          connection lost
+        </span>
+      ) : reconnecting ? (
+        <span className="status-line-stall" aria-hidden="true">
+          reconnecting…
+        </span>
+      ) : null}
       {stalled ? (
         <span className="status-line-stall" aria-hidden="true">
           ⚠ still working

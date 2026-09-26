@@ -225,12 +225,22 @@ describe('Orchestrator guardrails', () => {
     // main's small-window/compact increases (+7 over 1046) plus this branch's
     // decision-event increases (+17 over 1046), each ratcheted independently;
     // the cap is their sum.
-    // Bumped 1070 -> 1076 (decision-tool D13): the optional
+    // Bumped 1070 -> 1071 (tool cost persistence): the turn's rollup
+    // accumulator handed to `processTools` (one pass-through line). The logic
+    // lives in agent-loop/tool-cost.ts.
+    // Bumped 1071 -> 1077 (decision-tool D13): the optional
     // `personalityToolExclude` config field with its one-line doc, the
     // `PersonalityConfig` type import, its private field, constructor
     // assignment and deps-getter line. Pass-through only; the union with the
     // surface's `toolsetExclude` lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1076);
+    // Bumped 1077 -> 1083 (terminal approval prompt): the public
+    // `isToolPermitted` delegator (doc line, signature, body, close, blank) and its
+    // import, so an approval surface can skip asking about a call the
+    // allowlist refuses anyway. The logic lives in agent-loop/tool-permitted.ts.
+    // Bumped 1083 -> 1092 (ux A4 overflow-retry notice): the one `_loop`
+    // tool_progress yield (6 lines) and its 3-line comment at the
+    // compact-and-retry point. Pinned by __tests__/overflow-retry-notice.test.ts.
+    expect(lineCount).toBeLessThanOrEqual(1092);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -351,7 +361,15 @@ describe('Orchestrator guardrails', () => {
       // its per-call sink handed to `enforceBeforeToolCall` and
       // `handleUntrustedResult` (one line each). Measured at 864. The sink
       // logic lives in agent-loop/turn-decisions.ts.
-      if (lineCount > 864) {
+      // Bumped 864 -> 866 (openclaw-2026.9.6-gaps S12): tool-processing.ts
+      // spreads the turn's `toolsetNarrowing` into the ToolContext (one line)
+      // and imports its builder (one line). No logic — the builder lives in
+      // agent-loop/toolset-narrowing.ts.
+      // Bumped 866 -> 870 (tool cost persistence): the rollup accumulator on
+      // the stage deps (one line), its type import and the helper's import (one
+      // line each), and one spread onto the tool_result row. The logic lives
+      // in agent-loop/tool-cost.ts.
+      if (lineCount > 870) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

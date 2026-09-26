@@ -4,7 +4,7 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-09-24
+updated: 2026-09-26
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
@@ -106,11 +106,13 @@ Fix · Pick a different id, or remove the existing user copy first.
 
 ### Personality is not hot-reloading {#personality-not-reloading}
 
-Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on `config.yaml`. Edits to `SOUL.md` or `toolset.yaml` alone do not invalidate the cache.
+Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on six fingerprinted paths per personality directory: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, and the `skills/` directory (the list is owned by `loadOne` in `extensions/personalities/src/index.ts`). A change to any of them is picked up on the next turn or command. The `skills/` entry is the directory's own mtime, which moves when a file is added, removed, or renamed — not when an existing skill file is edited in place.
 
-Fix · `touch ~/.ethos/personalities/<id>/config.yaml` after editing the other files.
+Fix ·
+1. Confirm the file you edited is one of the six fingerprinted paths. Edits elsewhere in the directory are not watched.
+2. If you edited an existing file under `skills/` in place, run `touch ~/.ethos/personalities/<id>/skills` to move the directory mtime, or re-save the file under a new name.
 
-Prevent · Edit `config.yaml` last so its mtime moves after the other files.
+Prevent · Keep skill edits as add/remove operations, or touch the `skills/` directory after in-place edits.
 
 ## Sessions and memory {#sessions-and-memory}
 

@@ -51,29 +51,34 @@ const PLAIN_PALETTE = { reset: '', dim: '', green: '', red: '', yellow: '' };
  */
 export function makeTuiSlashCommands(
   initialLoader: PluginSlashSource | undefined,
-  goals?: LoopGoals,
+  initialGoals?: LoopGoals,
 ): TuiSlashCommands & {
-  /** Serve the commands of a new runtime's plugin loader — the chat `/model`
-   *  switch calls it, since the replaced loop's dispose unloads its loader
-   *  (F06; pinned by apps/ethos/src/__tests__/tui-capabilities.test.ts). */
-  rebind(loader: PluginSlashSource | undefined): void;
+  /** Serve the commands of a new runtime's plugin loader — and, when passed,
+   *  its goal store/executor pair — the chat `/model` switch calls it, since
+   *  the replaced loop's dispose unloads its loader and retires its goals pair
+   *  (F06; pinned by apps/ethos/src/__tests__/tui-capabilities.test.ts and
+   *  lib/__tests__/tui-goal-slash.test.ts). */
+  rebind(loader: PluginSlashSource | undefined, goals?: LoopGoals): void;
 } {
   let pluginLoader = initialLoader;
+  let goals = initialGoals;
   return {
-    rebind: (loader) => {
+    rebind: (loader, nextGoals) => {
       pluginLoader = loader;
+      if (nextGoals) goals = nextGoals;
     },
     list: () => pluginLoader?.getAllSlashCommands() ?? [],
     dispatch: async (name, args, ctx) => {
-      if (goals && (name === 'goal' || name === 'goals')) {
+      const activeGoals = goals;
+      if (activeGoals && (name === 'goal' || name === 'goals')) {
         const chunks: string[] = [];
         const out = (text: string) => {
           chunks.push(text);
         };
-        if (name === 'goals') runGoalsSlash({ goals, out, c: PLAIN_PALETTE });
+        if (name === 'goals') runGoalsSlash({ goals: activeGoals, out, c: PLAIN_PALETTE });
         else
           await runGoalSlash(args, {
-            goals,
+            goals: activeGoals,
             personalityId: ctx.personalityId,
             out,
             c: PLAIN_PALETTE,

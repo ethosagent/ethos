@@ -131,6 +131,7 @@ describe('resolveExecutionPosture — backend selection', () => {
       containerized: NOT_CONTAINERIZED,
       sshConfigured: false,
       dockerBuildable: false,
+      allowLocalFallback: true,
     });
     expect(posture.backend).toBe('local');
     expect(posture.containerized).toBe(false);
@@ -309,12 +310,32 @@ describe('resolveExecutionPosture — A1 docker-absent decision', () => {
 });
 
 describe('resolveExecutionPosture — F1 docker-unbuildable honest fallback', () => {
-  it('resolves an honest local posture when docker is disabled in-process (constitution permits)', () => {
+  // S6 / D3 (plan openclaw-2026.9.6-gaps): the downgrade to host execution is
+  // an operator decision, not a silent default.
+  it('refuses the docker→local downgrade without execution.allowLocalFallback, naming the key', () => {
     const posture = resolveExecutionPosture({
       personality: p({ toolset: ['terminal'] }),
       containerized: NOT_CONTAINERIZED,
       sshConfigured: false,
       dockerBuildable: false,
+    });
+    expect(posture.backend).toBe('docker');
+    expect(posture.hostFallback).toBeUndefined();
+    expect(posture.dockerAbsent).toEqual({
+      blocked: true,
+      canInstall: true,
+      canConsentLocal: false,
+      consentForbiddenReason: expect.stringContaining('execution.allowLocalFallback: true'),
+    });
+  });
+
+  it('resolves an honest local posture when docker is disabled in-process and the operator opted in', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'] }),
+      containerized: NOT_CONTAINERIZED,
+      sshConfigured: false,
+      dockerBuildable: false,
+      allowLocalFallback: true,
     });
     // Honest: backend reflects what actually runs (host), not Docker.
     expect(posture.backend).toBe('local');

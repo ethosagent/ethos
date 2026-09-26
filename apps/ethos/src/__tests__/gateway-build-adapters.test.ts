@@ -274,6 +274,42 @@ describe('buildAdapters — multi-bot adapter loop (Phase 2)', () => {
     expect(byPlatform.get('telegram')?.id).toBe('telegram:tg-a');
   });
 
+  it('threads discord.approvalRoleIds into the Discord adapter (S9)', async () => {
+    // Without it the adapter's default `role_gate` refuses every approval click
+    // and the approval hangs to its timeout.
+    const adapters = await buildAdapters(
+      { ...baseConfig, discordToken: 'discord-tok', discord: { approvalRoleIds: ['111', '222'] } },
+      makeLoader(),
+    );
+    const discord = adapters.find((a) => (a as CapturedAdapter).displayName === 'discord');
+    expect((discord as CapturedAdapter | undefined)?.capturedConfig.approvalRoleIds).toEqual([
+      '111',
+      '222',
+    ]);
+  });
+
+  it('threads discord.post_thinking_placeholder: false into the Discord adapter (UD4)', async () => {
+    const adapters = await buildAdapters(
+      { ...baseConfig, discordToken: 'discord-tok', discordPostThinkingPlaceholder: false },
+      makeLoader(),
+    );
+    const discord = adapters.find((a) => (a as CapturedAdapter).displayName === 'discord');
+    expect((discord as CapturedAdapter | undefined)?.capturedConfig.postThinkingPlaceholder).toBe(
+      false,
+    );
+  });
+
+  it('omits postThinkingPlaceholder when unset, leaving the adapter default (ON) in charge', async () => {
+    const adapters = await buildAdapters(
+      { ...baseConfig, discordToken: 'discord-tok' },
+      makeLoader(),
+    );
+    const discord = adapters.find((a) => (a as CapturedAdapter).displayName === 'discord');
+    expect((discord as CapturedAdapter | undefined)?.capturedConfig).not.toHaveProperty(
+      'postThinkingPlaceholder',
+    );
+  });
+
   it('skips a platform whose adapter module fails to load (graceful degradation)', async () => {
     const failingLoader: AdapterModuleLoader = async (modulePath) => {
       if (modulePath === '@ethosagent/platform-telegram') return null; // SDK missing

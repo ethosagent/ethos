@@ -4,9 +4,20 @@
 // the full createAgentLoop wiring (which depends on plugin-loader,
 // sandbox-docker, etc. and chokes outside the monorepo install).
 
-import { checkCommand as checkProcessCommand } from '@ethosagent/tools-process';
-import { checkCommand as checkTerminalCommand } from '@ethosagent/tools-terminal';
-import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
+import {
+  checkCommand as checkProcessCommand,
+  approvalRequiredReason as processApprovalReason,
+} from '@ethosagent/tools-process';
+import {
+  checkCommand as checkTerminalCommand,
+  approvalRequiredReason as terminalApprovalReason,
+} from '@ethosagent/tools-terminal';
+import type {
+  BeforeToolCallPayload,
+  ExecutionPosture,
+  HookRegistry,
+  PersonalityConfig,
+} from '@ethosagent/types';
 
 /** Result returned by a danger predicate. `null` = no approval needed. */
 export type DangerReason = string | null;
@@ -62,7 +73,8 @@ export type SmartApprovalCallback = (
  *
  * **Composition: union, not override.** Under `smart` the effective flag set is
  * `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS`; under `manual` / `off` it is
- * `alwaysAsk` alone. An explicit `alwaysAsk` therefore always takes effect, in
+ * `alwaysAsk` alone — in every mode plus {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS}
+ * when the turn runs on a host-local posture. An explicit `alwaysAsk` therefore always takes effect, in
  * every mode — this list can only add to it, never replace or subtract from it.
  * That matches the module's law that modes only make things stricter.
  *
@@ -104,6 +116,36 @@ export const SMART_MODE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
 ];
 
 /**
+ * Tools flagged, in every mode, when the turn's personality resolves to a
+ * LOCAL execution posture that is not itself a container (S6 / D1(a) and
+ * EXE-001, plan openclaw-2026.9.6-gaps).
+ *
+ * Each of these runs a model-chosen shell string on the HOST, as the Ethos
+ * user, with nothing between it and the operator's files but the regex
+ * hardline: `terminal` and `process_start` directly, `run_tests` and `lint`
+ * through `bash -c` (`makeCommandTool`, extensions/tools-code/src/index.ts).
+ * Under a docker posture the container is the boundary and they stay
+ * unflagged in `manual`, as before; a `containerized` local posture (Ethos
+ * itself runs in a container, `detectContainerized`) is treated the same way.
+ *
+ * Composition is the same union as {@link SMART_MODE_CONSEQUENTIAL_TOOLS}: it
+ * only adds to `alwaysAsk`. Under `off` with the unattended capability
+ * (`allowAutoApproveDangerousTools`) they are still auto-approved — that
+ * operator opt-in is exactly "run these without asking".
+ *
+ * The posture comes from {@link CreateDangerPredicateOptions.getExecutionPosture};
+ * without it (bare tests) nothing is added. The approval surfaces all supply
+ * it (`createApprovalDangerPredicate` requires it,
+ * packages/wiring/src/approval-seams.ts).
+ */
+export const LOCAL_POSTURE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
+  'terminal',
+  'process_start',
+  'run_tests',
+  'lint',
+];
+
+/**
  * Tools every entry point WITH an approval surface flags via `alwaysAsk`, in
  * every mode — not just `smart`.
  *
@@ -115,13 +157,13 @@ export const SMART_MODE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
  * `tool-processing.ts`, which emits `tool_approval_required` and then runs the
  * tool regardless). `alwaysAsk` is the mechanism that actually prompts.
  *
- * Passed by the three approval-surface entry points: `apps/ethos/src/commands/
- * serve.ts` and `apps/desktop/src/main/serve.ts` (web modal) and
- * `apps/ethos/src/commands/gateway.ts` (Slack card). CLI and TUI deliberately do
- * NOT pass it: they have no approval flow at all — only the synchronous,
- * hard-blocking `createTerminalGuardHook` — so flagging a tool there would
- * change nothing. Both tools' `description` strings say so, so the model is not
- * told a prompt exists where none does.
+ * Passed by every approval-surface entry point: `apps/ethos/src/commands/
+ * serve.ts` and `apps/desktop/src/main/serve.ts` (web modal),
+ * `apps/ethos/src/commands/gateway.ts` (Slack card), and
+ * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts — the CLI
+ * prompt, the TUI modal, and the fail-closed gate on `ethos chat -q`, ACP and
+ * the other non-interactive CLI commands, `gateNonInteractiveLoop` in
+ * apps/ethos/src/lib/non-interactive-approval.ts).
  *
  * `call` (outbound telephony) is listed for a different reason: the gate
  * PREDATES the capability, deliberately. The tool self-reports unavailable
@@ -141,7 +183,9 @@ export interface CreateDangerPredicateOptions {
   /**
    * Tools that always require approval, in every mode. Unioned with
    * {@link SMART_MODE_CONSEQUENTIAL_TOOLS} when the resolved personality is on
-   * `approvalMode: 'smart'`; used alone under `manual` and `off`.
+   * `approvalMode: 'smart'`; used alone under `manual` and `off`. In every
+   * mode {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS} is added on a host-local
+   * posture (see {@link CreateDangerPredicateOptions.getExecutionPosture}).
    *
    * Every entry point that has an approval surface passes at least
    * {@link APPROVAL_SURFACE_ALWAYS_ASK}.
@@ -156,6 +200,17 @@ export interface CreateDangerPredicateOptions {
   /** Smart-mode callback (see SmartApprovalCallback above). */
   smartApprove?: SmartApprovalCallback;
   /**
+   * The execution posture the turn's personality resolves to — the SAME
+   * resolution the tools run under (`ExecutionRouting.resolvePosture`,
+   * packages/wiring/src/compose-tools.ts). Drives
+   * {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS}. Absent or `undefined` → no
+   * posture-dependent flags.
+   */
+  getExecutionPosture?: (
+    payload: BeforeToolCallPayload,
+    personality: PersonalityConfig | undefined,
+  ) => ExecutionPosture | undefined;
+  /**
    * Capability gate for `approvalMode: 'off'`. Without this set to
    * true, the predicate treats `off` as `manual` — i.e. it will NOT
    * auto-approve any dangerous tool, even when the personality config
@@ -165,17 +220,31 @@ export interface CreateDangerPredicateOptions {
    * (Codex flagged the prior cross-module-only invariant as security-
    * rot shaped).
    *
-   * **Exactly one production caller passes this flag:** the gateway
-   * systemLoop's unattended gate (`wireUnattendedApprovalGate` in
+   * **Two production callers pass this flag.** The gateway systemLoop's
+   * unattended gate (`wireUnattendedApprovalGate` in
    * `apps/ethos/src/unattended-approval-gate.ts`, registered by
-   * `runGatewayStart`), and only when the operator sets
-   * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
+   * `runGatewayStart`, and by `gateCronLoop` in
+   * `apps/ethos/src/lib/non-interactive-approval.ts` for `ethos cron
+   * run`/`daemon`), and only when the operator sets
+   * `allowUnattendedDangerousTools: true` in `config.yaml`. Those loops run
    * cron, dreams and watcher wakes — trusted local automation with nobody
-   * to ask. Every surface with a human — the web modal (`serve.ts`,
-   * `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
+   * to ask. And the operator's own terminal (`wireTerminalApprovalGate` in
+   * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, and every CLI
+   * command `gateNonInteractiveLoop` gates — `-q`, `-z`, `batch`, `eval`,
+   * the judge, `bench`, the MCP console, `acp`), always: `off` there keeps meaning what it meant before
+   * those loops had a gate — flagged calls run unasked.
+   *
+   * On every caller the flag covers flagged TOOLS only: a command-substitution
+   * call ({@link approvalRequiredReason}) still returns its reason, so it is
+   * asked where a human can answer (the CLI prompt) and refused where none
+   * can (the unattended gate). Enforced in {@link createDangerPredicate};
+   * pinned by `__tests__/danger-predicate.test.ts` and
+   * `apps/ethos/src/__tests__/unattended-approval-gate.test.ts`.
+   *
+   * Every surface a remote sender or a browser can reach — the web modal
+   * (`serve.ts`, `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
    * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
-   * `off` behaves as `manual` there. CLI / TUI use the synchronous
-   * `createTerminalGuardHook` (hard-block, no approval flow).
+   * `off` behaves as `manual` there.
    *
    * The capability gate stays the API contract that prevents any other
    * caller from accidentally auto-approving dangerous tools.
@@ -191,11 +260,21 @@ export interface CreateDangerPredicateOptions {
 export { canonicalizeArgs } from '@ethosagent/core';
 
 /**
+ * Tools whose `command` argument is a shell string checked by the terminal
+ * guard's `checkCommand`: `terminal` itself, and `run_tests` / `lint`, which
+ * hand their `command` to `bash -c` (EXE-001). Read by {@link hardlineReason}
+ * and by the non-web guard registration in `composeAllTools`
+ * (`createTerminalGuardHook(TERMINAL_CHECKED_TOOLS)`), so the approval path
+ * and the hard block cover the same set.
+ */
+export const TERMINAL_CHECKED_TOOLS: ReadonlyArray<string> = ['terminal', 'run_tests', 'lint'];
+
+/**
  * The hardline reason for a call, or `null` when it is not hardline.
  *
- * Hardline = a `terminal` or `process_start` `command` that the tool's own
- * blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal` and
- * `@ethosagent/tools-process` respectively — the same checks
+ * Hardline = a {@link TERMINAL_CHECKED_TOOLS} or `process_start` `command`
+ * that the blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal`
+ * and `@ethosagent/tools-process` respectively — the same checks
  * `createTerminalGuardHook` / `createProcessGuardHook` hard-block with on
  * every non-web profile, `compose-tools.ts`).
  *
@@ -205,17 +284,70 @@ export { canonicalizeArgs } from '@ethosagent/core';
  * stored grant or a lease decide a hardline call.
  */
 export function hardlineReason(payload: BeforeToolCallPayload): string | null {
-  const check =
-    payload.toolName === 'terminal'
-      ? checkTerminalCommand
-      : payload.toolName === 'process_start'
-        ? checkProcessCommand
-        : undefined;
+  const check = TERMINAL_CHECKED_TOOLS.includes(payload.toolName)
+    ? checkTerminalCommand
+    : payload.toolName === 'process_start'
+      ? checkProcessCommand
+      : undefined;
   if (!check) return null;
-  const args = payload.args as { command?: unknown } | null | undefined;
-  if (typeof args?.command !== 'string' || args.command === '') return null;
-  const result = check(args.command);
+  const command = shellCommand(payload);
+  if (command === null) return null;
+  const result = check(command);
   return result.dangerous ? result.reason : null;
+}
+
+/**
+ * Why a {@link TERMINAL_CHECKED_TOOLS} or `process_start` `command` needs a
+ * human's approval though it is not hardline, or `null` — today, command
+ * substitution (`approvalRequiredReason` in `@ethosagent/tools-terminal` and
+ * `@ethosagent/tools-process`). {@link createDangerPredicate} flags such a call
+ * in every approval mode; callers check {@link hardlineReason} first.
+ */
+export function approvalRequiredReason(payload: BeforeToolCallPayload): string | null {
+  const reason = TERMINAL_CHECKED_TOOLS.includes(payload.toolName)
+    ? terminalApprovalReason
+    : payload.toolName === 'process_start'
+      ? processApprovalReason
+      : undefined;
+  if (!reason) return null;
+  const command = shellCommand(payload);
+  return command === null ? null : reason(command);
+}
+
+function shellCommand(payload: BeforeToolCallPayload): string | null {
+  const args = payload.args as { command?: unknown } | null | undefined;
+  return typeof args?.command === 'string' && args.command !== '' ? args.command : null;
+}
+
+/**
+ * Loops whose `before_tool_call` carries a HOST APPROVAL GATE: a hook built on
+ * this module's predicate that, for every call the predicate flags, either
+ * asks a human or refuses. Marked by the code that registers the gate —
+ * `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts: the card hook or the
+ * no-surface gate, for every bot), `wireUnattendedApprovalGate`
+ * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop) and
+ * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts: `ethos
+ * chat` and the non-interactive CLI commands, `gateNonInteractiveLoop` in
+ * apps/ethos/src/lib/non-interactive-approval.ts). Read per call by the terminal and
+ * process guards `composeAllTools` registers (`approvalGated`), which leave an
+ * approval-required command to the gate on a marked loop and refuse it on any
+ * other, since nobody could approve it there. An unmarked loop is the
+ * fail-closed default.
+ * A mark on a registry that is garbage-collected goes with it (WeakSet).
+ */
+const hostApprovalGated = new WeakSet<HookRegistry>();
+
+/** Record that `hooks` carries a host approval gate. Returns the undo. */
+export function markHostApprovalGate(hooks: HookRegistry): () => void {
+  hostApprovalGated.add(hooks);
+  return () => {
+    hostApprovalGated.delete(hooks);
+  };
+}
+
+/** Whether `hooks` carries a host approval gate ({@link markHostApprovalGate}). */
+export function hasHostApprovalGate(hooks: HookRegistry): boolean {
+  return hostApprovalGated.has(hooks);
 }
 
 /**
@@ -246,10 +378,16 @@ export function hardlineReason(payload: BeforeToolCallPayload): string | null {
  *          `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`.
  *   2. Flagged tool / non-hardline danger → consult approvalMode. The flag set
  *      is `alwaysAsk` under manual and off, and
- *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart:
+ *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart; in every mode
+ *      it also takes {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS} when the turn
+ *      runs on a non-containerized local posture, and any call with an
+ *      {@link approvalRequiredReason} (command substitution), on any posture:
  *        manual (default) → return the reason (drives the modal).
  *        off              → return null (auto-approve — hardline still
- *                           hard-blocks separately).
+ *                           hard-blocks separately), but only with
+ *                           `allowAutoApproveDangerousTools`, and never for
+ *                           an {@link approvalRequiredReason}: a command
+ *                           substitution returns its reason in `off` too.
  *        smart            → consult `smartApprove` callback. `approve`
  *                           auto-approves; `deny` surfaces the reviewer's
  *                           specific reason; `ask` surfaces the generic
@@ -265,6 +403,15 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
   const alwaysAsk = new Set(opts.alwaysAsk ?? []);
   // Built once; `smart` is the only mode that sees it (see the const's docs).
   const smartAlwaysAsk = new Set([...alwaysAsk, ...SMART_MODE_CONSEQUENTIAL_TOOLS]);
+  // Resolved only for a tool on the list, so every other call pays nothing.
+  const onHostShell = (
+    payload: BeforeToolCallPayload,
+    personality: PersonalityConfig | undefined,
+  ): boolean => {
+    if (!LOCAL_POSTURE_CONSEQUENTIAL_TOOLS.includes(payload.toolName)) return false;
+    const posture = opts.getExecutionPosture?.(payload, personality);
+    return posture?.backend === 'local' && posture.containerized !== true;
+  };
   return async (payload) => {
     // Hardline first, in every mode — see the resolution order above for what
     // enforces it on each surface.
@@ -278,18 +425,29 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
 
     // Non-hardline danger. The mode is resolved first because it selects the
     // flag set: `smart` adds the built-in consequential-tool list on top of
-    // `alwaysAsk`, `manual` / `off` see `alwaysAsk` alone.
+    // `alwaysAsk`, `manual` / `off` see `alwaysAsk` alone; a host-local posture
+    // adds the shell tools in every mode (`onHostShell`).
     // Future: per-tool risk classifiers (sql_execute, kubectl, etc.)
     // would also produce non-hardline reasons that route through here.
     const mode = safety?.approvalMode ?? 'manual';
     const flagged = mode === 'smart' ? smartAlwaysAsk : alwaysAsk;
+    // An approval-required command (command substitution) is flagged in every
+    // mode, whatever the tool's own flag status, and its reason is named.
+    const commandReason = approvalRequiredReason(payload);
     let dangerReason: string | null = null;
-    if (flagged.has(payload.toolName)) {
+    if (commandReason) {
+      dangerReason = `${payload.toolName} requires explicit approval (${commandReason})`;
+    } else if (flagged.has(payload.toolName) || onHostShell(payload, personality)) {
       dangerReason = `${payload.toolName} requires explicit approval`;
     }
     if (!dangerReason) return null;
 
-    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true) return null;
+    // The `off` capability pre-authorizes flagged TOOLS. It never covers
+    // command substitution: what that call runs is hidden from every check,
+    // so it is asked where a human can answer and refused where none can.
+    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true && !commandReason) {
+      return null;
+    }
     if (mode === 'smart' && opts.smartApprove) {
       const verdict = await opts.smartApprove(payload, dangerReason, personality);
       if (verdict.decision === 'approve') return null;

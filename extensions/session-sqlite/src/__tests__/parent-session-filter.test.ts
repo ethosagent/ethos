@@ -56,7 +56,7 @@ for (const factory of factories) {
       }
     });
 
-    it('a fork round-trips contentBlocks, toolName, isError, traceId and usage', async () => {
+    it('a fork round-trips contentBlocks, toolName, isError and traceId, and drops usage', async () => {
       const { store, close } = factory.make();
       try {
         const src = await store.createSession({ ...base, key: 'src' });
@@ -97,8 +97,11 @@ for (const factory of factories) {
 
         const { session } = await forkSession(store, src.id, { key: 'src:fork:1' });
         const after = await store.getMessages(session.id);
+        // Everything but `usage` round-trips; a copy is history, not spend
+        // (forkSession, packages/core/src/session-fork.ts).
         const strip = ({ id: _i, sessionId: _s, timestamp: _t, ...rest }: StoredMessage) => rest;
-        expect(after.map(strip)).toEqual(before.map(strip));
+        expect(after.map(strip)).toEqual(before.map(({ usage: _u, ...m }) => strip(m)));
+        for (const m of after) expect(m.usage).toBeUndefined();
         expect((await store.getSession(session.id))?.parentSessionId).toBe(src.id);
         expect((await store.listSessions({ parentSessionId: src.id })).map((s) => s.id)).toEqual([
           session.id,

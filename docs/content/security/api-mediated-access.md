@@ -4,7 +4,7 @@ description: Reference architecture for API-mediated data access — agents call
 kind: explanation
 audience: shared
 slug: api-mediated-access
-updated: 2026-05-18
+updated: 2026-09-25
 ---
 
 An AI agent with a raw database connection string can read any table, write any row, and leak credentials through [tool](../getting-started/glossary.md#tool) results or memory context. No row-level authorization, no audit trail at the data layer, no way to revoke access without rotating the entire connection string. This page explains why that is the wrong architecture and what the right one looks like.
@@ -35,17 +35,26 @@ When an agent holds a database connection string, four things go wrong simultane
 
 The agent does not connect to the database. It calls an internal API service that sits between the agent and the data store.
 
-```
-┌───────────┐         ┌──────────────────────┐         ┌──────────┐
-│           │  HTTPS   │   Internal API       │         │          │
-│   Agent   │────────→│   Service            │────────→│ Database │
-│           │         │                      │         │          │
-└───────────┘         │  • Holds DB creds    │         └──────────┘
-                      │  • Validates caller  │
-                      │  • Row-level ACL     │
-                      │  • Audit log         │
-                      └──────────────────────┘
-```
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 640 180" role="img" aria-label="Flow diagram of API-mediated access. The agent calls an internal API service over HTTPS, and only the internal API service talks to the database. The service holds the DB credentials, validates the caller, enforces row-level ACLs, and writes the audit log." font-family="Geist Mono,monospace">
+<defs><marker id="apimed-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
+<rect x="20" y="62" width="130" height="52" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<rect x="240" y="20" width="210" height="140" rx="10" fill="#9CC5F2" fill-opacity="0.08" stroke="#9CC5F2"/>
+<rect x="520" y="62" width="100" height="52" rx="10" fill="#EAC98F" fill-opacity="0.08" stroke="#EAC98F"/>
+<line x1="150" y1="88" x2="236" y2="88" stroke="#70706B" marker-end="url(#apimed-arrow)"/>
+<line x1="450" y1="88" x2="516" y2="88" stroke="#70706B" marker-end="url(#apimed-arrow)"/>
+<g font-size="13" fill="var(--ethos-text-primary)">
+<text x="85" y="93" text-anchor="middle">Agent</text>
+<text x="345" y="46" text-anchor="middle">Internal API Service</text>
+<text x="570" y="93" text-anchor="middle">Database</text>
+</g>
+<g font-size="11" fill="var(--ethos-text-secondary)">
+<text x="193" y="78" text-anchor="middle">HTTPS</text>
+<text x="258" y="76">• Holds DB creds</text>
+<text x="258" y="96">• Validates caller</text>
+<text x="258" y="116">• Row-level ACL</text>
+<text x="258" y="136">• Audit log</text>
+</g>
+</svg></div><figcaption>The agent reaches the database only through an internal API service that holds the credentials, validates the caller, enforces row-level ACLs, and writes the audit log.</figcaption></figure>
 
 The API service is the only component that holds database credentials. It performs four functions.
 
@@ -61,9 +70,9 @@ The API service is the only component that holds database credentials. It perfor
 
 Ethos does not ship a database tool, and that is deliberate. The framework provides the building blocks for API-mediated access without requiring changes to the core runtime.
 
-**`web_fetch` for HTTP calls.** The agent calls the internal API service using `web_fetch` (or a custom MCP tool that wraps it). The request carries the agent's identity in a header — an API key from the personality's [secret](../getting-started/glossary.md#secret) refs, or a session-scoped token issued at [turn](../getting-started/glossary.md#turn) start. The tool result flows back through the standard [credential redaction](./controls.md#credential-redaction) and [provenance wrapping](./controls.md#provenance-wrapping) layers before it re-enters the LLM context, so sensitive fields in the API response are scrubbed even if the API service returns more than the agent needs.
+**An HTTP tool for API calls.** The agent calls the internal API service through a tool that uses the injected `ctx.scopedFetch` (a custom tool, or an MCP tool). The request carries the agent's identity in a header — an API key from the personality's [secret](../getting-started/glossary.md#secret) refs, or a session-scoped token issued at [turn](../getting-started/glossary.md#turn) start. The tool result flows back through the standard [credential redaction](./controls.md#credential-redaction) and [provenance wrapping](./controls.md#provenance-wrapping) layers before it re-enters the LLM context, so sensitive fields in the API response are scrubbed even if the API service returns more than the agent needs.
 
-**`network.allowedHosts` for egress control.** The personality's [network policy](./controls.md#per-personality-network-policy) restricts which hosts the agent can reach. A personality that needs the internal API service declares `api.internal.example.com` in its `networkReach`; everything else is denied. The agent cannot reach the database host directly — it is not in the allowlist. This is the structural enforcement that makes the pattern hold even when the LLM is coerced: a hijacked agent that tries to connect to `db.internal:5432` is rejected at the network layer before the TCP connection opens.
+**`safety.network.allow` for egress control.** The personality's [network policy](./controls.md#per-personality-network-policy) restricts which hosts its tools can reach through `ctx.scopedFetch`. A personality that needs the internal API service lists `api.internal.example.com` in `safety.network.allow`; a host outside the list is refused with `HOST_NOT_ALLOWED` (`ScopedFetchImpl`, `safeFetch`). The agent cannot reach the database host through those tools — it is not in the allowlist. The policy covers only tools on the injected fetch seam: a tool that opens its own socket, and a shell command inside the execution backend, are outside it, so pair it with network-layer egress rules.
 
 **SSRF protection for the API service.** If the API service itself makes outbound calls (webhooks, callbacks), Ethos's [SSRF controls](./controls.md#ssrf-protection) prevent the agent from instructing the API service to fetch from private IP ranges or cloud metadata endpoints. The agent cannot use the API service as an SSRF proxy.
 
@@ -142,7 +151,7 @@ These are the patterns this architecture is designed to prevent. If you find any
 
 **Connection string in `config.yaml` or environment variables accessible to the agent.** The agent's configuration should contain an API key for the internal service, not a database URI. If the agent can read its own config (via file tools or environment inspection), a database URI in that config is a credential exposure.
 
-**Database port in `network.allowedHosts`.** If the personality's network policy includes `db.internal:5432` or `localhost:5432`, the agent can reach the database directly — even if no SQL tool is registered. A custom MCP tool or a `web_fetch` to a non-standard port can bypass the "no SQL tool" assumption.
+**Database host in `safety.network.allow`.** The policy lists hosts, not ports, so if it includes `db.internal` (or the personality sets `allow_private_urls: true` and can reach `localhost`), every port on that host is reachable — including the database port — even if no SQL tool is registered. A custom MCP tool on a non-standard port can bypass the "no SQL tool" assumption.
 
 **A database admin tool in the agent's toolset.** Tools like `sql_query`, `db_exec`, or a generic "run this SQL" tool give the agent direct database access regardless of the API service. If the personality's `toolset.yaml` includes such a tool, the API-mediated pattern is bypassed.
 

@@ -20,8 +20,8 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
-import { Gateway, type GatewayConfig } from '../index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Gateway, type GatewayConfig, type HeldNotice, type HeldNoticeStore } from '../index';
 
 async function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -179,7 +179,7 @@ function rows(spool: SQLiteInboundSpool): SpoolRow[] {
   return ids.map(({ id }) => spool.get(id)).filter((r): r is SpoolRow => r !== null);
 }
 
-const PLAIN = '[background job job-1234';
+const PLAIN = 'background job job-1234';
 
 describe("parent review — deliver: 'parent'", () => {
   it('runs one review turn instead of the plain notice; its answer is what the user sees', async () => {
@@ -200,7 +200,7 @@ describe("parent review — deliver: 'parent'", () => {
     expect(s.calls[0]?.reviewOfJobId).toBe(j.id);
     // The trusted instruction, then the envelope, then the result still wrapped.
     expect(s.calls[0]?.text).toContain('A background task you delegated has finished');
-    expect(s.calls[0]?.text).toContain('[background job job-1234');
+    expect(s.calls[0]?.text).toContain('background job job-1234');
     expect(s.calls[0]?.text).toContain('CI run 812');
     expect(out.sends).toEqual(['Reviewed: the build is green.']);
     expect(j.deliveredAt).toBeGreaterThan(0);
@@ -452,5 +452,156 @@ describe('parent review — shutdown', () => {
     expect(out.sends).toHaveLength(1);
     expect(out.sends[0]).toContain(PLAIN);
     expect(rows(spool)[0]?.status).toBe('done');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U11 — a review is an unprompted message like any wake notice. Before this,
+// `/mute` and quiet hours held the plain notice (`deliverCompletion`) but a
+// `deliver: 'parent'` job went straight to `admitWakeReview` → `enqueueTurn`:
+// a paid turn ran into a muted lane and its answer was sent. Now the review is
+// parked, unclaimed, until the hold ends, then runs once.
+// ---------------------------------------------------------------------------
+
+class MemoryHeldNotices implements HeldNoticeStore {
+  rows: HeldNotice[] = [];
+  private seq = 0;
+  async hold(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<void> {
+    this.rows.push({ ...notice, id: ++this.seq, heldAt: Date.now() });
+  }
+  async listHeld(): Promise<HeldNotice[]> {
+    return [...this.rows];
+  }
+  async markReleased(id: number): Promise<void> {
+    this.rows = this.rows.filter((r) => r.id !== id);
+  }
+}
+
+function dm(text: string, messageId: string): InboundMessage {
+  return {
+    platform: 'telegram',
+    chatId: 'chat-1',
+    userId: 'u1',
+    botKey: 'bot-a',
+    text,
+    isDm: true,
+    isGroupMention: false,
+    messageId,
+    raw: {},
+  };
+}
+
+describe('parent review — held by /mute and quiet hours (U11)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('/mute 8h: no review turn runs and nothing is sent; after the mute ends it runs once', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    const j = job();
+    const s = scriptedLoop();
+    const exec = fakeExecutor();
+    const gw = gateway(s.loop, out.adapter, fakeJobStore([j]), spool, {
+      executor: exec.executor,
+      deliveryLedger: ledger,
+      heldNotices: new MemoryHeldNotices(),
+    });
+    await gw.handleMessage(dm('/mute 8h', 'm1'), out.adapter);
+    const acks = out.sends.length;
+
+    exec.fire(j);
+    await settle();
+    await gw.sweepPendingDeliveries();
+    await settle();
+    expect(s.calls).toHaveLength(0);
+    expect(out.sends.slice(acks)).toEqual([]);
+    expect(rows(spool).filter((r) => r.kind === 'wake_review')).toEqual([]);
+    // Unclaimed: a restart while muted re-owes it through sweepUndeliveredJobs.
+    expect(j.deliveredAt).toBeUndefined();
+
+    await gw.handleMessage(dm('/mute off', 'm2'), out.adapter);
+    const afterUnmute = out.sends.length;
+    await gw.sweepPendingDeliveries();
+    await waitUntil(() => rows(spool).find((r) => r.kind === 'wake_review')?.status === 'done');
+    await gw.sweepPendingDeliveries();
+    await settle();
+
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]?.reviewOfJobId).toBe(j.id);
+    expect(out.sends.slice(afterUnmute)).toEqual(['Reviewed: the build is green.']);
+    expect(j.deliveredAt).toBeGreaterThan(0);
+  });
+
+  it('quiet hours: the restore sweep parks the review and the window end releases it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const j = job();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, fakeJobStore([j]), spool, {
+      deliveryLedger: new SQLiteDeliveryLedger(':memory:'),
+      heldNotices: new MemoryHeldNotices(),
+      quietHours: { timeZone: 'UTC', window: { startMinute: 22 * 60, endMinute: 7 * 60 } },
+    });
+
+    await gw.sweepUndeliveredJobs();
+    await settle();
+    expect(s.calls).toHaveLength(0);
+    expect(out.sends).toEqual([]);
+    expect(j.deliveredAt).toBeUndefined();
+
+    vi.setSystemTime(new Date('2026-09-26T07:01:00Z'));
+    await gw.sweepPendingDeliveries();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(s.calls).toHaveLength(1);
+    expect(out.sends).toEqual(['Reviewed: the build is green.']);
+  });
+
+  it('a review that falls back inside quiet hours holds the plain notice, then sends it once', async () => {
+    // A review admitted before the window, crashed after a tool started: the
+    // next process owes the plain notice — inside quiet hours it is held.
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    const j = job();
+    const store = fakeJobStore([j]);
+    const first = scriptedLoop(async function* () {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'post_update', args: {} };
+      await new Promise(() => {});
+    });
+    const exec = fakeExecutor();
+    gateway(first.loop, out.adapter, store, spool, {
+      executor: exec.executor,
+      deliveryLedger: ledger,
+    });
+    exec.fire(j);
+    await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
+
+    // A quiet window around the current UTC time, so no clock goes backwards.
+    const nowMin = Math.floor((Date.now() % 86_400_000) / 60_000);
+    const held = new MemoryHeldNotices();
+    const gw2 = gateway(scriptedLoop().loop, out.adapter, store, spool, {
+      deliveryLedger: ledger,
+      heldNotices: held,
+      quietHours: {
+        timeZone: 'UTC',
+        window: { startMinute: (nowMin + 1440 - 60) % 1440, endMinute: (nowMin + 60) % 1440 },
+      },
+    });
+    await gw2.replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(out.sends).toEqual([]);
+    expect(held.rows.map((r) => r.text)).toEqual([expect.stringContaining(PLAIN)]);
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 2 * 60 * 60_000);
+    await gw2.sweepPendingDeliveries();
+    await gw2.sweepPendingDeliveries();
+    expect(out.sends).toHaveLength(1);
+    expect(out.sends[0]).toContain(PLAIN);
+    expect(held.rows).toEqual([]);
   });
 });

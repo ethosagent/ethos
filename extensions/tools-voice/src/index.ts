@@ -41,6 +41,7 @@ export {
   buildRealtimeInstructions,
   createAgentConsultTool,
   deriveRealtimeToolset,
+  fenceFarEndSpeech,
   REALTIME_BOUNDARY_POLICY,
   REALTIME_SAFE_TOOLS,
 } from './agent-consult';

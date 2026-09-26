@@ -27,9 +27,9 @@
 //     vision input resolver's `ctx.fetchImpl` test seam
 //     (extensions/tools-vision/src/input-resolver.ts); every other caller
 //     takes the default and is pinned.
-//   - Only `safeFetch` pins. `web_fetch` / `web_extract` use their own SSRF
-//     check (extensions/tools-web/src/ssrf.ts) and remain exposed to the
-//     rebinding race; that is the separate third-party HTTP client survey.
+//   - Only `safeFetch` pins. `web_extract` fetches via `ctx.scopedFetch` (this
+//     function, no `fetchImpl`), so it IS pinned; its `checkSsrf` lookup is never
+//     connected to (tools-web/src/__tests__/web-extract-pinning.test.ts).
 //   - One `Agent` per request forgoes keep-alive. Accepted: `safeFetch`
 //     callers (OAuth, scope probes, vision URL fetches, the model catalog)
 //     are low-volume.

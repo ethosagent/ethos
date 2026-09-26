@@ -153,6 +153,20 @@ describe('gatewayObservability — the production sink', () => {
     expect(second.blocks).toEqual(['gateway.b']);
   });
 
+  it('forwards channel.pairing rows to the process sink', () => {
+    const recordChannelPairing = vi.fn();
+    const sink = gatewayObservability(() => ({
+      recordSafetyBlock: () => {},
+      recordChannelAllow: () => {},
+      recordChannelDeny: () => {},
+      recordChannelPairing,
+    }));
+
+    sink.recordChannelPairing?.({ code: 'channel.pairing.issued' });
+
+    expect(recordChannelPairing).toHaveBeenCalledWith({ code: 'channel.pairing.issued' });
+  });
+
   it('is fail-open: a store that will not open, or a record that throws, never reaches the Gateway', async () => {
     const unopenable = gatewayObservability(() => {
       throw new Error('observability.db: disk I/O error');

@@ -1,0 +1,86 @@
+/* ── Shared landing primitives — values verbatim from the "Alive" mockup
+   (ethos-home-alive.html). Consumed by the OrbitHero and the landing page
+   sections; nothing outside the landing page uses these. ─────────────── */
+
+.wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding-inline: 24px;
+}
+
+@media (max-width: 480px) {
+  .wrap {
+    padding-inline: 16px;
+  }
+}
+
+.mono {
+  font-family: var(--ifm-font-family-monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 12px;
+  padding: 10px 20px;
+  border: 1px solid var(--ethos-border-strong);
+  background: var(--ethos-bg-elevated);
+  color: var(--ethos-text-primary);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    transform 0.22s var(--ethos-ease-spring),
+    box-shadow 0.22s var(--ethos-ease);
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(26, 26, 26, 0.1);
+  color: var(--ethos-text-primary);
+  text-decoration: none;
+}
+
+.btnPop {
+  background: var(--ethos-text-primary);
+  color: var(--ethos-bg-base);
+  border-color: var(--ethos-text-primary);
+}
+
+.btnPop:hover {
+  color: var(--ethos-bg-base);
+}
+
+.kicker {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  margin: 0;
+}
+
+.h2 {
+  font-family: var(--ethos-font-display);
+  font-weight: 700;
+  font-size: clamp(30px, 4.4vw, 46px);
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  margin: 12px 0 0;
+  color: var(--ethos-text-primary);
+  text-wrap: balance;
+}
+
+.lead {
+  color: var(--ethos-text-secondary);
+  font-size: 16px;
+  max-width: 56ch;
+  margin: 16px 0 0;
+}
+
+.block {
+  padding-block: 84px;
+}

@@ -26,6 +26,7 @@ import { registerProtocolHandler } from './protocol-handler';
 import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
 import { DESKTOP_SHUTDOWN_GRACE_MS } from './runtime-shutdown';
 import { onSatelliteStatus, setWakeEnabled, startSatellite, stopSatellite } from './satellite';
+import { applySpaCsp } from './spa-csp';
 import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
 import { createTray, destroyTray, setTrayState, setWakeTray, type TrayState } from './tray';
@@ -85,22 +86,9 @@ function spaConnectSrc(): string {
 }
 
 function setupSpaCsp(): void {
-  const csp = [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    `connect-src ${spaConnectSrc()}`,
-    "img-src 'self' data: https:",
-    "font-src 'self'",
-  ].join('; ');
-
+  const connectSrc = spaConnectSrc();
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [csp],
-      },
-    });
+    callback({ responseHeaders: applySpaCsp(details.responseHeaders, connectSrc) });
   });
 }
 

@@ -1,0 +1,114 @@
+/* Colocated styles for the settings UX additions (plan
+   ux-feedback-and-config-clarity B2 / B3 / B6). Deliberately NOT in
+   styles.css — a concurrent change owns that file; these classes are
+   settings-only and live beside the components that render them. Tokens are
+   the `--ethos-*` variables `tokensToCssVariables()` stamps on :root, so
+   every skin retunes them. */
+
+/* --- Applies badge (B6 §6.5): glyph + word, never colour alone ----------- */
+
+.settings-row-applies {
+  font-family: "Geist Mono", monospace;
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.settings-row-applies-live {
+  color: var(--ethos-text-tertiary);
+}
+.settings-row-applies-next-turn {
+  color: var(--ethos-success);
+}
+.settings-row-applies-gateway-restart {
+  color: var(--ethos-warning);
+}
+
+/* --- Advanced disclosure (B6): collapse is CSS-only, never an unmount ---- */
+
+.settings-rail-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  margin-top: 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  border-radius: 4px;
+}
+.settings-rail-advanced-toggle:hover {
+  background: var(--ethos-hover);
+}
+.settings-rail-advanced.is-collapsed {
+  display: none;
+}
+
+/* --- Save-bar parse warnings (B2): rows, not toasts ----------------------- */
+
+.settings-savebar-warnings-toggle {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ethos-warning);
+}
+.settings-savebar-warnings {
+  margin: 0;
+  padding: 4px 0 0;
+  list-style: none;
+  width: 100%;
+}
+.settings-savebar-warning-row {
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ethos-text-secondary);
+}
+.settings-savebar-warning-row::before {
+  content: "⚠ ";
+  color: var(--ethos-warning);
+}
+
+/* --- Resolved block (B3): one compact read-only group --------------------- */
+
+.settings-resolved {
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.settings-resolved-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  margin-bottom: 6px;
+}
+.settings-resolved-row {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.settings-resolved-label {
+  width: 96px;
+  flex: none;
+  color: var(--ethos-text-dim);
+}
+.settings-resolved-value {
+  font-family: "Geist Mono", monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text);
+  overflow-wrap: anywhere;
+}
+.settings-resolved-note {
+  color: var(--ethos-text-tertiary);
+}

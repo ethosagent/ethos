@@ -33,6 +33,7 @@ import {
   hardlineReason,
   type IdentityMap,
   type MemoryBundle,
+  notPermittedRefusal,
   type ReplayAndResolveResult,
 } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
@@ -111,6 +112,7 @@ import { SystemEventBus } from './services/system-event-bus';
 import { TasksService } from './services/tasks.service';
 import { TeamsService } from './services/teams.service';
 import { ToolSettingsService } from './services/tool-settings.service';
+import { UsageService } from './services/usage.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
 import { WakeRoutesService } from './services/wake-routes.service';
@@ -1805,6 +1807,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
         // what keeps a stored grant or lease from approving a hardline
         // command (openclaw-advisory-fixes Item 10).
         isHardline: (payload) => hardlineReason(payload) !== null,
+        // No modal for a call the personality's allowlist refuses anyway.
+        refusedAnyway: notPermittedRefusal(loop),
       }),
     );
     loopReleases.push('web approval hook', off);
@@ -2034,6 +2038,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       satellites: satelliteRegistry,
       wakeRoutes: wakeRoutesService,
       deliveries: deliveriesService,
+      usage: new UsageService(opts.sessionStore),
       outbox: outboxService,
       learning: learningService,
       calls: callsService,

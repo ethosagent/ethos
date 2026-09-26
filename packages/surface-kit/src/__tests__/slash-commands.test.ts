@@ -54,8 +54,14 @@ describe('SLASH_COMMANDS registry', () => {
       'commands',
       'learn',
       'undo',
+      'title',
+      'attach',
+      'dry-run',
       'exit',
       'quit',
+      'background',
+      'goal',
+      'goals',
     ]);
   });
 
@@ -63,6 +69,49 @@ describe('SLASH_COMMANDS registry', () => {
     const gateway = slashCommandsForSurface('gateway').map((c) => c.name);
     for (const name of ['stop', 'start', 'queue', 'background', 'voice']) {
       expect(gateway).toContain(name);
+    }
+  });
+});
+
+describe('TUI surface tag (C5)', () => {
+  // The TUI's /help body and its CompletionPanel both DERIVE from this
+  // filtered list now (apps/tui/src/help.ts, apps/tui/src/components/
+  // CompletionPanel.tsx — pinned by apps/tui/src/__tests__/help.test.ts), so
+  // the previous source-scrape of those files is obsolete. This pin is the
+  // deliberate edit point when a command joins or leaves the TUI surface.
+  it('reproduces the TUI built-in list in order', () => {
+    const tui = slashCommandsForSurface('tui').map((c) => c.name);
+    expect(tui).toEqual([
+      'help',
+      'new',
+      'fork',
+      'branches',
+      'branch',
+      'personality',
+      'model',
+      'memory',
+      'usage',
+      'compact',
+      'budget',
+      'verbose',
+      'learn',
+      'exit',
+      'sessions',
+      'readonly',
+      'details',
+      'skin',
+      'tools',
+      'skills',
+      'goal',
+      'goals',
+    ]);
+  });
+
+  it('tui entries keep name, usage and description for help generation', () => {
+    for (const cmd of slashCommandsForSurface('tui')) {
+      expect(cmd.name).toBeTruthy();
+      expect(cmd.usage).toContain(`/${cmd.name}`);
+      expect(cmd.description).toBeTruthy();
     }
   });
 });
@@ -115,7 +164,7 @@ describe('resolveSlashCommand', () => {
 describe('branch commands', () => {
   it('/fork, /branches, /branch are advertised on the CLI and gateway and parse their argument', () => {
     for (const name of ['fork', 'branches', 'branch']) {
-      expect(getSlashCommand(name)?.surfaces).toEqual(['cli', 'gateway']);
+      expect(getSlashCommand(name)?.surfaces).toEqual(['cli', 'gateway', 'tui']);
     }
     expect(parseSlashCommand('/branch 2')).toEqual({ name: 'branch', args: ['2'], arg: '2' });
     expect(parseSlashCommand('/FORK')).toEqual({ name: 'fork', args: [], arg: '' });

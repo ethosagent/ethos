@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickLayout, renderStatusBar, thresholdFor } from '../lib/status-bar';
+import { formatCostUsd, pickLayout, renderStatusBar, thresholdFor } from '../lib/status-bar';
 
 describe('FW-1 status bar layout', () => {
   it('picks full layout at ≥76 columns', () => {
@@ -67,6 +67,62 @@ describe('FW-1 status bar render', () => {
     expect(renderStatusBar({ ...base, elapsedSecs: 60, columns: 80 }).text).toContain('1m');
     expect(renderStatusBar({ ...base, elapsedSecs: 3600, columns: 80 }).text).toContain('1h');
     expect(renderStatusBar({ ...base, elapsedSecs: 3660, columns: 80 }).text).toContain('1h1m');
+  });
+});
+
+describe('C4 identity, cost and session fields', () => {
+  const base = {
+    model: 'claude-sonnet-5',
+    contextTokens: 12_400,
+    contextMax: 200_000,
+    elapsedSecs: 60,
+    personality: 'researcher',
+    sessionKey: 'cli:ethos',
+    messageCount: 14,
+    costUsd: 0.04,
+  };
+
+  it('full layout renders personality · model, cost, and session (N msgs)', () => {
+    const r = renderStatusBar({ ...base, columns: 120 });
+    expect(r.layout).toBe('full');
+    expect(r.text).toContain('researcher · claude-sonnet-5');
+    expect(r.text).toContain('$0.04');
+    expect(r.text).toContain('cli:ethos (14 msgs)');
+  });
+
+  it('compact keeps personality and cost, drops the session', () => {
+    const r = renderStatusBar({ ...base, columns: 70 });
+    expect(r.layout).toBe('compact');
+    expect(r.text).toContain('researcher · claude-sonnet-5');
+    expect(r.text).toContain('$0.04');
+    expect(r.text).not.toContain('cli:ethos');
+  });
+
+  it('minimal drops both session and cost', () => {
+    const r = renderStatusBar({ ...base, columns: 50 });
+    expect(r.layout).toBe('minimal');
+    expect(r.text).toContain('researcher · claude-sonnet-5');
+    expect(r.text).not.toContain('$');
+    expect(r.text).not.toContain('cli:ethos');
+  });
+
+  it('the new fields are optional — the legacy shape is unchanged without them', () => {
+    const r = renderStatusBar({
+      model: 'claude-sonnet-5',
+      contextTokens: 12_400,
+      contextMax: 200_000,
+      elapsedSecs: 60,
+      columns: 120,
+    });
+    expect(r.text).not.toContain('·');
+    expect(r.text).not.toContain('$');
+  });
+
+  it('formatCostUsd: two decimals, four below one cent', () => {
+    expect(formatCostUsd(0.04)).toBe('0.04');
+    expect(formatCostUsd(1.239)).toBe('1.24');
+    expect(formatCostUsd(0.0042)).toBe('0.0042');
+    expect(formatCostUsd(0)).toBe('0.00');
   });
 });
 

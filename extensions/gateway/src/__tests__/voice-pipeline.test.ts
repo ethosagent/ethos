@@ -3,9 +3,11 @@
 // implementation, tested there. What remains is the gateway's own glue between
 // audio attachments and the transcript text handed to the loop.
 
+import { DefaultTtsProviderRegistry } from '@ethosagent/core';
 import type { Attachment, SttAudio, SttProvider, VoiceAudioFormat } from '@ethosagent/types';
 import { STT_CONTRACT_VERSION, voiceAudioMimeType } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import { Gateway, VOICE_FAILURE_NOTICE } from '../index';
 import type { TranscodeRequest, Transcoder } from '../transcode';
 import {
   buildTranscriptText,
@@ -13,6 +15,7 @@ import {
   type TranscribeStageEvent,
   transcribeAudioAttachments,
 } from '../voice-pipeline';
+import { type FakeAdapter, fakeAdapter, inbound, recordingTts, stubLoop } from './voice-fakes';
 
 describe('hasAudioAttachments', () => {
   it('returns false for undefined', () => {
@@ -365,5 +368,57 @@ describe('transcribeAudioAttachments — normalization and retry', () => {
       { stage: 'normalize', ok: true },
       { stage: 'transcribe', ok: false, error: 'second' },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H5 (plan ux-feedback-and-config-clarity) — a voice reply the lane asked for
+// that could not be produced is SAID, once, after the text reply.
+// ---------------------------------------------------------------------------
+
+describe('voice reply failure notice (H5)', () => {
+  function gatewayWith(registry: DefaultTtsProviderRegistry, adapter: FakeAdapter) {
+    return new Gateway({
+      bots: [
+        { botKey: 'bot-a', loop: stubLoop(), binding: { type: 'personality', name: 'default' } },
+      ],
+      ttsProviderRegistry: registry,
+      ttsProviderName: 'local-tts',
+      defaultVoiceMode: 'all',
+      adapters: new Map([['telegram', adapter.adapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+  }
+
+  it('a TTS failure sends exactly one notice, after the text reply, in its thread', async () => {
+    const registry = new DefaultTtsProviderRegistry();
+    registry.register('local-tts', () => ({
+      name: 'local-tts',
+      caps: { kind: 'tts', formats: ['wav'], local: true, contractVersion: 1 },
+      synthesize: async () => {
+        throw new Error('tts fell over');
+      },
+    }));
+    const adapter = fakeAdapter();
+    const gw = gatewayWith(registry, adapter);
+
+    await gw.handleMessage(inbound({ threadId: 'thread-3' }), adapter.adapter);
+
+    expect(adapter.voiceSends).toHaveLength(0);
+    expect(adapter.sent.map((s) => s.message.text)).toEqual(['here you go', VOICE_FAILURE_NOTICE]);
+    // Never before the text; and into the same thread.
+    expect(adapter.sent[1]?.message.threadId).toBe('thread-3');
+  });
+
+  it('a successful voice reply sends no failure notice', async () => {
+    const tts = recordingTts('wav');
+    const adapter = fakeAdapter();
+    const gw = gatewayWith(tts.registry, adapter);
+
+    await gw.handleMessage(inbound(), adapter.adapter);
+
+    expect(adapter.voiceSends).toHaveLength(1);
+    expect(adapter.sent.map((s) => s.message.text)).toEqual(['here you go']);
+    void gw;
   });
 });

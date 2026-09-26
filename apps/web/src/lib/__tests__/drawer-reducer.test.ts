@@ -466,12 +466,14 @@ describe('drawer-reducer', () => {
           ? { kind: e.kind, toolName: e.toolName, status: e.status, durationMs: e.durationMs }
           : e.kind === 'decision'
             ? { kind: e.kind, event: e.event }
-            : {
-                kind: e.kind,
-                claim: e.claim,
-                evidence: e.evidence,
-                citesToolCallId: e.citesToolCallId,
-              },
+            : e.kind === 'notice'
+              ? { kind: e.kind, word: e.word, subject: e.subject }
+              : {
+                  kind: e.kind,
+                  claim: e.claim,
+                  evidence: e.evidence,
+                  citesToolCallId: e.citesToolCallId,
+                },
       );
     }
 

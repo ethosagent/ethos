@@ -81,7 +81,7 @@ import { activateFirstPartyPlugins } from './activate-first-party';
 import { validateCallCaptureBinding } from './call-capture-binding';
 import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
-import { buildVaultBackend, composeGatedMemory } from './memory-backend';
+import { buildVaultBackend, composeGatedMemory, composeGatedVectorMemory } from './memory-backend';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
 import { createBuiltinVoiceRegistries } from './voice-registries';
@@ -212,8 +212,10 @@ export function createPersonalityFsWriteDenyResolver(
  * nothing until the process was rebuilt.
  *
  * An id the registry does not know degrades to the empty policy — the same
- * value an absent `safety.network` block yields, and the narrower of the two
- * directions under the resolver's current semantics.
+ * value an absent `safety.network` block yields: open public internet under
+ * the `safeFetch` floor (`resolveCapabilities`, packages/core/src/
+ * capability-resolver.ts). The unknown id gets no allow list and no deny list
+ * of its own, which is why the fallback is logged.
  */
 export function createPersonalityNetworkPolicyResolver(
   personalities: Pick<PersonalityRegistry, 'get' | 'getDefault'>,
@@ -328,6 +330,7 @@ export async function buildInfrastructure(
   // (history + approve-before-store gate) via composeGatedMemory — the backend
   // decides where content + history live; the pending queue and tombstones stay
   // rooted at ~/.ethos in both cases (gate machinery, not memory content).
+  // `vector` composes the same gate without history (composeGatedVectorMemory).
   //
   // Cap drops must be audible (the Curator lesson, plan §3b): the pending queue
   // signals every at-cap drop through this seam — logged, plus an observability
@@ -361,7 +364,15 @@ export async function buildInfrastructure(
     }).provider;
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
-    return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });
+    // Same approve-before-store gate, minus the history decorator (vector
+    // keeps no provenance history) — see composeGatedVectorMemory.
+    return composeGatedVectorMemory({
+      base: new VectorMemoryProvider({ dir, storage: wiringCtx.storage }),
+      ...(config.memoryApproval ? { approval: config.memoryApproval } : {}),
+      dataDir: dir,
+      storage: wiringCtx.storage,
+      observability: pendingCapObservability,
+    });
   });
   memoryProviders.register('vault', ({ dataDir: dir }) => {
     // ScopedStorage confinement + `.ethos-meta` history live in

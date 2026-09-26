@@ -1510,6 +1510,51 @@ const VoiceBotUpdateSchema = z.object({
   }),
 });
 
+/**
+ * B3 (plan ux-feedback-and-config-clarity §6.2–6.3) — the `Resolved` block:
+ * which configuration is actually in effect, from `resolveEffectiveConfig`
+ * in `@ethosagent/config`. Settings → General renders it read-only; the same
+ * resolver feeds `ethos status` and `ethos doctor`. `apiKey` carries only the
+ * provider and the SOURCE of the key (env var name / vault ref) — never a
+ * value or preview.
+ */
+const ConfigResolvedSchema = z.object({
+  /** `ETHOS_STATE_DIR` when set, else `~/.ethos`. */
+  stateDir: z.string(),
+  configPath: z.string(),
+  personality: z.object({
+    id: z.string(),
+    /** Which key decided it (`default` = neither key set). */
+    source: z.enum(['activeContext', 'personality', 'default']),
+    /** The `personality:` value an activeContext outranked. */
+    shadowed: z.string().optional(),
+  }),
+  model: z.object({
+    id: z.string(),
+    /** The config-level rung that decided `id` (`model:` or `modelRouting.<id>`). */
+    rung: z.string(),
+  }),
+  apiKey: z.object({
+    provider: z.string(),
+    /**
+     * `missing` = env unset AND the resolver was handed a vault listing that
+     * lacks the ref (see `EffectiveConfig.apiKey.source` in
+     * `@ethosagent/config`). web-api resolves without a vault listing today,
+     * so it never sends `missing` — the variant is here so the schema mirrors
+     * the resolver's enum, additively.
+     */
+    source: z.enum(['env', 'vault', 'inline', 'missing']),
+    /** The vault ref consulted (absent for `inline`). */
+    ref: z.string().optional(),
+    /** The environment variable that supplied the key (source `env`). */
+    envVar: z.string().optional(),
+    /** Present when the env var wins AND the vault also holds the ref. */
+    overrides: z.literal('vault').optional(),
+  }),
+  /** Parse-time warnings for the file as it stands (B2 unknown-key lines). */
+  warnings: z.array(z.string()),
+});
+
 const ConfigGetOutput = z.object({
   provider: z.string(),
   model: z.string(),
@@ -1537,6 +1582,8 @@ const ConfigGetOutput = z.object({
   /** What the provider-chain codec dropped out of config.yaml and why (a
    *  `providers.<n>` index with no `provider` line loses the whole entry). */
   providersNotices: z.array(z.string()),
+  /** The effective configuration (B3) — see `ConfigResolvedSchema`. */
+  resolved: ConfigResolvedSchema,
   approvalMode: z.enum(['manual', 'smart', 'off']),
   verbosity: z.enum(['concise', 'balanced', 'verbose']),
   debugMode: z.boolean(),
@@ -1667,8 +1714,9 @@ const ConfigGetOutput = z.object({
   voiceLivekitApiKeyPreview: z.string().nullable(),
   /** `voice.livekit.apiSecret`, REDACTED. */
   voiceLivekitApiSecretPreview: z.string().nullable(),
-  /** `voice.inbound.allowlist` — caller numbers that reach the owner's own
-   *  personality. Null = key absent, which the consumer reads as "screen
+  /** `voice.inbound.allowlist` — caller numbers treated as known for pre-warm.
+   *  Caller ID is not identity, so a match never reaches the owner's own
+   *  personality (INB-001b, `decideInboundCall`). Null = key absent, which the consumer reads as "screen
    *  everyone through the receptionist". An explicitly EMPTY allowlist is not
    *  expressible on disk; `voiceInboundReceptionist` IS that policy. */
   voiceInboundAllowlist: z.array(z.string()).nullable(),
@@ -2530,6 +2578,13 @@ const ConfigUpdateOutput = z.object({
    * with `id: null` / `''` is never adopted (adopting would write its id back).
    */
   adoptedModels: z.array(ModelRegistryAdoptedModelSchema).optional(),
+  /**
+   * B2 (web save half): the config parser's warnings for the file THIS save
+   * just wrote — `config.yaml:<n> unknown key '<k>' — did you mean …?` lines
+   * for keys the save kept in passthrough but nothing reads. Absent when the
+   * parse raised none. The settings save bar renders the count and the lines.
+   */
+  warnings: z.array(z.string()).optional(),
 });
 
 /** @experimental */
@@ -5170,6 +5225,57 @@ const InboundActionInput = z.object({ id: z.string().min(1) });
  *  retried or discarded). */
 const InboundActionOutput = z.object({ ok: z.boolean() });
 
+// ---------------------------------------------------------------------------
+// Usage — spend and tokens over a window (plan openclaw-2026.9.6-gaps U3)
+//
+// The web face of `ethos usage`: the same `usageAggregate` rows folded by the
+// same `summarizeUsageRows` (@ethosagent/session-sqlite), so a window reads the
+// same in the terminal and the browser. The CLI's observability-backed parts
+// (turn outcomes, `--by tool|skill`) are not here.
+// ---------------------------------------------------------------------------
+
+const UsageRowSchema = z.object({
+  /** The group: a UTC date, model, personality id, platform, or session id. */
+  key: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheCreationTokens: z.number(),
+  estimatedCostUsd: z.number(),
+  messages: z.number(),
+});
+
+const UsageDimensionSchema = z.enum(['model', 'personality', 'channel', 'session']);
+
+const UsageSummaryInput = z.object({
+  /** Window length ending now, in ms. 1 minute to 366 days. */
+  windowMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(366 * 24 * 60 * 60 * 1000),
+  /** Optional breakdown, as `ethos usage --by`. */
+  by: UsageDimensionSchema.optional(),
+});
+
+const UsageSummaryOutput = z.object({
+  /** Epoch milliseconds. */
+  since: z.number(),
+  until: z.number(),
+  totals: UsageRowSchema.omit({ key: true }).extend({
+    /** Share of billable input served from cache, 0–1. */
+    cacheHitRate: z.number(),
+  }),
+  /** One row per UTC day with spend, `key` = `YYYY-MM-DD`. */
+  daily: z.array(UsageRowSchema),
+  by: z.object({ dimension: UsageDimensionSchema, rows: z.array(UsageRowSchema) }).optional(),
+});
+
+/** @experimental */
+const usage = {
+  summary: oc.input(UsageSummaryInput).output(UsageSummaryOutput),
+};
+
 /** @experimental */
 const deliveries = {
   summary: oc.input(DeliveriesSummaryInput).output(DeliveriesSummaryOutput),
@@ -6356,6 +6462,7 @@ export const contract = {
   digest,
   voice,
   deliveries,
+  usage,
   outbox,
   learning,
   channels,

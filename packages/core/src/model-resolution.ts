@@ -650,6 +650,18 @@ export async function attemptWithFallbacks<T>(opts: {
   registry: ModelRegistry;
   attempt: (m: ResolvedModel) => Promise<T>;
   onDeviation?: (d: ModelDeviation) => void;
+  /**
+   * A4 — user-facing fallback notice seam, called once per hop BEFORE the
+   * fallback attempt with the alias that just failed and the alias about to
+   * be tried. Nothing is emitted here because this function is not a
+   * generator inside the turn: rendering is the caller's job. LIMITATION:
+   * nothing in production calls `attemptWithFallbacks` yet — the seam is not
+   * wired into the loop, so no `_loop` notice exists today. A future caller
+   * inside the turn should pass an `onFallback` that emits a
+   * `toolName: '_loop'` `tool_progress` with `audience: 'user'` (the shape
+   * the CLI and TUI already render as a one-line yellow notice).
+   */
+  onFallback?: (from: string, to: string) => void;
 }): Promise<T> {
   try {
     return await opts.attempt(opts.resolved);
@@ -657,6 +669,7 @@ export async function attemptWithFallbacks<T>(opts: {
     const primary = lookupEntry(opts.registry, opts.resolved.alias);
     const declared = primary?.fallbacks ?? [];
     let lastError: unknown = primaryError;
+    let lastAlias = opts.resolved.alias;
     let attempted = 0;
 
     for (const alias of declared) {
@@ -672,6 +685,8 @@ export async function attemptWithFallbacks<T>(opts: {
         once: false,
       };
       opts.onDeviation?.(deviation);
+      opts.onFallback?.(lastAlias, entry.alias);
+      lastAlias = entry.alias;
       attempted += 1;
 
       try {

@@ -17,12 +17,12 @@ interface PendingAuth {
 // In-memory store keyed by sessionToken. Tokens expire after 20 minutes.
 const pending = new Map<string, PendingAuth>();
 
-// WEB-007: this endpoint is intentionally unauthenticated (the user may not be
-// onboarded yet), but each device-code request inserts into `pending` and
-// spawns a ~16-minute background poller doing repeated outbound fetches. Cap the
-// number of concurrent pending flows so an unauthenticated client cannot drive
-// unbounded background pollers / map growth. The rate limiter on the mount is
-// the first line of defense; this is the hard ceiling.
+// WEB-007: each device-code request inserts into `pending` and spawns a
+// ~16-minute background poller doing repeated outbound fetches. Cap the number
+// of concurrent pending flows so no client can drive unbounded background
+// pollers / map growth. The mount is cookie-auth + CSRF (S8, the `/auth/codex`
+// mount in `createRoutes`, ./index.ts) and rate-limited; this is the hard
+// ceiling.
 const MAX_PENDING = 20;
 
 export function codexAuthRoutes(opts: { secrets: SecretsResolver }) {

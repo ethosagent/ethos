@@ -39,6 +39,7 @@ import type { RecipesService } from '../services/recipes.service';
 import type { SkillsService } from '../services/skills.service';
 import type { TasksService } from '../services/tasks.service';
 import type { ToolSettingsService } from '../services/tool-settings.service';
+import type { UsageService } from '../services/usage.service';
 import type { VoiceService } from '../services/voice.service';
 import type { VoiceLaneModeService } from '../services/voice-lane-mode.service';
 import type { WakeRoutesService } from '../services/wake-routes.service';
@@ -117,6 +118,9 @@ export interface RpcContext {
   /** Read-only delivery-obligation ledger view. Not optional: it degrades to
    *  zeros when the gateway has never run. */
   deliveries: DeliveriesService;
+  /** Spend and tokens over a window (`usage.summary`, U3). Not optional: a
+   *  session store with no aggregation answers zeros. */
+  usage: UsageService;
   /** The personality approval queue — read, and the human's decisions. Not
    *  optional: it reports an empty queue (opening nothing) where no gated
    *  personality has ever proposed a publication. Decisions only; the gateway

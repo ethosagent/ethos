@@ -21,6 +21,13 @@ import Database, { migrate } from '@ethosagent/sqlite';
 // delivery. Read side: the pending-notify `ContextInjector`
 // (`packages/wiring/src/compose-tools.ts`), which reads and marks consumed in
 // one step at inject time, at the assignee's own next turn.
+//
+// Second table, `held_notices` (plan openclaw-2026.9.6-gaps U11): a channel
+// notice nobody asked for, held by the gateway for quiet hours or a lane
+// `/mute` (`Gateway.noticeHoldReason`) and released by its delivery sweep
+// (`Gateway.releaseHeldNotices`). Structurally the gateway's `HeldNoticeStore`.
+// Added to the idempotent baseline with no version bump: no existing table
+// changes, and an older binary opens the file and ignores the new table.
 // ---------------------------------------------------------------------------
 
 export interface PendingNotify {
@@ -37,6 +44,19 @@ export interface WritePendingNotifyInput {
   assigneePersonalityId: string;
   kind: string;
   ref?: string;
+}
+
+/** A held channel notice — the gateway's `HeldNotice`, structurally. */
+export interface HeldChannelNotice {
+  id: number;
+  botKey: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  laneKey: string;
+  sessionKey: string;
+  text: string;
+  heldAt: number;
 }
 
 export interface PendingNotifyQueue {
@@ -63,7 +83,31 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS pending_notifies_lookup
     ON pending_notifies(team, assignee_personality_id, consumed);
+
+  CREATE TABLE IF NOT EXISTS held_notices (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    bot_key     TEXT NOT NULL,
+    platform    TEXT NOT NULL,
+    chat_id     TEXT NOT NULL,
+    thread_id   TEXT,
+    lane_key    TEXT NOT NULL,
+    session_key TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    held_at     INTEGER NOT NULL
+  ) STRICT;
 `;
+
+interface HeldNoticeRow {
+  id: number;
+  bot_key: string;
+  platform: string;
+  chat_id: string;
+  thread_id: string | null;
+  lane_key: string;
+  session_key: string;
+  text: string;
+  held_at: number;
+}
 
 interface PendingNotifyRow {
   id: number;
@@ -152,6 +196,49 @@ export class SQLiteNotifyQueue implements PendingNotifyQueue {
       return rows.map(rowToPendingNotify);
     });
     return consume();
+  }
+
+  /** Hold a channel notice until its lane may be notified (U11). */
+  async hold(notice: Omit<HeldChannelNotice, 'id' | 'heldAt'>): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO held_notices
+         (bot_key, platform, chat_id, thread_id, lane_key, session_key, text, held_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        notice.botKey,
+        notice.platform,
+        notice.chatId,
+        notice.threadId ? notice.threadId : null,
+        notice.laneKey,
+        notice.sessionKey,
+        notice.text,
+        Date.now(),
+      );
+  }
+
+  /** Every held notice, oldest first. */
+  async listHeld(): Promise<HeldChannelNotice[]> {
+    const rows = this.db
+      .prepare('SELECT * FROM held_notices ORDER BY held_at ASC, id ASC')
+      .all() as HeldNoticeRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      botKey: r.bot_key,
+      platform: r.platform,
+      chatId: r.chat_id,
+      ...(r.thread_id ? { threadId: r.thread_id } : {}),
+      laneKey: r.lane_key,
+      sessionKey: r.session_key,
+      text: r.text,
+      heldAt: r.held_at,
+    }));
+  }
+
+  /** Forget a notice the gateway has handed to the delivery ledger. */
+  async markReleased(id: number): Promise<void> {
+    this.db.prepare('DELETE FROM held_notices WHERE id = ?').run(id);
   }
 
   close(): void {

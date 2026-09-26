@@ -308,16 +308,24 @@ describe('F07 — a gateway turn drains AgentLoop past `done`', () => {
     const second = h.gw.handleMessage(msg('second'), h.out.adapter);
     await settle();
     // The second turn has not started (one LLM call so far), and the message
-    // was not steered into the finished turn — no "↩ noted" ack, which would
-    // have been an acknowledgement nobody ever read.
+    // was not steered into the finished turn — no absorbed-steer ack, which
+    // would have been an acknowledgement nobody ever read. It queued behind
+    // the parked tail and said so (H3).
     expect(h.scripted.state.calls).toBe(1);
-    expect(h.out.sentTo('chat-1')).toEqual(['answer 1']);
+    expect(h.out.sentTo('chat-1')).toEqual([
+      'answer 1',
+      "⏳ queued (2nd) — I'll answer after the current reply.",
+    ]);
 
     h.gate.releaseAll();
     await first;
     await waitUntil(() => h.gate.parked() === 1);
     expect(h.scripted.state.calls).toBe(2);
-    expect(h.out.sentTo('chat-1')).toEqual(['answer 1', 'answer 2']);
+    expect(h.out.sentTo('chat-1')).toEqual([
+      'answer 1',
+      "⏳ queued (2nd) — I'll answer after the current reply.",
+      'answer 2',
+    ]);
 
     h.gate.releaseAll();
     await second;
@@ -568,7 +576,10 @@ describe('F07 follow-ups — the gateway turn tail', () => {
     const out = recordingAdapter();
     await gw.handleMessage(msg('hi'), out.adapter);
     expect(tailRan).toBe(true);
-    expect(out.sentTo('chat-1')).toEqual(['partial\n\n⚠ Response interrupted: model fell over']);
+    // A3 — the fold carries the chat-error map's title, not the raw string.
+    expect(out.sentTo('chat-1')).toEqual([
+      'partial\n\n⚠ Response interrupted: the model call failed',
+    ]);
   });
 
   it('a tail failure AFTER the answer is recorded, not thrown at the adapter', async () => {
@@ -924,22 +935,29 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
 describe('F07 — verifier scenarios', () => {
   it('B and C queued behind A’s parked tail run in order, each with its own tail', async () => {
     const h = harness();
+    const answers = () => h.out.sentTo('chat-1').filter((t) => t.startsWith('answer'));
     const a = h.gw.handleMessage(msg('A'), h.out.adapter);
     await waitUntil(() => h.out.sends.length === 1 && h.gate.parked() === 1);
     const b = h.gw.handleMessage(msg('B'), h.out.adapter);
     const c = h.gw.handleMessage(msg('C'), h.out.adapter);
     await settle();
-    expect(h.out.sentTo('chat-1')).toEqual(['answer 1']);
+    // H3 — each queued message is acked with its position; no answers yet
+    // beyond A's.
+    expect(h.out.sentTo('chat-1')).toEqual([
+      'answer 1',
+      "⏳ queued (2nd) — I'll answer after the current reply.",
+      "⏳ queued (3rd) — I'll answer after the current reply.",
+    ]);
 
     h.gate.releaseAll();
     await a;
-    await waitUntil(() => h.out.sends.length === 2 && h.gate.parked() === 1);
+    await waitUntil(() => answers().length === 2 && h.gate.parked() === 1);
     h.gate.releaseAll();
     await b;
-    await waitUntil(() => h.out.sends.length === 3 && h.gate.parked() === 1);
+    await waitUntil(() => answers().length === 3 && h.gate.parked() === 1);
     h.gate.releaseAll();
     await c;
-    expect(h.out.sentTo('chat-1')).toEqual(['answer 1', 'answer 2', 'answer 3']);
+    expect(answers()).toEqual(['answer 1', 'answer 2', 'answer 3']);
     expect(h.gate.calls).toHaveLength(3);
   });
 
@@ -971,7 +989,14 @@ describe('F07 — verifier scenarios', () => {
     await waitUntil(() => h.scripted.state.answers === 2 && h.gate.parked() === 1);
     h.gate.releaseAll();
     await d;
-    expect(h.out.sentTo('chat-1')).toEqual(['answer 1', '✓ Stopped.', 'answer 2']);
+    expect(h.out.sentTo('chat-1')).toEqual([
+      'answer 1',
+      "⏳ queued (2nd) — I'll answer after the current reply.",
+      "⏳ queued (3rd) — I'll answer after the current reply.",
+      '✓ Stopped.',
+      "⏳ queued (2nd) — I'll answer after the current reply.",
+      'answer 2',
+    ]);
   });
 
   for (const streaming of [false, true]) {

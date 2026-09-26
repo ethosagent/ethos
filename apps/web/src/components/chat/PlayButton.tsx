@@ -1,4 +1,4 @@
-import { message } from 'antd';
+import { App as AntApp } from 'antd';
 import { useCallback, useRef, useState } from 'react';
 import { rpc } from '../../rpc';
 
@@ -26,6 +26,9 @@ export function playbackRequest(text: string, personalityId?: string) {
 }
 
 export function PlayButton({ text, personalityId }: PlayButtonProps) {
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message } = AntApp.useApp();
   const [state, setState] = useState<PlayState>('idle');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -80,7 +83,7 @@ export function PlayButton({ text, personalityId }: PlayButtonProps) {
         : raw;
       void message.error(msg);
     }
-  }, [state, text, personalityId]);
+  }, [state, text, personalityId, message]);
 
   return (
     <button

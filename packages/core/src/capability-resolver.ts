@@ -103,10 +103,18 @@ export function resolveCapabilities(
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;
     const policy = backends.personalityNetworkPolicy?.(scopeIds.personalityId) ?? {};
-    const personalityAllow = policy.allow;
+    // `PersonalitySafetyConfig.network` (packages/types/src/personality.ts):
+    // "Empty/absent = open public internet (subject to floor)". An empty
+    // `allow: []` is the same as no list, matching `checkAllowDeny`
+    // (packages/safety/network/src/policy.ts), which only enters allowlist
+    // mode on a non-empty list. "Open" is never unguarded: `safeFetch` still
+    // applies the scheme, cloud-metadata, private-network and deny-list floor
+    // to every hop (pinned by the "'*' tool on a personality with no allow
+    // list" cases in __tests__/capability-resolver.test.ts).
+    const personalityAllow = policy.allow && policy.allow.length > 0 ? policy.allow : undefined;
     let resolvedHosts: Set<string>;
     if (declaredHosts.includes('*')) {
-      resolvedHosts = new Set(personalityAllow ?? []);
+      resolvedHosts = new Set(personalityAllow ?? ['*']);
     } else if (personalityAllow) {
       // Intersect: only keep declared hosts covered by a personality pattern
       resolvedHosts = new Set(

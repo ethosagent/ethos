@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-17
+updated: 2026-09-25
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -363,7 +363,6 @@ safety:
   approvalMode: manual
   observability:
     storeToolArgs: redacted
-    storeToolBodies: redacted
     storeLlmPayloads: metadata
     redactPatterns:
       - sk-ant-
@@ -378,9 +377,9 @@ Decides what happens when a tool call is classified `dangerous`.
 
 | Value | Behaviour |
 |---|---|
-| `manual` | Every `dangerous` classification surfaces the approval modal; `safe` auto-fires; `blocked` errors out. |
+| `manual` | Every `dangerous` classification surfaces the approval prompt (the web UI modal, or a Slack / Telegram / Discord card); `safe` auto-fires; `blocked` errors out. `ethos chat` asks in the terminal (a `y/N` line in the readline REPL, a modal in the TUI). Where nobody can answer — `ethos chat -q`, piped stdin, `ethos -z`, `batch`, `eval`, `cron`, `bench`, `ethos mcp serve`, `ethos acp` — the call is refused (`wireTerminalApprovalGate`, `apps/ethos/src/terminal-approval.ts`). See [Set up approval gates](../how-to/set-up-approval-gates.md). |
 | `smart` | An auxiliary fast-model call reviews each `dangerous` classification and either auto-approves, auto-denies, or escalates to `manual`. Trades latency and dollars for reduced approval fatigue. |
-| `off` | `dangerous` classifications auto-fire without prompting; the hardline `blocked` floor still applies. |
+| `off` | `dangerous` classifications auto-fire without prompting; the hardline `blocked` floor still applies. Honoured only on unattended cron — the gateway's cron/dream loop and `ethos cron run` / `ethos cron daemon` — with `allowUnattendedDangerousTools: true`, and in `ethos chat` and the other operator-invoked CLI commands. A command using `$(…)` or backticks is never auto-approved: the CLI asks about it and unattended cron refuses it; everywhere else `off` behaves like `manual`. |
 
 Notes:
 
@@ -393,7 +392,7 @@ Controls what the observability store persists for this personality.
 | Field | Values | Description |
 |---|---|---|
 | `safety.observability.storeToolArgs` | `none` \| `redacted` \| `full` | Tool-call arguments. |
-| `safety.observability.storeToolBodies` | `none` \| `redacted` \| `full` | Tool-call result bodies. |
+| `safety.observability.storeToolBodies` | `none` \| `redacted` \| `full` | Reserved. Accepted and validated, but tool-call result bodies are never stored at any setting; only the result size is recorded. |
 | `safety.observability.storeLlmPayloads` | `none` \| `metadata` \| `full` | LLM request and response payloads. |
 | `safety.observability.redactPatterns` | string[] | Substrings redacted from anything stored. |
 

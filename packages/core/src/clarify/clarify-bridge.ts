@@ -391,7 +391,11 @@ export class ClarifyBridge {
       question: input.question,
       ...(input.options !== undefined ? { options: input.options } : {}),
       ...(input.default !== undefined ? { default: input.default } : {}),
-      answerableBy: input.answerableBy,
+      answerableBy:
+        input.answerableBy ??
+        (input.jobId === undefined || typeof routing.surfaceContext.originatorUserId === 'string'
+          ? 'originator'
+          : 'anyone'),
       createdAt: createdAt.toISOString(),
       defaultDeadlineAt: null,
       presentedAt: null,

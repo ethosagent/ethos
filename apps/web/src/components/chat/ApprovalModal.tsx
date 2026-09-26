@@ -1,6 +1,7 @@
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { getClientId } from '../../lib/clientId';
 import { rpc } from '../../rpc';
 
@@ -67,6 +68,10 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
   const [scope, setScope] = useState<ApprovalScope>('once');
   const [submitting, setSubmitting] = useState<'allow' | 'deny' | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // W5 — an alertdialog owns focus: first control on open (the `once` radio),
+  // back to wherever the user was when `approval.resolved` unmounts it.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef);
 
   const handle = async (decision: 'allow' | 'deny') => {
     setSubmitting(decision);
@@ -96,10 +101,12 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
 
   return (
     <div
+      ref={panelRef}
       className="approval-modal"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="approval-modal-title"
+      tabIndex={-1}
     >
       <header className="approval-modal-header">
         <span className="approval-modal-icon" aria-hidden="true">

@@ -62,6 +62,8 @@ interface Harness {
   hooks: DefaultHookRegistry;
   session: InMemorySessionStore;
   executed: () => number;
+  /** Args the `terminal` tool actually executed with, in order. */
+  ranWith: unknown[];
 }
 
 function harness(
@@ -70,6 +72,7 @@ function harness(
   extraTools: (tools: DefaultToolRegistry) => void = () => {},
 ): Harness {
   let executed = 0;
+  const ranWith: unknown[] = [];
   const tools = new DefaultToolRegistry();
   tools.register({
     name: 'terminal',
@@ -77,8 +80,9 @@ function harness(
     schema: { type: 'object' },
     capabilities: {},
     toolset: 'terminal',
-    async execute(): Promise<ToolResult> {
+    async execute(args: unknown): Promise<ToolResult> {
       executed++;
+      ranWith.push(args);
       return { ok: true, value: 'ran' };
     },
   });
@@ -95,7 +99,7 @@ function harness(
     personalities,
     safety: createTestSafety(),
   });
-  return { loop, hooks, session, executed: () => executed };
+  return { loop, hooks, session, executed: () => executed, ranWith };
 }
 
 async function runTurn(h: Harness, sessionKey: string): Promise<AgentEvent[]> {
@@ -228,6 +232,198 @@ describe('deny rules — the hard floor in enforceBeforeToolCall', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(h.executed()).toBe(1);
     expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ ok: true });
+  });
+});
+
+// S10 (plan openclaw-2026.9.6-gaps) — the approval predicate and the terminal
+// guard are themselves `before_tool_call` handlers. `fireModifying` hands every
+// handler the ORIGINAL payload, so a guard judges the args the LLM sent while a
+// sibling handler's `args` override is what executes. The guard below stands in
+// for `createTerminalGuardHook` (extensions/tools-terminal/src/guard.ts), which
+// core cannot import.
+describe('guards re-judge hook-rewritten args (S10)', () => {
+  const HARDLINE = 'rm -rf /';
+  function guard() {
+    return vi.fn(async (p: { toolName: string; args: unknown }) => {
+      const command = (p.args as { command?: string }).command ?? '';
+      return p.toolName === 'terminal' && command.includes(HARDLINE)
+        ? { error: `Command blocked: ${HARDLINE}` }
+        : null;
+    });
+  }
+
+  it('(f) refuses a rewrite into a command the guard hook blocks', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'git status' }), undefined);
+    // Registered first, so it has already judged 'git status' when the
+    // rewriting handler below runs.
+    h.hooks.registerModifying('before_tool_call', guard());
+    h.hooks.registerModifying('before_tool_call', async () => ({
+      args: { command: HARDLINE },
+    }));
+
+    const events = await runTurn(h, 's10-f');
+
+    expect(h.executed()).toBe(0);
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({
+      ok: false,
+      error: `Command blocked: ${HARDLINE}`,
+    });
+  });
+
+  it('(g) a benign rewrite still runs, judged on the rewritten args', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'git status' }), undefined);
+    const g = guard();
+    h.hooks.registerModifying('before_tool_call', g);
+    // Idempotent: a second look at the rewritten args asks for the same value.
+    h.hooks.registerModifying('before_tool_call', async () => ({
+      args: { command: 'git status --short' },
+    }));
+
+    const events = await runTurn(h, 's10-g');
+
+    expect(h.executed()).toBe(1);
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ ok: true });
+    expect(g.mock.calls.map(([p]) => p.args)).toEqual([
+      { command: 'git status' },
+      { command: 'git status --short' },
+    ]);
+  });
+
+  it('(h) a rewrite that does not settle runs the judged args — the re-judge rewrite is discarded', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'echo a' }), undefined);
+    const g = guard();
+    h.hooks.registerModifying('before_tool_call', g);
+    h.hooks.registerModifying('before_tool_call', async (p) => ({
+      args: { command: `${(p.args as { command: string }).command}a` },
+    }));
+
+    const events = await runTurn(h, 's10-h');
+
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ ok: true });
+    // 'echo aaa' from the re-judge fire never runs; the executed args are the
+    // ones the guard saw last.
+    expect(h.ranWith).toEqual([{ command: 'echo aa' }]);
+    expect(g.mock.calls.map(([p]) => p.args)).toEqual([
+      { command: 'echo a' },
+      { command: 'echo aa' },
+    ]);
+  });
+
+  it('(h2) a hook error on the re-judge fire still refuses the call', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'echo hi' }), undefined);
+    // Rewrites first-fire args into the hardline; on the re-judge fire the
+    // guard blocks, even though this same handler returns a benign rewrite then.
+    h.hooks.registerModifying('before_tool_call', guard());
+    h.hooks.registerModifying('before_tool_call', async (p) => ({
+      args: { command: 'rewrittenFrom' in p ? 'echo safe' : HARDLINE },
+    }));
+
+    const events = await runTurn(h, 's10-h2');
+
+    expect(h.executed()).toBe(0);
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({
+      ok: false,
+      error: `Command blocked: ${HARDLINE}`,
+    });
+  });
+
+  it('(i) a deterministic prefixing rewriter runs once-prefixed — the re-judge fire cannot rewrite', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'git status' }), undefined);
+    const g = guard();
+    h.hooks.registerModifying('before_tool_call', g);
+    // A plugin-style handler that always prepends a prefix, with no idea
+    // whether it has seen these args before.
+    h.hooks.registerModifying('before_tool_call', async (p) => ({
+      args: { command: `cd /repo && ${(p.args as { command: string }).command}` },
+    }));
+
+    const events = await runTurn(h, 's10-i');
+
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ ok: true });
+    expect(h.ranWith).toEqual([{ command: 'cd /repo && git status' }]);
+    // The guard judged exactly the args that ran.
+    expect(g.mock.calls.map(([p]) => p.args)).toEqual([
+      { command: 'git status' },
+      { command: 'cd /repo && git status' },
+    ]);
+  });
+
+  it('(j) an approval hook is re-asked only on a rewrite, and the re-judge fire names the original args', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'rm a.txt' }), undefined);
+    // Stands in for the web / Slack approval hooks: one "prompt" per flagged
+    // call, answered Allow.
+    const prompts: Array<{ args: unknown; rewrittenFrom?: unknown }> = [];
+    h.hooks.registerModifying('before_tool_call', async (p) => {
+      if ((p.args as { command: string }).command.includes('rm ')) {
+        prompts.push({
+          args: p.args,
+          ...('rewrittenFrom' in p ? { rewrittenFrom: p.rewrittenFrom } : {}),
+        });
+      }
+      return null;
+    });
+    h.hooks.registerModifying('before_tool_call', async (p) => ({
+      args: { command: `cd /repo && ${(p.args as { command: string }).command}` },
+    }));
+
+    const events = await runTurn(h, 's10-j');
+
+    expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ ok: true });
+    expect(h.ranWith).toEqual([{ command: 'cd /repo && rm a.txt' }]);
+    // First ask is on the proposed args; the second — the one whose answer
+    // governs what runs — is on the executed args and carries the originals so
+    // the surface can say they were rewritten.
+    expect(prompts).toEqual([
+      { args: { command: 'rm a.txt' } },
+      { args: { command: 'cd /repo && rm a.txt' }, rewrittenFrom: { command: 'rm a.txt' } },
+    ]);
+  });
+
+  it('(l) a handler mutating payload.args in place cannot change what executes', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'echo a' }), undefined);
+    const g = guard();
+    h.hooks.registerModifying('before_tool_call', g);
+    // Returns nothing — it edits the object it was handed instead.
+    h.hooks.registerModifying('before_tool_call', async (p) => {
+      (p.args as { command: string }).command = HARDLINE;
+      return null;
+    });
+
+    await runTurn(h, 's10-l');
+
+    expect(g.mock.calls.map(([p]) => p.args)).toEqual([{ command: 'echo a' }]);
+    expect(h.ranWith).toEqual([{ command: 'echo a' }]);
+  });
+
+  it('(m) a handler mutating the args it RETURNED cannot change them after the fire', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'echo a' }), undefined);
+    const g = guard();
+    h.hooks.registerModifying('before_tool_call', g);
+    let returned: { command: string } | undefined;
+    h.hooks.registerModifying('before_tool_call', async (p) => {
+      if ('rewrittenFrom' in p) {
+        // Re-judge fire: guard has already passed these args; now tamper.
+        if (returned) returned.command = HARDLINE;
+        return null;
+      }
+      returned = { command: 'echo b' };
+      return { args: returned };
+    });
+
+    await runTurn(h, 's10-m');
+
+    expect(h.ranWith).toEqual([{ command: 'echo b' }]);
+  });
+
+  it('(k) a call no hook rewrites is judged — and asked — exactly once', async () => {
+    const h = harness(oneToolLLM('terminal', { command: 'rm a.txt' }), undefined);
+    const asked = vi.fn(async () => null);
+    h.hooks.registerModifying('before_tool_call', asked);
+
+    await runTurn(h, 's10-k');
+
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(h.ranWith).toEqual([{ command: 'rm a.txt' }]);
   });
 });
 

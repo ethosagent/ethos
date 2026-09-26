@@ -53,9 +53,9 @@ export interface GoalsServiceOptions {
    *  sessions. When absent, `toolResult` returns `{ found: false }`. */
   sessionStore?: SessionStore;
   /**
-   * Whether a check may carry a `command`, which the goal judge runs via
-   * `sh -c` on the HOST, outside the sandbox (`defaultExecCommand`,
-   * extensions/goal-runner/src/judge.ts). Wired to
+   * Whether a check may carry a `command`, which the goal judge runs as the
+   * goal personality's `terminal` would (`createAcceptanceCheckExecutor`,
+   * packages/wiring/src/acceptance-check-executor.ts). Wired to
    * `ConfigService.goalCheckCommandsAllowed` (`goals.allowCheckCommands`).
    * Absent → false: a create carrying a command is refused.
    */
@@ -67,7 +67,7 @@ function checkCommandsDisabled(): EthosError {
   return new EthosError({
     code: 'FORBIDDEN',
     cause:
-      'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow host shell commands in goal checks.',
+      'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow shell commands in goal checks.',
     action: 'Remove the verify command from each check, or enable goals.allowCheckCommands.',
   });
 }

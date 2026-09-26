@@ -1,6 +1,6 @@
 ---
 name: github-code-review
-description: Review someone else's PR. Clones into an isolated worktree under ~/.ethos/review-worktrees/ so the user's main checkout is untouched, walks the diff, posts inline comments grouped by severity. Cleans up the worktree on completion.
+description: Review someone else's PR. Checks out into an isolated worktree under the repo's .ethos-work/review-worktrees/ so the user's main checkout is untouched, walks the diff, posts inline comments grouped by severity. Cleans up the worktree on completion.
 version: 1.0.0
 author: ethosagent
 tags: [coding, github, review]
@@ -45,14 +45,17 @@ Read the title, body, and base branch. Note the size — if `additions + deletio
 ## Step 2 — check out into an isolated worktree
 
 ```bash
-mkdir -p ~/.ethos/review-worktrees
+mkdir -p <main-repo>/.ethos-work/review-worktrees
+grep -qxF '.ethos-work/' <main-repo>/.git/info/exclude || echo '.ethos-work/' >> <main-repo>/.git/info/exclude
 gh pr checkout <number> --branch pr-<number> --recurse-submodules
-git -C <main-repo> worktree add ~/.ethos/review-worktrees/<number> pr-<number>
+git -C <main-repo> worktree add <main-repo>/.ethos-work/review-worktrees/<number> pr-<number>
 ```
+
+The `.git/info/exclude` line keeps `.ethos-work/` out of `git status` without editing any tracked file. The worktree lives inside the repo rather than under `~/.ethos`: the terminal guard refuses any command that names the Ethos state dir, and `read_file` reaches the workspace.
 
 The user's main checkout is **never** touched. All file reads in subsequent steps reference the worktree path.
 
-If a worktree at `~/.ethos/review-worktrees/<number>` already exists from a prior run, prune-and-recreate (do **not** silently use a stale worktree).
+If a worktree at `<main-repo>/.ethos-work/review-worktrees/<number>` already exists from a prior run, prune-and-recreate (do **not** silently use a stale worktree).
 
 ## Step 3 — read project conventions
 
@@ -108,7 +111,7 @@ For the review verdict (request changes vs approve vs comment-only), let the use
 ## Step 7 — clean up
 
 ```bash
-git worktree remove ~/.ethos/review-worktrees/<number> --force
+git -C <main-repo> worktree remove <main-repo>/.ethos-work/review-worktrees/<number> --force
 ```
 
 Always remove the worktree when the review is finished. Stale worktrees accumulate fast.

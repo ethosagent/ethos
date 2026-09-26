@@ -32,6 +32,7 @@ import {
   type DecisionsConfig,
   serializeDecisionsLines,
 } from './decisions';
+import { nearestKey } from './nearest-key';
 
 // Plan decision-provider-jev §7 — the operator's `decisions.*` keys and their
 // resolver (defaults, per-site budgets); plan decision-provider-personality
@@ -86,6 +87,9 @@ export {
   parseModelDeclaration,
   validateModelRegistry,
 } from './model-registry';
+// Plan ux-feedback-and-config-clarity B2 — the shared typo-suggestion helper,
+// re-exported for the CLI's unknown-command hint (N1) and `ethos doctor`.
+export { damerauLevenshtein, nearestKey } from './nearest-key';
 
 // ---------------------------------------------------------------------------
 // Value scalars — the one reader of a `key: <value>`, and the CLI's writer
@@ -759,6 +763,8 @@ export interface TelegramBotConfig {
    * paused (§6).
    */
   dropPendingUpdates?: boolean;
+  /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 export interface SlackAppConfig {
@@ -816,6 +822,8 @@ export interface SlackAppConfig {
    *  plus the full answer as `answer.md` instead of a chunk wall. Absent = the
    *  adapter's default (9000); `0` disables the fallback. */
   longReplyThresholdChars?: number;
+  /** See {@link BotBudgetConfig}. `slack.apps.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 /**
@@ -841,6 +849,25 @@ export interface WhatsAppConfig {
    *  default personality in the gateway. */
   bind?: BotBinding;
   piiRedaction?: boolean;
+  /** See {@link BotBudgetConfig}. `whatsapp.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
+}
+
+/**
+ * Operator spending limit for ONE channel bot (plan openclaw-2026.9.6-gaps D5),
+ * written under the bot's own entry: `telegram.bots.<n>.budget.dailyUsd`,
+ * `slack.apps.<n>.budget.dailyUsd`, `whatsapp.<n>.budget.dailyUsd`.
+ *
+ * A setting, not identity — two deployments of the same personality can
+ * disagree about it — so it lives here, never on `PersonalityConfig`. Enforced
+ * per turn by `Gateway.enqueueTurn` (extensions/gateway) against the bot's
+ * spend since 00:00 UTC; absent = no daily cap. The legacy scalar bots
+ * (`telegramToken`, `discordToken`, email) have no entry to hang it on and so
+ * cannot be capped this way.
+ */
+export interface BotBudgetConfig {
+  /** USD a bot may spend per UTC day before its turns are refused. > 0. */
+  dailyUsd: number;
 }
 
 /**
@@ -941,8 +968,10 @@ export interface VoiceTrunkConfig {
  */
 export interface VoiceInboundConfig {
   /**
-   * Caller numbers that reach the owner's own personality with pre-warm on
-   * ring. E.164 patterns using the same `*` wildcard grammar as
+   * Caller numbers treated as known for `prewarm: 'allowlisted'`. Caller ID is
+   * set by the calling party, so a match is a hint and never reaches the
+   * owner's own personality (INB-001b, `decideInboundCall` in
+   * `@ethosagent/platform-voice`). E.164 patterns using the same `*` wildcard grammar as
    * `voice.bots[].match` (`matchesVoicePattern`), so one grammar governs every
    * number match in the system.
    *
@@ -1281,11 +1310,16 @@ export function parseProviderChain(
     const provider = slot?.get('provider');
     if (!slot || !provider) {
       // A typo'd `providers.1.provder:` loses the WHOLE entry, on every
-      // surface, and this codec is the only reader — so it says which lines.
+      // surface, and this codec is the only reader — so it says which lines,
+      // and which of them was probably meant as the `provider` line (U4).
+      const fields = [...(slot?.keys() ?? [])];
+      const typo = fields.find((f) => nearestConfigKey(f, ['provider']) === 'provider');
       notices?.push(
         `config.yaml: no 'providers.${idx}.provider' line, so entry ${idx} is ignored — ` +
-          `${[...(slot?.keys() ?? [])].map((f) => `'providers.${idx}.${f}'`).join(', ')} ` +
-          'had no effect.',
+          `${fields.map((f) => `'providers.${idx}.${f}'`).join(', ')} had no effect` +
+          (typo
+            ? `; did you mean 'providers.${idx}.provider' for 'providers.${idx}.${typo}'?`
+            : '.'),
       );
       continue;
     }
@@ -1333,7 +1367,16 @@ export function parseProviderChain(
         continue;
       }
       if (isProviderChainStringField(field)) entry[field] = value;
-      else passthrough[field] = value;
+      else {
+        // Kept so a writer cannot delete it, but read by nothing at runtime
+        // (see `ProviderChainEntry.passthrough`) — so it is said out loud (U4).
+        passthrough[field] = value;
+        const near = nearestConfigKey(field, PROVIDER_CHAIN_FIELDS);
+        notices?.push(
+          `config.yaml: 'providers.${idx}.${field}' is not a provider-chain field, so it has ` +
+            `no effect${near ? `; did you mean 'providers.${idx}.${near}'?` : '.'}`,
+        );
+      }
     }
     if (Object.keys(passthrough).length > 0) entry.passthrough = passthrough;
     entries.push(entry);
@@ -1735,8 +1778,11 @@ export interface WebhookHookConfig {
 
 /**
  * One `webhooks.<id>.rateLimit` block. The limiter it configures is
- * in-process and keyed by hookId — the gateway is a single-process model, so
- * there is no shared bucket to coordinate.
+ * in-process — the gateway is a single-process model, so there is no shared
+ * bucket to coordinate. The same knobs size two buckets: one per hookId, spent
+ * only by callers that passed the bearer check, and one per (hookId, caller
+ * address), spent only by bearer failures (`createWebhookServer`,
+ * apps/ethos/src/webhook-server.ts).
  */
 export interface WebhookRateLimitConfig {
   /** Requests allowed per minute. Also the bucket size. */
@@ -1954,6 +2000,92 @@ export interface CronTopLevelConfig {
    *   cron.maxParallelJobs: 2
    */
   maxParallelJobs?: number;
+  /**
+   * Wall-clock cap, in ms, on a cron prompt job's agent turn when the job sets
+   * no `maxRunMs` of its own. Positive integer; absent = the scheduler's
+   * `DEFAULT_CRON_MAX_RUN_MS` (30 min). Enforced by `CronScheduler.runTurnCapped`
+   * in `@ethosagent/cron`. Config key:
+   *   cron.defaultMaxRunMs: 600000
+   */
+  defaultMaxRunMs?: number;
+}
+
+/** `notifications.*` (U11). Raw strings, validated at parse. */
+export interface NotificationsConfig {
+  /** `HH:MM-HH:MM` in `timezone`. */
+  quietHours?: string;
+  /** IANA zone name. Absent = the host's zone (`hostTimeZone`). */
+  timezone?: string;
+  /** Per-botKey override: a window, or `off`. */
+  bots?: Record<string, { quietHours: string }>;
+}
+
+/**
+ * `HH:MM-HH:MM` → minutes after local midnight, or null when malformed. A start
+ * later than the end crosses midnight (`22:00-07:00`). The ONE parser for the
+ * `notifications.quietHours` grammar: the config parser validates with it and
+ * the gateway wiring resolves with it.
+ */
+export function parseQuietHoursSpec(
+  spec: string,
+): { startMinute: number; endMinute: number } | null {
+  const m = spec.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const [h1, m1, h2, m2] = [m[1], m[2], m[3], m[4]].map(Number);
+  if (h1 === undefined || m1 === undefined || h2 === undefined || m2 === undefined) return null;
+  if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) return null;
+  return { startMinute: h1 * 60 + m1, endMinute: h2 * 60 + m2 };
+}
+
+/** Whether `timeZone` is an IANA zone this runtime knows. */
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The host's IANA zone — the `notifications.timezone` default. */
+export function hostTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+function buildNotificationsConfig(
+  kv: Record<string, string>,
+  botsKv: Record<string, Record<string, string>>,
+  warnings: string[],
+): NotificationsConfig | undefined {
+  const out: NotificationsConfig = {};
+  const quiet = kv.quietHours;
+  if (quiet !== undefined) {
+    if (parseQuietHoursSpec(quiet)) out.quietHours = quiet;
+    else
+      warnings.push(
+        `config.yaml: notifications.quietHours '${quiet}' is not HH:MM-HH:MM — quiet hours are off.`,
+      );
+  }
+  const tz = kv.timezone;
+  if (tz !== undefined) {
+    if (isValidTimeZone(tz)) out.timezone = tz;
+    else
+      warnings.push(
+        `config.yaml: notifications.timezone '${tz}' is not a known IANA time zone — using the host's zone.`,
+      );
+  }
+  const bots: Record<string, { quietHours: string }> = {};
+  for (const [botKey, entry] of Object.entries(botsKv)) {
+    const spec = entry.quietHours;
+    if (spec === undefined) continue;
+    if (spec === 'off' || parseQuietHoursSpec(spec)) bots[botKey] = { quietHours: spec };
+    else
+      warnings.push(
+        `config.yaml: notifications.bots.${botKey}.quietHours '${spec}' is not HH:MM-HH:MM or off — ignored.`,
+      );
+  }
+  if (Object.keys(bots).length > 0) out.bots = bots;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface EthosConfig {
@@ -2012,8 +2144,28 @@ export interface EthosConfig {
    *   execution.ssh.knownHostsFile: ~/.ssh/known_hosts_ethos
    *   execution.ssh.strictHostKeys: accept-new
    *   execution.ssh.remoteWorkdir: /srv/work
+   *
+   * `allowLocalFallback` — the operator's opt-in to run exec-bearing
+   * personalities UN-SANDBOXED on the host when this process cannot build a
+   * Docker backend at all (the desktop in-process backend). Unset, that
+   * docker→local downgrade is refused and exec tools answer `not_available`
+   * (`resolveExecutionPosture`, packages/wiring/src/resolve-execution-posture.ts;
+   * S6 / D3, plan openclaw-2026.9.6-gaps). Only the literal `true` opts in:
+   *   execution.allowLocalFallback: true
+   *
+   * `containerized` — the operator's statement that Ethos itself runs inside a
+   * container that auto-detection (`/.dockerenv`, `/proc/1/cgroup`,
+   * `KUBERNETES_SERVICE_HOST`) cannot see, so that container is already the
+   * isolation boundary and exec personalities run `local` in it. It is
+   * `detectContainerized`'s explicit config signal
+   * (packages/wiring/src/resolve-execution-posture.ts), forwarded by the
+   * compose path (`createExecutionRouting`'s `containerizedConfig`). Only the
+   * literal `true` sets it; the env equivalent is `ETHOS_EXECUTION_BACKEND=local`:
+   *   execution.containerized: true
    */
   execution?: {
+    allowLocalFallback?: boolean;
+    containerized?: boolean;
     docker?: { cpu?: number; diskMb?: number; image?: string };
     ssh?: {
       /** Hostname or IP of the remote target. Non-empty; its presence is the switch. */
@@ -2307,6 +2459,16 @@ export interface EthosConfig {
      * `regex_match`. Absent leaves the adapter on its own `mention_only`.
      */
     defaultChannelMode?: 'mention_only' | 'thread_follow' | 'all' | 'observe';
+    /**
+     * Role ids allowed to click Approve / Deny on an approval card
+     * (`discord.approvalRoleIds: 111,222`). Passed to
+     * `DiscordAdapterConfig.approvalRoleIds` by `buildAdapters`
+     * (apps/ethos/src/commands/gateway.ts). Absent leaves the adapter's
+     * default `role_gate` with no roles, which refuses every click
+     * (`DiscordAdapter.handleApprovalDecision`), so every Discord approval
+     * waits out its timeout. Pinned by `__tests__/discord-approval-roles.test.ts`.
+     */
+    approvalRoleIds?: string[];
     missedMessageBackfill?: {
       /** Read history at all. Default `true` — today's behaviour. */
       enabled?: boolean;
@@ -2322,6 +2484,14 @@ export interface EthosConfig {
       limit?: number;
     };
   };
+  /**
+   * Discord "Thinking…" placeholder message posted while a turn runs.
+   * Config key: `discord.post_thinking_placeholder`. Absent = undefined
+   * (consumer default: on); `false` disables it. A flat top-level field —
+   * the gateway half that reads it lands separately; this carries exactly
+   * what the file says.
+   */
+  discordPostThinkingPlaceholder?: boolean;
   /** Per-team runtime knobs. Keyed by team manifest name (same identifier rules). */
   teams?: Record<string, TeamRuntimeConfig>;
   whatsapp?: WhatsAppConfig[];
@@ -2628,7 +2798,26 @@ export interface EthosConfig {
    * no `cron:` section at all runs only the local interval trigger, unchanged.
    */
   cron?: CronTopLevelConfig;
+  /**
+   * U11 — operator quiet hours for unprompted channel notices (`notifications.*`).
+   * A setting, not identity: it never lives on a personality. The gateway holds
+   * a background-job wake or an owner notice inside the window and delivers it
+   * when the window ends (`Gateway.noticeHoldReason`); a reply to the user's
+   * own message is never held. Config keys:
+   *   notifications.quietHours: 22:00-07:00      (HH:MM-HH:MM, may cross midnight)
+   *   notifications.timezone: Europe/London      (IANA; absent = the host's zone)
+   *   notifications.bots.<botKey>.quietHours: off  (per-bot window, or off)
+   */
+  notifications?: NotificationsConfig;
   displayBellOnComplete?: boolean;
+  /**
+   * UD3 (plan ux-feedback-and-config-clarity H1) — how long a non-streaming
+   * channel lane stays silent before the gateway sends its one per-turn
+   * "working on it" ack. Config key: display.slow_turn_notice_ms. Absent means
+   * the consumer's default (8000); `0` disables the notice. The default is NOT
+   * baked in here — this field carries exactly what the file says.
+   */
+  displaySlowTurnNoticeMs?: number;
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
   /**
@@ -2795,12 +2984,11 @@ export interface EthosConfig {
   /** Public-facing URL of the web UI. Used as the OAuth redirect base.
    *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
   webBaseUrl?: string;
-  /** Storage-layer settings. Supports at-rest encryption via
-   *  `storage.encryption: true` in config.yaml (requires ETHOS_STORAGE_KEY), and
-   *  a pluggable backend via `storage.backend` (default `fs`). Set `s3` to
-   *  target AWS S3 (or an S3-compatible endpoint) when `backend: s3`. */
+  /** Storage-layer settings: a pluggable backend via `storage.backend`
+   *  (default `fs`). Set `s3` to target AWS S3 (or an S3-compatible endpoint)
+   *  when `backend: s3`. (`storage.encryption` was removed — see
+   *  `storageEncryptionRemovedNotice`.) */
   storage?: {
-    encryption?: boolean;
     backend?: 'fs' | 's3';
     s3?: {
       bucket?: string;
@@ -2824,14 +3012,24 @@ export interface EthosConfig {
    * card routes plus the `a2a_send` tool are live only when `a2a.enabled: true`
    * is set explicitly — default false (A2A stays opt-in). Config key:
    * a2a.enabled. Supersedes the deprecated `ETHOS_A2A_ENABLED` env override.
+   *
+   * `peering.allowPrivateUrls` (config key `a2a.peering.allowPrivateUrls`,
+   * default false) lets OPERATOR-initiated peering — `ethos a2a peer add` and
+   * the web "Add peer" dialog — fetch a card from a loopback or private-network
+   * URL. Read by `A2aPeeringService.fetchVerified`
+   * (packages/wiring/src/a2a-peering-service.ts); the model-driven `a2a_send`
+   * never reads it and stays on the personality's `safety.network`. The
+   * cloud-metadata address is refused regardless (`validateUrl` in
+   * packages/safety/network/src/safe-fetch.ts).
    */
-  a2a?: { enabled?: boolean };
+  a2a?: { enabled?: boolean; peering?: { allowPrivateUrls?: boolean } };
   /**
    * Goal settings. `allowCheckCommands: true` lets a goal created from the web
-   * UI/API carry a check with a `command`, which the goal judge runs via
-   * `sh -c` ON THE HOST — outside the sandbox, as the user running ethos
-   * (`defaultExecCommand`, extensions/goal-runner/src/judge.ts). Default false: a
-   * create carrying a command is refused (`GoalsService.create`,
+   * UI/API carry a check with a `command`, which the goal judge runs as that
+   * personality's shell command — through the `terminal` gates and on its
+   * resolved execution backend, which is the host itself under a local posture
+   * (`createAcceptanceCheckExecutor`, packages/wiring). Default false: a create
+   * carrying a command is refused (`GoalsService.create`,
    * apps/web-api/src/services/goals.service.ts). Config key:
    * goals.allowCheckCommands
    */
@@ -3336,6 +3534,10 @@ export interface EthosConfig {
   telemetry?: TelemetryConfig;
 }
 
+/** The personality `parseConfigYaml` falls back to when `personality:` is
+ *  absent — surfaced by `resolveEffectiveConfig` as source `default`. */
+export const DEFAULT_PERSONALITY_ID = 'researcher';
+
 export function ethosDir(): string {
   const override = process.env.ETHOS_STATE_DIR;
   if (override) return override;
@@ -3379,9 +3581,13 @@ export async function readRawConfig(
   storage: Storage,
   opts: { logger?: Logger } = {},
 ): Promise<EthosConfig | null> {
-  const src = await storage.read(join(ethosDir(), 'config.yaml'));
+  const configPath = join(ethosDir(), 'config.yaml');
+  const src = await storage.read(configPath);
   if (!src) return null;
   const parsed = parseConfigYaml(src);
+  if (parsed.activeContext?.type === 'personality') {
+    await migrateActiveContextPersonality(storage, configPath, src, parsed);
+  }
   if (parsed.schemaVersion === undefined && !preVersionedConfigWarned && opts.logger) {
     preVersionedConfigWarned = true;
     opts.logger.warn(
@@ -3392,6 +3598,80 @@ export async function readRawConfig(
     );
   }
   return parsed;
+}
+
+/**
+ * UD1 Option A (plan ux-feedback-and-config-clarity §6.2) — `personality:` is
+ * the ONE default-personality key; on disk `activeContext` keeps only the team
+ * case. A file still carrying `activeContext.type: personality` is migrated on
+ * load: in memory the entry is folded into `personality:` (so the legacy read
+ * path `config.activeContext?.name ?? config.personality` yields the same id),
+ * and the FILE is rewritten once, surgically — only the `activeContext.*` and
+ * `personality:` lines change, so every comment and unmodelled line survives
+ * without going through the serializer. A deprecation notice is recorded on
+ * `parseWarningsByConfig` for one release. The in-process `activeContext`
+ * personality override (`applyCliOverrides` for `--personality`) is untouched:
+ * this migrates what the LOAD PATH read from disk, never a constructed config.
+ *
+ * Mutates `parsed` in place — the parse-notice side tables are keyed by object
+ * identity, and a copy would silently drop `parseErrorsByConfig`.
+ * Fail-open on the rewrite: if the write throws, this process still runs the
+ * migrated config and the next load repeats the attempt.
+ */
+async function migrateActiveContextPersonality(
+  storage: Storage,
+  configPath: string,
+  src: string,
+  parsed: EthosConfig,
+): Promise<void> {
+  const ctx = parsed.activeContext;
+  if (ctx?.type !== 'personality') return;
+  parsed.personality = ctx.name;
+  // The migration sets an explicit personality, so the parser's "key absent"
+  // record no longer describes this config (see `personalityDefaultedByConfig`).
+  personalityDefaultedByConfig.delete(parsed);
+  parsed.activeContext = undefined;
+  const exLines = src.split('\n');
+  const hasPersonalityLine = exLines.some((l) => configLineKey(l) === 'personality');
+  const out: string[] = [];
+  let inserted = false;
+  for (const line of exLines) {
+    const key = configLineKey(line);
+    if (key === 'personality') {
+      out.push(`personality: ${ctx.name}`);
+      continue;
+    }
+    if (key === 'activeContext.type' || key === 'activeContext.name') {
+      if (!hasPersonalityLine && !inserted) {
+        out.push(`personality: ${ctx.name}`);
+        inserted = true;
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  // Atomic on purpose: config.yaml is exactly the "partial write corrupts
+  // state" case the Storage contract reserves `writeAtomic` for.
+  let rewriteError: string | null = null;
+  try {
+    await storage.writeAtomic(configPath, out.join('\n'), { mode: 0o600 });
+  } catch (err) {
+    // Read-only mount, permissions — the in-memory migration above still
+    // holds for this process, and the next load repeats the attempt.
+    rewriteError = err instanceof Error ? err.message : String(err);
+  }
+  // The notice is honest about which of the two states the file is in: it is
+  // pushed AFTER the write attempt, never before.
+  const warnings = parseWarningsByConfig.get(parsed) ?? [];
+  warnings.push(
+    `activeContext.type: personality is deprecated — migrated to 'personality: ${ctx.name}' ` +
+      `(activeContext now only names a team). ` +
+      (rewriteError === null
+        ? `The file was rewritten automatically; no action needed.`
+        : `The file could not be rewritten (${rewriteError}); this run uses the migrated ` +
+          `value in memory, and the rewrite will be retried on the next load.`),
+  );
+  parseWarningsByConfig.set(parsed, warnings);
 }
 
 export async function readConfig(
@@ -3704,7 +3984,72 @@ export async function writeConfig(
   const path = join(ethosDir(), 'config.yaml');
   const existing = await storage.read(path);
   if (existing !== null) lines.push(...unexpressibleLines(existing, lines));
-  await storage.write(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+  const out = existing !== null ? weaveComments(existing, lines) : lines;
+  await storage.write(path, `${out.join('\n')}\n`, { mode: 0o600 });
+}
+
+/** The heading orphaned comment blocks are kept under (B5, §6.6). */
+const UNATTACHED_COMMENTS_MARKER = '# --- unattached ---';
+
+/**
+ * B5 (plan ux-feedback-and-config-clarity §6.6) — re-attach the existing
+ * file's comments and blank lines to the freshly serialized key lines, BY KEY,
+ * never by position (§9: positional attachment misplaces a comment when a key
+ * moves between sections).
+ *
+ * Shape: everything above the first key line is the file header and stays at
+ * the top; the contiguous run of comment/blank lines immediately above each
+ * later key line is that key's block and is re-emitted above the key wherever
+ * it now sits; comment/blank lines after the last key line stay at the end;
+ * blocks whose key no longer exists keep their COMMENT lines under a
+ * `# --- unattached ---` tail (a blank-only block above a deleted key is
+ * dropped — there is nothing to preserve). A double write is byte-identical:
+ * the tail written by the first write parses as trailing lines on the second.
+ * Pinned by `__tests__/config-write-preserves-keys.test.ts`.
+ */
+function weaveComments(existing: string, lines: readonly string[]): string[] {
+  const exLines = existing.split('\n');
+  // The artifact of the file's final newline, not a real blank line.
+  if (exLines.at(-1) === '') exLines.pop();
+  const header: string[] = [];
+  const blocks = new Map<string, string[]>();
+  let pending: string[] = [];
+  let sawKey = false;
+  for (const line of exLines) {
+    const key = configLineKey(line);
+    if (key === null) {
+      pending.push(line);
+      continue;
+    }
+    if (!sawKey) header.push(...pending);
+    else if (pending.length > 0 && !blocks.has(key)) blocks.set(key, pending);
+    sawKey = true;
+    pending = [];
+  }
+  const trailing = sawKey ? pending : [];
+  if (!sawKey) header.push(...pending);
+
+  const out: string[] = [...header];
+  const consumed = new Set<string>();
+  for (const line of lines) {
+    const key = configLineKey(line);
+    if (key !== null && !consumed.has(key)) {
+      const block = blocks.get(key);
+      if (block) {
+        out.push(...block);
+        blocks.delete(key);
+      }
+      consumed.add(key);
+    }
+    out.push(line);
+  }
+  out.push(...trailing);
+  const orphans: string[] = [];
+  for (const block of blocks.values()) {
+    orphans.push(...block.filter((l) => l.trimStart().startsWith('#')));
+  }
+  if (orphans.length > 0) out.push(UNATTACHED_COMMENTS_MARKER, ...orphans);
+  return out;
 }
 
 /** The `key` of a flat `key: value` config line; `null` for blanks and comments. */
@@ -3740,10 +4085,11 @@ function configLineKey(line: string): string | null {
  * attach to whichever entry moved into it. Pinned by
  * `packages/config/src/__tests__/config-provider-chain.test.ts`.
  *
- * Limits, both pre-existing: comments and blank lines are still dropped, and a
- * preserved credential is not externalized into the vault (nothing parses the
- * key, so `externalizeConfigSecrets` never sees it) — it stays exactly as the
- * writer that put it there left it.
+ * Comments and blank lines are handled by `weaveComments` (B5), not here — this
+ * function returns KEY lines only. Remaining limit, pre-existing: a preserved
+ * credential is not externalized into the vault (nothing parses the key, so
+ * `externalizeConfigSecrets` never sees it) — it stays exactly as the writer
+ * that put it there left it.
  */
 function unexpressibleLines(existing: string, emitted: readonly string[]): string[] {
   const covered = new Set<string>();
@@ -3795,6 +4141,12 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.memoryCharLimits.user !== undefined) {
       lines.push(`memory.charLimits.user: ${config.memoryCharLimits.user}`);
     }
+  }
+  if (config.execution?.allowLocalFallback === true) {
+    lines.push('execution.allowLocalFallback: true');
+  }
+  if (config.execution?.containerized === true) {
+    lines.push('execution.containerized: true');
   }
   if (config.execution?.docker) {
     if (config.execution.docker.cpu !== undefined) {
@@ -3944,6 +4296,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.displayResumeRecapTurns !== undefined)
     lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
   if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
+  // `!== undefined`, not truthy: 0 is a meaningful value (notice disabled).
+  if (config.displaySlowTurnNoticeMs !== undefined)
+    lines.push(`display.slow_turn_notice_ms: ${config.displaySlowTurnNoticeMs}`);
   if (config.displayMemoryNotices !== undefined)
     lines.push(`display.memory_notices: ${config.displayMemoryNotices}`);
   if (config.displayStreamingEdits)
@@ -3999,6 +4354,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (bot.defaultChannelMode) {
         lines.push(`telegram.bots.${i}.defaultChannelMode: ${bot.defaultChannelMode}`);
       }
+      if (bot.budget) lines.push(`telegram.bots.${i}.budget.dailyUsd: ${bot.budget.dailyUsd}`);
     }
   }
   if (config.slack?.apps.length) {
@@ -4034,6 +4390,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`slack.apps.${i}.mode.http: ${app.mode.http}`);
       }
       if (app.webhookPath) lines.push(`slack.apps.${i}.webhookPath: ${app.webhookPath}`);
+      if (app.budget) lines.push(`slack.apps.${i}.budget.dailyUsd: ${app.budget.dailyUsd}`);
     }
   }
   if (config.whatsapp?.length) {
@@ -4052,6 +4409,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
           lines.push(`whatsapp.${i}.bind.allowSlashSwitch: true`);
         }
       }
+      if (wa.budget) lines.push(`whatsapp.${i}.budget.dailyUsd: ${wa.budget.dailyUsd}`);
     }
   }
   if (config.voice) {
@@ -4359,6 +4717,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
   if (config.a2a?.enabled !== undefined) lines.push(`a2a.enabled: ${config.a2a.enabled}`);
+  if (config.a2a?.peering?.allowPrivateUrls !== undefined)
+    lines.push(`a2a.peering.allowPrivateUrls: ${config.a2a.peering.allowPrivateUrls}`);
   if (config.goals?.allowCheckCommands !== undefined)
     lines.push(`goals.allowCheckCommands: ${config.goals.allowCheckCommands}`);
   // Written even when the list is empty — `""` is how "trust no org" survives
@@ -4479,6 +4839,17 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.cron.maxParallelJobs !== undefined) {
       lines.push(`cron.maxParallelJobs: ${config.cron.maxParallelJobs}`);
     }
+    if (config.cron.defaultMaxRunMs !== undefined) {
+      lines.push(`cron.defaultMaxRunMs: ${config.cron.defaultMaxRunMs}`);
+    }
+  }
+  if (config.notifications) {
+    const n = config.notifications;
+    if (n.quietHours !== undefined) lines.push(`notifications.quietHours: ${n.quietHours}`);
+    if (n.timezone !== undefined) lines.push(`notifications.timezone: ${n.timezone}`);
+    for (const [botKey, entry] of Object.entries(n.bots ?? {})) {
+      lines.push(`notifications.bots.${botKey}.quietHours: ${entry.quietHours}`);
+    }
   }
   if (config.kanban) {
     if (config.kanban.maxInProgress !== undefined)
@@ -4546,6 +4917,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.discord?.defaultChannelMode) {
     lines.push(`discord.defaultChannelMode: ${config.discord.defaultChannelMode}`);
   }
+  if (config.discord?.approvalRoleIds && config.discord.approvalRoleIds.length > 0) {
+    lines.push(`discord.approvalRoleIds: ${config.discord.approvalRoleIds.join(',')}`);
+  }
   if (config.discord?.missedMessageBackfill) {
     const bf = config.discord.missedMessageBackfill;
     if (bf.enabled !== undefined)
@@ -4553,6 +4927,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (bf.windowSeconds !== undefined)
       lines.push(`discord.missedMessageBackfill.windowSeconds: ${bf.windowSeconds}`);
     if (bf.limit !== undefined) lines.push(`discord.missedMessageBackfill.limit: ${bf.limit}`);
+  }
+  if (config.discordPostThinkingPlaceholder !== undefined) {
+    lines.push(`discord.post_thinking_placeholder: ${config.discordPostThinkingPlaceholder}`);
   }
   if (config.kanbanPoll) {
     if (config.kanbanPoll.enabled !== undefined)
@@ -4602,6 +4979,11 @@ export async function resolveConfigSecrets(
   secrets: SecretsResolver,
 ): Promise<EthosConfig> {
   const r = { ...config };
+  // This clone sits on the `readConfig` path every CLI command uses, so the
+  // identity-keyed parse notices must travel with it — without this, chat
+  // printed zero B2 warnings while status/doctor (readRawConfig, original
+  // object) showed them.
+  adoptConfigNotices(r, config);
   r.apiKey = await resolveSecretValue(r.apiKey, secrets);
   if (r.baseUrl) r.baseUrl = await resolveSecretValue(r.baseUrl, secrets);
   if (r.telegramToken) r.telegramToken = await resolveSecretValue(r.telegramToken, secrets);
@@ -4801,6 +5183,293 @@ export async function resolveConfigSecrets(
   return r;
 }
 
+/**
+ * Keys another reader of `~/.ethos/config.yaml` consumes that `parseConfigYaml`
+ * never reads, so {@link ConfigKeyUse} must not report them. `<n>` is an index.
+ * A key belongs here only when its reader is named beside it; the web-api
+ * writer's keys are pinned against this list by
+ * `apps/web-api/src/__tests__/repositories/config-unknown-keys.test.ts`.
+ */
+export const EXTERNALLY_READ_CONFIG_KEYS: readonly string[] = [
+  // apps/web-api `ConfigRepository.read`'s `known` set (written by `ConfigRepository.write`).
+  'approvalMode',
+  'verbosity',
+  'debugMode',
+  'contextLayering',
+  // apps/web-api `ConfigService.get` / `readVoiceTuning` — browser voice tuning.
+  'display.voice_chime',
+  'display.voice_endpoint_silence_ms',
+  'display.voice_barge_threshold',
+  'display.voice_barge_sustain_ms',
+  'display.voice_speech_threshold',
+  'display.voice_speech_min_ms',
+  // apps/web-api `PlatformsRepository.listTelegramBots`.
+  'telegram.bots.<n>.username',
+];
+
+const EXTERNALLY_READ_CONFIG_KEY_RES = EXTERNALLY_READ_CONFIG_KEYS.map(
+  (k) => new RegExp(`^${k.replace(/\./g, '\\.').replace(/<n>/g, '\\d+')}$`),
+);
+
+/**
+ * The exact TOP-LEVEL (undotted) `config.yaml` keys this module models — the
+ * keys `parseConfigYaml`'s builders read from the top-level map, hand-maintained
+ * (plan ux-feedback-and-config-clarity B2, §6.1). Suggestion candidates for the
+ * line-numbered unknown-key warning, and exported for the CLI (`ethos status`,
+ * `ethos doctor`). Drift gate: `__tests__/config-unknown-keys.test.ts` asserts
+ * every top-level key `writeConfig` emits is in this list, so a new serializer
+ * key without a list entry fails the test.
+ */
+export const KNOWN_CONFIG_KEYS: readonly string[] = [
+  'schemaVersion',
+  'provider',
+  'model',
+  'apiKey',
+  'personality',
+  'memory',
+  'baseUrl',
+  'apiVersion',
+  'region',
+  'awsProfile',
+  'contextWindow',
+  'toolOrder',
+  'requestTimeoutMs',
+  'approvalTimeoutMs',
+  'maxRetries',
+  'toolPayloadLimitChars',
+  'tool_loading',
+  'verbose',
+  'webBaseUrl',
+  'skin',
+  'allowUnattendedDangerousTools',
+  'telegramToken',
+  'discordToken',
+  'slackBotToken',
+  'slackAppToken',
+  'slackSigningSecret',
+  'emailImapHost',
+  'emailImapPort',
+  'emailUser',
+  'emailPassword',
+  'emailSmtpHost',
+  'emailSmtpPort',
+  'emailTrustedAuthservId',
+];
+
+/**
+ * The dotted key FAMILIES the parser has branches for (plan
+ * ux-feedback-and-config-clarity B2, §6.1) — derived from the branch regexes in
+ * `parseConfigYaml`'s line loop plus `parseProviderChain` and
+ * `claimModelRegistryLine`. The false-positive rule (§9): a line under one of
+ * these prefixes NEVER gets the line-numbered `unknown key` warning, even when
+ * no branch consumed it — `unexpressibleLines` deliberately preserves keys the
+ * parser does not model, and warning about a preserved key would teach
+ * operators to delete lines the system is keeping on purpose. Unread keys
+ * under a family still get the softer `has no effect` notice from
+ * {@link ConfigKeyUse}.
+ */
+export const KNOWN_KEY_PREFIXES: readonly string[] = [
+  'a2a.',
+  'activeContext.',
+  'admin.',
+  'arming.',
+  'auxiliary.',
+  'aws.',
+  'background.',
+  'backup.',
+  'browser.',
+  'callCapture.',
+  'channelDigest.',
+  'channel_filter.',
+  'channel_toolsets.',
+  'compaction.',
+  'cron.',
+  'decisions.',
+  'discord.',
+  'display.',
+  'evolver.',
+  'execution.',
+  'gateway.',
+  'grounding.',
+  'idleWatcher.',
+  'kanban.',
+  'kanbanPoll.',
+  'learningReplay.',
+  'logs.',
+  'memory.',
+  'memoryApproval.',
+  'memoryCapture.',
+  'memoryConsolidation.',
+  'memoryVault.',
+  'modelCatalog.',
+  'modelRegistry.',
+  'modelRouting.',
+  'models.',
+  'nightlyPass.',
+  'notifications.',
+  'pauseClockCorrection.',
+  'pauseLifecycle.',
+  'personalities.',
+  'plugins.',
+  'providers.',
+  'quick_commands.',
+  'retention.',
+  'security.',
+  'storage.',
+  'slack.apps.',
+  'teamSupervisor.',
+  'teams.',
+  'telegram.bots.',
+  'telemetry.',
+  'toolLoop.',
+  'toolSettings.',
+  'voice.',
+  'web.',
+  'webhooks.',
+  'weeklyDigest.',
+  'whatsapp.',
+];
+
+/** The candidate closest to `key`, when it is close enough to be a typo of it:
+ *  at most 1 edit for a key under 5 characters, 2 up to 11, 3 beyond. */
+function nearestConfigKey(key: string, candidates: Iterable<string>): string | undefined {
+  const limit = key.length < 5 ? 1 : key.length < 12 ? 2 : 3;
+  return nearestKey(key, candidates, limit);
+}
+
+/**
+ * Which `config.yaml` keys `parseConfigYaml` actually reads (plan
+ * openclaw-2026.9.6-gaps U4). The parser's own maps are wrapped by
+ * {@link ConfigKeyUse.track}, so a key counts as read only when the builder
+ * really looked its value up — there is no second list of known keys to drift
+ * from the parser. A key the file sets that nothing looked up, or a line no
+ * branch of the parser claims, becomes a notice naming the nearest key that WAS
+ * looked up. Enumerating a map (`Object.keys(m).length`) does not count as
+ * reading its keys; `Object.entries` and spreads do, so a builder that copies a
+ * whole map never has its keys reported.
+ *
+ * Notices only, never errors (plan D2): a stale key must not stop boot.
+ * Coverage limits, both silent rather than wrong: a map the parser keeps
+ * untracked (the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`,
+ * `channel_filter.*`, `models.*`) and a branch that drops an unknown field
+ * inline (`voice.filler.*`, `voice.wake.*`, `voice.realtime.*`) report nothing.
+ * `providers.<n>.*` is reported by `parseProviderChain` against
+ * `PROVIDER_CHAIN_FIELDS`. Pinned by `__tests__/unknown-keys.test.ts`.
+ */
+class ConfigKeyUse {
+  private readonly present = new Set<string>();
+  private readonly read = new Set<string>();
+
+  /** Wrap one of the parser's `field → raw value` maps whose keys, behind
+   *  `prefix`, are the config.yaml keys themselves. */
+  track<T extends object>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      get: (t, prop, receiver) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.get(t, prop, receiver);
+      },
+      has: (t, prop) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.has(t, prop);
+      },
+      set: (t, prop, value, receiver) => {
+        if (typeof prop === 'string') this.present.add(prefix + prop);
+        return Reflect.set(t, prop, value, receiver);
+      },
+    });
+  }
+
+  /** Wrap an `index → (field → raw value)` map (`telegram.bots.<n>.<field>`):
+   *  each entry is tracked under `prefix<n>.`; the index itself is not a key. */
+  trackIndexed<T extends Record<number, Record<string, string>>>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      set: (t, prop, value, receiver) => {
+        const entry =
+          typeof prop === 'string' && typeof value === 'object' && value !== null
+            ? this.track(`${prefix}${prop}.`, value)
+            : value;
+        return Reflect.set(t, prop, entry, receiver);
+      },
+    });
+  }
+
+  /**
+   * B2 — lines eligible for the line-numbered `unknown key` warning: the ones
+   * no branch consumed, plus the ones only the last-resort `<word>: <value>`
+   * catch-all stored. Whether each one WARNS is decided in {@link notices},
+   * after the builders have run and the read set is complete.
+   */
+  private readonly unknownLines: { lineNo: number; key: string }[] = [];
+
+  /** A line no branch of the parser claimed. Blank values are skipped: an
+   *  empty line loses nothing, and several keys give empty a meaning. */
+  unclaimed(line: string, lineNo: number): void {
+    const key = configLineKey(line);
+    if (key === null) return;
+    if (parseConfigScalar(line.slice(key.length + 1)).trim() === '') return;
+    this.present.add(key);
+    this.unknownLines.push({ lineNo, key });
+  }
+
+  /** A top-level line only the last-resort `<word>: <value>` catch-all stored —
+   *  a real key when a builder reads it or `KNOWN_CONFIG_KEYS` names it, a
+   *  line-numbered warning otherwise. Blank values skipped, as in `unclaimed`. */
+  caughtAll(lineNo: number, key: string, rawValue: string): void {
+    if (parseConfigScalar(rawValue).trim() === '') return;
+    this.unknownLines.push({ lineNo, key });
+  }
+
+  notices(): string[] {
+    const out: string[] = [];
+    // B2 (plan ux-feedback-and-config-clarity §6.1) — the line-numbered
+    // warning, only when the line matched no parser branch AND no known prefix
+    // family (§9 false-positive rule: `unexpressibleLines` passthrough keys
+    // under a family the parser models must not warn) AND no builder read it.
+    const warned = new Set<string>();
+    for (const { lineNo, key } of this.unknownLines) {
+      if (warned.has(key)) continue;
+      if (this.read.has(key)) continue;
+      if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
+      if (KNOWN_CONFIG_KEYS.includes(key)) continue;
+      if (KNOWN_KEY_PREFIXES.some((p) => key.startsWith(p))) continue;
+      const near = nearestKey(key, [...KNOWN_CONFIG_KEYS, ...this.read]);
+      out.push(
+        `config.yaml:${lineNo} unknown key '${key}'${near ? ` — did you mean '${near}'?` : ''}`,
+      );
+      warned.add(key);
+    }
+    // U4 — the softer notice for keys a branch DID consume (or a family keeps)
+    // that no builder read. A key already warned about above is skipped: one
+    // line per mistake, and the line-numbered form is the more actionable one.
+    for (const key of this.present) {
+      if (warned.has(key)) continue;
+      if (this.read.has(key)) continue;
+      if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
+      const near = nearestConfigKey(key, this.read);
+      out.push(
+        `config.yaml: '${key}' has no effect — the config parser did not read it` +
+          (near
+            ? `; did you mean '${near}'?`
+            : ' (a misspelled key, or one that applies only alongside another key).'),
+      );
+    }
+    return out;
+  }
+}
+
+/** `a2a.enabled` + `a2a.peering.allowPrivateUrls`; undefined when neither is set. */
+function buildA2aConfig(kv: Record<string, string>): EthosConfig['a2a'] {
+  const enabled = kv['a2a.enabled'];
+  const allowPrivateUrls = kv['a2a.peering.allowPrivateUrls'];
+  if (enabled === undefined && allowPrivateUrls === undefined) return undefined;
+  return {
+    ...(enabled !== undefined ? { enabled: enabled === 'true' } : {}),
+    ...(allowPrivateUrls !== undefined
+      ? { peering: { allowPrivateUrls: allowPrivateUrls === 'true' } }
+      : {}),
+  };
+}
+
 /** Accepted `logs.level` values, ordered by severity. Mirrors `LogLevel`. */
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
@@ -4813,28 +5482,37 @@ const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
  * parser for the keys it happens to care about.
  */
 export function parseConfigYaml(src: string): EthosConfig {
-  const kv: Record<string, string> = {};
+  // U4 — every map below whose keys are config.yaml keys is tracked, so the
+  // unknown-key notice is derived from what this function actually reads.
+  const keyUse = new ConfigKeyUse();
+  const kv: Record<string, string> = keyUse.track('', {});
   const modelRouting: Record<string, string> = {};
   const toolSettings: ToolSettingsMap = {};
-  const activeContextKv: Record<string, string> = {};
-  const retentionKv: Record<string, string> = {};
+  const activeContextKv: Record<string, string> = keyUse.track('activeContext.', {});
+  const retentionKv: Record<string, string> = keyUse.track('retention.', {});
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
-  const displayKv: Record<string, string> = {};
-  const evolverKv: Record<string, string> = {};
-  const backgroundKv: Record<string, string> = {};
+  const displayKv: Record<string, string> = keyUse.track('display.', {});
+  const evolverKv: Record<string, string> = keyUse.track('evolver.', {});
+  const backgroundKv: Record<string, string> = keyUse.track('background.', {});
   /** `background.acp.agents.<name>.<field>` — the named ACP-agent roster (T4/I3). */
   const backgroundAcpAgentsKv: Record<string, Record<string, string>> = {};
   // The `cron:` section: `fireUrl` / `maxParallelJobs`, plus the deprecated
   // `trigger.<field>` / `arming.<field>` keys, which are stored under their
   // combined `subsection.field` name.
-  const cronKv: Record<string, string> = {};
-  const auxiliaryCompressionKv: Record<string, string> = {};
-  const auxiliaryVisionKv: Record<string, string> = {};
-  const auxiliaryWebKv: Record<string, string> = {};
-  const auxiliaryAsrKv: Record<string, string> = {};
-  const auxiliaryTtsKv: Record<string, string> = {};
-  const webKv: Record<string, string> = {};
-  const modelCatalogKv: Record<string, string> = {};
+  const cronKv: Record<string, string> = keyUse.track('cron.', {});
+  // U11 — `notifications.quietHours` / `.timezone`, and the per-bot overrides.
+  const notificationsKv: Record<string, string> = keyUse.track('notifications.', {});
+  const notificationBotsKv: Record<string, Record<string, string>> = keyUse.trackIndexed(
+    'notifications.bots.',
+    {},
+  );
+  const auxiliaryCompressionKv: Record<string, string> = keyUse.track('auxiliary.compression.', {});
+  const auxiliaryVisionKv: Record<string, string> = keyUse.track('auxiliary.vision.', {});
+  const auxiliaryWebKv: Record<string, string> = keyUse.track('auxiliary.web.', {});
+  const auxiliaryAsrKv: Record<string, string> = keyUse.track('auxiliary.asr.', {});
+  const auxiliaryTtsKv: Record<string, string> = keyUse.track('auxiliary.tts.', {});
+  const webKv: Record<string, string> = keyUse.track('web.', {});
+  const modelCatalogKv: Record<string, string> = keyUse.track('modelCatalog.', {});
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   // What the registry codec dropped and why — filed under `parseWarningsByConfig`
   // beside `providerNotices`, the same channel `parseProviderChain` uses.
@@ -4846,64 +5524,85 @@ export function parseConfigYaml(src: string): EthosConfig {
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
   // §5 — global compaction.<field>: <value> (pressure | target | ...flags).
-  const compactionKv: Record<string, string> = {};
+  const compactionKv: Record<string, string> = keyUse.track('compaction.', {});
   // memory.charLimits.<memory|user>: <chars> — markdown-backend per-key ceilings.
-  const memoryCharLimitsKv: Record<string, string> = {};
+  const memoryCharLimitsKv: Record<string, string> = keyUse.track('memory.charLimits.', {});
   // execution.docker.<cpu|diskMb|image>: <value> — container caps + the sandbox image.
-  const executionDockerKv: Record<string, string> = {};
+  const executionDockerKv: Record<string, string> = keyUse.track('execution.docker.', {});
   // execution.ssh.<field>: <value> — the deployment's single remote target.
-  const executionSshKv: Record<string, string> = {};
+  const executionSshKv: Record<string, string> = keyUse.track('execution.ssh.', {});
+  // execution.allowLocalFallback: <bool> — S6 / D3 opt-in to host fallback.
+  // Tracked so a typo of it gets this key as its suggestion (U4).
+  const executionFlagsKv: Record<string, string> = keyUse.track('execution.', {});
   // kanban.<maxInProgress|maxInProgressPerProfile>: <n> — board WIP caps.
-  const kanbanKv: Record<string, string> = {};
+  const kanbanKv: Record<string, string> = keyUse.track('kanban.', {});
   // grounding.<field>: <value> — ground-truth verification policy. The nested
   // `grounding.kanban.*` keys get their own map so the two levels cannot
   // collide on a shared field name.
-  const groundingKv: Record<string, string> = {};
-  const groundingKanbanKv: Record<string, string> = {};
+  const groundingKv: Record<string, string> = keyUse.track('grounding.', {});
+  const groundingKanbanKv: Record<string, string> = keyUse.track('grounding.kanban.', {});
   // toolLoop.<field>: <n> — the loop's hard tool caps and their soft-warn tiers.
-  const toolLoopKv: Record<string, string> = {};
+  const toolLoopKv: Record<string, string> = keyUse.track('toolLoop.', {});
   // browser.<field>: <value> — Playwright budgets plus launch posture. The
   // nested keys are stored under their DOTTED sub-path (`proxy.server`,
   // `stealth.enabled`) rather than in per-level maps: no flat key contains a
   // dot, so the two levels cannot collide on one map.
-  const browserKv: Record<string, string> = {};
+  const browserKv: Record<string, string> = keyUse.track('browser.', {});
   // gateway.<field>: <value> — gateway-wide, non-credential knobs.
-  const gatewayKv: Record<string, string> = {};
+  const gatewayKv: Record<string, string> = keyUse.track('gateway.', {});
   // decisions.<field>: <value> — the decision provider, stored under the
   // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
-  const decisionsKv: Record<string, string> = {};
+  const decisionsKv: Record<string, string> = keyUse.track('decisions.', {});
   // teamSupervisor.restartLoopGuard.<field>: <n> — member auto-restart brake.
   // Unset = 5 respawns in 60s (one more than the old hardcoded four).
-  const restartLoopGuardKv: Record<string, string> = {};
+  const restartLoopGuardKv: Record<string, string> = keyUse.track(
+    'teamSupervisor.restartLoopGuard.',
+    {},
+  );
   // discord.missedMessageBackfill.<field>: <value> — channel-history backfill.
-  const discordBackfillKv: Record<string, string> = {};
+  const discordBackfillKv: Record<string, string> = keyUse.track(
+    'discord.missedMessageBackfill.',
+    {},
+  );
   // discord.<field>: <value> — non-backfill Discord knobs (defaultChannelMode).
-  const discordKv: Record<string, string> = {};
+  const discordKv: Record<string, string> = keyUse.track('discord.', {});
   // Call-capture personality binding (decision 3) — callCapture.personalityId: <id>.
-  const callCaptureKv: Record<string, string> = {};
+  const callCaptureKv: Record<string, string> = keyUse.track('callCapture.', {});
   // Phase 3 — memoryConsolidation.<field>: <value> (silent flush config).
-  const memoryConsolidationKv: Record<string, string> = {};
+  const memoryConsolidationKv: Record<string, string> = keyUse.track('memoryConsolidation.', {});
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
-  const idleWatcherKv: Record<string, string> = {};
+  const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
-  const pauseClockCorrectionKv: Record<string, string> = {};
+  const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
   // Pause/resume lifecycle notifications — pauseLifecycle.http.<field>: <value>.
-  const pauseLifecycleHttpKv: Record<string, string> = {};
-  const logsRotationKv: Record<string, string> = {};
-  const awsSecretsKv: Record<string, string> = {};
-  const telemetryLangfuseKv: Record<string, string> = {};
+  const pauseLifecycleHttpKv: Record<string, string> = keyUse.track('pauseLifecycle.http.', {});
+  const logsRotationKv: Record<string, string> = keyUse.track('logs.rotation.', {});
+  const awsSecretsKv: Record<string, string> = keyUse.track('aws.secrets.', {});
+  const telemetryLangfuseKv: Record<string, string> = keyUse.track(
+    'telemetry.export.langfuse.',
+    {},
+  );
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
-  const telegramBotsKv: Record<number, Record<string, string>> = {};
-  const slackAppsKv: Record<number, Record<string, string>> = {};
-  const whatsappKv: Record<number, Record<string, string>> = {};
-  const voiceBotsKv: Record<number, Record<string, string>> = {};
-  const voiceLiveKitKv: Record<string, string> = {};
-  const voiceTrunkKv: Record<string, string> = {};
+  const telegramBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'telegram.bots.',
+    {},
+  );
+  const slackAppsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'slack.apps.',
+    {},
+  );
+  const whatsappKv: Record<number, Record<string, string>> = keyUse.trackIndexed('whatsapp.', {});
+  const voiceBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'voice.bots.',
+    {},
+  );
+  const voiceLiveKitKv: Record<string, string> = keyUse.track('voice.livekit.', {});
+  const voiceTrunkKv: Record<string, string> = keyUse.track('voice.trunk.', {});
   /** `voice.inbound.<field>` — the scalar inbound-call policy knobs. */
-  const voiceInboundKv: Record<string, string> = {};
+  const voiceInboundKv: Record<string, string> = keyUse.track('voice.inbound.', {});
   /** `voice.inbound.owner.<field>` — the notification destination, one level down. */
-  const voiceInboundOwnerKv: Record<string, string> = {};
+  const voiceInboundOwnerKv: Record<string, string> = keyUse.track('voice.inbound.owner.', {});
   /** `voice.bargeIn.<surface>.<field>` — VAD thresholds, keyed by surface. */
   const voiceBargeInKv: Record<string, Record<string, string>> = {};
   /** `voice.filler.<field>` — the tool-call filler/tick knobs, range-checked on the way in. */
@@ -4958,7 +5657,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const channelToolsetsKv: Record<string, string> = {};
   // Chapter 1 safety: channel_filter.<platform>.<field>: <value>
   const channelFilterKv: Record<string, Record<string, string>> = {};
-  for (const line of src.split('\n')) {
+  // B2 — `lineIdx` is 0-based; warnings print the 1-based line number.
+  for (const [lineIdx, line] of src.split('\n').entries()) {
     // telegram.bots.<index>.bind.<field>: <value>
     const tbind = line.match(/^telegram\.bots\.(\d+)\.bind\.(\S+):\s*(.+)$/);
     if (tbind) {
@@ -5317,6 +6017,26 @@ export function parseConfigYaml(src: string): EthosConfig {
       cronKv.maxParallelJobs = parseConfigScalar(cronMax[1]);
       continue;
     }
+    // notifications.bots.<botKey>.<field>: <value>  (U11 — per-bot override)
+    const notifBot = line.match(/^notifications\.bots\.([A-Za-z0-9_-]+)\.(\w+):\s*(.+)$/);
+    if (notifBot) {
+      notificationBotsKv[notifBot[1]] ??= {};
+      const entry = notificationBotsKv[notifBot[1]];
+      if (entry) entry[notifBot[2]] = parseConfigScalar(notifBot[3]);
+      continue;
+    }
+    // notifications.<field>: <value>  (U11 — quietHours, timezone)
+    const notif = line.match(/^notifications\.(\w+):\s*(.+)$/);
+    if (notif) {
+      notificationsKv[notif[1]] = parseConfigScalar(notif[2]);
+      continue;
+    }
+    // cron.defaultMaxRunMs: <ms>  (R10 — per-run wall-clock default)
+    const cronMaxRun = line.match(/^cron\.defaultMaxRunMs:\s*(.+)$/);
+    if (cronMaxRun) {
+      cronKv.defaultMaxRunMs = parseConfigScalar(cronMaxRun[1]);
+      continue;
+    }
     // auxiliary.compression.<field>: <value>
     const auxc = line.match(/^auxiliary\.compression\.(\w+):\s*(.+)$/);
     if (auxc) {
@@ -5539,6 +6259,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       kv['a2a.enabled'] = parseConfigScalar(a2a[1]);
       continue;
     }
+    // a2a.peering.allowPrivateUrls: <bool>  (operator peering may reach loopback/LAN).
+    const a2ap = line.match(/^a2a\.peering\.allowPrivateUrls:\s*(.+)$/);
+    if (a2ap) {
+      kv['a2a.peering.allowPrivateUrls'] = parseConfigScalar(a2ap[1]);
+      continue;
+    }
     // goals.allowCheckCommands: <value>
     const gcc = line.match(/^goals\.allowCheckCommands:\s*(.+)$/);
     if (gcc) {
@@ -5648,10 +6374,23 @@ export function parseConfigYaml(src: string): EthosConfig {
       executionDockerKv[exd[1]] = parseConfigScalar(exd[2]);
       continue;
     }
+    // execution.allowLocalFallback: <bool>  (S6 / D3 host-fallback opt-in).
+    const exl = line.match(/^execution\.allowLocalFallback:\s*(.+)$/);
+    if (exl) {
+      executionFlagsKv.allowLocalFallback = parseConfigScalar(exl[1]);
+      continue;
+    }
+    // execution.containerized: <bool>  (this deployment is itself the boundary).
+    const exc = line.match(/^execution\.containerized:\s*(.+)$/);
+    if (exc) {
+      executionFlagsKv.containerized = parseConfigScalar(exc[1]);
+      continue;
+    }
     // execution.ssh.<field>: <value>  (the single remote execution target).
     // The field list is an alternation, so an unrecognised `execution.ssh.*`
     // key falls through to the generic `key: value` catch-all below and is
-    // then never read — dropped, not rejected, like every other stray key.
+    // then never read — dropped with a notice, not rejected, like every other
+    // stray key (`ConfigKeyUse.unclaimed`).
     const exs = line.match(
       /^execution\.ssh\.(host|user|port|identityFile|knownHostsFile|strictHostKeys|remoteWorkdir):\s*(.+)$/,
     );
@@ -5662,7 +6401,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     // browser.<field>: <value>  (Playwright budgets + launch posture). The
     // alternation is an ALLOWLIST: an unlisted `browser.*` key matches nothing
     // here, and the generic `key: value` catch-all at the end of this loop is
-    // `\w+` only — so it is dropped, like every other stray dotted key.
+    // `\w+` only — so it is dropped with a notice, like every other stray
+    // dotted key (`ConfigKeyUse.unclaimed`).
     const brw = line.match(
       /^browser\.(navigationTimeoutMs|commandTimeoutMs|headed|idleTimeoutMs|stealth\.enabled|profiles\.enabled|proxy\.(?:server|username|password)):\s*(.+)$/,
     );
@@ -5679,8 +6419,9 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // decisions.<field>: <value>  (decision provider). An ALLOWLIST like
-    // `browser.*`: an unlisted `decisions.*` key is dropped here and kept
-    // verbatim by `writeConfig`'s `unexpressibleLines`.
+    // `browser.*`: an unlisted `decisions.*` key is dropped here with a notice
+    // (`ConfigKeyUse.unclaimed`) and kept verbatim by `writeConfig`'s
+    // `unexpressibleLines`.
     const dcs = line.match(DECISIONS_LINE_RE);
     if (dcs) {
       decisionsKv[dcs[1]] = parseConfigScalar(dcs[2]);
@@ -5734,7 +6475,13 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     const m = line.match(/^(\w+):\s*(.+)$/);
-    if (m) kv[m[1].trim()] = parseConfigScalar(m[2]);
+    if (m) {
+      const key = m[1].trim();
+      kv[key] = parseConfigScalar(m[2]);
+      keyUse.caughtAll(lineIdx + 1, key, m[2]);
+    } else {
+      keyUse.unclaimed(line, lineIdx + 1);
+    }
   }
 
   const activeContextType = activeContextKv.type;
@@ -5847,11 +6594,21 @@ export function parseConfigYaml(src: string): EthosConfig {
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
   const memoryCharLimits = buildMemoryCharLimits(memoryCharLimitsKv);
-  const executionResult = buildExecutionConfig(executionDockerKv, executionSshKv);
+  const executionResult = buildExecutionConfig(
+    executionDockerKv,
+    executionSshKv,
+    executionFlagsKv.allowLocalFallback,
+    executionFlagsKv.containerized,
+  );
   const execution = executionResult.execution;
   const restartLoopGuard = buildRestartLoopGuard(restartLoopGuardKv);
   const discordBackfill = buildDiscordBackfill(discordBackfillKv);
   const discordModeResult = buildDiscordDefaultMode(discordKv);
+  const discordRoleList = (discordKv.approvalRoleIds ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const discordApprovalRoleIds = discordRoleList.length > 0 ? discordRoleList : undefined;
   const callCapture = callCaptureKv.personalityId
     ? { personalityId: callCaptureKv.personalityId }
     : undefined;
@@ -5880,6 +6637,12 @@ export function parseConfigYaml(src: string): EthosConfig {
   // process's address", this answers "should this process stop running its own
   // clock", and plenty of deployments want the first without the second.
   const cronDeprecations: string[] = [];
+  const notificationWarnings: string[] = [];
+  const notifications = buildNotificationsConfig(
+    notificationsKv,
+    notificationBotsKv,
+    notificationWarnings,
+  );
   const cronBuilt = buildCronConfig(cronKv, cronDeprecations);
   const cronFireUrl = process.env.ETHOS_CRON_FIRE_URL ?? cronBuilt?.fireUrl;
   const cron =
@@ -6082,7 +6845,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-sonnet-5',
     apiKey: kv.apiKey ?? '',
-    personality: kv.personality ?? 'researcher',
+    personality: kv.personality ?? DEFAULT_PERSONALITY_ID,
     memory:
       kv.memory === 'vector'
         ? 'vector'
@@ -6193,7 +6956,15 @@ export function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     background: buildBackgroundConfig(backgroundKv, backgroundAcpAgentsKv),
     cron,
+    ...(notifications ? { notifications } : {}),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
+    displaySlowTurnNoticeMs: (() => {
+      if (displayKv.slow_turn_notice_ms === undefined) return undefined;
+      const n = Number(displayKv.slow_turn_notice_ms);
+      // A negative value reads as "never" — clamp to 0 (disabled) rather than
+      // dropping it to undefined, which would resurrect the 8000ms default.
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : undefined;
+    })(),
     displayMemoryNotices:
       displayKv.memory_notices === 'true'
         ? true
@@ -6236,7 +7007,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     pluginsAutoInstall,
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
-    a2a: kv['a2a.enabled'] !== undefined ? { enabled: kv['a2a.enabled'] === 'true' } : undefined,
+    a2a: buildA2aConfig(kv),
     goals:
       kv['goals.allowCheckCommands'] !== undefined
         ? { allowCheckCommands: kv['goals.allowCheckCommands'] === 'true' }
@@ -6301,12 +7072,21 @@ export function parseConfigYaml(src: string): EthosConfig {
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
-      discordBackfill || discordModeResult.mode
+      discordBackfill || discordModeResult.mode || discordApprovalRoleIds
         ? {
             ...(discordModeResult.mode ? { defaultChannelMode: discordModeResult.mode } : {}),
+            ...(discordApprovalRoleIds ? { approvalRoleIds: discordApprovalRoleIds } : {}),
             ...(discordBackfill ? { missedMessageBackfill: discordBackfill } : {}),
           }
         : undefined,
+    // Only the two literals are accepted; anything else is dropped so a typo
+    // cannot silently disable (or force) the placeholder.
+    discordPostThinkingPlaceholder:
+      discordKv.post_thinking_placeholder === 'true'
+        ? true
+        : discordKv.post_thinking_placeholder === 'false'
+          ? false
+          : undefined,
     kanbanPoll:
       kv['kanbanPoll.enabled'] !== undefined ||
       kv['kanbanPoll.intervalMs'] !== undefined ||
@@ -6325,6 +7105,10 @@ export function parseConfigYaml(src: string): EthosConfig {
     pauseClockCorrection,
     pauseLifecycle: pauseLifecycleHttp ? { http: pauseLifecycleHttp } : undefined,
   };
+  // UD1/B3 — the `personality:` field above baked in DEFAULT_PERSONALITY_ID;
+  // record when the file never set the key so `resolveEffectiveConfig` can
+  // report `source: 'default'` instead of claiming `(personality:)`.
+  if (kv.personality === undefined) personalityDefaultedByConfig.add(config);
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them
   // and continues with whatever entries did parse.
@@ -6339,6 +7123,9 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,
+    ...storageEncryptionRemovedNotice(kv),
+    ...notificationWarnings,
+    ...keyUse.notices(),
   ]);
   return config;
 }
@@ -6370,6 +7157,16 @@ const parseErrorsByConfig = new WeakMap<EthosConfig, string[]>();
 // entry there, and a boot warning that boots nothing is worse than the thing
 // it warns about.
 const parseWarningsByConfig = new WeakMap<EthosConfig, string[]>();
+
+// UD1/B3 — whether the FILE set `personality:` at all. `parseConfigYaml` bakes
+// `DEFAULT_PERSONALITY_ID` into the field (so every reader sees a usable id),
+// which would make `resolveEffectiveConfig`'s `source: 'default'` unreachable
+// for parsed configs; this side-table records key ABSENCE at parse time so the
+// resolver can still tell "the file chose it" from "the parser defaulted it".
+// Same identity-keyed pattern (and the same caveat about copies) as
+// `parseWarningsByConfig`. Cleared by `migrateActiveContextPersonality`, which
+// sets an explicit personality.
+const personalityDefaultedByConfig = new WeakSet<EthosConfig>();
 
 /**
  * Parse-time notices for a config returned by {@link readRawConfig} — the read
@@ -6416,6 +7213,166 @@ export function configParseNotices(config: EthosConfig): { errors: string[]; war
   return {
     errors: parseErrorsByConfig.get(config) ?? [],
     warnings: parseWarningsByConfig.get(config) ?? [],
+  };
+}
+
+/**
+ * Carry the identity-keyed side-tables across a config copy.
+ *
+ * Parse-time notices (`parseErrorsByConfig`, `parseWarningsByConfig`) and the
+ * personality-key-absence record (`personalityDefaultedByConfig`) are keyed by
+ * the parsed config OBJECT's identity, so any `{ ...config }` clone silently
+ * sheds them — `ethos chat` dropped the B2 unknown-key warnings this way while
+ * `ethos status`/`ethos doctor` (which read the original object) showed them.
+ * Every code path that copies a loaded config and later feeds the copy to a
+ * notices reader (`configParseNotices`, `resolveEffectiveConfig`) must call
+ * this on the copy. Adoption shares the same arrays by reference — notices
+ * describe the parse, not the copy's overrides, so divergence is not a concern.
+ */
+export function adoptConfigNotices(target: EthosConfig, source: EthosConfig): void {
+  if (target === source) return;
+  const errors = parseErrorsByConfig.get(source);
+  if (errors !== undefined) parseErrorsByConfig.set(target, errors);
+  const warnings = parseWarningsByConfig.get(source);
+  if (warnings !== undefined) parseWarningsByConfig.set(target, warnings);
+  if (personalityDefaultedByConfig.has(source)) personalityDefaultedByConfig.add(target);
+}
+
+/**
+ * B3 (plan ux-feedback-and-config-clarity §6.2–6.3) — the one answer to
+ * "which configuration is in effect". `ethos status`, `ethos doctor` and the
+ * web Settings header all render this instead of re-deriving their own.
+ */
+export interface EffectiveConfig {
+  /** `ETHOS_STATE_DIR` when set, else `~/.ethos`. */
+  stateDir: string;
+  /** `<stateDir>/config.yaml`. */
+  configPath: string;
+  personality: {
+    id: string;
+    /**
+     * Which key decided it. Post-UD1-migration a personality-typed
+     * `activeContext` exists only in-process (`--personality`); `default`
+     * means neither key was set and the parser's fallback applies.
+     */
+    source: 'activeContext' | 'personality' | 'default';
+    /** The `personality:` value an in-process `activeContext` outranked. */
+    shadowed?: string;
+  };
+  model: {
+    id: string;
+    /** The config-level rung that decided `id` — see the caveat on
+     *  {@link resolveEffectiveConfig}. */
+    rung: string;
+  };
+  apiKey: {
+    provider: string;
+    /**
+     * `missing` = no env var supplies `ref` AND the caller's `opts.vaultRefs`
+     * listing was provided and does not hold it — nothing on this machine
+     * serves the key. Without a vault listing an env miss still reads
+     * `vault`, an unverified claim by design (never a false alarm when the
+     * caller could not look).
+     */
+    source: 'env' | 'vault' | 'inline' | 'missing';
+    /** The vault ref consulted (absent for `inline`). */
+    ref?: string;
+    /** The environment variable that supplies `ref` (source `env`). */
+    envVar?: string;
+    /** Set when the env var wins AND `opts.vaultRefs` says the vault also
+     *  holds the ref — the silent-precedence case worth printing. */
+    overrides?: 'vault';
+  };
+  /** The parse-time warnings for this config (`configParseNotices`). */
+  warnings: string[];
+}
+
+/**
+ * Resolve what this config ACTUALLY selects, from config + environment alone.
+ *
+ * Scope caveats, deliberate at this layer:
+ * - `model.rung` knows only the CONFIG-level ladder: a `modelRouting.<id>`
+ *   override for the effective personality, else the global `model:` key. The
+ *   full turn-time ladder (`resolveTurnModel` in `@ethosagent/core`) also
+ *   reads the personality's own declaration and the model-registry roles,
+ *   which need personality FILES — not resolvable from config alone, so a
+ *   registry deployment's turn can land on a different rung than reported
+ *   here. The rung string names the config key that decided the id.
+ * - A team-typed `activeContext` selects a team, not a personality; wiring
+ *   dispatches it before the personality fallback, so this reports the
+ *   `personality:` key exactly as the non-team path would use it.
+ * - Vault contents are I/O this pure function does not perform: pass the
+ *   vault's ref listing as `opts.vaultRefs` to get `overrides: 'vault'` and
+ *   the `source: 'missing'` verdict (env unset AND the listing lacks the
+ *   ref); without it an env hit is reported as `source: 'env'` with no
+ *   overrides claim, and an env miss as `source: 'vault'` unverified.
+ */
+export function resolveEffectiveConfig(
+  config: EthosConfig,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  opts: { vaultRefs?: Iterable<string> } = {},
+): EffectiveConfig {
+  const stateDir = env.ETHOS_STATE_DIR || join(homedir(), '.ethos');
+  const configPath = join(stateDir, 'config.yaml');
+
+  let personality: EffectiveConfig['personality'];
+  if (config.activeContext?.type === 'personality') {
+    const shadowed =
+      config.personality && config.personality !== config.activeContext.name
+        ? config.personality
+        : undefined;
+    personality = {
+      id: config.activeContext.name,
+      source: 'activeContext',
+      ...(shadowed !== undefined ? { shadowed } : {}),
+    };
+  } else if (config.personality && !personalityDefaultedByConfig.has(config)) {
+    personality = { id: config.personality, source: 'personality' };
+  } else {
+    // Either no personality at all (a constructed config) or a parsed config
+    // whose file never set the key (`personalityDefaultedByConfig`).
+    personality = { id: config.personality || DEFAULT_PERSONALITY_ID, source: 'default' };
+  }
+
+  const routed =
+    config.modelRouting && Object.hasOwn(config.modelRouting, personality.id)
+      ? config.modelRouting[personality.id]?.trim()
+      : undefined;
+  const model: EffectiveConfig['model'] = routed
+    ? { id: routed, rung: `modelRouting.${personality.id}` }
+    : { id: config.model, rung: 'model:' };
+
+  const provider = config.provider;
+  let apiKey: EffectiveConfig['apiKey'];
+  if (config.apiKey && !isSecretRef(config.apiKey)) {
+    apiKey = { provider, source: 'inline' };
+  } else {
+    let ref = secretRefForConfigKey('apiKey', { provider }) ?? `providers/${provider}/apiKey`;
+    const explicit = config.apiKey?.match(SINGLE_SECRET_REF_RE);
+    if (explicit?.[1]) ref = explicit[1];
+    const envVar = REF_TO_ENV.get(ref);
+    const envSet = envVar !== undefined && (env[envVar] ?? '') !== '';
+    const vaultRefsProvided = opts.vaultRefs !== undefined;
+    const vaultHasRef = [...(opts.vaultRefs ?? [])].includes(ref);
+    apiKey = {
+      provider,
+      // `missing` only when the caller LOOKED (`opts.vaultRefs` provided) and
+      // the vault does not hold the ref; without a listing an env miss stays
+      // the unverified `vault` claim — never overclaim, never false-alarm.
+      source: envSet ? 'env' : vaultRefsProvided && !vaultHasRef ? 'missing' : 'vault',
+      ref,
+      ...(envSet && envVar !== undefined ? { envVar } : {}),
+      ...(envSet && vaultHasRef ? { overrides: 'vault' as const } : {}),
+    };
+  }
+
+  return {
+    stateDir,
+    configPath,
+    personality,
+    model,
+    apiKey,
+    warnings: configParseNotices(config).warnings,
   };
 }
 
@@ -7087,6 +8044,8 @@ function sshDestinationError(host: string, user: string | undefined): string | n
 function buildExecutionConfig(
   dockerKv: Record<string, string>,
   sshKv: Record<string, string>,
+  rawAllowLocalFallback?: string,
+  rawContainerized?: string,
 ): { execution: EthosConfig['execution'] | undefined; errors: string[]; warnings: string[] } {
   const docker: NonNullable<NonNullable<EthosConfig['execution']>['docker']> = {};
   const cpu = Number(dockerKv.cpu);
@@ -7165,6 +8124,9 @@ function buildExecutionConfig(
   }
 
   const execution: NonNullable<EthosConfig['execution']> = {};
+  // Only the literal `true` opts in: anything else keeps the refusal.
+  if (rawAllowLocalFallback === 'true') execution.allowLocalFallback = true;
+  if (rawContainerized === 'true') execution.containerized = true;
   if (Object.keys(docker).length > 0) execution.docker = docker;
   if (ssh) execution.ssh = ssh;
   return {
@@ -7292,6 +8254,9 @@ function buildBackgroundConfig(
  */
 const LEGACY_EXTERNAL_FIRE_URL = 'legacy:cron.trigger.external';
 
+/** Largest `cron.defaultMaxRunMs` a Node timer can hold (2^31-1 ms). */
+const CRON_MAX_RUN_MS_CEILING = 2_147_483_647;
+
 /**
  * Parse the `cron:` section from its flat-key bag (see `CronTopLevelConfig`).
  * Returns undefined when no recognised field is present so `config.cron` is
@@ -7410,8 +8375,40 @@ function buildCronConfig(
   if (kv.maxParallelJobs !== undefined && Number.isFinite(maxParallel) && maxParallel > 0) {
     cfg.maxParallelJobs = Math.floor(maxParallel);
   }
+  const maxRunMs = Number(kv.defaultMaxRunMs);
+  if (kv.defaultMaxRunMs !== undefined && Number.isFinite(maxRunMs) && maxRunMs >= 1) {
+    // Above 2^31-1 Node clamps the run's setTimeout to 1ms, so every cron run
+    // would time out at once. Mirrors `MAX_CRON_RUN_MS` in `@ethosagent/cron`,
+    // which `CronScheduler.runTurnCapped` also clamps to. Pinned by
+    // `__tests__/config-cron-max-run.test.ts`.
+    if (maxRunMs > CRON_MAX_RUN_MS_CEILING) {
+      deprecations.push(
+        `cron.defaultMaxRunMs: ${kv.defaultMaxRunMs} is above the maximum of ${CRON_MAX_RUN_MS_CEILING} (about 24.8 days) and was ignored; the built-in default applies.`,
+      );
+    } else {
+      cfg.defaultMaxRunMs = Math.floor(maxRunMs);
+    }
+  }
   if (Object.keys(cfg).length === 0) return undefined;
   return cfg;
+}
+
+/**
+ * SEC-001 — `storage.encryption` was removed: it validated ETHOS_STORAGE_KEY and
+ * then wrapped only the personality-design tool's storage, so `MEMORY.md`,
+ * `USER.md`, personality configs and team memory — what its how-to promised —
+ * stayed plaintext. A config that still sets it gets this notice instead of
+ * the generic unknown-key one. Pinned by `__tests__/config.test.ts`
+ * ('drops storage.encryption and says it was removed').
+ */
+function storageEncryptionRemovedNotice(kv: Record<string, string>): string[] {
+  if (kv['storage.encryption'] === undefined) return [];
+  return [
+    "config.yaml: 'storage.encryption' was removed and has no effect — files under " +
+      '~/.ethos/ are not encrypted by Ethos. Use full-disk or volume encryption for data ' +
+      'at rest. Files the personality-design tool wrote while the flag was on are ' +
+      'ciphertext and must be recreated.',
+  ];
 }
 
 function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] {
@@ -7424,11 +8421,9 @@ function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] 
   const rawBackend = kv['storage.backend'];
   const backend: 'fs' | 's3' | undefined =
     rawBackend === 'fs' || rawBackend === 's3' ? rawBackend : undefined;
-  const encryption = kv['storage.encryption'] === 'true';
   const hasS3 = s3.bucket !== undefined;
-  if (!encryption && backend === undefined && !hasS3) return undefined;
+  if (backend === undefined && !hasS3) return undefined;
   return {
-    ...(encryption ? { encryption: true } : {}),
     ...(backend ? { backend } : {}),
     ...(hasS3 ? { s3 } : {}),
   };
@@ -7730,6 +8725,29 @@ function buildBotBinding(
   return { bind: binding, errors };
 }
 
+/**
+ * `<entry>.budget.dailyUsd` → {@link BotBudgetConfig}, shared by the three bot
+ * rosters that carry one. Reading the key through the tracked entry is what
+ * marks it read for the U4 unknown-key notice (`ConfigKeyUse.trackIndexed`).
+ * A value that is not a positive finite number is an error, like an invalid
+ * `defaultChannelMode`: a cap the operator wrote and the gateway silently
+ * ignored would be worse than no cap.
+ */
+function buildBotBudget(
+  entry: Record<string, string>,
+  label: string,
+): { budget?: BotBudgetConfig; error?: string } {
+  const raw = entry['budget.dailyUsd'];
+  if (raw === undefined) return {};
+  const dailyUsd = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(dailyUsd) || dailyUsd <= 0) {
+    return {
+      error: `${label}: invalid budget.dailyUsd '${raw}' (expected a positive number of USD).`,
+    };
+  }
+  return { budget: { dailyUsd } };
+}
+
 function sortedIndexes(kv: Record<number, Record<string, string>>): number[] {
   // Numeric sort — `Object.keys(...)` returns strings even on numeric-keyed
   // records, and the default lexicographic order would put index 10 before 2.
@@ -7818,6 +8836,12 @@ function buildTelegramBots(kv: Record<number, Record<string, string>>): {
       }
       bot.defaultChannelMode = mode;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) bot.budget = budget.budget;
     bots.push(bot);
   }
   return { bots, errors };
@@ -7896,6 +8920,12 @@ function buildSlackApps(kv: Record<number, Record<string, string>>): {
     if (entry['mode.http'] !== undefined) transport.http = entry['mode.http'] === 'true';
     if (Object.keys(transport).length > 0) app.mode = transport;
     if (entry.webhookPath) app.webhookPath = entry.webhookPath;
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };
@@ -7947,6 +8977,12 @@ function buildWhatsApps(kv: Record<number, Record<string, string>>): {
       }
       if (result.bind) app.bind = result.bind;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };

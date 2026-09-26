@@ -23,6 +23,7 @@ import type {
   CliSubcommandContext,
   ExecutionBackendConfig,
   ExecutionBackendRegistry,
+  ExecutionPosture,
   GoalStore,
   LLMProvider,
   Logger,
@@ -168,6 +169,10 @@ export interface WiringConfig {
    * saw — a configured `remoteWorkdir` or `identityFile` silently ignored.
    */
   execution?: {
+    /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput` (S6 / D3). */
+    allowLocalFallback?: boolean;
+    /** `execution.containerized` — `detectContainerized`'s explicit config signal. */
+    containerized?: boolean;
     /** `image` — the digest-pinned sandbox image (`execution.docker.image`). */
     docker?: { cpu?: number; diskMb?: number; image?: string };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
@@ -500,11 +505,9 @@ export interface WiringConfig {
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
-  /** Storage-layer settings. When `encryption` is true, the primary FsStorage
-   *  is wrapped in CryptoStorage using ETHOS_STORAGE_KEY. */
+  /** Storage-layer settings. */
   storage?: {
     backend?: string;
-    encryption?: boolean;
   };
   /**
    * Remote model catalog configuration. When provided with `enabled !== false`,
@@ -759,6 +762,14 @@ export interface CreateAgentLoopOptions {
    * completion is delivered to the channel root.
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+  /**
+   * Resolve the platform user whose message started the live turn on
+   * `sessionKey`, for stamping `origin_user_id` on background jobs (so their
+   * clarify defaults to that user). Supplied by the gateway
+   * (`Gateway.originUserIdFor`); omitted elsewhere, in which case a job
+   * records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
   /**
    * Lane 0 (eng review D16) — force a LIVE served-window probe (bypassing the
    * 15-minute disk cache) and rewrite the cache. Set by the command paths
@@ -1536,6 +1547,15 @@ export interface CreateAgentLoopResult {
    * the approver is exactly the LLM reviewer.
    */
   approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
+  /**
+   * The execution posture a personality's turns resolve to in THIS build —
+   * the same resolution its exec tools run under (`ExecutionRouting.resolvePosture`,
+   * packages/wiring/src/compose-tools.ts). `undefined` id → the deployment
+   * default; an unknown id → `undefined`. Hosts forward it as
+   * `executionPostureFor` to `createApprovalDangerPredicate`, which flags the
+   * shell tools under a host-local posture (S6 / D1(a)).
+   */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
   /** The McpManager instance from tool composition. Pass to createWebApi so
    *  re-auth via the web UI hits the live manager and updates the tool registry. */
   mcpManager: McpManager;
@@ -1732,7 +1752,7 @@ export async function createAgentLoop(
   const opts: CreateAgentLoopOptions = rawOpts.replay
     ? { ...rawOpts, disablePostTurnLearning: true }
     : rawOpts;
-  const { wiringCtx, profile, log } = buildWiringContext(config, opts);
+  const { wiringCtx, profile, log } = buildWiringContext(opts);
   // F06 — ONE stack for the whole assembly. Every stage pushes the release of
   // each resource it opens right after opening it, so a stage that throws
   // leaves the stack holding exactly what the earlier stages built — released
@@ -1971,15 +1991,21 @@ export {
   type CreateApprovalDangerPredicateOptions,
   createApprovalDangerPredicate,
   createLazyProvider,
+  firstRefusal,
+  notPermittedRefusal,
 } from './approval-seams';
 export {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  approvalRequiredReason,
   type CreateDangerPredicateOptions,
   canonicalizeArgs,
   createDangerPredicate,
   type DangerPredicate,
   type DangerReason,
   hardlineReason,
+  hasHostApprovalGate,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApprovalCallback,
   type SmartVerdict,
@@ -2102,6 +2128,12 @@ export {
   mergeFunnelState,
   readFunnelState,
 } from './observability/funnel';
+export {
+  type InstallScanEvent,
+  type InstallScanInput,
+  type InstallScanVerdict,
+  installScanEvent,
+} from './observability/install-scan';
 export { resolveExecutionBackendName } from './resolve-execution-backend';
 export {
   type BuildExecutionPostureInput,

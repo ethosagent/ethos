@@ -66,6 +66,26 @@ describe('validateUrl', () => {
     expect((await validateUrl('http://other.com/', policy, resolveHost)).ok).toBe(false);
   });
 
+  it("allow: ['*'] admits a public host but never widens the floor", async () => {
+    const policy = { allow: ['*'] };
+    const publicHost = async () => ['1.1.1.1'];
+    expect((await validateUrl('https://example.com/', policy, publicHost)).ok).toBe(true);
+    // Private range, rebinding, and cloud-metadata are refused regardless.
+    expect((await validateUrl('http://10.0.0.1/', policy)).ok).toBe(false);
+    expect((await validateUrl('http://a.example.com/', policy, async () => ['10.0.0.5'])).ok).toBe(
+      false,
+    );
+    expect((await validateUrl('http://169.254.169.254/', policy)).ok).toBe(false);
+    // The deny list still wins over a wildcard allow.
+    const r = await validateUrl(
+      'https://evil.example.com/',
+      { allow: ['*'], deny: ['evil.example.com'] },
+      publicHost,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/deny list/);
+  });
+
   it('rejects URL-encoded variants of private IPs', async () => {
     // Hex-encoded loopback (URL parser normalizes)
     expect((await validateUrl('http://0x7f.0.0.1/', {})).ok).toBe(false);

@@ -82,7 +82,8 @@ export interface ChildSpec {
    * (`GATEWAY_LOCK_EXIT_CODE`, packages/wiring/src/gateway-lock.ts) when
    * another gateway already holds this state dir's lock (plan
    * reach-and-containment D2-14) — restarting it forever would spam the log
-   * and never succeed.
+   * and never succeed. It exits 78 (`CONFIG_INVALID_EXIT_CODE`) when its
+   * config cannot be started from, for the same reason.
    */
   terminalExitCodes?: readonly number[];
 }
@@ -91,6 +92,13 @@ export interface ChildSpec {
  *  not imported, so the supervisor does not load the wiring graph. Pinned
  *  equal by `__tests__/run-all.test.ts`. */
 export const GATEWAY_LOCK_HELD_EXIT_CODE = 3;
+
+/** Mirrors `CONFIG_INVALID_EXIT_CODE` in packages/wiring/src/gateway-lock.ts
+ *  (78, EX_CONFIG): `gateway start` could not start from its config
+ *  (`exitIfConfigInvalid`, lib/config-exit.ts), which a restart cannot fix.
+ *  Not imported, for the same reason as the lock code. Pinned equal by
+ *  `__tests__/run-all.test.ts`. */
+export const CONFIG_INVALID_EXIT_CODE = 78;
 
 /** Pure: does this exit end the child for good, or enter the restart path? */
 export function childExitDecision(
@@ -127,7 +135,7 @@ export function defaultChildSpecs(): ChildSpec[] {
     {
       name: 'gateway',
       args: ['gateway', 'start'],
-      terminalExitCodes: [GATEWAY_LOCK_HELD_EXIT_CODE],
+      terminalExitCodes: [GATEWAY_LOCK_HELD_EXIT_CODE, CONFIG_INVALID_EXIT_CODE],
     },
     { name: 'serve', args: ['serve'] },
   ];

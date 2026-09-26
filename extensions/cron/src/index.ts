@@ -93,6 +93,9 @@ export interface CronJob {
   lastError?: string;
   /** Job ids/names whose latest output will be prepended as context at run time. */
   contextFrom?: string[];
+  /** Wall-clock cap on a prompt job's agent turn, in ms. Absent = the
+   *  scheduler's `defaultMaxRunMs`. Enforced by `CronScheduler.runTurnCapped`. */
+  maxRunMs?: number;
   /** Ownership. 'system' jobs are seeded by the framework and non-disableable.
    *  Default 'user'. Distinct from `origin` (channel platform/chatId). */
   source?: 'system' | 'user';
@@ -181,9 +184,31 @@ export interface CronArmingBackend {
   arm(nextRunAt: Date | null): void | Promise<void>;
 }
 
+/** Per-call options the scheduler hands `runJob`. */
+export interface CronRunJobOptions {
+  /** Aborted when the turn exceeds its `maxRunMs`. Pass it to `AgentLoop.run`
+   *  as `abortSignal` so the turn actually stops. */
+  abortSignal: AbortSignal;
+}
+
+/** Built-in wall-clock cap on a prompt job's turn when neither the job nor
+ *  `cron.defaultMaxRunMs` sets one. Below `CRON_RUNNING_STALE_MS`, so a capped
+ *  run always clears its `runningSince` stamp before the stamp reads stale. */
+export const DEFAULT_CRON_MAX_RUN_MS = 30 * 60 * 1000;
+
+/** The largest `maxRunMs` a timer can hold: Node clamps a `setTimeout` delay
+ *  above 2^31-1 to 1ms, which would time every run out at once. Refused at
+ *  `CronScheduler.createJob`, and clamped in `CronScheduler.runTurnCapped` for a
+ *  value that arrives another way (a hand-edited jobs.json, the constructor's
+ *  `defaultMaxRunMs`). `packages/config` mirrors it for `cron.defaultMaxRunMs`. */
+export const MAX_CRON_RUN_MS = 2_147_483_647;
+
 export interface CronSchedulerConfig {
   /** Called when a job fires. Returns the text output and session key. */
-  runJob: (job: CronJob) => Promise<CronRunResult>;
+  runJob: (job: CronJob, opts?: CronRunJobOptions) => Promise<CronRunResult>;
+  /** Wall-clock cap for a prompt job's turn that sets no `maxRunMs` (mapped
+   *  from `cron.defaultMaxRunMs`). Default `DEFAULT_CRON_MAX_RUN_MS`. */
+  defaultMaxRunMs?: number;
   /** Directory for jobs.json, its lock and the output/ run history. Required,
    *  with no default: every host passes `ethosCronDir()` from
    *  `@ethosagent/config`, which honours `ETHOS_STATE_DIR`. A `homedir()`
@@ -435,7 +460,8 @@ export class CronScheduler {
   private readonly jobsPath: string;
   private readonly lockPath: string;
   private readonly outputDir: string;
-  private readonly runJob: (job: CronJob) => Promise<CronRunResult>;
+  private readonly runJob: (job: CronJob, opts?: CronRunJobOptions) => Promise<CronRunResult>;
+  private readonly defaultMaxRunMs: number;
   private readonly tickIntervalMs: number;
   /** `null` = uncapped. See `CronSchedulerConfig.maxParallelJobs`. */
   private readonly maxParallelJobs: number | null;
@@ -459,6 +485,7 @@ export class CronScheduler {
     this.lockPath = join(this.cronDir, 'jobs.json.lock');
     this.outputDir = join(this.cronDir, 'output');
     this.runJob = config.runJob;
+    this.defaultMaxRunMs = config.defaultMaxRunMs ?? DEFAULT_CRON_MAX_RUN_MS;
     this.tickIntervalMs = config.tickIntervalMs ?? 60_000;
     this.maxParallelJobs = config.maxParallelJobs ?? null;
     this.storage = config.storage;
@@ -551,6 +578,18 @@ export class CronScheduler {
       throw new Error('prompt is required for user jobs');
     }
 
+    if (
+      params.maxRunMs !== undefined &&
+      (!Number.isInteger(params.maxRunMs) || params.maxRunMs < 1)
+    ) {
+      throw new Error('maxRunMs must be a positive integer (milliseconds)');
+    }
+    if (params.maxRunMs !== undefined && params.maxRunMs > MAX_CRON_RUN_MS) {
+      throw new Error(
+        `maxRunMs must be at most ${MAX_CRON_RUN_MS} (about 24.8 days); got ${params.maxRunMs}`,
+      );
+    }
+
     if (params.script) await this.validateScriptRef(params.script, 'script');
     if (params.precheck) await this.validateScriptRef(params.precheck, 'precheck');
 
@@ -577,8 +616,11 @@ export class CronScheduler {
         throw new Error(`Job with id "${job.id}" already exists`);
       }
       if (job.contextFrom && job.contextFrom.length > 0) {
+        // Another personality's job is an unknown reference (S15): the same
+        // text, so this is not an existence oracle. Re-checked at fire time by
+        // `resolveContext`.
         for (const ref of job.contextFrom) {
-          if (!jobs.find((j) => j.id === ref || j.name === ref)) {
+          if (!findOwnedRef(jobs, ref, job.personalityId)) {
             throw new Error(`contextFrom references unknown job: "${ref}"`);
           }
         }
@@ -1074,9 +1116,19 @@ export class CronScheduler {
     if (!job.contextFrom || job.contextFrom.length === 0) return '';
 
     const blocks: string[] = [];
+    const jobs = await this.readJobs();
     for (const ref of job.contextFrom) {
-      const refJob = await this.findJobByIdOrName(ref);
-      if (!refJob) continue;
+      // Only the firing job's own personality's output (S15). A reference
+      // stored before `createJob` refused foreign ones resolves to nothing.
+      const refJob = findOwnedRef(jobs, ref, job.personalityId);
+      if (!refJob) {
+        this.logger.warn(`[cron] contextFrom "${ref}" skipped for job "${job.id}"`, {
+          component: 'cron',
+          jobId: job.id,
+          reason: `no job "${ref}" owned by personality "${job.personalityId}"`,
+        });
+        continue;
+      }
 
       const runs = await this.listRuns(refJob.id, 1);
       if (runs.length === 0) continue;
@@ -1085,8 +1137,17 @@ export class CronScheduler {
       if (!latestRun) continue;
       try {
         const output = await this.readRunOutput(latestRun.outputPath);
+        // A prior run's output is whatever that turn read (web pages, mail):
+        // fenced as untrusted, like the precheck stdout below (plan
+        // openclaw-2026.9.6-gaps S13; pinned by "fences each referenced output
+        // as untrusted" in __tests__/cron.test.ts).
+        const fenced = wrapUntrusted({
+          content: output,
+          toolName: 'cron_context',
+          source: `cron-run:${refJob.id}`,
+        }).content;
         blocks.push(
-          `--- Context from "${refJob.name}" (${refJob.id}) ---\n${output}\n--- End context ---`,
+          `--- Context from "${refJob.name}" (${refJob.id}) ---\n${fenced}\n--- End context ---`,
         );
       } catch {
         // non-fatal — skip this reference
@@ -1094,11 +1155,6 @@ export class CronScheduler {
     }
 
     return blocks.length > 0 ? `${blocks.join('\n\n')}\n\n` : '';
-  }
-
-  private async findJobByIdOrName(ref: string): Promise<CronJob | null> {
-    const jobs = await this.readJobs();
-    return jobs.find((j) => j.id === ref || j.name === ref) ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1179,9 +1235,33 @@ export class CronScheduler {
     // whole effective prompt through the injection guard before the LLM sees it.
     const contextPrefix = await this.resolveContext(job);
     const effectivePrompt = sanitize(precheckContext + contextPrefix + (job.prompt ?? ''));
-    const result = await this.runJob({ ...job, prompt: effectivePrompt });
+    const result = await this.runTurnCapped({ ...job, prompt: effectivePrompt });
     await this.persistAndDeliver(job, result.output, result.ranAt, result.progress);
     return result;
+  }
+
+  /**
+   * R10 — a prompt job's turn gets a wall-clock cap (`job.maxRunMs`, else
+   * `defaultMaxRunMs`). At the cap the turn's `abortSignal` fires and the run
+   * is abandoned with a "timed out" error even if `runJob` ignores the signal,
+   * so a stalled turn cannot hold its `runningSince` stamp or a
+   * `maxParallelJobs` slot. The throw lands in `lastError` like any failed run.
+   */
+  private async runTurnCapped(job: CronJob): Promise<CronRunResult> {
+    const maxRunMs = Math.min(job.maxRunMs ?? this.defaultMaxRunMs, MAX_CRON_RUN_MS);
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Cron job "${job.id}" turn timed out after ${maxRunMs}ms (maxRunMs)`));
+      }, maxRunMs);
+    });
+    try {
+      return await Promise.race([this.runJob(job, { abortSignal: controller.signal }), timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1497,6 +1577,16 @@ function filenameToIso(filename: string): string {
   if (!m) return stem;
   const [, date, hh, mm, ss, ms, z] = m;
   return `${date}T${hh}:${mm}:${ss}.${ms}${z ?? ''}`;
+}
+
+/**
+ * A `contextFrom` reference (id or name) resolved among `personalityId`'s own
+ * jobs only — the single lookup behind `createJob`'s refusal and
+ * `resolveContext`'s fire-time re-check (S15). Pinned by the S15 cases in
+ * `src/__tests__/cron.test.ts` ("CronScheduler job chaining").
+ */
+function findOwnedRef(jobs: CronJob[], ref: string, personalityId: string): CronJob | undefined {
+  return jobs.find((j) => (j.id === ref || j.name === ref) && j.personalityId === personalityId);
 }
 
 function slugify(name: string): string {

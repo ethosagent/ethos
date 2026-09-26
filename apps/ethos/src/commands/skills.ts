@@ -15,7 +15,7 @@ import {
   type TrustTier,
 } from '@ethosagent/wiring/security-kernel';
 import { writeJson } from '../json-output';
-import { getStorage } from '../wiring';
+import { getStorage, recordInstallScan } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -338,7 +338,8 @@ async function walkAndScanSkillSource(dir: string, out: ScanFinding[]): Promise<
   }
 }
 
-async function scanSkillDir(slug: string, skillDir: string, yesFlag = false): Promise<void> {
+/** Exported for testing — not part of the public CLI surface. */
+export async function scanSkillDir(slug: string, skillDir: string, yesFlag = false): Promise<void> {
   // Scan SKILL.md for prompt-injection / hidden-unicode / etc.
   const allFindings: ScanFinding[] = [];
   try {
@@ -357,11 +358,13 @@ async function scanSkillDir(slug: string, skillDir: string, yesFlag = false): Pr
     hasYellow: allFindings.some((f) => f.severity === 'yellow'),
   };
 
+  const tier = deriveTierFromSlug(slug);
+  const decision = canInstall(result, tier);
+  recordInstallScan({ kind: 'skill', source: slug, tier, scan: result, decision });
+
   if (!result.hasRed && !result.hasYellow) return;
 
-  const tier = deriveTierFromSlug(slug);
   const tierColor = tier === 'untrusted' ? c.red : tier === 'community' ? c.yellow : c.dim;
-  const decision = canInstall(result, tier);
 
   console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}  ${tierColor}[${tier}]${c.reset}`);
   for (const f of result.findings) {

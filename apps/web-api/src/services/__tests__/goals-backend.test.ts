@@ -223,7 +223,7 @@ describe('GoalsService — check commands', () => {
     await expect(service.create(withCommand)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message:
-        'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow host shell commands in goal checks.',
+        'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow shell commands in goal checks.',
     });
     expect(store.list()).toEqual([]);
     expect(executor.started).toEqual([]);

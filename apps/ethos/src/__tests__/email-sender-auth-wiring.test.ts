@@ -77,6 +77,15 @@ describe('emailTrustedAuthservId wiring', () => {
     expect(cfg.trustedAuthservId).toBe('mx.example.com');
   });
 
+  it('buildAdapters wires a Storage and an absolute emailDir, so thread state survives a restart', async () => {
+    const cfg = await builtEmailConfig(emailConfig);
+    expect(cfg.storage).toBeDefined();
+    expect(String(cfg.emailDir)).toMatch(/[/\\]email$/);
+    expect(String(cfg.emailDir).startsWith('/') || /^[A-Za-z]:/.test(String(cfg.emailDir))).toBe(
+      true,
+    );
+  });
+
   it('buildAdapters leaves trustedAuthservId absent when the key is unset', async () => {
     const cfg = await builtEmailConfig(emailConfig);
     expect('trustedAuthservId' in cfg).toBe(false);

@@ -26,7 +26,7 @@ interface Criterion {
   type: 'check' | 'rubric';
   description: string;
   weight: number;
-  /** Shell command the judge runs on the host; only sent when the server allows it. */
+  /** Shell command the judge runs as the personality's terminal would; only sent when the server allows it. */
   command: string;
 }
 

@@ -1,13 +1,20 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 
+// Option C — refined classic (user-approved 2026-09-26; mockup
+// ethos-docs-c-classic.html). Four static top-level groups, each carrying a
+// `sidebar-group` className that custom.css styles as an uppercase label with
+// a colored dot (researcher / engineer / reviewer / neutral). The flat how-to
+// list is regrouped into collapsed topical subcategories; every page id that
+// was reachable before stays reachable here.
 const sidebars: SidebarsConfig = {
   docsSidebar: [
-    'intro',
     {
       type: 'category',
       label: 'Getting started',
-      collapsed: false,
+      collapsible: false,
+      className: 'sidebar-group sidebar-group--start',
       items: [
+        'intro',
         'getting-started/what-is-ethos',
         'getting-started/architecture-90-seconds',
         'getting-started/why-ethos',
@@ -17,7 +24,8 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Using Ethos',
-      collapsed: false,
+      collapsible: false,
+      className: 'sidebar-group sidebar-group--using',
       items: [
         'using/quickstart',
         {
@@ -32,7 +40,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'How-to',
+          label: 'Install & providers',
           collapsed: true,
           items: [
             'using/how-to/install-on-windows',
@@ -41,46 +49,109 @@ const sidebars: SidebarsConfig = {
             'using/how-to/use-aws-bedrock',
             'using/how-to/configure-local-serving',
             'using/how-to/qualify-a-local-model',
+            'using/how-to/use-chatgpt-subscription-via-codex',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Deploy & run',
+          collapsed: true,
+          items: [
+            'using/how-to/deploy-in-production',
+            'using/how-to/deploy-on-ec2',
+            'using/how-to/run-in-docker',
+            'using/how-to/run-as-daemon',
+            'using/how-to/use-zero-mode',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Channels & bots',
+          collapsed: true,
+          items: [
+            'using/how-to/run-multiple-bots',
+            'using/how-to/run-channels-over-webhooks',
+            'using/how-to/receive-files-via-telegram',
+            'using/how-to/receive-files-via-slack',
+            'using/how-to/send-cross-channel-messages',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Voice & calls',
+          collapsed: true,
+          items: [
             'using/how-to/local-voice',
             'using/how-to/voice-notes-on-channels',
             'using/how-to/run-a-wake-satellite',
             'using/how-to/answer-phone-calls',
-            'using/how-to/deploy-in-production',
-            'using/how-to/deploy-on-ec2',
-            'using/how-to/run-multiple-bots',
-            'using/how-to/run-channels-over-webhooks',
-            'using/how-to/run-as-daemon',
-            'using/how-to/recover-messages-after-a-crash',
-            'using/how-to/back-up-and-restore',
-            'using/how-to/use-zero-mode',
-            'using/how-to/run-in-docker',
-            'using/how-to/run-tools-over-ssh',
-            'using/how-to/monitor-with-grafana',
-            'using/how-to/use-skills',
-            'using/how-to/interactive-charts-in-chat',
-            'using/how-to/use-inline-context-refs',
-            'using/how-to/manage-skill-evolution',
-            'using/how-to/migrate-from-openclaw',
-            'using/how-to/use-as-mcp-server',
-            'using/how-to/schedule-tasks-with-cron',
-            'using/how-to/loop-over-tools-in-code',
-            'using/how-to/set-up-mcp-for-a-personality',
-            'using/how-to/use-web-dashboard',
-            'using/how-to/retrieve-agent-files',
-            'using/how-to/upload-agent-files',
-            'using/how-to/use-admin-panel',
-            'using/how-to/audit-user-identity',
-            'using/how-to/set-up-approval-gates',
-            'using/how-to/use-a-decision-model',
-            'using/how-to/approve-posts-before-sending',
-            'using/how-to/peer-two-ethos-agents',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Teams & memory',
+          collapsed: true,
+          items: [
             'using/how-to/run-a-team-with-kanban',
             'using/how-to/work-with-a-team',
             'using/how-to/use-team-memory',
-            'using/how-to/receive-files-via-telegram',
-            'using/how-to/receive-files-via-slack',
-            'using/how-to/send-cross-channel-messages',
-            'using/how-to/use-chatgpt-subscription-via-codex',
+            'using/how-to/peer-two-ethos-agents',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Skills & automation',
+          collapsed: true,
+          items: [
+            'using/how-to/use-skills',
+            'using/how-to/manage-skill-evolution',
+            'using/how-to/schedule-tasks-with-cron',
+            'using/how-to/loop-over-tools-in-code',
+            'using/how-to/run-tools-over-ssh',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Integrations & MCP',
+          collapsed: true,
+          items: [
+            'using/how-to/use-as-mcp-server',
+            'using/how-to/set-up-mcp-for-a-personality',
+            'using/how-to/migrate-from-openclaw',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Dashboard & files',
+          collapsed: true,
+          items: [
+            'using/how-to/use-web-dashboard',
+            'using/how-to/use-admin-panel',
+            'using/how-to/retrieve-agent-files',
+            'using/how-to/upload-agent-files',
+            'using/how-to/interactive-charts-in-chat',
+            'using/how-to/use-inline-context-refs',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Approvals & identity',
+          collapsed: true,
+          items: [
+            'using/how-to/set-up-approval-gates',
+            'using/how-to/use-a-decision-model',
+            'using/how-to/approve-posts-before-sending',
+            'using/how-to/audit-user-identity',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Ops & recovery',
+          collapsed: true,
+          items: [
+            'using/how-to/back-up-and-restore',
+            'using/how-to/recover-messages-after-a-crash',
+            'using/how-to/monitor-with-grafana',
             'using/how-to/safe-mode',
           ],
         },
@@ -119,7 +190,8 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Building on Ethos',
-      collapsed: false,
+      collapsible: false,
+      className: 'sidebar-group sidebar-group--building',
       items: [
         'building/quickstart',
         {
@@ -163,7 +235,6 @@ const sidebars: SidebarsConfig = {
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
             'building/how-to/consume-attachments-in-a-tool',
-            'building/how-to/enable-storage-encryption',
             'building/how-to/author-a-canvas-template',
           ],
         },
@@ -226,37 +297,45 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Platforms',
-      collapsed: true,
+      label: 'Platforms & security',
+      collapsible: false,
+      className: 'sidebar-group sidebar-group--platform',
       items: [
-        'platforms/cli',
-        'platforms/desktop',
-        'platforms/telegram',
-        'platforms/discord',
-        'platforms/slack',
-        'platforms/capability-matrix',
+        {
+          type: 'category',
+          label: 'Platforms',
+          collapsed: true,
+          items: [
+            'platforms/cli',
+            'platforms/desktop',
+            'platforms/telegram',
+            'platforms/discord',
+            'platforms/slack',
+            'platforms/capability-matrix',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Security',
+          collapsed: true,
+          items: [
+            'security/overview',
+            'security/security-boundary',
+            'security/white-paper',
+            'security/threat-model',
+            'security/controls',
+            'security/production-hardening-checklist',
+            'security/least-privilege-tokens',
+            'security/api-mediated-access',
+            'security/process-isolation',
+            'security/security-fixes',
+            'security/responsible-disclosure',
+          ],
+        },
+        'troubleshooting',
+        'changelog',
       ],
     },
-    {
-      type: 'category',
-      label: 'Security',
-      collapsed: true,
-      items: [
-        'security/overview',
-        'security/security-boundary',
-        'security/white-paper',
-        'security/threat-model',
-        'security/controls',
-        'security/production-hardening-checklist',
-        'security/least-privilege-tokens',
-        'security/api-mediated-access',
-        'security/process-isolation',
-        'security/security-fixes',
-        'security/responsible-disclosure',
-      ],
-    },
-    'troubleshooting',
-    'changelog',
   ],
 };
 

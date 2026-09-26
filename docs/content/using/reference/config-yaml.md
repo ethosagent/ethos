@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -13,16 +13,29 @@ updated: 2026-09-25
 
 The full field set lives in the `EthosConfig` interface in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). `parseConfigYaml` reads values; `writeConfig` writes them. Fields marked `@internal` are managed by the runtime (e.g. `activeContext` by `ethos set`) — do not hand-edit them.
 
+A key the parser never reads, such as a misspelling, is kept in the file but has no effect. It produces a warning naming the key and, when one is close, the key it was probably meant to be: `config.yaml: 'personalty' has no effect — the config parser did not read it; did you mean 'personality'?`. `ethos doctor` prints these warnings, as do `ethos serve`, `ethos gateway` and `ethos boot` at startup. A warning never stops startup. Keys that only the web UI reads (`approvalMode`, `verbosity`, `debugMode`, `contextLayering`, the `display.voice_*` tuning keys) are not reported. The check lives in `ConfigKeyUse` in the same file. It does not yet cover the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`, `channel_filter.*` or `models.*`.
+
 ## Minimal example {#minimal-example}
 
 ```yaml
+schemaVersion: 1
 provider: anthropic
-model: claude-opus-4-7
-apiKey: sk-ant-...
+model: claude-sonnet-5
+apiKey: ${secrets:providers/anthropic/apiKey}
 personality: researcher
 ```
 
-This is what `ethos setup` writes for a default Anthropic install. Everything below is optional.
+This is what `ethos setup` writes for a default Anthropic install. The key value itself lives in the secrets vault (`~/.ethos/secrets/providers/anthropic/apiKey`); config.yaml carries only the reference. Everything below is optional.
+
+## schemaVersion {#schema-version}
+
+Type: integer · Default: `1` · Required: no
+
+Config file schema version. `writeConfig` emits it as the first line of every write; the current version is `1` (`CURRENT_ETHOS_CONFIG_SCHEMA_VERSION`). A file without the line is treated as `schemaVersion: 1`, with a one-time startup warning suggesting `ethos setup` or adding the line by hand.
+
+```yaml
+schemaVersion: 1
+```
 
 ## provider {#provider}
 
@@ -36,22 +49,22 @@ provider: anthropic
 
 ## model {#model}
 
-Type: string · Default: `claude-opus-4-7` · Required (effectively)
+Type: string · Default: `claude-sonnet-5` · Required (effectively)
 
-Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`.
+Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser falls back to `claude-sonnet-5` when the line is absent; `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`), which for Anthropic is also `claude-sonnet-5`.
 
 ```yaml
-model: claude-opus-4-7
+model: claude-sonnet-5
 ```
 
 ## apiKey {#api-key}
 
-Type: string · Default: empty · Required
+Type: secret reference · Default: empty · Required
 
-Primary provider API key. For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
+Primary provider API key, as a `${secrets:<ref>}` reference. `ethos setup` stores the value in the vault under `providers/<provider>/apiKey` and writes the reference here; rotate it with `ethos secrets set providers/<provider>/apiKey <value>`. Every write refuses a recognizable plaintext key in this field (`validateNoPlaintextSecrets` in `packages/config/src/index.ts`). For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
 
 ```yaml
-apiKey: sk-ant-...
+apiKey: ${secrets:providers/anthropic/apiKey}
 ```
 
 ## personality {#personality}
@@ -129,6 +142,8 @@ memoryApproval.ttlDays: 30
 Notes:
 
 - Cap and TTL apply to every queue over one deployment — the runtime gate, `ethos memory pending`, and the web Pending tab.
+- `all` also gates consolidation: both the inline fallback and the nightly pass's MEMORY.md / USER.md rewrite wait in the queue as `consolidation` entries (`MemoryEditing.consolidation` in [packages/wiring/src/memory-backend.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/memory-backend.ts)). The nightly pass still updates its `memory-meta.json` decay sidecar straight away.
+- Every backend is gated, `memory: vector` included. Under vector an approved candidate is written into `memory.db` and records no history entry, because vector keeps no history. (`composeGatedVectorMemory` and `createPendingMemoryStore` in [packages/wiring/src/memory-backend.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/memory-backend.ts).)
 - A change takes effect on restart, like `memory` itself.
 
 ## memoryCapture.evidenceSessions {#memory-capture-evidence-sessions}
@@ -363,6 +378,35 @@ Notes:
 - Unlike Slack and Telegram, Discord needs no extra platform-side switch for messages nobody addressed to the bot. The **Message Content Intent** the adapter already requires for mentions covers them too — see [Confirm intents](../../platforms/discord.md#3-confirm-intents).
 - **Per-channel overrides cannot be set on Discord.** The adapter reads a per-channel override store (`ChannelOverrideStore`, JSONL under `~/.ethos/discord/<botKey>/`) and a stored entry wins over this key, but no command or API writes one — Slack's `/ethos channel-mode` has no Discord equivalent. This key is the only way to put a Discord channel into `observe` today, and it applies to every channel the bot can see. `/ethos help` prints the channel's effective mode.
 
+## discord.approvalRoleIds {#discord-approval-role-ids}
+
+Type: comma-separated list of Discord role ids · Default: unset
+
+Roles whose members may click **Approve** / **Deny** on a Discord approval card. Unset, the adapter refuses every click with "Approval roles not configured. No one can approve." (`DiscordAdapter.handleApprovalDecision` in [extensions/platform-discord/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/platform-discord/src/index.ts)), and each approval is denied when its timeout expires.
+
+```yaml
+discord.approvalRoleIds: 1234567890123456789,9876543210987654321
+```
+
+Notes:
+
+- A role check comes first. The approval coordinator then accepts only the bound decider: the requester in a DM, the platform owner in a group.
+- Read once at gateway startup. Restart the gateway after editing.
+
+## discord.post_thinking_placeholder {#discord-post-thinking-placeholder}
+
+Type: boolean · Default: `true`
+
+The "Thinking…" placeholder message the Discord adapter posts while a turn runs, so a channel is not silent between the user's message and the reply. `false` disables it — no placeholder is posted, and the reply arrives as the first message. Parsed into `EthosConfig.discordPostThinkingPlaceholder` ([`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)); a value that is neither `true` nor `false` is dropped and reads as unset.
+
+```yaml
+discord.post_thinking_placeholder: false
+```
+
+Notes:
+
+- Read once at gateway startup. Restart the gateway after editing.
+
 ## slackBotToken {#slack-bot-token}
 
 Type: string · Default: unset
@@ -407,6 +451,25 @@ Notes:
 - Read once at gateway startup. Restart the gateway after editing.
 - **The adapter's own fallback is `all`, not `mention_only`.** `DEFAULT_CHANNEL_MODE` in [`extensions/platform-whatsapp/src/config.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/platform-whatsapp/src/config.ts) is `all`, because an unset mode has always meant "answer every group message" for code that constructs `WhatsAppAdapter` directly and flipping it would silence a working embedder on upgrade. The gateway never leaves it unset — it passes `default_mode ?? 'mention_only'` — so an `ethos gateway` deployment gets `mention_only` like every other platform. The `all` fallback is reachable only by embedding the adapter yourself.
 - **Per-chat overrides cannot be set on WhatsApp.** The adapter reads a per-chat override store (`ChannelOverrideStore`, JSONL under `~/.ethos/whatsapp/<botKey>/`) and a stored entry wins over this key, but no command or API writes one — Slack's `/ethos channel-mode` has no WhatsApp equivalent. This key is the only way to put a WhatsApp group into `observe` today, and it applies to every group that account is in.
+
+## \<bot\>.budget.dailyUsd {#bot-daily-budget}
+
+Type: positive number (USD) · Default: unset (no daily cap)
+
+Caps what one channel bot may spend per UTC day. Set it on the bot's own entry: `telegram.bots.<i>.budget.dailyUsd`, `slack.apps.<i>.budget.dailyUsd` or `whatsapp.<i>.budget.dailyUsd`.
+
+```yaml
+telegram.bots.0.budget.dailyUsd: 5
+```
+
+Notes:
+
+- Once the bot's spend since 00:00 UTC meets the cap, each new message gets one reply saying so, and no agent turn runs until the next UTC day. `Gateway.enqueueTurn` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts) enforces it.
+- Spend is the same figure `ethos usage` reports, narrowed to that bot's sessions. The gateway reads it at most once a minute and adds its own turns' costs in between. Tool-reported costs are not in that figure, so they do not count toward this cap.
+- `/budget` in a chat shows the bot's spend today against this cap, next to the session cap. `/budget reset` clears only the session cap, never this one.
+- A value that is not a positive number is a parse error, and the bot entry is dropped. The legacy scalar bots (`telegramToken`, `discordToken`, email) have no entry to hold it, so they cannot be capped this way.
+- If the spend cannot be read, the turn runs, and the gateway records a `gateway.daily_budget_unreadable` event.
+- This is an operator setting, not part of a personality: two deployments of the same personality can set different caps. The per-session cap is [`budgetCapUsd`](./personality-yaml.md#budget-cap-usd).
 
 ## emailImapHost {#email-imap-host}
 
@@ -562,7 +625,7 @@ Per-category TTLs for the observability store and the observe-mode channel trans
 
 | Field | Default | Description |
 |---|---|---|
-| `retention.messages` | `365d` | Conversation message history. |
+| `retention.messages` | `365d` | Conversation message history. The same window also removes a session row, with its compaction and decision rows, once the row has not been updated inside the window and holds no message inside it. `ethos gateway start` and `ethos boot` run that session prune at startup and then hourly (`pruneExpiredSessions` in [session-retention.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/session-retention.ts)); `forever` turns it off. |
 | `retention.traces` | `90d` | Turn traces. |
 | `retention.spans` | `90d` | Tool / LLM spans inside traces. |
 | `retention.blobs` | `7d` | Large response payloads stored out-of-band. |
@@ -584,7 +647,7 @@ retention.events.install: forever
 Notes:
 
 - **A per-personality window for `retention.channelTranscript` prunes nothing, and is refused.** Observe-mode transcripts live in one `~/.ethos/channel-transcript.db` with no personality column, and the nightly job reads the global `retention.channelTranscript` only. Both setters refuse the combination and name the reason: `ethos retention set channelTranscript <duration> --personality <id>`, and the web Settings page — where the Personality column offers only `Global` for this subkey, and a save carrying one is rejected before it is written. Set the global key instead. A value an earlier build stored is still cleared the usual way: `ethos retention reset channelTranscript --personality <id>`, or removing the row in Settings and saving.
-- **Pruning runs once a night, at 03:00 local time, and a missed run is not made up.** All retention categories are aged out by a single system cron job (`observability-prune`) on a fixed `0 3 * * *` schedule that no config key changes. That job is created with `missedRunPolicy: skip`, so a machine that was asleep or powered off at 03:00 rolls the run forward rather than executing it late — a laptop that is never awake at 03:00 never prunes anything, indefinitely and silently. There is no prune at startup. Run Ethos on a machine that is up at 03:00 if a window here matters to you.
+- **Pruning runs once a night, at 03:00 local time, and a missed run is not made up.** All retention categories are aged out by a single system cron job (`observability-prune`) on a fixed `0 3 * * *` schedule that no config key changes. That job is created with `missedRunPolicy: skip`, so a machine that was asleep or powered off at 03:00 rolls the run forward rather than executing it late — a laptop that is never awake at 03:00 never prunes anything, indefinitely and silently. There is no prune at startup, apart from the session-row prune described under `retention.messages`. Run Ethos on a machine that is up at 03:00 if a window here matters to you.
 - **`ethos data prune` does not cover `retention.channelTranscript`.** It prunes the observability store only. The channel transcript is a separate database with no manual prune command; the nightly job is the only thing that ages it out.
 - **Per-message audit events outlive the transcript text they describe.** Every message an observe-mode channel records also emits a `channel.observed` audit event carrying the platform, chat id and sender id — no message text, but a durable record of who spoke where and when. That event is in the `audit` category (`365d`) and in a different database, so it survives the transcript's `30d` window by roughly 12×. Lowering `retention.channelTranscript` does not lower it; set `retention.events.audit` too if that matters to you.
 
@@ -634,6 +697,32 @@ Notes:
 - **Delivery is what consumes a lane.** A cursor advances only on a confirmed delivery, so a failed send, a missing owner, a refused owner or a crash mid-run all leave the messages to be digested again. Duplicates are possible by design; a lost digest is not.
 - **The digest turn gets no tools, no memory, no session and no plugin hooks.** It is a bare model call, not an agent turn — the one place in the system where unfiltered third-party text meets a model. See [Security controls](../../security/controls.md).
 - **Two runs on one machine cannot overlap.** A run holds `~/.ethos/channel-digest.lock` for its whole duration; a second run on the same host skips rather than waiting, names the process holding the lock in its run output, and records a `channel.digest_skipped` event. A restart overlapping its predecessor is covered. An `ethos gateway start` beside an `ethos boot` never gets that far: both take the gateway lock, and the second exits `3`. **The guarantee stops at the host boundary.** The lock identifies its holder by process id and boot id, both facts about the local machine, so a lock written by another host can read as abandoned and be taken over rather than respected — two machines sharing one `~/.ethos` over a network mount do not exclude each other. Both then send the same rooms to the model, deliver the same digest to the same owner, and the later write erases the cursors the earlier one advanced. Run one gateway per `~/.ethos`.
+
+## notifications.* {#notifications}
+
+Type: object · Default: off
+
+Quiet hours for notices the gateway sends without being asked: a finished background job's wake notice and an owner notice such as a post-call summary. Inside the window the notice is held in `~/.ethos/notify-queue.db` and delivered within a minute of the window ending, through the same delivery ledger as every other tracked send. A reply to a message the user just sent is never held, and neither is a notice about that message (a dead-lettered or interrupted turn).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `notifications.quietHours` | `HH:MM-HH:MM` | unset | The daily window, in `notifications.timezone`. A start later than the end crosses midnight. A malformed value is a warning and turns quiet hours off. |
+| `notifications.timezone` | IANA zone | the host's zone | The zone the window is read in, e.g. `Europe/London`. An unknown zone is a warning and falls back to the host's. |
+| `notifications.bots.<botKey>.quietHours` | `HH:MM-HH:MM` \| `off` | unset | A per-bot window, keyed by the bot's `botKey` (its `id:` or derived key). `off` turns quiet hours off for that bot only. |
+
+```yaml
+notifications.quietHours: 22:00-07:00
+notifications.timezone: Europe/London
+notifications.bots.work-slack.quietHours: off
+```
+
+In any chat, `/mute <30m|2h|1d>` holds that chat's notices for the given time, outside quiet hours too, and `/mute off` ends it early. A mute lasts at most 30 days, is stored beside the chat's session in `~/.ethos/gateway/lanes/<botKey>.json`, and survives a restart. In a group chat only the owner set in `channel_filter.<platform>.ownerUserId` can mute or unmute; a group on a platform with no owner refuses it (`Gateway.handleMuteCommand`). Plain `/mute`, which shows the current mute, stays open to everyone.
+
+Notes:
+
+- **Held, never dropped.** The hold and the release are `Gateway.noticeHoldReason` and `Gateway.releaseHeldNotices` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts). The release runs at the top of every delivery sweep: at boot and every 60 seconds. If no held-notice store is wired, which only happens outside `ethos gateway start` and `ethos boot`, the notice is sent at once rather than kept only in memory.
+- **What is not held yet.** Cron job output, watcher wakes, the channel digest and `deliver: 'parent'` background reviews are delivered on their own schedules and ignore quiet hours.
+- **Daylight saving.** The window is read from the zone's wall clock each time it is checked, so it moves with a DST change.
 
 ## logs.rotation {#logs-rotation}
 
@@ -707,7 +796,7 @@ Notes:
 
 Type: boolean · Default: `false`
 
-Allows a goal created from the web UI or API to carry a check with a verify command. When the goal is judged, the command runs through `sh -c` and the check passes if it exits `0` (`defaultExecCommand`, [`extensions/goal-runner/src/judge.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/goal-runner/src/judge.ts)).
+Allows a goal created from the web UI or API to carry a check with a verify command. When the goal is judged, the command runs as the goal's personality would run a `terminal` call, and the check passes if it exits `0` (`createAcceptanceCheckExecutor`, [`packages/wiring/src/acceptance-check-executor.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/acceptance-check-executor.ts)).
 
 ```yaml
 goals.allowCheckCommands: true
@@ -717,7 +806,7 @@ With the key off, a create request whose checks carry a non-empty command is ref
 
 Notes:
 
-- **The command runs on the host, outside the sandbox, as the user running Ethos.** It is not confined by the personality's toolset, `fs_reach` or the execution backend. Anyone who can create a goal through the web UI or API can then run arbitrary shell commands on this machine. Enable this key only when every such person is already trusted with shell access.
+- **The command runs wherever that personality's shell runs.** It is refused when the personality does not hold `terminal`, when a `safety.denyRules` entry matches, or when the approval check would flag it (a judge pass has nobody to approve, so a flagged command fails the check). Under a host-local execution posture `terminal` is always flagged, so a local personality's verify commands never run on the host. Anyone who can create a goal through the web UI or API can still run commands inside the personality's sandbox. Enable this key only when every such person is trusted with that personality's shell.
 - Commands time out after 30 seconds.
 - The key is read on every create, so a change takes effect without a restart. Any value other than the literal `true` reads as `false`.
 - The goal detail page shows each check's command, so you can see what a goal will run.
@@ -1051,12 +1140,12 @@ Notes:
 
 Type: dotted group · Default: no policy — the consumer's own defaults apply
 
-A phone number is the one surface strangers reach without being invited. This block is the answering policy: who gets through, what a call may cost, and where the summary lands. Callers outside `allowlist` are answered by `receptionist` in a restricted scope — no owner memory, no privileged tools — and are refused outright when no `receptionist` is set.
+A phone number is the one surface strangers reach without being invited. This block is the answering policy: who gets through, what a call may cost, and where the summary lands. Every caller is answered by `receptionist` in a restricted scope — no owner memory, no privileged tools — and is refused outright when no `receptionist` is set. Caller ID is not identity: the calling party sets it, so an `allowlist` match only decides pre-warm (`decideInboundCall`, `extensions/platform-voice/src/sip/inbound-gate.ts`).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `allowlist` | comma-separated list | unset | Caller numbers that reach the owner's own personality. E.164 patterns using the same `*` wildcard grammar as [`voice.bots[].match`](#voice-bots), matched against the whole number. Entries are trimmed and empties dropped. Unset means nobody is allowlisted — every caller goes to `receptionist`, or is refused if there is none. |
-| `receptionist` | string | unset | Personality id answering callers that are not on the allowlist. Its own memory (scope `personality:<id>`, fixed by turn setup — there is no scope setting) and its `toolset` *are* the restriction, and a call turn carries no user id, so no caller's or owner's `USER.md` is read; there is no second restriction system. Unset makes a non-allowlisted call a refusal (`screened`, reason `not_allowlisted`) rather than a screened conversation. |
+| `allowlist` | comma-separated list | unset | Caller numbers treated as known for `prewarm: allowlisted`. E.164 patterns using the same `*` wildcard grammar as [`voice.bots[].match`](#voice-bots), matched against the whole number. Entries are trimmed and empties dropped. A match does **not** reach the owner's own personality: caller ID is spoofable and no verification step exists, so every caller goes to `receptionist`, or is refused if there is none. |
+| `receptionist` | string | unset | Personality id answering every inbound caller. Its own memory (scope `personality:<id>`, fixed by turn setup — there is no scope setting) and its `toolset` *are* the restriction, and a call turn carries no user id, so no caller's or owner's `USER.md` is read; there is no second restriction system. Unset makes every call a refusal (`screened`, reason `not_allowlisted`, or `caller_unverified` when the caller ID matched `allowlist`) rather than a screened conversation. |
 | `concurrencyCap` | integer | `2` | Ceiling on concurrent inbound calls; callers over the cap get busy handling and the owner is notified. Must be a positive integer — `0` and fractions are parse errors, not "no cap". |
 | `perCallerPerHour` | integer | unset | Per-caller call ceiling inside a rolling hour, evaluated over a sliding window. Positive integer. |
 | `dailyBudgetUsd` | number | unset | Spend ceiling in USD per day across all inbound calls, reset on the UTC day boundary. Must be greater than zero. Counts **LLM token spend only**, at the provider's own estimate — STT, TTS, LiveKit media and PSTN minutes are not in the total, so the cap trips on real spend but trips late relative to a day's true cost. Browser talk-mode and channel voice notes do not route through the call dispatcher and never count against it. |
@@ -1086,9 +1175,8 @@ Notes:
 
 - **Malformed values are parse errors, not ignored.** Unlike the `voice.wake.*` knobs, a bad value here drops the whole `voice.inbound` block and reports the offending key. A silently-dropped budget or concurrency cap costs real money on a surface strangers can dial.
 - `owner.platform` and `owner.chatId` are required together. One without the other is a parse error naming the missing key, rather than a half-built destination that quietly drops the notification this block exists to deliver.
-- **An explicitly empty allowlist is not expressible.** A flat `key: value` line with no value does not parse, so `voice.inbound.allowlist:` and an absent key are the same file. Set `voice.inbound.receptionist` and leave `allowlist` out — that *is* the screen-everyone policy.
 - An unrecognised field name under `voice.inbound.` is a parse error, so a typo cannot look configured while doing nothing.
-- Gates run cheapest-refusal-first: daily budget → per-caller rate → concurrency → allowlist. A refusal releases whatever it took, so a wall of refused calls leaves the concurrency counter at zero rather than wedging the line.
+- Gates run cheapest-refusal-first: daily budget → per-caller rate → concurrency → receptionist. A refusal releases whatever it took, so a wall of refused calls leaves the concurrency counter at zero rather than wedging the line.
 - The end-to-end behaviour of every key here is in [Give an agent a phone number](../how-to/answer-phone-calls.md).
 
 ## voice.bargeIn.\<surface\>.\<field\> {#voice-barge-in}
@@ -1148,6 +1236,16 @@ Notes:
 
 - A value saved through Settings is clamped to the range. A value that will not parse as a number falls back to the default rather than failing the load — these keys are read on every talk-mode turn, so a typo must not take the lane down.
 - The five keys are independent. Set the one that is wrong; the rest keep their defaults.
+
+## display.slow_turn_notice_ms {#display-slow-turn-notice}
+
+Type: integer (ms) · Default: `8000` · Required: no
+
+How long a non-streaming gateway lane stays silent before it gets its one per-turn "working on it" ack. `0` disables the whole notice family for non-streaming lanes, not just the first timer. Streaming lanes are unaffected — their tool progress edits the draft message in place — and email lanes never get the notice, whatever the value. A negative or non-numeric value is ignored and the default applies.
+
+```yaml
+display.slow_turn_notice_ms: 12000
+```
 
 ## voice.wake.\<field\> {#voice-wake}
 
@@ -1318,6 +1416,10 @@ Notes:
 Type: managed · Required: no
 
 Managed by `ethos set personality <id>` / `ethos set team <name>`. The runtime writes two dotted keys: `activeContext.type` (`personality` | `team`) and `activeContext.name` (id or team name). Hand-editing is not supported — values are interpreted only when both keys are present and `type` is recognised.
+
+Notes:
+
+- `activeContext.type: personality` is deprecated for one release: on load it is migrated to `personality: <name>` and the file is rewritten automatically, with a warning saying no action is needed (`migrateActiveContextPersonality` in `packages/config/src/index.ts`). The team form is unchanged — `activeContext` now only names a team.
 
 ## File location and permissions {#file-location}
 

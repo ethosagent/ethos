@@ -79,7 +79,7 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
           type: 'string',
           enum: ['anyone', 'originator'],
           description:
-            "Group chats: who may answer. 'anyone' (default) or 'originator' to restrict to the user who triggered the turn.",
+            "Group chats: who may answer. 'originator' (default) restricts it to the user who triggered the turn; 'anyone' lets any member of the chat answer. A background task defaults to 'anyone' only when no one is recorded as having started it.",
         },
       },
     },
@@ -98,7 +98,23 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
           ? args.timeout_s
           : DEFAULT_TIMEOUT_S;
       const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(MIN_TIMEOUT_S, Math.round(timeoutRaw)));
-      const answerableBy = args.answerable_by === 'originator' ? 'originator' : 'anyone';
+      // Default 'originator' (S11): an omitted value must not let any group
+      // member answer. Enforced per surface by each `clarify-surface.ts`'s
+      // `gateAnswerer` against `surfaceContext.originatorUserId`. A background
+      // turn (`ctx.jobId`) leaves an omitted value to `ClarifyBridge.request`,
+      // which resolves it against the job's origin lane: 'originator' when the
+      // job recorded who started it (`BackgroundJob.originUserId`, stamped as
+      // `originatorUserId` by `resolveJobClarifyOrigin` in
+      // packages/wiring/src/build-agent-loop.ts), 'anyone' only when it did
+      // not (a cron-, web- or CLI-started job). Pinned by
+      // `__tests__/clarify-tool.test.ts` (S11) and the "omitted answerableBy"
+      // cases in packages/core/src/__tests__/clarify.test.ts.
+      const answerableBy =
+        args.answerable_by === 'anyone' || args.answerable_by === 'originator'
+          ? args.answerable_by
+          : ctx.jobId !== undefined
+            ? undefined
+            : 'originator';
 
       const startedAt = Date.now();
       try {
@@ -113,7 +129,7 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
           ...(options && options.length > 0 ? { options } : {}),
           ...(def !== undefined ? { default: def } : {}),
           timeoutMs: timeoutS * 1000,
-          answerableBy,
+          ...(answerableBy !== undefined ? { answerableBy } : {}),
           sessionId: ctx.sessionId,
           ...(ctx.jobId !== undefined ? { jobId: ctx.jobId } : {}),
           surfaceType: ctx.platform as ClarifySurfaceType,

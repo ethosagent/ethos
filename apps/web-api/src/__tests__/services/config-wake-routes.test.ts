@@ -119,7 +119,7 @@ describe('Settings → Voice wake routes', () => {
     });
     await expect(
       brittle.update({ wakeRoutes: { r: { phrase: 'hey', personality: 'researcher' } } }),
-    ).resolves.toEqual({ adoptedModels: [] });
+    ).resolves.toMatchObject({ adoptedModels: [] });
     expect(await yaml()).toContain('voice.wake.routes.r.phrase: hey');
   });
 

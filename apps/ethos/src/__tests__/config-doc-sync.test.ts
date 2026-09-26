@@ -13,14 +13,25 @@
 //   (b) A YAML/code-block line of the form `<field>: <value>  # <comment>` where
 //       the comment contains at least one word — i.e. the YAML example
 //       block describes each field inline.
+//   (c) An H2 section heading naming the field or a dotted path under it
+//       (`## memoryVault.*`, `## evolver.cron_enabled`). Both reference pages
+//       document each key as its own section per the config-field reference
+//       schema in .agents/skills/docs/SKILL.md, so the heading IS the
+//       documented form there.
 //
 // Bare substring match is intentionally not enough: "the field name appeared
 // somewhere in the file" is the bar that gets gamed in two years by future-you
 // pasting the type into a code block and calling it documented.
 //
+// The pages document ON-DISK config keys; where a key's spelling differs from
+// the interface field name (`displaySlowTurnNoticeMs` is the
+// `display.slow_turn_notice_ms` line), DOC_KEY_ALIASES carries the mapping.
+//
 // Internal/derived fields (populated by the loader, not user-set) are tagged
 // `@internal` in the source and skipped here. Adding a new user-facing field
-// without docs fails this test.
+// without docs fails this test — unless it is deliberately parked in the
+// UNDOCUMENTED_* roster below, which is a one-way ratchet: a parked field
+// that gains docs fails until its entry is removed.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,9 +42,6 @@ const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'index.ts'
 const PERSONALITY_SRC = join(REPO_ROOT, 'packages', 'types', 'src', 'personality.ts');
 // New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md;
 // PersonalityConfig fields live in using/reference/personality-yaml.md.
-// Both pages are Phase 3 stubs as of 2026-05-12 — the field-level assertions
-// below are suspended (describe.skip) until Phase 3 authors them. See
-// plan/docs_rewrite.md. Once authored, remove the `.skip` calls.
 const CONFIG_REFERENCE_DOC = join(
   REPO_ROOT,
   'docs',
@@ -54,6 +62,120 @@ const PERSONALITY_REFERENCE_DOC = join(
 interface FieldEntry {
   name: string;
   internal: boolean;
+}
+
+/**
+ * Interface field name → the on-disk key the reference page documents, where
+ * the two spellings differ. `parseConfigYaml` / `serializeConfigLines` in
+ * packages/config/src/index.ts own the real mapping; this table mirrors only
+ * the entries the doc-sync check needs.
+ */
+const DOC_KEY_ALIASES: Record<string, string> = {
+  discordPostThinkingPlaceholder: 'discord.post_thinking_placeholder',
+  displaySlowTurnNoticeMs: 'display.slow_turn_notice_ms',
+  evolverCronEnabled: 'evolver.cron_enabled',
+  evolverSchedule: 'evolver.schedule',
+};
+
+/**
+ * Fields the reference pages do not document yet (plan
+ * ux-feedback-and-config-clarity §6.8 re-enabled this suite against pages
+ * that never covered the full surface). Each entry is asserted UNdocumented,
+ * so documenting one fails the test until its entry is removed here — the
+ * roster only shrinks, and a NEW field cannot ship undocumented without a
+ * deliberate edit to this list.
+ */
+const UNDOCUMENTED_ETHOS_FIELDS = new Set([
+  'a2a',
+  'admin',
+  'allowUnattendedDangerousTools',
+  'apiVersion',
+  'approvalTimeoutMs',
+  'auxiliary',
+  'aws',
+  'awsProfile',
+  'backgroundMaxConcurrent',
+  'callCapture',
+  'channelFilter',
+  'channelToolsets',
+  'compaction',
+  'contextWindow',
+  'cron',
+  'decisions',
+  'displayBellOnComplete',
+  'displayBusyInputMode',
+  'displayCallAccent',
+  'displayCallStyle',
+  'displayDebugPanel',
+  'displayDebugPanelModel',
+  'displayMemoryNotices',
+  'displayResumeHint',
+  'displayResumeRecapTurns',
+  'displayStreamingEdits',
+  'displayToolPreviewLength',
+  'displayVerbosity',
+  'execution',
+  'gateway',
+  'grounding',
+  'idleWatcher',
+  'kanban',
+  'kanbanPoll',
+  'maxRetries',
+  'memoryCharLimits',
+  'memoryConsolidation',
+  'modelCatalog',
+  'modelRegistry',
+  'models',
+  'pauseClockCorrection',
+  'pauseLifecycle',
+  'personalitiesConfig',
+  'pluginsAutoInstall',
+  'quick_commands',
+  'region',
+  'requestTimeoutMs',
+  'storage',
+  'teamSupervisor',
+  'telemetry',
+  'toolLoading',
+  'toolLoop',
+  'toolOrder',
+  'toolPayloadLimitChars',
+  'toolSettings',
+  'webBaseUrl',
+  'webhooks',
+  'weeklyDigest',
+]);
+
+const UNDOCUMENTED_PERSONALITY_FIELDS = new Set([
+  'decisions',
+  'display',
+  'dreaming',
+  'evolution_approval_mode',
+  'memory',
+  'nightly',
+]);
+
+function escapeRe(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Form (c): an H2 heading whose key (markdown escapes stripped, `{#anchor}`
+ * suffix dropped, comma/slash groups split) equals the field or is a dotted
+ * path under it. `## toolset.yaml`, `## skills/` and
+ * `## fs_reach.read / fs_reach.write` all count for their fields.
+ */
+function headingDocuments(field: string, doc: string): boolean {
+  for (const line of doc.split('\n')) {
+    const m = line.match(/^##\s+(.+?)\s*(\{#[-\w]+\})?\s*$/);
+    if (!m) continue;
+    const text = (m[1] ?? '').replace(/\\([.<>*_])/g, '$1');
+    for (const candidate of text.split(/[,/]/)) {
+      const key = candidate.trim();
+      if (key === field || key.startsWith(`${field}.`)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -134,9 +256,17 @@ function extractFields(src: string, interfaceName: string): FieldEntry[] {
 }
 
 /**
- * Returns true if `field` is documented (form (a) or (b)) anywhere in `doc`.
+ * Returns true if `field` is documented (form (a), (b) or (c)) anywhere in
+ * `doc`, under its own name or its DOC_KEY_ALIASES spelling.
  */
 function isDocumented(field: string, doc: string): boolean {
+  const alias = DOC_KEY_ALIASES[field];
+  const names = alias ? [field, alias] : [field];
+  return names.some((name) => headingDocuments(name, doc) || bodyDocuments(name, doc));
+}
+
+/** Forms (a) and (b) for one name. */
+function bodyDocuments(field: string, doc: string): boolean {
   const lines = doc.split('\n');
 
   // (a) Table row matcher.
@@ -153,7 +283,7 @@ function isDocumented(field: string, doc: string): boolean {
     // (e.g. comma-separated grouped fields), or starts with `<field>` followed
     // by punctuation or whitespace (e.g. `<flag>` / `<alias>`).
     const fieldExact = firstCell === field || firstCell === `\`${field}\``;
-    const fieldGroup = new RegExp(`(^|[\\s,])\`${field}\`([\\s,]|$)`).test(firstCell);
+    const fieldGroup = new RegExp(`(^|[\\s,])\`${escapeRe(field)}\`([\\s,]|$)`).test(firstCell);
     if (!fieldExact && !fieldGroup) continue;
 
     if (restCells.length >= 3 && /[a-zA-Z]/.test(restCells)) return true;
@@ -184,7 +314,9 @@ function isDocumented(field: string, doc: string): boolean {
     const line = lines[i] ?? '';
 
     // YAML key form: `<field>: <value>` (with or without trailing comment).
-    const yamlMatch = line.match(new RegExp(`^\\s*${field}\\s*:\\s*([^#\\n]*)(#\\s*(.+))?$`));
+    const yamlMatch = line.match(
+      new RegExp(`^\\s*${escapeRe(field)}\\s*:\\s*([^#\\n]*)(#\\s*(.+))?$`),
+    );
     if (yamlMatch) {
       // (b1) inline comment
       const comment = (yamlMatch[3] ?? '').trim();
@@ -205,7 +337,7 @@ function isDocumented(field: string, doc: string): boolean {
     }
 
     // (b3) field name in this code line; look for prose in a ±5-line window.
-    if (new RegExp(`\\b${field}\\b`).test(line)) {
+    if (new RegExp(`\\b${escapeRe(field)}\\b`).test(line)) {
       const start = Math.max(0, i - 5);
       const end = Math.min(lines.length - 1, i + 5);
       for (let j = start; j <= end; j++) {
@@ -216,7 +348,7 @@ function isDocumented(field: string, doc: string): boolean {
         if (proseLine.startsWith('|')) continue; // table fragments handled in (a)
         if (proseLine.startsWith('#')) continue; // markdown headings aren't sentences
         // Must contain the field name AND ≥ 5 letter-words.
-        if (!new RegExp(`\\b${field}\\b`, 'i').test(proseLine)) continue;
+        if (!new RegExp(`\\b${escapeRe(field)}\\b`, 'i').test(proseLine)) continue;
         const words = proseLine.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w));
         if (words.length >= 5) return true;
       }
@@ -231,43 +363,62 @@ function safeRead(path: string): string {
 }
 
 describe('config surface doc-sync', () => {
-  // SUSPENDED until Phase 3 of the docs rewrite authors using/reference/config-yaml.md.
-  // See plan/docs_rewrite.md. Drop the `.skip` once the reference page has real content.
-  describe.skip('EthosConfig fields are documented in config-yaml.md', () => {
+  describe('EthosConfig fields are documented in config-yaml.md', () => {
     const src = readFileSync(ETHOS_CONFIG_SRC, 'utf-8');
     const fields = extractFields(src, 'EthosConfig');
     const doc = safeRead(CONFIG_REFERENCE_DOC);
 
     for (const field of fields) {
       if (field.internal) continue;
+      if (UNDOCUMENTED_ETHOS_FIELDS.has(field.name)) {
+        it(`tracks \`${field.name}\` as undocumented`, () => {
+          expect(
+            isDocumented(field.name, doc),
+            `EthosConfig.${field.name} is now documented in using/reference/config-yaml.md — ` +
+              `remove it from UNDOCUMENTED_ETHOS_FIELDS in this test.`,
+          ).toBe(false);
+        });
+        continue;
+      }
       it(`documents \`${field.name}\``, () => {
         expect(
           isDocumented(field.name, doc),
           `EthosConfig.${field.name} is not documented in using/reference/config-yaml.md.\n` +
             `Add either:\n` +
-            `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it, or\n` +
-            `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`.\n` +
+            `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it,\n` +
+            `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`, or\n` +
+            `  (c) a \`## ${field.name}\` reference section (the config-field schema).\n` +
             `If \`${field.name}\` is not user-facing, mark it with \`@internal\` in packages/config/src/index.ts.`,
         ).toBe(true);
       });
     }
   });
 
-  // SUSPENDED until Phase 3 authors using/reference/personality-yaml.md.
-  describe.skip('PersonalityConfig fields are documented in personality-yaml.md', () => {
+  describe('PersonalityConfig fields are documented in personality-yaml.md', () => {
     const src = readFileSync(PERSONALITY_SRC, 'utf-8');
     const fields = extractFields(src, 'PersonalityConfig');
     const doc = safeRead(PERSONALITY_REFERENCE_DOC);
 
     for (const field of fields) {
       if (field.internal) continue;
+      if (UNDOCUMENTED_PERSONALITY_FIELDS.has(field.name)) {
+        it(`tracks \`${field.name}\` as undocumented`, () => {
+          expect(
+            isDocumented(field.name, doc),
+            `PersonalityConfig.${field.name} is now documented in using/reference/personality-yaml.md — ` +
+              `remove it from UNDOCUMENTED_PERSONALITY_FIELDS in this test.`,
+          ).toBe(false);
+        });
+        continue;
+      }
       it(`documents \`${field.name}\``, () => {
         expect(
           isDocumented(field.name, doc),
           `PersonalityConfig.${field.name} is not documented in using/reference/personality-yaml.md.\n` +
             `Add either:\n` +
-            `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it, or\n` +
-            `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`.\n` +
+            `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it,\n` +
+            `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`, or\n` +
+            `  (c) a \`## ${field.name}\` reference section (the config-field schema).\n` +
             `If \`${field.name}\` is internal/derived (populated by the loader, not user-set), mark it with \`@internal\` in packages/types/src/personality.ts.`,
         ).toBe(true);
       });

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { ChannelOverrideStore, evaluateChannelMode } from '@ethosagent/core';
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import type {
   AdapterCapabilities,
   AdapterVoiceCaps,
@@ -566,6 +567,74 @@ function toTelegramInputFile(att: Attachment): InputFile {
   return new InputFile(att.url, name);
 }
 
+/**
+ * The built-in half of Telegram's `/` menu, derived from the shared registry's
+ * `gateway` surface (`SLASH_COMMANDS` in @ethosagent/surface-kit) — the same
+ * list the gateway executes (`PLATFORM_COMMANDS`, pinned by
+ * extensions/gateway/src/__tests__/slash-registry-drift.test.ts), so a newly
+ * registered channel command appears here without a second edit. Aliases
+ * (`/reset`) and the owner's pairing commands (`/allow`, `/deny`,
+ * `/communications`) stay out of a menu every chat member sees; they still run
+ * when typed. Pinned by `__tests__/phase1.test.ts` ('Commands menu').
+ */
+const MENU_EXCLUDED = new Set(['allow', 'deny', 'communications']);
+
+/** Bound on `TelegramAdapter.approvalDeciders` — distinct recent clickers. */
+const APPROVAL_DECIDER_CAP = 256;
+/**
+ * Bot API 400 descriptions that no retry fixes: the chat is gone, or the bot
+ * lacks the right to post in it until an operator changes that.
+ */
+const PERMANENT_TELEGRAM_400 =
+  /chat not found|not enough rights to send|need administrator rights|CHAT_WRITE_FORBIDDEN|CHAT_RESTRICTED/i;
+
+/**
+ * Does `err` (grammy's `GrammyError`, read by shape: `error_code` +
+ * `description`) say this bot can never post to this chat as things stand?
+ * Every 403 does — blocked, kicked, user deactivated, can't initiate, not a
+ * member — and so do the 400s in {@link PERMANENT_TELEGRAM_400}. A 429 or a
+ * 5xx is transient, and any other 400 (message too long, bad markup) is about
+ * this message, not the chat.
+ */
+function isPermanentTelegramError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = 'error_code' in err ? err.error_code : undefined;
+  const description = 'description' in err ? err.description : undefined;
+  if (code === 403) return true;
+  return (
+    code === 400 && typeof description === 'string' && PERMANENT_TELEGRAM_400.test(description)
+  );
+}
+
+/** `{ ok: false }` for a failed Bot API call, marked `permanent` when it is. */
+function telegramFailure(err: unknown): DeliveryResult {
+  const error = err instanceof Error ? err.message : String(err);
+  return isPermanentTelegramError(err)
+    ? { ok: false, error, permanent: true }
+    : { ok: false, error };
+}
+
+/**
+ * Once any part of a reply has reached the chat, report it delivered: the
+ * gateway's delivery sweep redelivers a whole `ok: false` reply, which would
+ * re-post the parts that landed on every retry. The lost tail is named in
+ * `error`.
+ */
+function telegramPartial(ids: string[], total: number, err: unknown): DeliveryResult {
+  const error = err instanceof Error ? err.message : String(err);
+  return {
+    ok: true,
+    messageId: ids[0],
+    error: `partial: ${ids.length} of ${total} chunks delivered; ${error}`,
+  };
+}
+
+function telegramMenuCommands(): Array<{ command: string; description: string }> {
+  return slashCommandsForSurface('gateway')
+    .filter((c) => !c.aliasOf && !MENU_EXCLUDED.has(c.name))
+    .map((c) => ({ command: c.name, description: c.description }));
+}
+
 export class TelegramAdapter
   implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
 {
@@ -629,6 +698,14 @@ export class TelegramAdapter
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
+  /**
+   * Display names of approval-card clickers, keyed by their numeric id.
+   * `ApprovalDecisionEvent.decidedBy` must stay the numeric id (the
+   * coordinator binds on it), so `updateApprovalCard` resolves it back to a
+   * human-readable name here. Bounded: oldest entry evicted past
+   * `APPROVAL_DECIDER_CAP`.
+   */
+  private readonly approvalDeciders = new Map<string, { username?: string; firstName?: string }>();
   /** Outbox-card button-click handler, wired by the outbox wiring. */
   private outboxDecisionHandler?: (event: OutboxDecisionEvent) => void | Promise<void>;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
@@ -828,16 +905,7 @@ export class TelegramAdapter
     }
 
     // --- Commands menu (best-effort) ---
-    await this.bot.api
-      .setMyCommands([
-        { command: 'start', description: 'Introduce the bot' },
-        { command: 'new', description: 'Start a fresh session' },
-        { command: 'help', description: 'Show available commands' },
-        { command: 'personality', description: 'Show the bound personality' },
-        { command: 'usage', description: 'Session tokens + cost' },
-        { command: 'stop', description: 'Abort the current reply' },
-      ])
-      .catch(() => {});
+    await this.bot.api.setMyCommands(telegramMenuCommands()).catch(() => {});
 
     // --- Load persistence stores (Gap 4) ---
     await this.channelOverrides?.load();
@@ -1061,10 +1129,25 @@ export class TelegramAdapter
           const approvalId = data.slice(isApprove ? 8 : 5);
           if (approvalId) {
             const decision: 'allow' | 'deny' = isApprove ? 'allow' : 'deny';
+            if (event.userId !== undefined) {
+              this.approvalDeciders.delete(event.userId);
+              this.approvalDeciders.set(event.userId, {
+                username: cq.from?.username,
+                firstName: cq.from?.first_name,
+              });
+              if (this.approvalDeciders.size > APPROVAL_DECIDER_CAP) {
+                const oldest = this.approvalDeciders.keys().next().value;
+                if (oldest !== undefined) this.approvalDeciders.delete(oldest);
+              }
+            }
             const decisionEvent: ApprovalDecisionEvent = {
               approvalId,
               decision,
-              decidedBy: event.username ?? event.userId ?? 'unknown',
+              // The numeric id, the same value `InboundMessage.userId` carries:
+              // `ApprovalCoordinator.settle` (apps/ethos) compares it to the
+              // bound requester/owner and drops any other decider, so a
+              // @username here left every approval hanging to its timeout.
+              decidedBy: event.userId ?? 'unknown',
               channelId: event.chatId,
               messageTs: event.messageId,
             };
@@ -1306,22 +1389,27 @@ export class TelegramAdapter
             const sent = await this.bot.api.sendMessage(Number(chatId), body, baseOpts);
             ids.push(String(sent.message_id));
           } catch (retryErr) {
-            return {
-              ok: false,
-              error: retryErr instanceof Error ? retryErr.message : String(retryErr),
-            };
+            if (ids.length > 0) return this.partialSend(ids, totalChunks, retryErr);
+            return telegramFailure(retryErr);
           }
         } else if (errMsg.includes('parse')) {
           // HTML/Markdown parse errors — retry as plain text (observable fallback)
           this.logger?.warn(
             `[telegram] HTML parse fallback chunk=${i + 1}/${totalChunks} hash=${chunkHash(raw)}`,
           );
-          const sent = await this.bot.api
-            .sendMessage(Number(chatId), raw, threadOpt)
-            .catch(() => null);
-          if (sent) ids.push(String(sent.message_id));
+          // A fallback that also fails is a missing chunk, never success:
+          // partial when an earlier chunk landed, else a (possibly
+          // permanent) failure. Pinned by `__tests__/send-delivery.test.ts`.
+          try {
+            const sent = await this.bot.api.sendMessage(Number(chatId), raw, threadOpt);
+            ids.push(String(sent.message_id));
+          } catch (fallbackErr) {
+            if (ids.length > 0) return this.partialSend(ids, totalChunks, fallbackErr);
+            return telegramFailure(fallbackErr);
+          }
         } else {
-          return { ok: false, error: errMsg };
+          if (ids.length > 0) return this.partialSend(ids, totalChunks, err);
+          return telegramFailure(err);
         }
       }
     }
@@ -1382,8 +1470,16 @@ export class TelegramAdapter
       }
       return { ok: true, messageId: ids[0] };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      const leadPart = caption.length > 0 && !captionFitsFirst ? 1 : 0;
+      if (ids.length > 0) return telegramPartial(ids, atts.length + leadPart, err);
+      return telegramFailure(err);
     }
+  }
+
+  /** {@link telegramPartial}, remembering the ids that did land. */
+  private partialSend(ids: string[], total: number, err: unknown): DeliveryResult {
+    this.rememberChunkIds(ids);
+    return telegramPartial(ids, total, err);
   }
 
   /**
@@ -1410,7 +1506,7 @@ export class TelegramAdapter
           : await this.bot.api.sendAudio(Number(chatId), input, sendOpts);
       return { ok: true, messageId: String(sent.message_id) };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return telegramFailure(err);
     }
   }
 
@@ -1638,8 +1734,42 @@ export class TelegramAdapter
     decidedBy: string;
   }): Promise<DeliveryResult> {
     const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
-    const text = `Tool: ${input.toolName} — ${verb} by @${input.decidedBy}`;
-    return this.editToPlainText(input.chatId, input.messageTs, text);
+    const prefix = `Tool: ${input.toolName} — ${verb} by `;
+    // A non-numeric decider (the coordinator's system/timeout decider) is
+    // rendered as before. A numeric one is a Telegram user id — the value S9
+    // made `decidedBy` — and is shown by the name the clicker carried.
+    if (!/^\d+$/.test(input.decidedBy)) {
+      return this.editToPlainText(input.chatId, input.messageTs, `${prefix}@${input.decidedBy}`);
+    }
+    const who = this.approvalDeciders.get(input.decidedBy);
+    if (who?.username) {
+      return this.editToPlainText(input.chatId, input.messageTs, `${prefix}@${who.username}`);
+    }
+    // No @username to autolink: link the name (or the bare id) to the user so
+    // the card still names a tappable person. Offsets are UTF-16 code units,
+    // which is what JS string lengths count.
+    const label = who?.firstName || `user ${input.decidedBy}`;
+    try {
+      await this.bot.api.editMessageText(
+        Number(input.chatId),
+        Number(input.messageTs),
+        `${prefix}${label}`,
+        {
+          reply_markup: { inline_keyboard: [] },
+          entities: [
+            {
+              type: 'text_link',
+              offset: prefix.length,
+              length: label.length,
+              url: `tg://user?id=${input.decidedBy}`,
+            },
+          ],
+        },
+      );
+      return { ok: true, messageId: input.messageTs };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Register the approval-card button-click handler. The coordinator wires
@@ -1750,14 +1880,7 @@ export class TelegramAdapter
   }
 
   async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {
-    const builtins = [
-      { command: 'start', description: 'Introduce the bot' },
-      { command: 'new', description: 'Start a fresh session' },
-      { command: 'help', description: 'Show available commands' },
-      { command: 'personality', description: 'Show the bound personality' },
-      { command: 'usage', description: 'Session tokens + cost' },
-      { command: 'stop', description: 'Abort the current reply' },
-    ];
+    const builtins = telegramMenuCommands();
     const pluginEntries = cmds.map((c) => ({
       command: c.name
         .toLowerCase()

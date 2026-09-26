@@ -84,11 +84,11 @@ const WRITE_DENY_REASON = 'personality definition is operator-owned';
  * `ScopedFsImpl.checkReach` (`writeDenyPaths`) — the two boundaries a
  * personality's turn writes through; those two must change together too.
  *
- * The fourth is NOT equivalent today. It walks with async `lstat` from
- * `node:fs/promises` — so an `lstatSync` grep misses it — and swallows every
- * stat error with `.catch(() => null)`, then CONTINUES the walk, where the
- * other three abort on anything but ENOENT. That is the fail-open commit
- * 69e7b26d removed from `restore.ts`; bringing it into line is a pending fix.
+ * The fourth walks with async `lstat` from `node:fs/promises` — so an
+ * `lstatSync` grep misses it — but applies the same errno rule as the other
+ * three: ENOENT alone ends the walk, anything else refuses (pinned by
+ * `apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts`).
+ * It refuses ANY symlink rather than following it and re-judging the target.
  *
  * Prefixes are matched literally — there is no glob expansion. Pass paths
  * that end in `/` for directory scopes; ScopedStorage normalizes them so

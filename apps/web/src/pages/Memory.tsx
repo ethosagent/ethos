@@ -22,8 +22,11 @@ import type { Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PersonalitySelect } from '../components/personality/PersonalitySelect';
+import { EmptyState } from '../components/ui/EmptyState';
+import { LoadingState } from '../components/ui/LoadingState';
 import { memoryFailure, retryMemoryQuery } from '../features/memory/refusal';
 import { useFavouritePersonality } from '../hooks/useFavouritePersonality';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { resolvePersonalityId } from '../lib/favouritePersonality';
 import { rpc } from '../rpc';
 
@@ -77,11 +80,7 @@ export function Memory() {
   });
 
   if (personalitiesQuery.isLoading || (personalitiesQuery.isSuccess && listQuery.isLoading)) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-        <Spin />
-      </div>
-    );
+    return <LoadingState label="Loading memory…" />;
   }
   const files = listQuery.data?.items ?? [];
   const fileByStore = new Map(files.map((f) => [f.store, f] as const));
@@ -234,6 +233,9 @@ function MemoryEditor({
 
   const dirty = draft !== (file?.content ?? '');
   const matchCount = search ? countMatches(draft, search) : 0;
+
+  // N5a — an unsaved draft holds navigation and unload until confirmed.
+  useUnsavedGuard(dirty);
 
   const onCopy = async () => {
     try {
@@ -455,9 +457,7 @@ function MemoryTimeline({ personalityId }: { personalityId: string }) {
       </div>
 
       {historyQuery.isLoading ? (
-        <div style={{ display: 'grid', placeItems: 'center', height: 160 }}>
-          <Spin />
-        </div>
+        <LoadingState label="Loading history…" height={160} />
       ) : historyFailure ? (
         // The same refusal the Files tab shows: a backend with no file memory
         // has no provenance history either, which is not "nothing yet".
@@ -472,9 +472,10 @@ function MemoryTimeline({ personalityId }: { personalityId: string }) {
           </Typography.Text>
         )
       ) : entries.length === 0 ? (
-        <Typography.Text type="secondary">
-          No memory history yet. Edits, captures, and consolidation runs appear here.
-        </Typography.Text>
+        <EmptyState
+          title="No memory history yet."
+          hint="Edits, captures, and consolidation runs appear here."
+        />
       ) : (
         <>
           <div>
@@ -742,11 +743,7 @@ function MemoryPending({ personalityId }: { personalityId: string }) {
     (approveMut.isPending && approveMut.variables) || (rejectMut.isPending && rejectMut.variables);
 
   if (pendingQuery.isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 160 }}>
-        <Spin />
-      </div>
-    );
+    return <LoadingState label="Loading pending queue…" height={160} />;
   }
   if (pendingQuery.error) {
     return (
@@ -757,9 +754,10 @@ function MemoryPending({ personalityId }: { personalityId: string }) {
   }
   if (entries.length === 0) {
     return (
-      <Typography.Text type="secondary">
-        No pending memory. Captured facts awaiting your approval appear here.
-      </Typography.Text>
+      <EmptyState
+        title="No pending memory."
+        hint="Captured facts awaiting your approval appear here."
+      />
     );
   }
 

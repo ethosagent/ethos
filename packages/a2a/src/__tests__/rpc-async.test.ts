@@ -119,6 +119,35 @@ describe('Async message/send — submit + idempotency dedupe', () => {
     expect(captured.opts?.skill).toBe('search');
   });
 
+  it('hands the runner the peer message inside the untrusted fence on the async path (S13)', async () => {
+    const target = makeAgent(TARGET_ID);
+    const peer = makeAgent('peer-a');
+    const sheet: SheetHolder = { skills: ['search'] };
+    const peerStore = newPeerStore();
+    const store = new InMemoryA2aTaskStore();
+    const clock = { t: Date.now() };
+    const captured: Parameters<typeof capturingRunner>[1] = {};
+    const service = createA2aRpcService({
+      getIdentity: stubIdentity(target, sheet),
+      peerStore,
+      runner: capturingRunner(HELLO_SCRIPT, captured),
+      taskStore: store,
+      now: () => clock.t,
+    });
+    const minted = await mintPeerToken(target, peer, ['search'], peerStore, { now: clock.t });
+    const ts = clock.t;
+    const res = await service.handleRpc(TARGET_ID, asyncRpc('search', 'k-fence', 'do X'), {
+      token: minted.token,
+      proofSignature: signPop(peer, A2A_METHOD_MESSAGE_SEND, minted.claims.jti, ts),
+      proofTimestamp: ts,
+    });
+    if ('error' in res) throw new Error(`unexpected error ${res.error.code}`);
+    const ack = res.result as A2aAsyncSubmitResult;
+    await waitForTerminal(store, ack.taskId);
+    expect(captured.text?.startsWith('<untrusted ')).toBe(true);
+    expect(captured.text).toContain('\ndo X\n</untrusted>');
+  });
+
   it('dedupes a retried async send: runner runs EXACTLY once, second returns the prior task', async () => {
     const target = makeAgent(TARGET_ID);
     const peer = makeAgent('peer-a');

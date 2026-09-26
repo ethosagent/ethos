@@ -17,8 +17,9 @@
 import { spawnSync } from 'node:child_process';
 // Raw `node:fs` for the same reasons `runDoctorFix` already reaches for
 // `chmod`: Storage has no permissions API, and the integrity check hands a raw
-// path to SQLite (the documented store carve-out in AGENTS.md).
-import { existsSync, readdirSync, statSync } from 'node:fs';
+// path to SQLite (the documented store carve-out in AGENTS.md). `statfsSync`
+// likewise: Storage has no filesystem-type API (`checkStateDirFilesystem`).
+import { existsSync, readdirSync, type StatsFs, statfsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -28,6 +29,7 @@ import {
   describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
+  nearestKey,
   readConfig,
   readRawConfig,
   resolveDecisionsConfig,
@@ -57,6 +59,7 @@ import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
 import { createLLM, getSecretsResolver, getStorage } from '../wiring';
+import { formatResolvedLines, resolveEffective } from './status';
 
 const c = {
   reset: '\x1b[0m',
@@ -769,6 +772,69 @@ export function checkSecretsDirMode(dataDir: string): VaultModeResult {
   };
 }
 
+/**
+ * Linux `statfs(2)` `f_type` magic numbers (linux/magic.h, fs/smb/client) for
+ * the filesystems SQLite's WAL locking is not safe on. virtiofs and Docker
+ * Desktop's gRPC-FUSE both mount through the FUSE superblock and so report
+ * FUSE_SUPER_MAGIC; Docker Desktop on Windows and WSL2's `/mnt/c` are 9p.
+ */
+const UNSAFE_STATE_FS: ReadonlyMap<number, string> = new Map([
+  [0x65735546, 'fuse'],
+  [0x01021997, '9p'],
+  [0x6969, 'nfs'],
+  [0x517b, 'smb'],
+  [0xff534d42, 'cifs'],
+  [0xfe534d42, 'smb2'],
+]);
+
+export interface StateDirFilesystemResult {
+  path: string;
+  /** `unknown` = this platform's statfs gives no filesystem identity to test. */
+  status: 'ok' | 'warn' | 'unknown' | 'absent';
+  /** Name of the unsafe filesystem, set only on `warn`. */
+  fsType?: string;
+  message: string;
+}
+
+/**
+ * Warns when the state directory sits on a FUSE or network filesystem, where
+ * SQLite's locking can corrupt the databases (R4). Only Linux is classified:
+ * Node's `statfs` exposes `f_type` and no filesystem name, and on macOS that
+ * field is `vfc_typenum`, a registration-order number with no stable meaning
+ * (APFS reads 0x1a on one machine and could read otherwise on another). The
+ * case this exists for — a container on Docker Desktop — is Linux inside.
+ */
+export function checkStateDirFilesystem(
+  dataDir: string,
+  deps: { statfs?: (path: string) => StatsFs; platform?: NodeJS.Platform } = {},
+): StateDirFilesystemResult {
+  const statfs = deps.statfs ?? statfsSync;
+  const platform = deps.platform ?? process.platform;
+  let type: number;
+  try {
+    type = statfs(dataDir).type >>> 0;
+  } catch {
+    return { path: dataDir, status: 'absent', message: 'state directory not created yet.' };
+  }
+  if (platform !== 'linux') {
+    return {
+      path: dataDir,
+      status: 'unknown',
+      message: `filesystem type not checked on ${platform} (statfs reports no filesystem name).`,
+    };
+  }
+  const fsType = UNSAFE_STATE_FS.get(type);
+  if (!fsType) {
+    return { path: dataDir, status: 'ok', message: 'state directory is on a local filesystem.' };
+  }
+  return {
+    path: dataDir,
+    status: 'warn',
+    fsType,
+    message: `state directory is on ${fsType} — SQLite locking is unsafe there and the databases can corrupt. Use a Docker named volume or a local disk.`,
+  };
+}
+
 export interface DirSanityIssue {
   /** `dataDir`-relative path the issue is about. */
   path: string;
@@ -1288,6 +1354,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     const db = await checkSessionsDb(storage);
     const integrity = await checkDatabaseIntegrity(ethosDir());
     const secretsDir = checkSecretsDirMode(ethosDir());
+    const stateDirFilesystem = checkStateDirFilesystem(ethosDir());
     const skillIssues = checkSkillsDir(ethosDir());
     const teamIssues = checkTeamsDir(ethosDir());
     const gateway = await checkGatewayHealth(storage);
@@ -1339,6 +1406,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       storeIntegrity: integrity,
       inboundSpool: await inboundSpoolReportFor(resolvedConfig ?? config),
       secretsDir,
+      stateDirFilesystem,
       skillIssues,
       teamIssues,
       gateway,
@@ -1400,9 +1468,15 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${cfgPath}`);
+    // B3 — the same Resolved block `ethos status` prints, at the top of the
+    // Config section: what this config ACTUALLY selects, and from which key.
+    const resolved = await resolveEffective(config);
+    for (const line of formatResolvedLines(resolved, {
+      stateDirFromEnv: Boolean(process.env.ETHOS_STATE_DIR),
+    })) {
+      console.log(`     ${line}`);
+    }
     console.log(`     provider:    ${config.provider ?? '(not set)'}`);
-    console.log(`     model:       ${config.model ?? '(not set)'}`);
-    console.log(`     personality: ${config.personality ?? '(default)'}`);
     // `ethos gateway` and `ethos listen` surface these at boot; an operator
     // running `ethos serve` and driving the web UI would otherwise never see
     // them, and this is the command whose job is "what is wrong with my config".
@@ -1631,6 +1705,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     console.log(`  ${c.green}✓${c.reset}  sessions.db opens and queries cleanly`);
   } else {
     console.log(`  ${c.red}✗${c.reset}  sessions.db failed to open: ${c.dim}${db.error}${c.reset}`);
+    // N2 — pair the failure with the next step (same phrasing as the Store
+    // integrity section; `ethos import` is the restore command that exists).
+    console.log(
+      `      ${c.dim}Restore from a backup: ${c.reset}${c.bold}ethos import <archive>${c.reset}`,
+    );
   }
   console.log('');
 
@@ -1686,6 +1765,14 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${describeSecretsDirMode(secretsDir)}`);
+  }
+  const stateFs = checkStateDirFilesystem(ethosDir());
+  if (stateFs.status === 'warn') {
+    console.log(`  ${c.yellow}⚠${c.reset}  ${stateFs.message}`);
+  } else if (stateFs.status === 'ok') {
+    console.log(`  ${c.green}✓${c.reset}  ${stateFs.message}`);
+  } else {
+    console.log(`  ${c.dim}–  ${stateFs.message}${c.reset}`);
   }
   const dirIssues = [...checkSkillsDir(ethosDir()), ...checkTeamsDir(ethosDir())];
   if (dirIssues.length === 0) {
@@ -1832,6 +1919,17 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 // --fix: auto-repair common issues
 // ---------------------------------------------------------------------------
 
+/**
+ * B7 — the provider suggestion for `doctor --fix`'s unknown-provider repair.
+ * Damerau-Levenshtein against the catalog ids (the same `nearestKey` helper
+ * as B2's unknown-config-key suggestion), replacing the first-letter guess
+ * that offered 'azure' for 'antropic'. Falls back to 'anthropic' when nothing
+ * is within two edits. Exported for `__tests__/doctor-funnel.test.ts`.
+ */
+export function suggestProvider(input: string, knownIds: readonly string[]): string {
+  return nearestKey(input, knownIds) ?? 'anthropic';
+}
+
 async function runDoctorFix(): Promise<void> {
   // chmod stays raw node:fs — Storage has no permissions API (keys.json /
   // config.yaml owner-restriction is the whole point of this repair step).
@@ -1910,7 +2008,7 @@ async function runDoctorFix(): Promise<void> {
     const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
     const knownIds = PROVIDER_CATALOG.map((p) => p.id);
     if (!knownIds.includes(config.provider)) {
-      const closest = knownIds.find((id) => id.startsWith(config.provider[0] ?? '')) ?? 'anthropic';
+      const closest = suggestProvider(config.provider, knownIds);
       console.log(
         `  ${c.yellow}→ Action needed:${c.reset}  Unknown provider '${config.provider}'. Did you mean '${closest}'?`,
       );

@@ -1,9 +1,18 @@
 import { basename } from 'node:path';
-import type { AgentBridge } from '@ethosagent/agent-bridge';
+import type { AgentBridge, BridgeApprovalRequest } from '@ethosagent/agent-bridge';
+import { haltNotice } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
-import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
+import { describeChatError } from '@ethosagent/surface-kit';
+import {
+  answerSuffix,
+  type BackgroundJob,
+  type PendingClarify,
+  type Session,
+  type ToolProgressAudience,
+} from '@ethosagent/types';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { backgroundCompletionLines } from '../background';
 import {
   type CredentialRequest,
   type SetPluginCredential,
@@ -21,6 +30,7 @@ import {
 } from '../skin';
 import { getUpdateStatus, type UpdateStatus } from '../update-check';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
+import { ApprovalModal } from './ApprovalModal';
 import { type ChatMessage, ChatRow, StreamingRow } from './ChatPane';
 import { ClarifyModal } from './ClarifyModal';
 import { CompletionPanel, getMatches } from './CompletionPanel';
@@ -55,6 +65,16 @@ function fmtSecs(ms: number): string {
 
 function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+}
+
+/**
+ * Two decimals, four below one cent — the CLI's cost-display rule. Duplicated
+ * from `formatCostUsd` in apps/ethos/src/lib/status-bar.ts because apps/tui
+ * cannot import apps/ethos; CHANGE BOTH TOGETHER. Exported for the pin test
+ * (__tests__/format-cost.test.ts).
+ */
+export function formatCostUsd(costUsd: number): string {
+  return costUsd > 0 && costUsd < 0.01 ? costUsd.toFixed(4) : costUsd.toFixed(2);
 }
 
 function formatVerboseSummary(t: TurnTiming): string {
@@ -111,6 +131,13 @@ export interface AppProps {
   initialSessionKey: string;
   initialVerbose?: boolean;
   /**
+   * B2 — host startup warnings (config parse notices), rendered once on mount
+   * as dim system lines in the transcript plus a 'warning' timeline entry —
+   * the same visual class as other notices. The host passes the same lines
+   * the readline branch prints, so the wording is identical across branches.
+   */
+  startupNotices?: string[];
+  /**
    * `/memory` — the personality's file memory (MEMORY.md / USER.md) as the
    * agent reads it, or null when empty. Injected by the host so it follows the
    * configured backend (the vault under `memory: vault`); rejects with the
@@ -134,6 +161,13 @@ export interface AppProps {
   onNotification?: (sessionKey: string, cb: (text: string) => void) => () => void;
   /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
   onSkillProposed?: (cb: (text: string) => void) => () => void;
+  /**
+   * C5 — subscribe to background-job completions (the executor's `onComplete`
+   * shape). Completions land in the transcript as the same dim box the
+   * readline branch prints; `bg:N` in the status bar counts completions since
+   * the user last submitted input. Returns an unsubscribe.
+   */
+  onBackgroundComplete?: (cb: (job: BackgroundJob) => void) => () => void;
   /**
    * `/fork`, `/branches`, `/branch <n>` over the host's session store. Injected
    * so the TUI never opens `sessions.db` itself; `switchTo` asks the TUI to
@@ -201,6 +235,7 @@ export function App({
   initialPersonality,
   initialSessionKey,
   initialVerbose = false,
+  startupNotices,
   initialSkin,
   rebuildLoop,
   inventory,
@@ -209,6 +244,7 @@ export function App({
   slashCommands,
   onNotification,
   onSkillProposed,
+  onBackgroundComplete,
   readMemory,
   branches,
   setPluginCredential,
@@ -250,6 +286,8 @@ export function App({
   const [modal, setModal] = useState<Modal>(null);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
   const [credentialRequest, setCredentialRequest] = useState<CredentialRequest | null>(null);
+  // Tool calls waiting for Allow / Deny, oldest first; only the head is shown.
+  const [approvalQueue, setApprovalQueue] = useState<BridgeApprovalRequest[]>([]);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -265,6 +303,10 @@ export function App({
   const [budgetCapUsd, setBudgetCapUsd] = useState<number | null>(
     () => bridge.getPersonalityBudgetCap(initialPersonality) ?? null,
   );
+  // C5 — background completions the user has not acted after yet: incremented
+  // per rendered completion box, reset when the user next submits input (the
+  // moment we know they were at the terminal with the notice on screen).
+  const [bgCompletedUnseen, setBgCompletedUnseen] = useState(0);
 
   const verboseRef = useRef(initialVerbose);
   const [verboseDisplay, setVerboseDisplay] = useState(initialVerbose);
@@ -280,6 +322,10 @@ export function App({
   const streamedTextRef = useRef('');
   const turnToolDurationsRef = useRef<number[]>([]);
   const turnUsageRef = useRef<TurnTiming['turnUsage']>(null);
+  /** S4/U1 — the turn's budget-halt notice, committed after its reply on `done`. */
+  const haltNoticeRef = useRef<string | null>(null);
+  /** A3 — the turn's trace id from `run_start`, for the error render's `trace <id>` line. */
+  const turnTraceIdRef = useRef<string | null>(null);
   const [turnElapsed, setTurnElapsed] = useState(0);
   const fileByToolCallRef = useRef(
     new Map<string, { action: FileActivity['action']; path: string }>(),
@@ -442,6 +488,20 @@ export function App({
     }
   }, [version]);
 
+  // B2 — host startup warnings (config parse notices) render once on mount as
+  // dim system lines plus a 'warning' timeline entry, the same visual class as
+  // the other notices above and below. The host owns the once-per-process
+  // latch, so a remount inside one process shows whatever it was handed.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId/pushTimeline close over stable refs; mount-only by design
+  useEffect(() => {
+    if (!startupNotices || startupNotices.length === 0) return;
+    setMessages((prev) => [
+      ...prev,
+      ...startupNotices.map((text) => ({ id: nextId(), role: 'system' as const, text })),
+    ]);
+    for (const text of startupNotices) pushTimeline('warning', text);
+  }, []);
+
   // Session-scoped notifications (e.g. plugin monitors via notify_session).
   // Re-subscribes when the session key changes (/new, /sessions) so routing
   // follows the active session, mirroring the readline path's re-register.
@@ -464,6 +524,24 @@ export function App({
       setMessages((prev) => [...prev, { id: nextId(), role: 'system', text }]);
     });
   }, [onSkillProposed]);
+
+  // C5 — background completions: the same box the readline branch prints,
+  // as a dim system row, plus the status bar's unseen counter (`bg:N`).
+  // Only done/failed render (backgroundCompletionLines returns null otherwise).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId/pushTimeline close over stable refs
+  useEffect(() => {
+    if (!onBackgroundComplete) return;
+    return onBackgroundComplete((job) => {
+      const lines = backgroundCompletionLines(job);
+      if (!lines) return;
+      setMessages((prev) => [...prev, { id: nextId(), role: 'system', text: lines.join('\n') }]);
+      setBgCompletedUnseen((n) => n + 1);
+      pushTimeline(
+        job.status === 'done' ? 'success' : 'error',
+        `background ${job.id.slice(0, 8)} ${job.status}`,
+      );
+    });
+  }, [onBackgroundComplete]);
 
   // Append a fresh HUD snapshot whenever the personality, model, or session
   // changes — these are the rare events that warrant re-showing the chrome.
@@ -546,7 +624,13 @@ export function App({
         setShowKeymap(true);
       }
     },
-    { isActive: modal === null && clarifyRequest === null && credentialRequest === null },
+    {
+      isActive:
+        modal === null &&
+        clarifyRequest === null &&
+        credentialRequest === null &&
+        approvalQueue.length === 0,
+    },
   );
 
   useEffect(() => {
@@ -603,6 +687,10 @@ export function App({
       const full = streamed + answerSuffix(streamed, text);
       const reply = full.trim() ? full : text;
       if (reply.trim()) newMessages.push({ id: nextId(), role: 'assistant', text: reply });
+      if (haltNoticeRef.current) {
+        newMessages.push({ id: nextId(), role: 'system', text: haltNoticeRef.current });
+        haltNoticeRef.current = null;
+      }
       if (verboseRef.current && turnStartRef.current !== null) {
         const summary = formatVerboseSummary({
           turnStart: turnStartRef.current,
@@ -644,7 +732,21 @@ export function App({
       }
     };
 
-    const onToolProgress = (toolName: string, message: string, percent: number | undefined) => {
+    const onToolProgress = (
+      toolName: string,
+      message: string,
+      percent: number | undefined,
+      audience: ToolProgressAudience,
+    ) => {
+      // C5 — Phase 30.2 audience gate: surface code renders only 'user'
+      // progress. Internal events (budget warnings, telemetry) stay off screen.
+      if (audience !== 'user') return;
+      // A4 — the loop's own notices (compaction retry, provider fallback) use
+      // the reserved `_loop` name: a one-line yellow notice, never a tool row.
+      if (toolName === '_loop') {
+        if (message) pushTimeline('warning', message);
+        return;
+      }
       setActiveTools((prev) =>
         prev.map((t) => (t.toolName === toolName ? { ...t, message, percent } : t)),
       );
@@ -659,12 +761,19 @@ export function App({
       toolName: string,
       ok: boolean,
       durationMs: number,
-      result?: string,
+      result: string | undefined,
+      _structured: Record<string, unknown> | undefined,
+      _audience: 'internal' | 'user' | 'dashboard' | undefined,
+      error: string | undefined,
     ) => {
       setActiveTools((prev) => prev.filter((t) => t.toolCallId !== toolCallId));
       setCompletedTools((prev) => [...prev, { id: toolCallId, toolName, ok, durationMs }]);
       turnToolDurationsRef.current.push(durationMs);
-      const preview = result ? ` -> ${result.replace(/\s+/g, ' ').slice(0, 56)}` : '';
+      // C2 — a failed tool shows its reason: the bridge's trailing `error`
+      // argument (set only when ok is false), falling back to the result text.
+      const failureText = error ?? result;
+      const previewSource = ok ? result : failureText;
+      const preview = previewSource ? ` -> ${previewSource.replace(/\s+/g, ' ').slice(0, 56)}` : '';
       pushTimeline(ok ? 'success' : 'error', `tool end: ${toolName} (${durationMs}ms)${preview}`);
       const fileMeta = fileByToolCallRef.current.get(toolCallId);
       const activityId = activityByToolCallRef.current.get(toolCallId);
@@ -681,7 +790,7 @@ export function App({
         updateDelegation(delegationId, {
           status: ok ? 'done' : 'failed',
           durationMs,
-          ...(ok ? {} : { error: result?.slice(0, 200) }),
+          ...(ok ? {} : { error: failureText?.slice(0, 200) }),
         });
         delegationByToolCallRef.current.delete(toolCallId);
       }
@@ -696,16 +805,26 @@ export function App({
       turnUsageRef.current = { inputTokens, outputTokens, estimatedCostUsd };
     };
 
+    // A3 — errors render from the one chat-error map: title + next step, plus
+    // the turn's trace id when `run_start` carried one.
     const onError = (error: string, code: string) => {
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: 'assistant', text: `[${code}] ${error}` },
-      ]);
+      const described = describeChatError(code, error, turnTraceIdRef.current ?? undefined);
+      const lines = [`✗ ${described.title}`, `  → ${described.action}`];
+      if (described.trace) lines.push(`  trace ${described.trace}`);
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', text: lines.join('\n') }]);
       streamedTextRef.current = '';
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
-      pushTimeline('error', `[${code}] ${error}`);
+      pushTimeline('error', `${described.title} [${code}]`);
+    };
+
+    // S4/U1 — held until `done` so the notice lands after the reply it cut short.
+    const onHalt = (halt: Parameters<typeof haltNotice>[0]) => {
+      const notice = haltNotice(halt);
+      if (!notice) return;
+      haltNoticeRef.current = notice;
+      pushTimeline('warning', notice);
     };
 
     const onQueued = (_input: string, queueDepth: number) => {
@@ -720,7 +839,14 @@ export function App({
 
     // Phase 5: update status bar when effective model differs from the
     // initial config (e.g. per-personality routing, team overrides).
-    const onRunStart = (_provider: string, resolvedModel: string) => {
+    // A3 — also latch the turn's trace id for the error render.
+    const onRunStart = (
+      _provider: string,
+      resolvedModel: string,
+      _source: unknown,
+      traceId: string | undefined,
+    ) => {
+      turnTraceIdRef.current = traceId ?? null;
       setCurrentModel(resolvedModel);
     };
 
@@ -731,6 +857,7 @@ export function App({
     bridge.on('tool_progress', onToolProgress);
     bridge.on('tool_end', onToolEnd);
     bridge.on('usage', onUsage);
+    bridge.on('halt', onHalt);
     bridge.on('error', onError);
     bridge.on('queued', onQueued);
     bridge.on('idle', onIdle);
@@ -744,6 +871,7 @@ export function App({
       bridge.off('tool_progress', onToolProgress);
       bridge.off('tool_end', onToolEnd);
       bridge.off('usage', onUsage);
+      bridge.off('halt', onHalt);
       bridge.off('error', onError);
       bridge.off('queued', onQueued);
       bridge.off('idle', onIdle);
@@ -776,6 +904,27 @@ export function App({
     return bridge.onClarifyResolved(() => setClarifyRequest(null));
   }, [bridge]);
 
+  // Tool approval — relayed by the bridge from the host's approval gate
+  // (`AgentBridge.setApprovalSource`). Requests queue; a settle from anywhere
+  // (this modal, a timeout, a cancel) drops that request from the queue.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pushTimeline closes over a stable ref
+  useEffect(() => {
+    const onRequest = (request: BridgeApprovalRequest) => {
+      setApprovalQueue((q) => [...q, request]);
+      pushTimeline('warning', `approval needed: ${request.toolName}`);
+    };
+    const onSettled = (approvalId: string, decision: 'allow' | 'deny') => {
+      setApprovalQueue((q) => q.filter((r) => r.approvalId !== approvalId));
+      pushTimeline(decision === 'allow' ? 'success' : 'error', `approval ${decision}`);
+    };
+    bridge.on('approval_request', onRequest);
+    bridge.on('approval_settled', onSettled);
+    return () => {
+      bridge.off('approval_request', onRequest);
+      bridge.off('approval_settled', onSettled);
+    };
+  }, [bridge]);
+
   const applyCompletion = () => {
     if (!completionVisible) return;
     const match = completionMatches[completionIndex];
@@ -787,6 +936,9 @@ export function App({
     if (!value.trim()) return;
     setStatusMsg('');
     setInterrupted(false);
+    // C5 — the user acted at the prompt with any completion notices on
+    // screen, so the status bar's `bg:N` unseen counter resets here.
+    setBgCompletedUnseen(0);
     setHistoryIndex(null);
     setHistoryDraft('');
     setHistory((prev) => {
@@ -825,6 +977,7 @@ export function App({
   const beginTurn = () => {
     setCompletedTools([]);
     setRunning(true);
+    turnTraceIdRef.current = null;
     turnStartRef.current = Date.now();
     firstTextDeltaAtRef.current = null;
     streamedTextRef.current = '';
@@ -998,7 +1151,7 @@ export function App({
             role: 'assistant',
             text:
               `Tokens: ${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out\n` +
-              `Cost: $${usage.costUsd.toFixed(5)}`,
+              `Cost: $${formatCostUsd(usage.costUsd)}`,
           },
         ]);
         break;
@@ -1017,8 +1170,8 @@ export function App({
             role: 'assistant',
             text:
               cap != null
-                ? `Session spend: $${usage.costUsd.toFixed(5)} / $${cap.toFixed(2)} cap`
-                : `Session spend: $${usage.costUsd.toFixed(5)} (no cap set for this personality)`,
+                ? `Session spend: $${formatCostUsd(usage.costUsd)} / $${cap.toFixed(2)} cap`
+                : `Session spend: $${formatCostUsd(usage.costUsd)} (no cap set for this personality)`,
           },
         ]);
         break;
@@ -1196,6 +1349,22 @@ export function App({
     }
     setStatusMsg('Usage: /details [<section>] [<mode>]');
   };
+
+  const approvalHead = approvalQueue[0];
+  if (approvalHead) {
+    return (
+      <SkinContext.Provider value={tokens}>
+        <ApprovalModal
+          request={approvalHead}
+          queued={approvalQueue.length - 1}
+          onDecide={(decision) => {
+            setApprovalQueue((q) => q.filter((r) => r.approvalId !== approvalHead.approvalId));
+            bridge.respondToApproval(approvalHead.approvalId, decision);
+          }}
+        />
+      </SkinContext.Provider>
+    );
+  }
 
   if (clarifyRequest) {
     const req = clarifyRequest;
@@ -1439,6 +1608,7 @@ export function App({
             modal === null &&
             clarifyRequest === null &&
             credentialRequest === null &&
+            approvalQueue.length === 0 &&
             !showKeymap &&
             focusPane === 'input'
           }
@@ -1496,7 +1666,7 @@ export function App({
           currentTool={currentTool}
           elapsedSecs={agentStatus === 'thinking' ? turnElapsed : undefined}
           readonlyMode={readonlyMode}
-          backgroundCount={delegations.filter((d) => d.status === 'pending').length}
+          backgroundCount={bgCompletedUnseen}
           updateStatus={updateStatus}
           budgetState={
             budgetCapUsd != null

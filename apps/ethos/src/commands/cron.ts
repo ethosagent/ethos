@@ -13,6 +13,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { answerSuffix, EthosError } from '@ethosagent/types';
 import { writeJson } from '../json-output';
+import { gateCronLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
 
@@ -45,6 +46,9 @@ function makeScheduler(config: EthosConfig): {
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, config.logs?.level),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -60,7 +64,7 @@ function makeScheduler(config: EthosConfig): {
         // observability unavailable — audit is fail-open
       }
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!personalities) {
         personalities = await createPersonalityRegistry(getStorage());
         await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -74,6 +78,7 @@ function makeScheduler(config: EthosConfig): {
       }
       if (!loop) {
         runtime = await createAgentLoop(config);
+        gateCronLoop(runtime, config);
         loop = runtime.loop;
       }
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
@@ -98,6 +103,8 @@ function makeScheduler(config: EthosConfig): {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        abortSignal: runOpts?.abortSignal,
       })) {
         if (event.type === 'text_delta') output += event.text;
         // A `returnDirect` tool's answer arrives only as `done.text`, after
@@ -159,6 +166,8 @@ export async function runCronCommand(
               schedule: j.schedule,
               personalityId: j.personalityId,
               nextRun: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
+              lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
+              lastError: j.lastError ?? null,
               prompt: j.prompt,
               script: j.script,
             })),
@@ -183,6 +192,11 @@ export async function runCronCommand(
           console.log(`    Schedule    : ${j.schedule}`);
           console.log(`    Personality : ${pers}`);
           console.log(`    Next run    : ${next}`);
+          // N4 — whether the last firing worked, not just when the next one is.
+          const outcome = cronLastOutcome(j);
+          console.log(
+            `    Last run    : ${outcome.startsWith('failed') ? `${c.red}${outcome}${c.reset}` : outcome}`,
+          );
           const preview =
             (j.script ? `[script: ${j.script.file}]` : j.prompt) ??
             (j.systemTask ? `[system: ${j.systemTask}]` : '—');
@@ -460,6 +474,35 @@ export async function runCronCommand(
         'Usage: ethos cron [list [--personality <id>] | show <id> | create | update <id> | pause | resume | delete | run]',
       );
   }
+}
+
+/**
+ * N4 — `last: ok 2h ago` / `last: failed 10m ago` / `never`, from the two
+ * fields the cron store records per job (`lastRunAt` + `lastError`,
+ * extensions/cron/src/index.ts). Limitation: the store keeps no per-run
+ * outcome history and `lastError` is written on failure but never cleared by
+ * a later success — a job that failed once keeps reading `failed` even after
+ * it has recovered, until the field changes again. Named here rather than
+ * guessed around; `ethos cron show <id>` has the detail.
+ * Exported for `__tests__/cron-list-outcome.test.ts`.
+ */
+export function cronLastOutcome(
+  job: { lastRunAt?: string; lastError?: string },
+  now = Date.now(),
+): string {
+  if (!job.lastRunAt) return 'never';
+  const ranAt = Date.parse(job.lastRunAt);
+  const ago = Number.isFinite(ranAt) ? cronAgo(now - ranAt) : job.lastRunAt;
+  return job.lastError ? `failed ${ago}` : `ok ${ago}`;
+}
+
+function cronAgo(diffMs: number): string {
+  const mins = Math.floor(Math.max(diffMs, 0) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function parseFlags(args: string[]): Record<string, string> {

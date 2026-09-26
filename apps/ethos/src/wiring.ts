@@ -27,6 +27,8 @@ import {
   type CreateAgentLoopResult,
   EthosObservability,
   FunnelTracker,
+  type InstallScanInput,
+  installScanEvent,
   type LearningInbox,
   createAgentLoop as packageCreateAgentLoop,
   createLearningInbox as packageCreateLearningInbox,
@@ -35,6 +37,7 @@ import {
   type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
+import { cliToolsetsRefusal } from './cli-overrides';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
 
@@ -158,6 +161,20 @@ export function getEthosObservability(): EthosObservability {
   }
   if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
   return ethosObsSingleton;
+}
+
+/**
+ * Record one `install.scan` row (`installScanEvent`, packages/wiring) for an
+ * install-scanner decision made by a CLI command — `ethos skills install`
+ * (`scanSkillDir`) and `ethos plugin install` (`installPlugin`). Fail-open: an
+ * observability store that will not open costs the row, never the install.
+ */
+export function recordInstallScan(input: InstallScanInput): void {
+  try {
+    getEthosObservability().recordSkillScan(installScanEvent(input));
+  } catch {
+    // observability unavailable — audit is fail-open
+  }
 }
 
 let funnelSingleton: FunnelTracker | undefined;
@@ -606,6 +623,7 @@ export async function createCliLearningInbox(config: EthosConfig): Promise<Learn
     defaultPersonalityId: config.personality,
     observability: {
       recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+      recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
     },
     ...(resolveLearningReplay(config).enabled
       ? {
@@ -662,6 +680,8 @@ export async function createAgentLoop(
      * Gateway only — it is the one component that knows the mapping.
      */
     resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+    /** Resolve who started a live turn, for the same reason. Gateway only. */
+    resolveOriginUserId?: (sessionKey: string) => string | undefined;
     /**
      * Lane 0 (D16) — force a LIVE served-window probe (bypassing the disk
      * cache) and rewrite the cache. Set by `ethos bench context`; chat and
@@ -723,6 +743,7 @@ export async function createAgentLoop(
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
     ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
     ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+    ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
@@ -779,6 +800,11 @@ export interface TeamLoopInfo {
   /** `CreateAgentLoopResult.approverDecision` of the coordinator's build (plan
    *  decision-provider-jev §8.2) — absent unless the approver site is on. */
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
+  /** `CreateAgentLoopResult.executionPostureFor` of the coordinator's build (S6 / D1(a)). */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  /** `CreateAgentLoopResult.personalities` of the coordinator's build — what the
+   *  terminal approval gate reads `approvalMode` from (`wireTerminalApprovalGate`). */
+  personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -846,6 +872,8 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     approverDecision,
+    executionPostureFor,
+    personalities,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -887,6 +915,8 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
+    personalities,
   };
 }
 
@@ -934,6 +964,11 @@ export interface ActiveLoop {
   /** Wait out its background jobs and goal runs — `CreateAgentLoopResult.drain`;
    *  the `/model` switch drains the replaced runtime before disposing it. */
   drain: import('@ethosagent/wiring').CreateAgentLoopResult['drain'];
+  /** The approval seams of this loop's build — what `wireTerminalApprovalGate`
+   *  (./terminal-approval.ts) gates the chat loop with. */
+  personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
 }
 
 export async function resolveActiveLoop(
@@ -962,9 +997,16 @@ export async function resolveActiveLoop(
       goals: teamResult.goals,
       dispose: teamResult.dispose,
       drain: teamResult.drain,
+      personalities: teamResult.personalities,
+      executionPostureFor: teamResult.executionPostureFor,
+      ...(teamResult.approverDecision ? { approverDecision: teamResult.approverDecision } : {}),
     };
   }
-  const personalityId = config.activeContext?.name ?? config.personality;
+  // B3 / UD1 Option A — `personality:` is the one default-personality key.
+  // A personality-typed `activeContext` no longer reaches this point:
+  // `readRawConfig` migrates the disk form into `personality:`, and the
+  // in-process `--personality` override sets both fields (cli-overrides.ts).
+  const personalityId = config.personality;
   const result = await createAgentLoop({ ...config, personality: personalityId }, opts);
   applyCliOverrideHooks(result.loop, config);
   return {
@@ -980,6 +1022,9 @@ export async function resolveActiveLoop(
     goals: result.goals,
     dispose: result.dispose,
     drain: result.drain,
+    personalities: result.personalities,
+    executionPostureFor: result.executionPostureFor,
+    ...(result.approverDecision ? { approverDecision: result.approverDecision } : {}),
   };
 }
 
@@ -995,15 +1040,10 @@ export async function resolveActiveLoop(
 function applyCliOverrideHooks(loop: AgentLoop, config: EthosConfig): void {
   // --toolsets: reject before_tool_call for tools not in the allowed set
   if (config.cliToolsets && config.cliToolsets.length > 0) {
-    const allowed = new Set(config.cliToolsets);
+    const refusal = cliToolsetsRefusal(loop, config.cliToolsets);
     loop.hooks.registerModifying('before_tool_call', async (payload) => {
-      const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
-      if (tool?.toolset && !allowed.has(tool.toolset)) {
-        return {
-          error: `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`,
-        };
-      }
-      return null;
+      const error = refusal(payload);
+      return error ? { error } : null;
     });
   }
 

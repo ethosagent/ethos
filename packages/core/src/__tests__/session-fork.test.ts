@@ -113,7 +113,7 @@ describe('forkSession', () => {
     expect(copied[N - 1]?.content).toBe(`m${N - 1}`);
   });
 
-  it('preserves every StoredMessage field, including contentBlocks on a provider-compaction row', async () => {
+  it('preserves every StoredMessage field but usage, including contentBlocks on a provider-compaction row', async () => {
     const store = new InMemorySessionStore();
     const source = await seedSource(store);
     const compaction: Msg = {
@@ -128,8 +128,12 @@ describe('forkSession', () => {
     const copied = await store.getMessages(session.id);
     expect(copied).toHaveLength(originals.length);
 
-    const strip = ({ id: _i, sessionId: _s, timestamp: _t, ...rest }: StoredMessage) => rest;
+    // `usage` is the one field a copy does not keep: the copy is history, not
+    // spend (see forkSession's doc comment).
+    const strip = ({ id: _i, sessionId: _s, timestamp: _t, usage: _u, ...rest }: StoredMessage) =>
+      rest;
     expect(copied.map(strip)).toEqual(originals.map(strip));
+    for (const m of copied) expect(m.usage).toBeUndefined();
     for (const m of copied) expect(m.sessionId).toBe(session.id);
 
     // idMap: every source id maps onto the row actually in the fork, in order.

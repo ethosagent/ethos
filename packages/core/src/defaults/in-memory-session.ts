@@ -71,6 +71,9 @@ export class InMemorySessionStore implements SessionStore {
   async listSessions(filter?: SessionFilter): Promise<Session[]> {
     let results = [...this.sessions.values()];
     if (filter?.platform) results = results.filter((s) => s.platform === filter.platform);
+    // Literal, case-sensitive — the SQLite store's `substr` comparison.
+    const keyPrefix = filter?.keyPrefix;
+    if (keyPrefix) results = results.filter((s) => s.key.startsWith(keyPrefix));
     if (filter?.personalityId)
       results = results.filter((s) => s.personalityId === filter.personalityId);
     if (filter?.workingDir) results = results.filter((s) => s.workingDir === filter.workingDir);
@@ -284,7 +287,10 @@ export class InMemorySessionStore implements SessionStore {
   async pruneOldSessions(olderThan: Date): Promise<number> {
     let count = 0;
     for (const [id, session] of this.sessions.entries()) {
-      if (session.updatedAt < olderThan) {
+      // Same rule as SQLiteSessionStore.pruneOldSessions: a session holding a
+      // message at or after the cutoff is kept, whatever its `updatedAt`.
+      const recent = (this.messages.get(id) ?? []).some((m) => m.timestamp >= olderThan);
+      if (session.updatedAt < olderThan && !recent) {
         this.sessions.delete(id);
         this.messages.delete(id);
         this.decisions.delete(id);

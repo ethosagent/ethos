@@ -85,7 +85,9 @@ interface DiscordAdapterConfig {
   };
   /**
    * When enabled, `sendTyping()` posts a short "Thinking..." placeholder
-   * message that is deleted when the real response is sent. Default: false.
+   * message that is deleted when the real response is sent. Default: true
+   * (H1 / UD4, ux-feedback-and-config-clarity) — set `false` explicitly to
+   * suppress it.
    */
   postThinkingPlaceholder?: boolean;
   /**
@@ -101,6 +103,39 @@ interface DiscordAdapterConfig {
    * `discord.missedMessageBackfill`.
    */
   missedMessageBackfill?: { enabled?: boolean; windowSeconds?: number; limit?: number };
+}
+
+/**
+ * Discord JSON error codes no retry can fix: Unknown Channel, Missing Access,
+ * Cannot send messages to this user, Missing Permissions.
+ */
+const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
+
+/**
+ * A tracked "Thinking…" placeholder whose typing refresh last fired this long
+ * ago belongs to a PREVIOUS turn that ended without a reply (errored, halted,
+ * or answered elsewhere). The adapter has no turn id — `sendTyping(chatId)` is
+ * the whole contract — so the turn boundary is inferred: the gateway refreshes
+ * typing every few seconds while a turn is live, and a gap this large means
+ * the turn is over. The next `sendTyping` then deletes the stale message and
+ * posts a fresh one, so a placeholder is posted per TURN, never once per chat
+ * lifetime. The normal boundary is still `send()`/`editMessage()`, which
+ * delete the placeholder outright (`clearThinkingPlaceholder`).
+ */
+const THINKING_PLACEHOLDER_STALE_MS = 30_000;
+
+/**
+ * Does `err` (a discord.js `DiscordAPIError`, read by shape) say the bot can
+ * never post here — until an operator changes something? HTTP 403/404 or one
+ * of {@link PERMANENT_DISCORD_CODES}. Rate limits (429) and server errors are
+ * not: discord.js retries 429s itself and a 5xx is transient.
+ */
+function isPermanentDiscordError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const status = 'status' in err ? err.status : undefined;
+  const code = 'code' in err ? err.code : undefined;
+  if (status === 403 || status === 404) return true;
+  return typeof code === 'number' && PERMANENT_DISCORD_CODES.has(code);
 }
 
 export class DiscordAdapter
@@ -167,7 +202,14 @@ export class DiscordAdapter
   /** CHS-005 — optional sink for adapter-local security decisions. */
   private readonly observability: DiscordAdapterConfig['observability'];
   private readonly approvalPolicy: 'role_gate' | 'allow_any';
-  private readonly postThinkingPlaceholder: boolean;
+  /**
+   * UD4 — true when `sendTyping` posts the "Thinking…" placeholder. Read
+   * structurally by the gateway (`placeholderCoversLane` in
+   * `extensions/gateway/src/index.ts`) to skip the H1 `_working on it…_`
+   * notice on lanes the placeholder already covers — a plain optional
+   * property, not a PlatformAdapter contract field.
+   */
+  readonly postsThinkingPlaceholder: boolean;
   /** Inbound-attachment ceiling override, bytes. Absent = the 25 MB default. */
   private readonly maxInboundMediaBytes: number | undefined;
   private readonly missedMessageBackfill: DiscordAdapterConfig['missedMessageBackfill'];
@@ -188,8 +230,13 @@ export class DiscordAdapter
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
   private readonly pendingReactions = new Map<string, string>();
   private readonly pendingReactionsMax = 256;
-  /** Thinking placeholder messages keyed by chatId → messageId. */
-  private readonly thinkingMessages = new Map<string, string>();
+  /** The current turn's thinking placeholder per chat: its messageId plus when
+   *  the typing refresh last touched it (per-turn staleness — see
+   *  {@link THINKING_PLACEHOLDER_STALE_MS}). */
+  private readonly thinkingMessages = new Map<
+    string,
+    { messageId: string; lastTypingAt: number }
+  >();
 
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
@@ -203,7 +250,7 @@ export class DiscordAdapter
     this.approvalRoleIds = config.approvalRoleIds ?? [];
     this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
     this.observability = config.observability;
-    this.postThinkingPlaceholder = config.postThinkingPlaceholder ?? false;
+    this.postsThinkingPlaceholder = config.postThinkingPlaceholder ?? true;
     this.maxInboundMediaBytes = config.maxInboundMediaBytes;
     this.missedMessageBackfill = config.missedMessageBackfill;
 
@@ -301,18 +348,31 @@ export class DiscordAdapter
   // Sending
   // ---------------------------------------------------------------------------
 
+  /**
+   * Once ANY chunk has reached the channel this reports `ok: true`: the
+   * gateway's delivery sweep redelivers a whole `ok: false` reply, so a
+   * failure after the first chunk would re-post the text that did land on
+   * every retry. The residual is a truncated reply — the chunks after the
+   * failure are lost, named in `error` as `partial: N of M chunks` — which is
+   * the smaller failure than a repeated one. Bookkeeping after the last chunk
+   * (receipt reaction, thread state) cannot turn a delivery into a failure
+   * either. A refusal no retry can fix is marked `permanent`
+   * (`isPermanentDiscordError`). Pinned by `__tests__/send-delivery.test.ts`.
+   */
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    const ids: string[] = [];
+    let total = 0;
     try {
       await this.clearThinkingPlaceholder(chatId);
 
       const targetId = message.threadId ?? chatId;
       const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('send' in channel)) {
-        return { ok: false, error: 'Channel not found or not sendable' };
+        return { ok: false, error: 'Channel not found or not sendable', permanent: true };
       }
 
       const chunks = chunkText(toNativeMarkdown(message.text), this.maxMessageLength);
-      const ids: string[] = [];
+      total = chunks.length;
 
       for (const chunk of chunks) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
@@ -322,18 +382,31 @@ export class DiscordAdapter
         });
         ids.push(String(sent.id));
       }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (ids.length > 0) {
+        this.rememberChunkIds(ids);
+        return {
+          ok: true,
+          messageId: ids[0],
+          error: `partial: ${ids.length} of ${total} chunks delivered; ${error}`,
+        };
+      }
+      return isPermanentDiscordError(err)
+        ? { ok: false, error, permanent: true }
+        : { ok: false, error };
+    }
 
-      this.rememberChunkIds(ids);
+    this.rememberChunkIds(ids);
+    try {
       await this.clearReceiptReaction(chatId);
-
       if (message.threadId && this.threadState) {
         await this.threadState.recordPost(chatId, message.threadId);
       }
-
-      return { ok: true, messageId: ids[0] };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } catch {
+      // Best-effort: the reply is already in the channel.
     }
+    return { ok: true, messageId: ids[0] };
   }
 
   /**
@@ -379,15 +452,29 @@ export class DiscordAdapter
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         await (channel as any).sendTyping();
       }
-      if (this.postThinkingPlaceholder && channel && 'send' in channel) {
-        if (!this.thinkingMessages.has(chatId)) {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-          const placeholder = await (channel as any).send({
-            content: 'Thinking…',
-            allowedMentions: { parse: [] },
-          });
-          this.thinkingMessages.set(chatId, String(placeholder.id));
+      if (this.postsThinkingPlaceholder && channel && 'send' in channel) {
+        const existing = this.thinkingMessages.get(chatId);
+        if (existing && Date.now() - existing.lastTypingAt <= THINKING_PLACEHOLDER_STALE_MS) {
+          // Same turn — the gateway's periodic typing refresh. Keep the one
+          // placeholder and slide the liveness window.
+          existing.lastTypingAt = Date.now();
+          return;
         }
+        if (existing) {
+          // A previous turn's placeholder no send() ever cleared (the turn
+          // ended without a reply). Delete it so the channel never accumulates
+          // stale "Thinking…" rows, then post this turn's own.
+          await this.clearThinkingPlaceholder(chatId);
+        }
+        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+        const placeholder = await (channel as any).send({
+          content: 'Thinking…',
+          allowedMentions: { parse: [] },
+        });
+        this.thinkingMessages.set(chatId, {
+          messageId: String(placeholder.id),
+          lastTypingAt: Date.now(),
+        });
       }
     } catch {
       // ignore
@@ -720,14 +807,14 @@ export class DiscordAdapter
   }
 
   private async clearThinkingPlaceholder(chatId: string): Promise<void> {
-    const placeholderId = this.thinkingMessages.get(chatId);
-    if (!placeholderId) return;
+    const entry = this.thinkingMessages.get(chatId);
+    if (!entry) return;
     this.thinkingMessages.delete(chatId);
     try {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'messages' in channel) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-        const msg = await (channel as any).messages.fetch(placeholderId);
+        const msg = await (channel as any).messages.fetch(entry.messageId);
         await msg.delete();
       }
     } catch {

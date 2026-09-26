@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AcceptanceSpec } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { IMPLICIT_GOAL_CHECK, isConverged, judge } from '../judge';
@@ -77,23 +80,26 @@ describe('judge — command-backed checks', () => {
     expect(verdict.perCriterion[0]?.evidence).toBe(`command exited 0: ${'x'.repeat(200)}`);
   });
 
-  it('runs the real default execCommand for trivial commands (smoke)', async () => {
-    const spec = specWith({
-      checks: [
-        { id: 'ok', description: 'true exits 0', command: 'true' },
-        { id: 'nope', description: 'exit 1 fails', command: 'exit 1' },
-      ],
-    });
-
-    const verdict = await judge({ output: '', spec });
-
-    const ok = verdict.perCriterion.find((c) => c.id === 'ok');
-    const nope = verdict.perCriterion.find((c) => c.id === 'nope');
-    expect(ok?.pass).toBe(true);
-    expect(ok?.evidence).toBe('command exited 0');
-    expect(nope?.pass).toBe(false);
-    expect(nope?.evidence).toBe('command exited 1');
-    expect(nope?.gap).toBe('exit 1 fails');
+  // S1 (plan openclaw-2026.9.6-gaps): the judge used to run a model-supplied
+  // `command` through the host's `sh -c` with no gate. It no longer has a
+  // shell of its own — without an injected executor (built in wiring from the
+  // personality's resolved execution backend) a command check is refused.
+  it('runs no command without an injected executor, and fails the check with a reason', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-judge-'));
+    try {
+      const sentinel = join(dir, 'ran');
+      const spec = specWith({
+        checks: [{ id: 'c', description: 'writes a file', command: `touch '${sentinel}'` }],
+      });
+      const verdict = await judge({ output: '', spec });
+      expect(existsSync(sentinel)).toBe(false);
+      const result = verdict.perCriterion[0];
+      expect(result?.pass).toBe(false);
+      expect(result?.evidence).toMatch(/no execution backend/);
+      expect(verdict.score).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

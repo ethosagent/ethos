@@ -15,7 +15,7 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { Gateway, type GatewayConfig } from '../index';
+import { ABSORBED_STEER_ACK, Gateway, type GatewayConfig } from '../index';
 import { LaneSessionFiles } from '../lane-sessions';
 
 const DATA_DIR = '/state';
@@ -197,6 +197,38 @@ describe('gateway lane → session map survives a restart (D28)', () => {
     expect(s.turns[0]?.sessionKey).toBe(LANE);
   });
 
+  // U11 — a lane's /mute is stored beside its session key, so it outlives a restart.
+  it('/mute survives a restart and leaves the lane on its default session', async () => {
+    const storage = new InMemoryStorage();
+    const out = recordingAdapter();
+    await gateway(keyedLoop().loop, out.adapter, storage).handleMessage(
+      msg('/mute 2h'),
+      out.adapter,
+    );
+    const entry = (await new LaneSessionFiles(storage, DATA_DIR).load('bot-a')).get(LANE);
+    expect(entry?.sessionKey).toBe(LANE);
+    expect(entry?.mutedUntil).toBeGreaterThan(Date.now());
+
+    const held: string[] = [];
+    const second = keyedLoop();
+    const gw2 = gateway(second.loop, out.adapter, storage, {
+      heldNotices: {
+        hold: async (n) => {
+          held.push(n.text);
+        },
+        listHeld: async () => [],
+        markReleased: async () => {},
+      },
+    });
+    await gw2.restoreLaneSessions();
+    await expect(
+      gw2.notifyTracked({ platform: 'telegram', chatId: 'chat-1' }, 'job finished'),
+    ).resolves.toBe('held');
+    expect(held).toEqual(['job finished']);
+    await gw2.handleMessage(msg('hi'), out.adapter);
+    expect(second.turns[0]?.sessionKey).toBe(LANE);
+  });
+
   it('writes one file per bot under gateway/lanes/', async () => {
     const storage = new InMemoryStorage();
     const out = recordingAdapter();
@@ -348,5 +380,81 @@ describe('gateway lane → session map — a bot added live', () => {
     });
     await gw.handleMessage(msgB('/new'), b.adapter);
     expect((await files.load('bot-b')).get(LANE_B2)?.sessionKey).toBe(`${LANE_B2}:777`);
+  });
+});
+
+// H3 (plan ux-feedback-and-config-clarity) — a second message during a turn is
+// always told where it went: absorbed into the running answer, or queued with
+// its position. Every ack carries the thread it was asked in.
+describe('gateway — second-message acks (H3)', () => {
+  function fullRecordingAdapter() {
+    const outbound: OutboundMessage[] = [];
+    const adapter = {
+      id: 'telegram:bot-a',
+      displayName: 'Telegram',
+      canSendTyping: false,
+      canEditMessage: false,
+      canReact: false,
+      canSendFiles: false,
+      maxMessageLength: 4096,
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(async (_chatId: string, m: OutboundMessage): Promise<DeliveryResult> => {
+        outbound.push(m);
+        return { ok: true, messageId: String(outbound.length) };
+      }),
+      onMessage: vi.fn(),
+      health: vi.fn().mockResolvedValue({ ok: true }),
+    } as unknown as PlatformAdapter;
+    return { adapter, outbound };
+  }
+
+  it('absorbed steers are acked; a full sink queues with an ordinal; all with threadId', async () => {
+    const { adapter, outbound } = fullRecordingAdapter();
+    const s = keyedLoop(true); // the turn never ends — the sink never drains
+    const gw = gateway(s.loop, adapter, new InMemoryStorage());
+    const withThread = (text: string): InboundMessage => ({ ...msg(text), threadId: 'th-9' });
+
+    void gw.handleMessage(withThread('kick off'), adapter).catch(() => {});
+    await waitUntil(() => s.turns.length === 1);
+
+    // 1) Absorbed into the running turn.
+    await gw.handleMessage(withThread('also mention pricing'), adapter);
+    expect(outbound.at(-1)?.text).toBe(ABSORBED_STEER_ACK);
+    expect(outbound.at(-1)?.threadId).toBe('th-9');
+
+    // Fill the steer sink (cap 32; one entry used above).
+    for (let i = 0; i < 31; i++) await gw.handleMessage(withThread(`steer ${i}`), adapter);
+    expect(outbound.filter((m) => m.text === ABSORBED_STEER_ACK)).toHaveLength(32);
+
+    // 2) Sink full → queued as its own turn, ack names the position (the
+    //    running turn is 1st) — no silent drop.
+    void gw.handleMessage(withThread('overflow B'), adapter).catch(() => {});
+    await waitUntil(() => outbound.some((m) => m.text?.startsWith('⏳ queued (2nd)')));
+    const ackB = outbound.find((m) => m.text?.startsWith('⏳ queued (2nd)'));
+    expect(ackB?.text).toBe("⏳ queued (2nd) — I'll answer after the current reply.");
+    expect(ackB?.threadId).toBe('th-9');
+
+    // 3) Next overflow lands behind it — ordinal from the lane depth.
+    void gw.handleMessage(withThread('overflow C'), adapter).catch(() => {});
+    await waitUntil(() => outbound.some((m) => m.text?.startsWith('⏳ queued (3rd)')));
+    expect(outbound.at(-1)?.threadId).toBe('th-9');
+
+    // One ack per message, no floods: 32 absorbed + 2 queued.
+    expect(outbound.filter((m) => m.text?.startsWith('⏳ queued')).length).toBe(2);
+  });
+
+  it('/queue during a running turn acks with the same H3 wording as the plain enqueue', async () => {
+    const { adapter, outbound } = fullRecordingAdapter();
+    const s = keyedLoop(true); // the turn never ends — the sink stays active
+    const gw = gateway(s.loop, adapter, new InMemoryStorage());
+
+    void gw.handleMessage(msg('kick off'), adapter).catch(() => {});
+    await waitUntil(() => s.turns.length === 1);
+
+    await gw.handleMessage(msg('/queue follow-up question'), adapter);
+    // One wording for one concept — the sink-up /queue path used to say
+    // "✅ queued (position N)" while every other queued ack was H3's.
+    expect(outbound.at(-1)?.text).toBe("⏳ queued (2nd) — I'll answer after the current reply.");
   });
 });

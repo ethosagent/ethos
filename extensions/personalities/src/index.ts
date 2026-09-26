@@ -807,10 +807,11 @@ export interface CreatePersonalityInput {
    *
    * `PersonalityConfig.safety` carries more (approvalMode, denyRules,
    * injectionDefense, …); those are edited afterwards through `update`, which
-   * merges onto whatever is already on disk. Network reach is different: it has
-   * to be right in the FIRST write, because a personality with no
-   * `safety.network` resolves every `allowedHosts: ['*']` tool to an EMPTY host
-   * set (`packages/core/src/capability-resolver.ts`) and denies every fetch.
+   * merges onto whatever is already on disk. Network reach is different: it is
+   * set in the FIRST write so a narrowed personality is never briefly open — a
+   * personality with no `safety.network` gets the open public internet under
+   * the `safeFetch` floor (`resolveCapabilities`,
+   * `packages/core/src/capability-resolver.ts`).
    *
    * Narrowing only, per ARCHITECTURE.md §V S6 — the non-overridable floor
    * (cloud-metadata + private ranges blocked, http/https only) is applied
@@ -993,6 +994,28 @@ function mergeVoiceConfig(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+/** One personality directory whose load failed (N3, ux-feedback-and-config-
+ *  clarity). The registry keeps serving the last-good copy: `define()` runs
+ *  only after a successful parse, so a broken edit never evicts the config
+ *  already in the `personalities` map. */
+export interface PersonalityLoadFailure {
+  id: string;
+  dir: string;
+  /** Human-readable cause, prefixed with the source file where the parse
+   *  names one (e.g. `config.yaml: …` — see `withSourceFile`). */
+  error: string;
+}
+
+/** Outcome of the most recent `loadFromDirectory` call. */
+export interface PersonalityLoadReport {
+  failures: PersonalityLoadFailure[];
+  /** Personalities whose mtime fingerprint changed on this call — a reload of
+   *  something already registered, with the changed inputs named (basenames
+   *  of the six fingerprinted paths, e.g. `SOUL.md`). First sights are not
+   *  listed. */
+  reloaded: Array<{ id: string; changed: string[] }>;
+}
+
 export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly personalities = new Map<string, PersonalityConfig>();
   /** Per-personality MCP policy loaded from mcp.yaml (sibling artifact, NOT
@@ -1005,6 +1028,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly toolsConfigs = new Map<string, PersonalityToolsConfig>();
   // dir → mtime fingerprint of the paths `loadOne` lists (the one owner of that list)
   private readonly fingerprintCache = new Map<string, string>();
+  /** What the most recent `loadFromDirectory` call found (N3). Replaced whole
+   *  per call. A directory the fingerprint fast path skipped contributes
+   *  nothing, so a still-broken personality is reported once per content
+   *  change, not once per refresh tick. */
+  lastLoadReport: PersonalityLoadReport = { failures: [], reloaded: [] };
   private defaultId = 'researcher';
   private readonly storage: Storage;
   /** Directory holding user-created personalities (mutable). When unset,
@@ -1101,12 +1129,44 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       }
     }
 
-    await Promise.all(
+    // allSettled, not all (N3): one malformed personality directory must not
+    // block the others — every successful loadOne is APPLIED before this call
+    // settles, whatever its siblings did.
+    const results = await Promise.allSettled(
       entries.map(async (entry) => {
         const personalityDir = join(dir, entry);
-        await this.loadOne(personalityDir, entry);
+        return await this.loadOne(personalityDir, entry);
       }),
     );
+
+    const report: PersonalityLoadReport = { failures: [], reloaded: [] };
+    results.forEach((result, i) => {
+      const entry = entries[i];
+      if (entry === undefined) return;
+      if (result.status === 'rejected') {
+        const error =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        report.failures.push({ id: entry, dir: join(dir, entry), error });
+      } else if (result.value !== null) {
+        report.reloaded.push({ id: entry, changed: result.value });
+      }
+    });
+    this.lastLoadReport = report;
+
+    if (report.failures.length > 0) {
+      // Still a rejection — deliberately. Every existing caller either treats
+      // a personality-load failure as fatal (CLI wiring, `gateway start`
+      // first boot, `ethos serve`/`boot`, web-api) or already tolerates a
+      // rejection (the gateway refresh's allSettled + the per-turn refresh's
+      // swallow), so resolving here would turn fail-closed boots into silent
+      // ones nobody reads a report for. The successes above are applied
+      // regardless, and `lastLoadReport` survives the throw for callers that
+      // catch. (plan ux-feedback-and-config-clarity §4 N3, §9.)
+      const detail = report.failures.map((f) => `${f.id}: ${f.error}`).join('; ');
+      throw new Error(
+        `personalities: ${report.failures.length} of ${entries.length} failed to load — ${detail} (last-good copies still serve)`,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1833,7 +1893,13 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async loadOne(dir: string, id: string): Promise<void> {
+  /**
+   * Returns the changed fingerprint inputs (file basenames) when this call
+   * RELOADED a directory already fingerprinted, `null` on a first sight or a
+   * no-change fast path — `loadFromDirectory` turns that into the
+   * `lastLoadReport.reloaded` entries (N3).
+   */
+  private async loadOne(dir: string, id: string): Promise<string[] | null> {
     // Fingerprint guard — invalidate when any of the personality's inputs change.
     // mtime alone is enough: filesystems we run on (APFS / ext4 / NTFS) all
     // expose sub-millisecond mtime, so two writes within the same tick
@@ -1842,16 +1908,30 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     // derives `skillsDirs` from its existence — without it, installing the
     // first skill into a personality that had no `skills/` dir would never be
     // seen until the process restarted.
-    const fingerprint = await this.fileFingerprint([
+    const paths = [
       join(dir, 'config.yaml'),
       join(dir, 'SOUL.md'),
       join(dir, 'toolset.yaml'),
       join(dir, 'mcp.yaml'),
       join(dir, 'tools.yaml'),
       join(dir, 'skills'),
-    ]);
-    if (this.fingerprintCache.get(dir) === fingerprint) return;
+    ];
+    const fingerprint = await this.fileFingerprint(paths);
+    const previous = this.fingerprintCache.get(dir);
+    if (previous === fingerprint) return null;
+    // Set BEFORE buildConfig on purpose: a directory whose parse throws is
+    // retried only when its content changes again, so a broken personality
+    // costs one failed parse (and one report entry) per edit, not one per
+    // refresh tick — and the last-good copy keeps serving meanwhile.
     this.fingerprintCache.set(dir, fingerprint);
+    const changed =
+      previous === undefined
+        ? null
+        : diffFingerprint(
+            previous,
+            fingerprint,
+            paths.map((p) => basename(p)),
+          );
 
     const { config, mcpPolicy, mcpWarnings, toolsConfig } = await this.buildConfig(dir, id);
     if (config) {
@@ -1872,6 +1952,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         this.toolsConfigs.delete(id);
       }
     }
+    return changed;
   }
 
   private async buildConfig(
@@ -1895,7 +1976,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     if (!configSrc && !soulExists) return { config: null };
 
-    const parsed = configSrc ? parseConfigYaml(configSrc) : { flat: {}, nested: {} };
+    const parsed = configSrc
+      ? withSourceFile('config.yaml', () => parseConfigYaml(configSrc))
+      : { flat: {}, nested: {} };
     const cfg = parsed.flat;
 
     const capabilities = cfg.capabilities
@@ -1940,7 +2023,10 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? Number.parseFloat(cfg.budgetCapUsd)
         : undefined;
 
-    const safety = parsed.nested.safety ? buildSafetyConfig(parsed.nested.safety) : undefined;
+    const safetyBlock = parsed.nested.safety;
+    const safety = safetyBlock
+      ? withSourceFile('config.yaml', () => buildSafetyConfig(safetyBlock))
+      : undefined;
 
     // E5 — context_layering.* dotted keys. Mirrors the fs_reach.* pattern so
     // we don't need a new nested-block parser entry for one-off configs.
@@ -1969,6 +2055,10 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     const model = buildModelConfig(cfg);
 
+    const toolset = toolsetSrc
+      ? withSourceFile('toolset.yaml', () => parseToolsetYaml(toolsetSrc))
+      : undefined;
+
     const config: PersonalityConfig = {
       id,
       name: cfg.name ?? titleCase(id),
@@ -1979,7 +2069,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(capabilities?.length ? { capabilities } : {}),
       soulFile: join(dir, 'SOUL.md'),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),
-      ...(toolsetSrc ? { toolset: parseToolsetYaml(toolsetSrc) } : {}),
+      ...(toolset ? { toolset } : {}),
       ...(streamingTimeoutMs !== undefined ? { streamingTimeoutMs } : {}),
       ...(fsReach ? { fs_reach: fsReach } : {}),
       ...(mcpServers !== undefined ? { mcp_servers: mcpServers } : {}),
@@ -2007,7 +2097,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(decisions !== undefined ? { decisions } : {}),
     };
 
-    validateUnsafeCombinations(id, config);
+    withSourceFile('config.yaml', () => validateUnsafeCombinations(id, config));
     let mcpPolicy: import('@ethosagent/types').McpPolicy | undefined;
     let mcpWarnings: string[] | undefined;
     if (mcpSrc) {
@@ -2809,6 +2899,38 @@ function validateUnsafeCombinations(id: string, config: PersonalityConfig): void
         '               (b) remove channel bindings from this personality (cli/cron only).\n' +
         '       This combination is not configurable; it is rejected at config load.',
     );
+  }
+}
+
+/**
+ * Which fingerprint components differ between two `fileFingerprint` values —
+ * the fingerprint is per-path mtimes joined with `|` in `names` order, so an
+ * index-wise diff names exactly the inputs that moved (N3's
+ * `reloaded (SOUL.md changed)` lines).
+ */
+function diffFingerprint(previous: string, next: string, names: string[]): string[] {
+  const a = previous.split('|');
+  const b = next.split('|');
+  const changed: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name && a[i] !== b[i]) changed.push(name);
+  }
+  return changed;
+}
+
+/**
+ * Re-throw `fn`'s error with the source file named, so a load failure in
+ * `lastLoadReport` reads `config.yaml: …` instead of a bare message with no
+ * home (N3). The parsers here carry no line numbers, so file-level attribution
+ * is the limit of what this can honestly claim.
+ */
+function withSourceFile<T>(file: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(msg.startsWith(`${file}:`) ? msg : `${file}: ${msg}`);
   }
 }
 

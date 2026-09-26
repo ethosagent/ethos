@@ -6,6 +6,7 @@ import { useConfig } from '../features/config/api/queries';
 import { useDocumentsList } from '../features/documents/api/queries';
 import { kanbanKeys } from '../features/kanban/api/keys';
 import { learningKeys } from '../features/learning/api/keys';
+import { outboxKeys } from '../features/outbox/api/keys';
 import {
   usePersonalityList,
   usePersonalitySkillsList,
@@ -157,6 +158,33 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
     queryFn: () => rpc.plugins.list(),
     enabled: !!personalityId,
   });
+  // N4 (plan ux-feedback-and-config-clarity) — things waiting for a human get
+  // a badge, the same NavRow badge the Tasks/Learning rows already use.
+  // Memory = parked capture candidates (`memory.pendingList`, the queue the
+  // page's Pending tab renders); Outbox = drafts awaiting approval
+  // (`outbox.list` filtered to `awaiting_approval` — the page's "needs you"
+  // section). Both reuse the list RPCs those pages already poll; workspace
+  // altitude only, so the Library never fires them.
+  const memoryPendingQuery = useQuery({
+    queryKey: ['memory', 'pending', personalityId],
+    queryFn: () => rpc.memory.pendingList({ personalityId: personalityId ?? '' }),
+    enabled: !!personalityId,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const memoryPending = memoryPendingQuery.data?.pending.length ?? 0;
+  const outboxQuery = useQuery({
+    // The Outbox pane's own key for this scope, so a decision made there
+    // refreshes this badge without a second poll.
+    queryKey: outboxKeys.list(personalityId ? { personalityId } : {}),
+    queryFn: () => rpc.outbox.list({ personalityId: personalityId ?? '' }),
+    enabled: !!personalityId,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const outboxPending =
+    outboxQuery.data?.items.filter((i) => i.state === 'awaiting_approval').length ?? 0;
+
   const skillsFraction = formatFraction(
     skillsQuery.data?.skills.length,
     globalSkillsQuery.data?.skills.length,
@@ -309,7 +337,13 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
             label="Sessions"
             pathname={pathname}
           />
-          <NavRow path={`${wsPrefix}/memory`} glyph="memory" label="Memory" pathname={pathname} />
+          <NavRow
+            path={`${wsPrefix}/memory`}
+            glyph="memory"
+            label="Memory"
+            pathname={pathname}
+            badge={memoryPending}
+          />
           <NavRow
             path={`${wsPrefix}/documents`}
             glyph="documents"
@@ -317,7 +351,13 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
             pathname={pathname}
           />
           <NavRow path={`${wsPrefix}/schedule`} glyph="cron" label="Schedule" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/outbox`} glyph="outbox" label="Outbox" pathname={pathname} />
+          <NavRow
+            path={`${wsPrefix}/outbox`}
+            glyph="outbox"
+            label="Outbox"
+            pathname={pathname}
+            badge={outboxPending}
+          />
           <NavRow
             path={`${wsPrefix}/skills`}
             glyph="skills"

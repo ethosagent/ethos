@@ -77,7 +77,7 @@ function harness(opts: {
     installMethod: 'npm',
     currentVersion: '1.0.0',
     currentEntry: CURRENT,
-    fetchLatest: async () => '1.1.0',
+    resolveVersion: async () => '1.1.0',
     runEthos: async (entry, args) => {
       runs.push({ entry, args });
       if (entry === CURRENT && args[0] === 'doctor') return opts.baseline ?? out(report('1.0.0'));
@@ -132,7 +132,7 @@ describe('ethos upgrade — the happy path', () => {
   it('source mode prints git steps and never touches npm', async () => {
     const h = harness({});
     h.deps.installMethod = 'source';
-    h.deps.fetchLatest = async () => {
+    h.deps.resolveVersion = async () => {
       throw new Error('registry must not be hit');
     };
     expect(await runUpgrade([], h.deps)).toBe(0);
@@ -377,7 +377,7 @@ describe('ethos upgrade — aborts before install', () => {
 
   it('when the registry is unreachable', async () => {
     const h = harness({});
-    h.deps.fetchLatest = async () => {
+    h.deps.resolveVersion = async () => {
       throw new Error('ENOTFOUND');
     };
     expect(await runUpgrade([], h.deps)).toBe(1);
@@ -403,6 +403,51 @@ describe('ethos upgrade — a live gateway', () => {
     const h = harness({ gatewayLive: false });
     await runUpgrade([], h.deps);
     expect(h.text()).not.toContain('restart');
+  });
+});
+
+describe('ethos upgrade --version', () => {
+  it('--version 0.7.3 resolves and installs that spec, and gates on it', async () => {
+    const h = harness({ installed: [out(report('0.7.3'))] });
+    const asked: string[] = [];
+    h.deps.resolveVersion = async (spec) => {
+      asked.push(spec);
+      return spec;
+    };
+    expect(await runUpgrade(['--version', '0.7.3'], h.deps)).toBe(0);
+    expect(asked).toEqual(['0.7.3']);
+    expect(h.installs).toEqual(['@ethosagent/cli@0.7.3']);
+  });
+
+  it('without --version it resolves the latest dist-tag', async () => {
+    const h = harness({});
+    const asked: string[] = [];
+    h.deps.resolveVersion = async (spec) => {
+      asked.push(spec);
+      return '1.1.0';
+    };
+    expect(await runUpgrade([], h.deps)).toBe(0);
+    expect(asked).toEqual(['latest']);
+  });
+
+  it('refuses a missing or range-shaped spec before touching the registry', async () => {
+    for (const args of [['--version'], ['--version', '--no-rollback'], ['--version', '^0.7']]) {
+      const h = harness({});
+      h.deps.resolveVersion = async () => {
+        throw new Error('registry must not be hit');
+      };
+      expect(await runUpgrade(args, h.deps)).toBe(1);
+      expect(h.text()).toContain('--version');
+      expect(h.runs).toEqual([]);
+      expect(h.installs).toEqual([]);
+    }
+  });
+
+  it('a successful upgrade points at the changelog entry for the new version', async () => {
+    const h = harness({ installed: [out(report('0.7.3'))] });
+    h.deps.resolveVersion = async (spec) => spec;
+    expect(await runUpgrade(['--version', '0.7.3'], h.deps)).toBe(0);
+    expect(h.text()).toContain('What changed: https://ethosagent.ai/docs/changelog#v0-7-3');
   });
 });
 
