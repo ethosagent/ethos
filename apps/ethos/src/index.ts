@@ -11,7 +11,7 @@ if (_nodeMajor < 24) {
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
-import { ethosDir, readConfig } from '@ethosagent/config';
+import { adoptConfigNotices, ethosDir, readConfig } from '@ethosagent/config';
 import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
@@ -307,6 +307,9 @@ try {
             setRotationConfig(fresh.logs.rotation);
           }
           let withFlags = { ...fresh };
+          // B2 — the parse-notice side-tables are keyed by object identity;
+          // carry them onto the clone or chat prints zero config warnings.
+          adoptConfigNotices(withFlags, fresh);
           if (verboseFlag) withFlags.verbose = true;
           if (skinFlag) withFlags.skin = skinFlag;
           if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
@@ -326,6 +329,9 @@ try {
           setRotationConfig(config.logs.rotation);
         }
         let withFlags = { ...config };
+        // B2 — the parse-notice side-tables are keyed by object identity;
+        // carry them onto the clone or chat prints zero config warnings.
+        adoptConfigNotices(withFlags, config);
         if (verboseFlag) withFlags.verbose = true;
         if (skinFlag) withFlags.skin = skinFlag;
         if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };

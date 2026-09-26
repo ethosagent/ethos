@@ -4943,6 +4943,11 @@ export async function resolveConfigSecrets(
   secrets: SecretsResolver,
 ): Promise<EthosConfig> {
   const r = { ...config };
+  // This clone sits on the `readConfig` path every CLI command uses, so the
+  // identity-keyed parse notices must travel with it — without this, chat
+  // printed zero B2 warnings while status/doctor (readRawConfig, original
+  // object) showed them.
+  adoptConfigNotices(r, config);
   r.apiKey = await resolveSecretValue(r.apiKey, secrets);
   if (r.baseUrl) r.baseUrl = await resolveSecretValue(r.baseUrl, secrets);
   if (r.telegramToken) r.telegramToken = await resolveSecretValue(r.telegramToken, secrets);
@@ -7162,6 +7167,28 @@ export function configParseNotices(config: EthosConfig): { errors: string[]; war
     errors: parseErrorsByConfig.get(config) ?? [],
     warnings: parseWarningsByConfig.get(config) ?? [],
   };
+}
+
+/**
+ * Carry the identity-keyed side-tables across a config copy.
+ *
+ * Parse-time notices (`parseErrorsByConfig`, `parseWarningsByConfig`) and the
+ * personality-key-absence record (`personalityDefaultedByConfig`) are keyed by
+ * the parsed config OBJECT's identity, so any `{ ...config }` clone silently
+ * sheds them — `ethos chat` dropped the B2 unknown-key warnings this way while
+ * `ethos status`/`ethos doctor` (which read the original object) showed them.
+ * Every code path that copies a loaded config and later feeds the copy to a
+ * notices reader (`configParseNotices`, `resolveEffectiveConfig`) must call
+ * this on the copy. Adoption shares the same arrays by reference — notices
+ * describe the parse, not the copy's overrides, so divergence is not a concern.
+ */
+export function adoptConfigNotices(target: EthosConfig, source: EthosConfig): void {
+  if (target === source) return;
+  const errors = parseErrorsByConfig.get(source);
+  if (errors !== undefined) parseErrorsByConfig.set(target, errors);
+  const warnings = parseWarningsByConfig.get(source);
+  if (warnings !== undefined) parseWarningsByConfig.set(target, warnings);
+  if (personalityDefaultedByConfig.has(source)) personalityDefaultedByConfig.add(target);
 }
 
 /**
