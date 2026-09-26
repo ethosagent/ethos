@@ -22,6 +22,7 @@ import { LOOPBACK_PEER_POLICY } from '../a2a-fixtures';
 import {
   approvePeer,
   echoRunner,
+  fencedPeerMessage,
   type RealAgentServer,
   revokePeer,
   startAgentServer,
@@ -89,7 +90,9 @@ describe('A2A real-socket lifecycle (plan T1.8)', () => {
     expect(syncResult.ok).toBe(true);
     if (syncResult.ok && syncResult.mode === 'sync') {
       expect(syncResult.state).toBe('completed');
-      expect(syncResult.text).toBe('echo: hello over a real socket');
+      expect(syncResult.text).toBe(
+        `echo: ${fencedPeerMessage(initiator.fingerprint, 'hello over a real socket')}`,
+      );
     }
 
     // --- async submit --------------------------------------------------------
@@ -138,7 +141,13 @@ describe('A2A real-socket lifecycle (plan T1.8)', () => {
     expect(sseRes.headers.get('content-type')).toContain('text/event-stream');
     const sseBody = await sseRes.text();
     expect(sseBody).toContain('completed');
-    expect(sseBody).toContain('echo: do it in the background');
+    // The SSE frame carries the task result JSON-encoded, so compare against the
+    // encoded form (newlines in the fence arrive as `\n`).
+    expect(sseBody).toContain(
+      JSON.stringify(
+        `echo: ${fencedPeerMessage(initiator.fingerprint, 'do it in the background')}`,
+      ).slice(1, -1),
+    );
 
     // --- revoke -----------------------------------------------------------
     await revokePeer(responder, initiator.fingerprint);

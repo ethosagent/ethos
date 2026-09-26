@@ -11,7 +11,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { A2aOutboundClient, A2aOutboundError, computeA2aBackoffDelayMs } from '../../outbound';
 import { LOOPBACK_PEER_POLICY } from '../a2a-fixtures';
-import { approvePeer, echoRunner, type RealAgentServer, startAgentServer } from './harness';
+import {
+  approvePeer,
+  echoRunner,
+  fencedPeerMessage,
+  type RealAgentServer,
+  startAgentServer,
+} from './harness';
 import {
   type FailNTimesThenProxy,
   type HangingListener,
@@ -144,7 +150,8 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok && result.mode === 'sync') expect(result.text).toBe('echo: hi');
+    if (result.ok && result.mode === 'sync')
+      expect(result.text).toBe(`echo: ${fencedPeerMessage(initiator.fingerprint, 'hi')}`);
     expect(proxy.attempts()).toBe(3);
     // Full jitter, randomFn fixed at 0.5: window = min(cap, base * 2^attempt).
     expect(sleeps).toEqual([
