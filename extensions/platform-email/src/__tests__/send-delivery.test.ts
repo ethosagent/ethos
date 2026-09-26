@@ -1,3 +1,4 @@
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { EmailAdapter, type EmailAdapterConfig } from '../index';
 import { loadEmailSdk } from '../sdk';
@@ -42,6 +43,78 @@ function makeAdapter(err: Error) {
   return adapter;
 }
 
+/** A raw inbound email that passes sender auth for `CONFIG_AUTH`. */
+function rawEmail(from: string, subject: string, messageId: string): Buffer {
+  const domain = from.slice(from.lastIndexOf('@') + 1);
+  return Buffer.from(
+    [
+      `Authentication-Results: mx.example.com; dmarc=pass header.from=${domain}`,
+      `From: ${from}`,
+      'To: agent@example.com',
+      `Subject: ${subject}`,
+      `Message-ID: ${messageId}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'please look',
+    ].join('\r\n'),
+    'utf-8',
+  );
+}
+
+function imapWith(messages: Array<{ uid: number; raw: Buffer }>) {
+  return {
+    connect: vi.fn().mockResolvedValue(undefined),
+    logout: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue(messages.map((m) => m.uid)),
+    getMailboxLock: vi.fn().mockResolvedValue({ release: vi.fn() }),
+    fetch: vi.fn().mockImplementation(async function* () {
+      for (const m of messages) yield { uid: m.uid, source: m.raw };
+    }),
+    messageFlagsAdd: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+// A reply owed across a restart: the delivery-ledger sweep redelivers it
+// through a NEW adapter instance, which never polled the message it answers.
+describe('EmailAdapter — thread state survives a restart', () => {
+  const CONFIG_AUTH: EmailAdapterConfig = { ...CONFIG, trustedAuthservId: 'mx.example.com' };
+
+  it('a new adapter on the same storage replies in-thread to a chat the old one saw', async () => {
+    const storage = new InMemoryStorage();
+    const first = new EmailAdapter(
+      { ...CONFIG_AUTH, storage, emailDir: '/ethos/email' },
+      {
+        createImapClient: () =>
+          imapWith([{ uid: 1, raw: rawEmail('alice@example.com', 'Build', '<m1@x>') }]) as never,
+        createTransporter: () => ({ sendMail: vi.fn() }) as never,
+      },
+    );
+    const chats: string[] = [];
+    first.onMessage((m) => chats.push(m.chatId));
+    await first.poll();
+    const chatId = chats[0] ?? '';
+    expect(chatId).toBe('alice@example.com:build');
+
+    // "Restart": a fresh instance, same storage, never polled.
+    const transport = { sendMail: vi.fn().mockResolvedValue({ messageId: '<r@x>' }) };
+    const second = new EmailAdapter(
+      { ...CONFIG_AUTH, storage, emailDir: '/ethos/email' },
+      { createTransporter: () => transport as never },
+    );
+    const res = await second.send(chatId, { text: 'owed reply' });
+    expect(res).toEqual({ ok: true, messageId: '<r@x>' });
+    expect(transport.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'alice@example.com',
+        subject: 'Re: Build',
+        inReplyTo: '<m1@x>',
+        references: '<m1@x>',
+      }),
+    );
+  });
+});
+
 describe('EmailAdapter.send — permanent refusals', () => {
   it.each([
     [550, '550 5.1.1 <a@x.com>: Recipient address rejected: User unknown'],
@@ -50,6 +123,15 @@ describe('EmailAdapter.send — permanent refusals', () => {
   ])('SMTP %i is a hard bounce — permanent', async (code, response) => {
     const res = await makeAdapter(smtpError(code, response)).send('a@x.com:s', { text: 'hi' });
     expect(res).toMatchObject({ ok: false, permanent: true });
+  });
+
+  it('a chat with no thread state at all is permanent — no retry can recover it', async () => {
+    const transport = { sendMail: vi.fn() };
+    const adapter = new EmailAdapter(CONFIG, { createTransporter: () => transport as never });
+    const res = await adapter.send('nobody@x.com:s', { text: 'hi' });
+    expect(res).toMatchObject({ ok: false, permanent: true });
+    expect(res.error).toMatch(/No thread state/);
+    expect(transport.sendMail).not.toHaveBeenCalled();
   });
 
   it('4xx, auth failures and transport errors are not permanent', async () => {
