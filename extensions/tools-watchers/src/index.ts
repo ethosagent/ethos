@@ -108,9 +108,9 @@ export interface WatcherToolsOptions {
   outbox?: WatcherOutboxGate;
   /**
    * The operator messaging allowlist — the same closure `send_message` gets
-   * (`packages/wiring/src/compose-tools.ts`). Checked for a `deliver` target
-   * whose owner the outbox does not gate (S5); a gated owner's foreign target is
-   * already refused by `refuseForeignDeliver`. Absent = no allowlist applies.
+   * (`packages/wiring/src/compose-tools.ts`). Checked for EVERY `deliver`
+   * target (S5), before the outbox refusal, whether or not the outbox gates the
+   * owner. Absent = no allowlist applies.
    */
   getAllowedTargets?: MessagingToolsOptions['getAllowedTargets'];
 }
@@ -258,19 +258,22 @@ export function createWatcherTools(
         if (!deliver.platform || !deliver.chat_id) {
           return fail('deliver requires explicit platform and chat_id');
         }
+        // Every target meets the allowlist `send_message` meets (S5), FIRST and
+        // whatever the outbox says — the same order as `executeSendMessage` in
+        // `@ethosagent/tools-messaging` (O-D3): the outbox exempts a gated
+        // owner's origin chat and the operator's chat, and that exemption must
+        // never widen the destinations the operator allowed. Pinned by "a gated
+        // owner's origin chat outside the allowlist is refused" in
+        // `src/__tests__/ownership.test.ts`.
+        const notAllowed = messagingTargetRefusal(
+          opts.getAllowedTargets,
+          caller,
+          deliver.platform,
+          deliver.chat_id,
+        );
+        if (notAllowed) return fail(notAllowed);
         const refusal = refuseForeignDeliver(opts.outbox, owner, deliver.platform, deliver.chat_id);
         if (refusal) return refusal;
-        // An owner the outbox gates on this platform was answered above; any
-        // other owner meets the allowlist `send_message` meets (S5).
-        if (!opts.outbox?.gates(caller, deliver.platform)) {
-          const notAllowed = messagingTargetRefusal(
-            opts.getAllowedTargets,
-            caller,
-            deliver.platform,
-            deliver.chat_id,
-          );
-          if (notAllowed) return fail(notAllowed);
-        }
         onChange.deliver = { platform: deliver.platform, chatId: deliver.chat_id };
       }
       if (wake) {

@@ -1,7 +1,7 @@
 // S5 (plan openclaw-2026.9.6-gaps): watcher tools are scoped to the calling
 // personality the way cron's are (`loadOwnedJob` in `@ethosagent/tools-cron`).
 // A wake is always self, another personality's watcher is indistinguishable
-// from a nonexistent one, and an ungated owner's `deliver` meets the same
+// from a nonexistent one, and every `deliver` meets the same
 // allowlist `send_message` does.
 
 import { InMemoryStorage } from '@ethosagent/storage-fs';
@@ -150,7 +150,7 @@ describe('watcher tool ownership', () => {
   });
 });
 
-describe('an ungated owner’s deliver meets the send_message allowlist', () => {
+describe('a deliver meets the send_message allowlist', () => {
   const allowlist = (personalityId?: string): string[] | null =>
     personalityId === 'A' ? ['telegram:allowed'] : [];
   const gatesNobody: WatcherOutboxGate = { gates: () => false, ownerTarget: () => undefined };
@@ -186,6 +186,41 @@ describe('an ungated owner’s deliver meets the send_message allowlist', () => 
       { getAllowedTargets: allowlist },
     );
     expect(errorOf(r)).toContain('is not in the personality');
+  });
+
+  // A gated owner's origin chat and the operator's chat are exempt from the
+  // OUTBOX (`isForeignDeliverForGatedOwner`), never from the allowlist —
+  // `send_message` checks the allowlist first, unconditionally (O-D3).
+  const gatesA: WatcherOutboxGate = {
+    gates: (personalityId) => personalityId === 'A',
+    ownerTarget: () => 'operator',
+  };
+  async function createAsGatedA(chatId: string): Promise<ToolResult> {
+    const tool = toolsFor({ getAllowedTargets: allowlist, outbox: gatesA }).get('watcher_create');
+    if (!tool) throw new Error('watcher_create not registered');
+    return tool.execute(
+      { id: 'gated', ...base, deliver: { platform: 'telegram', chat_id: chatId } },
+      { ...ctxFor('A'), platform: 'telegram', origin: 'telegram:origin-chat' },
+    );
+  }
+
+  it('a gated owner’s origin chat outside the allowlist is refused', async () => {
+    expect(errorOf(await createAsGatedA('origin-chat'))).toBe(
+      `Target "telegram:origin-chat" is not in the personality's allowed messaging targets. Allowed: telegram:allowed`,
+    );
+    expect(await manager.getWatcher('gated')).toBeNull();
+  });
+
+  it('a gated owner’s operator chat outside the allowlist is refused', async () => {
+    expect(errorOf(await createAsGatedA('operator'))).toContain('is not in the personality');
+  });
+
+  it('a gated owner’s foreign target meets the allowlist before the outbox', async () => {
+    expect(errorOf(await createAsGatedA('stranger'))).toContain('is not in the personality');
+  });
+
+  it('a gated owner’s allowlisted foreign target still meets the outbox refusal', async () => {
+    expect(errorOf(await createAsGatedA('allowed'))).toContain('Use wake instead');
   });
 
   it('no allowlist wired leaves deliver unchanged', async () => {
