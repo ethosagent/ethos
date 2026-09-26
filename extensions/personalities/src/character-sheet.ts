@@ -759,6 +759,8 @@ function guaranteeRows(
     obs?.storeToolArgs ? `tool args ${obs.storeToolArgs}` : '',
     obs?.storeLlmPayloads ? `LLM payloads ${obs.storeLlmPayloads}` : '',
     obs?.redactPatterns?.length ? `+${plural(obs.redactPatterns.length, 'pattern')}` : '',
+    // otlp-export D12 — traces never leave the machine through an export sink.
+    obs?.exportTraces === false ? 'export: off' : '',
   ].filter((p) => p !== '');
   const storesFull = obs?.storeToolArgs === 'full' || obs?.storeLlmPayloads === 'full';
   const red: GuaranteeRow = {

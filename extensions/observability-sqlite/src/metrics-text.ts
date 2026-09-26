@@ -18,6 +18,7 @@ const COUNTER_FAMILIES = [
   'ethos_turn_outcomes_total',
   'ethos_memory_writes_total',
   'ethos_http_requests_total',
+  'ethos_otlp_export_traces_total',
 ] as const;
 
 /** Histogram base names (D18) — bucket rows are named `<base>_bucket`, plus
@@ -30,6 +31,14 @@ const HISTOGRAM_FAMILIES = [
 export interface GatewayAdapterStatus {
   adapter: string;
   up: 0 | 1;
+}
+
+/** One sink's export lag, for the `ethos_trace_export_lag_seconds` gauge
+ *  (otlp-export §4.1). `lagSeconds` is 0 when nothing is pending — the
+ *  source computes it from `oldestUnexportedStartTs`. */
+export interface ExportLagEntry {
+  sink: string;
+  lagSeconds: number;
 }
 
 /** Escape a label value per the OpenMetrics text format: backslash, quote,
@@ -59,6 +68,7 @@ function sortRows(rows: MetricCounterRow[]): MetricCounterRow[] {
 export function renderMetricsText(
   counters: MetricCounterRow[],
   gatewayAdapters: GatewayAdapterStatus[],
+  exportLag?: ExportLagEntry[],
 ): string {
   const byMetric = new Map<string, MetricCounterRow[]>();
   for (const row of counters) {
@@ -101,6 +111,17 @@ export function renderMetricsText(
     }
   }
 
+  if (exportLag && exportLag.length > 0) {
+    lines.push('# TYPE ethos_trace_export_lag_seconds gauge');
+    // The sink renders as the `store` label — `sink` is not in
+    // ALLOWED_LABEL_KEYS and `store` already is (otlp-export §4.1).
+    for (const { sink, lagSeconds } of [...exportLag].sort((a, b) =>
+      a.sink.localeCompare(b.sink),
+    )) {
+      lines.push(formatLine('ethos_trace_export_lag_seconds', { store: sink }, lagSeconds));
+    }
+  }
+
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 
@@ -108,6 +129,10 @@ export function renderMetricsText(
  *  instance without this module depending on the concrete class. */
 export interface MetricsTextSource {
   getMetricCounters(): MetricCounterRow[];
+  /** Optional per-sink export lag (otlp-export §4.1). Absent (or returning
+   *  no entries) → no `ethos_trace_export_lag_seconds` line is rendered. An
+   *  entry's `lagSeconds` is 0 when nothing is pending for that sink. */
+  getExportLag?(): ExportLagEntry[];
 }
 
 export interface CreateMetricsTextProviderOptions {
@@ -140,7 +165,8 @@ export function createMetricsTextProvider(
     if (cached && cached.expiresAt > now) return cached.text;
     const counters = opts.store.getMetricCounters();
     const gatewayAdapters = await opts.getGatewayAdapters();
-    const text = renderMetricsText(counters, gatewayAdapters);
+    const exportLag = opts.store.getExportLag?.();
+    const text = renderMetricsText(counters, gatewayAdapters, exportLag);
     cached = { text, expiresAt: now + ttlMs };
     return text;
   };

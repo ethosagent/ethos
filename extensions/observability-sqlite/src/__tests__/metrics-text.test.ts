@@ -66,6 +66,28 @@ describe('renderMetricsText', () => {
     expect(text).toContain('ethos_http_requests_total{method="GET",status="200"} 7');
   });
 
+  it('renders the export lag gauge when entries are given, and no line otherwise', () => {
+    const withLag = renderMetricsText([], [], [{ sink: 'otlp', lagSeconds: 42 }]);
+    expect(withLag).toContain('# TYPE ethos_trace_export_lag_seconds gauge');
+    expect(withLag).toContain('ethos_trace_export_lag_seconds{store="otlp"} 42');
+
+    // Nothing pending is an explicit 0, not a missing line.
+    const idle = renderMetricsText([], [], [{ sink: 'otlp', lagSeconds: 0 }]);
+    expect(idle).toContain('ethos_trace_export_lag_seconds{store="otlp"} 0');
+
+    expect(renderMetricsText([], [])).not.toContain('ethos_trace_export_lag_seconds');
+    expect(renderMetricsText([], [], [])).not.toContain('ethos_trace_export_lag_seconds');
+  });
+
+  it('renders ethos_otlp_export_traces_total as a counter family', () => {
+    const rows: MetricCounterRow[] = [
+      { metric: 'ethos_otlp_export_traces_total', labels: { outcome: 'pruned' }, value: 3 },
+    ];
+    const text = renderMetricsText(rows, []);
+    expect(text).toContain('# TYPE ethos_otlp_export_traces_total counter');
+    expect(text).toContain('ethos_otlp_export_traces_total{outcome="pruned"} 3');
+  });
+
   it('drops a row for a metric name outside the fixed family list (D18)', () => {
     const rows: MetricCounterRow[] = [{ metric: 'not_a_real_metric', labels: {}, value: 1 }];
     expect(renderMetricsText(rows, [])).toBe('');
@@ -142,5 +164,22 @@ describe('createMetricsTextProvider — 5s TTL cache', () => {
     await getMetrics();
 
     expect(getMetricCounters).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders the lag gauge from an optional getExportLag, and none without it', async () => {
+    const withLag = createMetricsTextProvider({
+      store: {
+        getMetricCounters: () => [],
+        getExportLag: () => [{ sink: 'otlp', lagSeconds: 7 }],
+      },
+      getGatewayAdapters: () => [],
+    });
+    expect(await withLag()).toContain('ethos_trace_export_lag_seconds{store="otlp"} 7');
+
+    const withoutLag = createMetricsTextProvider({
+      store: { getMetricCounters: () => [] },
+      getGatewayAdapters: () => [],
+    });
+    expect(await withoutLag()).not.toContain('ethos_trace_export_lag_seconds');
   });
 });

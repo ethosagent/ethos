@@ -98,6 +98,7 @@
     "@ethosagent/digest": "workspace:*",
     "@ethosagent/execution-local": "workspace:*",
     "@ethosagent/export-langfuse": "workspace:*",
+    "@ethosagent/export-otlp": "workspace:*",
     "@ethosagent/gateway": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",

@@ -48,6 +48,7 @@
     "@ethosagent/execution-pi": "workspace:*",
     "@ethosagent/execution-local": "workspace:*",
     "@ethosagent/execution-ssh": "workspace:*",
+    "@ethosagent/export-otlp": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/job-runner": "workspace:*",

@@ -11,13 +11,31 @@ import {
 } from './metric-counters';
 import { redactJson, redactString } from './redact';
 
-// v3 baseline schema — the current table/index shape. Passed to migrate() as
+// Per-sink export state (otlp-export §4.1, D9). `traces.exported_at` /
+// `claimed_at` are Langfuse's single-sink columns; a second exporter stamping
+// them would steal Langfuse's rows. This table gives each sink its own
+// cursor with the same `.immediate()` claim disjointness. Shared by the v4
+// baseline and `MIGRATIONS[4]` so the DDL exists exactly once.
+const TRACE_EXPORTS_SCHEMA = `
+      CREATE TABLE IF NOT EXISTS trace_exports (
+        sink        TEXT    NOT NULL,   -- 'otlp' in v1
+        trace_id    TEXT    NOT NULL,
+        claimed_at  INTEGER,
+        exported_at INTEGER,            -- terminal: set for every outcome below
+        outcome     TEXT,               -- 'exported'|'rejected'|'opted_out'|'dropped_backlog'|'pruned'
+        PRIMARY KEY (sink, trace_id)
+      ) STRICT;
+    `;
+
+// v4 baseline schema — the current table/index shape. Passed to migrate() as
 // the idempotent `CREATE ... IF NOT EXISTS` baseline, so a fresh DB gets
-// `metric_counters` (P2-counters, D2/D15) and the `traces.exported_at` /
-// `claimed_at` claim columns (P2-langfuse, D7) without walking the migration
-// chain. `MIGRATIONS[2]`/`MIGRATIONS[3]` below bring an existing older DB the
-// rest of the way — SQLite has no `ADD COLUMN IF NOT EXISTS`, so the baseline
-// alone cannot upgrade a DB that already has a `traces` table without them.
+// `metric_counters` (P2-counters, D2/D15), the `traces.exported_at` /
+// `claimed_at` claim columns (P2-langfuse, D7) and `trace_exports`
+// (otlp-export, D9) without walking the migration chain.
+// `MIGRATIONS[2]`/`MIGRATIONS[3]`/`MIGRATIONS[4]` below bring an existing
+// older DB the rest of the way — SQLite has no `ADD COLUMN IF NOT EXISTS`,
+// so the baseline alone cannot upgrade a DB that already has a `traces`
+// table without them.
 const OBS_SCHEMA = `
       CREATE TABLE IF NOT EXISTS traces (
         trace_id        TEXT PRIMARY KEY,
@@ -76,6 +94,8 @@ const OBS_SCHEMA = `
         body            TEXT NOT NULL
       ) STRICT;
 
+      ${TRACE_EXPORTS_SCHEMA}
+
       ${METRIC_COUNTERS_SCHEMA}
     `;
 
@@ -95,6 +115,13 @@ const MIGRATIONS = {
   3: (db: Database.Database): void => {
     db.exec('ALTER TABLE traces ADD COLUMN exported_at INTEGER');
     db.exec('ALTER TABLE traces ADD COLUMN claimed_at INTEGER');
+  },
+  // v3 -> v4: `trace_exports` (otlp-export, D9). Like `metric_counters` in
+  // step 2, the `IF NOT EXISTS` baseline above already creates the table for
+  // an older DB before this step runs, so this is a documentation-and-
+  // version-bump step, not load-bearing DDL.
+  4: (db: Database.Database): void => {
+    db.exec(TRACE_EXPORTS_SCHEMA);
   },
 };
 
@@ -151,7 +178,7 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
     // touched. The legacy column rename above still runs first, exactly as before.
     migrate(this.db, {
       name: 'observability-sqlite',
-      targetVersion: 3,
+      targetVersion: 4,
       baseline: OBS_SCHEMA,
       migrations: MIGRATIONS,
     });
@@ -856,6 +883,181 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Per-sink export claims (otlp-export §4.1, D9/D10) — not on
+  // `ObservabilityStore`; sink pollers reach this concrete class directly,
+  // the same way the Langfuse methods above are reached. Each sink gets its
+  // own cursor in `trace_exports`, so running two exporters never lets one
+  // steal the other's rows (D9). `traces.exported_at`/`claimed_at` stay
+  // Langfuse's and are never touched here.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Atomically claim up to `batchSize` closed traces the given sink has not
+   * terminally stamped — the `claimUnexportedTraces` idiom, keyed by sink.
+   * One `.immediate()` transaction makes peer processes' claims disjoint
+   * (same argument as that method's doc). `status IS NOT NULL` is "closed";
+   * `start_ts >= minStartTs` bounds the backlog (D11) — traces older than
+   * the bound are `markStaleForSink`'s to stamp, not this call's to claim.
+   *
+   * The claim itself is an upsert: a trace the sink has never seen gets a
+   * fresh `trace_exports` row, and a row whose claim is stale
+   * (`claimed_at < staleCutoff`) or released is re-claimed via
+   * `ON CONFLICT … DO UPDATE` guarded on `exported_at IS NULL`. The reload is
+   * scoped to `claimed_at = now`, so a row a peer claimed between the SELECT
+   * and the upsert is never returned as claimed here too. Each returned
+   * trace carries the exact `claimedAt` this call stamped, which
+   * `markSinkExported`/`releaseSinkClaim` later require as proof the caller
+   * still holds the claim it thinks it holds.
+   */
+  claimTracesForSink(
+    sink: string,
+    batchSize: number,
+    staleClaimCutoffMs: number,
+    minStartTs: number,
+  ): ClaimedTrace[] {
+    const now = Date.now();
+    const staleCutoff = now - staleClaimCutoffMs;
+    return this.db
+      .transaction((): ClaimedTrace[] => {
+        const candidates = this.db
+          .prepare(
+            `SELECT t.trace_id FROM traces t
+               LEFT JOIN trace_exports te ON te.sink = ? AND te.trace_id = t.trace_id
+             WHERE t.status IS NOT NULL AND t.start_ts >= ?
+               AND (te.trace_id IS NULL
+                    OR (te.exported_at IS NULL AND (te.claimed_at IS NULL OR te.claimed_at < ?)))
+             ORDER BY t.start_ts ASC LIMIT ?`,
+          )
+          .all(sink, minStartTs, staleCutoff, batchSize) as { trace_id: string }[];
+        if (candidates.length === 0) return [];
+        const upsert = this.db.prepare(
+          `INSERT INTO trace_exports (sink, trace_id, claimed_at) VALUES (?, ?, ?)
+           ON CONFLICT (sink, trace_id) DO UPDATE SET claimed_at = excluded.claimed_at
+           WHERE exported_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)`,
+        );
+        for (const c of candidates) upsert.run(sink, c.trace_id, now, staleCutoff);
+        const ids = candidates.map((c) => c.trace_id);
+        const placeholders = ids.map(() => '?').join(',');
+        const rows = this.db
+          .prepare(
+            `SELECT t.* FROM traces t
+               JOIN trace_exports te ON te.sink = ? AND te.trace_id = t.trace_id
+             WHERE t.trace_id IN (${placeholders}) AND te.claimed_at = ?
+             ORDER BY t.start_ts ASC`,
+          )
+          .all(sink, ...ids, now) as TraceRow[];
+        return rows.map((r) => ({ trace: rowToTrace(r), claimedAt: now }));
+      })
+      .immediate();
+  }
+
+  /**
+   * Terminally stamp a claimed trace for a sink. `claimed_at = ?` restricts
+   * this to the row this SPECIFIC claim holds — a stale reclaim by a peer can
+   * never be stamped by the original, now-late caller (the
+   * `markTraceExported` rule, keyed by sink). Every outcome — `exported`,
+   * `rejected`, `opted_out`, `dropped_backlog`, `pruned` — sets
+   * `exported_at`, which is what "terminal" means for the claim query above.
+   */
+  markSinkExported(
+    sink: string,
+    traceId: string,
+    claimedAt: number,
+    outcome: SinkExportOutcome,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE trace_exports SET exported_at = ?, outcome = ?, claimed_at = NULL
+         WHERE sink = ? AND trace_id = ? AND claimed_at = ?`,
+      )
+      .run(Date.now(), outcome, sink, traceId, claimedAt);
+  }
+
+  /**
+   * Put a claimed trace back in the sink's unexported pool — the retry path
+   * for a retryable export failure. `claimed_at = ?` is the same
+   * claim-scoping as `markSinkExported`.
+   */
+  releaseSinkClaim(sink: string, traceId: string, claimedAt: number): void {
+    this.db
+      .prepare(
+        `UPDATE trace_exports SET claimed_at = NULL
+         WHERE sink = ? AND trace_id = ? AND claimed_at = ?`,
+      )
+      .run(sink, traceId, claimedAt);
+  }
+
+  /**
+   * Terminally stamp every closed, unclaimed, unexported trace older than
+   * `olderThanTs` for the sink, in one statement, and return how many were
+   * stamped — the bounded backlog (D11). Live claims are left alone: their
+   * poller is mid-export, and if it dies the stale reclaim in
+   * `claimTracesForSink` (or the next tick's stale sweep here, once the
+   * claim has been released) handles the row.
+   */
+  markStaleForSink(
+    sink: string,
+    olderThanTs: number,
+    outcome: SinkExportOutcome = 'dropped_backlog',
+  ): number {
+    return this.db
+      .prepare(
+        `INSERT INTO trace_exports (sink, trace_id, exported_at, outcome)
+         SELECT ?, t.trace_id, ?, ?
+           FROM traces t
+           LEFT JOIN trace_exports te ON te.sink = ? AND te.trace_id = t.trace_id
+          WHERE t.status IS NOT NULL AND t.start_ts < ?
+            AND (te.trace_id IS NULL OR (te.exported_at IS NULL AND te.claimed_at IS NULL))
+         ON CONFLICT (sink, trace_id) DO UPDATE SET
+           exported_at = excluded.exported_at,
+           outcome = excluded.outcome
+         WHERE exported_at IS NULL AND claimed_at IS NULL`,
+      )
+      .run(sink, Date.now(), outcome, sink, olderThanTs).changes;
+  }
+
+  /**
+   * `start_ts` of the oldest closed trace the sink has not terminally
+   * stamped, or `null` when nothing is pending — the export lag gauge's
+   * input (`ethos_trace_export_lag_seconds`). A live claim still counts as
+   * pending: it has not shipped yet.
+   */
+  oldestUnexportedStartTs(sink: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(t.start_ts) AS ts FROM traces t
+           LEFT JOIN trace_exports te ON te.sink = ? AND te.trace_id = t.trace_id
+         WHERE t.status IS NOT NULL AND (te.trace_id IS NULL OR te.exported_at IS NULL)`,
+      )
+      .get(sink) as { ts: number | null } | undefined;
+    return row?.ts ?? null;
+  }
+
+  /**
+   * Bump `ethos_<sink>_export_traces_total{outcome="…"}` by `amount` — the
+   * export-outcome counter of otlp-export §4.1/§4.2, the same one
+   * `pruneObservability` bumps for `pruned` (retention.ts). Sink pollers hold
+   * this store but not its raw db handle, which `incrementCounter` requires,
+   * so the store carries the increment for them (the `recordHttpRequest`
+   * pattern: a direct increment inside its own transaction, D15). `outcome`
+   * is a metric label, not restricted to `SinkExportOutcome` — `partial`
+   * counts spans a collector rejected inside an accepted export and is
+   * terminal for nothing.
+   */
+  countSinkExportOutcome(sink: string, outcome: string, amount: number): void {
+    if (amount <= 0) return;
+    this.db.transaction(() => {
+      incrementCounter(
+        this.db,
+        `ethos_${sink}_export_traces_total`,
+        { outcome },
+        amount,
+        new Date().toISOString(),
+      );
+    })();
+  }
+
+  // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
@@ -882,6 +1084,18 @@ export interface ClaimedTrace {
   trace: Trace;
   claimedAt: number;
 }
+
+/**
+ * Terminal outcome of one trace for one sink — the `trace_exports.outcome`
+ * column (otlp-export §4.1). Every value is terminal: `markSinkExported`
+ * sets `exported_at` alongside it, whatever the outcome.
+ */
+export type SinkExportOutcome =
+  | 'exported'
+  | 'rejected'
+  | 'opted_out'
+  | 'dropped_backlog'
+  | 'pruned';
 
 export interface ToolUsageRow {
   tool: string;

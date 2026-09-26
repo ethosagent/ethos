@@ -422,6 +422,17 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     shape: { kind: 'single', field: 'secretKey' },
   },
   {
+    // `telemetry.export.otlp.headers.<Name>` — every OTLP collector header
+    // value is vaulted under the operator's own header name (otlp-export D7),
+    // so `<n>` is that name, expanded against what the vault actually holds.
+    id: 'settings.otlp',
+    category: 'settings',
+    label: 'OTLP export header',
+    refPattern: 'telemetry/export/otlp/headers/<n>',
+    shape: { kind: 'single', field: 'value' },
+    indexed: true,
+  },
+  {
     id: 'settings.pauseLifecycle',
     category: 'settings',
     label: 'Pause-lifecycle orchestrator token',

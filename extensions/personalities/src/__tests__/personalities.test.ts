@@ -686,6 +686,45 @@ describe('FilePersonalityRegistry', () => {
       expect(p?.safety?.observability?.storeToolArgs).toBe('full');
     });
 
+    it('parses exportTraces: false and rejects a non-boolean value (otlp-export D12)', async () => {
+      const dir = join(testDir, 'localonly');
+      await mkdir(dir);
+      await writeFile(
+        join(dir, 'config.yaml'),
+        [
+          'name: LocalOnly',
+          'model: claude-sonnet-4-6',
+          'safety:',
+          '  observability:',
+          '    exportTraces: false',
+        ].join('\n'),
+      );
+      await writeFile(join(dir, 'SOUL.md'), '# LocalOnly');
+      await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+      const registry = new FilePersonalityRegistry(new FsStorage(), testDir);
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('localonly')?.safety?.observability?.exportTraces).toBe(false);
+
+      const bad = join(testDir, 'badexport');
+      await mkdir(bad);
+      await writeFile(
+        join(bad, 'config.yaml'),
+        [
+          'name: BadExport',
+          'model: claude-sonnet-4-6',
+          'safety:',
+          '  observability:',
+          '    exportTraces: sometimes',
+        ].join('\n'),
+      );
+      await writeFile(join(bad, 'SOUL.md'), '# BadExport');
+      await writeFile(join(bad, 'toolset.yaml'), '- read_file\n');
+      const badRegistry = new FilePersonalityRegistry(new FsStorage(), testDir);
+      await expect(badRegistry.loadFromDirectory(testDir)).rejects.toThrow(
+        /Invalid exportTraces: "sometimes"/,
+      );
+    });
+
     it('personality without safety block loads with undefined safety', async () => {
       const dir = join(testDir, 'plain');
       await mkdir(dir);

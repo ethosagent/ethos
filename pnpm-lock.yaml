@@ -328,6 +328,9 @@ importers:
       '@ethosagent/export-langfuse':
         specifier: workspace:*
         version: link:../../extensions/export-langfuse
+      '@ethosagent/export-otlp':
+        specifier: workspace:*
+        version: link:../../extensions/export-otlp
       '@ethosagent/gateway':
         specifier: workspace:*
         version: link:../../extensions/gateway
@@ -1211,6 +1214,19 @@ importers:
         version: link:../../packages/core
 
   extensions/export-langfuse:
+    dependencies:
+      '@ethosagent/observability-sqlite':
+        specifier: workspace:*
+        version: link:../observability-sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.9)(yaml@2.9.0))
+
+  extensions/export-otlp:
     dependencies:
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
@@ -2778,6 +2794,9 @@ importers:
       '@ethosagent/execution-ssh':
         specifier: workspace:*
         version: link:../../extensions/execution-ssh
+      '@ethosagent/export-otlp':
+        specifier: workspace:*
+        version: link:../../extensions/export-otlp
       '@ethosagent/goal-runner':
         specifier: workspace:*
         version: link:../../extensions/goal-runner

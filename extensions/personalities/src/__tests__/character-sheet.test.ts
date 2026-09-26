@@ -869,6 +869,24 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(row(sheet, 'G-RED')).toContain('storeToolBodies full is reserved');
   });
 
+  // otlp-export D12 — `exportTraces: false` keeps traces local: the export
+  // poller stamps them `opted_out` and never POSTs. A restriction, so the
+  // row narrows rather than relaxes, and the sheet must say so.
+  it('reports exportTraces: false as export: off on the redaction row', () => {
+    const localOnly: PersonalityConfig = {
+      id: 'local',
+      name: 'Local',
+      safety: { observability: { exportTraces: false } },
+    };
+    const sheet = renderCharacterSheet(localOnly, soulMd);
+    expect(status(sheet, 'G-RED')).toBe('narrowed');
+    expect(row(sheet, 'G-RED')).toContain('export: off');
+
+    // Default (absent) means exported — no `export: off` in the sheet.
+    const sheetDefault = renderCharacterSheet(fullConfig, soulMd);
+    expect(sheetDefault).not.toContain('export: off');
+  });
+
   it('reports a narrowed injection pipeline as relaxed-but-never-off (no opt-out)', () => {
     const sheet = renderCharacterSheet(permissive, soulMd);
     expect(status(sheet, 'G-INJ')).toBe('relaxed');

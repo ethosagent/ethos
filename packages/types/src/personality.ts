@@ -12,6 +12,17 @@ export interface PersonalityObservabilityConfig {
   storeToolBodies?: 'none' | 'redacted' | 'full';
   storeLlmPayloads?: 'none' | 'metadata' | 'full';
   redactPatterns?: string[];
+  /**
+   * Whether this personality's traces may leave the machine through a remote
+   * export sink (otlp-export D12). Default true — absent means exported.
+   * `false` can only RESTRICT egress: the sink's poller stamps the trace
+   * `opted_out` and never POSTs it (enforced by the `isExportAllowed` gate
+   * the wiring hosts build into `OtlpPollLoop`,
+   * `extensions/export-otlp/src/poller.ts`; pinned by its poller.test.ts).
+   * Local recording in observability.db is unaffected — that is what
+   * `storeToolArgs`/`storeLlmPayloads` above govern.
+   */
+  exportTraces?: boolean;
 }
 
 export interface PersonalitySafetyConfig {

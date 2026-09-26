@@ -1925,6 +1925,10 @@ export {
   clarifyUnresolvedMessage,
   haltNotice,
 } from '@ethosagent/core';
+// OTLP trace export (otlp-export §4.4) — re-exported so the two long-lived
+// hosts (`ethos gateway`, `ethos serve`) reach the exporter through wiring
+// (ARCHITECTURE.md Law 5), the same way they reach the notify queue.
+export { OtlpPollLoop, resolveOtlpSettings } from '@ethosagent/export-otlp';
 export {
   isGated,
   type MemoryApprovalMode,

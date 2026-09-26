@@ -347,6 +347,13 @@ const INDEXED_SECRET_REFS: ReadonlyArray<{
     re: /^keys\.(\d+)\.apiKey$/,
     ref: (m, ctx) => `rotation/${ctx.rotationKeyIds?.[Number(m[1])] ?? m[1]}`,
   },
+  {
+    // Every OTLP collector header VALUE is a credential (otlp-export D7); the
+    // header NAME keys the ref. Greedy `.+` so a header name containing a dot
+    // survives intact rather than being split by the dot-to-slash catch-all.
+    re: /^telemetry\.export\.otlp\.headers\.(.+)$/,
+    ref: (m) => `telemetry/export/otlp/headers/${m[1]}`,
+  },
 ];
 
 /** Credential leaves `SECRET_FIELD_NAMES` doesn't list (it catches these by
@@ -1727,8 +1734,34 @@ export interface TelemetryLangfuseExportConfig {
   secretKey?: string;
 }
 
+/**
+ * OTLP/HTTP export target (otlp-export plan, §4.4 / D7 / D8). Every header
+ * VALUE is a credential: header names are free (`Authorization`,
+ * `x-honeycomb-team`, `api-key`), so there is no safe subset to leave
+ * plaintext — each `headers.<Name>` value is vaulted as
+ * `telemetry/export/otlp/headers/<Name>` on write and resolved on read.
+ * OTel env vars override `endpoint`/`headers` but never enable export;
+ * `resolveOtlpSettings` in `@ethosagent/export-otlp` applies that precedence.
+ */
+export interface TelemetryOtlpExportConfig {
+  /** Default false — export is opt-in (env vars never enable it). */
+  enabled?: boolean;
+  /** Base URL; `/v1/traces` is appended by the exporter. */
+  endpoint?: string;
+  /** Collector headers by name. Every value is vaulted (D7). */
+  headers?: Record<string, string>;
+  /** Default false — tool args and event cause/details stay local (D6). */
+  includeContent?: boolean;
+  /** Poll interval. Default 15000ms. */
+  intervalMs?: number;
+  /** Unexported traces older than this are dropped, not shipped (D11).
+   *  Default 86400000ms (24h). */
+  backlogMaxAgeMs?: number;
+}
+
 export interface TelemetryExportConfig {
   langfuse?: TelemetryLangfuseExportConfig;
+  otlp?: TelemetryOtlpExportConfig;
 }
 
 export interface TelemetryConfig {
@@ -3937,6 +3970,23 @@ async function externalizeConfigSecrets(
       },
     };
   }
+  if (r.telemetry?.export?.otlp?.headers) {
+    const otlp = r.telemetry.export.otlp;
+    const headers: Record<string, string> = {};
+    // Every header value is a credential (otlp-export D7) — there is no safe
+    // plaintext subset, so each one is vaulted under its header name.
+    for (const [name, value] of Object.entries(otlp.headers ?? {})) {
+      headers[name] = await externalizeSecret(
+        value,
+        ref(`telemetry.export.otlp.headers.${name}`),
+        secrets,
+      );
+    }
+    r.telemetry = {
+      ...r.telemetry,
+      export: { ...r.telemetry.export, otlp: { ...otlp, headers } },
+    };
+  }
   if (r.pauseLifecycle?.http?.token) {
     const http = r.pauseLifecycle.http;
     r.pauseLifecycle = {
@@ -4970,6 +5020,22 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (lf.publicKey) lines.push(`telemetry.export.langfuse.publicKey: ${lf.publicKey}`);
     if (lf.secretKey) lines.push(`telemetry.export.langfuse.secretKey: ${lf.secretKey}`);
   }
+  if (config.telemetry?.export?.otlp) {
+    const otlp = config.telemetry.export.otlp;
+    if (otlp.enabled !== undefined) lines.push(`telemetry.export.otlp.enabled: ${otlp.enabled}`);
+    if (otlp.endpoint) lines.push(`telemetry.export.otlp.endpoint: ${otlp.endpoint}`);
+    for (const [name, value] of Object.entries(otlp.headers ?? {})) {
+      // Values reaching here are `${secrets:…}` refs — `writeConfig`
+      // externalized them (D7) before serialization.
+      lines.push(`telemetry.export.otlp.headers.${name}: ${value}`);
+    }
+    if (otlp.includeContent !== undefined)
+      lines.push(`telemetry.export.otlp.includeContent: ${otlp.includeContent}`);
+    if (otlp.intervalMs !== undefined)
+      lines.push(`telemetry.export.otlp.intervalMs: ${otlp.intervalMs}`);
+    if (otlp.backlogMaxAgeMs !== undefined)
+      lines.push(`telemetry.export.otlp.backlogMaxAgeMs: ${otlp.backlogMaxAgeMs}`);
+  }
   // Every value in the one spelling `parseConfigScalar` reads back unchanged.
   return lines.map(renderConfigLine);
 }
@@ -5156,6 +5222,17 @@ export async function resolveConfigSecrets(
         ...r.telemetry.export,
         langfuse: { ...lf, secretKey: await resolveSecretValue(secretKey, secrets) },
       },
+    };
+  }
+  if (r.telemetry?.export?.otlp?.headers) {
+    const otlp = r.telemetry.export.otlp;
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(otlp.headers ?? {})) {
+      headers[name] = await resolveSecretValue(value, secrets);
+    }
+    r.telemetry = {
+      ...r.telemetry,
+      export: { ...r.telemetry.export, otlp: { ...otlp, headers } },
     };
   }
   if (r.memoryCapture?.apiKey) {
@@ -5580,6 +5657,13 @@ export function parseConfigYaml(src: string): EthosConfig {
   const awsSecretsKv: Record<string, string> = keyUse.track('aws.secrets.', {});
   const telemetryLangfuseKv: Record<string, string> = keyUse.track(
     'telemetry.export.langfuse.',
+    {},
+  );
+  const telemetryOtlpKv: Record<string, string> = keyUse.track('telemetry.export.otlp.', {});
+  // Header names are free-form (dots, dashes, any case), so they get their
+  // own map behind the longer prefix rather than riding `telemetryOtlpKv`.
+  const telemetryOtlpHeadersKv: Record<string, string> = keyUse.track(
+    'telemetry.export.otlp.headers.',
     {},
   );
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
@@ -6102,6 +6186,21 @@ export function parseConfigYaml(src: string): EthosConfig {
     const tel = line.match(/^telemetry\.export\.langfuse\.(\w+):\s*(.+)$/);
     if (tel) {
       telemetryLangfuseKv[tel[1]] = parseConfigScalar(tel[2]);
+      continue;
+    }
+    // telemetry.export.otlp.headers.<Name>: <value> — matched before the
+    // scalar rule below, whose `\w+` would drop a dashed or dotted header
+    // name. Header names cannot contain `:` (RFC 9110 token), so matching
+    // the name up to the first colon is exact.
+    const otlpHeader = line.match(/^telemetry\.export\.otlp\.headers\.([^:\s]+):\s*(.+)$/);
+    if (otlpHeader) {
+      telemetryOtlpHeadersKv[otlpHeader[1]] = parseConfigScalar(otlpHeader[2]);
+      continue;
+    }
+    // telemetry.export.otlp.<field>: <value>
+    const otlpLine = line.match(/^telemetry\.export\.otlp\.(\w+):\s*(.+)$/);
+    if (otlpLine) {
+      telemetryOtlpKv[otlpLine[1]] = parseConfigScalar(otlpLine[2]);
       continue;
     }
     // modelCatalog.providers.<id>.url: <value>
@@ -6699,9 +6798,43 @@ export function parseConfigYaml(src: string): EthosConfig {
           ...(telemetryLangfuseKv.secretKey ? { secretKey: telemetryLangfuseKv.secretKey } : {}),
         }
       : undefined;
-  const telemetryConfig: TelemetryConfig | undefined = telemetryLangfuse
-    ? { export: { langfuse: telemetryLangfuse } }
-    : undefined;
+  const otlpHeaders: Record<string, string> = {};
+  for (const [name, value] of Object.entries(telemetryOtlpHeadersKv)) {
+    otlpHeaders[name] = value;
+  }
+  const telemetryOtlp: TelemetryOtlpExportConfig | undefined =
+    Object.keys(telemetryOtlpKv).length > 0 || Object.keys(otlpHeaders).length > 0
+      ? {
+          ...(telemetryOtlpKv.enabled === 'true'
+            ? { enabled: true }
+            : telemetryOtlpKv.enabled === 'false'
+              ? { enabled: false }
+              : {}),
+          ...(telemetryOtlpKv.endpoint ? { endpoint: telemetryOtlpKv.endpoint } : {}),
+          ...(Object.keys(otlpHeaders).length > 0 ? { headers: otlpHeaders } : {}),
+          ...(telemetryOtlpKv.includeContent === 'true'
+            ? { includeContent: true }
+            : telemetryOtlpKv.includeContent === 'false'
+              ? { includeContent: false }
+              : {}),
+          ...(telemetryOtlpKv.intervalMs !== undefined && /^\d+$/.test(telemetryOtlpKv.intervalMs)
+            ? { intervalMs: Number.parseInt(telemetryOtlpKv.intervalMs, 10) }
+            : {}),
+          ...(telemetryOtlpKv.backlogMaxAgeMs !== undefined &&
+          /^\d+$/.test(telemetryOtlpKv.backlogMaxAgeMs)
+            ? { backlogMaxAgeMs: Number.parseInt(telemetryOtlpKv.backlogMaxAgeMs, 10) }
+            : {}),
+        }
+      : undefined;
+  const telemetryConfig: TelemetryConfig | undefined =
+    telemetryLangfuse || telemetryOtlp
+      ? {
+          export: {
+            ...(telemetryLangfuse ? { langfuse: telemetryLangfuse } : {}),
+            ...(telemetryOtlp ? { otlp: telemetryOtlp } : {}),
+          },
+        }
+      : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const whatsappResult = buildWhatsApps(whatsappKv);
@@ -7431,6 +7564,11 @@ const SECRET_FIELD_NAMES = new Set([
   'secretKey',
 ]);
 
+/** `telemetry.export.otlp.headers.<Name>` — every value under this path must
+ *  be a `${secrets:…}` reference (otlp-export D7). Path-keyed rather than
+ *  leaf-keyed because the leaf is the operator's header name. */
+const OTLP_HEADER_FIELD_RE = /^telemetry\.export\.otlp\.headers\./;
+
 /**
  * Walk every string value in `config` (including nested objects and arrays)
  * and throw if any value looks like a plaintext secret. Called from
@@ -7459,7 +7597,10 @@ export function validateNoPlaintextSecrets(config: object): void {
     const raw = field.includes('.') ? field.slice(field.lastIndexOf('.') + 1) : field;
     const leaf = raw.replace(/\[\d+\]$/, '');
 
-    if (SECRET_FIELD_NAMES.has(leaf)) {
+    // Every OTLP collector header value is a credential (otlp-export D7):
+    // the leaf is the header NAME, so the path — not the field name — is
+    // what marks it secret.
+    if (SECRET_FIELD_NAMES.has(leaf) || OTLP_HEADER_FIELD_RE.test(field)) {
       // Known secret field — entire value must be a secrets reference
       if (stripped.trim().length > 0) {
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal label, not a template

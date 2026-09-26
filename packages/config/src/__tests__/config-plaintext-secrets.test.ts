@@ -209,6 +209,42 @@ describe('validateNoPlaintextSecrets', () => {
     );
   });
 
+  it('rejects a plaintext OTLP header value (path-aware)', () => {
+    // The leaf is the operator's header name, never in SECRET_FIELD_NAMES —
+    // the `telemetry.export.otlp.headers.` path is what marks it secret (D7).
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      telemetry: {
+        export: {
+          otlp: { enabled: true, headers: { 'x-honeycomb-team': 'plain-header-value' } },
+        },
+      },
+    });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(
+      /field 'telemetry\.export\.otlp\.headers\.x-honeycomb-team'.*field requires \$\{secrets:ref\}/,
+    );
+  });
+
+  it('accepts an OTLP config whose header values are secrets refs', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      telemetry: {
+        export: {
+          otlp: {
+            enabled: true,
+            endpoint: 'http://localhost:4318',
+            headers: {
+              Authorization: secretRef('telemetry/export/otlp/headers/Authorization'),
+            },
+            includeContent: false,
+            intervalMs: 15_000,
+          },
+        },
+      },
+    });
+    expect(() => validateNoPlaintextSecrets(config)).not.toThrow();
+  });
+
   it('accepts a Langfuse config with secretKey as a secrets ref and publicKey plaintext', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),

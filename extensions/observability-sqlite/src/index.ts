@@ -15,6 +15,7 @@ export {
 } from './metric-counters';
 export type {
   CreateMetricsTextProviderOptions,
+  ExportLagEntry,
   GatewayAdapterStatus,
   MetricsTextSource,
 } from './metrics-text';
@@ -33,6 +34,7 @@ export {
 export { OBSERVABILITY_KILL_SWITCH_FILE, ObservabilityService } from './service';
 export type {
   ClaimedTrace,
+  SinkExportOutcome,
   SkillUsageRow,
   ToolUsageRow,
   TurnOutcomeCounts,

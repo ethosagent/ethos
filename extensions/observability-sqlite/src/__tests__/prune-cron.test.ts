@@ -20,6 +20,7 @@ describe('startPruneCron', () => {
       events: 0,
       snapshots: 0,
       messages: 0,
+      unexportedPruned: 0,
     });
 
     const customConfig = { ...RETENTION_DEFAULTS, traces: '7d' };
