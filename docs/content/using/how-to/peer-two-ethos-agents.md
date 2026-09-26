@@ -63,6 +63,15 @@ echo 'webBaseUrl: http://localhost:3000' >> /tmp/ethos-a/config.yaml
 echo 'webBaseUrl: http://localhost:3001' >> /tmp/ethos-b/config.yaml
 ```
 
+Both agents run on `localhost`, and `ethos a2a peer add` refuses a loopback or private-network card URL unless the operator opts in. Opt both agents in:
+
+```bash
+echo 'a2a.peering.allowPrivateUrls: true' >> /tmp/ethos-a/config.yaml
+echo 'a2a.peering.allowPrivateUrls: true' >> /tmp/ethos-b/config.yaml
+```
+
+Leave it unset for peers on the public internet. Cloud-metadata addresses stay refused with it set.
+
 ## 2. See the zero-skills warning
 
 A2A is private by default: no built-in personality exposes anything to peers, so a fresh install's card advertises zero skills and every inbound `message/send` is rejected. **Terminal B**:
@@ -329,6 +338,7 @@ ethos audit --category a2a.rpc
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `FORBIDDEN_SCOPE` (JSON-RPC error `-32003`) | The named skill isn't on the receiving personality's trusted-peer card — either `exposeToAgents` is unset/false, or the skill name doesn't match. | Re-check step 3's frontmatter and re-run `ethos a2a status --personality <id>` to confirm the warning is gone. |
+| `Card URL refused` on `peer add` | The URL is on `localhost` or a private network, and `a2a.peering.allowPrivateUrls` is not set in that install's `config.yaml`. | Add `a2a.peering.allowPrivateUrls: true`, as in step 1. |
 | `fingerprint mismatch` on `peer add` | The `--fingerprint` you typed doesn't match what the URL actually serves — a typo, or `webBaseUrl` pointing at the wrong port so the card came from a different process than you think. | Re-run `peer add` without `--fingerprint` to preview the real value, and confirm `webBaseUrl` matches the port `ethos serve` is actually bound to. |
 | `not_available` from `a2a_send` | Either A2A is disabled on the caller's install, or the calling personality has no signing key yet (identity was never minted). | Run `ethos a2a enable` and `ethos a2a identity --personality <id>` on the caller. |
 | The model never calls `a2a_send` | `a2a_send` isn't on the personality's `toolset.yaml`, or `ethos chat`/`ethos -z` was used instead of `ethos serve`/`gateway` (the only two surfaces that register the tool). | Confirm step 7, and confirm the request went to a running `ethos serve` process. |

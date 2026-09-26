@@ -39,6 +39,10 @@ async function guard<T>(fn: () => Promise<T>): Promise<T> {
         throw new ORPCError('FINGERPRINT_MISMATCH', { status: 400, message: err.message });
       if (err.code === 'unknown_personality')
         throw new ORPCError('NOT_FOUND', { status: 404, message: err.message });
+      // url_refused: the operator's peering policy refused the URL — a request
+      // the operator can fix (a2a.peering.allowPrivateUrls), not an upstream fault.
+      if (err.code === 'url_refused')
+        throw new ORPCError('A2A_URL_REFUSED', { status: 400, message: err.message });
       // fetch_failed / invalid_card — upstream peer card unreachable or untrusted.
       throw new ORPCError('A2A_UPSTREAM_ERROR', { status: 502, message: err.message });
     }

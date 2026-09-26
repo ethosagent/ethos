@@ -23,7 +23,12 @@ export type { NetworkPolicy };
 
 /** Knobs shared by the card fetch and the outbound client. */
 export interface A2aEgressOptions {
-  /** The acting personality's `safety.network` block. Absent → `{}` (public internet only). */
+  /**
+   * The acting personality's `safety.network` block — or, for an operator's
+   * `ethos a2a peer add`, the policy `A2aPeeringService` builds from
+   * `a2a.peering.allowPrivateUrls` (packages/wiring/src/a2a-peering-service.ts).
+   * Absent → `{}` (public internet only).
+   */
   networkPolicy?: NetworkPolicy;
   /** Test seam: validated, but NOT connection-pinned (see `safeFetch`). */
   fetchImpl?: typeof fetch;
