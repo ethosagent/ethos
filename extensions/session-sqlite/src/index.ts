@@ -1080,7 +1080,10 @@ export class SQLiteSessionStore implements SessionStore {
     since: Date;
     until: Date;
     dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
-    /** Only sessions whose key starts with this, literally (`%`/`_` escaped).
+    /** Only sessions whose key starts with this, literally and case-sensitively:
+     *  an exact `substr` comparison, not `LIKE`, which folds ASCII case and would
+     *  mix the spend of bots whose ids differ only by case. Pinned by
+     *  'keyPrefix is case-sensitive' in `__tests__/usage-aggregate.test.ts`.
      *  How one channel bot's spend is read: its sessions are keyed under
      *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
     keyPrefix?: string;
@@ -1108,7 +1111,7 @@ export class SQLiteSessionStore implements SessionStore {
            JOIN sessions s ON s.id = m.session_id
           WHERE m.timestamp >= ? AND m.timestamp < ?
             AND m.input_tokens IS NOT NULL
-            ${opts.keyPrefix !== undefined ? "AND s.key LIKE ? ESCAPE '\\'" : ''}
+            ${opts.keyPrefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
           -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
           -- real column, so \`GROUP BY key\` silently resolves to it and every
           -- dimension collapses to per-session grouping.
@@ -1118,7 +1121,7 @@ export class SQLiteSessionStore implements SessionStore {
       .all(
         opts.since.toISOString(),
         opts.until.toISOString(),
-        ...(opts.keyPrefix !== undefined ? [`${opts.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`] : []),
+        ...(opts.keyPrefix !== undefined ? [opts.keyPrefix, opts.keyPrefix] : []),
       ) as UsageAggregateRow[];
   }
 

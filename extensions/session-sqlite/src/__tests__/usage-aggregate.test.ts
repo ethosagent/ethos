@@ -134,6 +134,39 @@ describe('usageAggregate', () => {
     expect(rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0)).toBe(3);
   });
 
+  // SQLite's LIKE folds ASCII case, so two bots whose ids differ only by case
+  // would each be billed the other's spend.
+  it('keyPrefix is case-sensitive', async () => {
+    for (const [key, cost] of [
+      ['telegram:Sales:c1', 1],
+      ['telegram:sales:c1', 2],
+      ['telegram:SALES:c1', 4],
+      ['telegram:sal%s:c1', 8],
+    ] as const) {
+      const s = await store.createSession({ ...base, key } as never);
+      await store.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'x',
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          estimatedCostUsd: cost,
+        },
+      });
+    }
+    const total = async (keyPrefix: string) =>
+      (await store.usageAggregate({ ...window, dimension: 'day', keyPrefix })).reduce(
+        (sum, r) => sum + r.estimatedCostUsd,
+        0,
+      );
+    expect(await total('telegram:Sales:')).toBe(1);
+    expect(await total('telegram:sales:')).toBe(2);
+    expect(await total('telegram:sal%s:')).toBe(8);
+  });
+
   // A fork replays its source's history with fresh timestamps. The copies are
   // history, not spend: counting them bills the source's turns twice in
   // `ethos usage`, the per-bot daily cap and the web Usage view.
