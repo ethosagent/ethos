@@ -136,8 +136,10 @@ the published contracts.
 ## III. Architectural Laws
 
 Each law is a one-sentence rule with a one-sentence rationale. Laws are
-binding and are enforced mechanically by §IX unless explicitly marked
-prose-only.
+binding. Each law names what enforces it: an archcheck rule id from
+`architecture.config.ts` (§IX), a test, or "not mechanically enforced
+(known gap)" — a law with no enforcer is recorded as a gap, never implied
+to be checked.
 
 ### Law 1 — Contracts are pure
 Modules in the contracts layer must not depend on any other internal
@@ -146,6 +148,8 @@ they author the schema language itself (zod, oRPC, Protobuf-TS).
 *Rationale:* a contract that imports a sibling becomes structurally
 bound to it; a contract that depends on a typed-DSL library is still a
 contract.
+*Enforced by:* archcheck `l1-contracts-pure` (the contracts layer may
+import no internal layer; external packages sit outside the layer graph).
 
 ### Law 2 — Core does not import concrete implementations
 The core layer imports contracts only. It does not import an LLM
@@ -153,11 +157,25 @@ provider, a tool, a memory backend, a session store, a platform adapter,
 a persistence backend, or any extension that implements an injection
 seam. *Rationale:* the engine must be swappable independent of what is
 plugged into it.
+*Enforced by:* archcheck `l2-core-no-concrete` (core may import contracts
+and the security kernel only) and
+`packages/core/src/__tests__/no-kernel-runtime-imports.test.ts`. §II lets
+core reach the kernel through contract types only, but archcheck's
+`ignoreTypeOnly` is set per source layer, so the archcheck rule allows
+every core → kernel edge; the test scans non-test `packages/core/src` for
+runtime imports of the kernel packages (the `security-kernel` layer in
+`architecture.config.ts`) and allows only `import type` / `export type`.
 
 ### Law 3 — Wiring is the only composition root
 Only wiring modules import concrete extensions by name and assemble them.
 *Rationale:* the system's runtime topology must exist in exactly one
 place.
+*Enforced by:* archcheck `l3-wiring-composes` (wiring may import every
+layer and owns the report for a file in no layer), with the deny side in
+every other layer rule — `l5-apps-through-wiring`,
+`extensions-implement-contracts`, `support-packages`,
+`core-adapters-wrap-core` — and `app-entry-modules-compose` naming the
+app wiring adapters §II permits.
 
 ### Law 4 — Extensions implement contracts
 An extension is a replaceable module that implements one or more
@@ -166,11 +184,20 @@ are guidance for healthy sibling dependencies, not validator-enforced
 categories. *Rationale:* requiring contract mediation for every
 cross-extension call has higher cost than benefit when the boundary is
 not a security boundary.
+*Enforced by:* archcheck `extensions-implement-contracts` (an extension
+never reaches wiring or apps; sibling extensions share a layer, so their
+edges are allowed). That an extension implements a contract is not
+mechanically enforced (known gap).
 
 ### Law 5 — Apps do not bypass wiring
 An app imports wiring and contracts. An app does not import a concrete
 extension directly. *Rationale:* a second composition root re-creates
 the topology and breaks the substitution model.
+*Enforced by:* archcheck `l5-apps-through-wiring` (runtime imports;
+`import type` is exempt), `app-entry-modules-compose` (the entry modules
+that are an app's thin wiring adapter) and `web-api-rpc-is-thin`.
+Violations that predate archcheck are recorded in
+`.archcheck/baseline.json`, which may only shrink.
 
 ### Law 6 — Personality is schema-bound
 A personality's behaviour is fully determined by the fields of the
@@ -179,6 +206,10 @@ prompt text, filename heuristics, or any unschematised source.
 *Rationale:* personality is the framework's primary axis of variation;
 if the schema does not express a capability, the framework does not
 honour it.
+*Enforced by:* the schema half by
+`packages/types/src/__tests__/personality-field-count.test.ts` (the
+frozen field count). That no code reads identity from prompt text or
+filenames is not mechanically enforced (known gap).
 
 ### Law 7 — Storage abstraction guards the personality boundary
 Modules that read or write user-authored files on a personality's behalf
@@ -187,6 +218,17 @@ logs, pidfiles, journals, database-driver files, system paths,
 build-time tooling — may use raw `node:fs`. *Rationale:* Storage exists
 to make personality `fs_reach` enforceable; outside that boundary it
 adds complexity without safety gain.
+*Enforced by:* `apps/ethos/src/__tests__/no-raw-fs.test.ts` (the raw
+`node:fs` scan and its reasoned allowlist) and
+`scripts/check-tool-imports.sh` (tool packages; runs at pre-push and in
+CI's `architecture` job), not archcheck: archcheck
+cannot ban a Node built-in import. archcheck
+`p24-no-fsstorage-in-libraries` enforces the other half — library code
+receives an injected Storage and never constructs `FsStorage` — over every
+file archcheck reads (the root `tsconfig.json` program).
+`packages/types/src/__tests__/storage-construction-boundary.test.ts`
+covers the same boundary for library files outside that program, such as
+`extensions/execution-pi/pi-extension/`.
 
 ### Law 8 — Tool execution respects the personality toolset
 The tool registry filters tool definitions presented to the model by
@@ -194,17 +236,25 @@ personality toolset and rejects calls outside the allowlist at execution
 time. Rejected calls produce typed error results that maintain the
 model's message contract. *Rationale:* a permissive registry undermines
 the personality schema.
+*Enforced by:* `packages/core/src/__tests__/tool-registry.test.ts`
+(filtering at definition time and rejection at execution time).
 
 ### Law 9 — Imports are extensionless internally
 Internal relative imports omit the file extension. *Rationale:* the
 codebase runs without a build step in development; extensionful imports
 break that contract and force a build dependency on every contributor.
+*Enforced by:* not mechanically enforced (known gap). No lint rule,
+test or archcheck rule inspects import specifiers for an extension, and
+tsx resolves both forms, so an extensioned import does not fail in dev.
 
 ### Law 10 — Library code is silent
 Library code outside designated app entry points uses the `Logger`
 contract for all output. `console.*` is permitted only in app entry
 modules and in build/test tooling. *Rationale:* silent libraries
 compose; chatty libraries pollute every embedder.
+*Enforced by:* archcheck `l10-silent-libraries` over `packages/**` and
+`extensions/**`, with named exceptions in `architecture.config.ts`.
+`apps/**` is not scanned (not mechanically enforced there).
 
 ### Law 11 — Kernel guarantees are not weakenable from outside
 A module outside the security kernel must not be able to weaken a
@@ -215,6 +265,12 @@ stopped implementing it.
 
 Like §V, this law has no exception path under §VIII: an exception to it
 is, by definition, a module that can weaken a kernel guarantee.
+
+*Enforced by:* behaviourally, by the AgentSafety conformance suite
+(`packages/core/src/__tests__/safety-conformance.test.ts`); there is no
+static rule (known gap). Its no-exception-path half is enforced by the
+`exceptions` check in `scripts/check-architecture.mjs`, which rejects a
+sidecar entry naming Law 11.
 
 ------------------------------------------------------------------------
 
@@ -340,6 +396,9 @@ The personality toolset is the sole authority on which tools the model
 may invoke. Enforcement happens at both definition time (the model sees
 only allowed tools) and execution time (the registry rejects disallowed
 calls). No code path circumvents the allowlist.
+*Enforced by:* `packages/core/src/__tests__/tool-registry.test.ts`. That
+no code path circumvents the registry is not mechanically enforced
+(known gap).
 
 **S2 — Sandbox attestation is binding.**
 A tool that executes untrusted code does so inside an attested sandbox.
@@ -352,6 +411,9 @@ Outbound messages on every channel pass through a single deduplication
 chokepoint keyed on session identity and message content. Channel
 adapters do not implement their own deduplication. A duplicate is a
 silent drop.
+*Enforced by:* the chokepoint by
+`extensions/gateway/src/__tests__/dedup.test.ts`. The ban on
+adapter-local deduplication is not mechanically enforced (known gap).
 
 **S4 — Tool progress is internal by default.**
 Progress events emitted by tools are framework-internal unless the tool
@@ -373,6 +435,10 @@ no personality, channel, or tool may disable it, and no schema field may
 exist whose effect is to disable it. A personality safety block may only
 ever narrow what the framework already permits; a field that widens
 policy is a violation of this rule, not a configuration of it.
+*Enforced by:* `packages/types/src/__tests__/personality-field-count.test.ts`
+(no schema field may be added without the drift gate moving) and the
+AgentSafety conformance suite
+(`packages/core/src/__tests__/safety-conformance.test.ts`).
 
 **S7 — Boundary errors are user-facing.**
 A boundary violation — storage scope, tool allowlist, sandbox
@@ -383,6 +449,8 @@ the operator. Silent failures are forbidden.
 A plugin declares the contract major version it was built against. The
 loader rejects mismatches without overlap. *Rationale:* overlap
 deprecation has, historically, become permanent compatibility.
+*Enforced by:* `packages/plugin-contract/src/__tests__/plugin-contract.test.ts`
+(`checkPluginContractMajor`).
 
 **S9 — Secret values are stored exclusively in SecretsResolver.**
 A secret value — API key, bearer token, OAuth token, password, or any
@@ -392,6 +460,10 @@ MCP server config, export archive, or any storage path outside the
 name (for documentation or manifest purposes) but never by value.
 `SecretsResolver` is the sole storage and retrieval path for all
 credential material. No exception path exists for this rule.
+
+S2, S4, S5, S7 and S9 are behavioural: tests exercise them, but no static
+rule — archcheck or otherwise — enforces them (known gap). None of the
+§V rules is an archcheck rule, and none takes an exception.
 
 ------------------------------------------------------------------------
 
@@ -545,20 +617,126 @@ permanent-grandfather list anywhere in this constitution.
 
 ### Where exceptions live
 
-Active exceptions are tracked in the operational state sidecar referenced
-from §IX, not in this document. The constitution defines the policy; the
-sidecar holds the entries.
+Active exceptions are tracked outside this document. The constitution
+defines the policy; one file holds each entry, never two.
+
+- **Exceptions to a rule archcheck enforces** live in
+  `architecture.config.ts` `exceptions:` and nowhere else. archcheck's
+  entry has four fields, so the §VIII fields map onto them: `scope` →
+  `path` (one exact file, never a glob); `review_by` → `expires` (archcheck
+  fails the run and names the owner once it passes); `owner` → `owner`;
+  `id`, `law`, `created`, `reason` and `removal_condition` → `reason`,
+  written as `EX-NNN (<law>, created <date>): <why, citing the code that
+  justifies it>. Removal condition: <observable condition>.`
+- **Exceptions to a law another gate enforces** live in the operational
+  state sidecar (`.architecture-state.yaml`), whose shape
+  `scripts/check-architecture.mjs` checks against the fields above.
 
 ------------------------------------------------------------------------
 
 ## IX. Validator-Enforced Rules
 
-The block below is the mechanically-checkable projection of this
-constitution. It encodes the *structure* of enforcement, not the
-*inventory* of current modules. Inventory (which package is at which
-path, which sibling dependency matches which pattern, which exceptions
-are currently active) lives in the operational state sidecar
-(`.architecture-state.yaml` at the repo root) and is updated freely.
+This section says how the constitution is enforced. Two files carry the
+mechanical projection, and neither restates the other.
+
+### The operating model
+
+- **This document is the guideline.** It says why each law exists, and
+  every law in §III names its enforcer or its known gap.
+- **`architecture.config.ts` is the enforced projection** of §II and of
+  the §III laws that can be read from imports and syntax: the layer
+  table, the banned constructs, and the exceptions to them. The layer
+  paths, the app entry modules and the vendored shim live there and
+  nowhere else. [archcheck](https://www.npmjs.com/package/archcheck)
+  checks it:
+  - at **pre-commit**, on the changed files
+    (`archcheck --changed --format verdict`, `lefthook.yml`);
+  - at **pre-push**, on the whole repository (`archcheck`,
+    `archcheck emit --check`, and the baseline-shrink check);
+  - in **`pnpm test`**, through
+    `packages/types/src/__tests__/archcheck.test.ts` (the live run) and
+    `packages/types/src/__tests__/archcheck-fixtures.test.ts` (every
+    error rule is proven to fire on a fixture in `archcheck-fixtures/`);
+  - in **CI**, in the `architecture` job (SARIF upload, `emit --check`,
+    and the baseline-shrink check).
+- **Violations that predate archcheck** are recorded in
+  `.archcheck/baseline.json`. The baseline only shrinks: a fixed finding
+  makes archcheck exit 4 until `archcheck baseline --prune` runs, and a
+  new or grown entry fails `scripts/check-archcheck-baseline.mjs` (pre-push
+  and CI) unless the commit that grew it carries an
+  `Architecture-Approved-By:` trailer.
+- **Changing a rule, an exception or the baseline requires the
+  maintainer's approval.** Three mechanisms hold that line: the
+  `Architecture-Approved-By:` trailer, which the baseline-shrink check
+  reads; CI, which refuses baseline growth without it; and the Claude
+  guard hook (`scripts/guard-architecture.sh`, registered in
+  `.claude/settings.json`), which blocks an agent from editing
+  `architecture.config.ts`, `.archcheck/baseline.json`,
+  `archcheck-fixtures/`, the archcheck gate tests, the baseline check,
+  the hook itself or its registration in `.claude/settings.json`, and
+  from running `baseline --write` or skipping hooks. An edit to the
+  manifest itself is gated by review and the hook; no script parses a
+  trailer for it.
+- **`scripts/check-architecture.mjs`** is the second checker. It reads the
+  YAML block below and `.architecture-state.yaml`, and checks what
+  archcheck cannot express: tier completeness, the guarantee register
+  against its enforcement points (both directions), claims about the
+  register made elsewhere, §VIII exception shape for sidecar entries, and
+  stale kernel paths. It runs in `pnpm test`
+  (`packages/types/src/__tests__/architecture-rules.test.ts`).
+
+What neither checker sees: `apps/web`, `apps/desktop` and
+`apps/vscode-extension` are excluded from the root `tsconfig.json` that
+archcheck reads, so no layer rule covers them (known gap).
+
+*Amended 2026-09-26 (§VI class: Substantive).* The layer and law rules
+moved out of the YAML block below into `architecture.config.ts`, enforced
+by archcheck; `scripts/check-architecture.mjs` dropped its `layers` check;
+`.architecture-state.yaml` dropped `layers:`, `vendored:` and
+`app_entry_modules:`; and exceptions to archcheck-enforced rules moved to
+the manifest (§VIII). Recorded in `CHANGELOG.md`.
+
+### The archcheck rules
+
+Generated from `architecture.config.ts` by `archcheck emit`. Do not edit
+inside the fence: change the manifest and run `pnpm arch:emit`, or
+`archcheck emit --check` fails.
+
+<!-- archcheck:begin rules-table -->
+
+**21 rules** · ✓ 19 deterministic · ◑ 2 proxy · ○ 0 judgement · **100% automatable**
+
+| | Rule | Statement | Kind | Severity |
+|---|---|---|---|---|
+| ✓ | `app-entry-modules-compose` | an app entry module is its thin wiring adapter and may compose anything (§II) | layers | error |
+| ✓ | `core-adapters-wrap-core` | plugin-sdk and agent-bridge wrap core for plugin authors and UI surfaces, and reach nothing concrete | layers | error |
+| ✓ | `every-error-rule-has-a-fixture` | every error-severity rule has a fixture it catches | required-file | error |
+| ✓ | `extensions-implement-contracts` | an extension implements contracts and never reaches wiring or apps | layers | error |
+| ✓ | `kernel-reads-contracts` | the security kernel depends only on contracts and vendored shims | layers | error |
+| ✓ | `l1-contracts-pure` | @ethosagent/types has zero imports and zero deps (§II L1) | layers | error |
+| ✓ | `l10-silent-libraries` | library code does not write to the console (Law 10) | banned-syntax | error |
+| ✓ | `l2-core-no-concrete` | core never imports concrete implementations (§II L2) | layers | error |
+| ✓ | `l3-wiring-composes` | wiring is the composition root and may import every layer | layers | error |
+| ✓ | `l5-apps-through-wiring` | apps depend on contracts and wiring only; concrete implementations come via wiring (Law 5) | layers | error |
+| ✓ | `no-computed-dynamic-import` | dynamic imports name a literal specifier so the graph stays readable | banned-syntax | error |
+| ✓ | `no-empty-catch` | a catch block handles, rethrows or explains the error it swallows | banned-syntax | error |
+| ✓ | `no-inline-suppression` | exceptions live in the manifest with an owner and an expiry, not inline | banned-syntax | warn |
+| ✓ | `observability-sqlite-stays-extractable` | observability-sqlite depends only on types, safety-redact and the sqlite shim, so it stays extractable | layers | error |
+| ✓ | `p24-no-fsstorage-in-libraries` | library code receives an injected Storage and never constructs FsStorage (P2.4) | banned-syntax | error |
+| ✓ | `support-packages` | library packages depend only on contracts, the kernel and vendored shims | layers | error |
+| ◑ | `surface-throws-ethos-error` | CLI surface code throws EthosError, not raw Error (Phase 30.9) | banned-syntax | error |
+| ✓ | `tests-reach-anything` | test files may import any layer to build fixtures | layers | error |
+| ◑ | `tools-read-env-through-ctx` | tool code reads configuration through ctx.*, not process.env | banned-syntax | error |
+| ✓ | `vendored-shim` | the sqlite shim is a thin platform wrapper with no Ethos semantics | layers | error |
+| ✓ | `web-api-rpc-is-thin` | web-api rpc handlers validate input, call one service method and return its result | layers | error |
+
+<!-- archcheck:end rules-table -->
+
+### The validator block
+
+The block below is read by `scripts/check-architecture.mjs` and by the
+§VII drift gates. It keeps only what they read: the sidecar pointer, the
+§V safety rules, the frozen schemas and the exception policy.
 
 Where this section and the prose above conflict, the prose is
 authoritative and the YAML is a bug to be fixed in the next amendment.
@@ -567,109 +745,17 @@ authoritative and the YAML is a bug to be fixed in the next amendment.
 # ARCHITECTURE-RULES v1
 # Parser contract: a single YAML document inside the first ```yaml fence
 # whose first non-blank line is `# ARCHITECTURE-RULES v1`.
-# The validator reads this block plus `.architecture-state.yaml` and
-# exits non-zero on any unmatched violation.
+# scripts/check-architecture.mjs reads this block plus
+# `.architecture-state.yaml` and exits non-zero on any unmatched violation.
+# The §VII drift gates read `frozen_schemas:`.
 
 version: 1
 state_sidecar: ".architecture-state.yaml"
 
-# ---- Layers (§II) -----------------------------------------------------
-# Order is significant. A layer may depend on any layer beneath it and
-# on no layer above it. Paths and module identities live in the sidecar.
-
-layers:
-  - name: contracts
-    role: "Interface definitions and value types. The floor."
-    depends_on: []
-    forbids:
-      - internal_workspace_deps: all
-
-  - name: security-kernel
-    role: "Implementations of the §V-mandated safety primitives."
-    depends_on: [contracts]
-    forbids:
-      - imports_outside_layer: [core, extensions, wiring, apps]
-      - raw_filesystem_apis: true
-      - direct_console_writes: true
-
-  - name: core
-    role: "Framework engine. Applies §V safety primitives through injected seams."
-    depends_on: [contracts]
-    # Core reaches the kernel only through contract types bound by wiring.
-    type_only_deps: [security-kernel]
-    forbids:
-      - imports_outside_layer: [extensions, wiring, apps]
-      - runtime_imports_of_layer: [security-kernel]
-      - raw_filesystem_apis: true
-      - direct_console_writes: true
-
-  - name: extensions
-    role: "Concrete implementations of contracts."
-    depends_on: [contracts, security-kernel, core]
-    sibling_dependencies: permitted
-    forbids:
-      - direct_console_writes: true
-      - raw_filesystem_apis_outside_storage_contract: true
-
-  - name: wiring
-    role: "Composition root. Imports concrete extensions by name and binds the kernel."
-    depends_on: [contracts, security-kernel, core, extensions]
-    composition_root: true
-
-  - name: apps
-    role: "User-facing entry points. Drive wiring."
-    depends_on: [contracts, wiring]
-    forbids:
-      - direct_extension_imports: true   # Law 5
-    composition_root: "entry modules only"
-
-# ---- Laws (§III) ------------------------------------------------------
-
-laws:
-  L1_contracts_pure:
-    check: forbid_internal_workspace_deps
-    scope: layer:contracts
-
-  L2_core_no_concrete:
-    check: imports_only_layers
-    scope: layer:core
-    allowed_layers: [contracts]
-
-  L3_only_wiring_composes:
-    check: imports_concrete_extensions
-    allowed_in: [layer:wiring]
-    forbidden_elsewhere: true
-
-  L5_apps_through_wiring:
-    check: imports_only_layers
-    scope: layer:apps
-    allowed_layers: [contracts, wiring]
-
-  L7_storage_abstraction:
-    check: forbid_raw_filesystem_on_personality_boundary
-    scope: "layer:core | layer:extensions | layer:apps"
-    contract: storage
-
-  L8_toolset_enforcement:
-    check: tool_registry_filters_by_personality_toolset
-    enforcement_points: [definition_time, execution_time]
-    on_rejection: typed_error_preserving_model_contract
-
-  L9_extensionless_imports:
-    check: forbid_internal_extensioned_imports
-    scope: "*"
-
-  L10_silent_libraries:
-    check: forbid_console_writes
-    scope: "*"
-    allowed_in: layer:apps/entry
-    contract: logger
-
-  L11_kernel_guarantees_not_weakenable:
-    check: forbid_external_weakening_of_kernel_guarantee
-    scope: "* except layer:security-kernel"
-    severity: error
-    no_exception_path: true
+# ---- Layers (§II) and laws (§III) -------------------------------------
+# Not here. The layer table and the laws archcheck can read live in
+# architecture.config.ts; each §III law names its enforcer in its own
+# "Enforced by:" line.
 
 # ---- Safety constitution (§V) ----------------------------------------
 # These have no exception path. A violation here is a release blocker.
@@ -819,8 +905,9 @@ frozen_schemas:
     frozen_fields: [id, name, description, protocolVersion, skills, endpoints, publicKey, keyFingerprint, signatureAlg, signature, did]
 
 # ---- Exception policy (§VIII) ----------------------------------------
-# Active exceptions live in the sidecar, not here. This block defines
-# the shape every entry must take and the validator's failure modes.
+# Active exceptions live in architecture.config.ts (rules archcheck
+# enforces) or the sidecar (everything else), not here. This block defines
+# the shape every sidecar entry must take and the validator's failure modes.
 
 exception_policy:
   required_fields: [id, law, scope, reason, owner, created, removal_condition, review_by]
@@ -851,10 +938,12 @@ and may be edited freely; they are not constitutional.
   schema-bump workflows, doc-sync rule.
 - [DESIGN.md](./DESIGN.md) — visual and UX design system.
 - [.agents/skills/docs/SKILL.md](./.agents/skills/docs/SKILL.md) — documentation information architecture (the `/docs` skill).
+- `architecture.config.ts` — the enforced projection of §II and §III
+  that archcheck checks (§IX). Changes need the maintainer's approval.
 - `.architecture-state.yaml` — the operational sidecar referenced from
-  §IX: current layer paths, sibling-pattern instances, active exceptions.
-  Updated freely as the codebase evolves; never the authority on what is
-  allowed, only on what currently exists.
+  §IX: the tier roster, the register anchors, and the exceptions to laws
+  archcheck does not enforce. Updated freely as the codebase evolves;
+  never the authority on what is allowed, only on what currently exists.
 
 If a question has no answer in this document, the answer is: the
 constitution is silent, and the working manual or the codebase decides.

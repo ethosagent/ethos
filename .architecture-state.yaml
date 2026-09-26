@@ -1,15 +1,18 @@
 # .architecture-state.yaml — the operational state sidecar
 #
 # WHAT THIS IS. The mechanical inventory of what this repository currently
-# CONTAINS: which package sits at which path, which layer it belongs to, which
-# security tier it is held to, and which §VIII exceptions are open right now.
+# CONTAINS: which package sits at which path, which security tier it is held
+# to, what each guarantee-register citation asserts, and which §VIII exceptions
+# to rules archcheck does NOT enforce are open right now. Layer paths and the
+# exceptions to archcheck-enforced rules live in architecture.config.ts.
 #
-# WHAT THIS IS NOT. It is not policy. ARCHITECTURE.md §IX is the authority on
-# what is ALLOWED — layers, dependency direction, laws, exception shape. This
-# file records only what EXISTS. Where the two disagree, §IX wins and this file
-# is the thing to fix. §IX declares this file by name
-# (`state_sidecar: ".architecture-state.yaml"`), and §VIII sends active
-# exceptions here rather than into the constitution.
+# WHAT THIS IS NOT. It is not policy. ARCHITECTURE.md is the authority on what
+# is ALLOWED — laws and exception shape — and architecture.config.ts is its
+# enforced projection for layers and dependency direction. This file records
+# only what EXISTS. Where they disagree, ARCHITECTURE.md wins and this file is
+# the thing to fix. §IX declares this file by name
+# (`state_sidecar: ".architecture-state.yaml"`), and §VIII sends the active
+# exceptions archcheck does not own here rather than into the constitution.
 #
 # HOW IT CHANGES. Freely, in an ordinary PR, in the same commit as the change it
 # records. Adding a package means adding its tier here. That is deliberate: a
@@ -19,181 +22,12 @@
 #
 # READ WITH. docs/content/security/security-boundary.md (the tier roster and the
 # guarantee register), SECURITY.md (the triage decision table), ARCHITECTURE.md
-# §II (layers), §VIII (exceptions), §IX (validator rules).
+# §VIII (exceptions), §IX (validator rules), architecture.config.ts (layers).
 
 version: 1
 
-# ---- Layers (§II) ---------------------------------------------------------
-# The path inventory behind ARCHITECTURE.md §II's layer model. Order matches
-# §IX: a layer may depend on any layer beneath it and none above it.
-#
-# `security-kernel` covers seven packages under packages/safety/ plus the named
-# enforcement files inside packages/core and packages/wiring. §II names the
-# layer and §IX carries its rules, so this entry is the path inventory behind a
-# constitutional layer rather than the record-of-fact-without-policy it was
-# before the Phase 2 amendment (plan/phases/security-boundary.md G1).
-#
-# §II names five layers and does not partition packages/* exhaustively. The
-# library packages not listed below (a2a, agent-bridge, config, design-tokens,
-# logger, oauth-core, plugin-contract, plugin-sdk, pricing, sdk, session-lane,
-# surface-kit, ui-components, web-contracts) have no layer assignment today.
-# They all carry a tier, which is the assignment the security boundary needs.
-# `packages/sqlite` is the one exception: it is classified `vendored` below,
-# which is a positive statement rather than an absence.
-
-layers:
-  - name: contracts
-    paths:
-      - packages/types
-
-  - name: security-kernel
-    paths:
-      - packages/safety/channel
-      - packages/safety/groundtruth
-      - packages/safety/injection
-      - packages/safety/network
-      - packages/safety/redact
-      - packages/safety/scanner
-      - packages/safety/watcher
-      - packages/storage-fs
-    # Enforcement points that live inside other packages. Listed by file
-    # because the packages they sit in are only partly kernel; the same files
-    # appear as `kernel_paths` on the package entries under `tiers:` below.
-    embedded_paths:
-      - packages/core/src/agent-loop.ts
-      - packages/core/src/tool-registry.ts
-      - packages/core/src/agent-loop/approval-posture.ts
-      - packages/core/src/agent-loop/stages/context-assembly.ts
-      - packages/core/src/agent-loop/stages/per-call-enforcement.ts
-      - packages/core/src/agent-loop/stages/tool-processing.ts
-      - packages/core/src/agent-loop/stages/tool-rejection.ts
-      - packages/core/src/agent-loop/result-defense.ts
-      - packages/core/src/scoped/scoped-fs.ts
-      - packages/core/src/scoped/scoped-fetch.ts
-      - packages/core/src/scoped/scoped-process.ts
-      - packages/core/src/scoped/scoped-secrets.ts
-      - packages/core/src/scoped/scoped-attachments.ts
-      - packages/core/src/fs-reach.ts
-      - packages/core/src/path-boundary.ts
-      - packages/core/src/url-validator.ts
-      - packages/core/src/capability-validator.ts
-      - packages/core/src/capability-resolver.ts
-      - packages/core/src/hook-registry.ts
-      - packages/core/src/script-safe.ts
-      - packages/wiring/src/build-agent-loop.ts
-      - packages/wiring/src/danger-predicate.ts
-      - packages/wiring/src/approval-seams.ts
-      - packages/wiring/src/smart-approver.ts
-      - packages/wiring/src/decision-site.ts
-      - packages/wiring/src/decision-injection-classifier.ts
-      - packages/wiring/src/resolve-execution-posture.ts
-      - packages/wiring/src/skill-passthrough.ts
-
-  - name: core
-    paths:
-      - packages/core
-
-  - name: extensions
-    paths:
-      - extensions/*
-
-  - name: wiring
-    paths:
-      - packages/wiring
-
-  - name: apps
-    paths:
-      - apps/*
-
-# ---- Vendored runtime shims ----------------------------------------------
-# Workspace packages that are functionally EXTERNAL dependencies which happen
-# to live in-repo: a thin wrapper over a platform primitive, carrying no Ethos
-# semantics, no contract, and no policy. The layer check reads them the way it
-# reads an npm dependency — a closed layer (contracts / security-kernel / core)
-# may depend on one without that edge being an unclassified reach.
-#
-# This is the narrowest possible carve-out and it is deliberately expensive to
-# claim: `rationale` is REQUIRED and must be non-empty, and the validator fails
-# on an entry without one. The bar is "no Ethos semantics" — not "small", not
-# "infrastructural", not "nobody has assigned it a layer yet". A package that
-# implements an Ethos contract (`@ethosagent/logger` implements `Logger`) or
-# encodes an Ethos decision (`@ethosagent/design-tokens` is DESIGN.md as code)
-# does NOT qualify, however low-level it looks.
-#
-# A vendored package still carries a tier. Vendoring answers "which layer
-# rules apply", never "is this in the security boundary".
-
-vendored:
-  "@ethosagent/sqlite":
-    path: packages/sqlite
-    assigned: 2026-08-12
-    rationale: >-
-      A synchronous shim over Node's built-in `node:sqlite` (`DatabaseSync`),
-      resolved through `process.getBuiltinModule` so a bundler cannot rewrite
-      the `node:` specifier. It has exactly one `@ethosagent/*` edge —
-      `@ethosagent/types`, imported by `packages/sqlite/src/migrate.ts` for
-      `EthosError` — and no other dependencies at all. That edge does not
-      reopen the layer question: `types` is the zero-dep bottom layer every
-      package may import by construction, so an edge to it can neither create a
-      cycle nor reach across a layer, and raising a typed `EthosError` instead
-      of a bare `Error` carries no Ethos semantics INTO the shim. Beyond it the
-      package contains none: no contract, no personality concept, no policy, no
-      boundary decision — only parameter marshalling and a `run/get/all`
-      surface over the platform API. It exists
-      as a workspace package rather than an npm dependency because it is
-      Node-version-coupled glue we must be able to patch in the same commit as
-      its caller. `packages/safety/channel` depends on it for the DM pairing
-      store, which legitimately needs SQLite; routing that through a contract
-      seam would add an indirection whose only purpose is to satisfy a layer
-      rule aimed at Ethos-semantic coupling that this package does not have.
-
-# ---- App entry modules (§II thin wiring adapter, §IX composition_root) -----
-# §II grants an app "its own thin wiring adapter" and §IX grants apps
-# `composition_root: "entry modules only"`. Neither enumerates WHICH modules,
-# so Law 5 had no machine-readable boundary and the validator could only report
-# it at manifest granularity, as advisory. This is that inventory: the files in
-# each app that are permitted to import extensions and the security kernel
-# directly.
-#
-# Derived from what the code actually is, not from what would make findings go
-# away: the module each app's package.json names as its entry point, plus the
-# app's dedicated wiring adapter where one exists by name
-# (`apps/ethos/src/wiring.ts`, the archetype). Everything else in an app is
-# ordinary app code and must reach concrete implementations through
-# `@ethosagent/wiring`.
-#
-# Adding a path here is a claim that the file IS a composition root. It is not
-# a suppression mechanism — the Law 5 file check is advisory today precisely
-# because the repository does not yet match this inventory (see the note on the
-# check in scripts/check-architecture.mjs), and padding the list to green the
-# build would destroy the only signal that says so.
-
-app_entry_modules:
-  apps/acp-server:
-    - apps/acp-server/src/index.ts
-  apps/desktop:
-    - apps/desktop/src/main/index.ts
-    # The desktop's in-process backend composition root, and nothing else: it
-    # builds the agent loop, session store, personality registry and identity
-    # map, hands them to createWebApi, and binds the Hono server. Its only
-    # app-specific state is the module-level server handle / bound port that
-    # start/stop/getPort exist to manage.
-    - apps/desktop/src/main/serve.ts
-  apps/ethos:
-    - apps/ethos/src/index.ts
-    - apps/ethos/src/wiring.ts
-    # Named wiring adapter for the ACP session-scoped MCP grant, extracted from
-    # the acp command: it binds the concrete McpSessionView (@ethosagent/tools-mcp)
-    # into acp-server's SessionViewFactory seam and closes the allowlist resolver
-    # over the personality registry. Composition only — no command logic.
-    - apps/ethos/src/lib/acp-mcp-wiring.ts
-  apps/mcp-server:
-    - apps/mcp-server/src/index.ts
-  apps/tui:
-    - apps/tui/src/index.ts
-    - apps/tui/src/setup/index.ts
-  apps/web-api:
-    - apps/web-api/src/index.ts
+# ---- Layers, vendored shims, app entry modules ----------------------------
+# Moved to architecture.config.ts, which archcheck enforces (ARCHITECTURE.md §IX).
 
 # ---- Register anchors -----------------------------------------------------
 # What each guarantee-register citation is ASSERTING at the line it points to.
@@ -1276,33 +1110,10 @@ tiers:
 # Safety Constitution rules take no exceptions at all — they are amended
 # through §VI or not at all, and no Tier 0 package is eligible for one.
 #
-# Empty was the correct state until the first entry below. It is not "no
-# exceptions were needed"; it is "no exception has been granted through §VIII
-# since this file existed".
+# Exceptions to rules archcheck enforces (layers, Law 10, tool env reads,
+# dynamic imports, ...) live in architecture.config.ts `exceptions:` and ONLY
+# there — EX-001 moved there when archcheck took over Law 5. One home per
+# exception. This list is for exceptions to laws that scripts/check-
+# architecture.mjs or another gate here enforces; empty is the correct state.
 
-exceptions:
-  - id: EX-001
-    law: "§III Law 5 — apps depend on [contracts, wiring] only"
-    scope: apps/ethos/src/redact-error.ts
-    reason: >-
-      The crash logger imports @ethosagent/safety-redact directly instead of
-      taking redaction through the composition root. It runs on the bootstrap
-      path, BEFORE wiring exists, and it is synchronous by construction: it
-      must finish writing before the process exits, so it cannot await a
-      composition root that has not been built and in the crash case may never
-      be. Routing it through wiring was measured against the alternatives and
-      is the wrong direction — 18 ms direct versus 121 ms through the narrow
-      subpath, paid on every CLI start to serve a path that runs only when the
-      process is already dying. Redaction on this path is not optional: a crash
-      log is exactly where an unredacted credential ends up, so removing the
-      import rather than the coupling is not available either.
-    owner: "@MiteshSharma"
-    created: 2026-08-12
-    removal_condition: >-
-      apps/ethos/src/redact-error.ts no longer imports @ethosagent/safety-redact
-      — either because the crash logger stops needing redaction, or because the
-      redaction primitives it uses are inlined into apps/ethos and the workspace
-      dependency is dropped from apps/ethos/package.json. Observable as: the
-      import is absent from the file and the validator reports no Law 5 finding
-      for this path with this entry removed.
-    review_by: 2027-02-12
+exceptions: []

@@ -42,7 +42,7 @@ If two existing patterns in the codebase contradict, don't blend them. Pick one 
 "Looks orthogonal to me" is the most expensive phrase in this codebase. If you can't articulate why existing code is structured the way it is, ask before adding adjacent code.
 
 7. Follow the constitution
-[ARCHITECTURE.md](./ARCHITECTURE.md) is the structural source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
+[ARCHITECTURE.md](./ARCHITECTURE.md) is the structural source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws — and names what enforces each one. `architecture.config.ts` is the enforced projection of its layers and laws (see "Architecture checks (archcheck)" below). Read it before:
 
 - Adding or moving any package, extension, or app.
 - Adding a workspace dependency, especially one that crosses layers.
@@ -76,6 +76,17 @@ Why: the main session's context fills with conversation; sub-agents get clean, s
 A comment or doc sentence asserting a guarantee — "X is refused", "Y is validated", "Z never happens" — names the file and symbol that enforces it, or the test that pins it. Add a line number only when the symbol alone would not find it, and expect it to drift.
 
 This repo's most confident prose has described intent the adjacent code did not implement: a refusal attributed to an attestation nothing on the composition path reads, a fallback that actually failed closed, a duration grammar validated nowhere. Each read as fact for months. If you cannot name the enforcer, you have found a limitation — write it down as one. Do not add a linter for this.
+
+Architecture checks (archcheck)
+ARCHITECTURE.md says why each law exists; `architecture.config.ts` is the enforced projection — the layer table, banned constructs (console in libraries, `process.env` in tools, computed `import()`, empty catch, `new FsStorage` in libraries, raw `Error` in CLI commands) and their exceptions. archcheck checks it at pre-commit (`archcheck --changed`), pre-push (`archcheck`, `archcheck emit --check`, `node scripts/check-archcheck-baseline.mjs`), in `pnpm test` (`packages/types/src/__tests__/archcheck.test.ts`, `archcheck-fixtures.test.ts`) and in CI's `architecture` job. Pre-existing violations live in `.archcheck/baseline.json`, which only shrinks. `scripts/check-architecture.mjs` still checks tiers, the guarantee register, register claims, sidecar exceptions and stale paths — NOT layers.
+
+What to do per `pnpm arch` exit code:
+- 1 — a new violation. Fix the code using the finding's remedy (`pnpm exec archcheck explain <ruleId>`). If the rule looks wrong for this case, STOP and raise a request to the maintainer with the rule id, the file, and the proposed manifest diff (a rule change or an exception with owner, expiry, reason, removal condition) — never apply it yourself.
+- 2 — the manifest or environment is broken (includes an expired exception). Stop and report; do not touch code or the manifest.
+- 3 — emitted output is stale. Run `pnpm arch:emit` and commit the regenerated ARCHITECTURE.md table and `.archcheck/generated/`.
+- 4 — a baselined violation was fixed. Run `pnpm arch:prune` and commit the smaller baseline.
+
+Protected paths — changes need the maintainer's approval, and the Claude guard hook (`scripts/guard-architecture.sh`) blocks agent edits to them: `architecture.config.ts`, `.archcheck/baseline.json`, `archcheck-fixtures/`, `packages/types/src/__tests__/archcheck.test.ts`, `packages/types/src/__tests__/archcheck-fixtures.test.ts`, `scripts/check-archcheck-baseline.mjs`, `scripts/guard-architecture.sh`, `.claude/settings.json` (the hook's own registration). The hook also refuses `baseline --write`, `--no-verify`, `LEFTHOOK=0`, `SKIP_PUSH_HOOK=1` and `Architecture-Approved-By` in shell commands — that trailer is the maintainer's to add, not an agent's.
 
 What this is
 Ethos is a TypeScript agent framework where personality is architecture. A personality (SOUL.md + toolset.yaml + config.yaml) is a structural component — not a system prompt string — that shapes tool access, memory filtering, model routing, and communication style simultaneously.
@@ -381,7 +392,7 @@ AgentLoop sets resultBudgetChars: 80_000 by default. ToolRegistry.executeParalle
 Tools can declare a lower maxResultChars (e.g. read_file with pagination). The actual budget per call is Math.min(perCallBudget, tool.maxResultChars ?? perCallBudget).
 
 Key conventions
-No console.log in library code — only in CLI (apps/ethos/src/). Some console.warn/error lingers in extensions/cron, extensions/plugin-loader, and extensions/tools-mcp; do not add new ones.
+No console.* in library code — only in CLI (apps/ethos/src/). archcheck's `l10-silent-libraries` enforces this over packages/** and extensions/**; the few legitimate uses (the ConsoleLogger sink, CLI command bodies, manual phase-check CLIs) are named exceptions in architecture.config.ts.
 All imports are extensionless — import './foo' not import './foo.ts' or import './foo.js'. This is the one hard rule; tsx handles it.
 Workspace package.json exports point to ./src/index.ts — so Node 24 can run them directly in dev without a build step.
 biome check --write . auto-fixes import order, formatting, and safe lint issues. Run it before committing.
