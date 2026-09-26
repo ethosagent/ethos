@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,6 +95,51 @@ describe('createWebApi — OpenAPI surface', () => {
     // some accidental empty-200). Don't assert exact bytes — the script URL
     // can update with @scalar/api-reference versions.
     expect(html.toLowerCase()).toContain('scalar');
+  });
+
+  // The app-wide strict CSP (`cspMiddleware`, middleware/csp.ts) blanked this
+  // page: its CDN script and inline bootstrap are neither same-origin nor
+  // nonced. The docs page carries its own policy (`OPENAPI_DOCS_CSP`,
+  // routes/openapi.ts); every other response keeps the strict one.
+  it('/openapi/ carries a CSP that permits exactly the scripts the page runs', async () => {
+    const res = await app.request('/openapi/', {
+      headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
+    });
+    expect(res.status).toBe(200);
+    const csp = res.headers.get('content-security-policy') ?? '';
+    const html = await res.text();
+    const scriptSrc = (csp.split(';').find((d) => d.trim().startsWith('script-src ')) ?? '')
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+
+    const srcs = [...html.matchAll(/<script[^>]*\ssrc="([^"]+)"[^>]*>/g)].map((m) => m[1]);
+    expect(srcs.length).toBeGreaterThan(0);
+    for (const src of srcs) expect(scriptSrc).toContain(src);
+
+    // Every EXECUTABLE inline script (no src, not a JSON data block) is allowed by hash.
+    const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)([^>]*)>([\s\S]*?)<\/script>/g)]
+      .filter((m) => !/type="application\/json"/.test(m[1] ?? ''))
+      .map((m) => m[2] ?? '');
+    expect(inline.length).toBeGreaterThan(0);
+    for (const body of inline) {
+      const hash = createHash('sha256').update(body, 'utf8').digest('base64');
+      expect(scriptSrc).toContain(`'sha256-${hash}'`);
+    }
+
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
+    expect(scriptSrc).not.toContain("'unsafe-eval'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+  });
+
+  it('the rest of /openapi keeps the strict nonce-only policy', async () => {
+    const res = await app.request('/openapi/spec.json', {
+      headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
+    });
+    const csp = res.headers.get('content-security-policy') ?? '';
+    expect(csp).toMatch(/script-src 'self' 'nonce-[^']+'/);
+    expect(csp).not.toContain('cdn.jsdelivr.net');
   });
 
   it('/openapi/spec.json is rejected without auth cookie', async () => {
