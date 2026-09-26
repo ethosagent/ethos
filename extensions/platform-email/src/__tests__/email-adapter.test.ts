@@ -411,6 +411,31 @@ describe('EmailAdapter slash commands', () => {
     expect(await inboundText('/stop\r\n\r\nSent from my phone')).toBe('/stop');
   });
 
+  it('a free-text command keeps every line of its prompt, minus the quoted reply and signature', async () => {
+    expect(
+      await inboundText(
+        '/background summarise the thread\r\nthen draft a reply\r\n\r\nkeep it short\r\n\r\nOn Tue, Bob wrote:\r\n> earlier text\r\n\r\n-- \r\nAlice',
+      ),
+    ).toBe('/background summarise the thread\nthen draft a reply\n\nkeep it short');
+    expect(await inboundText('/queue first\r\nsecond\r\n> quoted\r\n')).toBe(
+      '/queue first\nsecond',
+    );
+  });
+
+  it('a free-text command alone on the first line takes the lines below as its prompt', async () => {
+    expect(await inboundText('/background\r\nwrite the weekly report\r\n\r\n-- \r\nAlice')).toBe(
+      '/background\nwrite the weekly report',
+    );
+  });
+
+  it('a quoted-reply header wrapped across two lines ends the prompt', async () => {
+    expect(
+      await inboundText(
+        '/compact focus on the budget\r\n\r\nOn Tue, 3 Sep 2026 at 10:00, Bob <bob@example.com>\r\nwrote:\r\n> earlier',
+      ),
+    ).toBe('/compact focus on the budget');
+  });
+
   it('a first line that is not a gateway command leaves the body untouched', async () => {
     expect(await inboundText('/etc/hosts is wrong\r\n\r\nsee above')).toBe(
       '/etc/hosts is wrong\n\nsee above',

@@ -196,6 +196,13 @@ export interface CronRunJobOptions {
  *  run always clears its `runningSince` stamp before the stamp reads stale. */
 export const DEFAULT_CRON_MAX_RUN_MS = 30 * 60 * 1000;
 
+/** The largest `maxRunMs` a timer can hold: Node clamps a `setTimeout` delay
+ *  above 2^31-1 to 1ms, which would time every run out at once. Refused at
+ *  `CronScheduler.createJob`, and clamped in `CronScheduler.runTurnCapped` for a
+ *  value that arrives another way (a hand-edited jobs.json, the constructor's
+ *  `defaultMaxRunMs`). `packages/config` mirrors it for `cron.defaultMaxRunMs`. */
+export const MAX_CRON_RUN_MS = 2_147_483_647;
+
 export interface CronSchedulerConfig {
   /** Called when a job fires. Returns the text output and session key. */
   runJob: (job: CronJob, opts?: CronRunJobOptions) => Promise<CronRunResult>;
@@ -605,6 +612,11 @@ export class CronScheduler {
       (!Number.isInteger(params.maxRunMs) || params.maxRunMs < 1)
     ) {
       throw new Error('maxRunMs must be a positive integer (milliseconds)');
+    }
+    if (params.maxRunMs !== undefined && params.maxRunMs > MAX_CRON_RUN_MS) {
+      throw new Error(
+        `maxRunMs must be at most ${MAX_CRON_RUN_MS} (about 24.8 days); got ${params.maxRunMs}`,
+      );
     }
 
     if (params.script) await this.validateScriptRef(params.script, 'script');
@@ -1265,7 +1277,7 @@ export class CronScheduler {
    * `maxParallelJobs` slot. The throw lands in `lastError` like any failed run.
    */
   private async runTurnCapped(job: CronJob): Promise<CronRunResult> {
-    const maxRunMs = job.maxRunMs ?? this.defaultMaxRunMs;
+    const maxRunMs = Math.min(job.maxRunMs ?? this.defaultMaxRunMs, MAX_CRON_RUN_MS);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_, reject) => {

@@ -2278,4 +2278,56 @@ describe('cron maxRunMs', () => {
       }),
     ).rejects.toThrow(/maxRunMs/);
   });
+
+  // Node clamps a setTimeout delay above 2^31-1 to 1ms, so an over-large cap
+  // would time every run out immediately.
+  it('rejects a maxRunMs above the timer ceiling at create time', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Huge Cap',
+        schedule: '0 8 * * *',
+        prompt: 'go',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+        maxRunMs: 2_147_483_648,
+      }),
+    ).rejects.toThrow(/maxRunMs must be at most 2147483647/);
+  });
+
+  it('clamps an over-large stored maxRunMs or defaultMaxRunMs instead of timing out at once', async () => {
+    const scheduler = new CronScheduler({
+      cronDir: testDir,
+      scriptsDir,
+      tickIntervalMs: 999_999,
+      storage: new FsStorage(),
+      defaultMaxRunMs: 3_000_000_000,
+      runJob: () =>
+        new Promise<CronRunResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                jobId: 'default-huge',
+                output: 'done',
+                sessionKey: 'k',
+                ranAt: new Date().toISOString(),
+              }),
+            20,
+          ),
+        ),
+    });
+    const job = await scheduler.createJob({
+      name: 'Default Huge',
+      schedule: '0 8 * * *',
+      prompt: 'go',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await expect(scheduler.runJobNow(job.id)).resolves.toMatchObject({ output: 'done' });
+
+    // A hand-edited jobs.json can carry a value createJob would refuse.
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, { maxRunMs: 5_000_000_000 });
+    await expect(scheduler.runJobNow(job.id)).resolves.toMatchObject({ output: 'done' });
+  });
 });

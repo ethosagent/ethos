@@ -32,6 +32,19 @@ describe('cron.defaultMaxRunMs config parsing', () => {
     expect((await load([...base, 'cron.defaultMaxRunMs: soon'].join('\n')))?.cron).toBeUndefined();
   });
 
+  // Node clamps a setTimeout delay above 2^31-1 to 1ms, so the value would
+  // time every cron run out immediately (`CronScheduler.runTurnCapped`).
+  it('drops a value above the timer ceiling and says why', async () => {
+    const yaml = [...base, 'cron.defaultMaxRunMs: 3000000000'].join('\n');
+    expect((await load(yaml))?.cron).toBeUndefined();
+    expect(configParseNotices(parseConfigYaml(yaml)).warnings.join('\n')).toContain(
+      'cron.defaultMaxRunMs: 3000000000 is above the maximum of 2147483647',
+    );
+    expect((await load([...base, 'cron.defaultMaxRunMs: 2147483647'].join('\n')))?.cron).toEqual({
+      defaultMaxRunMs: 2147483647,
+    });
+  });
+
   it('is a key the parser reads (no unknown-key notice)', () => {
     const notices = configParseNotices(
       parseConfigYaml([...base, 'cron.defaultMaxRunMs: 600000'].join('\n')),

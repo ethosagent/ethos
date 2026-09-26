@@ -7,8 +7,14 @@
 // order and are shown as each answer lands, so two parallel tool calls never
 // share the input line. A request settled elsewhere (timeout, Ctrl-C cancel)
 // closes its prompt, or leaves the queue, with a line saying it was denied.
+//
+// The line itself is claimed through a `LineArbiter` (./line-arbiter.ts), shared
+// with every other one-line prompt in `ethos chat`, so an approval and a clarify
+// open at once are asked one after the other and a typed line answers only the
+// question on screen.
 
 import type { BridgeApprovalRequest, BridgeApprovalSource } from '@ethosagent/agent-bridge';
+import { createLineArbiter, type LineArbiter, type LineClaim } from './line-arbiter';
 
 /** The slice of `readline.Interface` the prompt drives. */
 export interface ApprovalPromptReadline {
@@ -21,6 +27,11 @@ export interface ApprovalPromptReadline {
 export interface CliApprovalPromptDeps {
   source: BridgeApprovalSource;
   rl: ApprovalPromptReadline;
+  /**
+   * The session's shared line owner. Absent = one private to this prompt,
+   * which is only right when nothing else reads lines from `rl`.
+   */
+  lines?: LineArbiter;
   write: (text: string) => void;
   /** Before the first prompt of a run is drawn: stop the spinner, claim input. */
   onOpen: () => void;
@@ -57,8 +68,9 @@ export function attachCliApprovalPrompt(deps: CliApprovalPromptDeps): {
   isOpen: () => boolean;
   dispose: () => void;
 } {
+  const lines = deps.lines ?? createLineArbiter(deps.rl);
   const queue: BridgeApprovalRequest[] = [];
-  let current: { request: BridgeApprovalRequest; onLine: (line: string) => void } | null = null;
+  let current: { request: BridgeApprovalRequest; claim: LineClaim } | null = null;
   let open = false;
 
   const advance = (): void => {
@@ -83,16 +95,17 @@ export function attachCliApprovalPrompt(deps: CliApprovalPromptDeps): {
       deps.source.decide(next.approvalId, allow ? 'allow' : 'deny');
       advance();
     };
-    current = { request: next, onLine };
-    deps.write(formatCliApprovalRequest(next));
-    const question = `${yellow('Allow?')} [y/N] `;
-    deps.rl.once('line', onLine);
-    if (deps.questionOnReadline === false) {
-      deps.write(question);
-    } else {
-      deps.rl.setPrompt(question);
-      deps.rl.prompt();
-    }
+    const show = (): void => {
+      deps.write(formatCliApprovalRequest(next));
+      const question = `${yellow('Allow?')} [y/N] `;
+      if (deps.questionOnReadline === false) {
+        deps.write(question);
+      } else {
+        deps.rl.setPrompt(question);
+        deps.rl.prompt();
+      }
+    };
+    current = { request: next, claim: lines.claim({ show, onLine }) };
   };
 
   const offRequest = deps.source.onRequest((request) => {
@@ -102,13 +115,14 @@ export function attachCliApprovalPrompt(deps: CliApprovalPromptDeps): {
   const offSettled = deps.source.onSettled((approvalId, decision) => {
     // Our own answer already cleared `current` before deciding.
     if (current?.request.approvalId === approvalId) {
-      deps.rl.off('line', current.onLine);
+      const { claim } = current;
       deps.write(
         dim(
           `\n  ${decision === 'allow' ? 'allowed' : 'denied'} ${current.request.toolName} (no answer typed — timed out or cancelled)\n`,
         ),
       );
       current = null;
+      claim.release();
       advance();
       return;
     }
@@ -121,7 +135,7 @@ export function attachCliApprovalPrompt(deps: CliApprovalPromptDeps): {
     dispose: () => {
       offRequest();
       offSettled();
-      if (current) deps.rl.off('line', current.onLine);
+      current?.claim.release();
     },
   };
 }

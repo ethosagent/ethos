@@ -482,14 +482,18 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    // Key prefixes are literal and case-sensitive: an exact `substr`
+    // comparison, never LIKE, which folds ASCII case (`Sales` / `sales` are
+    // different bots) and reads `%`/`_` as wildcards. Pinned by
+    // `__tests__/key-prefix-filter.test.ts`.
     if (filter?.keyPrefix) {
-      conditions.push("key LIKE ? ESCAPE '\\'");
-      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+      conditions.push('substr(key, 1, length(?)) = ?');
+      values.push(filter.keyPrefix, filter.keyPrefix);
     }
     if (filter?.excludeKeyPrefixes) {
       for (const prefix of filter.excludeKeyPrefixes) {
-        conditions.push("key NOT LIKE ? ESCAPE '\\'");
-        values.push(`${prefix.replace(/[%_\\]/g, '\\$&')}%`);
+        conditions.push('substr(key, 1, length(?)) != ?');
+        values.push(prefix, prefix);
       }
     }
     if (filter?.personalityId) {
@@ -507,10 +511,6 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.since) {
       conditions.push('created_at >= ?');
       values.push(filter.since.toISOString());
-    }
-    if (filter?.keyPrefix) {
-      conditions.push('key LIKE ?');
-      values.push(`${filter.keyPrefix}%`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -985,10 +985,11 @@ export class SQLiteSessionStore implements SessionStore {
       .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
       .all(lower) as SessionRow[];
     if (exact.length > 0) return exact.map(rowToSession);
-    // 2. Fragment match (case-insensitive substring)
+    // 2. Fragment match (case-insensitive substring). `instr`, not LIKE, so a
+    //    `%` or `_` in the query matches only itself.
     const fragment = this.db
-      .prepare('SELECT * FROM sessions WHERE LOWER(title) LIKE ?')
-      .all(`%${lower}%`) as SessionRow[];
+      .prepare('SELECT * FROM sessions WHERE instr(LOWER(title), ?) > 0')
+      .all(lower) as SessionRow[];
     return fragment.map(rowToSession);
   }
 
@@ -1080,7 +1081,10 @@ export class SQLiteSessionStore implements SessionStore {
     since: Date;
     until: Date;
     dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
-    /** Only sessions whose key starts with this, literally (`%`/`_` escaped).
+    /** Only sessions whose key starts with this, literally and case-sensitively:
+     *  an exact `substr` comparison, not `LIKE`, which folds ASCII case and would
+     *  mix the spend of bots whose ids differ only by case. Pinned by
+     *  'keyPrefix is case-sensitive' in `__tests__/usage-aggregate.test.ts`.
      *  How one channel bot's spend is read: its sessions are keyed under
      *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
     keyPrefix?: string;
@@ -1108,7 +1112,7 @@ export class SQLiteSessionStore implements SessionStore {
            JOIN sessions s ON s.id = m.session_id
           WHERE m.timestamp >= ? AND m.timestamp < ?
             AND m.input_tokens IS NOT NULL
-            ${opts.keyPrefix !== undefined ? "AND s.key LIKE ? ESCAPE '\\'" : ''}
+            ${opts.keyPrefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
           -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
           -- real column, so \`GROUP BY key\` silently resolves to it and every
           -- dimension collapses to per-session grouping.
@@ -1118,7 +1122,7 @@ export class SQLiteSessionStore implements SessionStore {
       .all(
         opts.since.toISOString(),
         opts.until.toISOString(),
-        ...(opts.keyPrefix !== undefined ? [`${opts.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`] : []),
+        ...(opts.keyPrefix !== undefined ? [opts.keyPrefix, opts.keyPrefix] : []),
       ) as UsageAggregateRow[];
   }
 

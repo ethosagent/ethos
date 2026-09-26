@@ -10,6 +10,7 @@
 import type { Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import type { EventTranslatorCredentialRequired } from '@ethosagent/surface-kit';
+import { createLineArbiter, type LineArbiter } from './line-arbiter';
 
 /** A readline output that can stop echoing while a secret is typed. */
 export interface MutableOutput {
@@ -48,21 +49,30 @@ export function readMaskedLine(
   output: MutableOutput,
   target: NodeJS.WritableStream,
   question: string,
+  /** The session's shared line owner (lib/line-arbiter.ts). Absent = one
+   *  private to this read, which is only right when nothing else reads `rl`. */
+  lines: LineArbiter = createLineArbiter(rl),
 ): Promise<string> {
-  target.write(question);
-  output.mute();
   return new Promise((resolve) => {
-    rl.once('line', (answer: string) => {
-      output.unmute();
-      target.write('\n');
-      // `history` is readline's own array (newest first); it is not part of the
-      // typed surface, so reach it structurally.
-      const history = (rl as unknown as { history?: string[] }).history;
-      if (Array.isArray(history)) {
-        const at = history.indexOf(answer);
-        if (at !== -1) history.splice(at, 1);
-      }
-      resolve(answer);
+    lines.claim({
+      // Muted only once this read owns the line, so a prompt shown before it
+      // is answered with echo on.
+      show: () => {
+        target.write(question);
+        output.mute();
+      },
+      onLine: (answer: string) => {
+        output.unmute();
+        target.write('\n');
+        // `history` is readline's own array (newest first); it is not part of the
+        // typed surface, so reach it structurally.
+        const history = (rl as unknown as { history?: string[] }).history;
+        if (Array.isArray(history)) {
+          const at = history.indexOf(answer);
+          if (at !== -1) history.splice(at, 1);
+        }
+        resolve(answer);
+      },
     });
   });
 }
