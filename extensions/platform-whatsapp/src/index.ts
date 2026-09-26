@@ -77,13 +77,14 @@ export interface WhatsAppAdapterConfig {
 export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
   readonly id: string;
   readonly displayName = 'WhatsApp';
-  readonly canSendTyping = false;
+  readonly canSendTyping = true;
   readonly canEditMessage = false;
   readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 65536;
   readonly capabilities: AdapterCapabilities = {
     platform: 'whatsapp',
+    typing: true,
     channelModes: true,
   };
 
@@ -511,6 +512,26 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     }
 
     return { ok: true, messageId: firstId };
+  }
+
+  /**
+   * WhatsApp's typing signal is a presence update: `composing` renders the
+   * "typing…" indicator in the chat header (H1, ux-feedback-and-config-clarity).
+   * The gateway refreshes this every few seconds during a turn, so a DM shows
+   * life for the whole turn even though the lane cannot stream. Best-effort
+   * like the receipt reaction — a presence failure must never fail the turn,
+   * so errors are swallowed. Pinned by `__tests__/presence.test.ts`.
+   */
+  async sendTyping(chatId: string): Promise<void> {
+    if (!this.sock) return;
+    const sock = this.sock as {
+      sendPresenceUpdate: (presence: string, jid?: string) => Promise<void>;
+    };
+    try {
+      await sock.sendPresenceUpdate('composing', chatId);
+    } catch {
+      // best-effort presence
+    }
   }
 
   /**

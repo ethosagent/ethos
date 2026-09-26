@@ -29,6 +29,7 @@ import {
   describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
+  nearestKey,
   readConfig,
   readRawConfig,
   resolveDecisionsConfig,
@@ -54,6 +55,7 @@ import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
 import { createLLM, getSecretsResolver, getStorage } from '../wiring';
+import { formatResolvedLines, resolveEffective } from './status';
 
 const c = {
   reset: '\x1b[0m',
@@ -1393,9 +1395,15 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${cfgPath}`);
+    // B3 — the same Resolved block `ethos status` prints, at the top of the
+    // Config section: what this config ACTUALLY selects, and from which key.
+    const resolved = await resolveEffective(config);
+    for (const line of formatResolvedLines(resolved, {
+      stateDirFromEnv: Boolean(process.env.ETHOS_STATE_DIR),
+    })) {
+      console.log(`     ${line}`);
+    }
     console.log(`     provider:    ${config.provider ?? '(not set)'}`);
-    console.log(`     model:       ${config.model ?? '(not set)'}`);
-    console.log(`     personality: ${config.personality ?? '(default)'}`);
     // `ethos gateway` and `ethos listen` surface these at boot; an operator
     // running `ethos serve` and driving the web UI would otherwise never see
     // them, and this is the command whose job is "what is wrong with my config".
@@ -1620,6 +1628,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     console.log(`  ${c.green}✓${c.reset}  sessions.db opens and queries cleanly`);
   } else {
     console.log(`  ${c.red}✗${c.reset}  sessions.db failed to open: ${c.dim}${db.error}${c.reset}`);
+    // N2 — pair the failure with the next step (same phrasing as the Store
+    // integrity section; `ethos import` is the restore command that exists).
+    console.log(
+      `      ${c.dim}Restore from a backup: ${c.reset}${c.bold}ethos import <archive>${c.reset}`,
+    );
   }
   console.log('');
 
@@ -1829,6 +1842,17 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 // --fix: auto-repair common issues
 // ---------------------------------------------------------------------------
 
+/**
+ * B7 — the provider suggestion for `doctor --fix`'s unknown-provider repair.
+ * Damerau-Levenshtein against the catalog ids (the same `nearestKey` helper
+ * as B2's unknown-config-key suggestion), replacing the first-letter guess
+ * that offered 'azure' for 'antropic'. Falls back to 'anthropic' when nothing
+ * is within two edits. Exported for `__tests__/doctor-funnel.test.ts`.
+ */
+export function suggestProvider(input: string, knownIds: readonly string[]): string {
+  return nearestKey(input, knownIds) ?? 'anthropic';
+}
+
 async function runDoctorFix(): Promise<void> {
   // chmod stays raw node:fs — Storage has no permissions API (keys.json /
   // config.yaml owner-restriction is the whole point of this repair step).
@@ -1907,7 +1931,7 @@ async function runDoctorFix(): Promise<void> {
     const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
     const knownIds = PROVIDER_CATALOG.map((p) => p.id);
     if (!knownIds.includes(config.provider)) {
-      const closest = knownIds.find((id) => id.startsWith(config.provider[0] ?? '')) ?? 'anthropic';
+      const closest = suggestProvider(config.provider, knownIds);
       console.log(
         `  ${c.yellow}→ Action needed:${c.reset}  Unknown provider '${config.provider}'. Did you mean '${closest}'?`,
       );

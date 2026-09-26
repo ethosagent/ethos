@@ -179,7 +179,7 @@ function rows(spool: SQLiteInboundSpool): SpoolRow[] {
   return ids.map(({ id }) => spool.get(id)).filter((r): r is SpoolRow => r !== null);
 }
 
-const PLAIN = '[background job job-1234';
+const PLAIN = 'background job job-1234';
 
 describe("parent review — deliver: 'parent'", () => {
   it('runs one review turn instead of the plain notice; its answer is what the user sees', async () => {
@@ -200,7 +200,7 @@ describe("parent review — deliver: 'parent'", () => {
     expect(s.calls[0]?.reviewOfJobId).toBe(j.id);
     // The trusted instruction, then the envelope, then the result still wrapped.
     expect(s.calls[0]?.text).toContain('A background task you delegated has finished');
-    expect(s.calls[0]?.text).toContain('[background job job-1234');
+    expect(s.calls[0]?.text).toContain('background job job-1234');
     expect(s.calls[0]?.text).toContain('CI run 812');
     expect(out.sends).toEqual(['Reviewed: the build is green.']);
     expect(j.deliveredAt).toBeGreaterThan(0);

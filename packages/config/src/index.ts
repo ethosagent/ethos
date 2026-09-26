@@ -31,6 +31,7 @@ import {
   type DecisionsConfig,
   serializeDecisionsLines,
 } from './decisions';
+import { nearestKey } from './nearest-key';
 
 // Plan decision-provider-jev §7 — the operator's `decisions.*` keys and their
 // resolver (defaults, per-site budgets); plan decision-provider-personality
@@ -85,6 +86,9 @@ export {
   parseModelDeclaration,
   validateModelRegistry,
 } from './model-registry';
+// Plan ux-feedback-and-config-clarity B2 — the shared typo-suggestion helper,
+// re-exported for the CLI's unknown-command hint (N1) and `ethos doctor`.
+export { damerauLevenshtein, nearestKey } from './nearest-key';
 
 // ---------------------------------------------------------------------------
 // Value scalars — the one reader of a `key: <value>`, and the CLI's writer
@@ -2787,6 +2791,14 @@ export interface EthosConfig {
    */
   notifications?: NotificationsConfig;
   displayBellOnComplete?: boolean;
+  /**
+   * UD3 (plan ux-feedback-and-config-clarity H1) — how long a non-streaming
+   * channel lane stays silent before the gateway sends its one per-turn
+   * "working on it" ack. Config key: display.slow_turn_notice_ms. Absent means
+   * the consumer's default (8000); `0` disables the notice. The default is NOT
+   * baked in here — this field carries exactly what the file says.
+   */
+  displaySlowTurnNoticeMs?: number;
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
   /**
@@ -3492,6 +3504,10 @@ export interface EthosConfig {
   telemetry?: TelemetryConfig;
 }
 
+/** The personality `parseConfigYaml` falls back to when `personality:` is
+ *  absent — surfaced by `resolveEffectiveConfig` as source `default`. */
+export const DEFAULT_PERSONALITY_ID = 'researcher';
+
 export function ethosDir(): string {
   const override = process.env.ETHOS_STATE_DIR;
   if (override) return override;
@@ -3526,9 +3542,13 @@ export function ethosScriptsDir(): string {
 let preVersionedConfigWarned = false;
 
 export async function readRawConfig(storage: Storage): Promise<EthosConfig | null> {
-  const src = await storage.read(join(ethosDir(), 'config.yaml'));
+  const configPath = join(ethosDir(), 'config.yaml');
+  const src = await storage.read(configPath);
   if (!src) return null;
   const parsed = parseConfigYaml(src);
+  if (parsed.activeContext?.type === 'personality') {
+    await migrateActiveContextPersonality(storage, configPath, src, parsed);
+  }
   if (parsed.schemaVersion === undefined && !preVersionedConfigWarned) {
     preVersionedConfigWarned = true;
     console.warn(
@@ -3539,6 +3559,68 @@ export async function readRawConfig(storage: Storage): Promise<EthosConfig | nul
     );
   }
   return parsed;
+}
+
+/**
+ * UD1 Option A (plan ux-feedback-and-config-clarity §6.2) — `personality:` is
+ * the ONE default-personality key; on disk `activeContext` keeps only the team
+ * case. A file still carrying `activeContext.type: personality` is migrated on
+ * load: in memory the entry is folded into `personality:` (so the legacy read
+ * path `config.activeContext?.name ?? config.personality` yields the same id),
+ * and the FILE is rewritten once, surgically — only the `activeContext.*` and
+ * `personality:` lines change, so every comment and unmodelled line survives
+ * without going through the serializer. A deprecation notice is recorded on
+ * `parseWarningsByConfig` for one release. The in-process `activeContext`
+ * personality override (`applyCliOverrides` for `--personality`) is untouched:
+ * this migrates what the LOAD PATH read from disk, never a constructed config.
+ *
+ * Mutates `parsed` in place — the parse-notice side tables are keyed by object
+ * identity, and a copy would silently drop `parseErrorsByConfig`.
+ * Fail-open on the rewrite: if the write throws, this process still runs the
+ * migrated config and the next load repeats the attempt.
+ */
+async function migrateActiveContextPersonality(
+  storage: Storage,
+  configPath: string,
+  src: string,
+  parsed: EthosConfig,
+): Promise<void> {
+  const ctx = parsed.activeContext;
+  if (ctx?.type !== 'personality') return;
+  parsed.personality = ctx.name;
+  parsed.activeContext = undefined;
+  const warnings = parseWarningsByConfig.get(parsed) ?? [];
+  warnings.push(
+    `activeContext.type: personality is deprecated — migrated to 'personality: ${ctx.name}' ` +
+      `(activeContext now only names a team). The file was rewritten automatically; ` +
+      `no action needed.`,
+  );
+  parseWarningsByConfig.set(parsed, warnings);
+  const exLines = src.split('\n');
+  const hasPersonalityLine = exLines.some((l) => configLineKey(l) === 'personality');
+  const out: string[] = [];
+  let inserted = false;
+  for (const line of exLines) {
+    const key = configLineKey(line);
+    if (key === 'personality') {
+      out.push(`personality: ${ctx.name}`);
+      continue;
+    }
+    if (key === 'activeContext.type' || key === 'activeContext.name') {
+      if (!hasPersonalityLine && !inserted) {
+        out.push(`personality: ${ctx.name}`);
+        inserted = true;
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  try {
+    await storage.write(configPath, out.join('\n'), { mode: 0o600 });
+  } catch {
+    // Read-only mount, permissions — the in-memory migration above still
+    // holds for this process, and the deprecation notice names the state.
+  }
 }
 
 export async function readConfig(
@@ -3851,7 +3933,72 @@ export async function writeConfig(
   const path = join(ethosDir(), 'config.yaml');
   const existing = await storage.read(path);
   if (existing !== null) lines.push(...unexpressibleLines(existing, lines));
-  await storage.write(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+  const out = existing !== null ? weaveComments(existing, lines) : lines;
+  await storage.write(path, `${out.join('\n')}\n`, { mode: 0o600 });
+}
+
+/** The heading orphaned comment blocks are kept under (B5, §6.6). */
+const UNATTACHED_COMMENTS_MARKER = '# --- unattached ---';
+
+/**
+ * B5 (plan ux-feedback-and-config-clarity §6.6) — re-attach the existing
+ * file's comments and blank lines to the freshly serialized key lines, BY KEY,
+ * never by position (§9: positional attachment misplaces a comment when a key
+ * moves between sections).
+ *
+ * Shape: everything above the first key line is the file header and stays at
+ * the top; the contiguous run of comment/blank lines immediately above each
+ * later key line is that key's block and is re-emitted above the key wherever
+ * it now sits; comment/blank lines after the last key line stay at the end;
+ * blocks whose key no longer exists keep their COMMENT lines under a
+ * `# --- unattached ---` tail (a blank-only block above a deleted key is
+ * dropped — there is nothing to preserve). A double write is byte-identical:
+ * the tail written by the first write parses as trailing lines on the second.
+ * Pinned by `__tests__/config-write-preserves-keys.test.ts`.
+ */
+function weaveComments(existing: string, lines: readonly string[]): string[] {
+  const exLines = existing.split('\n');
+  // The artifact of the file's final newline, not a real blank line.
+  if (exLines.at(-1) === '') exLines.pop();
+  const header: string[] = [];
+  const blocks = new Map<string, string[]>();
+  let pending: string[] = [];
+  let sawKey = false;
+  for (const line of exLines) {
+    const key = configLineKey(line);
+    if (key === null) {
+      pending.push(line);
+      continue;
+    }
+    if (!sawKey) header.push(...pending);
+    else if (pending.length > 0 && !blocks.has(key)) blocks.set(key, pending);
+    sawKey = true;
+    pending = [];
+  }
+  const trailing = sawKey ? pending : [];
+  if (!sawKey) header.push(...pending);
+
+  const out: string[] = [...header];
+  const consumed = new Set<string>();
+  for (const line of lines) {
+    const key = configLineKey(line);
+    if (key !== null && !consumed.has(key)) {
+      const block = blocks.get(key);
+      if (block) {
+        out.push(...block);
+        blocks.delete(key);
+      }
+      consumed.add(key);
+    }
+    out.push(line);
+  }
+  out.push(...trailing);
+  const orphans: string[] = [];
+  for (const block of blocks.values()) {
+    orphans.push(...block.filter((l) => l.trimStart().startsWith('#')));
+  }
+  if (orphans.length > 0) out.push(UNATTACHED_COMMENTS_MARKER, ...orphans);
+  return out;
 }
 
 /** The `key` of a flat `key: value` config line; `null` for blanks and comments. */
@@ -3887,10 +4034,11 @@ function configLineKey(line: string): string | null {
  * attach to whichever entry moved into it. Pinned by
  * `packages/config/src/__tests__/config-provider-chain.test.ts`.
  *
- * Limits, both pre-existing: comments and blank lines are still dropped, and a
- * preserved credential is not externalized into the vault (nothing parses the
- * key, so `externalizeConfigSecrets` never sees it) — it stays exactly as the
- * writer that put it there left it.
+ * Comments and blank lines are handled by `weaveComments` (B5), not here — this
+ * function returns KEY lines only. Remaining limit, pre-existing: a preserved
+ * credential is not externalized into the vault (nothing parses the key, so
+ * `externalizeConfigSecrets` never sees it) — it stays exactly as the writer
+ * that put it there left it.
  */
 function unexpressibleLines(existing: string, emitted: readonly string[]): string[] {
   const covered = new Set<string>();
@@ -4094,6 +4242,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.displayResumeRecapTurns !== undefined)
     lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
   if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
+  // `!== undefined`, not truthy: 0 is a meaningful value (notice disabled).
+  if (config.displaySlowTurnNoticeMs !== undefined)
+    lines.push(`display.slow_turn_notice_ms: ${config.displaySlowTurnNoticeMs}`);
   if (config.displayMemoryNotices !== undefined)
     lines.push(`display.memory_notices: ${config.displayMemoryNotices}`);
   if (config.displayStreamingEdits)
@@ -4996,45 +5147,126 @@ const EXTERNALLY_READ_CONFIG_KEY_RES = EXTERNALLY_READ_CONFIG_KEYS.map(
   (k) => new RegExp(`^${k.replace(/\./g, '\\.').replace(/<n>/g, '\\d+')}$`),
 );
 
-/** Optimal-string-alignment distance: Levenshtein plus adjacent transposition,
- *  so `modle` is one edit from `model`. */
-function editDistance(a: string, b: string): number {
-  const rows: number[][] = [];
-  for (let i = 0; i <= a.length; i++) {
-    const row: number[] = [];
-    for (let j = 0; j <= b.length; j++) {
-      if (i === 0 || j === 0) {
-        row.push(i + j);
-        continue;
-      }
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const prev = rows[i - 1] ?? [];
-      let d = Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost);
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        d = Math.min(d, (rows[i - 2]?.[j - 2] ?? 0) + 1);
-      }
-      row.push(d);
-    }
-    rows.push(row);
-  }
-  return rows[a.length]?.[b.length] ?? 0;
-}
+/**
+ * The exact TOP-LEVEL (undotted) `config.yaml` keys this module models — the
+ * keys `parseConfigYaml`'s builders read from the top-level map, hand-maintained
+ * (plan ux-feedback-and-config-clarity B2, §6.1). Suggestion candidates for the
+ * line-numbered unknown-key warning, and exported for the CLI (`ethos status`,
+ * `ethos doctor`). Drift gate: `__tests__/config-unknown-keys.test.ts` asserts
+ * every top-level key `writeConfig` emits is in this list, so a new serializer
+ * key without a list entry fails the test.
+ */
+export const KNOWN_CONFIG_KEYS: readonly string[] = [
+  'schemaVersion',
+  'provider',
+  'model',
+  'apiKey',
+  'personality',
+  'memory',
+  'baseUrl',
+  'apiVersion',
+  'region',
+  'awsProfile',
+  'contextWindow',
+  'toolOrder',
+  'requestTimeoutMs',
+  'approvalTimeoutMs',
+  'maxRetries',
+  'toolPayloadLimitChars',
+  'tool_loading',
+  'verbose',
+  'webBaseUrl',
+  'skin',
+  'allowUnattendedDangerousTools',
+  'telegramToken',
+  'discordToken',
+  'slackBotToken',
+  'slackAppToken',
+  'slackSigningSecret',
+  'emailImapHost',
+  'emailImapPort',
+  'emailUser',
+  'emailPassword',
+  'emailSmtpHost',
+  'emailSmtpPort',
+  'emailTrustedAuthservId',
+];
+
+/**
+ * The dotted key FAMILIES the parser has branches for (plan
+ * ux-feedback-and-config-clarity B2, §6.1) — derived from the branch regexes in
+ * `parseConfigYaml`'s line loop plus `parseProviderChain` and
+ * `claimModelRegistryLine`. The false-positive rule (§9): a line under one of
+ * these prefixes NEVER gets the line-numbered `unknown key` warning, even when
+ * no branch consumed it — `unexpressibleLines` deliberately preserves keys the
+ * parser does not model, and warning about a preserved key would teach
+ * operators to delete lines the system is keeping on purpose. Unread keys
+ * under a family still get the softer `has no effect` notice from
+ * {@link ConfigKeyUse}.
+ */
+export const KNOWN_KEY_PREFIXES: readonly string[] = [
+  'a2a.',
+  'activeContext.',
+  'admin.',
+  'arming.',
+  'auxiliary.',
+  'aws.',
+  'background.',
+  'backup.',
+  'browser.',
+  'callCapture.',
+  'channelDigest.',
+  'channel_filter.',
+  'channel_toolsets.',
+  'compaction.',
+  'cron.',
+  'decisions.',
+  'discord.',
+  'display.',
+  'evolver.',
+  'execution.',
+  'gateway.',
+  'grounding.',
+  'idleWatcher.',
+  'kanban.',
+  'kanbanPoll.',
+  'learningReplay.',
+  'logs.',
+  'memory.',
+  'memoryApproval.',
+  'memoryCapture.',
+  'memoryConsolidation.',
+  'memoryVault.',
+  'modelCatalog.',
+  'modelRegistry.',
+  'modelRouting.',
+  'models.',
+  'notifications.',
+  'pauseClockCorrection.',
+  'pauseLifecycle.',
+  'personalities.',
+  'providers.',
+  'quick_commands.',
+  'retention.',
+  'security.',
+  'slack.apps.',
+  'teamSupervisor.',
+  'teams.',
+  'telegram.bots.',
+  'telemetry.',
+  'toolLoop.',
+  'toolSettings.',
+  'voice.',
+  'web.',
+  'webhooks.',
+  'whatsapp.',
+];
 
 /** The candidate closest to `key`, when it is close enough to be a typo of it:
  *  at most 1 edit for a key under 5 characters, 2 up to 11, 3 beyond. */
 function nearestConfigKey(key: string, candidates: Iterable<string>): string | undefined {
   const limit = key.length < 5 ? 1 : key.length < 12 ? 2 : 3;
-  let best: string | undefined;
-  let bestDistance = limit + 1;
-  for (const candidate of candidates) {
-    if (candidate === key) continue;
-    const d = editDistance(key, candidate);
-    if (d < bestDistance) {
-      best = candidate;
-      bestDistance = d;
-    }
-  }
-  return best;
+  return nearestKey(key, candidates, limit);
 }
 
 /**
@@ -5093,18 +5325,56 @@ class ConfigKeyUse {
     });
   }
 
+  /**
+   * B2 — lines eligible for the line-numbered `unknown key` warning: the ones
+   * no branch consumed, plus the ones only the last-resort `<word>: <value>`
+   * catch-all stored. Whether each one WARNS is decided in {@link notices},
+   * after the builders have run and the read set is complete.
+   */
+  private readonly unknownLines: { lineNo: number; key: string }[] = [];
+
   /** A line no branch of the parser claimed. Blank values are skipped: an
    *  empty line loses nothing, and several keys give empty a meaning. */
-  unclaimed(line: string): void {
+  unclaimed(line: string, lineNo: number): void {
     const key = configLineKey(line);
     if (key === null) return;
     if (parseConfigScalar(line.slice(key.length + 1)).trim() === '') return;
     this.present.add(key);
+    this.unknownLines.push({ lineNo, key });
+  }
+
+  /** A top-level line only the last-resort `<word>: <value>` catch-all stored —
+   *  a real key when a builder reads it or `KNOWN_CONFIG_KEYS` names it, a
+   *  line-numbered warning otherwise. Blank values skipped, as in `unclaimed`. */
+  caughtAll(lineNo: number, key: string, rawValue: string): void {
+    if (parseConfigScalar(rawValue).trim() === '') return;
+    this.unknownLines.push({ lineNo, key });
   }
 
   notices(): string[] {
     const out: string[] = [];
+    // B2 (plan ux-feedback-and-config-clarity §6.1) — the line-numbered
+    // warning, only when the line matched no parser branch AND no known prefix
+    // family (§9 false-positive rule: `unexpressibleLines` passthrough keys
+    // under a family the parser models must not warn) AND no builder read it.
+    const warned = new Set<string>();
+    for (const { lineNo, key } of this.unknownLines) {
+      if (warned.has(key)) continue;
+      if (this.read.has(key)) continue;
+      if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
+      if (KNOWN_CONFIG_KEYS.includes(key)) continue;
+      if (KNOWN_KEY_PREFIXES.some((p) => key.startsWith(p))) continue;
+      const near = nearestKey(key, [...KNOWN_CONFIG_KEYS, ...this.read]);
+      out.push(
+        `config.yaml:${lineNo} unknown key '${key}'${near ? ` — did you mean '${near}'?` : ''}`,
+      );
+      warned.add(key);
+    }
+    // U4 — the softer notice for keys a branch DID consume (or a family keeps)
+    // that no builder read. A key already warned about above is skipped: one
+    // line per mistake, and the line-numbered form is the more actionable one.
     for (const key of this.present) {
+      if (warned.has(key)) continue;
       if (this.read.has(key)) continue;
       if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
       const near = nearestConfigKey(key, this.read);
@@ -5319,7 +5589,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const channelToolsetsKv: Record<string, string> = {};
   // Chapter 1 safety: channel_filter.<platform>.<field>: <value>
   const channelFilterKv: Record<string, Record<string, string>> = {};
-  for (const line of src.split('\n')) {
+  // B2 — `lineIdx` is 0-based; warnings print the 1-based line number.
+  for (const [lineIdx, line] of src.split('\n').entries()) {
     // telegram.bots.<index>.bind.<field>: <value>
     const tbind = line.match(/^telegram\.bots\.(\d+)\.bind\.(\S+):\s*(.+)$/);
     if (tbind) {
@@ -6130,8 +6401,13 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     const m = line.match(/^(\w+):\s*(.+)$/);
-    if (m) kv[m[1].trim()] = parseConfigScalar(m[2]);
-    else keyUse.unclaimed(line);
+    if (m) {
+      const key = m[1].trim();
+      kv[key] = parseConfigScalar(m[2]);
+      keyUse.caughtAll(lineIdx + 1, key, m[2]);
+    } else {
+      keyUse.unclaimed(line, lineIdx + 1);
+    }
   }
 
   const activeContextType = activeContextKv.type;
@@ -6495,7 +6771,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-sonnet-5',
     apiKey: kv.apiKey ?? '',
-    personality: kv.personality ?? 'researcher',
+    personality: kv.personality ?? DEFAULT_PERSONALITY_ID,
     memory:
       kv.memory === 'vector'
         ? 'vector'
@@ -6608,6 +6884,11 @@ export function parseConfigYaml(src: string): EthosConfig {
     cron,
     ...(notifications ? { notifications } : {}),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
+    displaySlowTurnNoticeMs: (() => {
+      if (displayKv.slow_turn_notice_ms === undefined) return undefined;
+      const n = Number(displayKv.slow_turn_notice_ms);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+    })(),
     displayMemoryNotices:
       displayKv.memory_notices === 'true'
         ? true
@@ -6829,6 +7110,130 @@ export function configParseNotices(config: EthosConfig): { errors: string[]; war
   return {
     errors: parseErrorsByConfig.get(config) ?? [],
     warnings: parseWarningsByConfig.get(config) ?? [],
+  };
+}
+
+/**
+ * B3 (plan ux-feedback-and-config-clarity §6.2–6.3) — the one answer to
+ * "which configuration is in effect". `ethos status`, `ethos doctor` and the
+ * web Settings header all render this instead of re-deriving their own.
+ */
+export interface EffectiveConfig {
+  /** `ETHOS_STATE_DIR` when set, else `~/.ethos`. */
+  stateDir: string;
+  /** `<stateDir>/config.yaml`. */
+  configPath: string;
+  personality: {
+    id: string;
+    /**
+     * Which key decided it. Post-UD1-migration a personality-typed
+     * `activeContext` exists only in-process (`--personality`); `default`
+     * means neither key was set and the parser's fallback applies.
+     */
+    source: 'activeContext' | 'personality' | 'default';
+    /** The `personality:` value an in-process `activeContext` outranked. */
+    shadowed?: string;
+  };
+  model: {
+    id: string;
+    /** The config-level rung that decided `id` — see the caveat on
+     *  {@link resolveEffectiveConfig}. */
+    rung: string;
+  };
+  apiKey: {
+    provider: string;
+    source: 'env' | 'vault' | 'inline';
+    /** The vault ref consulted (absent for `inline`). */
+    ref?: string;
+    /** The environment variable that supplies `ref` (source `env`). */
+    envVar?: string;
+    /** Set when the env var wins AND `opts.vaultRefs` says the vault also
+     *  holds the ref — the silent-precedence case worth printing. */
+    overrides?: 'vault';
+  };
+  /** The parse-time warnings for this config (`configParseNotices`). */
+  warnings: string[];
+}
+
+/**
+ * Resolve what this config ACTUALLY selects, from config + environment alone.
+ *
+ * Scope caveats, deliberate at this layer:
+ * - `model.rung` knows only the CONFIG-level ladder: a `modelRouting.<id>`
+ *   override for the effective personality, else the global `model:` key. The
+ *   full turn-time ladder (`resolveTurnModel` in `@ethosagent/core`) also
+ *   reads the personality's own declaration and the model-registry roles,
+ *   which need personality FILES — not resolvable from config alone, so a
+ *   registry deployment's turn can land on a different rung than reported
+ *   here. The rung string names the config key that decided the id.
+ * - A team-typed `activeContext` selects a team, not a personality; wiring
+ *   dispatches it before the personality fallback, so this reports the
+ *   `personality:` key exactly as the non-team path would use it.
+ * - Vault contents are I/O this pure function does not perform: pass the
+ *   vault's ref listing as `opts.vaultRefs` to get `overrides: 'vault'`;
+ *   without it an env hit is reported as `source: 'env'` with no overrides
+ *   claim.
+ */
+export function resolveEffectiveConfig(
+  config: EthosConfig,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  opts: { vaultRefs?: Iterable<string> } = {},
+): EffectiveConfig {
+  const stateDir = env.ETHOS_STATE_DIR || join(homedir(), '.ethos');
+  const configPath = join(stateDir, 'config.yaml');
+
+  let personality: EffectiveConfig['personality'];
+  if (config.activeContext?.type === 'personality') {
+    const shadowed =
+      config.personality && config.personality !== config.activeContext.name
+        ? config.personality
+        : undefined;
+    personality = {
+      id: config.activeContext.name,
+      source: 'activeContext',
+      ...(shadowed !== undefined ? { shadowed } : {}),
+    };
+  } else if (config.personality) {
+    personality = { id: config.personality, source: 'personality' };
+  } else {
+    personality = { id: DEFAULT_PERSONALITY_ID, source: 'default' };
+  }
+
+  const routed =
+    config.modelRouting && Object.hasOwn(config.modelRouting, personality.id)
+      ? config.modelRouting[personality.id]?.trim()
+      : undefined;
+  const model: EffectiveConfig['model'] = routed
+    ? { id: routed, rung: `modelRouting.${personality.id}` }
+    : { id: config.model, rung: 'model:' };
+
+  const provider = config.provider;
+  let apiKey: EffectiveConfig['apiKey'];
+  if (config.apiKey && !isSecretRef(config.apiKey)) {
+    apiKey = { provider, source: 'inline' };
+  } else {
+    let ref = secretRefForConfigKey('apiKey', { provider }) ?? `providers/${provider}/apiKey`;
+    const explicit = config.apiKey?.match(SINGLE_SECRET_REF_RE);
+    if (explicit?.[1]) ref = explicit[1];
+    const envVar = REF_TO_ENV.get(ref);
+    const envSet = envVar !== undefined && (env[envVar] ?? '') !== '';
+    const vaultHasRef = [...(opts.vaultRefs ?? [])].includes(ref);
+    apiKey = {
+      provider,
+      source: envSet ? 'env' : 'vault',
+      ref,
+      ...(envSet && envVar !== undefined ? { envVar } : {}),
+      ...(envSet && vaultHasRef ? { overrides: 'vault' as const } : {}),
+    };
+  }
+
+  return {
+    stateDir,
+    configPath,
+    personality,
+    model,
+    apiKey,
+    warnings: configParseNotices(config).warnings,
   };
 }
 

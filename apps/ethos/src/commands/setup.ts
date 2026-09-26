@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  type BotBinding,
   type EthosConfig,
   ethosDir,
   externalizeProviderChain,
@@ -87,11 +88,15 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
           apiVersion: existingConfig.apiVersion,
           personality: existingConfig.personality,
           memory: existingConfig.memory,
-          telegramToken: existingConfig.telegramToken,
+          // Seed from the list form first (what setup now writes, B4); the
+          // legacy scalars remain readable for configs written before it.
+          // Values are secret refs, which `storeSecret` passes through.
+          telegramToken: existingConfig.telegram?.bots?.[0]?.token ?? existingConfig.telegramToken,
           discordToken: existingConfig.discordToken,
-          slackBotToken: existingConfig.slackBotToken,
-          slackAppToken: existingConfig.slackAppToken,
-          slackSigningSecret: existingConfig.slackSigningSecret,
+          slackBotToken: existingConfig.slack?.apps?.[0]?.botToken ?? existingConfig.slackBotToken,
+          slackAppToken: existingConfig.slack?.apps?.[0]?.appToken ?? existingConfig.slackAppToken,
+          slackSigningSecret:
+            existingConfig.slack?.apps?.[0]?.signingSecret ?? existingConfig.slackSigningSecret,
           emailImapHost: existingConfig.emailImapHost,
           emailImapPort: existingConfig.emailImapPort,
           emailUser: existingConfig.emailUser,
@@ -117,11 +122,12 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
       ? await storeSecret(secrets, `providers/${provider}/apiKey`, answers.apiKey)
       : '';
 
+    const personality = answers.personality ?? 'researcher';
     const config: EthosConfig = {
       provider,
       model: answers.model ?? getDefaultModel(provider)?.modelId ?? 'claude-sonnet-5',
       apiKey: apiKeyRef,
-      personality: answers.personality ?? 'researcher',
+      personality,
       memory: answers.memory,
       baseUrl: answers.baseUrl,
       apiVersion: answers.apiVersion,
@@ -129,20 +135,15 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
       providers: answers.providers
         ? await externalizeProviderChain(answers.providers, secrets)
         : undefined,
-      telegramToken: answers.telegramToken
-        ? await storeSecret(secrets, 'telegram/token', answers.telegramToken)
-        : undefined,
+      // B4 — the list forms the gateway reads natively; the legacy scalar
+      // keys (`telegramToken`, `slackBotToken`, …) are the ones
+      // `applyPlatformShim` deprecates on every boot.
+      ...(await channelListConfig(answers, existingConfig, secrets, {
+        type: 'personality',
+        name: personality,
+      })),
       discordToken: answers.discordToken
         ? await storeSecret(secrets, 'discord/token', answers.discordToken)
-        : undefined,
-      slackBotToken: answers.slackBotToken
-        ? await storeSecret(secrets, 'slack/botToken', answers.slackBotToken)
-        : undefined,
-      slackAppToken: answers.slackAppToken
-        ? await storeSecret(secrets, 'slack/appToken', answers.slackAppToken)
-        : undefined,
-      slackSigningSecret: answers.slackSigningSecret
-        ? await storeSecret(secrets, 'slack/signingSecret', answers.slackSigningSecret)
         : undefined,
       emailImapHost: answers.emailImapHost,
       emailImapPort: answers.emailImapPort,
@@ -190,11 +191,62 @@ async function recordSetupFunnel(config: EthosConfig, wizardPath: 'tui' | 'readl
 
 function configuredChannels(config: EthosConfig): string[] {
   const channels: string[] = [];
-  if (config.telegramToken) channels.push('telegram');
+  if ((config.telegram?.bots?.length ?? 0) > 0 || config.telegramToken) channels.push('telegram');
   if (config.discordToken) channels.push('discord');
-  if (config.slackBotToken) channels.push('slack');
+  if ((config.slack?.apps?.length ?? 0) > 0 || config.slackBotToken) channels.push('slack');
   if (config.emailImapHost && config.emailUser) channels.push('email');
   return channels;
+}
+
+/**
+ * B4 — build the `telegram.bots.0.*` / `slack.apps.0.*` list forms from the
+ * wizard's channel answers, so the serializer emits the keys the gateway
+ * reads natively and a fresh `ethos setup` + `ethos gateway start` prints
+ * zero deprecations. Tokens are externalized to the vault (idempotent — a
+ * re-run hands back the stored reference). An answer left blank carries the
+ * existing list over unchanged. Slack needs the botToken + signingSecret
+ * pair at minimum (`SlackAppConfig`); a partial trio is not written.
+ * Discord has no list form in the schema — `discordToken` is not deprecated
+ * and stays a scalar. Exported for the B4 setup tests.
+ */
+export async function channelListConfig(
+  answers: {
+    telegramToken?: string;
+    slackBotToken?: string;
+    slackAppToken?: string;
+    slackSigningSecret?: string;
+  },
+  existing: Pick<EthosConfig, 'telegram' | 'slack'> | null,
+  secrets: import('@ethosagent/types').SecretsResolver,
+  bind: BotBinding,
+): Promise<Pick<EthosConfig, 'telegram' | 'slack'>> {
+  const telegram = answers.telegramToken
+    ? {
+        bots: [
+          { token: await storeSecret(secrets, 'telegram/token', answers.telegramToken), bind },
+        ],
+      }
+    : existing?.telegram;
+  const slack =
+    answers.slackBotToken && answers.slackSigningSecret
+      ? {
+          apps: [
+            {
+              botToken: await storeSecret(secrets, 'slack/botToken', answers.slackBotToken),
+              ...(answers.slackAppToken
+                ? { appToken: await storeSecret(secrets, 'slack/appToken', answers.slackAppToken) }
+                : {}),
+              signingSecret: await storeSecret(
+                secrets,
+                'slack/signingSecret',
+                answers.slackSigningSecret,
+              ),
+              bind,
+            },
+          ],
+        }
+      : existing?.slack;
+  return { ...(telegram ? { telegram } : {}), ...(slack ? { slack } : {}) };
 }
 
 export async function scaffoldEthosDir(storage: ReturnType<typeof getStorage>) {

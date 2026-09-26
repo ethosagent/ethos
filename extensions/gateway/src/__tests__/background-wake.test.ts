@@ -287,7 +287,7 @@ function sentTexts(adapter: PlatformAdapter): string[] {
     .filter((t): t is string => typeof t === 'string');
 }
 
-const NOTICE_PREFIX = '[background job ';
+const NOTICE_PREFIX = 'background job ';
 
 function noticeSends(adapter: PlatformAdapter): string[] {
   return sentTexts(adapter).filter((t) => t.startsWith(NOTICE_PREFIX));
@@ -335,7 +335,7 @@ describe('Gateway — background wake defers behind an in-flight turn', () => {
     await waitUntil(() => noticeSends(adapter).length === 1);
 
     const notice = noticeSends(adapter)[0] ?? '';
-    expect(notice).toContain('[background job deadbeef "crawl" finished — status: done]');
+    expect(notice).toContain('background job deadbeef "crawl" finished');
     expect(notice).toContain('found 3 items');
     // The in-flight turn's own reply still went out, untouched by the wake.
     expect(sentTexts(adapter)).toContain('reply');
@@ -407,6 +407,50 @@ describe('Gateway — background wake exactly-once delivery', () => {
 });
 
 // ---------------------------------------------------------------------------
+// H6 (plan ux-feedback-and-config-clarity) — the wake notice is a sentence
+// ---------------------------------------------------------------------------
+
+describe('Gateway — wake notice wording (H6)', () => {
+  it('a failed job reads as a human sentence naming the process logs, unbracketed', async () => {
+    const g = gatedLoop();
+    const { executor, fire } = fakeExecutor();
+    const adapter = stubAdapter();
+    const gw = new Gateway({
+      bots: [
+        {
+          botKey: 'b1',
+          loop: g.loop,
+          binding: { type: 'personality', name: 'default' },
+          backgroundExecutor: executor,
+        },
+      ],
+      adapters: new Map([['test', adapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+
+    fire(
+      makeJob({
+        id: 'a1b2c3d4-9999',
+        label: 'nightly digest',
+        status: 'failed',
+        error: 'boom',
+      }),
+    );
+    await waitUntil(() => noticeSends(adapter).length === 1);
+
+    const notice = noticeSends(adapter)[0] ?? '';
+    expect(notice).toContain(
+      'background job a1b2c3d4 "nightly digest" failed — ethos process logs a1b2c3d4',
+    );
+    expect(notice).not.toContain('[background job');
+    // The error body still rides along, wrapped as untrusted content.
+    expect(notice).toContain('boom');
+
+    void gw;
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase B — untrusted envelope + injection observability
 // ---------------------------------------------------------------------------
 
@@ -442,7 +486,7 @@ describe('Gateway — background wake wraps the summary as untrusted', () => {
     expect(notice).toContain('</untrusted>');
 
     // The outer envelope is OUTSIDE the untrusted wrapper (plain, trusted).
-    const envelope = '[background job feedface "scrape" finished — status: done]';
+    const envelope = 'background job feedface "scrape" finished';
     const envIdx = notice.indexOf(envelope);
     const wrapIdx = notice.indexOf('<untrusted');
     expect(envIdx).toBe(0);

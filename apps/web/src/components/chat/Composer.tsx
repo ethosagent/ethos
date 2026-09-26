@@ -77,6 +77,25 @@ export function Composer({
   const hasReadyAttachments = attachments && attachments.length > 0;
   const isUploading = attachments?.some((a) => a.state === 'uploading');
 
+  // W5 — the send/stop slot swaps elements when streaming starts and ends.
+  // If the user's focus was ON the slot, the swap would drop it to `body`;
+  // instead the freshly-rendered button takes it. The flag survives the
+  // unmount (no blur fires for a removed node), which is exactly the signal.
+  const sendSlotRef = useRef<HTMLButtonElement | null>(null);
+  const slotHadFocusRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the swap is keyed on isStreaming
+  useEffect(() => {
+    if (slotHadFocusRef.current) sendSlotRef.current?.focus();
+  }, [isStreaming]);
+  const slotFocusProps = {
+    onFocus: () => {
+      slotHadFocusRef.current = true;
+    },
+    onBlur: () => {
+      slotHadFocusRef.current = false;
+    },
+  };
+
   // A suggestion pill fills the draft; it never sends on the user's behalf.
   // Keyed on `seq` so the same suggestion picked twice still lands.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `seq` is the event, `text` is the payload
@@ -475,9 +494,11 @@ export function Composer({
             {isStreaming && onAbort ? (
               <button
                 type="button"
+                ref={sendSlotRef}
                 className="composer-send-btn composer-stop-btn"
                 onClick={onAbort}
                 aria-label="Stop"
+                {...slotFocusProps}
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                   <rect x="2" y="2" width="10" height="10" rx="1.5" fill="white" />
@@ -486,10 +507,12 @@ export function Composer({
             ) : (
               <button
                 type="button"
+                ref={sendSlotRef}
                 className="composer-send-btn"
                 onClick={handleSend}
                 disabled={disabled || (text.trim() === '' && !hasReadyAttachments) || isUploading}
                 aria-label="Send message"
+                {...slotFocusProps}
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path

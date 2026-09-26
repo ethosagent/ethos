@@ -203,6 +203,29 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         ],
       };
 
+    case 'halt':
+      // A1 (ux-feedback plan) — an early safety stop. Not `error` (the turn
+      // still completes, partial) and not `approval` (nothing is waiting on a
+      // human): a neutral notice whose glyph + word carry the warning.
+      return {
+        ...base,
+        key: `halt:${ctx.sessionId}:${ctx.seq}`,
+        kind: 'notice',
+        label: 'halt',
+        summary: `⚠ stopped early · ${event.kind} · ${event.rule}`,
+        details: [
+          { key: 'kind', kind: 'text', value: event.kind },
+          { key: 'rule', kind: 'text', value: event.rule },
+          ...(event.toolName === undefined
+            ? []
+            : ([{ key: 'tool', kind: 'text', value: event.toolName }] as ActivityDetail[])),
+          ...(event.count === undefined
+            ? []
+            : ([{ key: 'count', kind: 'text', value: String(event.count) }] as ActivityDetail[])),
+          { key: 'message', kind: 'text', value: event.message },
+        ],
+      };
+
     case 'run_start':
       return {
         ...base,

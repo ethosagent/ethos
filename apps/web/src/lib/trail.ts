@@ -68,7 +68,27 @@ export interface TrailDecision {
   event: DecisionEvent;
 }
 
-export type TrailEntry = TrailAction | TrailFinding | TrailDecision;
+/**
+ * A loop-level notice the turn's account has to carry (ux-feedback plan A1/A4/
+ * W4): a safety halt (`⚠ stopped early`), a model deviation, a `_loop`
+ * compaction/fallback line, a proactive memory capture (`✓ remembered`).
+ * Feedback rows, never toasts (DESIGN.md "Feedback & activity" item 6), and a
+ * row that resolves in place rather than vanishing (item 7).
+ */
+export interface TrailNotice {
+  kind: 'notice';
+  id: string;
+  /** Glyph + word derive from the tone — colour is never the only carrier. */
+  tone: 'ok' | 'warning' | 'neutral';
+  /** The state word (`stopped early`, `remembered`, `notice`). */
+  word: string;
+  /** Mono subject (`budget · tool_calls`, `"prefers pnpm" → USER.md`). */
+  subject: string;
+  /** Secondary text in --text-secondary (the halt's full message, a fix). */
+  detail?: string;
+}
+
+export type TrailEntry = TrailAction | TrailFinding | TrailDecision | TrailNotice;
 
 /** turnId -> ordered entries */
 export type TrailState = Record<string, TrailEntry[]>;
@@ -141,9 +161,21 @@ export function updateTrailActionAnywhere(
   return trail;
 }
 
+/** The glyph half of a notice row's glyph + word. */
+export function noticeGlyph(tone: TrailNotice['tone']): string {
+  if (tone === 'ok') return '✓';
+  if (tone === 'warning') return '⚠';
+  return '·';
+}
+
 /** The pseudo tool name a grounding finding arrives under on `tool_progress`
  *  (producer lands with `plan/phases/ground-truth-verification.md`). */
 const GROUNDING_TOOL = '_grounding';
+
+/** The reserved loop tool name (ux-feedback plan A4, UD2): compaction/retry and
+ *  provider-fallback notices ride `tool_progress` under this name. The registry
+ *  refuses `_`-prefixed tool registrations, so nothing can impersonate it. */
+const LOOP_TOOL = '_loop';
 
 /** ` [ref:<toolCallId>]`, and only at the very end of the message. */
 const GROUNDING_REF = / \[ref:([A-Za-z0-9_-]+)\]$/;
@@ -243,6 +275,18 @@ export function applyTrailEvent(
     case 'tool_progress': {
       // Tool-progress audience boundary (CLAUDE.md): only `'user'` surfaces.
       if (event.audience !== 'user') return null;
+      // A loop-level notice (compaction retry, provider fallback — A4) is a
+      // notice ROW, not a tool row and not transient status text.
+      if (event.toolName === LOOP_TOOL) {
+        const seq = trail[turnId]?.length ?? 0;
+        return appendTrailEntry(trail, turnId, {
+          kind: 'notice',
+          id: `${turnId}-loop-${seq}`,
+          tone: 'warning',
+          word: 'notice',
+          subject: event.message,
+        });
+      }
       // Findings are trail rows (contract §5); every other user-audience
       // progress line is status text, which is the caller's business.
       if (event.toolName !== GROUNDING_TOOL) return trail;
@@ -251,6 +295,31 @@ export function applyTrailEvent(
         kind: 'finding',
         id: `${turnId}-finding-${seq}`,
         ...parseGroundingMessage(event.message),
+      });
+    }
+    case 'halt': {
+      // A1 — an early safety stop is a finding-class row: the reply that
+      // follows is partial, and the trail is where the account of why lives.
+      const seq = trail[turnId]?.length ?? 0;
+      return appendTrailEntry(trail, turnId, {
+        kind: 'notice',
+        id: `${turnId}-halt-${seq}`,
+        tone: 'warning',
+        word: 'stopped early',
+        subject: `${event.kind} · ${event.rule}`,
+        detail: event.message,
+      });
+    }
+    case 'memory.captured': {
+      // W4 — `✓ remembered · "…"` is a trail row, not a vanishing toast
+      // (DESIGN.md item 6).
+      const seq = trail[turnId]?.length ?? 0;
+      return appendTrailEntry(trail, turnId, {
+        kind: 'notice',
+        id: `${turnId}-remembered-${seq}`,
+        tone: 'ok',
+        word: 'remembered',
+        subject: event.summary,
       });
     }
     case 'decision':
@@ -443,6 +512,9 @@ export interface TrailSummary {
    * about them: a ✓ is withheld while any row is unsettled.
    */
   unsettled: number;
+  /** Notice rows (halt / deviation / `_loop` / remembered) — counted apart
+   *  from actions and findings, since they are the loop's own account. */
+  notices: number;
   /** Null when NO action carries a duration — history without durations. */
   totalDurationMs: number | null;
   /**
@@ -466,6 +538,7 @@ export interface DecisionTally {
 export function summariseTrail(entries: TrailEntry[]): TrailSummary {
   let actions = 0;
   let findings = 0;
+  let notices = 0;
   let ok = 0;
   let failed = 0;
   let unrecorded = 0;
@@ -481,6 +554,10 @@ export function summariseTrail(entries: TrailEntry[]): TrailSummary {
   for (const entry of entries) {
     if (entry.kind === 'finding') {
       findings++;
+      continue;
+    }
+    if (entry.kind === 'notice') {
+      notices++;
       continue;
     }
     if (entry.kind === 'decision') {
@@ -506,6 +583,7 @@ export function summariseTrail(entries: TrailEntry[]): TrailSummary {
   return {
     actions,
     findings,
+    notices,
     ok,
     failed,
     unrecorded,
@@ -534,6 +612,24 @@ export function decisionFooterSegment(tally: DecisionTally): string | null {
   if (tally.shadow > 0)
     return `${tally.shadow} ${noun(tally.shadow)} observed${ms(tally.shadowMs)}`;
   return null;
+}
+
+/**
+ * The footer's notice segments, deduped by glyph + word (`⚠ stopped early`,
+ * `✓ remembered`) — the collapsed line must say a notice exists, or the row
+ * only reachable by expanding would effectively vanish (DESIGN.md item 7).
+ */
+export function noticeFooterSegments(entries: TrailEntry[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== 'notice') continue;
+    const segment = `${noticeGlyph(entry.tone)} ${entry.word}`;
+    if (seen.has(segment)) continue;
+    seen.add(segment);
+    out.push(segment);
+  }
+  return out;
 }
 
 /** `⚠ 1 disagreement` / `⚠ 2 disagreements`, or null with none. */

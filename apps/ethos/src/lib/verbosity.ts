@@ -75,7 +75,13 @@ export function unstreamedDoneText(event: AgentEvent, streamedText: string): str
 export function projectEvent(
   event: AgentEvent,
   verbosity: Verbosity,
-  turn?: { streamedText: string },
+  turn?: {
+    streamedText: string;
+    /** A2 — true when the turn's abort controller fired (the user pressed
+     *  Esc / typed /stop). The loop's trailing `error(code: 'aborted')` then
+     *  renders nothing; a non-user abort still renders. */
+    aborted?: boolean;
+  },
 ): RenderedLine[] {
   const doneAnswer = turn ? unstreamedDoneText(event, turn.streamedText) : undefined;
   // S4/U1 — a budget halt renders at EVERY verbosity, `quiet` included, for
@@ -122,6 +128,14 @@ export function projectEvent(
       // Phase 30.2 — `default` honours the audience gate; `verbose`+ lifts it.
       const isUserOptIn = event.audience === 'user';
       if (verbosity === 'default' && !isUserOptIn) break;
+      // A4 — loop-level notices (compact-and-retry, provider fallback) carry
+      // the reserved name `_loop` (a `_`-prefixed name no tool may register).
+      // One line, message only — the renderer styles it as a yellow notice,
+      // never a tool row. Quiet already returned above, so quiet prints none.
+      if (event.toolName === '_loop') {
+        out.push({ text: event.message, kind: 'tool_progress' });
+        break;
+      }
       // A budget stop arrives as this user-audience `_budget` chip AND the
       // `halt` right behind it (`budgetGuardEvents`, @ethosagent/core); the
       // halt line above carries the message, so the chip is not repeated.
@@ -149,6 +163,9 @@ export function projectEvent(
       });
       break;
     case 'error':
+      // A2 — a user-initiated stop already confirmed itself; the loop's
+      // trailing `aborted` error would re-announce it as a failure.
+      if (event.code === 'aborted' && turn?.aborted) break;
       out.push({ text: `[${event.code}] ${event.error}`, kind: 'error' });
       break;
     case 'run_start': {
@@ -194,4 +211,52 @@ export function projectEvent(
   }
 
   return out;
+}
+
+/** A5 (UD6) — cap for the rolling one-line thinking preview. */
+export const THINKING_PREVIEW_MAX = 80;
+
+/**
+ * A5 (UD6) — fold a `thinking_delta` into the rolling one-line preview shown
+ * at `verbose` and `debug` only: the latest ~80 chars, whitespace flattened so
+ * it stays a single line the REPL overwrites in place. Returns `null` at
+ * `quiet` and `default` — nothing is shown there.
+ */
+export function thinkingPreview(
+  previous: string,
+  delta: string,
+  verbosity: Verbosity,
+  max = THINKING_PREVIEW_MAX,
+): string | null {
+  if (verbosity !== 'verbose' && verbosity !== 'debug') return null;
+  const merged = (previous + delta).replace(/\s+/g, ' ');
+  return merged.length > max ? merged.slice(-max) : merged;
+}
+
+export interface VerbosityCommandResult {
+  /** The level in effect after the command — unchanged when refused. */
+  level: Verbosity;
+  /** The line the REPL prints (dim normally, red when refused). */
+  notice: string;
+  /** C6 — an unknown level is refused and the current level KEPT. */
+  refused: boolean;
+}
+
+/**
+ * C6 — the `/verbose` command's whole decision: no arg cycles, `status`
+ * reports, a valid level sets, and anything else is refused with the valid
+ * set named — the current level stays in effect.
+ */
+export function applyVerbosityCommand(arg: string, current: Verbosity): VerbosityCommandResult {
+  if (!arg) {
+    const next = nextVerbosity(current);
+    return { level: next, notice: `verbosity: ${next}`, refused: false };
+  }
+  if (arg === 'status') return { level: current, notice: `verbosity: ${current}`, refused: false };
+  if (isVerbosity(arg)) return { level: arg, notice: `verbosity: ${arg}`, refused: false };
+  return {
+    level: current,
+    notice: `✗ unknown level '${arg}' · valid: quiet|default|verbose|debug`,
+    refused: true,
+  };
 }

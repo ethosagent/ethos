@@ -88,6 +88,20 @@ export const TurnErrorEventSchema = z.object({
   code: z.string(),
 });
 
+/** A1 (ux-feedback plan) — an early safety stop: a per-turn tool budget
+ *  tripped (`kind: 'budget'`) or the safety watcher paused the turn
+ *  (`kind: 'watcher'`). Mirrors the `halt` AgentEvent exactly
+ *  (packages/types/src/agent-event.ts). A normal `done` still follows, so
+ *  the client marks the reply partial rather than ending the turn here. */
+export const HaltEventSchema = z.object({
+  type: z.literal('halt'),
+  kind: z.enum(['budget', 'watcher']),
+  rule: z.string(),
+  toolName: z.string().optional(),
+  count: z.number().optional(),
+  message: z.string(),
+});
+
 // openclaw-9.5 item 1 — the turn was refused pre-turn because an enabled
 // plugin is missing a credential (the web chat sends with
 // `credentialPrompt: true`; see `ChatService.send`). The chat pane collects
@@ -397,6 +411,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   ContextMetaEventSchema,
   TurnDoneEventSchema,
   TurnErrorEventSchema,
+  HaltEventSchema,
   MessagePersistedEventSchema,
   CredentialRequiredEventSchema,
   ToolApprovalRequiredEventSchema,
@@ -476,6 +491,10 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventT
   'tool_end',
   'done',
   'error',
+  // A1 (ux-feedback plan) — a safety halt is a discrete action worth a row:
+  // an agent that stopped early is exactly what a watcher of the feed wants
+  // to see.
+  'halt',
   'message_persisted',
   'tool.approval_required',
   'approval.resolved',

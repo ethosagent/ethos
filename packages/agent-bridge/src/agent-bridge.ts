@@ -18,6 +18,7 @@ import type {
   ClarifySurfaceType,
   ModelDeviation,
   ModelResolutionSource,
+  ToolProgressAudience,
 } from '@ethosagent/types';
 import { InMemorySteerSink } from './in-memory-steer-sink';
 
@@ -105,7 +106,18 @@ interface BridgeEventMap {
     args: unknown,
     audience: 'internal' | 'user' | 'dashboard' | undefined,
   ];
-  tool_progress: [toolName: string, message: string, percent: number | undefined];
+  // C5 (ux-feedback plan) — the trailing `audience` mirrors the REQUIRED
+  // Phase 30.2 field on the AgentEvent: surfaces render only 'user' progress.
+  // Trailing so 3-arg handlers keep working.
+  tool_progress: [
+    toolName: string,
+    message: string,
+    percent: number | undefined,
+    audience: ToolProgressAudience,
+  ];
+  // C2 (ux-feedback plan) — the trailing `error` mirrors the optional
+  // AgentEvent field: the tool's failure reason, set only when `ok` is false.
+  // Trailing so 7-arg handlers keep working.
   tool_end: [
     toolCallId: string,
     toolName: string,
@@ -114,6 +126,7 @@ interface BridgeEventMap {
     result: string | undefined,
     structured: Record<string, unknown> | undefined,
     audience: 'internal' | 'user' | 'dashboard' | undefined,
+    error: string | undefined,
   ];
   usage: [inputTokens: number, outputTokens: number, estimatedCostUsd: number];
   /** S4/U1 — an early safety stop (budget or watcher). Forwarded whole; a
@@ -381,6 +394,10 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
 
   private async runTurnBody(input: string, opts: BridgeOpts): Promise<void> {
     this.controller = new AbortController();
+    // This turn's own controller — `this.controller` is nulled by the stall
+    // guard, but the aborted-error suppression below must keep answering for
+    // THIS turn's signal.
+    const controller = this.controller;
     let timedOut = false;
 
     // Stall guard: if no done/error arrives within turnTimeoutMs, emit an error
@@ -427,7 +444,13 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             this.emit('tool_start', event.toolCallId, event.toolName, event.args, event.audience);
             break;
           case 'tool_progress':
-            this.emit('tool_progress', event.toolName, event.message, event.percent);
+            this.emit(
+              'tool_progress',
+              event.toolName,
+              event.message,
+              event.percent,
+              event.audience,
+            );
             break;
           case 'tool_end':
             this.emit(
@@ -439,6 +462,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
               event.result,
               event.structured,
               event.audience,
+              event.error,
             );
             break;
           case 'usage':
@@ -452,6 +476,13 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'error':
             clearTimeout(timeoutHandle);
             this.flushText();
+            // A2 (ux-feedback plan) — a user Stop (`abortTurn`) makes the loop
+            // yield a normal `error` with code 'aborted'. The surface already
+            // acknowledged the stop, so an error box on top of it is noise.
+            // Suppressed only when THIS turn's controller aborted; an
+            // 'aborted' from any other origin (e.g. a host shutting the loop
+            // down under the bridge) still surfaces.
+            if (event.code === 'aborted' && controller.signal.aborted) break;
             this.emit('error', event.error, event.code);
             break;
           case 'run_start':

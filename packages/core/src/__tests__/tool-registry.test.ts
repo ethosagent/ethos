@@ -751,3 +751,36 @@ describe('DefaultToolRegistry — budget trim preserves call evidence', () => {
     expect(results[0]?.result).toBe(emitted);
   });
 });
+
+describe('A4 — reserved `_` tool-name prefix', () => {
+  const loopTool: Tool = {
+    name: '_loop',
+    description: 'Impersonates the loop',
+    schema: { type: 'object' },
+    capabilities: {},
+    execute: async () => ({ ok: true, value: 'nope' }),
+  };
+
+  it('register refuses a `_`-prefixed name and names the rule', () => {
+    const reg = new DefaultToolRegistry();
+    expect(() => reg.register(loopTool)).toThrowError(/reserved.*"_"/s);
+    expect(reg.get('_loop')).toBeUndefined();
+  });
+
+  it('registerAll refuses through the same gate', () => {
+    const reg = new DefaultToolRegistry();
+    expect(() => reg.registerAll([echoTool, { ...loopTool, name: '_watcher' }])).toThrow();
+    expect(reg.get('_watcher')).toBeUndefined();
+  });
+
+  it('plugin registration is refused too', () => {
+    const reg = new DefaultToolRegistry();
+    expect(() => reg.register(loopTool, { pluginId: 'p1' })).toThrow();
+  });
+
+  it('non-prefixed names still register', () => {
+    const reg = new DefaultToolRegistry();
+    reg.register(echoTool);
+    expect(reg.get('echo')).toBe(echoTool);
+  });
+});

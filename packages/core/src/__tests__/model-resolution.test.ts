@@ -683,6 +683,52 @@ describe('attemptWithFallbacks (D17 row 2)', () => {
     expect(attempted[1]?.pinned).toBe(true);
     expect(attempted[1]?.deviation?.kind).toBe('entry-fallback');
   });
+
+  // A4 — the user-facing fallback notice seam.
+  it('onFallback fires once per hop with the failed and the next alias', async () => {
+    const hops: Array<[string, string]> = [];
+    await expect(
+      attemptWithFallbacks({
+        resolved: primary,
+        registry,
+        attempt: async (m) => {
+          throw new Error(`${m.alias} is down`);
+        },
+        onFallback: (from, to) => hops.push([from, to]),
+      }),
+    ).rejects.toBeInstanceOf(ModelFallbacksExhaustedError);
+    // One notice per attempted hop; the skipped cross-provider `qwen` gets none.
+    expect(hops).toEqual([
+      ['opus', 'opus-batch'],
+      ['opus-batch', 'opus-eu'],
+    ]);
+  });
+
+  it('onFallback is silent when the primary answers', async () => {
+    const onFallback = vi.fn();
+    await attemptWithFallbacks({
+      resolved: primary,
+      registry,
+      attempt: async () => 'ok',
+      onFallback,
+    });
+    expect(onFallback).not.toHaveBeenCalled();
+  });
+
+  it('onFallback fires once when the first fallback answers', async () => {
+    const hops: Array<[string, string]> = [];
+    const out = await attemptWithFallbacks({
+      resolved: primary,
+      registry,
+      attempt: async (m) => {
+        if (m.alias === 'opus') throw new Error('529 overloaded');
+        return m.alias;
+      },
+      onFallback: (from, to) => hops.push([from, to]),
+    });
+    expect(out).toBe('opus-batch');
+    expect(hops).toEqual([['opus', 'opus-batch']]);
+  });
 });
 
 describe('describeDeviation (D17)', () => {

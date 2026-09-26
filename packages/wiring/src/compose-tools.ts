@@ -86,6 +86,7 @@ import type {
   ExecutionBackendRegistry,
   ExecutionPosture,
   ExecutionRouter,
+  HookRegistry,
   InjectionResult,
   LLMProvider,
   LLMProviderRegistry,
@@ -316,6 +317,64 @@ export function createPendingNotifyInjector(
       };
     },
   };
+}
+
+/**
+ * N4 (ux-feedback-and-config-clarity) — a ticket bounced to `needs_revision`
+ * is work waiting on someone, so a human channel is told, not only the
+ * postmortem file. Copies the `goal_completed` sender shape
+ * (`registerGoalNotifications` in `@ethosagent/goal-runner`): parse a
+ * `platform:chatId` target, send one line with the reason.
+ *
+ * Limitation (repo rule 12): `AfterTicketRevisionPayload`
+ * (packages/types/src/hooks.ts) carries no origin channel and the kanban
+ * `Task` row stores none (`Task` in extensions/kanban-store) — unlike a goal,
+ * whose own `origin` field is what `registerGoalNotifications` reads. So "the
+ * ticket's origin channel" is not reachable from this seam. The closest
+ * honest target is the ASSIGNEE personality's operator-configured messaging
+ * allowlist (`<dataDir>/messaging.json`, the same `platform:chatId` entries
+ * `send_message` may deliver to): the notice goes to its first channel-shaped
+ * entry. No such entry (`'*'`, `cli`, `web`, or an empty list) means no
+ * notice; a send refusal ("Gateway not active" outside gateway mode, or a
+ * platform failure) is swallowed — this is a Void-hook side effect and must
+ * never gate the revision transition itself.
+ */
+export function registerTicketRevisionNotifier(opts: {
+  hooks: HookRegistry;
+  send: MessagingSendFn;
+  getAllowedTargets: (personalityId?: string) => string[];
+}): () => void {
+  const { hooks, send, getAllowedTargets } = opts;
+  return hooks.registerVoid('after_ticket_revision', async (payload) => {
+    let target: { platform: string; chatId: string } | undefined;
+    for (const entry of getAllowedTargets(payload.assignee)) {
+      const parsed = parseChannelTarget(entry);
+      if (parsed) {
+        target = parsed;
+        break;
+      }
+    }
+    if (!target) return;
+    const shortId = payload.taskId.slice(0, 8);
+    await send(
+      target.platform,
+      target.chatId,
+      `Ticket ${shortId} needs revision — ${payload.reason}`,
+    );
+  });
+}
+
+/**
+ * `'platform:chatId'` → parts; `null` for anything else (`cli`, `web`, `'*'`,
+ * bare names). The same rule as the goal-runner's `parseChannelOrigin`.
+ */
+function parseChannelTarget(target: string): { platform: string; chatId: string } | null {
+  if (target === 'web' || target === 'cli') return null;
+  const idx = target.indexOf(':');
+  if (idx < 1) return null;
+  const chatId = target.slice(idx + 1);
+  if (!chatId) return null;
+  return { platform: target.slice(0, idx), chatId };
 }
 
 /**
@@ -1628,6 +1687,21 @@ export async function composeAllTools(
     outbox: outboxGate,
   }).tools)
     tools.register(tool);
+
+  // N4 — default `after_ticket_revision` notifier, beside the completion
+  // verifier that produces those bounces (registered in the kanban block
+  // above). It lives HERE because it borrows the messaging seam just built
+  // (`gatewaySendRef` resolves the live send at fire time; the stub outside
+  // gateway mode refuses and the notice is dropped, fail-open). Gated on the
+  // kanban block having run — nothing else fires the hook.
+  if (kanbanStore !== null) {
+    registerTicketRevisionNotifier({
+      hooks,
+      send: async (platform, target, body, botKey) =>
+        gatewaySendRef.fn(platform, target, body, botKey),
+      getAllowedTargets,
+    });
+  }
 
   // Cron tool — registered only when a CronScheduler was threaded through.
   if (opts.cronScheduler) {

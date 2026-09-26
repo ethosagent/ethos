@@ -1,5 +1,8 @@
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
+import { EnvSecretsResolver } from '@ethosagent/storage-fs';
+import type { SecretsResolver } from '@ethosagent/types';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
 import { runSecretsCredential } from './secrets-credential';
@@ -19,6 +22,42 @@ function maskValue(value: string): string {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+/**
+ * B8 — which reader would actually serve `ref`. The merged resolver reads env
+ * before the file vault (`MergedSecretsResolver` in wiring), so an env var
+ * recognised for this ref silently outranks a stored value; the list column
+ * makes that precedence visible. Exported for `secrets-list-source.test.ts`.
+ */
+export async function secretSource(
+  ref: string,
+  envReader: SecretsResolver = new EnvSecretsResolver(),
+): Promise<'env' | 'vault'> {
+  return (await envReader.get(ref)) !== null ? 'env' : 'vault';
+}
+
+/**
+ * B8 — whether `secrets get` may print the plaintext. `--reveal` always may;
+ * a TTY without it asks first; a non-TTY without it refuses (a script that
+ * wants the value states so explicitly). Exported for the test.
+ */
+export function revealDecision(opts: {
+  reveal: boolean;
+  isTTY: boolean;
+}): 'yes' | 'confirm' | 'refuse' {
+  if (opts.reveal) return 'yes';
+  return opts.isTTY ? 'confirm' : 'refuse';
+}
+
+async function confirmReveal(ref: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(`Print the plaintext value of ${ref}? [y/N] `, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
 export async function runSecrets(args: string[]): Promise<void> {
   const sub = args[0] ?? 'list';
   const resolver = await getSecretsResolver();
@@ -29,10 +68,14 @@ export async function runSecrets(args: string[]): Promise<void> {
       const prefix = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
       const refs = await resolver.list(prefix);
       if (json) {
-        const result: Array<{ ref: string; masked: string }> = [];
+        const result: Array<{ ref: string; masked: string; source: 'env' | 'vault' }> = [];
         for (const ref of refs.sort()) {
           const val = await resolver.get(ref);
-          result.push({ ref, masked: val ? maskValue(val) : '(empty)' });
+          result.push({
+            ref,
+            masked: val ? maskValue(val) : '(empty)',
+            source: await secretSource(ref),
+          });
         }
         writeJson(result);
         return;
@@ -43,11 +86,16 @@ export async function runSecrets(args: string[]): Promise<void> {
         return;
       }
       console.log();
-      console.log(`${c.bold}Secrets${c.reset}  ${c.dim}(~/.ethos/secrets/)${c.reset}`);
+      console.log(
+        `${c.bold}Secrets${c.reset}  ${c.dim}(~/.ethos/secrets/; env entries outrank the vault)${c.reset}`,
+      );
       for (const ref of refs.sort()) {
         const val = await resolver.get(ref);
         const masked = val ? maskValue(val) : `${c.red}(empty)${c.reset}`;
-        console.log(`  ${c.cyan}${ref}${c.reset}  ${masked}`);
+        const source = await secretSource(ref);
+        const sourceCol =
+          source === 'env' ? `${c.yellow}env${c.reset}  ` : `${c.dim}vault${c.reset}`;
+        console.log(`  ${sourceCol}  ${c.cyan}${ref}${c.reset}  ${masked}`);
       }
       console.log();
       break;
@@ -71,9 +119,10 @@ export async function runSecrets(args: string[]): Promise<void> {
     }
 
     case 'get': {
-      const ref = args[1] === '--json' ? undefined : args[1];
+      const ref = args.slice(1).find((a) => !a.startsWith('--'));
+      const reveal = args.includes('--reveal');
       if (!ref) {
-        console.log('Usage: ethos secrets get <ref>');
+        console.log('Usage: ethos secrets get <ref> [--reveal]');
         process.exit(1);
       }
       const value = await resolver.get(ref);
@@ -84,6 +133,18 @@ export async function runSecrets(args: string[]): Promise<void> {
         }
         console.log(`${c.red}Secret not found: ${ref}${c.reset}`);
         process.exit(1);
+      }
+      // B8 — plaintext only with --reveal or an explicit TTY confirmation.
+      const decision = revealDecision({ reveal, isTTY: Boolean(process.stdin.isTTY) });
+      if (decision === 'refuse') {
+        console.error(
+          `Refusing to print ${ref} without confirmation. Re-run with: ethos secrets get ${ref} --reveal`,
+        );
+        process.exit(1);
+      }
+      if (decision === 'confirm' && !(await confirmReveal(ref))) {
+        console.log('Cancelled.');
+        return;
       }
       if (json) {
         writeJson({ ref, value });
@@ -116,7 +177,7 @@ export async function runSecrets(args: string[]): Promise<void> {
 
     default:
       console.log(
-        'Usage: ethos secrets [list | set <ref> <value> | get <ref> | remove <ref> | credential <add|list|rm|grant|revoke> | path]',
+        'Usage: ethos secrets [list | set <ref> <value> | get <ref> [--reveal] | remove <ref> | credential <add|list|rm|grant|revoke> | path]',
       );
   }
 }

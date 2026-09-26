@@ -47,6 +47,19 @@ const HANDLED: Array<[string, SseEvent]> = [
   ],
   ['done', { type: 'done', text: 'ok', turnCount: 3 }],
   ['error', { type: 'error', error: 'boom', code: 'E_BOOM' }],
+  // A1 (ux-feedback plan) — an early safety stop is a discrete action worth a
+  // row; the reply that follows is partial and the feed says why.
+  [
+    'halt',
+    {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool_calls',
+      toolName: 'bash',
+      count: 12,
+      message: 'per-turn tool budget reached (12/12)',
+    },
+  ],
   [
     'run_start',
     { type: 'run_start', provider: 'anthropic', model: 'claude', source: 'personality' },

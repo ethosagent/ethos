@@ -3,7 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { memo } from 'react';
 import { CardView } from '../../features/cards/CardView';
 import { formatBytes, type MessageAttachment } from '../../lib/attachments';
-import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
+import type {
+  AssistantBlock,
+  AssistantTurn,
+  TurnRunMeta,
+  UserMessage,
+} from '../../lib/chat-reducer';
 import type { TrailEntry } from '../../lib/trail';
 import { rpc } from '../../rpc';
 import { HtmlBlock } from './HtmlBlock';
@@ -26,7 +31,17 @@ import { Trail } from './Trail';
 // Both bubbles are memoized: with a long history loaded, a streamed token must
 // re-render only the live bubble. That holds only while the props they are
 // given stay referentially stable — see MessageList's `AssistantHistoryRow`.
-export const UserBubble = memo(function UserBubble({ message }: { message: UserMessage }) {
+export const UserBubble = memo(function UserBubble({
+  message,
+  onRetry,
+  onDiscard,
+}: {
+  message: UserMessage;
+  /** W1 — re-send this failed message verbatim. Stable, keyed by id here. */
+  onRetry?: (messageId: string) => void;
+  /** W1 — drop the failed bubble; the hook restores the draft. */
+  onDiscard?: (messageId: string) => void;
+}) {
   const attachments = message.attachments ?? [];
   return (
     <div className="message-row message-row-user">
@@ -46,6 +61,37 @@ export const UserBubble = memo(function UserBubble({ message }: { message: UserM
           {attachments.map((a) => (
             <AttachmentChip key={a.localId} attachment={a} />
           ))}
+        </div>
+      ) : null}
+      {/* W1 — a send the server refused. The bubble stays (DESIGN.md item 7);
+          this row says so and carries the two verbs. Glyph + word, never
+          colour alone. */}
+      {message.status === 'failed' ? (
+        <div className="message-send-failed" role="alert">
+          <span className="message-send-failed-state">⚠ not sent</span>
+          {message.error ? (
+            <span className="message-send-failed-reason" title={message.error}>
+              {message.error}
+            </span>
+          ) : null}
+          {onRetry ? (
+            <button
+              type="button"
+              className="message-send-failed-btn"
+              onClick={() => onRetry(message.id)}
+            >
+              Retry
+            </button>
+          ) : null}
+          {onDiscard ? (
+            <button
+              type="button"
+              className="message-send-failed-btn"
+              onClick={() => onDiscard(message.id)}
+            >
+              Discard
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -85,6 +131,7 @@ export const AssistantBubble = memo(function AssistantBubble({
   runSurface,
   trail,
   stopped,
+  runMeta,
 }: {
   turn: AssistantTurn;
   streaming?: boolean;
@@ -101,6 +148,8 @@ export const AssistantBubble = memo(function AssistantBubble({
   trail?: TrailEntry[];
   /** The user stopped this turn. */
   stopped?: boolean;
+  /** A4 — what the turn ran on; the trail footer names it. */
+  runMeta?: TurnRunMeta;
 }) {
   const fullText = turn.blocks
     .filter((b): b is Extract<AssistantBlock, { kind: 'text' }> => b.kind === 'text')
@@ -114,7 +163,12 @@ export const AssistantBubble = memo(function AssistantBubble({
   const ttsEnabled = caps?.capabilities.voice_tts ?? false;
   return (
     <div className="message-row message-row-assistant">
-      <Trail entries={trail ?? []} turnId={turn.id} {...(stopped ? { stopped } : {})} />
+      <Trail
+        entries={trail ?? []}
+        turnId={turn.id}
+        {...(stopped ? { stopped } : {})}
+        {...(runMeta ? { meta: runMeta } : {})}
+      />
       <div className="message-assistant">
         {turn.blocks.map((block, idx) => (
           <BlockRenderer

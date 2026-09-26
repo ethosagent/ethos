@@ -115,6 +115,7 @@ export function applyEvent(
     case 'tool_end':
     case 'tool_progress':
     case 'tool.approval_required':
+    case 'halt':
     case 'decision': {
       // `tool_end` resolves its call wherever it lives — including in a turn
       // that has already closed — so it never opens one. A `decision` never

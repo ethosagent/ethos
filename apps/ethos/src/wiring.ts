@@ -1001,7 +1001,11 @@ export async function resolveActiveLoop(
       ...(teamResult.approverDecision ? { approverDecision: teamResult.approverDecision } : {}),
     };
   }
-  const personalityId = config.activeContext?.name ?? config.personality;
+  // B3 / UD1 Option A — `personality:` is the one default-personality key.
+  // A personality-typed `activeContext` no longer reaches this point:
+  // `readRawConfig` migrates the disk form into `personality:`, and the
+  // in-process `--personality` override sets both fields (cli-overrides.ts).
+  const personalityId = config.personality;
   const result = await createAgentLoop({ ...config, personality: personalityId }, opts);
   applyCliOverrideHooks(result.loop, config);
   return {

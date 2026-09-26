@@ -27,6 +27,7 @@ import {
 } from './clarify-queue';
 import { applyRunEvent, emptyRunsState, type RunsState, seedRun } from './pi-run-reducer';
 import {
+  appendTrailEntry,
   applyTrailEvent,
   closeTrail,
   decisionStatusLabel,
@@ -60,6 +61,13 @@ export interface UserMessage {
   /** Optimistically-rendered attachments shown as chips in the user bubble.
    *  Carries no base64 data — render-only metadata. */
   attachments?: MessageAttachment[];
+  /**
+   * W1 — a send the server refused. The bubble STAYS (DESIGN.md item 7,
+   * nothing vanishes) with a `⚠ not sent · Retry · Discard` row under it;
+   * `error` is the refusal, verbatim.
+   */
+  status?: 'failed';
+  error?: string;
   /**
    * How the turn ARRIVED. `'voice'` means the user spoke it; absent means they
    * typed it.
@@ -139,6 +147,35 @@ export interface AssistantTurn {
 
 export type ChatMessage = UserMessage | AssistantTurn;
 
+/**
+ * A3 — a turn error as the banner renders it: the raw message, the loop's
+ * error `code` (the key into `describeChatError`'s shared map), and the turn's
+ * trace id when its `run_start` carried one.
+ */
+export interface ChatError {
+  message: string;
+  code?: string;
+  traceId?: string;
+}
+
+/** The deviation shape `run_start` may carry (`ModelDeviationSchema`). */
+export type RunDeviation = NonNullable<Extract<SseEvent, { type: 'run_start' }>['deviation']>;
+
+/**
+ * A4 — what the turn actually ran on, from its `run_start`. The trail footer
+ * renders `{provider} · {model}`; a deviation additionally lands as a notice
+ * row in the turn's trail the moment it arrives.
+ */
+export interface TurnRunMeta {
+  provider: string;
+  model: string;
+  deviation?: RunDeviation;
+  traceId?: string;
+}
+
+/** W2 — where the shared SSE connection stands, as `lib/sse.ts` reports it. */
+export type ChatConnectionState = 'open' | 'reconnecting' | 'closed';
+
 export interface ChatState {
   /** Finalised history. Most recent at the end. */
   messages: ChatMessage[];
@@ -173,7 +210,7 @@ export interface ChatState {
    */
   credentialRefusedMessageId: string | null;
   isStreaming: boolean;
-  error: string | null;
+  error: ChatError | null;
   /** Wall-clock ms of the most recent streaming event (text_delta, tool_start, tool_end).
    *  Null when not streaming. Used to detect stall in the UI. */
   lastStreamEventAt: number | null;
@@ -214,6 +251,19 @@ export interface ChatState {
   phase: TurnPhase | null;
   /** Turns the user stopped. Their footer reads `✗ stopped · N actions`. */
   stoppedTurnIds: string[];
+  /**
+   * A5 — a capped preview of the live turn's extended thinking, for the
+   * collapsed `thinking ▸ "…"` line in the STATUS SLOT (never in the bubble,
+   * DESIGN.md item 1). Null when the turn is not reasoning.
+   */
+  thinking: string | null;
+  /** A4 — the live turn's `run_start` facts. Moved into `turnMeta` under the
+   *  turn's final id when the turn finalises. */
+  runMeta: TurnRunMeta | null;
+  /** A4 — per-finalised-turn run meta, keyed like `trail`. */
+  turnMeta: Record<string, TurnRunMeta>;
+  /** W2 — the SSE connection's health, from `subscribeToSession`. */
+  connection: ChatConnectionState;
   /**
    * The user pressed Stop and the events already on the wire have not drained.
    *
@@ -263,6 +313,10 @@ export const initialChatState: ChatState = {
   trail: {},
   phase: null,
   stoppedTurnIds: [],
+  thinking: null,
+  runMeta: null,
+  turnMeta: {},
+  connection: 'open',
   abortedTurn: false,
   streamAnchored: false,
 };
@@ -319,6 +373,14 @@ export type ChatAction =
     }
   | { type: 'send-failed'; userMessageId: string; error: string }
   | { type: 'clear-error' }
+  /**
+   * W1 — the user discarded a failed send's bubble (its text goes back into
+   * the composer, which the hook owns) or is retrying it (the retry submits a
+   * fresh bubble, so the failed copy goes first).
+   */
+  | { type: 'discard-failed-message'; id: string }
+  /** W2 — the shared SSE connection changed state. */
+  | { type: 'connection-changed'; connection: ChatConnectionState }
   /**
    * Wipe state for a session change — starting a new session, or opening a
    * different one. Without this, the new session would briefly render with
@@ -411,6 +473,14 @@ const TURN_ADVANCING_EVENTS = new Set<SseEventType>([
   'tool_progress',
   'tool.approval_required',
   'decision',
+  // A halt mints a turn (`ensureTurn`) for its trail row, so a stopped turn
+  // must not see one.
+  'halt',
+  // A2 — the loop yields `{ type: 'error', code: 'aborted' }` after a user
+  // abort; letting it through painted an error banner over a Stop the user
+  // was just told succeeded. A REAL post-Stop failure is not lost: `abort-failed`
+  // lifts this guard when the Stop RPC itself fails.
+  'error',
   'done',
 ]);
 
@@ -570,7 +640,13 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       // approval it was parked on goes with it — see `closeTurn`.
       const turn = state.currentTurn;
       const closed = turn ? { ...state, ...closeTurn(state, turn.id, 'errored') } : state;
-      return { ...finaliseTurn(closed), error: event.error };
+      // A3 — `code` keys the shared error map, and the trace id (from this
+      // turn's `run_start`) is what a bug report quotes.
+      const traceId = state.runMeta?.traceId;
+      return {
+        ...finaliseTurn(closed),
+        error: { message: event.error, code: event.code, ...(traceId ? { traceId } : {}) },
+      };
     }
 
     case 'tool.approval_required': {
@@ -652,11 +728,41 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
           [...state.messages].reverse().find((m) => m.role === 'user')?.id ?? null,
       };
 
-    case 'run_start':
+    case 'run_start': {
+      // A4 — keep what the turn actually runs on. A deviation is a finding-
+      // class row (DESIGN.md item 5), so it joins the turn's trail NOW — which
+      // mints the turn, so the row cannot be lost if the turn never streams.
+      const runMeta: TurnRunMeta = {
+        provider: event.provider,
+        model: event.model,
+        ...(event.deviation ? { deviation: event.deviation } : {}),
+        ...(event.traceId ? { traceId: event.traceId } : {}),
+      };
+      const deviated = event.deviation
+        ? (() => {
+            const turn = ensureTurn(state.currentTurn, now);
+            const seq = state.trail[turn.id]?.length ?? 0;
+            return {
+              currentTurn: turn,
+              trail: appendTrailEntry(state.trail, turn.id, {
+                kind: 'notice' as const,
+                id: `${turn.id}-deviation-${seq}`,
+                tone: 'warning' as const,
+                word: 'model deviation',
+                subject: `${event.deviation.declared} → ${event.deviation.effective}`,
+                detail: event.deviation.fix
+                  ? `${event.deviation.reason} — ${event.deviation.fix}`
+                  : event.deviation.reason,
+              }),
+            };
+          })()
+        : {};
       // The clock starts when the user pressed Send, not when the server got
       // round to us — `submit-user-message` already set it.
       return {
         ...state,
+        ...deviated,
+        runMeta,
         turnStartedAt: state.turnStartedAt ?? now,
         currentOp: null,
         phase: 'thinking',
@@ -664,6 +770,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         // `streamAnchored`.
         streamAnchored: true,
       };
+    }
 
     case 'usage':
       // Track the most recent input-token count as the current context size.
@@ -712,6 +819,36 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
     }
 
     case 'thinking_delta':
+      // A5 — extended reasoning is a live stream: it refreshes the stall
+      // clock (20 s of visible thinking is not a stall) and feeds the status
+      // slot's collapsed `thinking ▸ "…"` preview. Never the bubble (item 1).
+      return {
+        ...state,
+        isStreaming: true,
+        lastStreamEventAt: now,
+        phase: 'thinking',
+        thinking: appendThinkingPreview(state.thinking, event.thinking),
+      };
+
+    case 'halt': {
+      // A1 — an early safety stop joins the turn's trail as a finding row
+      // (`⚠ stopped early · budget · tool_calls`). A normal `done` follows,
+      // so nothing else about the turn moves here.
+      const turn = ensureTurn(state.currentTurn, now);
+      const trail = applyTrailEvent(state.trail, turn.id, event) ?? state.trail;
+      return { ...state, currentTurn: turn, trail, lastStreamEventAt: now };
+    }
+
+    case 'memory.captured': {
+      // W4 — `✓ remembered · "…"` is a trail row on the turn that produced it
+      // (item 6, rows not toasts). Capture completes after `done`, so the row
+      // usually joins the newest finalised turn rather than a live one.
+      const target = state.currentTurn?.id ?? lastAssistantId(state.messages);
+      if (!target) return state;
+      const trail = applyTrailEvent(state.trail, target, event) ?? state.trail;
+      return trail === state.trail ? state : { ...state, trail };
+    }
+
     case 'context_meta':
     case 'message_persisted':
     case 'cron.fired':
@@ -722,6 +859,15 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       return state;
   }
   return state;
+}
+
+/** A5 — first ~200 chars of the turn's reasoning; the slot shows 60. */
+const THINKING_PREVIEW_CAP = 200;
+
+function appendThinkingPreview(current: string | null, delta: string): string {
+  const base = current ?? '';
+  if (base.length >= THINKING_PREVIEW_CAP) return base;
+  return (base + delta).slice(0, THINKING_PREVIEW_CAP);
 }
 
 export function applyAction(state: ChatState, action: ChatAction): ChatState {
@@ -754,6 +900,9 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         error: null,
         lastStreamEventAt: null,
         currentOp: null,
+        // The next turn's reasoning and run facts are its own.
+        thinking: null,
+        runMeta: null,
         // Acknowledged before a single byte comes back (contract §2). The clock
         // starts here too, so elapsed measures what the user actually waited.
         phase: 'received',
@@ -849,19 +998,39 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       // still climbing, and `⚠ still working` arriving at 20 s for a request
       // that was already dead.
       //
-      // The optimistic user bubble is removed AFTER finalising: nothing came
-      // back, so there is nothing for it to have asked. On the rare path where
-      // the RPC failed only once the stream was already running, `closeTurn`
-      // settles what it left in flight rather than dropping the turn's trail on
-      // the floor.
+      // W1 — the optimistic bubble STAYS (DESIGN.md item 7): it flips to
+      // `status: 'failed'` and carries the refusal, so the `⚠ not sent ·
+      // Retry · Discard` row renders under the user's own words instead of
+      // the words vanishing. On the rare path where the RPC failed only once
+      // the stream was already running, `closeTurn` settles what it left in
+      // flight rather than dropping the turn's trail on the floor.
       const turn = state.currentTurn;
       const closed = turn ? { ...state, ...closeTurn(state, turn.id, 'errored') } : state;
       const finalised = finaliseTurn(closed);
       return {
         ...finalised,
-        messages: finalised.messages.filter((m) => m.id !== action.userMessageId),
-        error: action.error,
+        messages: finalised.messages.map((m) =>
+          m.id === action.userMessageId && m.role === 'user'
+            ? { ...m, status: 'failed' as const, error: action.error }
+            : m,
+        ),
+        error: { message: action.error },
       };
+    }
+
+    case 'discard-failed-message': {
+      // The bubble goes because the user said so — its text returns to the
+      // composer (the hook's half of Discard), so nothing is lost.
+      return {
+        ...state,
+        messages: state.messages.filter((m) => m.id !== action.id),
+        error: null,
+      };
+    }
+
+    case 'connection-changed': {
+      if (state.connection === action.connection) return state;
+      return { ...state, connection: action.connection };
     }
 
     case 'clear-error': {
@@ -938,7 +1107,9 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         abortedTurn: false,
-        error: `Stop did not reach the server — the turn may still be running. ${action.reason}`,
+        error: {
+          message: `Stop did not reach the server — the turn may still be running. ${action.reason}`,
+        },
       };
     }
 
@@ -1007,8 +1178,14 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
     currentOp: null,
     phase: null,
     turnStartedAt: null,
+    thinking: null,
+    runMeta: null,
     streamAnchored: false,
   } as const;
+  // A4 — the live turn's run meta follows the turn into history under its
+  // FINAL id, so the footer keeps naming what the turn ran on.
+  const keepMeta = (finalId: string): Partial<Pick<ChatState, 'turnMeta'>> =>
+    state.runMeta ? { turnMeta: { ...state.turnMeta, [finalId]: state.runMeta } } : {};
   if (!turn || (turn.blocks.length === 0 && (state.trail[turn.id]?.length ?? 0) === 0)) {
     return { ...state, ...cleared };
   }
@@ -1024,7 +1201,7 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
   // gives the live turn — and this one comparison covers it.
   const last = state.messages[state.messages.length - 1];
   if (last?.role === 'assistant' && turnsMatch(last, turn)) {
-    return { ...state, ...rekeyTrail(state, turn.id, last.id), ...cleared };
+    return { ...state, ...rekeyTrail(state, turn.id, last.id), ...keepMeta(last.id), ...cleared };
   }
   // History written before core persisted that row: the twin cannot carry the
   // answer (it exists only as a tool_result row, which `parseHistory` files in
@@ -1032,10 +1209,16 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
   // it the answer — one turn, and it shows what the user was told.
   if (last?.role === 'assistant' && streamed && turn !== streamed && turnsMatch(last, streamed)) {
     const messages = [...state.messages.slice(0, -1), { ...last, blocks: turn.blocks }];
-    return { ...state, messages, ...rekeyTrail(state, turn.id, last.id), ...cleared };
+    return {
+      ...state,
+      messages,
+      ...rekeyTrail(state, turn.id, last.id),
+      ...keepMeta(last.id),
+      ...cleared,
+    };
   }
 
-  return { ...state, messages: [...state.messages, turn], ...cleared };
+  return { ...state, messages: [...state.messages, turn], ...keepMeta(turn.id), ...cleared };
 }
 
 /**

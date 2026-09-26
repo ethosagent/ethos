@@ -33,6 +33,14 @@ export interface SettingsCategory {
    * so the category has nothing to say in a browser and must not appear there.
    */
   desktopOnly?: boolean;
+  /**
+   * Operator territory (plan ux-feedback-and-config-clarity B6/§6.4). The rail
+   * folds these behind one `▸ Advanced (N) — show operator settings`
+   * disclosure. The disclosure toggles a CSS class ONLY — the rows (and the
+   * routed panes) stay mounted, because the last toggle that unmounted left
+   * two whole categories rendering empty (see components/advanced.tsx).
+   */
+  advanced?: boolean;
 }
 
 function section(slug: string, label: string): SettingsSection {
@@ -92,6 +100,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'voice',
+    advanced: true,
     label: 'Voice',
     group: 'Channels',
     sections: [
@@ -120,6 +129,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'automation',
+    advanced: true,
     label: 'Automation',
     group: 'Channels',
     sections: [
@@ -134,6 +144,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'jobs',
+    advanced: true,
     label: 'Background jobs',
     group: 'Channels',
     sections: [
@@ -144,6 +155,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'data',
+    advanced: true,
     label: 'Data & retention',
     group: 'Machine',
     sections: [section('rules', 'rules'), section('built-in-defaults', 'built-in defaults')],
@@ -187,6 +199,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'developer',
+    advanced: true,
     label: 'Developer',
     group: 'Machine',
     sections: [
@@ -207,6 +220,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     // deployment, not what an agent IS. Which personalities route to it is
     // identity and lives on the personality (`execution:`), not here.
     slug: 'execution',
+    advanced: true,
     label: 'Execution',
     group: 'Machine',
     sections: [section('status', 'status'), section('remote-target', 'remote target')],
@@ -216,6 +230,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     // (plan/phases/agent-state-backup.md §5, D6). Machine group: what this
     // machine holds and how it is copied off, not what the agent is.
     slug: 'backup',
+    advanced: true,
     label: 'Backup',
     group: 'Machine',
     sections: [
@@ -226,6 +241,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   },
   {
     slug: 'desktop',
+    advanced: true,
     label: 'Desktop',
     group: 'Machine',
     desktopOnly: true,

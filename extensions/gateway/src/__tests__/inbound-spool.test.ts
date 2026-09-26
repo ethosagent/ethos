@@ -20,6 +20,7 @@ import type {
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ABSORBED_STEER_ACK,
   ATTACHMENT_NOT_RECOVERED_NOTE,
   createCapturingAdapter,
   deadLetteredNotice,
@@ -247,7 +248,7 @@ describe('inbound spool — rows closed without a turn', () => {
     const turn = gw.handleMessage(msg('first'), out.adapter);
     await waitUntil(() => s.texts.length === 1);
     await gw.handleMessage(msg('and also this'), out.adapter);
-    expect(out.sends.map((x) => x.text)).toContain('↩ noted');
+    expect(out.sends.map((x) => x.text)).toContain(ABSORBED_STEER_ACK);
     // The steer row waits on the absorbing turn.
     expect(rows(spool).map((r) => r.status)).toEqual(['processing', 'received']);
 
@@ -495,8 +496,31 @@ describe('inbound spool — stale rows', () => {
     expect(spool.get(two)).toMatchObject({ status: 'dead', lastError: 'stale' });
     expect(s.texts).toHaveLength(0);
     expect(out.sends.map((x) => x.text)).toEqual([
-      'I restarted and missed 2 message(s) older than a day; resend if still needed.',
+      'I restarted and missed 2 message(s) older than a day; resend if still needed. Missed: "old one", "old two".',
     ]);
+  });
+
+  it('quotes at most 3 messages, 40 chars each, then "and N more" (H6)', async () => {
+    let t = Date.now() - 25 * 60 * 60 * 1000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    const out = recordingAdapter();
+    const long = 'x'.repeat(60);
+    seed(spool, msg(long));
+    seed(spool, msg('two'));
+    seed(spool, msg('three'));
+    seed(spool, msg('four'));
+    t = Date.now();
+    const s = scriptedLoop();
+    const result = await gateway(s.loop, out.adapter, spool).replayInboundSpool();
+    expect(result).toEqual({ replayed: 0, deferred: 0, dead: 4 });
+    const notice = out.sends.map((x) => x.text)[0] ?? '';
+    expect(notice).toContain(`Missed: "${'x'.repeat(40)}…", "two", "three" and 1 more.`);
+  });
+
+  it('the interrupted-retry notice names its 24h window and the discard rule (H6)', () => {
+    expect(INTERRUPTED_RETRY_NOTICE).toContain(
+      'This works for 24 hours; any other message from you discards it.',
+    );
   });
 });
 
@@ -831,7 +855,7 @@ describe('inbound spool — absorbed steer rows', () => {
     if (withTool) await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
     else await waitUntil(() => loop.texts.length === 1);
     await gw.handleMessage(msg('and cc finance on it'), out.adapter);
-    expect(out.sends.map((s) => s.text)).toEqual(['↩ noted']);
+    expect(out.sends.map((s) => s.text)).toEqual([ABSORBED_STEER_ACK]);
     const [primary, steer] = rows(spool);
     expect(steer?.absorbedInto).toBe(primary?.id);
     out.sends.length = 0;

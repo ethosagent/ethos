@@ -79,13 +79,16 @@ export function usePushEventToasts(): void {
   }, [sessionId, notification, navigate]);
 }
 
-interface PushSummary {
+export interface PushSummary {
   title: string;
   description: string;
   deepLink: string;
 }
 
-function pushEventSummary(event: import('@ethosagent/web-contracts').SseEvent): PushSummary | null {
+/** Exported for the unit test — which push events toast, and with what copy. */
+export function pushEventSummary(
+  event: import('@ethosagent/web-contracts').SseEvent,
+): PushSummary | null {
   switch (event.type) {
     case 'cron.fired':
       return {
@@ -111,19 +114,17 @@ function pushEventSummary(event: import('@ethosagent/web-contracts').SseEvent): 
         description: event.skillId,
         deepLink: '/skills',
       };
-    case 'memory.captured':
-      // Quiet "· remembered: …" notice — the web mirror of the CLI's dim line.
-      return {
-        title: '· remembered',
-        description: event.summary,
-        deepLink: '/memory',
-      };
+    // `memory.captured` is deliberately NOT here (ux-feedback W4): a memory
+    // capture is feedback about the turn, and feedback rows are trail rows,
+    // never toasts (DESIGN.md "Feedback & activity" item 6). The chat reducer
+    // renders it as `✓ remembered · "…"` on the turn that produced it.
     default:
       return null;
   }
 }
 
-function pushEventId(event: import('@ethosagent/web-contracts').SseEvent): string | null {
+/** Exported for the unit test — the dedupe identity per toastable event. */
+export function pushEventId(event: import('@ethosagent/web-contracts').SseEvent): string | null {
   switch (event.type) {
     case 'cron.fired':
       return `cron:${event.jobId}:${event.ranAt}`;
@@ -134,10 +135,6 @@ function pushEventId(event: import('@ethosagent/web-contracts').SseEvent): strin
       return `skill:${event.skillId}:${event.proposedAt}`;
     case 'evolve.skill_applied':
       return `skill-applied:${event.skillId}:${event.appliedAt}`;
-    case 'memory.captured':
-      // No id/timestamp on the payload; bucket by summary so the browser's
-      // Last-Event-ID replay on reconnect doesn't re-toast the same capture.
-      return `mem:${event.summary}`;
     default:
       return null;
   }

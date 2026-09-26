@@ -365,6 +365,39 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
       expect.objectContaining({ credentialPrompt: true }),
     );
   });
+  it('forwards halt as a single object, keeping the landed shape (A1)', async () => {
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          {
+            type: 'halt',
+            kind: 'budget',
+            rule: 'tool-budget',
+            toolName: 'bash',
+            count: 12,
+            message: 'tool budget reached (12/12)',
+          },
+          { type: 'done', text: 'partial', turnCount: 1 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const halts: unknown[] = [];
+    bridge.on('halt', (halt) => halts.push(halt));
+    await bridge.send('x', {});
+
+    expect(halts).toEqual([
+      {
+        kind: 'budget',
+        rule: 'tool-budget',
+        toolName: 'bash',
+        count: 12,
+        message: 'tool budget reached (12/12)',
+      },
+    ]);
+  });
+
   it('forwards decision events without their type tag, including one after done (§15.2, PD17)', async () => {
     const settled = {
       id: 'd1',
@@ -394,5 +427,126 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
     await bridge.send('hi', {});
 
     expect(seen).toEqual([settled]);
+  });
+});
+
+// ux-feedback plan A2/C2/C5 — the bridge is the seam nearest the user's Stop
+// intent, and the one place tool failure reasons and progress audience cross
+// into the surfaces.
+describe('AgentBridge event forwarding (ux-feedback A2/C2/C5)', () => {
+  it('suppresses the aborted error after a user Stop (A2)', async () => {
+    const loop = {
+      run: vi.fn((_text: string, opts: { abortSignal?: AbortSignal }) => {
+        const signal = opts.abortSignal;
+        return (async function* () {
+          // A tool call in flight: yield nothing until the user aborts, then
+          // do what the real loop does — a normal `error` with code
+          // 'aborted', followed by `done`.
+          await new Promise<void>((resolve) => {
+            if (signal?.aborted) return resolve();
+            signal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+          yield { type: 'error', error: 'Aborted', code: 'aborted' };
+          yield { type: 'done', text: '', turnCount: 0 };
+        })();
+      }),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const errors: Array<{ error: string; code: string }> = [];
+    bridge.on('error', (error, code) => errors.push({ error, code }));
+    const doneTexts: string[] = [];
+    bridge.on('done', (text) => doneTexts.push(text));
+
+    const send = bridge.send('x', {});
+    bridge.abortTurn();
+    await send;
+
+    // The stop was already acknowledged by the surface — no error box.
+    expect(errors).toEqual([]);
+    // The rest of the turn still flows.
+    expect(doneTexts).toEqual(['']);
+  });
+
+  it('still emits an aborted error when the bridge signal is not aborted (A2)', async () => {
+    // A non-user abort — e.g. a host shutting the loop down under the bridge —
+    // yields the same event, but this bridge's controller never aborted.
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          { type: 'error', error: 'Aborted', code: 'aborted' },
+          { type: 'done', text: '', turnCount: 0 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const errors: Array<{ error: string; code: string }> = [];
+    bridge.on('error', (error, code) => errors.push({ error, code }));
+    await bridge.send('x', {});
+
+    expect(errors).toEqual([{ error: 'Aborted', code: 'aborted' }]);
+  });
+
+  it('forwards tool_end.error when ok is false, undefined when ok (C2)', async () => {
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          {
+            type: 'tool_end',
+            toolCallId: 'tc_1',
+            toolName: 'bash',
+            ok: false,
+            durationMs: 8,
+            error: 'exit 127: command not found',
+          },
+          { type: 'tool_end', toolCallId: 'tc_2', toolName: 'read_file', ok: true, durationMs: 3 },
+          { type: 'done', text: '', turnCount: 1 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const ends: Array<{ toolCallId: string; ok: boolean; error: string | undefined }> = [];
+    bridge.on(
+      'tool_end',
+      (toolCallId, _toolName, ok, _durationMs, _result, _structured, _audience, error) =>
+        ends.push({ toolCallId, ok, error }),
+    );
+    await bridge.send('x', {});
+
+    expect(ends).toEqual([
+      { toolCallId: 'tc_1', ok: false, error: 'exit 127: command not found' },
+      { toolCallId: 'tc_2', ok: true, error: undefined },
+    ]);
+  });
+
+  it('forwards audience on tool_progress (C5)', async () => {
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          {
+            type: 'tool_progress',
+            toolName: 'bash',
+            message: 'internal warn',
+            audience: 'internal',
+          },
+          { type: 'tool_progress', toolName: 'bash', message: 'reading…', audience: 'user' },
+          { type: 'done', text: '', turnCount: 1 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const progress: Array<{ message: string; audience: string }> = [];
+    bridge.on('tool_progress', (_toolName, message, _percent, audience) =>
+      progress.push({ message, audience }),
+    );
+    await bridge.send('x', {});
+
+    expect(progress).toEqual([
+      { message: 'internal warn', audience: 'internal' },
+      { message: 'reading…', audience: 'user' },
+    ]);
   });
 });

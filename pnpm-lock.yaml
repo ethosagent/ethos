@@ -544,6 +544,9 @@ importers:
       '@ethosagent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

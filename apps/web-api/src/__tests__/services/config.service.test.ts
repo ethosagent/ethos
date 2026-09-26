@@ -2141,3 +2141,80 @@ describe('ConfigService — settings passthrough groups', () => {
     expect(written).not.toContain('orphan');
   });
 });
+
+describe('ConfigService — resolved block (B3) and save warnings (B2)', () => {
+  let storage: InMemoryStorage;
+  let secrets: InMemorySecretsResolver;
+  let repo: ConfigRepository;
+  let service: ConfigService;
+
+  const write = async (lines: string[]) => {
+    await storage.write(join(DATA, 'config.yaml'), lines.join('\n'));
+  };
+
+  beforeEach(async () => {
+    storage = new InMemoryStorage();
+    secrets = new InMemorySecretsResolver();
+    await storage.mkdir(DATA);
+    repo = new ConfigRepository({ dataDir: DATA, storage, secrets });
+    service = new ConfigService({ config: repo, secrets });
+  });
+
+  it('get reports the effective personality, model rung and key source', async () => {
+    await write([
+      'provider: anthropic',
+      'model: claude-sonnet-5',
+      'apiKey: sk-anthropic-1234567890abcdef',
+      'personality: engineer',
+      'modelRouting.engineer: claude-opus-4',
+    ]);
+    const r = await service.get();
+    expect(r.resolved.personality).toEqual({ id: 'engineer', source: 'personality' });
+    expect(r.resolved.model).toEqual({ id: 'claude-opus-4', rung: 'modelRouting.engineer' });
+    expect(r.resolved.apiKey.provider).toBe('anthropic');
+    // An inline literal key is reported as such — never its value.
+    expect(r.resolved.apiKey.source).toBe('inline');
+    expect(JSON.stringify(r.resolved)).not.toContain('1234567890abcdef');
+    // Paths describe the repository's own data dir, not the process default.
+    expect(r.resolved.stateDir).toBe(DATA);
+    expect(r.resolved.configPath).toBe(join(DATA, 'config.yaml'));
+  });
+
+  it('get carries the parser warnings for an unknown key the repo keeps', async () => {
+    await write([
+      'provider: anthropic',
+      'model: claude-sonnet-5',
+      'apiKey: sk-anthropic-1234567890abcdef',
+      'personalty: engineer',
+    ]);
+    const r = await service.get();
+    expect(r.resolved.warnings.some((w) => w.includes("unknown key 'personalty'"))).toBe(true);
+  });
+
+  it('update returns the warnings for the file it just wrote', async () => {
+    await write([
+      'provider: anthropic',
+      'model: claude-sonnet-5',
+      'apiKey: sk-anthropic-1234567890abcdef',
+      'personality: researcher',
+      'memoryy: markdown',
+    ]);
+    const result = await service.update({ personality: 'engineer' });
+    // The typo'd key survives the save (passthrough, by design) and the
+    // response says so instead of keeping it silently.
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('memoryy: markdown');
+    expect(result.warnings.some((w) => w.includes("unknown key 'memoryy'"))).toBe(true);
+  });
+
+  it('update returns no warnings for a clean file', async () => {
+    await write([
+      'provider: anthropic',
+      'model: claude-sonnet-5',
+      'apiKey: sk-anthropic-1234567890abcdef',
+      'personality: researcher',
+    ]);
+    const result = await service.update({ personality: 'engineer' });
+    expect(result.warnings.filter((w) => w.includes('unknown key'))).toEqual([]);
+  });
+});

@@ -134,6 +134,14 @@ export function isEthosError(err: unknown): err is EthosError {
 }
 
 /**
+ * The action sentence for an error nothing knows a better next step for.
+ * Shared with `describeChatError` in `@ethosagent/surface-kit` so unknown
+ * chat-error codes and wrapped stray exceptions say the same thing.
+ */
+export const FALLBACK_ERROR_ACTION =
+  'Re-run with the same inputs. If the error repeats, file an issue with the message.';
+
+/**
  * Wrap an unknown error so callers can render it through the same path. Used
  * by the top-level handler in `apps/ethos/src/index.ts` to coerce stray
  * exceptions from library code into the envelope shape.
@@ -144,7 +152,7 @@ export function toEthosError(err: unknown, fallbackCode: EthosErrorCode = 'INTER
   return new EthosError({
     code: fallbackCode,
     cause: cause || 'Unknown error',
-    action: 'Re-run with the same inputs. If the error repeats, file an issue with the message.',
+    action: FALLBACK_ERROR_ACTION,
     details: err instanceof Error ? { name: err.name, stack: err.stack } : { value: err },
   });
 }
@@ -152,6 +160,10 @@ export function toEthosError(err: unknown, fallbackCode: EthosErrorCode = 'INTER
 interface FormatOptions {
   /** Emit ANSI color codes. Defaults to false (let the caller decide). */
   color?: boolean;
+  /** N2 — when set, append a dim third line pointing at the diagnostics the
+   *  caller just wrote: the error log path, the recent-errors command, and
+   *  (when known) the trace id. */
+  diagnostics?: { logPath: string; traceId?: string };
 }
 
 const ANSI = {
@@ -174,10 +186,17 @@ const ANSI = {
 export function formatError(err: EthosError, opts: FormatOptions = {}): string {
   const color = opts.color === true;
   const c = color ? ANSI : { reset: '', red: '', yellow: '', dim: '', bold: '' };
-  return [
+  const lines = [
     `${c.red}✗ ${c.bold}${err.code}${c.reset}${c.red}:${c.reset} ${err.cause}`,
     `  ${c.dim}→${c.reset} ${err.action}`,
-  ].join('\n');
+  ];
+  if (opts.diagnostics) {
+    const trace = opts.diagnostics.traceId ? ` · ethos trace ${opts.diagnostics.traceId}` : '';
+    lines.push(
+      `  ${c.dim}logged ${opts.diagnostics.logPath} · ethos errors --recent 5${trace}${c.reset}`,
+    );
+  }
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------

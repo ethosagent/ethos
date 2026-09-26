@@ -237,7 +237,10 @@ describe('Orchestrator guardrails', () => {
     // `isToolPermitted` delegator (doc line, signature, body, close, blank) and its
     // import, so an approval surface can skip asking about a call the
     // allowlist refuses anyway. The logic lives in agent-loop/tool-permitted.ts.
-    expect(lineCount).toBeLessThanOrEqual(1083);
+    // Bumped 1083 -> 1092 (ux A4 overflow-retry notice): the one `_loop`
+    // tool_progress yield (6 lines) and its 3-line comment at the
+    // compact-and-retry point. Pinned by __tests__/overflow-retry-notice.test.ts.
+    expect(lineCount).toBeLessThanOrEqual(1092);
   });
 
   it('no stage file exceeds 700 lines', () => {

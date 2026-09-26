@@ -27,7 +27,20 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "antd": {
+                "importNames": ["message"],
+                "message": "Static antd `message` renders outside the ConfigProvider theme (N5b). Use `const { message } = App.useApp()` instead."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "javascript": {

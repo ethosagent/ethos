@@ -9,7 +9,7 @@ import { resolveRunner, runnerAccentVars } from '../lib/runners';
 import { useResolvedTokens } from '../lib/skin-tokens';
 import { RUN_COPY } from '../lib/worker-copy';
 import { isChatPathname, resolveFallbackPersonalityId } from '../lib/workspaceRoutes';
-import { subscribeToSession } from '../sse';
+import { type SseConnectionState, subscribeToSession } from '../sse';
 
 interface StatusBarProps {
   drawerOpen: boolean;
@@ -51,6 +51,40 @@ function useSkillProposalCount(): number {
 }
 
 /**
+ * W2 (ux-feedback plan) — the active session's shared SSE socket health.
+ * Piggybacks on the same shared EventSource the other status-bar hooks use;
+ * null when no session is active (nothing to be disconnected from).
+ */
+function useSseConnectionState(): SseConnectionState | null {
+  const [sessionId, setSessionId] = useState<string | null>(() => getLastSessionId());
+  const [connection, setConnection] = useState<SseConnectionState | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setSessionId(getLastSessionId());
+    window.addEventListener('storage', refresh);
+    window.addEventListener('ethos:active-session-changed', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('ethos:active-session-changed', refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setConnection(null);
+      return;
+    }
+    const sub = subscribeToSession(sessionId, {
+      onEvent: () => undefined,
+      onConnectionState: setConnection,
+    });
+    return () => sub.close();
+  }, [sessionId]);
+
+  return sessionId ? connection : null;
+}
+
+/**
  * §4.4 — the run pill. Machine-wide, on the status bar, and hidden when no run
  * exists. Persistent state, never a toast: a notice that vanishes while you are
  * in another tab is the same as no notice at all.
@@ -87,13 +121,26 @@ export function StatusBar({ drawerOpen, onToggleDrawer, runs }: StatusBarProps) 
   // redirect uses: last-visited agent, else the config default.
   const cronPersonalityId = resolveFallbackPersonalityId(getLastPersonalityId(), data?.personality);
 
+  // W2 — a dropped SSE stream renders as DESIGN.md's amber "connecting" state:
+  // the backend answered the config query, but live events are not arriving.
+  const sseConnection = useSseConnectionState();
+  const reconnecting = sseConnection === 'reconnecting';
+
   const statusState: 'connected' | 'connecting' | 'offline' = isLoading
     ? 'connecting'
     : error
       ? 'offline'
-      : 'connected';
+      : reconnecting
+        ? 'connecting'
+        : 'connected';
 
-  const statusLabel = isLoading ? 'connecting…' : error ? 'offline' : 'Backend connected';
+  const statusLabel = isLoading
+    ? 'connecting…'
+    : error
+      ? 'offline'
+      : reconnecting
+        ? 'reconnecting…'
+        : 'Backend connected';
 
   const providerModel = data ? `${data.provider} · ${data.model}` : '—';
 

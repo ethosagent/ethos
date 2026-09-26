@@ -1,15 +1,19 @@
 import { randomBytes } from 'node:crypto';
+import { dirname } from 'node:path';
 import {
   type AdoptedModel,
   type CatalogModelLookup,
   type ChainModelImportSource,
+  type EffectiveConfig,
   fillFromTopLevel,
   introducedModelRegistryProblems,
   isProviderChainSecretRef,
   isVoiceChannelPlatform,
   normalizeAuxTimeoutSeconds,
+  parseConfigYaml,
   planChainModelImport,
   providerChainVersion,
+  resolveEffectiveConfig,
   secretRefFromValue,
   VOICE_CHANNEL_PLATFORMS,
   type VoiceBargeInTuning,
@@ -1360,6 +1364,12 @@ export interface ConfigGetResult {
   model: string;
   apiKeyPreview: string;
   baseUrl: string | null;
+  /**
+   * B3 — the effective configuration (`resolveEffectiveConfig` in
+   * `@ethosagent/config`, run over the same file this repository reads).
+   * Settings → General renders it read-only. Never carries a key value.
+   */
+  resolved: EffectiveConfig;
   personality: string;
   memory: 'markdown' | 'vector' | 'vault';
   modelRouting: Record<string, string>;
@@ -2055,6 +2065,13 @@ export interface ConfigUpdateInput {
 export interface ConfigUpdateResult {
   /** Models adopted into the registry by this save (`adoptChainModelsOnSave`). */
   adoptedModels: AdoptedModel[];
+  /**
+   * B2 (web save half) — the CLI parser's warnings for the file this save
+   * wrote: `config.yaml:<n> unknown key '<k>' — did you mean …?` lines for
+   * keys the save kept in passthrough but nothing reads. The settings save
+   * bar renders the count and the lines.
+   */
+  warnings: string[];
 }
 
 export interface ConfigServiceOptions {
@@ -2092,6 +2109,25 @@ export interface ConfigServiceOptions {
 export class ConfigService {
   constructor(private readonly opts: ConfigServiceOptions) {}
 
+  /**
+   * Run the CLI's parser (`parseConfigYaml`) over the same bytes the
+   * repository serves and resolve what they select (B2/B3). The repository's
+   * own reader keeps unknown keys silently in passthrough BY DESIGN; the CLI
+   * parser is the one that records them as warnings, and
+   * `resolveEffectiveConfig` reads its output. `ETHOS_STATE_DIR` is pinned to
+   * this repository's data dir so the resolved paths describe the file
+   * actually served, not whatever the process environment defaults to.
+   * `overrides: 'vault'` is never claimed here — that needs a vault listing
+   * this service does not perform (see `resolveEffectiveConfig`'s caveats).
+   */
+  private async resolveEffective(): Promise<EffectiveConfig> {
+    const src = (await this.opts.config.readSource()) ?? '';
+    return resolveEffectiveConfig(parseConfigYaml(src), {
+      ...process.env,
+      ETHOS_STATE_DIR: dirname(this.opts.config.configPath),
+    });
+  }
+
   async get(): Promise<ConfigGetResult> {
     const raw = await this.opts.config.read();
     if (!raw?.provider) {
@@ -2102,9 +2138,11 @@ export class ConfigService {
       });
     }
     const p = raw.passthrough;
+    const resolved = await this.resolveEffective();
     return {
       provider: raw.provider ?? '',
       model: raw.model ?? '',
+      resolved,
       apiKeyPreview: (await this.keyPreview(raw.apiKey)) ?? redactKey(undefined),
       baseUrl: raw.baseUrl ?? null,
       personality: raw.personality ?? 'researcher',
@@ -3320,7 +3358,10 @@ export class ConfigService {
     } catch {
       // The write landed; a broken listener is not the caller's problem.
     }
-    return { adoptedModels };
+    // B2: re-parse what this save actually wrote, so the response reports the
+    // unknown keys the write kept (passthrough) but nothing will read.
+    const { warnings } = await this.resolveEffective();
+    return { adoptedModels, warnings };
   }
 
   /**

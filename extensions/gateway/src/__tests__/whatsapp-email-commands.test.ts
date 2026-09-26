@@ -91,8 +91,9 @@ describe.each(['whatsapp', 'email'])('gateway slash commands on %s (U2)', (platf
     const out = recordingAdapter(platform);
     const s = recordingLoop();
     const gw = gateway(platform, s.loop, out.adapter);
+    // H6 — an idle lane has nothing to stop, and /stop says so.
     await gw.handleMessage(msg(platform, '/stop'), out.adapter);
-    expect(out.sends.at(-1)).toBe('✓ Stopped.');
+    expect(out.sends.at(-1)).toBe('nothing is running');
     await gw.handleMessage(msg(platform, '/new'), out.adapter);
     expect(out.sends.at(-1)).toBe('✓ New session started.');
     expect(s.turns).toHaveLength(0);

@@ -85,7 +85,9 @@ interface DiscordAdapterConfig {
   };
   /**
    * When enabled, `sendTyping()` posts a short "Thinking..." placeholder
-   * message that is deleted when the real response is sent. Default: false.
+   * message that is deleted when the real response is sent. Default: true
+   * (H1 / UD4, ux-feedback-and-config-clarity) — set `false` explicitly to
+   * suppress it.
    */
   postThinkingPlaceholder?: boolean;
   /**
@@ -108,6 +110,19 @@ interface DiscordAdapterConfig {
  * Cannot send messages to this user, Missing Permissions.
  */
 const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
+
+/**
+ * A tracked "Thinking…" placeholder whose typing refresh last fired this long
+ * ago belongs to a PREVIOUS turn that ended without a reply (errored, halted,
+ * or answered elsewhere). The adapter has no turn id — `sendTyping(chatId)` is
+ * the whole contract — so the turn boundary is inferred: the gateway refreshes
+ * typing every few seconds while a turn is live, and a gap this large means
+ * the turn is over. The next `sendTyping` then deletes the stale message and
+ * posts a fresh one, so a placeholder is posted per TURN, never once per chat
+ * lifetime. The normal boundary is still `send()`/`editMessage()`, which
+ * delete the placeholder outright (`clearThinkingPlaceholder`).
+ */
+const THINKING_PLACEHOLDER_STALE_MS = 30_000;
 
 /**
  * Does `err` (a discord.js `DiscordAPIError`, read by shape) say the bot can
@@ -208,8 +223,13 @@ export class DiscordAdapter
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
   private readonly pendingReactions = new Map<string, string>();
   private readonly pendingReactionsMax = 256;
-  /** Thinking placeholder messages keyed by chatId → messageId. */
-  private readonly thinkingMessages = new Map<string, string>();
+  /** The current turn's thinking placeholder per chat: its messageId plus when
+   *  the typing refresh last touched it (per-turn staleness — see
+   *  {@link THINKING_PLACEHOLDER_STALE_MS}). */
+  private readonly thinkingMessages = new Map<
+    string,
+    { messageId: string; lastTypingAt: number }
+  >();
 
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
@@ -223,7 +243,7 @@ export class DiscordAdapter
     this.approvalRoleIds = config.approvalRoleIds ?? [];
     this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
     this.observability = config.observability;
-    this.postThinkingPlaceholder = config.postThinkingPlaceholder ?? false;
+    this.postThinkingPlaceholder = config.postThinkingPlaceholder ?? true;
     this.maxInboundMediaBytes = config.maxInboundMediaBytes;
     this.missedMessageBackfill = config.missedMessageBackfill;
 
@@ -426,14 +446,28 @@ export class DiscordAdapter
         await (channel as any).sendTyping();
       }
       if (this.postThinkingPlaceholder && channel && 'send' in channel) {
-        if (!this.thinkingMessages.has(chatId)) {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-          const placeholder = await (channel as any).send({
-            content: 'Thinking…',
-            allowedMentions: { parse: [] },
-          });
-          this.thinkingMessages.set(chatId, String(placeholder.id));
+        const existing = this.thinkingMessages.get(chatId);
+        if (existing && Date.now() - existing.lastTypingAt <= THINKING_PLACEHOLDER_STALE_MS) {
+          // Same turn — the gateway's periodic typing refresh. Keep the one
+          // placeholder and slide the liveness window.
+          existing.lastTypingAt = Date.now();
+          return;
         }
+        if (existing) {
+          // A previous turn's placeholder no send() ever cleared (the turn
+          // ended without a reply). Delete it so the channel never accumulates
+          // stale "Thinking…" rows, then post this turn's own.
+          await this.clearThinkingPlaceholder(chatId);
+        }
+        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+        const placeholder = await (channel as any).send({
+          content: 'Thinking…',
+          allowedMentions: { parse: [] },
+        });
+        this.thinkingMessages.set(chatId, {
+          messageId: String(placeholder.id),
+          lastTypingAt: Date.now(),
+        });
       }
     } catch {
       // ignore
@@ -766,14 +800,14 @@ export class DiscordAdapter
   }
 
   private async clearThinkingPlaceholder(chatId: string): Promise<void> {
-    const placeholderId = this.thinkingMessages.get(chatId);
-    if (!placeholderId) return;
+    const entry = this.thinkingMessages.get(chatId);
+    if (!entry) return;
     this.thinkingMessages.delete(chatId);
     try {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'messages' in channel) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-        const msg = await (channel as any).messages.fetch(placeholderId);
+        const msg = await (channel as any).messages.fetch(entry.messageId);
         await msg.delete();
       }
     } catch {

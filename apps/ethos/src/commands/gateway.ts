@@ -1162,14 +1162,27 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       if (now - lastRefreshMs < REFRESH_DEBOUNCE_MS) return;
       lastRefreshMs = now;
       // allSettled, not all: one malformed personality directory (bad YAML) must
-      // not sink every other registry's refresh. Log the rejected arm count once
-      // and proceed — each surviving registry serves last-good.
+      // not sink every other registry's refresh — every registry applies the
+      // directories that parsed and serves last-good for the one that didn't.
       const results = await Promise.allSettled([
         seamPersonalities.loadFromDirectory(personalitiesDir),
         ...personalityRefreshers.map((fn) => fn()),
       ]);
+      // N3 (ux-feedback-and-config-clarity) — name each failure and each
+      // reload instead of a bare count. All registries read the same disk, so
+      // the seam registry's lastLoadReport describes what happened to every
+      // one of them; a rejected refresher arm with an empty seam report (a
+      // storage-level failure, not a per-directory parse) falls back to the
+      // old count line so nothing goes unreported.
+      const report = seamPersonalities.lastLoadReport;
+      for (const failure of report.failures) {
+        console.warn(`[personality] ${failure.id}: ${failure.error} — serving last-good copy`);
+      }
+      for (const reload of report.reloaded) {
+        console.log(`[personality] ${reload.id} reloaded (${reload.changed.join(', ')} changed)`);
+      }
       const failed = results.filter((r) => r.status === 'rejected').length;
-      if (failed > 0) {
+      if (failed > 0 && report.failures.length === 0) {
         console.warn(
           `[gateway] personality refresh: ${failed}/${results.length} registries failed to reload (serving last-good)`,
         );
@@ -5225,6 +5238,11 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         onTurnComplete,
         onUserTurn,
         streamingEdits,
+        // H1 — `display.slow_turn_notice_ms`; absent → the gateway's 8000
+        // default, 0 disables (plan ux-feedback-and-config-clarity, UD3).
+        ...(config.displaySlowTurnNoticeMs !== undefined
+          ? { slowTurnNoticeMs: config.displaySlowTurnNoticeMs }
+          : {}),
         ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
         ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
         ...(pairingDb ? { pairingDb } : {}),
@@ -5297,6 +5315,10 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         onTurnComplete,
         onUserTurn,
         streamingEdits,
+        // H1 — same wiring as the idle branch above.
+        ...(config.displaySlowTurnNoticeMs !== undefined
+          ? { slowTurnNoticeMs: config.displaySlowTurnNoticeMs }
+          : {}),
         ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
         ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
         ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),

@@ -223,9 +223,9 @@ app_entry_modules:
 
 register_anchors:
   G-TOOLS:
-    - { path: packages/core/src/tool-registry.ts, line: 219, contains: "toDefinitions(allowedTools" }
-    - { path: packages/core/src/tool-registry.ts, line: 394, contains: "!allowedTools.includes(call.name)" }
-    - { path: packages/core/src/tool-registry.ts, line: 287, contains: "enforce tool access at execution time" }
+    - { path: packages/core/src/tool-registry.ts, line: 228, contains: "toDefinitions(allowedTools" }
+    - { path: packages/core/src/tool-registry.ts, line: 403, contains: "!allowedTools.includes(call.name)" }
+    - { path: packages/core/src/tool-registry.ts, line: 296, contains: "enforce tool access at execution time" }
     - { path: packages/core/src/agent-loop/stages/tool-rejection.ts, line: 58, contains: "export function* emitToolRejection" }
     - { path: packages/core/src/script-safe.ts, line: 130, contains: "export function scriptCallableFor" }
 

@@ -166,6 +166,15 @@ export class DefaultToolRegistry implements ToolRegistry {
   }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
+    // A4 — `_`-prefixed names are reserved for loop-emitted notices
+    // (`toolName: '_loop'` retry/fallback progress, `'_watcher'` halts in
+    // agent-loop.ts). Refusing them here means no tool or plugin can
+    // impersonate the loop in a renderer keyed on the prefix.
+    if (tool.name.startsWith('_')) {
+      throw new Error(
+        `Tool name "${tool.name}" is reserved: names starting with "_" are loop-emitted notices and cannot be registered.`,
+      );
+    }
     this.tools.set(tool.name, { tool, pluginId: opts?.pluginId });
   }
 

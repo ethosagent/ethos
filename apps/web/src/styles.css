@@ -2152,14 +2152,6 @@ body,
   flex-shrink: 0;
 }
 
-.empty-state-brand {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-  margin-top: 4px;
-}
-
 .empty-state-name {
   font-size: 16px;
   font-weight: 500;
@@ -2366,54 +2358,9 @@ body,
   color: var(--accent, var(--ethos-info));
 }
 
-/* "Agent is thinking" placeholder — three dots that pulse in sequence
-   while the user waits for the first text_delta. Sits in the same row
-   shape as a real assistant bubble so the layout doesn't shift when the
-   real response replaces it. */
-
-.message-thinking {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 0;
-  opacity: 0.7;
-}
-
-.thinking-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--ethos-text-dim);
-  animation: thinking-bounce 1.2s ease-in-out infinite;
-}
-
-.thinking-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.thinking-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes thinking-bounce {
-  0%,
-  60%,
-  100% {
-    opacity: 0.3;
-    transform: translateY(0);
-  }
-  30% {
-    opacity: 1;
-    transform: translateY(-3px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thinking-dot {
-    animation: none;
-    opacity: 0.6;
-  }
-}
+/* The pre-first-token placeholder bubble is gone (ux-feedback W5): the status
+   line's reserved slot already announces `received` / `thinking`, and two
+   waiting indicators on one screen was one too many. */
 
 /* Scroll-to-bottom FAB — shown when user scrolls away from latest message */
 
@@ -2554,12 +2501,15 @@ textarea {
   cursor: not-allowed;
 }
 
+/* Stop is a semantic state, not a second red (ux-feedback W5): the token
+   retunes per skin, and hover brightens it exactly as the send button's
+   accent hover does. */
 .composer-stop-btn {
-  background: #ef4444;
+  background: var(--error);
 }
 
 .composer-stop-btn:hover {
-  background: #dc2626;
+  filter: brightness(1.12);
 }
 
 /* Voice recording */
@@ -3909,6 +3859,85 @@ textarea {
   font-size: 13px;
 }
 
+/* A3 (ux-feedback plan) — the shared error banner's three lines: `✗ title`,
+   `→ action` and `trace <id>`, plus Dismiss / Retry verbs. Errors are concrete
+   (DESIGN.md voice), the trace is a literal, so it is mono. */
+.chat-error-title {
+  font-weight: 500;
+}
+
+.chat-error-action {
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.chat-error-trace {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.chat-error-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-error-btn {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.chat-error-btn:hover {
+  background: var(--ethos-hover);
+}
+
+/* W1 — a send the server refused: the row under the bubble that keeps the
+   user's words on screen. Glyph + word in --warning, the reason in secondary,
+   Retry / Discard as plain verbs. */
+.message-send-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.message-send-failed-state {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.message-send-failed-reason {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.message-send-failed-btn {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 1px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.message-send-failed-btn:hover {
+  background: var(--ethos-hover);
+}
+
 /* Masked credential prompt (openclaw-9.5 item 1, `CredentialCard`). A panel
    built from primitives, like the takeover panel — not the Card primitive. */
 .credential-prompt {
@@ -4217,6 +4246,19 @@ textarea {
   color: var(--warning);
 }
 
+/* Loop-level notice segments in the collapsed footer (ux-feedback A1/A4/W4):
+   the word carries the state, the tone-specific row colour lives on the
+   expanded row — the footer stays one quiet line. */
+.trail-footer-notices {
+  color: var(--text-secondary);
+}
+
+/* A4 — what the turn ran on, `{provider} · {model}` in the mono the footer
+   already is; literals sit in tertiary like durations. */
+.trail-footer-meta {
+  color: var(--text-tertiary);
+}
+
 .trail-footer-duration {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
@@ -4413,6 +4455,20 @@ button.activity-row:hover {
 }
 
 .trail-decision--neutral .activity-row-state {
+  color: var(--text-secondary);
+}
+
+/* Loop-level notice rows (ux-feedback A1/A4/W4): glyph + word take the tone's
+   semantic token; the subject stays mono like every other row literal. */
+.trail-notice--warning .activity-row-state {
+  color: var(--warning);
+}
+
+.trail-notice--ok .activity-row-state {
+  color: var(--success);
+}
+
+.trail-notice--neutral .activity-row-state {
   color: var(--text-secondary);
 }
 
@@ -10094,4 +10150,103 @@ a.stage-header-scope:hover {
   flex: none;
   font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
   color: var(--ethos-error);
+}
+
+/* ---------------------------------------------------------------------------
+   QuickChat (desktop palette window) — ux-feedback W3/W5. Token classes in
+   place of the old inline monospace + white-alpha styles, so skins apply. */
+
+.quickchat-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.quickchat-accent {
+  height: 3px;
+  flex-shrink: 0;
+}
+
+.quickchat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.quickchat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quickchat-model {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.quickchat-open-main {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.quickchat-stop-btn {
+  border: 1px solid var(--error);
+  border-radius: 4px;
+  background: none;
+  color: var(--error);
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.quickchat-transcript {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px;
+}
+
+.quickchat-msg {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.quickchat-msg-user {
+  color: var(--text-secondary);
+}
+
+.quickchat-msg-role {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.quickchat-composer {
+  flex-shrink: 0;
+  padding: 4px 8px 8px;
+}
+
+.quickchat-composer textarea {
+  width: 100%;
+  resize: none;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--ethos-surface-tint);
+  color: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.quickchat-queued {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 0 2px 4px;
 }

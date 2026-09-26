@@ -99,10 +99,18 @@ export async function runPlugin(args: string[]): Promise<void> {
         process.exit(1);
       }
       const dir = pluginsDir();
-      const result = spawnSync('npm', ['uninstall', '--prefix', dir, pkg], { stdio: 'inherit' });
+      // stderr is piped so a failure can quote npm's reason (N2); stdout stays
+      // on the terminal.
+      const result = spawnSync('npm', ['uninstall', '--prefix', dir, pkg], {
+        stdio: ['inherit', 'inherit', 'pipe'],
+        encoding: 'utf8',
+      });
       if (result.status !== 0) {
-        console.error(`${c.red}Remove failed.${c.reset}`);
-        process.exit(result.status ?? 1);
+        throw new EthosError({
+          code: 'TOOL_EXECUTION_FAILED',
+          cause: `npm uninstall exited with status ${result.status ?? 'null'}${withStderrTail(result.stderr)}`,
+          action: `Check the npm error above, then re-run: ethos plugin remove ${pkg} (installed plugins: ethos plugin list)`,
+        });
       }
       // Removing the package does not withdraw consent: the grant still stands,
       // so a personality lockfile can auto-install it again. Say so.
@@ -145,6 +153,15 @@ export async function runPlugin(args: string[]): Promise<void> {
   }
 }
 
+/** N2 — the last few lines of a piped npm stderr, for the error envelope.
+ *  Empty string when nothing was captured. */
+function withStderrTail(stderr: string | null | undefined, maxChars = 400): string {
+  const trimmed = (stderr ?? '').trim();
+  if (!trimmed) return '';
+  const tail = trimmed.length > maxChars ? `…${trimmed.slice(-maxChars)}` : trimmed;
+  return `: ${tail}`;
+}
+
 // ---------------------------------------------------------------------------
 // Install: download to temp, scan, prompt, then commit
 // ---------------------------------------------------------------------------
@@ -157,16 +174,20 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     `${c.dim}Downloading ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} for safety scan...${c.reset}\n`,
   );
 
-  // Step 1: download without running install scripts so we can scan first
+  // Step 1: download without running install scripts so we can scan first.
+  // stderr is piped so a failure can quote npm's reason (N2).
   const pre = spawnSync(
     'npm',
     ['install', '--prefix', tmpDir, '--ignore-scripts', '--no-audit', pkg],
-    { stdio: 'inherit' },
+    { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' },
   );
   if (pre.status !== 0) {
     await rm(tmpDir, { recursive: true, force: true });
-    console.error(`${c.red}Download failed.${c.reset}`);
-    process.exit(pre.status ?? 1);
+    throw new EthosError({
+      code: 'PLUGIN_INSTALL_FAILED',
+      cause: `npm install exited with status ${pre.status ?? 'null'}${withStderrTail(pre.stderr)}`,
+      action: `Check the package name and registry access, then re-run: ethos plugin install ${pkg}`,
+    });
   }
 
   // Exact name@version resolved during the scan — used for the final install so we

@@ -10,7 +10,7 @@
 // dirty while standing in Memory, and the save bar is telling you the same
 // thing at the same time. Not a `Card` (DESIGN.md:134).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { countByCategory, filterSettings } from './lib/settings-index';
 import { categoryHref, SETTINGS_GROUPS, type SettingsCategory } from './lib/taxonomy';
@@ -38,6 +38,41 @@ export function CategoryRail({
   );
   const searching = query.trim().length > 0;
 
+  // B6 (§6.4) — the operator categories fold behind one disclosure. The
+  // toggle flips a CSS class ONLY (`.is-collapsed` → `display: none`): the
+  // rows below stay mounted whatever it says, because the last toggle that
+  // unmounted rendered two whole categories empty (components/advanced.tsx
+  // carries that history). Standing IN an advanced category holds it open —
+  // the active row must never be invisible.
+  const advanced = categories.filter((c) => c.advanced);
+  const activeIsAdvanced = advanced.some((c) => c.slug === activeCategory);
+  const [advancedOpen, setAdvancedOpen] = useState(activeIsAdvanced);
+  useEffect(() => {
+    if (activeIsAdvanced) setAdvancedOpen(true);
+  }, [activeIsAdvanced]);
+  const advancedDirty = advanced.some((c) => dirtyCategories.includes(c.slug));
+
+  const row = (category: SettingsCategory) => (
+    <Link
+      key={category.slug}
+      to={categoryHref(category)}
+      className={`settings-rail-row${category.slug === activeCategory ? ' active' : ''}`}
+    >
+      <span className="settings-rail-row-label">
+        {category.label}
+        {dirtyCategories.includes(category.slug) ? (
+          <span
+            className="settings-rail-dot"
+            role="img"
+            aria-label="unsaved changes"
+            title="Unsaved changes"
+          />
+        ) : null}
+      </span>
+      <span className="settings-rail-count">{counts[category.slug] ?? 0}</span>
+    </Link>
+  );
+
   return (
     <nav className="settings-rail" aria-label="Settings categories">
       <RailSearch value={query} onChange={setQuery} />
@@ -45,35 +80,49 @@ export function CategoryRail({
       {searching ? (
         <SearchResults results={results} categories={categories} />
       ) : (
-        SETTINGS_GROUPS.map((group) => {
-          const rows = categories.filter((c) => c.group === group);
-          if (rows.length === 0) return null;
-          return (
-            <div key={group} className="settings-rail-group">
-              <div className="settings-rail-group-label">{group}</div>
-              {rows.map((category) => (
-                <Link
-                  key={category.slug}
-                  to={categoryHref(category)}
-                  className={`settings-rail-row${category.slug === activeCategory ? ' active' : ''}`}
-                >
-                  <span className="settings-rail-row-label">
-                    {category.label}
-                    {dirtyCategories.includes(category.slug) ? (
-                      <span
-                        className="settings-rail-dot"
-                        role="img"
-                        aria-label="unsaved changes"
-                        title="Unsaved changes"
-                      />
-                    ) : null}
-                  </span>
-                  <span className="settings-rail-count">{counts[category.slug] ?? 0}</span>
-                </Link>
-              ))}
-            </div>
-          );
-        })
+        <>
+          {SETTINGS_GROUPS.map((group) => {
+            const rows = categories.filter((c) => c.group === group && !c.advanced);
+            if (rows.length === 0) return null;
+            return (
+              <div key={group} className="settings-rail-group">
+                <div className="settings-rail-group-label">{group}</div>
+                {rows.map(row)}
+              </div>
+            );
+          })}
+
+          {advanced.length > 0 ? (
+            <>
+              <button
+                type="button"
+                className="settings-rail-advanced-toggle"
+                aria-expanded={advancedOpen}
+                aria-controls="settings-rail-advanced"
+                onClick={() => setAdvancedOpen((v) => !v)}
+              >
+                {advancedOpen ? '▾' : '▸'} Advanced ({advanced.length}) —{' '}
+                {advancedOpen ? 'hide' : 'show'} operator settings
+                {!advancedOpen && advancedDirty ? (
+                  <span
+                    className="settings-rail-dot"
+                    role="img"
+                    aria-label="unsaved changes in a hidden category"
+                    title="Unsaved changes in a hidden category"
+                  />
+                ) : null}
+              </button>
+              <div
+                id="settings-rail-advanced"
+                className={`settings-rail-group settings-rail-advanced${
+                  advancedOpen ? '' : ' is-collapsed'
+                }`}
+              >
+                {advanced.map(row)}
+              </div>
+            </>
+          ) : null}
+        </>
       )}
     </nav>
   );

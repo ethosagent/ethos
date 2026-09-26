@@ -39,6 +39,7 @@ import { SessionLane } from '@ethosagent/session-lane';
 import type Database from '@ethosagent/sqlite';
 import {
   createEventTranslator,
+  describeChatError,
   formatBranchList,
   pickBranch,
   shouldSurfaceProgress,
@@ -73,6 +74,7 @@ import {
   answerSuffix,
   isVoiceOutboundAdapter,
   JOB_ABORTED_BY_SHUTDOWN,
+  resolveModelDisplay,
   voiceAudioExtension,
   voiceAudioMimeType,
 } from '@ethosagent/types';
@@ -114,6 +116,7 @@ import {
 } from './quiet-hours';
 import { DraftStreamer } from './streaming';
 import type { TranscodeResult, Transcoder } from './transcode';
+import { TurnFeedback } from './turn-feedback';
 import type { VoiceArtifactStore } from './voice-artifacts';
 import {
   buildTranscriptText,
@@ -493,7 +496,39 @@ function laneKeyOf(
  * and only their `retry` (see `isRetryText`) runs it again.
  */
 export const INTERRUPTED_RETRY_NOTICE =
-  '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.';
+  '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again. This works for 24 hours; any other message from you discards it.';
+
+/**
+ * H3 (plan ux-feedback-and-config-clarity) — the ack for a second message that
+ * was folded into the running turn's steer sink. Untracked, like every ack.
+ */
+export const ABSORBED_STEER_ACK = "↩ noted — I'll fold this into the answer I'm writing.";
+
+/**
+ * H3 — the ack for a second message that was queued behind the running turn
+ * (the plain enqueue on a busy lane, and the steer sink's full-rejection path,
+ * which used to drop the message silently). `position` counts the running
+ * turn: the first queued message is "2nd".
+ */
+export function queuedTurnAck(position: number): string {
+  const suffix =
+    position % 10 === 1 && position % 100 !== 11
+      ? 'st'
+      : position % 10 === 2 && position % 100 !== 12
+        ? 'nd'
+        : position % 10 === 3 && position % 100 !== 13
+          ? 'rd'
+          : 'th';
+  return `⏳ queued (${position}${suffix}) — I'll answer after the current reply.`;
+}
+
+/**
+ * H5 — sent once, untracked, AFTER the text reply was delivered, when a voice
+ * reply the lane's mode asked for could not be produced. Never before the
+ * text, never more than once per turn (`deliverVoiceReply` runs at most once
+ * per delivered reply).
+ */
+export const VOICE_FAILURE_NOTICE = "🔇 couldn't produce audio for that reply";
 
 /**
  * Sent once when a message's turn fails for the last allowed time and its spool
@@ -511,6 +546,23 @@ export function deadLetteredNotice(spoolId: string): string {
 
 /** How long an interrupted row answers to `retry` (plan D5). */
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The user-visible text a spool row was made from, for the stale-replay
+ * notice's quotes (H6). Best-effort: an unreadable payload yields nothing.
+ */
+function spooledText(row: SpoolRow): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(row.payload);
+    if (typeof parsed === 'object' && parsed !== null) {
+      const text = (parsed as { text?: unknown }).text;
+      if (typeof text === 'string' && text.trim().length > 0) return text.trim();
+    }
+  } catch {
+    // Fall through — no quote for this row.
+  }
+  return undefined;
+}
 
 /**
  * The whole of a `retry` reply: trimmed, lowercased, nothing else — except
@@ -1421,6 +1473,17 @@ export interface GatewayConfig {
    * every chunk.
    */
   streamingEditIntervalMs?: number;
+  /**
+   * H1 (plan ux-feedback-and-config-clarity, UD3) — ms of silence on a
+   * NON-streaming lane before the one untracked "_working on it …_" ack.
+   * Sourced from `display.slow_turn_notice_ms` (`EthosConfig.
+   * displaySlowTurnNoticeMs`, wired in `buildGateway`). Absent → 8000; `0`
+   * disables the notice — and with it H2's non-streaming fallback message,
+   * which shares the same once-per-turn latch (see ./turn-feedback.ts).
+   * Email lanes never get it (UD9). Pinned by
+   * `__tests__/slow-turn-notice.test.ts`.
+   */
+  slowTurnNoticeMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1440,6 +1503,7 @@ export const PLATFORM_COMMANDS: Readonly<
     string,
     | 'new'
     | 'usage'
+    | 'status'
     | 'budget'
     | 'stop'
     | 'help'
@@ -1465,6 +1529,7 @@ export const PLATFORM_COMMANDS: Readonly<
   '/branch': 'branch',
   '/stop': 'stop',
   '/usage': 'usage',
+  '/status': 'status',
   '/budget': 'budget',
   '/help': 'help',
   '/personality': 'personality',
@@ -1633,6 +1698,8 @@ export class Gateway {
   private readonly streamingGroup: boolean;
   /** Minimum ms between draft edits. */
   private readonly streamingEditIntervalMs: number;
+  /** See `GatewayConfig.slowTurnNoticeMs` (H1). 0 = disabled. */
+  private readonly slowTurnNoticeMs: number;
   /** Chats (`${platform}:${chatId}`) where streaming was disabled after
    *  repeated flood-waits — future turns there fall back to non-streaming. */
   private readonly streamingDisabledChats = new Set<string>();
@@ -1642,7 +1709,7 @@ export class Gateway {
    *  in `runTurn`); shutdown's resend notice skips those. */
   private readonly activeTurns = new Map<
     string,
-    { adapter: PlatformAdapter; chatId: string; answered?: boolean }
+    { adapter: PlatformAdapter; chatId: string; threadId?: string; answered?: boolean }
   >();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, SteerSink>();
@@ -1652,8 +1719,8 @@ export class Gateway {
    * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
    * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
    * scope) and consumed by the `session_start` hook below, which is the only
-   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey` and
-   * lacks `threadId`, so it can't serve this — hence a parallel map.
+   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey`,
+   * not `sessionKey`, so it can't serve this — hence a parallel map.
    */
   private readonly sessionRouting = new Map<string, SessionRouting>();
   /**
@@ -1922,6 +1989,7 @@ export class Gateway {
     this.streamingDm = config.streamingEdits?.dm ?? true;
     this.streamingGroup = config.streamingEdits?.group ?? false;
     this.streamingEditIntervalMs = config.streamingEditIntervalMs ?? 2500;
+    this.slowTurnNoticeMs = config.slowTurnNoticeMs ?? 8000;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.clarifyEscalationDelayMs = config.clarifyEscalationDelayMs ?? DEFAULT_ESCALATION_DELAY_MS;
@@ -3027,7 +3095,13 @@ export class Gateway {
 
       if (filterResult.action === 'pairing_reply') {
         this.recordPairing(message, 'issued');
-        await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => {});
+        await adapter
+          .send(message.chatId, {
+            text: filterResult.reply ?? '',
+            // H6 — into the thread it was asked in, like every other ack.
+            ...(message.threadId ? { threadId: message.threadId } : {}),
+          })
+          .catch(() => {});
         return;
       }
 
@@ -3188,8 +3262,21 @@ export class Gateway {
     const cmdType = PLATFORM_COMMANDS[cmdToken.toLowerCase()];
 
     if (cmdType === 'stop') {
-      lane.abort();
-      await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
+      // H6 — `✓ Stopped.` only when something is actually running or queued
+      // on this lane. `lane.length` counts the running turn (the lane task is
+      // `processing`) plus everything queued behind it; `activeSinks` /
+      // `activeTurns` cover the turn-end tail, where the sink is unhooked but
+      // the turn still holds the lane.
+      const running =
+        lane.length > 0 || this.activeSinks.has(laneKey) || this.activeTurns.has(laneKey);
+      if (running) {
+        lane.abort();
+        await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
+      } else {
+        await adapter
+          .send(message.chatId, { text: 'nothing is running', threadId })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -3236,6 +3323,7 @@ export class Gateway {
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
+        `/status — usage plus personality · model · session\n` +
         `/budget [reset] — session spend against its cap\n` +
         `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
@@ -3397,6 +3485,39 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
+          threadId,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // H6/UD5 — a DISTINCT command, not an alias: `/usage` stays the numbers,
+    // `/status` adds where you are (personality · model · session).
+    if (cmdType === 'status') {
+      const u = this.usageStore.get(laneKey) ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+      const personalityId = this.activePersonalityFor(laneKey, bot);
+      // The personality's configured model (a role or registry alias) — the
+      // gateway never resolves provider rungs itself. Stub loops in tests
+      // (and team bindings) fall back to `default`.
+      let model = 'default';
+      try {
+        if (typeof bot.loop.resolvePersonality === 'function') {
+          model = resolveModelDisplay(
+            bot.loop.resolvePersonality(bot.binding.type === 'team' ? undefined : personalityId)
+              .model,
+            'default',
+          );
+        }
+      } catch {
+        // Unknown personality id — keep the fallback label.
+      }
+      const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+      await adapter
+        .send(message.chatId, {
+          text:
+            `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\n` +
+            `Cost: $${u.costUsd.toFixed(5)}\n` +
+            `${personalityId} · ${model} · ${sessionKey}`,
           threadId,
         })
         .catch(() => {});
@@ -3909,8 +4030,29 @@ export class Gateway {
           if (!this.linkAbsorbed(spoolId, absorbing)) absorbing.absorbed.push(spoolId);
           handOff();
         }
-        await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
+        await adapter.send(message.chatId, { text: ABSORBED_STEER_ACK, threadId }).catch(() => {});
+        return;
       }
+      // H3 — the steer sink is full. This message used to be dropped with no
+      // ack at all; queue it as its own turn instead and say where it went.
+      // The row (when spooled) follows the queued turn like any plain enqueue —
+      // NOT `markAbsorbed`: nothing absorbed it. The ack is untracked (an
+      // ack, not a reply); the queued turn's reply rides the tracked path.
+      const overflowTurn = this.enqueueTurn(
+        laneKey,
+        lane,
+        bot,
+        message,
+        adapter,
+        text,
+        threadId,
+        spoolId,
+      );
+      handOff();
+      await adapter
+        .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
+        .catch(() => {});
+      await overflowTurn;
       return;
     }
 
@@ -3937,6 +4079,11 @@ export class Gateway {
       return;
     }
 
+    // H3 — a lane that is already busy says so: whenever something is running
+    // or queued ahead of this message, ack where it landed. Ordinal from the
+    // lane depth AFTER enqueue (the running turn counts, so the first queued
+    // message is "2nd"). Idle lane → no ack, the reply itself is the feedback.
+    const laneBusy = lane.length > 0;
     const turn = this.enqueueTurn(
       laneKey,
       lane,
@@ -3948,6 +4095,11 @@ export class Gateway {
       spoolId,
     );
     handOff();
+    if (laneBusy) {
+      await adapter
+        .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
+        .catch(() => {});
+    }
     await turn;
   }
 
@@ -4560,7 +4712,7 @@ export class Gateway {
     // Rows this run has already dealt with (deferred, stale, lost claims) —
     // without it a row with no adapter would be re-listed forever.
     const seen = new Set<string>();
-    const staleByLane = new Map<string, { row: SpoolRow; count: number }>();
+    const staleByLane = new Map<string, { row: SpoolRow; count: number; samples: string[] }>();
     this.replaying = true;
     try {
       for (;;) {
@@ -4593,7 +4745,15 @@ export class Gateway {
     } finally {
       this.replaying = false;
     }
-    for (const { row, count } of staleByLane.values()) {
+    for (const { row, count, samples } of staleByLane.values()) {
+      // H6 — quote what was missed (first 40 chars of each, up to 3), so the
+      // user knows WHICH messages to resend rather than a bare count.
+      const quoted = samples.map((s) => `"${s.length > 40 ? `${s.slice(0, 40)}…` : s}"`);
+      const more = count - quoted.length;
+      const missed =
+        quoted.length > 0
+          ? ` Missed: ${quoted.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`
+          : '';
       await this.notifyTracked(
         {
           platform: row.platform,
@@ -4605,7 +4765,7 @@ export class Gateway {
         },
         `I restarted and missed ${count} message(s) older than ${describeReplayAge(
           this.spoolMaxReplayAgeMs,
-        )}; resend if still needed.`,
+        )}; resend if still needed.${missed}`,
       ).catch(() => false);
     }
     return counts;
@@ -4614,7 +4774,7 @@ export class Gateway {
   private async replaySpoolRow(
     spool: InboundSpool,
     row: SpoolRow,
-    staleByLane: Map<string, { row: SpoolRow; count: number }>,
+    staleByLane: Map<string, { row: SpoolRow; count: number; samples: string[] }>,
     counts: { replayed: number; deferred: number; dead: number },
   ): Promise<void> {
     // BY BOT, before the claim — the ledger sweep's rule: a row this process
@@ -4634,9 +4794,14 @@ export class Gateway {
           counts.dead++;
           this.recordSpoolDeadLettered(row.id, 'stale');
           if (adapter) {
-            const entry = staleByLane.get(row.laneKey);
-            if (entry) entry.count++;
-            else staleByLane.set(row.laneKey, { row, count: 1 });
+            const entry = staleByLane.get(row.laneKey) ?? { row, count: 0, samples: [] };
+            entry.count++;
+            // Up to 3 quoted texts per lane; the notice adds "and N more".
+            if (entry.samples.length < 3) {
+              const text = spooledText(row);
+              if (text) entry.samples.push(text);
+            }
+            staleByLane.set(row.laneKey, entry);
           }
         }
       } catch (err) {
@@ -4887,7 +5052,12 @@ export class Gateway {
     const review = spoolTurn?.review;
     if (personalityId && !review) this.onUserTurn?.({ personalityId });
 
-    this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+    this.activeTurns.set(laneKey, {
+      adapter,
+      chatId: message.chatId,
+      // Carried so the shutdown notice returns to the thread the turn is in.
+      ...(threadId ? { threadId } : {}),
+    });
 
     // Flush buffered notifications from previous disconnected period
     if (this.notificationRouter) {
@@ -4932,6 +5102,9 @@ export class Gateway {
     const typingTimer = setInterval(() => {
       void adapter.sendTyping?.(message.chatId).catch(() => {});
     }, 4_000);
+
+    // H1/H2 timers — declared out here so the `finally` can always clear them.
+    let feedback: TurnFeedback | undefined;
 
     try {
       // --- Voice pipeline: auto-transcribe audio attachments ---
@@ -5058,6 +5231,34 @@ export class Gateway {
             })
           : undefined;
 
+      // H1/H2 — silent-lane liveness (see ./turn-feedback.ts for the shared
+      // once-per-turn latch). Not for review turns (they are the agent's own
+      // follow-up, not a user waiting) and never on email lanes (UD9 — a
+      // second email is worse than silence). On a streaming lane H2 edits the
+      // draft's progress line; on a non-streaming lane the one untracked ack
+      // goes out like a slash ack — no dedup, no ledger.
+      feedback =
+        review || message.platform === 'email'
+          ? undefined
+          : new TurnFeedback({
+              slowTurnNoticeMs: this.slowTurnNoticeMs,
+              ...(streamer
+                ? {
+                    pushProgress: (line: string) => {
+                      if (!signal.aborted) void streamer.pushProgress(line);
+                    },
+                  }
+                : {
+                    sendNotice: (notice: string) => {
+                      if (!signal.aborted)
+                        void adapter
+                          .send(message.chatId, { text: notice, threadId })
+                          .catch(() => {});
+                    },
+                  }),
+            });
+      feedback?.start();
+
       // Static per-channel toolset narrowing (context-economy Phase 1).
       // Resolved from static config only — never computed per turn — so the
       // tool list stays byte-stable across turns on this lane (plan R1).
@@ -5149,9 +5350,11 @@ export class Gateway {
             markAnswered();
           }
         } else if (errored) {
+          // A3 — the fold uses the shared chat-error map's title, never the
+          // raw provider string (`describeChatError`, @ethosagent/surface-kit).
           const note =
             responseText.trim().length > 0
-              ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
+              ? `${responseText}\n\n⚠ Response interrupted: ${describeChatError(errored.code, errored.error).title}`
               : `⚠ Error: ${errored.error}`;
           const sanitizedNote = stripAnsiEscapes(note);
           if (streamer && streamed) {
@@ -5305,6 +5508,9 @@ export class Gateway {
           // answer is already on its way, and anything the tail yields (a
           // turn-end compaction notice) would land after the final.
           if (answer) continue;
+          // H1/H2 — feed the liveness timers before the terminal check below
+          // disposes them, so a tool_end always cancels its own timer.
+          feedback?.onEvent(event);
           translator.push(event);
           // Feed the live draft. Progress folds in only for `audience:'user'`
           // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
@@ -5320,6 +5526,8 @@ export class Gateway {
             // The answer is going out; the tail is maintenance, not the agent
             // composing a reply, so it gets no typing indicator.
             clearInterval(typingTimer);
+            // …and no "working on it" either: nothing may fire after the final.
+            feedback?.dispose();
             // The loop reads its steer sink only between LLM iterations and
             // has none left, so a message pushed now would be acknowledged
             // ("↩ noted") and then read by nobody. Unhooked, the next message
@@ -5358,6 +5566,7 @@ export class Gateway {
       else await deliverAnswer();
     } finally {
       clearInterval(typingTimer);
+      feedback?.dispose();
       this.activeTurns.delete(laneKey);
       this.activeSinks.delete(laneKey);
       // A `removeAdapter` may be parked waiting for exactly this turn.
@@ -5424,6 +5633,26 @@ export class Gateway {
       });
     };
 
+    // H5 — the lane asked for a voice reply and is not getting one: say so,
+    // once, AFTER the text reply (this method only runs once the text is
+    // delivered). Untracked, like an ack — the reply itself already went out
+    // on the tracked path. Only for PRODUCTION failures (no provider, synth,
+    // transcode, format, byte cap): an operator's `ttsOut: false` and an
+    // adapter with no voice caps are policy, not failure, and a send the
+    // platform refused synthesized fine — its artifact is owed by the ledger
+    // sweep, so "couldn't produce audio" would be false there.
+    let voiceFailureNoticed = false;
+    const noticeVoiceFailure = (): void => {
+      if (voiceFailureNoticed) return;
+      voiceFailureNoticed = true;
+      void input.adapter
+        .send(input.chatId, {
+          text: VOICE_FAILURE_NOTICE,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        })
+        .catch(() => {});
+    };
+
     // 1. Operator override. `voice.channels.<platform>.ttsOut: false` outranks
     //    the lane's mode — a deployment decision beats a conversational one.
     if (this.channelVoiceOut?.[input.platform] === false) {
@@ -5452,6 +5681,7 @@ export class Gateway {
         'gateway.voice_no_provider',
         this.voiceProviderErrors.tts ? { error: this.voiceProviderErrors.tts } : {},
       );
+      noticeVoiceFailure();
       return;
     }
 
@@ -5484,6 +5714,7 @@ export class Gateway {
       );
     } catch (err) {
       event('gateway.voice_synth_failed', {}, err instanceof Error ? err.message : String(err));
+      noticeVoiceFailure();
       return;
     }
     event('gateway.voice_synth', {
@@ -5521,6 +5752,7 @@ export class Gateway {
         );
       if (!transcoded.ok) {
         event('gateway.voice_transcode_failed', { code: transcoded.code }, transcoded.error);
+        noticeVoiceFailure();
         return;
       }
       bytes = transcoded.data;
@@ -5530,6 +5762,7 @@ export class Gateway {
       // produces an undownloadable document, not a voice note — so skip and say
       // so, rather than deliver something that looks like a bug to the user.
       event('gateway.voice_format_unsupported', { format: synthesized.format, accepted: targets });
+      noticeVoiceFailure();
       return;
     }
 
@@ -5537,6 +5770,7 @@ export class Gateway {
     const maxBytes = sink.voiceCaps.outbound.maxBytes;
     if (maxBytes !== undefined && bytes.length > maxBytes) {
       event('gateway.voice_too_large', { bytes: bytes.length, maxBytes });
+      noticeVoiceFailure();
       return;
     }
 
@@ -5911,9 +6145,16 @@ export class Gateway {
     // Interrupted by its runtime's shutdown: no result to relay, and the error
     // is our own constant — a trusted one-liner, nothing to wrap.
     if (job.status === 'aborted') {
-      return `[background job ${shortId} ${labelPart}interrupted by a restart or config change — ask again to rerun]`;
+      return `background job ${shortId} ${labelPart}was interrupted by a restart or config change — ask again to rerun`;
     }
-    const envelope = `[background job ${shortId} ${labelPart}finished — status: ${job.status}]`;
+    // H6 — a human sentence, not a bracketed record. A failure names where
+    // the detail lives (`ethos process logs <id>`).
+    const envelope =
+      job.status === 'done'
+        ? `background job ${shortId} ${labelPart}finished`
+        : job.status === 'failed'
+          ? `background job ${shortId} ${labelPart}failed — ethos process logs ${shortId}`
+          : `background job ${shortId} ${labelPart}finished — status: ${job.status}`;
     const body =
       job.status === 'done' ? (job.summary ?? '(no summary)') : (job.error ?? 'unknown error');
     const wrapped = wrapUntrusted({ content: body, toolName: 'background_job_summary' });
@@ -6016,7 +6257,15 @@ export class Gateway {
         // Recorded so a message this chat sends during the drain is not told
         // the same thing twice (`refuseWhileClosing` dedups on the lane key).
         this.outboundDedup.record(laneKey, opts.notify);
-        sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
+        sends.push(
+          ctx.adapter
+            .send(ctx.chatId, {
+              text: opts.notify,
+              // H6 — back into the thread the interrupted turn was in.
+              ...(ctx.threadId ? { threadId: ctx.threadId } : {}),
+            })
+            .catch(() => {}),
+        );
       }
       if (sends.length > 0) {
         let pending = sends.length;

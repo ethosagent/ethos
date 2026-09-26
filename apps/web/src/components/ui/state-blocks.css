@@ -1,0 +1,31 @@
+/* LoadingState / EmptyState (N5c). Colocated — styles.css is owned by a
+   concurrent change; tokens are the --ethos-* skin variables. */
+
+.state-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.state-loading-label {
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
+.state-empty {
+  padding: 24px 0;
+}
+.state-empty-title {
+  font-size: 14px;
+  color: var(--ethos-text);
+}
+.state-empty-hint {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+  max-width: 560px;
+}
+.state-empty-action {
+  margin-top: 12px;
+}

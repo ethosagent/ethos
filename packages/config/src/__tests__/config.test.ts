@@ -441,6 +441,46 @@ describe('parseConfigYaml — a2a.enabled', () => {
   });
 });
 
+describe('parseConfigYaml — display.slow_turn_notice_ms (UD3)', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses the number', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: 12000'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBe(12000);
+  });
+
+  it('keeps 0 (disabled) distinct from absent (consumer default)', async () => {
+    const disabled = await loadYaml([...base, 'display.slow_turn_notice_ms: 0'].join('\n'));
+    expect(disabled.displaySlowTurnNoticeMs).toBe(0);
+    const absent = await loadYaml(base.join('\n'));
+    expect(absent.displaySlowTurnNoticeMs).toBeUndefined();
+  });
+
+  it('drops a non-numeric value rather than carrying NaN', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: soon'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back, including 0', async () => {
+    for (const value of [8000, 0]) {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      const original: EthosConfig = {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: 'sk',
+        personality: 'researcher',
+        displaySlowTurnNoticeMs: value,
+      };
+      await writeConfig(storage, original, new InMemorySecretsResolver());
+      const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+      expect(raw).toContain(`display.slow_turn_notice_ms: ${value}`);
+      const roundTripped = await readRawConfig(storage);
+      expect(roundTripped?.displaySlowTurnNoticeMs).toBe(value);
+    }
+  });
+});
+
 describe('parseConfigYaml — a2a.peering.allowPrivateUrls', () => {
   const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
 

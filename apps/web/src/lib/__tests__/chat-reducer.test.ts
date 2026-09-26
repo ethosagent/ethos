@@ -948,7 +948,7 @@ describe('applyEvent — error and unhandled events', () => {
     let s: ChatState = initialChatState;
     s = applyEvent(s, { type: 'text_delta', text: 'half-done' }, NOW);
     s = applyEvent(s, { type: 'error', error: 'rate limited', code: 'RATE_LIMIT' }, NOW);
-    expect(s.error).toBe('rate limited');
+    expect(s.error).toEqual({ message: 'rate limited', code: 'RATE_LIMIT' });
     expect(s.isStreaming).toBe(false);
     // `error` is a terminal transition now, so the partial answer is preserved
     // where every other ended turn lives — in `messages`, not held open as an
@@ -957,14 +957,25 @@ describe('applyEvent — error and unhandled events', () => {
     expect(finalised?.role === 'assistant' && finalised.blocks).toHaveLength(1);
   });
 
-  it('thinking / push events do not mutate state', () => {
-    const events: SseEvent[] = [
-      { type: 'thinking_delta', thinking: 'planning' },
-      { type: 'message_persisted', messageId: 'm1', role: 'assistant' },
-    ];
+  it('push events do not mutate state', () => {
+    const events: SseEvent[] = [{ type: 'message_persisted', messageId: 'm1', role: 'assistant' }];
     let s: ChatState = initialChatState;
     for (const event of events) s = applyEvent(s, event, NOW);
     expect(s).toEqual(initialChatState);
+  });
+
+  // A5 (ux-feedback plan) — extended reasoning is a LIVE stream: without this,
+  // 20 s of visible thinking tripped the `⚠ still working` stall warning.
+  it('thinking_delta refreshes liveness, sets the thinking phase and feeds the preview', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'thinking_delta', thinking: 'planning the ' }, NOW + 5);
+    s = applyEvent(s, { type: 'thinking_delta', thinking: 'refactor' }, NOW + 9);
+    expect(s.lastStreamEventAt).toBe(NOW + 9);
+    expect(s.phase).toBe('thinking');
+    expect(s.isStreaming).toBe(true);
+    expect(s.thinking).toBe('planning the refactor');
+    // The preview never lands in the bubble (DESIGN.md item 1).
+    expect(s.currentTurn).toBeNull();
   });
 
   it('usage tracks the latest inputTokens as context size and reset clears it', () => {
@@ -990,7 +1001,7 @@ describe('applyEvent — error and unhandled events', () => {
 describe('applyAction — UI/lifecycle transitions', () => {
   it('submit-user-message appends the user bubble and clears prior error', () => {
     const s = applyAction(
-      { ...initialChatState, error: 'previous failure' },
+      { ...initialChatState, error: { message: 'previous failure' } },
       { type: 'submit-user-message', id: 'u1', text: 'hi', timestamp: 1 },
     );
     expect(s.messages).toEqual([{ id: 'u1', role: 'user', content: 'hi', timestamp: 1 }]);
@@ -1290,7 +1301,9 @@ describe('applyAction — UI/lifecycle transitions', () => {
     expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
   });
 
-  it('send-failed drops the optimistic user message and surfaces the error', () => {
+  // W1 (ux-feedback plan) — nothing vanishes (DESIGN.md item 7): a refused
+  // send keeps the user's words on screen, flagged, with the error on them.
+  it('send-failed KEEPS the optimistic bubble, marked failed, and surfaces the error', () => {
     let s = applyAction(initialChatState, {
       type: 'submit-user-message',
       id: 'u1',
@@ -1298,8 +1311,23 @@ describe('applyAction — UI/lifecycle transitions', () => {
       timestamp: 1,
     });
     s = applyAction(s, { type: 'send-failed', userMessageId: 'u1', error: 'offline' });
+    expect(s.messages).toEqual([
+      { id: 'u1', role: 'user', content: 'hi', timestamp: 1, status: 'failed', error: 'offline' },
+    ]);
+    expect(s.error).toEqual({ message: 'offline' });
+  });
+
+  it('discard-failed-message removes the failed bubble and clears the banner', () => {
+    let s = applyAction(initialChatState, {
+      type: 'submit-user-message',
+      id: 'u1',
+      text: 'hi',
+      timestamp: 1,
+    });
+    s = applyAction(s, { type: 'send-failed', userMessageId: 'u1', error: 'offline' });
+    s = applyAction(s, { type: 'discard-failed-message', id: 'u1' });
     expect(s.messages).toEqual([]);
-    expect(s.error).toBe('offline');
+    expect(s.error).toBeNull();
   });
 
   it('send-failed ends the visible turn — no status line left behind the banner', () => {
@@ -1362,8 +1390,10 @@ describe('applyAction — UI/lifecycle transitions', () => {
     s = applyAction(s, { type: 'send-failed', userMessageId: 'u1', error: 'offline' });
     expect(s.phase).toBeNull();
     expect(actions(trailOf(s, turnId)).map((a) => a.status)).toEqual(['failed']);
-    // The optimistic user bubble still goes; the assistant turn it produced stays.
-    expect(s.messages.map((m) => m.role)).toEqual(['assistant']);
+    // The user bubble stays (marked failed, W1); the assistant turn it produced stays too.
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    const bubble = s.messages[0];
+    expect(bubble?.role === 'user' && bubble.status).toBe('failed');
   });
 });
 
@@ -1761,8 +1791,8 @@ describe('phases and the trail lifecycle', () => {
 
     s = applyAction(s, { type: 'abort-failed', reason: 'network unreachable' });
     expect(s.abortedTurn).toBe(false);
-    expect(s.error).toContain('Stop did not reach the server');
-    expect(s.error).toContain('network unreachable');
+    expect(s.error?.message).toContain('Stop did not reach the server');
+    expect(s.error?.message).toContain('network unreachable');
 
     // The suppression is lifted, so what the server is still doing is visible
     // again instead of silently dropped.
@@ -1790,6 +1820,11 @@ describe('phases and the trail lifecycle', () => {
       { type: 'tool_start', toolCallId: 'b', toolName: 'y', args: {} },
       { type: 'text_delta', text: 'zombie' },
       { type: 'thinking_delta', thinking: 'still going' },
+      // A2 — the loop's own post-abort `error` event: a red "Aborted" banner
+      // right after confirming the Stop would call the user's own action a
+      // failure.
+      { type: 'error', error: 'Aborted', code: 'aborted' },
+      { type: 'halt', kind: 'budget', rule: 'tool_calls', message: 'budget reached' },
       { type: 'done', text: 'zombie', turnCount: 1 },
     ] satisfies SseEvent[]) {
       s = applyEvent(s, event, NOW);
@@ -1826,7 +1861,7 @@ describe('phases and the trail lifecycle', () => {
     const turnId = s.currentTurn?.id ?? '';
     s = applyEvent(s, { type: 'error', error: 'rate limited', code: 'RATE_LIMIT' }, NOW);
 
-    expect(s.error).toBe('rate limited');
+    expect(s.error).toEqual({ message: 'rate limited', code: 'RATE_LIMIT' });
     expect(s.currentTurn).toBeNull();
     expect(s.turnStartedAt).toBeNull();
     expect(s.phase).toBeNull();
@@ -2103,5 +2138,164 @@ describe('history-loaded — provider compaction row', () => {
       { kind: 'text', content: COMPACTION_MARKER },
       { kind: 'text', content: 'reply' },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ux-feedback-and-config-clarity — A1/A3/A4/W4
+// ---------------------------------------------------------------------------
+
+describe('applyEvent — halt (A1)', () => {
+  it('records the halt as a warning notice on the turn trail', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'text_delta', text: 'partial answer' }, NOW);
+    s = applyEvent(
+      s,
+      {
+        type: 'halt',
+        kind: 'budget',
+        rule: 'tool_calls',
+        toolName: 'bash',
+        count: 12,
+        message: 'per-turn tool budget reached (12/12)',
+      },
+      NOW,
+    );
+    const entries = liveTrail(s);
+    expect(entries).toHaveLength(1);
+    const notice = entries[0];
+    expect(notice?.kind).toBe('notice');
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.tone).toBe('warning');
+    expect(notice.word).toBe('stopped early');
+    expect(notice.subject).toBe('budget · tool_calls');
+    expect(notice.detail).toBe('per-turn tool budget reached (12/12)');
+  });
+
+  it('a halt before any other event still gets a turn to live on', () => {
+    const s = applyEvent(
+      initialChatState,
+      { type: 'halt', kind: 'watcher', rule: 'loop-detect', message: 'watcher paused the turn' },
+      NOW,
+    );
+    expect(s.currentTurn).not.toBeNull();
+    expect(liveTrail(s).map((e) => e.kind)).toEqual(['notice']);
+  });
+});
+
+describe('applyEvent — error keeps code and trace (A3)', () => {
+  it('carries code and the run_start traceId onto state.error', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(
+      s,
+      {
+        type: 'run_start',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        source: 'personality',
+        traceId: 'trace-7f3a',
+      },
+      NOW,
+    );
+    s = applyEvent(s, { type: 'text_delta', text: 'x' }, NOW);
+    s = applyEvent(s, { type: 'error', error: 'boom from provider', code: 'llm_error' }, NOW);
+    expect(s.error).toEqual({
+      message: 'boom from provider',
+      code: 'llm_error',
+      traceId: 'trace-7f3a',
+    });
+  });
+
+  it('clear-error clears it', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'error', error: 'boom', code: 'llm_error' }, NOW);
+    expect(s.error).not.toBeNull();
+    s = applyAction(s, { type: 'clear-error' });
+    expect(s.error).toBeNull();
+  });
+});
+
+describe('applyEvent — run_start meta and deviation (A4)', () => {
+  const runStart = {
+    type: 'run_start' as const,
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    source: 'personality' as const,
+  };
+
+  it('stores provider and model for the live turn and moves them to the finalised turn', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, runStart, NOW);
+    expect(s.runMeta).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
+    s = applyEvent(s, { type: 'text_delta', text: 'hi' }, NOW);
+    const turnId = s.currentTurn?.id ?? '';
+    s = applyEvent(s, { type: 'done', text: 'hi', turnCount: 1 }, NOW);
+    expect(s.runMeta).toBeNull();
+    expect(s.turnMeta[turnId]).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
+  });
+
+  it('a deviation lands as a warning notice row the moment run_start arrives', () => {
+    const deviation = {
+      kind: 'chain-failover' as const,
+      declared: 'claude-opus',
+      effective: 'claude-sonnet-5',
+      reason: 'provider anthropic failed',
+      fix: 'check providers in ~/.ethos/config.yaml',
+      once: false,
+    };
+    const s = applyEvent(initialChatState, { ...runStart, deviation }, NOW);
+    const entries = liveTrail(s);
+    expect(entries).toHaveLength(1);
+    const notice = entries[0];
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.word).toBe('model deviation');
+    expect(notice.subject).toBe('claude-opus → claude-sonnet-5');
+    expect(notice.detail).toBe(
+      'provider anthropic failed — check providers in ~/.ethos/config.yaml',
+    );
+  });
+
+  it('a user-audience _loop progress is a notice row, not a tool row or status text', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'text_delta', text: 'working' }, NOW);
+    s = applyEvent(
+      s,
+      {
+        type: 'tool_progress',
+        toolName: '_loop',
+        message: 'context overflow — compacting and retrying',
+        audience: 'user',
+      },
+      NOW,
+    );
+    const entries = liveTrail(s);
+    expect(entries.map((e) => e.kind)).toEqual(['notice']);
+    const notice = entries[0];
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.subject).toBe('context overflow — compacting and retrying');
+    // Not painted into the status line as a transient tool label.
+    expect(s.currentOp).toBeNull();
+  });
+});
+
+describe('applyEvent — memory.captured (W4)', () => {
+  it('appends a ✓ remembered notice to the newest finalised turn', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'text_delta', text: 'noted.' }, NOW);
+    const turnId = s.currentTurn?.id ?? '';
+    s = applyEvent(s, { type: 'done', text: 'noted.', turnCount: 1 }, NOW);
+    s = applyEvent(s, { type: 'memory.captured', summary: 'prefers pnpm over npm' }, NOW);
+    const entries = trailOf(s, turnId);
+    expect(entries).toHaveLength(1);
+    const notice = entries[0];
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.tone).toBe('ok');
+    expect(notice.word).toBe('remembered');
+    expect(notice.subject).toBe('prefers pnpm over npm');
+  });
+
+  it('with no assistant turn at all, the capture is dropped rather than minting one', () => {
+    const s = applyEvent(initialChatState, { type: 'memory.captured', summary: 'x' }, NOW);
+    expect(s).toEqual(initialChatState);
   });
 });

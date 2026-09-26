@@ -127,6 +127,18 @@ describe('SSE event union', () => {
     { type: 'context_meta', data: { skill_files_used: ['summarize'] } },
     { type: 'done', text: 'final', turnCount: 1 },
     { type: 'error', error: 'overloaded', code: 'overloaded' },
+    // A1 (ux-feedback plan) — the halt event mirrors the `halt` AgentEvent:
+    // a budget halt carries the tripping tool and count, a watcher halt
+    // needs only its rule and message.
+    {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool-budget',
+      toolName: 'bash',
+      count: 12,
+      message: 'tool budget reached (12/12)',
+    },
+    { type: 'halt', kind: 'watcher', rule: 'repeat-tool', message: 'watcher paused the turn' },
     { type: 'message_persisted', messageId: 'msg_1', role: 'assistant' },
     {
       type: 'tool.approval_required',
@@ -213,6 +225,27 @@ describe('SSE event union', () => {
   it('rejects an unknown discriminator', () => {
     expect(() =>
       SseEventSchema.parse({ type: 'not_a_real_event' as 'text_delta', text: 'x' }),
+    ).toThrow();
+  });
+
+  it('rejects a halt with kind outside the enum', () => {
+    expect(() =>
+      SseEventSchema.parse({
+        type: 'halt',
+        kind: 'panic', // not 'budget' | 'watcher'
+        rule: 'tool-budget',
+        message: 'x',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a halt missing its message', () => {
+    expect(() =>
+      SseEventSchema.parse({
+        type: 'halt',
+        kind: 'budget',
+        rule: 'tool-budget',
+      }),
     ).toThrow();
   });
 

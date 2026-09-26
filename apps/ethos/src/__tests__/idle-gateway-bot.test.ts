@@ -184,7 +184,8 @@ describe('the idle gateway bot', () => {
     fire(job('job-1'));
     await waitUntil(() => sends.length > 0);
     expect(sends[0]?.chatId).toBe('chat-bg');
-    expect(sends[0]?.text).toContain('finished — status: done');
+    // H6 wording (plan ux-feedback-and-config-clarity): a human sentence.
+    expect(sends[0]?.text).toContain('background job job-1 "task" finished');
     expect(sends[0]?.text).toContain('child result: 42');
     expect(store.claimDelivery).toHaveBeenCalledWith('job-1');
   });

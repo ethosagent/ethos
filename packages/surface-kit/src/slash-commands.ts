@@ -16,7 +16,7 @@
 // executor, not averaged away in this registry.
 // ---------------------------------------------------------------------------
 
-export type SlashSurface = 'cli' | 'gateway' | 'web';
+export type SlashSurface = 'cli' | 'gateway' | 'web' | 'tui';
 
 export interface SlashCommandDef {
   name: string;
@@ -40,13 +40,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'help',
     description: 'Show all slash commands',
     usage: '/help',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'new',
     description: 'Start a fresh session',
     usage: '/new',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'reset',
@@ -59,31 +59,31 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'fork',
     description: 'Branch this session into a new one with the same history',
     usage: '/fork',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'branches',
     description: "List this session's branches",
     usage: '/branches',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'branch',
     description: 'Switch to branch <n> from /branches',
     usage: '/branch <n>',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'personality',
     description: 'Show or switch personality',
     usage: '/personality [id|list]',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'model',
-    description: 'Show current model (switch requires restart)',
+    description: 'Switch model for this session',
     usage: '/model [name]',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'tui'],
   },
   {
     name: 'tier',
@@ -95,13 +95,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'memory',
     description: "Show this personality's memory (MEMORY.md, USER.md)",
     usage: '/memory',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'tui'],
   },
   {
     name: 'usage',
     description: 'Show token and cost stats',
     usage: '/usage',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'compact',
@@ -113,13 +113,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'budget',
     description: 'Show session spend against cap',
     usage: '/budget [reset]',
-    surfaces: ['cli', 'gateway'],
+    surfaces: ['cli', 'gateway', 'tui'],
   },
   {
     name: 'verbose',
     description: 'Cycle or set output verbosity',
     usage: '/verbose [quiet|default|verbose|debug|status]',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'tui'],
   },
   {
     name: 'busy',
@@ -169,7 +169,26 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     usage: '/undo [N]',
     surfaces: ['cli'],
   },
-  { name: 'exit', description: 'Quit ethos', usage: '/exit', surfaces: ['cli'] },
+  // --- CLI chat commands the table was missing (C5, added by the chat wave) ---
+  {
+    name: 'title',
+    description: 'Show or set a name for this session',
+    usage: '/title [name]',
+    surfaces: ['cli'],
+  },
+  {
+    name: 'attach',
+    description: 'Attach a file to the next message',
+    usage: '/attach <path>',
+    surfaces: ['cli'],
+  },
+  {
+    name: 'dry-run',
+    description: 'Toggle dry-run mode (plan tools without executing)',
+    usage: '/dry-run on|off',
+    surfaces: ['cli'],
+  },
+  { name: 'exit', description: 'Quit ethos', usage: '/exit', surfaces: ['cli', 'tui'] },
   {
     name: 'quit',
     description: 'Alias for /exit',
@@ -191,6 +210,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     surfaces: ['gateway'],
   },
   {
+    name: 'status',
+    description: 'Usage plus personality · model · session',
+    usage: '/status',
+    surfaces: ['gateway'],
+  },
+  {
     name: 'queue',
     description: 'Show queued turns for this chat',
     usage: '/queue',
@@ -200,7 +225,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'background',
     description: 'Spawn a background agent task',
     usage: '/background <prompt>',
-    surfaces: ['gateway'],
+    surfaces: ['cli', 'gateway'],
   },
   {
     name: 'voice',
@@ -213,6 +238,55 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     description: 'Hold background notices in this chat for a while',
     usage: '/mute <30m|2h|1d|off>',
     surfaces: ['gateway'],
+  },
+  // --- TUI-only built-ins (apps/tui help + completion panel) ---
+  {
+    name: 'sessions',
+    description: 'Open session picker',
+    usage: '/sessions',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'readonly',
+    description: 'Toggle readonly mode',
+    usage: '/readonly',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'details',
+    description: 'Toggle section visibility',
+    usage: '/details [hidden|collapsed|expanded] [section]',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'skin',
+    description: 'Switch UI theme',
+    usage: '/skin [list|<name>]',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'tools',
+    description: 'List all available tools',
+    usage: '/tools',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'skills',
+    description: 'List available skills',
+    usage: '/skills',
+    surfaces: ['tui'],
+  },
+  {
+    name: 'goal',
+    description: 'Start an autonomous goal run',
+    usage: '/goal <text>',
+    surfaces: ['cli', 'tui'],
+  },
+  {
+    name: 'goals',
+    description: 'List recent goals',
+    usage: '/goals',
+    surfaces: ['cli', 'tui'],
   },
 ];
 

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import { resolveBackendBaseUrl } from './connection';
+import { showBackgroundNotification } from './notifications';
 
 let quickChatWindow: BrowserWindow | null = null;
 
@@ -103,5 +104,23 @@ export function registerQuickChatIpc(mainWindow: BrowserWindow): void {
     mainWindow.show();
     mainWindow.focus();
     hideQuickChat();
+  });
+
+  // W3 (ux-feedback plan) — a QuickChat reply finished while its window was
+  // hidden. `showBackgroundNotification` skips it when the main window is
+  // visible; a click shows the main window and sends `navigate:session`,
+  // whose renderer subscriber (apps/web App.tsx `useDesktopNavigation`) opens
+  // the session.
+  ipcMain.on('quick-chat:notify-done', (_event, req: unknown) => {
+    if (typeof req !== 'object' || req === null) return;
+    const { sessionId, title, body }: Record<string, unknown> = Object.fromEntries(
+      Object.entries(req),
+    );
+    if (typeof title !== 'string' || typeof body !== 'string') return;
+    showBackgroundNotification(mainWindow, {
+      title,
+      body,
+      ...(typeof sessionId === 'string' && sessionId !== '' ? { route: sessionId } : {}),
+    });
   });
 }

@@ -119,6 +119,57 @@ describe('ChatService', () => {
     unsubscribe();
   });
 
+  it('forwards a halt to the SSE stream, whole, before done (ux-feedback A1)', async () => {
+    const service = makeService([
+      { type: 'text_delta', text: 'partial answer' },
+      {
+        type: 'halt',
+        kind: 'budget',
+        rule: 'tool-budget',
+        toolName: 'bash',
+        count: 12,
+        message: 'tool budget reached (12/12)',
+      },
+      { type: 'done', text: 'partial answer', turnCount: 1 },
+    ]);
+    const events: SseEvent[] = [];
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    const unsubscribe = service.subscribe(result.sessionId, 0, (b) => {
+      events.push(b.event);
+    });
+
+    await waitForEvent(events, (e) => e.some((x) => x.type === 'done'));
+
+    expect(events.find((e) => e.type === 'halt')).toEqual({
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool-budget',
+      toolName: 'bash',
+      count: 12,
+      message: 'tool budget reached (12/12)',
+    });
+    unsubscribe();
+  });
+
+  it('forwards the tool_progress audience instead of stamping user (ux-feedback C5)', async () => {
+    const service = makeService([
+      { type: 'tool_progress', toolName: 'bash', message: 'internal warn', audience: 'internal' },
+      { type: 'tool_progress', toolName: 'bash', message: 'reading…', audience: 'user' },
+      { type: 'done', text: 'ok', turnCount: 1 },
+    ]);
+    const events: SseEvent[] = [];
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    const unsubscribe = service.subscribe(result.sessionId, 0, (b) => {
+      events.push(b.event);
+    });
+
+    await waitForEvent(events, (e) => e.some((x) => x.type === 'done'));
+
+    const progress = events.filter((e) => e.type === 'tool_progress');
+    expect(progress.map((e) => e.audience)).toEqual(['internal', 'user']);
+    unsubscribe();
+  });
+
   it('subscribe replays buffered events with seq > sinceSeq', async () => {
     const service = makeService();
     const result = await service.send({ clientId: 'tab-1', text: 'hi' });

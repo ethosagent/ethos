@@ -1,4 +1,4 @@
-import { message } from 'antd';
+import { App as AntApp } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceRecorder } from '../../hooks/useVoiceRecorder';
 import { rpc } from '../../rpc';
@@ -56,6 +56,9 @@ export function VoiceButton({
   micBusy,
   accent,
 }: VoiceButtonProps) {
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message } = AntApp.useApp();
   const { isRecording, elapsedMs, audioLevels, startRecording, stopRecording, cancelRecording } =
     useVoiceRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -105,7 +108,7 @@ export function VoiceButton({
     } finally {
       setIsTranscribing(false);
     }
-  }, [stopRecording, onTranscript, onRecordingChange]);
+  }, [stopRecording, onTranscript, onRecordingChange, message]);
 
   const handlePointerLeave = useCallback(() => {
     if (longPressRef.current) {

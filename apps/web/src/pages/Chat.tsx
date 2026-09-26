@@ -8,6 +8,7 @@ import { TakeoverMode } from '../components/browser/TakeoverMode';
 import { TakeoverUnavailableNote } from '../components/browser/TakeoverStage';
 import { takeoverStageFits } from '../components/browser/useTakeoverSocket';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
+import { ChatErrorBanner } from '../components/chat/ChatErrorBanner';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
 import { CredentialCard } from '../components/chat/CredentialCard';
@@ -153,6 +154,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     loadOlder,
     hasOlder,
     olderStatus,
+    clearError,
+    retryMessage,
+    discardMessage,
   } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
@@ -301,12 +305,44 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
 
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
 
+  // A4 — per-turn run meta for the trail footers: finalised turns from the
+  // reducer's map, plus the live turn's own.
+  const turnMeta = useMemo(() => {
+    if (!state.currentTurn || !state.runMeta) return state.turnMeta;
+    return { ...state.turnMeta, [state.currentTurn.id]: state.runMeta };
+  }, [state.turnMeta, state.currentTurn, state.runMeta]);
+
   // Suggestion pills (empty state + `recommend_actions` cards) fill the
   // composer draft. `seq` makes a repeat pick a distinct event.
   const [suggestion, setSuggestion] = useState<{ text: string; seq: number } | undefined>();
   const handleSuggestPrompt = useCallback((text: string) => {
     setSuggestion((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
   }, []);
+
+  // W1 — the failed-bubble verbs. Stable identities: UserBubble rows are
+  // memoized against them. Discard puts the text back in the composer through
+  // the same suggestion path a pill uses.
+  const handleRetryMessage = useCallback(
+    (messageId: string) => {
+      void retryMessage(messageId);
+    },
+    [retryMessage],
+  );
+  const handleDiscardMessage = useCallback(
+    (messageId: string) => {
+      const draft = discardMessage(messageId);
+      if (draft) handleSuggestPrompt(draft);
+    },
+    [discardMessage, handleSuggestPrompt],
+  );
+
+  // A3 — the banner's Retry for a retryable turn error: ask the same question
+  // again. The last user message is the turn the error ended.
+  const handleRetryTurn = useCallback(() => {
+    const lastUser = [...state.messages].reverse().find((m) => m.role === 'user');
+    if (!lastUser) return;
+    void sendMessage(lastUser.content);
+  }, [state.messages, sendMessage]);
 
   // `?draft=` — a prompt handed over from another surface (today: the recipe
   // post-install panel's "Open chat with …"). It fills the composer through the
@@ -1024,7 +1060,11 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         runSurface={runSurface}
         trail={state.trail}
         stoppedTurnIds={state.stoppedTurnIds}
+        turnMeta={turnMeta}
+        onRetryMessage={handleRetryMessage}
+        onDiscardMessage={handleDiscardMessage}
         personalityId={personalityId}
+        personalityName={coordinatorName}
         model={model}
         sessionId={currentSessionId ?? undefined}
         onSuggestPrompt={handleSuggestPrompt}
@@ -1047,6 +1087,8 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         label={state.currentOp}
         elapsedMs={elapsedMs}
         stalled={isStalled}
+        thinking={state.thinking}
+        reconnecting={state.connection === 'reconnecting'}
       />
       <div>
         {state.pendingCredential ? (
@@ -1058,9 +1100,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
           />
         ) : null}
         {state.error ? (
-          <div className="chat-error" role="alert">
-            {state.error}
-          </div>
+          <ChatErrorBanner error={state.error} onDismiss={clearError} onRetry={handleRetryTurn} />
         ) : null}
         <Composer
           personalityId={personalityId}

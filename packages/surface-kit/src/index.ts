@@ -10,6 +10,12 @@
 
 export { BRANCH_USAGE, formatBranchList, pickBranch } from './branches';
 export {
+  CHAT_ERROR_MAP,
+  type ChatErrorDescription,
+  type ChatErrorEntry,
+  describeChatError,
+} from './chat-errors';
+export {
   createEventTranslator,
   credentialInstruction,
   credentialSetCommand,

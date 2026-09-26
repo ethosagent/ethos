@@ -1503,6 +1503,44 @@ const VoiceBotUpdateSchema = z.object({
   }),
 });
 
+/**
+ * B3 (plan ux-feedback-and-config-clarity §6.2–6.3) — the `Resolved` block:
+ * which configuration is actually in effect, from `resolveEffectiveConfig`
+ * in `@ethosagent/config`. Settings → General renders it read-only; the same
+ * resolver feeds `ethos status` and `ethos doctor`. `apiKey` carries only the
+ * provider and the SOURCE of the key (env var name / vault ref) — never a
+ * value or preview.
+ */
+const ConfigResolvedSchema = z.object({
+  /** `ETHOS_STATE_DIR` when set, else `~/.ethos`. */
+  stateDir: z.string(),
+  configPath: z.string(),
+  personality: z.object({
+    id: z.string(),
+    /** Which key decided it (`default` = neither key set). */
+    source: z.enum(['activeContext', 'personality', 'default']),
+    /** The `personality:` value an activeContext outranked. */
+    shadowed: z.string().optional(),
+  }),
+  model: z.object({
+    id: z.string(),
+    /** The config-level rung that decided `id` (`model:` or `modelRouting.<id>`). */
+    rung: z.string(),
+  }),
+  apiKey: z.object({
+    provider: z.string(),
+    source: z.enum(['env', 'vault', 'inline']),
+    /** The vault ref consulted (absent for `inline`). */
+    ref: z.string().optional(),
+    /** The environment variable that supplied the key (source `env`). */
+    envVar: z.string().optional(),
+    /** Present when the env var wins AND the vault also holds the ref. */
+    overrides: z.literal('vault').optional(),
+  }),
+  /** Parse-time warnings for the file as it stands (B2 unknown-key lines). */
+  warnings: z.array(z.string()),
+});
+
 const ConfigGetOutput = z.object({
   provider: z.string(),
   model: z.string(),
@@ -1530,6 +1568,8 @@ const ConfigGetOutput = z.object({
   /** What the provider-chain codec dropped out of config.yaml and why (a
    *  `providers.<n>` index with no `provider` line loses the whole entry). */
   providersNotices: z.array(z.string()),
+  /** The effective configuration (B3) — see `ConfigResolvedSchema`. */
+  resolved: ConfigResolvedSchema,
   approvalMode: z.enum(['manual', 'smart', 'off']),
   verbosity: z.enum(['concise', 'balanced', 'verbose']),
   debugMode: z.boolean(),
@@ -2524,6 +2564,13 @@ const ConfigUpdateOutput = z.object({
    * with `id: null` / `''` is never adopted (adopting would write its id back).
    */
   adoptedModels: z.array(ModelRegistryAdoptedModelSchema).optional(),
+  /**
+   * B2 (web save half): the config parser's warnings for the file THIS save
+   * just wrote — `config.yaml:<n> unknown key '<k>' — did you mean …?` lines
+   * for keys the save kept in passthrough but nothing reads. Absent when the
+   * parse raised none. The settings save bar renders the count and the lines.
+   */
+  warnings: z.array(z.string()).optional(),
 });
 
 /** @experimental */

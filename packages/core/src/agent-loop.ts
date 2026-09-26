@@ -894,6 +894,15 @@ export class AgentLoop {
           ? await applyOverflowRetry(turnDeps, llmMessages, systemPrompt ?? '', personality, meta)
           : { retried: false };
         if (retry.retried) {
+          // A4 — the compact-and-retry is user-visible work, not silence.
+          // `_loop` is a reserved name (DefaultToolRegistry.register refuses
+          // `_`-prefixed tools), so renderers can key on it for notice style.
+          yield {
+            type: 'tool_progress',
+            toolName: '_loop',
+            message: 'context overflow — compacting and retrying',
+            audience: 'user',
+          };
           cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
           iteration--; // retry this iteration with the shrunk history
           continue;

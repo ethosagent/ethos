@@ -36,6 +36,15 @@ import {
 // differ only in URL, payload schema and registry key, so the pooling lives in
 // `subscribeShared` below and each family is a thin wrapper over it.
 
+/**
+ * W2 (ux-feedback plan) — where the shared EventSource stands.
+ *   `open`         — the stream is delivering.
+ *   `reconnecting` — dropped (or not yet opened); the browser is retrying.
+ *   `closed`       — the browser gave up (`readyState === CLOSED`); only a
+ *                    fresh subscribe reopens it.
+ */
+export type SseConnectionState = 'open' | 'reconnecting' | 'closed';
+
 export interface StreamSubscriberOptions<T> {
   /** Override the URL base. Defaults to same-origin. */
   apiBase?: string;
@@ -49,6 +58,12 @@ export interface StreamSubscriberOptions<T> {
    *  `'close'` from this handler to abort. Returning anything else (or
    *  nothing) keeps the stream open. */
   onError?: (err: unknown) => 'close' | undefined;
+  /**
+   * W2 — connection-state changes for the SHARED socket. Called once with the
+   * current state on subscribe, then on every transition, so a surface can say
+   * `reconnecting…` instead of silently missing events.
+   */
+  onConnectionState?: (state: SseConnectionState) => void;
 }
 
 export type SseSubscriberOptions = StreamSubscriberOptions<SseEvent>;
@@ -58,17 +73,21 @@ export interface SseSubscription {
   close(): void;
   /** Last seq the client observed. Useful for debugging mid-flight resume. */
   readonly lastSeq: number;
+  /** W2 — the shared socket's current state. */
+  readonly connectionState: SseConnectionState;
 }
 
 interface Subscriber<T> {
   onEvent: (event: T, seq: number) => void;
   onError?: (err: unknown) => 'close' | undefined;
+  onConnectionState?: (state: SseConnectionState) => void;
 }
 
 interface SharedConnection<T> {
   source: EventSource;
   subscribers: Set<Subscriber<T>>;
   lastSeq: number;
+  connectionState: SseConnectionState;
 }
 
 // Keyed by `${base}|${sessionId}` / `${base}|activity|${scope}` so a
@@ -139,7 +158,11 @@ function subscribeShared<T>(
   parse: (json: unknown) => T,
   opts: StreamSubscriberOptions<T>,
 ): SseSubscription {
-  const subscriber: Subscriber<T> = { onEvent: opts.onEvent, onError: opts.onError };
+  const subscriber: Subscriber<T> = {
+    onEvent: opts.onEvent,
+    onError: opts.onError,
+    onConnectionState: opts.onConnectionState,
+  };
 
   let conn = registry.get(key);
   if (!conn) {
@@ -157,11 +180,32 @@ function subscribeShared<T>(
       source,
       subscribers: new Set([subscriber]),
       lastSeq: opts.sinceSeq ?? 0,
+      // Not yet open — the browser is connecting, which the three-state
+      // vocabulary spells `reconnecting` (StatusBar draws it as the amber
+      // "connecting" dot either way).
+      connectionState: 'reconnecting',
     };
     registry.set(key, created);
     conn = created;
 
+    const setConnectionState = (next: SseConnectionState) => {
+      if (created.connectionState === next) return;
+      created.connectionState = next;
+      for (const sub of [...created.subscribers]) {
+        try {
+          sub.onConnectionState?.(next);
+        } catch {
+          // A state observer throwing must not break fan-out to the others.
+        }
+      }
+    };
+
+    source.onopen = () => setConnectionState('open');
+
     source.onmessage = (raw) => {
+      // A frame IS the connection working — belt-and-braces for environments
+      // whose EventSource never fires `onopen`.
+      setConnectionState('open');
       const seq = raw.lastEventId ? Number(raw.lastEventId) : created.lastSeq + 1;
       let parsed: T;
       try {
@@ -192,6 +236,11 @@ function subscribeShared<T>(
     };
 
     source.onerror = (err) => {
+      // The browser retries a dropped socket on its own; CLOSED (readyState 2
+      // per the EventSource spec — the numeric literal so a test double
+      // without the static constant compares correctly) means it gave up, and
+      // only a fresh subscribe reopens it.
+      setConnectionState(source.readyState === 2 ? 'closed' : 'reconnecting');
       for (const sub of [...created.subscribers]) {
         if (sub.onError?.(err) === 'close') created.subscribers.delete(sub);
       }
@@ -202,6 +251,13 @@ function subscribeShared<T>(
   }
 
   const shared = conn;
+  // A late subscriber joins mid-life: tell it where the socket already stands
+  // so it never renders a state it merely missed the transition into.
+  try {
+    subscriber.onConnectionState?.(shared.connectionState);
+  } catch {
+    // Same fail-open rule as fan-out above.
+  }
   return {
     close: () => {
       shared.subscribers.delete(subscriber);
@@ -209,6 +265,9 @@ function subscribeShared<T>(
     },
     get lastSeq() {
       return shared.lastSeq;
+    },
+    get connectionState() {
+      return shared.connectionState;
     },
   };
 }

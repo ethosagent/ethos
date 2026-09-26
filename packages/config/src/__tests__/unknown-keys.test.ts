@@ -28,10 +28,13 @@ describe('unknown config keys (U4)', () => {
     expect(warnings.join('\n')).toContain("did you mean 'providers.0.model'");
   });
 
-  it('a top-level typo suggests the top-level key', () => {
-    const warnings = unread(warningsOf('personalty: engineer'));
+  it('a top-level typo gets the line-numbered unknown-key warning (B2)', () => {
+    // No branch and no known family knows `personalty`, so the U4 notice is
+    // replaced by the sharper line-numbered form — one warning per mistake.
+    const warnings = warningsOf('personalty: engineer').filter((w) => w.includes('unknown key'));
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("'personalty'");
+    // 4 base lines → the typo is line 5.
+    expect(warnings[0]).toContain("config.yaml:5 unknown key 'personalty'");
     expect(warnings[0]).toContain("did you mean 'personality'");
   });
 
@@ -61,9 +64,10 @@ describe('unknown config keys (U4)', () => {
   });
 
   it('a key far from every read key is still named, without a guess', () => {
-    const warnings = unread(warningsOf('zzqx.frobnicate: 1'));
+    // A dotted key under NO known family gets the line-numbered form (B2).
+    const warnings = warningsOf('zzqx.frobnicate: 1').filter((w) => w.includes('unknown key'));
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("'zzqx.frobnicate'");
+    expect(warnings[0]).toContain("config.yaml:5 unknown key 'zzqx.frobnicate'");
     expect(warnings[0]).not.toContain('did you mean');
   });
 

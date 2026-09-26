@@ -108,8 +108,10 @@ describe('gateway — /cmd@this_bot runs the command', () => {
     const out = recordingAdapter('@ethos_bot');
     const s = recordingLoop();
     const gw = gateway(s.loop, out.adapter);
+    // Idle lane: /stop still resolves as a built-in (not a turn), and says
+    // nothing was running (H6).
     await gw.handleMessage(msg('/stop@ethos_bot'), out.adapter);
-    expect(out.sends.at(-1)).toBe('✓ Stopped.');
+    expect(out.sends.at(-1)).toBe('nothing is running');
     await gw.handleMessage(msg('/new@ethos_bot'), out.adapter);
     expect(out.sends.at(-1)).toBe('✓ New session started.');
     await gw.handleMessage(msg('after'), out.adapter);
@@ -167,7 +169,7 @@ describe('gateway — /cmd@this_bot runs the command', () => {
     await gw.handleMessage(msg('/NEW@ETHOS_BOT'), out.adapter);
     expect(out.sends.at(-1)).toBe('✓ New session started.');
     await gw.handleMessage(msg('/Stop@ethos_bot'), out.adapter);
-    expect(out.sends.at(-1)).toBe('✓ Stopped.');
+    expect(out.sends.at(-1)).toBe('nothing is running');
     expect(s.turns).toHaveLength(0);
   });
 });
@@ -204,5 +206,68 @@ describe('gateway — no adapter handle', () => {
     expect(s.turns[0]?.text).toContain('/new@other_bot');
     await gw.handleMessage(msg('/new'), out.adapter);
     expect(out.sends.at(-1)).toBe('✓ New session started.');
+  });
+});
+
+// H6 (plan ux-feedback-and-config-clarity) — /stop is honest about idleness,
+// and /status is a DISTINCT command: usage plus personality · model · session.
+describe('gateway — /stop honesty and /status (H6)', () => {
+  it('/stop on an idle lane answers "nothing is running" and aborts nothing', async () => {
+    const out = recordingAdapter();
+    const s = recordingLoop();
+    const gw = gateway(s.loop, out.adapter);
+    await gw.handleMessage(msg('/stop'), out.adapter);
+    expect(out.sends).toEqual(['nothing is running']);
+    expect(s.turns).toHaveLength(0);
+  });
+
+  it('/stop during a running turn still acks ✓ Stopped.', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const started: string[] = [];
+    const loop = {
+      hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) },
+      run: vi.fn((text: string) => {
+        started.push(text);
+        return (async function* () {
+          await gate;
+          yield { type: 'done', text: 'reply', turnCount: 1 };
+        })();
+      }),
+    };
+    const out = recordingAdapter();
+    const gw = gateway(loop, out.adapter);
+    const turn = gw.handleMessage(msg('slow one'), out.adapter);
+    while (started.length === 0) await new Promise((r) => setTimeout(r, 2));
+    await gw.handleMessage(msg('/stop'), out.adapter);
+    expect(out.sends).toContain('✓ Stopped.');
+    release();
+    await turn;
+  });
+
+  it('/status prints usage plus personality · model · session', async () => {
+    const out = recordingAdapter();
+    const s = recordingLoop();
+    const gw = gateway(s.loop, out.adapter);
+    await gw.handleMessage(msg('/status'), out.adapter);
+    expect(s.turns).toHaveLength(0);
+    const reply = out.sends.at(-1) ?? '';
+    expect(reply).toContain('Tokens: 0 in / 0 out');
+    expect(reply).toContain('Cost: $0.00000');
+    expect(reply).toContain(`default · default · ${LANE}`);
+  });
+
+  it('/status names the personality model when the loop resolves one', async () => {
+    const out = recordingAdapter();
+    const s = recordingLoop();
+    const loop = {
+      ...s.loop,
+      resolvePersonality: () => ({ id: 'default', model: 'claude-sonnet-5' }),
+    };
+    const gw = gateway(loop, out.adapter);
+    await gw.handleMessage(msg('/status'), out.adapter);
+    expect(out.sends.at(-1)).toContain(`default · claude-sonnet-5 · ${LANE}`);
   });
 });

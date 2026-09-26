@@ -129,6 +129,7 @@ describe('summariseTrail', () => {
     expect(summary).toEqual({
       actions: 2,
       findings: 1,
+      notices: 0,
       ok: 1,
       failed: 1,
       unrecorded: 0,
@@ -153,6 +154,7 @@ describe('summariseTrail', () => {
     expect(summariseTrail([])).toEqual({
       actions: 0,
       findings: 0,
+      notices: 0,
       ok: 0,
       failed: 0,
       unrecorded: 0,
