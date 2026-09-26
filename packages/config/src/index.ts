@@ -7643,6 +7643,9 @@ function buildBackgroundConfig(
  */
 const LEGACY_EXTERNAL_FIRE_URL = 'legacy:cron.trigger.external';
 
+/** Largest `cron.defaultMaxRunMs` a Node timer can hold (2^31-1 ms). */
+const CRON_MAX_RUN_MS_CEILING = 2_147_483_647;
+
 /**
  * Parse the `cron:` section from its flat-key bag (see `CronTopLevelConfig`).
  * Returns undefined when no recognised field is present so `config.cron` is
@@ -7763,7 +7766,17 @@ function buildCronConfig(
   }
   const maxRunMs = Number(kv.defaultMaxRunMs);
   if (kv.defaultMaxRunMs !== undefined && Number.isFinite(maxRunMs) && maxRunMs >= 1) {
-    cfg.defaultMaxRunMs = Math.floor(maxRunMs);
+    // Above 2^31-1 Node clamps the run's setTimeout to 1ms, so every cron run
+    // would time out at once. Mirrors `MAX_CRON_RUN_MS` in `@ethosagent/cron`,
+    // which `CronScheduler.runTurnCapped` also clamps to. Pinned by
+    // `__tests__/config-cron-max-run.test.ts`.
+    if (maxRunMs > CRON_MAX_RUN_MS_CEILING) {
+      deprecations.push(
+        `cron.defaultMaxRunMs: ${kv.defaultMaxRunMs} is above the maximum of ${CRON_MAX_RUN_MS_CEILING} (about 24.8 days) and was ignored; the built-in default applies.`,
+      );
+    } else {
+      cfg.defaultMaxRunMs = Math.floor(maxRunMs);
+    }
   }
   if (Object.keys(cfg).length === 0) return undefined;
   return cfg;
