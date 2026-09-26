@@ -14,13 +14,14 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 // analog for `process_start`. The pattern list is intentionally a verbatim
 // copy of the terminal guard's: the dangerous shapes are universally
 // dangerous and apply equally to either entry point. The same goes for
-// APPROVAL_PATTERNS (command substitution, which asks rather than refuses).
-// Keep the two files in sync when patterns are added.
+// APPROVAL_PATTERNS (command substitution, which asks rather than refuses)
+// and the inline-eval tokenizer (`inlineEvalReason`). Keep the two files in
+// sync when patterns are added.
 //
-// Same honest scope as the terminal guard: this is regex matching against
-// the raw command string, and the terminal guard's header lists what still
-// defeats it after the inline-eval wrappers became hardline (D1b). Pattern
-// matching is the v1 floor that catches accidents and lazy attacks;
+// Same honest scope as the terminal guard: regex matching against the raw
+// command string plus a small argv tokenizer for the inline-eval wrappers
+// (D1b), and the terminal guard's header lists what still defeats both.
+// Pattern matching is the v1 floor that catches accidents and lazy attacks;
 // production trust comes from sandbox attestation, not from this catalog.
 
 const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
@@ -106,40 +107,342 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
     test: (cmd) => /\btruncate\s+table\b/i.test(cmd),
     reason: 'destructive SQL DDL (TRUNCATE)',
   },
-  // D1(b) — inline-eval wrappers (plan openclaw-2026.9.6-gaps S6). Each one
-  // hands the shell a string the patterns above never see as a command, so the
-  // wrapper itself is the hardline shape, whatever it wraps.
-  {
-    // bash/sh/zsh/dash/ksh/fish -c '<string>' (also -lc, -ec, /bin/sh -c,
-    // `xargs sh -c`). `ssh -c <cipher>` does not match: the `sh` must start a word.
-    test: (cmd) =>
-      /(?:^|[\s;&|(`/])(?:ba|z|da|k|fi)?sh\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*c\b/.test(cmd),
-    reason: 'inline shell eval (sh -c)',
-  },
-  {
-    // eval in command position (start, after an operator, or after a wrapper).
-    test: (cmd) =>
-      /(?:^|[;&|({`\n]|\b(?:sudo|exec|xargs|env|command|builtin|nohup|time)\s)\s*eval\b/.test(cmd),
-    reason: 'inline shell eval (eval)',
-  },
-  {
-    // python -c '<code>' / python3 -c
-    test: (cmd) => /\bpython[0-9.]*\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*c\b/.test(cmd),
-    reason: 'inline interpreter eval (python -c)',
-  },
-  {
-    // node -e / -p / --eval / --print
-    test: (cmd) => /\bnode\s+(?:-[-a-zA-Z]+\s+)*(?:-[a-zA-Z]*[ep]\b|--eval\b|--print\b)/.test(cmd),
-    reason: 'inline interpreter eval (node -e)',
-  },
-  {
-    // Anything piped into a shell — the form a `base64 -d` payload takes to
-    // run. Matched on the pipe's target, not on `base64`, because the decoder
-    // has many spellings (`openssl base64 -d`, `xxd -r`, `printf '\x..'`).
-    test: (cmd) => /\|\s*(?:sudo\s+)?(?:\S*\/)?(?:ba|z|da|k|fi)?sh(?:\s|$)/.test(cmd),
-    reason: 'input piped into a shell',
-  },
 ];
+
+// ---------------------------------------------------------------------------
+// D1(b) — inline-eval wrappers (plan openclaw-2026.9.6-gaps S6), read from argv
+// ---------------------------------------------------------------------------
+//
+// Each wrapper hands the shell a string the patterns above never see as a
+// command, so the wrapper itself is the hardline shape, whatever it wraps.
+// Regexes over the raw string were bypassed by an eval flag that was not the
+// first option (`bash -o pipefail -c`), a wrapper in front of a pipe's shell
+// (`| env bash`) and `eval` after a keyword (`then eval`). So the command is
+// split into simple commands (`splitSimpleCommands`) and each argv is read:
+//   - `sh`/`bash`/`zsh`/`dash`/`ksh`/`fish` with `c` in any short-option
+//     cluster before the first operand (`-c`, `-ec`, `-xc`), options that take
+//     a word skipped (`-o pipefail`, `--rcfile f`), or fish's `--command`;
+//   - `python*` with `-c` under getopt rules (`-Bc`, `-W ignore -c`), `-m`
+//     ending the scan; `node` with `-e`/`-p`/`--eval`/`--print`, `-r x` and
+//     the arg-taking long options in NODE_ARG_LONG skipped. Scope stops there
+//     (D1): `perl -e`/`ruby -e`/`php -r` are NOT hardline — `perl -pi -e` is a
+//     routine in-place edit, and blocking it with no approval path costs more
+//     than the floor it adds.
+//   The interpreter checks run at EVERY word of a simple command, not only its
+//   head: the commands that run their arguments (`docker exec`, `uv run`,
+//   `kubectl exec --`, `watch`, `su -c`…) are an open-ended list. The cost is
+//   a false positive when a word that is exactly an interpreter's name is
+//   followed by its eval flag as another program's argument (`grep bash -c f`).
+//   - `eval` as the command, after leading `VAR=x` assignments, shell keywords
+//     (`then`, `do`, `else`, `{`, `!`…) and the wrappers in WRAPPERS
+//     (`sudo -u root`, `env -i`, `timeout 5`, `nice -n 5`, `xargs -0`…), with
+//     absolute paths reduced to their basename. Head position only: `make
+//     eval`, `pytest -k eval` are not flagged.
+//   - a shell that is the head (same unwrapping) of a command fed by `|`/`|&`
+//     — the form a `base64 -d` payload takes to run, matched on the pipe's
+//     target because the decoder has many spellings. `| xargs sh` is not this
+//     shape: xargs turns stdin into arguments, not a script.
+// Names are compared lower-cased: `BASH` resolves to bash on a
+// case-insensitive filesystem, the same reason `rm` is matched with /i above.
+
+interface SimpleCommand {
+  /** Words with quoting removed; redirection operators and their targets dropped. */
+  words: string[];
+  /** True when this command reads the previous one's output through `|` or `|&`. */
+  piped: boolean;
+}
+
+/**
+ * Split a shell string into simple commands: at `;`, `&`, `&&`, `|`, `||`,
+ * `|&`, newline, `(`, `)`, and at both ends of every `$(…)` and backtick
+ * substitution (including one inside double quotes), so each nested command
+ * is a simple command of its own. Quotes are honoured and removed; a
+ * backslash escapes the next character. Not a shell parser: no expansion, no
+ * here-doc bodies (their lines read as commands, which errs toward flagging),
+ * no `case` patterns, no brace/`${…}` grouping.
+ */
+export function splitSimpleCommands(cmd: string): SimpleCommand[] {
+  const out: SimpleCommand[] = [];
+  let words: string[] = [];
+  let word = '';
+  let inWord = false;
+  let quote: '' | "'" | '"' = '';
+  let piped = false;
+  let dropNextWord = false;
+  // One frame per open `$(` or backtick: the quote state to restore when it
+  // closes, and the depth of unquoted `(` opened inside it.
+  const frames: Array<{ restore: '' | '"'; depth: number; tick: boolean }> = [];
+
+  const endWord = () => {
+    if (inWord) {
+      if (dropNextWord) dropNextWord = false;
+      else words.push(word);
+    }
+    word = '';
+    inWord = false;
+  };
+  const endCommand = (nextPiped: boolean) => {
+    endWord();
+    if (words.length > 0) out.push({ words, piped });
+    words = [];
+    piped = nextPiped;
+    dropNextWord = false;
+  };
+  const open = (tick: boolean) => {
+    endCommand(false);
+    frames.push({ restore: quote === '"' ? '"' : '', depth: 0, tick });
+    quote = '';
+  };
+  const close = () => {
+    endCommand(false);
+    quote = frames.pop()?.restore ?? '';
+  };
+  const redirect = (i: number): number => {
+    // `2>` / `&>` / `>>` / `>&` / `<<<`: drop the operator and its target word.
+    if (inWord && /^\d+$/.test(word)) {
+      word = '';
+      inWord = false;
+    } else endWord();
+    let j = i;
+    while ('<>&'.includes(cmd[j + 1] ?? '|')) j++;
+    dropNextWord = true;
+    return j;
+  };
+
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i] ?? '';
+    const next = cmd[i + 1] ?? '';
+    if (quote === "'") {
+      if (c === "'") quote = '';
+      else word += c;
+      continue;
+    }
+    if (c === '\\') {
+      if (next === '\n') i++;
+      else if (quote === '"' && !'"\\$`'.includes(next)) word += c;
+      else {
+        word += next;
+        i++;
+      }
+      inWord = true;
+      continue;
+    }
+    if (c === '$' && next === '(') {
+      i++;
+      open(false);
+      continue;
+    }
+    if (c === '`') {
+      if (frames[frames.length - 1]?.tick) close();
+      else open(true);
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') quote = '';
+      else word += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      inWord = true;
+    } else if (c === ' ' || c === '\t' || c === '\r') endWord();
+    else if (c === '\n' || c === ';') endCommand(false);
+    else if (c === '|') {
+      if (next === '|' || next === '&') i++;
+      endCommand(next !== '|');
+    } else if (c === '&') {
+      if (next === '>') i = redirect(i);
+      else {
+        if (next === '&') i++;
+        endCommand(false);
+      }
+    } else if (c === '<' || c === '>') i = redirect(i);
+    else if (c === '(') {
+      const top = frames[frames.length - 1];
+      if (top && !top.tick) top.depth++;
+      endCommand(false);
+    } else if (c === ')') {
+      const top = frames[frames.length - 1];
+      if (top && !top.tick && top.depth === 0) close();
+      else {
+        if (top && !top.tick) top.depth--;
+        endCommand(false);
+      }
+    } else {
+      word += c;
+      inWord = true;
+    }
+  }
+  endCommand(false);
+  return out;
+}
+
+const SHELL_NAME = /^(?:ba|z|da|k|fi)?sh$/;
+const PYTHON_NAME = /^python[0-9.]*$/;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{']);
+// Commands that run the rest of their argv as a command: the short options
+// and long options that consume the next word, and fixed operands before the
+// command (timeout's DURATION).
+const WRAPPERS: Record<string, { short: string; long: string[]; operands?: number }> = {
+  env: { short: 'uCS', long: ['--unset', '--chdir', '--split-string'] },
+  sudo: {
+    short: 'ugpChDrtTUR',
+    long: [
+      '--user',
+      '--group',
+      '--prompt',
+      '--host',
+      '--chdir',
+      '--role',
+      '--type',
+      '--other-user',
+    ],
+  },
+  command: { short: '', long: [] },
+  builtin: { short: '', long: [] },
+  exec: { short: 'a', long: [] },
+  nice: { short: 'n', long: ['--adjustment'] },
+  nohup: { short: '', long: [] },
+  time: { short: 'fo', long: ['--format', '--output'] },
+  timeout: { short: 'sk', long: ['--signal', '--kill-after'], operands: 1 },
+  xargs: {
+    short: 'adEILnPs',
+    long: ['--arg-file', '--delimiter', '--max-lines', '--max-args', '--max-procs', '--max-chars'],
+  },
+};
+// node options whose value may be the next word (`--input-type module`).
+const NODE_ARG_LONG = new Set([
+  '--require',
+  '--import',
+  '--loader',
+  '--experimental-loader',
+  '--input-type',
+  '--conditions',
+  '--env-file',
+  '--title',
+  '--disable-warning',
+  '--watch-path',
+]);
+
+const commandName = (word: string): string => (word.split('/').pop() ?? word).toLowerCase();
+
+/** Index of the first word after `words[i..]`'s options (getopt rules). */
+function skipOptions(words: string[], i: number, short: string, long: string[]): number {
+  let k = i;
+  while (k < words.length) {
+    const w = words[k] ?? '';
+    if (w === '--') return k + 1;
+    if (!w.startsWith('-') || w === '-') return k;
+    k++;
+    if (w.startsWith('--')) {
+      if (!w.includes('=') && long.includes(w)) k++;
+      continue;
+    }
+    for (let j = 1; j < w.length; j++) {
+      if (short.includes(w[j] ?? '')) {
+        if (j === w.length - 1) k++;
+        break;
+      }
+    }
+  }
+  return k;
+}
+
+/** The command a simple command runs once assignments, keywords and wrappers are peeled off. */
+function commandHead(words: string[]): { name: string; viaXargs: boolean } | null {
+  let i = 0;
+  let viaXargs = false;
+  for (;;) {
+    while (i < words.length && (ASSIGNMENT.test(words[i] ?? '') || KEYWORDS.has(words[i] ?? ''))) {
+      i++;
+    }
+    const head = words[i];
+    if (head === undefined) return null;
+    const name = commandName(head);
+    const wrapper = WRAPPERS[name];
+    if (!wrapper) return { name, viaXargs };
+    if (name === 'xargs') viaXargs = true;
+    i = skipOptions(words, i + 1, wrapper.short, wrapper.long) + (wrapper.operands ?? 0);
+  }
+}
+
+function shellEvalFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i] ?? '';
+    if (w.startsWith('--')) {
+      if (w === '--command' || w.startsWith('--command=')) return true;
+      if (w === '--') return false;
+      if (w === '--rcfile' || w === '--init-file') i++;
+      continue;
+    }
+    if (!/^[-+][A-Za-z]+$/.test(w)) return false;
+    if (w.startsWith('-') && w.includes('c')) return true;
+    // bash reads `-o`/`-O`'s argument from the NEXT word, one per letter.
+    for (const ch of w) if (ch === 'o' || ch === 'O') i++;
+  }
+  return false;
+}
+
+function pythonEvalFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i] ?? '';
+    if (w === '--' || w === '-' || !w.startsWith('-')) return false;
+    if (w.startsWith('--')) {
+      if (w === '--check-hash-based-pycs') i++;
+      continue;
+    }
+    for (let j = 1; j < w.length; j++) {
+      const ch = w[j];
+      if (ch === 'c') return true;
+      if (ch === 'm') return false;
+      if (ch === 'W' || ch === 'X') {
+        if (j === w.length - 1) i++;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+function nodeEvalFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i] ?? '';
+    if (w === '--' || w === '-' || !w.startsWith('-')) return false;
+    if (w.startsWith('--')) {
+      const name = w.split('=')[0];
+      if (name === '--eval' || name === '--print') return true;
+      if (!w.includes('=') && NODE_ARG_LONG.has(w)) i++;
+      continue;
+    }
+    if (/[ep]/.test(w)) return true;
+    if (w === '-r' || w === '-C') i++;
+  }
+  return false;
+}
+
+/** The inline-eval wrapper `command` uses, or `null`. See the section comment above. */
+export function inlineEvalReason(command: string): string | null {
+  for (const { words, piped } of splitSimpleCommands(command)) {
+    for (let i = 0; i < words.length; i++) {
+      const name = commandName(words[i] ?? '');
+      const args = words.slice(i + 1);
+      if (SHELL_NAME.test(name) && shellEvalFlag(args)) return 'inline shell eval (sh -c)';
+      if (PYTHON_NAME.test(name) && pythonEvalFlag(args)) {
+        return 'inline interpreter eval (python -c)';
+      }
+      if ((name === 'node' || name === 'nodejs') && nodeEvalFlag(args)) {
+        return 'inline interpreter eval (node -e)';
+      }
+    }
+    const head = commandHead(words);
+    if (head?.name === 'eval') return 'inline shell eval (eval)';
+    if (piped && head && !head.viaXargs && SHELL_NAME.test(head.name)) {
+      return 'input piped into a shell';
+    }
+  }
+  return null;
+}
 
 // Approval-required, NOT hardline: shapes a human may reasonably want to run
 // (`kill $(lsof -t -i:3000)`, a commit message built with `$(cat msg)`) but
@@ -241,6 +544,8 @@ export function checkCommand(command: string): DangerResult {
   for (const { test, reason } of PATTERNS) {
     if (test(command)) return { dangerous: true, reason };
   }
+  const evalReason = inlineEvalReason(command);
+  if (evalReason) return { dangerous: true, reason: evalReason };
   for (const { test, paths } of ARGV_FS_DENY_PATTERNS) {
     if (test(command)) {
       return { dangerous: true, reason: `command targets always-deny path '${paths.join(', ')}'` };
