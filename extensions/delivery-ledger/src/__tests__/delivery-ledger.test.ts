@@ -185,7 +185,7 @@ describe('SQLiteDeliveryLedger — schema', () => {
     expect(sql.sql).toMatch(/STRICT/);
 
     const version = db.pragma('user_version') as Array<{ user_version: number }>;
-    expect(version[0]?.user_version).toBe(5);
+    expect(version[0]?.user_version).toBe(6);
 
     // STRICT enforcement is real: a TEXT into an INTEGER column throws.
     expect(() =>
@@ -332,7 +332,7 @@ describe('SQLiteDeliveryLedger — v1 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(5);
+      expect(version[0]?.user_version).toBe(6);
 
       const survivor = await store.get('old-1');
       expect(survivor?.content).toBe('survivor');
@@ -535,7 +535,7 @@ describe('SQLiteDeliveryLedger — v2 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(5);
+      expect(version[0]?.user_version).toBe(6);
 
       const row = await store.get('v2-1');
       expect(row?.content).toBe('written before voice existed');
@@ -939,7 +939,7 @@ describe('SQLiteDeliveryLedger — v3 → v4 migration', () => {
     const db = new Database(path);
     try {
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(5);
+      expect(version[0]?.user_version).toBe(6);
       const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
         name: string;
       }>;
@@ -1088,7 +1088,7 @@ describe('SQLiteDeliveryLedger — v4 → v5 migration', () => {
     const db = new Database(path);
     try {
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(5);
+      expect(version[0]?.user_version).toBe(6);
       const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
         name: string;
       }>;
@@ -1109,6 +1109,138 @@ describe('SQLiteDeliveryLedger — v4 → v5 migration', () => {
       expect((await store.get('v4-claimed'))?.status).toBe('pending');
     } finally {
       store.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Redelivery backoff (schema v6) — a row the platform keeps refusing was
+// re-sent every sweep tick until abandonStale, days later. The ledger now
+// counts failed redeliveries and records when the next one is due; the
+// POLICY (schedule, cap, what is permanent) lives in the gateway.
+// ---------------------------------------------------------------------------
+
+describe('SQLiteDeliveryLedger — deferRetry / abandon', () => {
+  it('a fresh row has no attempts and no due time', async () => {
+    const store = ledger();
+    const row = await store.get(await store.record(input()));
+    expect(row?.attempts).toBe(0);
+    expect(row?.nextAttemptAt).toBeUndefined();
+    expect(row?.abandonReason).toBeUndefined();
+    store.close();
+  });
+
+  it('deferRetry returns a claimed row to pending with one more attempt and a due time', async () => {
+    const store = ledger();
+    const id = await store.record(input());
+    expect(await store.claim(id)).toBe(true);
+    expect(await store.deferRetry(id, 1_000)).toBe(1);
+    const row = await store.get(id);
+    expect(row?.status).toBe('pending');
+    expect(row?.attempts).toBe(1);
+    expect(row?.nextAttemptAt).toBe(1_000);
+
+    expect(await store.claim(id)).toBe(true);
+    expect(await store.deferRetry(id, 2_000)).toBe(2);
+    expect((await store.get(id))?.nextAttemptAt).toBe(2_000);
+    store.close();
+  });
+
+  it('deferRetry and abandon never touch a row this caller did not claim', async () => {
+    const store = ledger();
+    const id = await store.record(input());
+    expect(await store.deferRetry(id, 1_000)).toBeNull();
+    expect(await store.abandon(id, 'nope')).toBeNull();
+    const delivered = await store.record(input({ content: 'd' }));
+    await store.claim(delivered);
+    await store.markDelivered(delivered);
+    expect(await store.abandon(delivered, 'nope')).toBeNull();
+    expect((await store.get(id))?.attempts).toBe(0);
+    expect((await store.get(delivered))?.status).toBe('delivered');
+    store.close();
+  });
+
+  it('abandon gives up on a claimed row, records why, and returns it', async () => {
+    const store = ledger();
+    const id = await store.record(input({ kind: 'voice', artifactRef: 'a1' }));
+    await store.claim(id);
+    const row = await store.abandon(id, 'permanent: 403 Forbidden');
+    expect(row?.status).toBe('abandoned');
+    expect(row?.artifactRef).toBe('a1');
+    expect((await store.get(id))?.abandonReason).toBe('permanent: 403 Forbidden');
+    expect(await store.listPending(['bot-a'])).toEqual([]);
+    store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v5 → v6 migration — `attempts`, `next_attempt_at`, `abandon_reason`.
+// ---------------------------------------------------------------------------
+
+/** The exact v5 schema, stamped at user_version = 5. */
+const V5_SCHEMA = `${V4_SCHEMA}
+  ALTER TABLE delivery_obligations ADD COLUMN claimed_at INTEGER;
+`;
+
+describe('SQLiteDeliveryLedger — v5 → v6 migration', () => {
+  let dir: string;
+  let path: string;
+  let rm: (p: string, o: { recursive: boolean; force: boolean }) => void;
+
+  beforeEach(async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    rm = rmSync;
+    dir = mkdtempSync(join(tmpdir(), 'delivery-ledger-v5-'));
+    path = join(dir, 'delivery.db');
+
+    const db = new Database(path);
+    db.exec(V5_SCHEMA);
+    db.pragma('user_version = 5');
+    db.prepare(
+      `INSERT INTO delivery_obligations
+       (id, bot_key, platform, chat_id, session_id, content_hash, content, created_at, status,
+        kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('v5-pending', 'bot-a', 'telegram', 'c', 's', 'h', 'owed', 1, 'pending', 'text');
+    db.close();
+  });
+
+  afterEach(() => {
+    rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps the pre-v6 row as never-attempted and due now, and stamps v6', async () => {
+    const store = new SQLiteDeliveryLedger(path);
+    try {
+      const row = await store.get('v5-pending');
+      expect(row?.status).toBe('pending');
+      expect(row?.attempts).toBe(0);
+      expect(row?.nextAttemptAt).toBeUndefined();
+      expect((await store.listPending(['bot-a'])).map((r) => r.id)).toEqual(['v5-pending']);
+      // The migrated row takes part in the backoff like any other.
+      expect(await store.claim('v5-pending')).toBe(true);
+      expect(await store.deferRetry('v5-pending', 5)).toBe(1);
+    } finally {
+      store.close();
+    }
+    const db = new Database(path);
+    try {
+      const version = db.pragma('user_version') as Array<{ user_version: number }>;
+      expect(version[0]?.user_version).toBe(6);
+      const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
+        name: string;
+      }>;
+      expect(cols.map((c) => c.name)).toEqual(
+        expect.arrayContaining(['attempts', 'next_attempt_at', 'abandon_reason']),
+      );
+      const table = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE name = 'delivery_obligations'`)
+        .get() as { sql: string };
+      expect(table.sql).toMatch(/STRICT/);
+    } finally {
+      db.close();
     }
   });
 });

@@ -157,6 +157,15 @@ export interface DeliveryResult {
   ok: boolean;
   messageId?: string;
   error?: string;
+  /**
+   * Set with `ok: false` when the platform refused in a way no retry can fix —
+   * the bot was blocked or removed, the chat or channel no longer exists. The
+   * gateway's delivery sweep abandons such an obligation at once instead of
+   * retrying it on a backoff (`Gateway.sweepDeliveriesOnce`). Absent means
+   * "possibly transient"; an adapter sets it only on a failure it can
+   * positively identify.
+   */
+  permanent?: boolean;
 }
 
 export interface PlatformAdapter {

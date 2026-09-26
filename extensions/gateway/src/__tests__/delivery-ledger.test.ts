@@ -827,3 +827,144 @@ describe('Gateway — periodic delivery sweep (startDeliverySweep)', () => {
     expect(adapter.sent).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Redelivery backoff — before this, a row the platform kept refusing was
+// re-sent on EVERY tick (once a minute) until abandonStale, seven days later.
+// A Discord send that posted and then reported failure re-posted the reply
+// every minute for a week; a chat that blocked the bot was hit every minute.
+// ---------------------------------------------------------------------------
+
+describe('Gateway — redelivery backoff and cap', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function owed(store: SQLiteDeliveryLedger): Promise<string> {
+    return store.record({
+      botKey: 'bot-a',
+      platform: 'telegram',
+      chatId: 'chat-1',
+      sessionId: 'telegram:bot-a:chat-1',
+      content: 'lost reply',
+    });
+  }
+
+  function refusingAdapter(result: DeliveryResult) {
+    const adapter = stubAdapter();
+    const at: number[] = [];
+    vi.mocked(adapter.send).mockImplementation(async () => {
+      at.push(Date.now());
+      return result;
+    });
+    return Object.assign(adapter, { at });
+  }
+
+  it('a row the platform keeps refusing is retried with doubling gaps, capped at 1h, then abandoned', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // jitter factor exactly 1
+    const store = ledger();
+    const recordSafetyBlock = vi.fn();
+    const adapter = refusingAdapter({ ok: false, error: 'flood wait' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      observability: { recordSafetyBlock },
+    });
+    vi.useFakeTimers();
+    const start = Date.now();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(12 * 3_600_000);
+
+    // Default cap: 10 failed redeliveries.
+    expect(adapter.at).toHaveLength(10);
+    const gapsMin = adapter.at.slice(1).map((t, i) => (t - (adapter.at[i] ?? 0)) / 60_000);
+    expect(gapsMin).toEqual([1, 2, 4, 8, 16, 32, 60, 60, 60]);
+    expect(((adapter.at[0] ?? 0) - start) / 60_000).toBe(1);
+
+    const row = await store.get(id);
+    expect(row?.status).toBe('abandoned');
+    expect(row?.attempts).toBe(10);
+    expect(row?.abandonReason).toMatch(/10 attempts/);
+    expect(row?.abandonReason).toMatch(/flood wait/);
+    expect(recordSafetyBlock).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'gateway.delivery_abandoned' }),
+    );
+  });
+
+  it('deliveryMaxAttempts lowers the cap', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const store = ledger();
+    const adapter = refusingAdapter({ ok: false, error: 'nope' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      deliveryMaxAttempts: 3,
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(adapter.at).toHaveLength(3);
+    expect((await store.get(id))?.status).toBe('abandoned');
+  });
+
+  it('a failure the adapter reports as permanent is abandoned at once', async () => {
+    const store = ledger();
+    const recordSafetyBlock = vi.fn();
+    const adapter = refusingAdapter({
+      ok: false,
+      error: '403: Forbidden: bot was blocked by the user',
+      permanent: true,
+    });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      observability: { recordSafetyBlock },
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+
+    expect(adapter.at).toHaveLength(1);
+    const row = await store.get(id);
+    expect(row?.status).toBe('abandoned');
+    expect(row?.abandonReason).toMatch(/permanent/);
+    expect(row?.abandonReason).toMatch(/blocked/);
+    expect(recordSafetyBlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'gateway.delivery_abandoned',
+        details: expect.objectContaining({ permanent: true }),
+      }),
+    );
+  });
+
+  it('the boot sweep and a restarted gateway respect a row that is not yet due', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const store = ledger();
+    const adapter = refusingAdapter({ ok: false, error: 'down' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    // A never-attempted row is due at once on the boot sweep, whatever its age.
+    expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 1 });
+    expect(adapter.at).toHaveLength(1);
+    expect((await store.get(id))?.nextAttemptAt).toBe(Date.now() + 60_000);
+
+    // Before it is due: neither a direct sweep nor a fresh process sends it.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+    const rebooted = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    expect(await rebooted.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+    expect(adapter.at).toHaveLength(1);
+
+    // Once due, it goes again, and a success confirms it.
+    await vi.advanceTimersByTimeAsync(30_000);
+    vi.mocked(adapter.send).mockResolvedValueOnce({ ok: true, messageId: 'x' });
+    expect(await rebooted.sweepPendingDeliveries()).toEqual({ redelivered: 1, failed: 0 });
+    expect((await store.get(id))?.status).toBe('delivered');
+  });
+});

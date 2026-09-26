@@ -381,6 +381,31 @@ const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
  * (`DeliveryLedger.reclaimStaleClaims`). A claim spans one adapter call.
  */
 const DELIVERY_CLAIM_STALE_MS = 5 * 60_000;
+/**
+ * Redelivery backoff (`deliveryRetryDelayMs`, applied in
+ * `sweepDeliveriesOnce`): after the Nth refused redelivery the row is not due
+ * again for `min(BASE * 2^(N-1), MAX)`, ±20% jitter — 1m, 2m, 4m … 32m, then
+ * 1h. Before this a refused row was re-sent on every tick until `abandonStale`,
+ * days later.
+ */
+const DELIVERY_RETRY_BASE_MS = 60_000;
+const DELIVERY_RETRY_MAX_MS = 60 * 60_000;
+/**
+ * Refused redeliveries after which a row is `abandoned` rather than retried
+ * again (`GatewayConfig.deliveryMaxAttempts`). With the schedule above, ten
+ * attempts span roughly four hours.
+ */
+const DELIVERY_DEFAULT_MAX_ATTEMPTS = 10;
+
+/** The delay before a row refused `attempts` times is due again, jittered so
+ *  rows that failed together do not retry together. */
+function deliveryRetryDelayMs(attempts: number): number {
+  const base = Math.min(
+    DELIVERY_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+    DELIVERY_RETRY_MAX_MS,
+  );
+  return Math.round(base * (0.8 + 0.4 * Math.random()));
+}
 
 /**
  * What {@link Gateway.acceptInbound} decided for one inbound message: the
@@ -997,6 +1022,14 @@ export interface GatewayConfig {
    */
   deliverySweepIntervalMs?: number;
   /**
+   * Refused redeliveries after which the sweep abandons an obligation (with
+   * the reason recorded and a `gateway.delivery_abandoned` event) instead of
+   * retrying it again. Default 10. Retries back off 1m, 2m, 4m … capped at 1h
+   * (`deliveryRetryDelayMs`). A refusal the adapter marks `permanent` is
+   * abandoned on the first attempt whatever this says.
+   */
+  deliveryMaxAttempts?: number;
+  /**
    * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
    * {@link Gateway.deliverPublication} runs before it publishes an approved
    * outbox item (O-T5, plan/phases/trust-before-reach.md).
@@ -1558,6 +1591,7 @@ export class Gateway {
   private spoolReplayTimer: ReturnType<typeof setInterval> | undefined;
   private orphansRecovered = false;
   private readonly deliverySweepIntervalMs: number;
+  private readonly deliveryMaxAttempts: number;
   private deliverySweepTimer: ReturnType<typeof setInterval> | undefined;
   /** The sweep running now, shared by every caller so two never overlap. */
   private deliverySweepInFlight: Promise<{ redelivered: number; failed: number }> | undefined;
@@ -1833,6 +1867,10 @@ export class Gateway {
       config.inboundSpoolOptions?.replayIntervalMs ?? SPOOL_DEFAULT_REPLAY_INTERVAL_MS;
     this.deliverySweepIntervalMs =
       config.deliverySweepIntervalMs ?? DELIVERY_SWEEP_DEFAULT_INTERVAL_MS;
+    this.deliveryMaxAttempts = Math.max(
+      1,
+      config.deliveryMaxAttempts ?? DELIVERY_DEFAULT_MAX_ATTEMPTS,
+    );
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
     this.channelToolsets = config.channelToolsets;
@@ -6649,9 +6687,17 @@ export class Gateway {
 
     let pending: Awaited<ReturnType<DeliveryLedger['listPending']>>;
     try {
-      const newest = Date.now() - minAgeMs;
+      const now = Date.now();
+      const newest = now - minAgeMs;
+      // Two gates. Age guards a live send (see DELIVERY_SWEEP_MIN_AGE_MS; the
+      // boot sweep passes 0). `nextAttemptAt` is the backoff a refused
+      // redelivery set (`settleRefusedRedelivery`), and binds EVERY sweep,
+      // the boot one included — a restart is not a reason to hit a platform
+      // that refused a minute ago.
       pending = (await ledger.listPending([...this.bots.keys()])).filter(
-        (row) => minAgeMs <= 0 || row.createdAt <= newest,
+        (row) =>
+          (minAgeMs <= 0 || row.createdAt <= newest) &&
+          (row.nextAttemptAt === undefined || row.nextAttemptAt <= now),
       );
     } catch (err) {
       this.observability?.recordSafetyBlock({
@@ -6718,7 +6764,7 @@ export class Gateway {
             },
           });
         } else {
-          await ledger.release(row.id);
+          await this.settleRefusedRedelivery(row, ledger, result ?? {});
           failed++;
         }
       } catch (err) {
@@ -6735,6 +6781,51 @@ export class Gateway {
   }
 
   /**
+   * Settle a claimed row whose redelivery the platform refused. The one owner
+   * of the retry policy: a `permanent` refusal (`DeliveryResult.permanent`) or
+   * the `deliveryMaxAttempts`-th refusal abandons the row, with the reason
+   * recorded on it (`DeliveryLedger.abandon`), a voice artifact released, and a
+   * `gateway.delivery_abandoned` event; anything else goes back to `pending`,
+   * not due again until `deliveryRetryDelayMs` has passed
+   * (`DeliveryLedger.deferRetry`). Pinned by the 'redelivery backoff and cap'
+   * cases in `__tests__/delivery-ledger.test.ts`.
+   */
+  private async settleRefusedRedelivery(
+    row: DeliveryObligation,
+    ledger: DeliveryLedger,
+    refusal: { error?: string; permanent?: boolean },
+  ): Promise<void> {
+    const attempts = row.attempts + 1;
+    const error = refusal.error ?? 'unconfirmed';
+    const permanent = refusal.permanent === true;
+    const reason = permanent
+      ? `permanent: ${error}`
+      : attempts >= this.deliveryMaxAttempts
+        ? `gave up after ${attempts} attempts: ${error}`
+        : undefined;
+    if (!reason) {
+      await ledger.deferRetry(row.id, Date.now() + deliveryRetryDelayMs(attempts));
+      return;
+    }
+    const abandoned = await ledger.abandon(row.id, reason);
+    if (!abandoned) return;
+    if (abandoned.artifactRef) await this.voiceArtifacts?.remove(abandoned.artifactRef);
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.delivery_abandoned',
+      cause: reason,
+      details: {
+        platform: row.platform,
+        botKey: row.botKey,
+        chatId: row.chatId,
+        kind: row.kind,
+        attempts,
+        permanent,
+        contentHash: row.contentHash,
+      },
+    });
+  }
+
+  /**
    * Redeliver one claimed `voice` obligation by re-sending its stored artifact.
    *
    * It never re-synthesizes. A second TTS pass is a different recording — the
@@ -6742,8 +6833,9 @@ export class Gateway {
    * since — so the user would receive an answer they can hear is not the one
    * that was lost. The artifact IS the obligation's payload.
    *
-   * Returns whether the platform confirmed. Every failure hands the row back to
-   * the pending pool rather than burning it.
+   * Returns whether the platform confirmed. Every failure goes through
+   * {@link settleRefusedRedelivery}: back to the pending pool on a backoff, or
+   * abandoned at the attempt cap or when the artifact is gone.
    */
   private async redeliverVoiceObligation(
     row: DeliveryObligation,
@@ -6751,10 +6843,17 @@ export class Gateway {
     ledger: DeliveryLedger,
   ): Promise<boolean> {
     const giveBack = async (code: string, details: Record<string, unknown> = {}) => {
-      await ledger.release(row.id);
       this.observability?.recordSafetyBlock({
         code,
         details: { platform: row.platform, botKey: row.botKey, chatId: row.chatId, ...details },
+      });
+      // A vanished artifact can never be re-sent — the bytes ARE the
+      // obligation — so it is permanent; every other refusal backs off. Only
+      // when a store is wired: a process with none cannot see an artifact a
+      // properly configured peer could still send.
+      await this.settleRefusedRedelivery(row, ledger, {
+        error: typeof details.error === 'string' ? details.error : code,
+        permanent: code === 'gateway.voice_artifact_missing' && this.voiceArtifacts !== undefined,
       });
       return false;
     };
