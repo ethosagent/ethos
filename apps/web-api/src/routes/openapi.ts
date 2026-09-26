@@ -31,6 +31,14 @@ import type { ServiceContainer } from './index';
 // bundle to serve. The source expression is the exact script URL (a path
 // without a trailing slash matches only that file), not the CDN host.
 //
+// The bundle runs on this cookie-authenticated API origin, so it is pinned to
+// one version and checked by Subresource Integrity: a changed or substituted
+// file is refused by the browser, not run. To bump it, change the version in
+// `SCALAR_SCRIPT_URL`, then set `SCALAR_SCRIPT_INTEGRITY` to the SHA-384 of the
+// exact bytes jsDelivr serves for the new URL:
+//   curl -sSL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+// and re-check the page in a browser (the CSP below was read off 1.72.1).
+//
 // The plugin's own template runs an inline bootstrap that embeds the whole spec,
 // and the spec's `servers` entry is the request's origin — so its hash changes
 // per Host header. `renderScalarDocsHtml` puts the config in an inert JSON data
@@ -38,8 +46,7 @@ import type { ServiceContainer } from './index';
 // bootstrap whose text never changes, allowed by its fixed hash.
 //
 // What the bundle needs beyond its own script, read from the bundle itself
-// (@scalar/api-reference 1.72.1, the version jsDelivr served when this was
-// written): it injects <style> elements, only some of them nonced — hence
+// (@scalar/api-reference 1.72.1): it injects <style> elements, only some of them nonced — hence
 // `style-src 'unsafe-inline'`; its default fonts come from fonts.scalar.com.
 // `connect-src 'self'` keeps "Try it" requests on this origin: Scalar's
 // default request proxy (proxy.scalar.com) is refused, so a request carrying
@@ -47,7 +54,9 @@ import type { ServiceContainer } from './index';
 // the bundle's one `Function('')` call is a feature probe inside a try/catch.
 // Checked by loading the page under this policy in headless Chromium: it
 // renders, its fonts load, and "Try it" requests go to this origin.
-const SCALAR_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference';
+const SCALAR_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.1';
+const SCALAR_SCRIPT_INTEGRITY =
+  'sha384-JezfTaoGe2t8F2YRYUQosjM0S21blpE8j3yOUgTEiTKCyLWx9K4lfwjKPd8Dp7WY';
 const SCALAR_BOOTSTRAP =
   "Scalar.createApiReference('#app', JSON.parse(document.getElementById('scalar-config').textContent))";
 const SCALAR_BOOTSTRAP_HASH = createHash('sha256').update(SCALAR_BOOTSTRAP).digest('base64');
@@ -99,7 +108,7 @@ function renderScalarDocsHtml(
   <body>
     <div id="app"></div>
     <script id="scalar-config" type="application/json">${jsonForScriptElement(scalarConfig)}</script>
-    <script src="${escapeHtml(scriptUrl)}"></script>
+    <script src="${escapeHtml(scriptUrl)}" integrity="${SCALAR_SCRIPT_INTEGRITY}" crossorigin="anonymous"></script>
     <script>${SCALAR_BOOTSTRAP}</script>
   </body>
 </html>

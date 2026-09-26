@@ -133,6 +133,27 @@ describe('createWebApi — OpenAPI surface', () => {
     expect(csp).toContain("object-src 'none'");
   });
 
+  // The bundle runs on the cookie-authenticated API origin, so it is pinned to
+  // an exact version and checked by Subresource Integrity (`SCALAR_SCRIPT_URL` /
+  // `SCALAR_SCRIPT_INTEGRITY`, routes/openapi.ts).
+  it('/openapi/ loads a version-pinned Scalar bundle with SRI, and the CSP names that URL', async () => {
+    const res = await app.request('/openapi/', {
+      headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
+    });
+    const csp = res.headers.get('content-security-policy') ?? '';
+    const html = await res.text();
+    const tags = [...html.matchAll(/<script[^>]*\ssrc="[^"]+"[^>]*>/g)].map((m) => m[0]);
+    expect(tags).toHaveLength(1);
+    const tag = tags[0] ?? '';
+    const src = /\ssrc="([^"]+)"/.exec(tag)?.[1] ?? '';
+    expect(src).toMatch(
+      /^https:\/\/cdn\.jsdelivr\.net\/npm\/@scalar\/api-reference@\d+\.\d+\.\d+$/,
+    );
+    expect(tag).toMatch(/\sintegrity="sha384-[A-Za-z0-9+/]{64}"/);
+    expect(tag).toContain('crossorigin="anonymous"');
+    expect(csp).toContain(`script-src ${src} `);
+  });
+
   it('the rest of /openapi keeps the strict nonce-only policy', async () => {
     const res = await app.request('/openapi/spec.json', {
       headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
