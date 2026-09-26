@@ -688,6 +688,19 @@ describe('SQLiteSessionStore — resume lookup', () => {
     const results = await store.findByTitle('auth');
     expect(results.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('findByTitle treats % and _ in the query literally', async () => {
+    const pct = await store.createSession({
+      ...baseSession,
+      key: 'cli:p',
+      title: 'cut 50% of cost',
+    });
+    await store.createSession({ ...baseSession, key: 'cli:q', title: 'cut 500 of cost' });
+    const under = await store.createSession({ ...baseSession, key: 'cli:u', title: 'rename A_B' });
+    await store.createSession({ ...baseSession, key: 'cli:v', title: 'rename AXB' });
+    expect((await store.findByTitle('50%')).map((s) => s.id)).toEqual([pct.id]);
+    expect((await store.findByTitle('a_b')).map((s) => s.id)).toEqual([under.id]);
+  });
 });
 
 describe('SQLiteSessionStore migration idempotency', () => {

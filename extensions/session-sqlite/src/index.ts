@@ -985,10 +985,11 @@ export class SQLiteSessionStore implements SessionStore {
       .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
       .all(lower) as SessionRow[];
     if (exact.length > 0) return exact.map(rowToSession);
-    // 2. Fragment match (case-insensitive substring)
+    // 2. Fragment match (case-insensitive substring). `instr`, not LIKE, so a
+    //    `%` or `_` in the query matches only itself.
     const fragment = this.db
-      .prepare('SELECT * FROM sessions WHERE LOWER(title) LIKE ?')
-      .all(`%${lower}%`) as SessionRow[];
+      .prepare('SELECT * FROM sessions WHERE instr(LOWER(title), ?) > 0')
+      .all(lower) as SessionRow[];
     return fragment.map(rowToSession);
   }
 
