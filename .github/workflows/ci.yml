@@ -60,6 +60,63 @@ jobs:
       - uses: ./.github/actions/setup
       - run: bash scripts/check-typecheck.sh
 
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    # A cold archcheck run over the repository is ~35s; the rest is setup.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The baseline-shrink check reads .archcheck/baseline.json at the base commit and walks
+          # the commits since it for an Architecture-Approved-By trailer.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      # Run once, capture the exit code, and upload the SARIF whatever it was, so a failing run
+      # still annotates the PR. The job fails on the code in the last step.
+      - name: Run archcheck (SARIF)
+        id: archcheck
+        run: |
+          set +e
+          pnpm exec archcheck --format sarif > archcheck.sarif
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          sarif_file: archcheck.sarif
+          category: archcheck
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### archcheck coverage'
+            echo '```'
+            pnpm exec archcheck coverage
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # 3 → the generated rule table / .archcheck/generated/ is stale: run `pnpm arch:emit`
+      - name: Emitted output is up to date
+        run: pnpm exec archcheck emit --check
+      - name: The archcheck baseline only shrinks
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/check-archcheck-baseline.mjs --base "$BASE_SHA"
+      # Law 7's tool-package half: no direct node:fs / node:child_process imports in
+      # extensions/tools-*/src (archcheck cannot ban a Node built-in import).
+      - name: Tool packages use ctx, not node:fs / node:child_process
+        run: bash scripts/check-tool-imports.sh
+      # 1 new violation · 2 manifest/environment broken · 4 run `pnpm exec archcheck baseline --prune`
+      - name: Fail on archcheck findings
+        if: steps.archcheck.outputs.exit_code != '0'
+        run: |
+          echo "::error::archcheck exited ${{ steps.archcheck.outputs.exit_code }} — run \`pnpm arch\` locally for the readable report"
+          exit 1
+
   version-sync:
     name: version-sync
     runs-on: ubuntu-latest

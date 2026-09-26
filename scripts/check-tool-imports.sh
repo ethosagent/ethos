@@ -2,7 +2,12 @@
 # Check for direct side-effect imports in tool source files.
 #
 # Tool code should use ctx.* (network, fs, secrets, process, storage) instead
-# of importing node:fs, node:child_process, fetch, or process.env directly.
+# of importing node:fs or node:child_process directly.
+#
+# process.env is NOT scanned here: archcheck's `tools-read-env-through-ctx` rule
+# (architecture.config.ts) owns it, with its exceptions recorded there. This
+# script keeps the node:fs / node:child_process import scan, which archcheck
+# cannot express (it cannot ban a Node built-in import).
 #
 # During the capability migration (P1→P5) this script is advisory — it prints
 # violations but exits 0. After P5, flip BLOCKING=1 to fail the build.
@@ -23,20 +28,15 @@ while IFS= read -r file; do
     *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts|*tools-process/src/watcher.ts) continue ;;
   esac
 
-  # tools-browser/src/sessions.ts: browser launcher reads ETHOS_BROWSER_NO_SANDBOX opt-in at launch
-  # time — no ctx is available before chromium.launch(). Same principle as tools-process exclusion.
+  # tools-code/src/shim/js-shim.ts: textual false positive — the `node:fs` import lives inside a
+  # String.raw literal (the container-side shim client source delivered at exec time); the module
+  # itself performs no host filesystem access. Same carve-out CLAUDE.md records for no-raw-fs.
   case "$file" in
-    *tools-browser/src/sessions.ts) continue ;;
+    *tools-code/src/shim/js-shim.ts) continue ;;
   esac
 
-  # Exclude isAvailable method bodies — boot-time availability checks
-  # legitimately need process.env (no ctx parameter at that point).
-  # Uses awk to skip lines between isAvailable and the next closing brace.
   hits=$(awk '
-    /isAvailable/ { skip=1 }
-    skip && /^[[:space:]]*\}/ { skip=0; next }
-    skip { next }
-    /from .node:fs|from .node:child_process|process\.env/ { print NR": "$0 }
+    /from .node:fs|from .node:child_process/ { print NR": "$0 }
   ' "$file" 2>/dev/null || true)
 
   if [ -n "$hits" ]; then
