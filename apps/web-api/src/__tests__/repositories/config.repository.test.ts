@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ethosDir, readRawConfig, writeConfig } from '@ethosagent/config';
+import { ethosDir, parseConfigYaml, readRawConfig, writeConfig } from '@ethosagent/config';
 import { deriveBotKey } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,20 @@ describe('ConfigRepository', () => {
     expect(yaml).not.toContain('123:ABC');
     expect(await secrets.get(`telegram/bots/${botKey}/token`)).toBe('123:ABC');
     expect(yaml).toContain('telegram.bots.1.bind.name: eng');
+  });
+
+  it('an unrelated web save keeps goals.allowCheckCommands, and the CLI reader still reads it', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      `${['provider: anthropic', 'model: claude-opus-4-6', 'goals.allowCheckCommands: true'].join('\n')}\n`,
+    );
+
+    await repo.update({ model: 'claude-opus-4-7' });
+
+    const yaml = (await storage.read(join(DATA, 'config.yaml'))) ?? '';
+    expect(yaml).toContain('goals.allowCheckCommands: true');
+    expect(parseConfigYaml(yaml).goals).toEqual({ allowCheckCommands: true });
   });
 
   it('reads providers.N.field lines into a providers array', async () => {

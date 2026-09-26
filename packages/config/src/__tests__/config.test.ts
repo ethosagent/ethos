@@ -439,6 +439,41 @@ describe('parseConfigYaml — a2a.enabled', () => {
   });
 });
 
+describe('parseConfigYaml — goals.allowCheckCommands', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses goals.allowCheckCommands: true into config.goals', async () => {
+    const cfg = await loadYaml([...base, 'goals.allowCheckCommands: true'].join('\n'));
+    expect(cfg.goals).toEqual({ allowCheckCommands: true });
+  });
+
+  it('parses an explicit false, and leaves config.goals undefined when absent', async () => {
+    const off = await loadYaml([...base, 'goals.allowCheckCommands: false'].join('\n'));
+    expect(off.goals).toEqual({ allowCheckCommands: false });
+    const absent = await loadYaml(base.join('\n'));
+    expect(absent.goals).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      goals: { allowCheckCommands: true },
+    };
+    await writeConfig(storage, original, new InMemorySecretsResolver());
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('goals.allowCheckCommands: true');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.goals).toEqual({ allowCheckCommands: true });
+  });
+});
+
 describe('parseConfigYaml — security.trusted_github_orgs', () => {
   const base = [
     'provider: anthropic',

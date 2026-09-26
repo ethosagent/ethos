@@ -1037,6 +1037,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const evolverService = new EvolverService({ evolver: evolverRepo, learning: learningService });
   const goalsService = new GoalsService({
     sessionStore: opts.sessionStore,
+    allowCheckCommands: () => configService.goalCheckCommandsAllowed(),
     ...(opts.goals ? { goals: opts.goals } : {}),
     // A team personality's goal runs on its team's pair — the same resolution
     // `loopForPersonality` makes for that personality's chat turns. Declared

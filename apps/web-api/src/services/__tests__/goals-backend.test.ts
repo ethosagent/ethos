@@ -200,3 +200,71 @@ describe('GoalsService — team personalities', () => {
     expect(team.store.list()).toEqual([]);
   });
 });
+
+// Goal check commands run via `sh -c` on the host (goal-runner judge.ts), so a
+// web create may carry one only when `goals.allowCheckCommands: true`.
+describe('GoalsService — check commands', () => {
+  const withCommand = {
+    personalityId: 'p',
+    goalText: 'Make the tests pass',
+    acceptanceCriteria: {
+      checks: [{ description: 'tests pass', command: 'pnpm test' }, { description: 'no cmd' }],
+    },
+  };
+
+  it('refuses the whole create with FORBIDDEN when the key is off, leaving no row', async () => {
+    const store = new InMemoryGoalStore();
+    const executor = recordingExecutor({ canExecute: true });
+    const service = new GoalsService({
+      goals: { store, executor },
+      allowCheckCommands: async () => false,
+    });
+
+    await expect(service.create(withCommand)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message:
+        'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow host shell commands in goal checks.',
+    });
+    expect(store.list()).toEqual([]);
+    expect(executor.started).toEqual([]);
+  });
+
+  it('defaults to off when no gate is wired', async () => {
+    const store = new InMemoryGoalStore();
+    const service = new GoalsService({
+      goals: { store, executor: recordingExecutor({ canExecute: true }) },
+    });
+    await expect(service.create(withCommand)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await service.settings()).toEqual({ allowCheckCommands: false });
+  });
+
+  it('ignores a blank command while off', async () => {
+    const store = new InMemoryGoalStore();
+    const service = new GoalsService({
+      goals: { store, executor: recordingExecutor({ canExecute: true }) },
+      allowCheckCommands: async () => false,
+    });
+    const { goal } = await service.create({
+      personalityId: 'p',
+      goalText: 'x',
+      acceptanceCriteria: { checks: [{ description: 'd', command: '   ' }] },
+    });
+    expect(store.get(goal.id)?.acceptanceCriteria?.checks).toEqual([
+      { id: 'check-0', description: 'd' },
+    ]);
+  });
+
+  it('passes the command through to the AcceptanceSpec when the key is on', async () => {
+    const store = new InMemoryGoalStore();
+    const service = new GoalsService({
+      goals: { store, executor: recordingExecutor({ canExecute: true }) },
+      allowCheckCommands: async () => true,
+    });
+    const { goal } = await service.create(withCommand);
+    expect(store.get(goal.id)?.acceptanceCriteria?.checks).toEqual([
+      { id: 'check-0', description: 'tests pass', command: 'pnpm test' },
+      { id: 'check-1', description: 'no cmd' },
+    ]);
+    expect(await service.settings()).toEqual({ allowCheckCommands: true });
+  });
+});

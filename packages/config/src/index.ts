@@ -2826,6 +2826,16 @@ export interface EthosConfig {
    */
   a2a?: { enabled?: boolean };
   /**
+   * Goal settings. `allowCheckCommands: true` lets a goal created from the web
+   * UI/API carry a check with a `command`, which the goal judge runs via
+   * `sh -c` ON THE HOST — outside the sandbox, as the user running ethos
+   * (`defaultExecCommand`, extensions/goal-runner/src/judge.ts). Default false: a
+   * create carrying a command is refused (`GoalsService.create`,
+   * apps/web-api/src/services/goals.service.ts). Config key:
+   * goals.allowCheckCommands
+   */
+  goals?: { allowCheckCommands?: boolean };
+  /**
    * Operator-controlled security settings.
    *
    * `trustedGitHubOrgs` — the GitHub organizations whose skills and plugins
@@ -4339,6 +4349,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
   if (config.a2a?.enabled !== undefined) lines.push(`a2a.enabled: ${config.a2a.enabled}`);
+  if (config.goals?.allowCheckCommands !== undefined)
+    lines.push(`goals.allowCheckCommands: ${config.goals.allowCheckCommands}`);
   // Written even when the list is empty — `""` is how "trust no org" survives
   // a round-trip, and dropping the line would silently restore the default.
   if (config.security?.trustedGitHubOrgs !== undefined)
@@ -5517,6 +5529,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       kv['a2a.enabled'] = parseConfigScalar(a2a[1]);
       continue;
     }
+    // goals.allowCheckCommands: <value>
+    const gcc = line.match(/^goals\.allowCheckCommands:\s*(.+)$/);
+    if (gcc) {
+      kv['goals.allowCheckCommands'] = parseConfigScalar(gcc[1]);
+      continue;
+    }
     // security.trusted_github_orgs: <org,list>
     // `(.*)` — not `(.+)` — on purpose: an empty value is a meaningful
     // configuration ("trust no org"), distinct from the key being absent.
@@ -6209,6 +6227,10 @@ export function parseConfigYaml(src: string): EthosConfig {
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
     a2a: kv['a2a.enabled'] !== undefined ? { enabled: kv['a2a.enabled'] === 'true' } : undefined,
+    goals:
+      kv['goals.allowCheckCommands'] !== undefined
+        ? { allowCheckCommands: kv['goals.allowCheckCommands'] === 'true' }
+        : undefined,
     // `!== undefined` — not truthiness: an empty value must survive as `[]`
     // (trust no org) instead of collapsing back to the shipped default.
     security:
