@@ -115,7 +115,7 @@ describe('Gateway voice obligations — failed send, sweep, redelivery, release'
     ledger.close();
   });
 
-  it('a pending voice row whose artifact is gone is released, never re-sent as text', async () => {
+  it('a pending voice row whose artifact is gone is abandoned, never re-sent as text', async () => {
     // The written reply already went out under its own obligation. Falling back
     // to `row.content` here would deliver the same answer twice — a worse
     // failure than one missing voice note.
@@ -147,8 +147,13 @@ describe('Gateway voice obligations — failed send, sweep, redelivery, release'
     expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 1 });
     expect(adapter.voiceSends).toHaveLength(0);
     expect(adapter.sent).toHaveLength(0);
-    // Released, not burned: the row goes back to the pending pool.
-    expect((await ledger.listPending(['bot-a']))[0]?.status).toBe('pending');
+    // The bytes ARE the obligation and they are gone, so no retry can succeed:
+    // abandoned at once with the reason recorded (`settleRefusedRedelivery`),
+    // rather than re-read every sweep until the days-long abandonStale cutoff.
+    expect(await ledger.listPending(['bot-a'])).toEqual([]);
+    const [row] = await ledger.listRecent(1);
+    expect(row?.status).toBe('abandoned');
+    expect(row?.abandonReason).toMatch(/^permanent: gateway\.voice_artifact_missing/);
 
     ledger.close();
   });

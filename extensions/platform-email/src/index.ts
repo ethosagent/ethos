@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import type {
   AdapterCapabilities,
@@ -6,6 +7,7 @@ import type {
   InboundMessage,
   OutboundMessage,
   PlatformAdapter,
+  Storage,
 } from '@ethosagent/types';
 import type { ImapFlow } from 'imapflow';
 import type * as nodemailer from 'nodemailer';
@@ -40,6 +42,16 @@ export interface EmailAdapterConfig {
    * key `emailTrustedAuthservId`.
    */
   trustedAuthservId?: string;
+  /**
+   * Where the reply-threading state for each chat is persisted
+   * (`<emailDir>/<botKey>/threads.json`), so a reply the delivery ledger
+   * redelivers after a restart still goes to the right address, in-thread.
+   * Absent → in memory only, and a restart loses it (such a redelivery is then
+   * refused as `permanent`).
+   */
+  storage?: Storage;
+  /** Directory for the persisted thread state. Default `'email'`. */
+  emailDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,9 +357,34 @@ interface ThreadState {
   inReplyTo?: string;
 }
 
+/** Newest chats kept in the persisted thread file; older ones are dropped. */
+const MAX_PERSISTED_THREADS = 1000;
+
+function isThreadState(v: unknown): v is ThreadState {
+  if (typeof v !== 'object' || v === null) return false;
+  if (!('to' in v) || typeof v.to !== 'string') return false;
+  if (!('replySubject' in v) || typeof v.replySubject !== 'string') return false;
+  return !('inReplyTo' in v) || v.inReplyTo === undefined || typeof v.inReplyTo === 'string';
+}
+
 // ---------------------------------------------------------------------------
 // EmailAdapter
 // ---------------------------------------------------------------------------
+
+/**
+ * SMTP reply codes that are a hard bounce for this recipient: 550 mailbox
+ * unavailable / user unknown, 551 user not local, 553 mailbox name not
+ * allowed. Other 5xx are left retryable on purpose — 535 is this deployment's
+ * own credentials (an operator fixes it and every owed reply should then go),
+ * and 552/554 are as often size or content policy as a dead address.
+ */
+const PERMANENT_SMTP_CODES = new Set([550, 551, 553]);
+
+/** Is `err` (nodemailer's SMTP error, read by shape: `responseCode`) a hard bounce? */
+function isPermanentSmtpError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('responseCode' in err)) return false;
+  return typeof err.responseCode === 'number' && PERMANENT_SMTP_CODES.has(err.responseCode);
+}
 
 export class EmailAdapter implements PlatformAdapter {
   readonly id = 'email';
@@ -372,6 +409,11 @@ export class EmailAdapter implements PlatformAdapter {
 
   // chatId → thread state needed to reply correctly
   private readonly threads = new Map<string, ThreadState>();
+  /** `<emailDir>/<botKey>/threads.json`, when a Storage is wired. */
+  private readonly threadsFile: string | undefined;
+  private threadsLoaded = false;
+  /** Serializes thread-file writes so two polls cannot interleave them. */
+  private threadsWrite: Promise<void> = Promise.resolve();
 
   // Injected in constructor — allows tests to provide mocks
   private readonly createImapClient: (cfg: EmailAdapterConfig) => ImapFlow;
@@ -389,6 +431,59 @@ export class EmailAdapter implements PlatformAdapter {
     this.botKey = config.botKey;
     this.createImapClient = overrides?.createImapClient ?? defaultImapClient;
     this.createTransporter = overrides?.createTransporter ?? defaultTransporter;
+    this.threadsFile = config.storage
+      ? join(config.emailDir ?? 'email', this.botKey, 'threads.json')
+      : undefined;
+  }
+
+  /**
+   * Merge the persisted thread file into memory, once. In-memory entries win:
+   * they are newer than anything a previous process wrote. A missing or
+   * unreadable file is an empty one.
+   */
+  private async loadThreads(): Promise<void> {
+    if (this.threadsLoaded) return;
+    this.threadsLoaded = true;
+    const storage = this.config.storage;
+    if (!storage || !this.threadsFile) return;
+    try {
+      const raw = await storage.read(this.threadsFile);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) return;
+      for (const [chatId, state] of Object.entries(parsed)) {
+        if (isThreadState(state) && !this.threads.has(chatId)) this.threads.set(chatId, state);
+      }
+    } catch {
+      // Unreadable → start empty; the next inbound rewrites it.
+    }
+  }
+
+  /** Record `chatId`'s thread in memory and, when a Storage is wired, on disk
+   *  (atomic whole-file replace, newest {@link MAX_PERSISTED_THREADS} kept).
+   *  Best-effort: a failed write never fails the inbound message. */
+  private async rememberThread(chatId: string, state: ThreadState): Promise<void> {
+    await this.loadThreads();
+    this.threads.delete(chatId); // re-insert so insertion order is recency
+    this.threads.set(chatId, state);
+    while (this.threads.size > MAX_PERSISTED_THREADS) {
+      const oldest = this.threads.keys().next().value;
+      if (oldest === undefined) break;
+      this.threads.delete(oldest);
+    }
+    const storage = this.config.storage;
+    const file = this.threadsFile;
+    if (!storage || !file) return;
+    const body = JSON.stringify(Object.fromEntries(this.threads));
+    this.threadsWrite = this.threadsWrite.then(async () => {
+      try {
+        await storage.mkdir(join(this.config.emailDir ?? 'email', this.botKey));
+        await storage.writeAtomic(file, body);
+      } catch {
+        // Best-effort; memory still has it for this process.
+      }
+    });
+    await this.threadsWrite;
   }
 
   // ---------------------------------------------------------------------------
@@ -413,9 +508,13 @@ export class EmailAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    if (!this.threads.has(chatId)) await this.loadThreads();
     const thread = this.threads.get(chatId);
     if (!thread) {
-      return { ok: false, error: `No thread state for chatId: ${chatId}` };
+      // Neither memory nor the persisted thread file knows this chat, so no
+      // retry can learn where to send — `permanent`, so the delivery sweep
+      // abandons it with this reason instead of retrying to the cap.
+      return { ok: false, error: `No thread state for chatId: ${chatId}`, permanent: true };
     }
 
     const transporter = this.createTransporter(this.config);
@@ -430,7 +529,13 @@ export class EmailAdapter implements PlatformAdapter {
       });
       return { ok: true, messageId: info.messageId };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // A hard bounce is marked `permanent` so the gateway's delivery sweep
+      // abandons it instead of re-sending to a dead mailbox. Pinned by
+      // `__tests__/send-delivery.test.ts`.
+      const error = err instanceof Error ? err.message : String(err);
+      return isPermanentSmtpError(err)
+        ? { ok: false, error, permanent: true }
+        : { ok: false, error };
     }
   }
 
@@ -527,10 +632,10 @@ export class EmailAdapter implements PlatformAdapter {
     const chatId = makeChatId(sender.userId, subject);
 
     // Replies still go to `from`, the claimed address, either way.
-    this.threads.set(chatId, {
+    await this.rememberThread(chatId, {
       to: from,
       replySubject: subject.match(/^re:/i) ? subject : `Re: ${subject}`,
-      inReplyTo: parsed.messageId ?? undefined,
+      ...(parsed.messageId ? { inReplyTo: parsed.messageId } : {}),
     });
 
     this.messageHandler?.({

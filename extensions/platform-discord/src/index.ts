@@ -103,6 +103,26 @@ interface DiscordAdapterConfig {
   missedMessageBackfill?: { enabled?: boolean; windowSeconds?: number; limit?: number };
 }
 
+/**
+ * Discord JSON error codes no retry can fix: Unknown Channel, Missing Access,
+ * Cannot send messages to this user, Missing Permissions.
+ */
+const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
+
+/**
+ * Does `err` (a discord.js `DiscordAPIError`, read by shape) say the bot can
+ * never post here — until an operator changes something? HTTP 403/404 or one
+ * of {@link PERMANENT_DISCORD_CODES}. Rate limits (429) and server errors are
+ * not: discord.js retries 429s itself and a 5xx is transient.
+ */
+function isPermanentDiscordError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const status = 'status' in err ? err.status : undefined;
+  const code = 'code' in err ? err.code : undefined;
+  if (status === 403 || status === 404) return true;
+  return typeof code === 'number' && PERMANENT_DISCORD_CODES.has(code);
+}
+
 export class DiscordAdapter
   implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
 {
@@ -301,18 +321,31 @@ export class DiscordAdapter
   // Sending
   // ---------------------------------------------------------------------------
 
+  /**
+   * Once ANY chunk has reached the channel this reports `ok: true`: the
+   * gateway's delivery sweep redelivers a whole `ok: false` reply, so a
+   * failure after the first chunk would re-post the text that did land on
+   * every retry. The residual is a truncated reply — the chunks after the
+   * failure are lost, named in `error` as `partial: N of M chunks` — which is
+   * the smaller failure than a repeated one. Bookkeeping after the last chunk
+   * (receipt reaction, thread state) cannot turn a delivery into a failure
+   * either. A refusal no retry can fix is marked `permanent`
+   * (`isPermanentDiscordError`). Pinned by `__tests__/send-delivery.test.ts`.
+   */
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    const ids: string[] = [];
+    let total = 0;
     try {
       await this.clearThinkingPlaceholder(chatId);
 
       const targetId = message.threadId ?? chatId;
       const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('send' in channel)) {
-        return { ok: false, error: 'Channel not found or not sendable' };
+        return { ok: false, error: 'Channel not found or not sendable', permanent: true };
       }
 
       const chunks = chunkText(toNativeMarkdown(message.text), this.maxMessageLength);
-      const ids: string[] = [];
+      total = chunks.length;
 
       for (const chunk of chunks) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
@@ -322,18 +355,31 @@ export class DiscordAdapter
         });
         ids.push(String(sent.id));
       }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (ids.length > 0) {
+        this.rememberChunkIds(ids);
+        return {
+          ok: true,
+          messageId: ids[0],
+          error: `partial: ${ids.length} of ${total} chunks delivered; ${error}`,
+        };
+      }
+      return isPermanentDiscordError(err)
+        ? { ok: false, error, permanent: true }
+        : { ok: false, error };
+    }
 
-      this.rememberChunkIds(ids);
+    this.rememberChunkIds(ids);
+    try {
       await this.clearReceiptReaction(chatId);
-
       if (message.threadId && this.threadState) {
         await this.threadState.recordPost(chatId, message.threadId);
       }
-
-      return { ok: true, messageId: ids[0] };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } catch {
+      // Best-effort: the reply is already in the channel.
     }
+    return { ok: true, messageId: ids[0] };
   }
 
   /**

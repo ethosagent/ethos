@@ -4195,6 +4195,10 @@ export async function buildAdapters(
           smtpHost: config.emailSmtpHost,
           smtpPort: config.emailSmtpPort ?? 587,
           botKey: emailBotKey(config.emailUser, config.emailImapHost),
+          // Persists each chat's reply-threading state so a reply the delivery
+          // ledger redelivers after a restart still reaches the right thread.
+          storage: getStorage(),
+          emailDir: join(ethosDir(), 'email'),
           // Unset → every sender is unverified (`resolveEmailSender`); the
           // boot-time warning is `warnEmailSenderAuthUnconfigured`.
           ...(config.emailTrustedAuthservId
