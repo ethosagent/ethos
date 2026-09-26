@@ -1,38 +1,34 @@
-import Link from '@docusaurus/Link';
 import clsx from 'clsx';
-import { type CSSProperties, type ReactNode, useEffect, useRef } from 'react';
+import { type CSSProperties, Fragment, type ReactNode, useEffect, useRef } from 'react';
 
-import PersonalityMark from '../PersonalityMark';
-import {
-  type LandingPersonality,
-  PERSONALITIES,
-  PERSONALITY_INDEX,
-  type PersonalityId,
-} from '../personalities';
+import InstallPill from '../InstallPill';
+import shared from '../landing.module.css';
+import { PERSONALITIES } from '../personalities';
+import RingMark from '../RingMark';
 import styles from './styles.module.css';
 
-// Orbital hero — text left, 3D orbital system right. One rAF loop drives
-// the orbit, the idle dispatch dot, the rising tool-call chips, and the
-// fixed starfield canvas. Hover selects, click pins; selection lifts to
-// the page (accent re-theme + showcase sync) via onSelect/onDeselect.
-// Reduced motion: static three-mark ring, selection still works.
-
-const HERO_TITLE_WORDS = ['Stop', 'asking', 'one', 'agent', 'to', 'do', 'everything.'];
+// Hero + orbit stage — port of the approved "Alive" mockup
+// (ethos-home-alive.html). One rAF loop drives the orbit, the idle dispatch
+// dot, the rising tool-call chips, the speech bubbles, and the starfield
+// canvas that spans the whole hero. Hover selects, click pins, click-outside
+// or Escape unpins — selection is internal to the stage (no page re-theme).
+// Reduced motion: static ring, one bubble on the front-most mark.
+// SSR-safe: every window/document/canvas access lives inside useEffect.
 
 const TAU = Math.PI * 2;
 const N = PERSONALITIES.length;
 const STEP = TAU / N;
 const FRONT = Math.PI / 2; // z = sin(theta) is max here → front-center
-const TILT_Y = 0.32;
-const IDLE_SPEED = 0.28; // rad/s
-const MAX_CHIPS = 3;
+const TILT = 0.3;
+const IDLE = 0.26; // rad/s
 const DOT_DURATION = 0.95; // seconds of dispatch-dot travel
 const CHIP_DURATION = 2.4; // rise + hold + relay
 const REFUSE_DURATION = 2.6; // rise + hold + fall-back dissolve
 const CHIP_LANES = [0, 1, 2];
+const BUBBLE_HOLD = 3.6; // seconds a bubble stays up
 
+const LIGHT_GREYS = ['#DEDEDA', '#D7D7D2', '#D0D0CC', '#C9C9C3'];
 const DARK_GREYS = ['#2A2A2A', '#2F2F2F', '#343434', '#3A3A3A'];
-const LIGHT_GREYS = ['#D8D8D4', '#D0D0CC', '#C8C8C4', '#C0C0BC'];
 
 interface Star {
   x: number;
@@ -65,47 +61,50 @@ function wrapDiff(target: number, current: number): number {
   return d;
 }
 
-export interface OrbitHeroProps {
-  selectedId: PersonalityId | null;
-  pinned: boolean;
-  onSelect: (id: PersonalityId, pin: boolean) => void;
-  onDeselect: () => void;
+function accentTextVar(id: string): string {
+  return `var(--ethos-accent-${id}-text)`;
 }
 
-export default function OrbitHero({
-  selectedId,
-  pinned,
-  onSelect,
-  onDeselect,
-}: OrbitHeroProps): ReactNode {
+// Backtick spans in bubble quotes render as <code>.
+function renderQuote(quote: string): ReactNode {
+  const parts = quote.split('`');
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: static list, never reorders
+      <code key={i}>{part}</code>
+    ) : (
+      // biome-ignore lint/suspicious/noArrayIndexKey: static list, never reorders
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
+
+export default function OrbitHero(): ReactNode {
+  const heroRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const guideRef = useRef<SVGSVGElement>(null);
   const ellipseRef = useRef<SVGEllipseElement>(null);
-  const dispatchRef = useRef<HTMLDivElement>(null);
+  const coreRef = useRef<HTMLDivElement>(null);
   const emitRef = useRef<HTMLDivElement>(null);
+  const dotRef = useRef<HTMLDivElement>(null);
   const starsRef = useRef<HTMLCanvasElement>(null);
   const markRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const chipRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const relayRefs = useRef<Array<HTMLDivElement | null>>([]);
-
-  const selRef = useRef<{ idx: number | null }>({ idx: null });
-  const killChipsRef = useRef<() => void>(() => {});
-
-  // Keep the rAF loop's view of the selection current, and clear in-flight
-  // chips the moment something is selected (matches the reference).
-  useEffect(() => {
-    selRef.current.idx = selectedId === null ? null : PERSONALITY_INDEX[selectedId];
-    if (selectedId !== null) killChipsRef.current();
-  }, [selectedId]);
+  const trailRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const bubbleRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   useEffect(() => {
+    const hero = heroRef.current;
     const stage = stageRef.current;
     const guide = guideRef.current;
     const guideEllipse = ellipseRef.current;
-    const dot = dispatchRef.current;
+    const core = coreRef.current;
     const emitRing = emitRef.current;
+    const dot = dotRef.current;
     const canvas = starsRef.current;
-    if (!stage || !guide || !guideEllipse || !dot || !emitRing || !canvas) return;
+    if (!hero || !stage || !guide || !guideEllipse || !core || !emitRing || !dot || !canvas) {
+      return;
+    }
 
     const markEls: HTMLButtonElement[] = [];
     for (const el of markRefs.current) {
@@ -115,13 +114,27 @@ export default function OrbitHero({
     for (const el of chipRefs.current) {
       if (el) chipEls.push(el);
     }
-    const relayEls: HTMLDivElement[] = [];
-    for (const el of relayRefs.current) {
-      if (el) relayEls.push(el);
+    const trailEls: HTMLDivElement[] = [];
+    for (const el of trailRefs.current) {
+      if (el) trailEls.push(el);
     }
-    if (markEls.length !== N || chipEls.length !== MAX_CHIPS || relayEls.length !== MAX_CHIPS) {
+    const bubbleEls: HTMLDivElement[] = [];
+    for (const el of bubbleRefs.current) {
+      if (el) bubbleEls.push(el);
+    }
+    if (
+      markEls.length !== N ||
+      bubbleEls.length !== N ||
+      chipEls.length !== CHIP_LANES.length ||
+      trailEls.length !== CHIP_LANES.length
+    ) {
       return;
     }
+
+    // Narrowed aliases — hoisted function declarations below don't keep the
+    // null-guard narrowing on the original consts.
+    const dotEl: HTMLDivElement = dot;
+    const emitEl: HTMLDivElement = emitRing;
 
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const ctx = canvas.getContext('2d');
@@ -140,7 +153,9 @@ export default function OrbitHero({
     let cy = 0;
     let radius = 0;
     let baseAngle = -Math.PI / 2;
-    let speed = IDLE_SPEED;
+    let speed = IDLE;
+    let sel: number | null = null;
+    let pinned = false;
 
     function layoutMarks(): void {
       for (let i = 0; i < marks.length; i++) {
@@ -149,39 +164,41 @@ export default function OrbitHero({
         const theta = baseAngle + i * STEP;
         const z = Math.sin(theta); // -1 (back) … +1 (front)
         const x = Math.cos(theta) * radius;
-        const y = z * radius * TILT_Y;
+        const y = z * radius * TILT;
         const depth = (z + 1) / 2; // 0…1
-        const scale = 0.68 + 0.44 * depth;
-        const opacity = 0.45 + 0.55 * depth;
         m.x = cx + x;
         m.y = cy + y;
         m.z = z;
-        m.el.style.transform = `translate(-50%, -50%) translate(${(cx + x).toFixed(2)}px, ${(cy + y).toFixed(2)}px) scale(${scale.toFixed(3)})`;
-        m.el.style.opacity = opacity.toFixed(3);
+        m.el.style.transform = `translate(-50%, -50%) translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${(0.66 + 0.46 * depth).toFixed(3)})`;
+        m.el.style.opacity = (0.42 + 0.58 * depth).toFixed(3);
         m.el.style.zIndex = String(20 + Math.round(depth * 60));
       }
     }
 
     function measure(): void {
-      if (!stage || !guide || !guideEllipse) return;
+      if (!stage || !guide || !guideEllipse || !core || !emitRing) return;
       const rect = stage.getBoundingClientRect();
       stageW = rect.width;
       stageH = rect.height;
       cx = stageW / 2;
-      cy = stageH / 2 - 24; // leave room for the call card at the bottom
-      radius = Math.min(stageW * 0.385, 230);
+      cy = stageH / 2 - 6;
+      radius = Math.min(stageW * 0.36, 235);
       guide.setAttribute('viewBox', `0 0 ${stageW} ${stageH}`);
       guideEllipse.setAttribute('cx', String(cx));
       guideEllipse.setAttribute('cy', String(cy));
       guideEllipse.setAttribute('rx', String(radius));
-      guideEllipse.setAttribute('ry', String(radius * TILT_Y));
+      guideEllipse.setAttribute('ry', String(radius * TILT));
+      core.style.left = `${cx}px`;
+      core.style.top = `${cy}px`;
+      emitEl.style.left = `${cx}px`;
+      emitEl.style.top = `${cy}px`;
       if (reduced) layoutMarks();
     }
 
     /* ---------- dispatch dot + tool-call chips ---------- */
     let dispatch: { t: number; idx: number } | null = null;
-    let dispatchWait = 2.2;
-    let chipWait = 0.6; // first chip fires almost immediately
+    let dispatchWait = 2.0;
+    let chipWait = 0.5; // first chip fires almost immediately
     let chipTargetCursor = Math.floor(Math.random() * N);
     let chipsSinceRefuse = 0;
     const flights: Flight[] = [];
@@ -190,29 +207,26 @@ export default function OrbitHero({
     function resetSlot(lane: number): void {
       laneBusy[lane] = false;
       const el = chipEls[lane];
-      const relay = relayEls[lane];
+      const trail = trailEls[lane];
       if (el) {
         el.style.opacity = '0';
         el.style.boxShadow = '';
         el.style.borderColor = '';
         el.style.color = '';
       }
-      if (relay) {
-        relay.style.opacity = '0';
-        relay.style.background = '';
+      if (trail) {
+        trail.style.opacity = '0';
+        trail.style.background = '';
       }
     }
 
-    function killDispatch(): void {
+    function killAll(): void {
       dispatch = null;
-      if (dot) {
-        dot.style.opacity = '0';
-        dot.style.background = '';
-      }
+      dotEl.style.opacity = '0';
+      dotEl.style.background = '';
       for (const lane of CHIP_LANES) resetSlot(lane);
       flights.length = 0;
     }
-    killChipsRef.current = killDispatch;
 
     function spawnChip(): void {
       let lane = -1;
@@ -224,7 +238,7 @@ export default function OrbitHero({
       }
       if (lane < 0) return; // concurrency cap — never confetti
       const el = chipEls[lane];
-      if (!el || !emitRing) return;
+      if (!el) return;
 
       // cycle personalities so variety shows quickly
       chipTargetCursor = (chipTargetCursor + 1 + Math.floor(Math.random() * 2)) % N;
@@ -250,24 +264,24 @@ export default function OrbitHero({
         t: 0,
         refused,
         refuseShown: false,
-        jx: (Math.random() - 0.5) * 48, // x jitter — successive chips don't stack
-        holdY: 96 + lane * 27, // px above core center, per lane
+        jx: (Math.random() - 0.5) * 50, // x jitter — successive chips don't stack
+        holdY: 100 + lane * 28, // px above core center, per lane
       });
 
       // faint expanding ring from the core at emission
-      emitRing.classList.remove(styles.coreEmitGo);
-      void emitRing.offsetWidth;
-      emitRing.classList.add(styles.coreEmitGo);
+      emitEl.classList.remove(styles.coreEmitGo);
+      void emitEl.offsetWidth;
+      emitEl.classList.add(styles.coreEmitGo);
     }
 
     // Advances one chip flight; returns false when finished.
     function chipFrame(f: Flight, dt: number): boolean {
       f.t += dt / (f.refused ? REFUSE_DURATION : CHIP_DURATION);
       const el = chipEls[f.lane];
-      const relay = relayEls[f.lane];
+      const trail = trailEls[f.lane];
       const m = marks[f.idx];
       const p = PERSONALITIES[f.idx];
-      if (!el || !relay || !m || !p) return false;
+      if (!el || !trail || !m || !p) return false;
 
       if (f.t >= 1) {
         if (!f.refused) {
@@ -291,7 +305,7 @@ export default function OrbitHero({
         // rise up and out of the core
         const rt = easeInOut(f.t / RISE);
         x = cx + f.jx * (0.35 + 0.65 * rt);
-        y = cy - 28 - (f.holdY - 28) * rt;
+        y = cy - 30 - (f.holdY - 30) * rt;
         op = Math.min(1, f.t / 0.05);
         el.style.boxShadow = '';
       } else if (f.t < HOLD_END) {
@@ -303,7 +317,7 @@ export default function OrbitHero({
         el.style.boxShadow = `0 0 ${(3 + 10 * pulse).toFixed(1)}px ${p.accent}66`;
         if (ht > 0.45) {
           el.style.borderColor = p.accent;
-          el.style.color = p.accent;
+          el.style.color = accentTextVar(p.id);
         }
       } else if (!f.refused) {
         // chip dissolves in place while a small accent dot relays to the mark
@@ -314,9 +328,9 @@ export default function OrbitHero({
         const e2 = easeInOut(dtn);
         const rx = x + (m.x - x) * e2;
         const ry = y + (m.y - y) * e2;
-        relay.style.transform = `translate(${rx.toFixed(2)}px, ${ry.toFixed(2)}px)`;
-        relay.style.background = p.accent;
-        relay.style.opacity = dtn < 0.08 ? String(dtn * 12) : '1';
+        trail.style.transform = `translate(${rx.toFixed(2)}px, ${ry.toFixed(2)}px)`;
+        trail.style.background = p.accent;
+        trail.style.opacity = dtn < 0.08 ? String(dtn * 12) : '1';
       } else {
         // refused: flash red, fall back toward the core, dissolve — no relay
         const ft = (f.t - HOLD_END) / (1 - HOLD_END);
@@ -324,11 +338,11 @@ export default function OrbitHero({
           f.refuseShown = true;
           el.textContent = 'write_file ';
           const fx = document.createElement('span');
-          fx.className = styles.flightRefused;
+          fx.className = styles.fx;
           fx.textContent = '✗ refused';
           el.appendChild(fx);
-          el.style.borderColor = '#F87171';
-          el.style.color = '#F87171';
+          el.style.borderColor = 'var(--ethos-error)';
+          el.style.color = 'var(--ethos-error)';
           el.style.boxShadow = '';
           m.el.classList.remove(styles.refusedFlash);
           void m.el.offsetWidth;
@@ -347,13 +361,12 @@ export default function OrbitHero({
     }
 
     function updateDispatch(dt: number): void {
-      if (reduced || selRef.current.idx !== null || !dot) return;
+      if (reduced || sel !== null) return;
 
-      // plain dispatch dot — single-flight
+      // plain dispatch dot — single-flight, targets the front-most mark
       if (!dispatch) {
         dispatchWait -= dt;
         if (dispatchWait <= 0) {
-          // target the currently-nearest (front-most) mark
           let best = 0;
           for (let i = 1; i < marks.length; i++) {
             const mi = marks[i];
@@ -361,7 +374,7 @@ export default function OrbitHero({
             if (mi && mb && mi.z > mb.z) best = i;
           }
           dispatch = { t: 0, idx: best };
-          dot.style.background = '';
+          dotEl.style.background = '';
         }
       } else {
         dispatch.t += dt / DOT_DURATION;
@@ -375,16 +388,16 @@ export default function OrbitHero({
           void m.el.offsetWidth; // restart animation
           m.el.classList.add(styles.recv);
           dispatch = null;
-          dot.style.opacity = '0';
-          dot.style.background = '';
+          dotEl.style.opacity = '0';
+          dotEl.style.background = '';
           dispatchWait = 2.6 + Math.random() * 1.8;
         } else {
           const e = easeInOut(Math.min(dispatch.t, 1));
           const x = cx + (m.x - cx) * e;
           const y = cy + (m.y - cy) * e;
-          dot.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
-          dot.style.opacity = dispatch.t < 0.1 ? String(dispatch.t * 10) : '1';
-          if (dispatch.t > 0.82) dot.style.background = p.accent;
+          dotEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+          dotEl.style.opacity = dispatch.t < 0.1 ? String(dispatch.t * 10) : '1';
+          if (dispatch.t > 0.82) dotEl.style.background = p.accent;
         }
       }
 
@@ -400,12 +413,81 @@ export default function OrbitHero({
       }
     }
 
-    /* ---------- starfield ---------- */
+    /* ---------- speech bubbles — the front-most agent speaks ---------- */
+    let bubbleT = 2.4;
+    let bubbleOn = false;
+    let bubbleIdx = -1;
+
+    let bubbleHoldLeft = 0;
+
+    function placeBubble(idx: number): void {
+      const bubble = bubbleEls[idx];
+      const m = marks[idx];
+      if (!bubble || !m) return;
+      // clamp inside the stage: bubble is translated -50% x and -100% y -58px
+      const bw = bubble.offsetWidth || 300;
+      const bh = bubble.offsetHeight || 88;
+      const half = bw / 2;
+      const x = Math.min(Math.max(m.x, half + 8), Math.max(half + 8, stageW - half - 8));
+      const y = Math.max(m.y - 14, bh + 66);
+      bubble.style.left = `${x}px`;
+      bubble.style.top = `${y}px`;
+    }
+
+    function hideBubble(): void {
+      const bubble = bubbleEls[bubbleIdx];
+      if (bubble) bubble.classList.remove(styles.bubbleShow);
+      bubbleOn = false;
+    }
+
+    function updateBubble(dt: number): void {
+      if (reduced) return;
+      if (bubbleOn) {
+        bubbleHoldLeft -= dt;
+        placeBubble(bubbleIdx);
+        if (bubbleHoldLeft <= 0 || (sel !== null && sel !== bubbleIdx)) {
+          hideBubble();
+          bubbleT = sel !== null ? 1.0 : 2.8;
+        }
+        return;
+      }
+      bubbleT -= dt;
+      if (bubbleT <= 0) {
+        let idx: number;
+        if (sel !== null) {
+          idx = sel;
+        } else {
+          idx = 0;
+          for (let i = 1; i < marks.length; i++) {
+            const mi = marks[i];
+            const mb = marks[idx];
+            if (mi && mb && mi.z > mb.z) idx = i;
+          }
+        }
+        const m = marks[idx];
+        if (!m) return;
+        if (m.z < 0.25) {
+          // wait until the speaker rotates forward
+          bubbleT = 0.12;
+          return;
+        }
+        bubbleIdx = idx;
+        placeBubble(idx);
+        const bubble = bubbleEls[idx];
+        if (bubble) bubble.classList.add(styles.bubbleShow);
+        bubbleOn = true;
+        bubbleHoldLeft = BUBBLE_HOLD;
+      }
+    }
+
+    /* ---------- starfield — spans the whole hero, dpr-scaled ---------- */
     let particles: Star[] = [];
     let pointerX = 0;
     let pointerY = 0;
     let parX = 0;
     let parY = 0;
+    let starsW = 0;
+    let starsH = 0;
 
     function palette(): string[] {
       return document.documentElement.getAttribute('data-theme') === 'dark'
@@ -414,39 +496,46 @@ export default function OrbitHero({
     }
 
     function initStars(): void {
-      if (!canvas) return;
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      if (!canvas || !hero) return;
+      const rect = hero.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      starsW = rect.width;
+      starsH = rect.height;
+      canvas.width = starsW * dpr;
+      canvas.height = starsH * dpr;
+      canvas.style.width = `${starsW}px`;
+      canvas.style.height = `${starsH}px`;
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const greys = palette();
-      const count = Math.min(90, Math.round((canvas.width * canvas.height) / 22000));
+      const count = Math.min(80, Math.round((starsW * starsH) / 24000));
       particles = [];
       for (let i = 0; i < count; i++) {
         const z = 0.25 + Math.random() * 0.75;
         particles.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
+          x: Math.random() * starsW,
+          y: Math.random() * starsH,
           z,
           r: 0.6 + z * 1.1,
           vx: (Math.random() - 0.5) * 3 * z,
           vy: (Math.random() - 0.5) * 1.5 * z,
-          c: greys[Math.floor(Math.random() * greys.length)] ?? '#2A2A2A',
+          c: greys[Math.floor(Math.random() * greys.length)] ?? '#D0D0CC',
         });
       }
     }
 
     function drawStars(dt: number): void {
-      if (!ctx || !canvas) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!ctx) return;
+      ctx.clearRect(0, 0, starsW, starsH);
       parX += (pointerX - parX) * Math.min(1, dt * 4);
       parY += (pointerY - parY) * Math.min(1, dt * 4);
       for (const s of particles) {
         if (!reduced) {
           s.x += s.vx * dt;
           s.y += s.vy * dt;
-          if (s.x < -4) s.x = canvas.width + 4;
-          if (s.x > canvas.width + 4) s.x = -4;
-          if (s.y < -4) s.y = canvas.height + 4;
-          if (s.y > canvas.height + 4) s.y = -4;
+          if (s.x < -4) s.x = starsW + 4;
+          if (s.x > starsW + 4) s.x = -4;
+          if (s.y < -4) s.y = starsH + 4;
+          if (s.y > starsH + 4) s.y = -4;
         }
         ctx.beginPath();
         ctx.fillStyle = s.c;
@@ -460,6 +549,57 @@ export default function OrbitHero({
       pointerY = e.clientY / window.innerHeight - 0.5;
     };
     if (!reduced) window.addEventListener('pointermove', onPointerMove, { passive: true });
+
+    /* ---------- selection: hover selects, click pins ---------- */
+    function select(i: number, pin: boolean): void {
+      sel = i;
+      pinned = pin || pinned;
+      killAll();
+      marks.forEach((m, j) => {
+        m.el.classList.toggle(styles.markSel, j === i);
+      });
+      bubbleT = Math.min(bubbleT, 0.15);
+    }
+
+    function deselect(): void {
+      sel = null;
+      pinned = false;
+      for (const m of marks) m.el.classList.remove(styles.markSel);
+    }
+
+    const markCleanups: Array<() => void> = [];
+    marks.forEach((m, i) => {
+      const onEnter = (): void => {
+        if (!pinned) select(i, false);
+      };
+      const onLeave = (): void => {
+        if (!pinned && sel === i) deselect();
+      };
+      const onClick = (): void => {
+        if (pinned && sel === i) deselect();
+        else select(i, true);
+      };
+      m.el.addEventListener('pointerenter', onEnter);
+      m.el.addEventListener('pointerleave', onLeave);
+      m.el.addEventListener('click', onClick);
+      markCleanups.push(() => {
+        m.el.removeEventListener('pointerenter', onEnter);
+        m.el.removeEventListener('pointerleave', onLeave);
+        m.el.removeEventListener('click', onClick);
+      });
+    });
+
+    const onStageClick = (e: globalThis.MouseEvent): void => {
+      const t = e.target;
+      if (t instanceof Element && t.closest('[data-orbit-mark]')) return;
+      deselect();
+    };
+    stage.addEventListener('click', onStageClick);
+
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') deselect();
+    };
+    window.addEventListener('keydown', onKeyDown);
 
     // Re-tint the starfield when the docs theme toggles.
     const themeObserver = new MutationObserver(() => {
@@ -475,8 +615,8 @@ export default function OrbitHero({
     let rafId: number | null = null;
     let lastT: number | null = null;
 
-    function orbitFrame(now: number): void {
-      rafId = requestAnimationFrame(orbitFrame);
+    function frame(now: number): void {
+      rafId = requestAnimationFrame(frame);
       if (lastT === null) {
         lastT = now;
         return;
@@ -484,28 +624,27 @@ export default function OrbitHero({
       const dt = Math.min((now - lastT) / 1000, 0.05);
       lastT = now;
 
-      const selectedIdx = selRef.current.idx;
-      const targetSpeed = selectedIdx === null ? IDLE_SPEED : 0;
+      const targetSpeed = sel === null ? IDLE : 0;
       speed += (targetSpeed - speed) * Math.min(1, dt * 3);
       baseAngle += speed * dt;
-      if (selectedIdx !== null) {
-        const target = FRONT - selectedIdx * STEP;
-        baseAngle += wrapDiff(target, baseAngle) * Math.min(1, dt * 5);
+      if (sel !== null) {
+        baseAngle += wrapDiff(FRONT - sel * STEP, baseAngle) * Math.min(1, dt * 5);
       }
       if (baseAngle > TAU) baseAngle -= TAU;
       if (baseAngle < -TAU) baseAngle += TAU;
 
       layoutMarks();
       updateDispatch(dt);
+      updateBubble(dt);
       drawStars(dt);
     }
 
-    function startOrbit(): void {
+    function startLoop(): void {
       if (rafId !== null) return;
       lastT = null;
-      rafId = requestAnimationFrame(orbitFrame);
+      rafId = requestAnimationFrame(frame);
     }
-    function stopOrbit(): void {
+    function stopLoop(): void {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -521,181 +660,161 @@ export default function OrbitHero({
 
     const onVisibility = (): void => {
       if (reduced) return;
-      if (document.hidden) stopOrbit();
-      else startOrbit();
+      if (document.hidden) stopLoop();
+      else startLoop();
     };
     document.addEventListener('visibilitychange', onVisibility);
 
     initStars();
     measure();
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        initStars();
+        measure();
+        if (reduced) drawStars(0);
+      });
+    }
 
     if (reduced) {
-      // Static ring: three marks evenly placed, no motion, no dispatch dots.
-      // Selection and re-theming still work on click.
+      // Static ring + one bubble on the front-most mark, so the scene isn't
+      // mute. Selection still works on click.
       baseAngle = -Math.PI / 2;
       layoutMarks();
       drawStars(0);
+      let idx = 0;
+      for (let i = 1; i < marks.length; i++) {
+        const mi = marks[i];
+        const mb = marks[idx];
+        if (mi && mb && mi.z > mb.z) idx = i;
+      }
+      bubbleIdx = idx;
+      placeBubble(idx);
+      const bubble = bubbleEls[idx];
+      if (bubble) bubble.classList.add(styles.bubbleShow);
     } else {
-      startOrbit();
+      startLoop();
     }
 
     return () => {
-      stopOrbit();
-      killChipsRef.current = () => {};
+      stopLoop();
       themeObserver.disconnect();
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('visibilitychange', onVisibility);
+      stage.removeEventListener('click', onStageClick);
+      for (const cleanup of markCleanups) cleanup();
       if (!reduced) window.removeEventListener('pointermove', onPointerMove);
     };
   }, []);
 
-  // Call-card content: hold the last selection so the card fades out with
-  // its content intact.
-  const lastSelectedRef = useRef<LandingPersonality | null>(null);
-  const active = selectedId === null ? null : PERSONALITIES[PERSONALITY_INDEX[selectedId]];
-  if (active) lastSelectedRef.current = active;
-  const cardP = active ?? lastSelectedRef.current ?? PERSONALITIES[0];
-
   return (
-    <section className={styles.hero} id="hero">
+    <section ref={heroRef} className={styles.hero} id="hero">
       {/* decorative, empty canvas — nothing for AT to announce */}
       <canvas ref={starsRef} className={styles.stars} />
-      <div className={styles.container}>
-        <div className={styles.heroGrid}>
-          <div className={styles.heroInner}>
-            <div className={styles.heroStripe} aria-hidden="true" />
-            <p className={styles.heroEyebrow}>ethos</p>
-            <h1 className={styles.heroTitle}>
-              {HERO_TITLE_WORDS.map((word, i) => (
-                <span
-                  key={word}
-                  className={styles.heroWord}
-                  style={{ ['--i' as never]: i } as CSSProperties}
-                >
-                  {word}
-                </span>
-              ))}
-            </h1>
-            <p className={styles.heroSubtitle}>
-              General-purpose AI is fine for small talk, mediocre at real work. Ethos gives you a
-              team of specialists — researcher, engineer, reviewer — each with its own tools,
-              memory, and model. Same conversation across Slack, Telegram, and your terminal.
-              Boundaries the prompt can't talk its way out of.
-            </p>
-            <div className={styles.heroActions}>
-              <Link className={styles.btnPrimary} to="/docs/using/quickstart">
-                Use Ethos
-              </Link>
-              <Link className={styles.btnGhost} to="/docs/building/quickstart">
-                Build on Ethos
-              </Link>
-            </div>
-            <p className={styles.heroMeta}>
-              mit · node 24 · typescript strict · zero deps in the types layer
-            </p>
-          </div>
-
-          <div className={styles.orbitStage} ref={stageRef}>
-            <p className={styles.srOnly}>
-              One agent core with three orbiting personalities — researcher, engineer, reviewer.
-              Every call the AgentLoop makes is shaped by a personality: hover or click a mark to
-              see its model, tagline, and curated toolset.
-            </p>
-            <svg
-              ref={guideRef}
-              className={styles.orbitGuide}
-              viewBox="0 0 600 460"
-              aria-hidden="true"
-            >
-              <ellipse
-                ref={ellipseRef}
-                className={styles.orbitEllipse}
-                cx="300"
-                cy="206"
-                rx="225"
-                ry="72"
-              />
-            </svg>
-            <div className={styles.core} aria-hidden="true">
-              <span className={styles.coreLabel}>AgentLoop</span>
-            </div>
-            <div ref={dispatchRef} className={styles.dispatchDot} aria-hidden="true" />
-            {PERSONALITIES.map((p, i) => (
-              <button
-                key={p.id}
-                type="button"
-                data-orbit-mark
-                ref={(el) => {
-                  markRefs.current[i] = el;
-                }}
-                className={clsx(styles.orbitMark, selectedId === p.id && styles.orbitMarkSel)}
-                aria-label={`personality ${p.id}`}
-                style={{ ['--pulse' as never]: `${p.accent}55` } as CSSProperties}
-                onPointerEnter={() => {
-                  if (!pinned) onSelect(p.id, false);
-                }}
-                onPointerLeave={() => {
-                  if (!pinned && selectedId === p.id) onDeselect();
-                }}
-                onClick={() => onSelect(p.id, true)}
-              >
-                <span className={styles.orbitDisc}>
-                  <PersonalityMark id={p.id} accent={p.accent} size={48} />
-                </span>
-                <span className={styles.orbitLabel}>{p.id}</span>
-              </button>
-            ))}
-            {CHIP_LANES.map((lane) => (
-              <div key={lane}>
-                <div
-                  ref={(el) => {
-                    chipRefs.current[lane] = el;
-                  }}
-                  className={styles.toolFlight}
-                  aria-hidden="true"
-                />
-                <div
-                  ref={(el) => {
-                    relayRefs.current[lane] = el;
-                  }}
-                  className={styles.chipTrail}
-                  aria-hidden="true"
-                />
-              </div>
-            ))}
-            <div ref={emitRef} className={styles.coreEmit} aria-hidden="true" />
-            <div
-              data-call-card
-              className={clsx(styles.callCard, selectedId !== null && styles.callCardShow)}
-              aria-live="polite"
-            >
-              {cardP && (
-                <>
-                  <div className={styles.callCardHead}>
-                    <span className={styles.callCardMark}>
-                      <PersonalityMark id={cardP.id} accent={cardP.accent} size={26} />
-                    </span>
-                    <span className={styles.callCardName}>{cardP.id}</span>
-                    <span className={styles.callCardModel}>{cardP.model}</span>
-                  </div>
-                  <div className={styles.callCardTagline}>{cardP.tagline}</div>
-                  <div className={styles.callCardTools}>
-                    {cardP.tools.map((t) => (
-                      <span key={t} className={styles.toolChip}>
-                        {t}
-                      </span>
-                    ))}
-                    {cardP.id === 'reviewer' && (
-                      <span className={clsx(styles.toolChip, styles.toolChipRefused)}>
-                        write_file <span className={styles.toolChipX}>✗</span> refused
-                      </span>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+      <div className={clsx(shared.wrap, styles.heroInner)}>
+        <span className={styles.heroBadge}>
+          <span className={styles.liveDot} /> 3 agents on duty right now
+        </span>
+        <h1 className={styles.heroTitle}>
+          Your AI team is{' '}
+          <span className={styles.hl}>
+            <i>already working.</i>
+          </span>
+        </h1>
+        <p className={styles.heroSub}>
+          Ethos runs <b>a whole team of specialist agents</b> — in parallel, on every app you use.
+          One researches, one ships code, one guards the merge. Each has its own tools, memory, and
+          model, and <b>none of them can overstep</b>.
+        </p>
+        <div className={styles.heroActions}>
+          <InstallPill />
+          <a className={clsx(shared.btn, shared.btnPop)} href="#roster">
+            Meet the team
+          </a>
         </div>
+        <p className={clsx(styles.heroMeta, shared.mono)}>
+          Open-source TypeScript framework · MIT · runs on your machine
+        </p>
+      </div>
+
+      <div ref={stageRef} className={clsx(shared.wrap, styles.stage)}>
+        <svg ref={guideRef} className={styles.orbitGuide} viewBox="0 0 600 470" aria-hidden="true">
+          <ellipse
+            ref={ellipseRef}
+            className={styles.orbitEllipse}
+            cx="300"
+            cy="230"
+            rx="230"
+            ry="74"
+          />
+        </svg>
+        <div ref={coreRef} className={styles.core} aria-hidden="true">
+          <span className={styles.coreLabel}>AgentLoop</span>
+        </div>
+        <div ref={emitRef} className={styles.coreEmit} aria-hidden="true" />
+        <div ref={dotRef} className={styles.dot} aria-hidden="true" />
+        {PERSONALITIES.map((p, i) => (
+          <button
+            key={p.id}
+            type="button"
+            data-orbit-mark
+            ref={(el) => {
+              markRefs.current[i] = el;
+            }}
+            className={styles.mark}
+            aria-label={`personality ${p.id}`}
+            style={
+              {
+                ['--pulse' as never]: `${p.accent}55`,
+                ['--accent' as never]: p.accent,
+              } as CSSProperties
+            }
+          >
+            <span className={styles.markDisc}>
+              <RingMark accent={p.accent} size={56} />
+            </span>
+            <span className={styles.markLabel}>{p.id}</span>
+          </button>
+        ))}
+        {CHIP_LANES.map((lane) => (
+          <Fragment key={lane}>
+            <div
+              ref={(el) => {
+                chipRefs.current[lane] = el;
+              }}
+              className={styles.flight}
+              aria-hidden="true"
+            />
+            <div
+              ref={(el) => {
+                trailRefs.current[lane] = el;
+              }}
+              className={styles.trail}
+              aria-hidden="true"
+            />
+          </Fragment>
+        ))}
+        {PERSONALITIES.map((p, i) => (
+          <div
+            key={p.id}
+            ref={(el) => {
+              bubbleRefs.current[i] = el;
+            }}
+            className={styles.bubble}
+            style={{ borderColor: `${p.accent}66` }}
+            aria-hidden="true"
+          >
+            <div className={styles.bubbleWho}>
+              <RingMark accent={p.accent} size={16} /> {p.id}{' '}
+              <span className={styles.bubbleModel}>{p.model}</span>
+            </div>
+            <div className={styles.bubbleText}>{renderQuote(p.quote)}</div>
+          </div>
+        ))}
+        <p className={styles.srOnly}>
+          Three agents orbit the loop and speak in turn — researcher, engineer, reviewer. Hover or
+          click one to pin it.
+        </p>
       </div>
     </section>
   );

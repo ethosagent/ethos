@@ -2,10 +2,10 @@
    Docs site is a public/marketing-shape surface. Brand accent is researcher
    blue #4A9EFF (matches DESIGN.md email-digest rule — single brand color
    when not on personality-tagged content). Per-personality accents only
-   appear in the personality showcase component.
+   appear on the landing page (orbit stage, roster, CTA).
    ─────────────────────────────────────────────────────────────────── */
 
-@import url("https://fonts.bunny.net/css?family=geist:400,500,600|geist-mono:400");
+@import url("https://fonts.bunny.net/css?family=geist:400,500,600|geist-mono:400,500");
 
 :root {
   /* DESIGN.md typography */
@@ -39,6 +39,19 @@
   --ethos-accent-researcher: #4a9eff;
   --ethos-accent-engineer: #4ade80;
   --ethos-accent-reviewer: #f59e0b;
+
+  /* Landing "Alive" tokens (mockup ethos-home-alive.html) — text-safe
+     accent variants, accent tints, error, display face, easings. */
+  --ethos-accent-researcher-text: #1d6fd8;
+  --ethos-accent-engineer-text: #0f8a47;
+  --ethos-accent-reviewer-text: #b45309;
+  --ethos-tint-researcher: #eaf3ff;
+  --ethos-tint-engineer: #e9faf0;
+  --ethos-tint-reviewer: #fef4e4;
+  --ethos-error: #ce2c2c;
+  --ethos-font-display: "Bricolage Grotesque", var(--ifm-font-family-base);
+  --ethos-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ethos-ease-spring: cubic-bezier(0.34, 1.4, 0.44, 1);
 
   /* Map Docusaurus surface tokens to DESIGN.md */
   --ifm-background-color: var(--ethos-bg-base);
@@ -84,6 +97,15 @@
   --ethos-text-primary: #e8e8e6;
   --ethos-text-secondary: #9a9a98;
   --ethos-text-tertiary: #7e7e7d;
+
+  /* Landing "Alive" tokens — dark palette (mockup body.dark) */
+  --ethos-accent-researcher-text: #4a9eff;
+  --ethos-accent-engineer-text: #4ade80;
+  --ethos-accent-reviewer-text: #f59e0b;
+  --ethos-tint-researcher: rgba(74, 158, 255, 0.14);
+  --ethos-tint-engineer: rgba(74, 222, 128, 0.13);
+  --ethos-tint-reviewer: rgba(245, 158, 11, 0.14);
+  --ethos-error: #f87171;
 
   --ifm-color-primary: #4a9eff;
   --ifm-background-color: var(--ethos-bg-base);

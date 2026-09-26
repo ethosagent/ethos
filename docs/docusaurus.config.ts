@@ -68,6 +68,26 @@ const config: Config = {
   // /llms-full.txt with no extra config.
   plugins: [(context) => rawMarkdownPlugin(context), (context) => jsonLdPlugin(context)],
 
+  // Landing-page display face (Bricolage Grotesque). Geist / Geist Mono are
+  // loaded via the bunny.net @import in src/css/custom.css.
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'preconnect',
+        href: 'https://fonts.gstatic.com',
+        crossorigin: 'anonymous',
+      },
+    },
+  ],
+  stylesheets: [
+    'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&display=swap',
+  ],
+
   themeConfig: {
     // Fallback for pages that don't get a per-page card rewrite (404, opt-out).
     // Real pages get their unique card via the json-ld plugin's postBuild
@@ -85,8 +105,9 @@ const config: Config = {
       },
     ],
     colorMode: {
-      defaultMode: 'dark',
-      respectPrefersColorScheme: true,
+      defaultMode: 'light',
+      disableSwitch: false,
+      respectPrefersColorScheme: false,
     },
     navbar: {
       title: 'ethos',
