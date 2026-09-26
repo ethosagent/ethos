@@ -8,6 +8,7 @@ import {
   ethosCronDir,
   ethosDir,
   ethosScriptsDir,
+  parseConfigYaml,
   readRawConfig,
   writeConfig,
 } from '../index';
@@ -437,6 +438,45 @@ describe('parseConfigYaml — a2a.enabled', () => {
 
     const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.a2a).toEqual({ enabled: true });
+  });
+});
+
+describe('parseConfigYaml — a2a.peering.allowPrivateUrls', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses the operator peering opt-in beside a2a.enabled', async () => {
+    const cfg = await loadYaml(
+      [...base, 'a2a.enabled: true', 'a2a.peering.allowPrivateUrls: true'].join('\n'),
+    );
+    expect(cfg.a2a).toEqual({ enabled: true, peering: { allowPrivateUrls: true } });
+  });
+
+  it('is read by the parser — no unknown-key notice', () => {
+    const cfg = parseConfigYaml([...base, 'a2a.peering.allowPrivateUrls: true'].join('\n'));
+    const warnings = configParseNotices(cfg).warnings;
+    expect(warnings.join('\n')).not.toContain('a2a.peering');
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(
+      storage,
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: 'sk',
+        personality: 'researcher',
+        a2a: { enabled: false, peering: { allowPrivateUrls: true } },
+      },
+      new InMemorySecretsResolver(),
+    );
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('a2a.peering.allowPrivateUrls: true');
+    expect((await readRawConfig(storage))?.a2a).toEqual({
+      enabled: false,
+      peering: { allowPrivateUrls: true },
+    });
   });
 });
 

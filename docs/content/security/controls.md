@@ -281,7 +281,7 @@ With no allow list, a `['*']` tool reaches any public host, but only over `http(
 
 *Status: Shipped.*
 
-`safeFetch` rejects requests whose resolved addresses are private (RFC1918), loopback, or link-local, unless the personality sets `allow_private_urls: true`. Cloud-metadata hosts are rejected even then: `169.254.169.254`, `metadata.google.internal`, `metadata`, `metadata.azure.com`, `metadata.aws.amazon.com`, `fd00:ec2::254`, Alibaba's `100.100.100.200`, and Oracle's `169.254.0.23`.
+`safeFetch` rejects requests whose resolved addresses are private (RFC1918), loopback, or link-local, unless the personality sets `allow_private_urls: true`. Operator-initiated A2A peering (`ethos a2a peer add` and the web Add-peer dialog) reads no personality's policy: its card fetch opts into private destinations only when `~/.ethos/config.yaml` sets `a2a.peering.allowPrivateUrls: true` (`A2aPeeringService.fetchVerified` in `packages/wiring/src/a2a-peering-service.ts`; pinned by `packages/wiring/src/__tests__/a2a-peering-private-urls.test.ts`). Cloud-metadata hosts are rejected even then: `169.254.169.254`, `metadata.google.internal`, `metadata`, `metadata.azure.com`, `metadata.aws.amazon.com`, `fd00:ec2::254`, Alibaba's `100.100.100.200`, and Oracle's `169.254.0.23`.
 
 - Source: `validateUrl` and `safeFetch` in `packages/safety/network/src/safe-fetch.ts`
 - Cloud metadata blocklist: `isCloudMetadataHost` in `packages/safety/network/src/cloud-metadata.ts`

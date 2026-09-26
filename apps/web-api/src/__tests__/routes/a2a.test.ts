@@ -275,6 +275,26 @@ describe('a2a RPC — mutations', () => {
     }
   });
 
+  it('url_refused → 400 A2A_URL_REFUSED carrying the operator-knob message', async () => {
+    const message = 'Card URL refused: … set a2a.peering.allowPrivateUrls: true …';
+    const { context } = makeContext({
+      peering: {
+        previewPeer: async () => {
+          throw new A2aPeeringError('url_refused', message);
+        },
+      },
+    });
+    try {
+      await call(a2aRouter.peers.preview, { url: 'http://127.0.0.1:3001' }, { context });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ORPCError);
+      expect((err as ORPCError<string, unknown>).code).toBe('A2A_URL_REFUSED');
+      expect((err as ORPCError<string, unknown>).status).toBe(400);
+      expect((err as Error).message).toBe(message);
+    }
+  });
+
   it('peers.setEnabled calls through', async () => {
     const { context, calls } = makeContext();
     const res = await call(

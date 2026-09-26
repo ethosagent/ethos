@@ -1976,6 +1976,7 @@ export function buildServeA2aSurface(opts: {
     storage: a2aStorage,
     baseDir: a2aBaseDir,
     identity: a2aIdentity,
+    allowPrivateUrls: config.a2a?.peering?.allowPrivateUrls === true,
   });
   const a2aRouteModules: RouteModule[] = [
     {
@@ -2060,7 +2061,11 @@ export function buildServeA2aSurface(opts: {
     try {
       const raw = await readRawConfig(a2aStorage);
       if (raw)
-        await writeConfig(a2aStorage, { ...raw, a2a: { enabled } }, await getSecretsResolver());
+        await writeConfig(
+          a2aStorage,
+          { ...raw, a2a: { ...raw.a2a, enabled } },
+          await getSecretsResolver(),
+        );
     } catch (err) {
       console.warn(
         `  a2a:          failed to persist a2a.enabled=${enabled} to config.yaml (toggle still applied for this process):`,

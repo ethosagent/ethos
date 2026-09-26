@@ -141,7 +141,12 @@ async function buildRealDeps(): Promise<A2aCommandDeps> {
     ...(config.webBaseUrl ? { baseUrl: config.webBaseUrl } : {}),
   });
   const a2aDir = join(dir, 'a2a');
-  const peering = buildA2aPeeringService({ storage, baseDir: a2aDir, identity });
+  const peering = buildA2aPeeringService({
+    storage,
+    baseDir: a2aDir,
+    identity,
+    allowPrivateUrls: config.a2a?.peering?.allowPrivateUrls === true,
+  });
   return {
     peering,
     loadConfig: () => readRawConfig(storage),
@@ -202,7 +207,7 @@ async function requireConfig(deps: A2aCommandDeps): Promise<EthosConfig> {
 
 async function a2aEnable(deps: A2aCommandDeps): Promise<void> {
   const config = await requireConfig(deps);
-  await deps.saveConfig({ ...config, a2a: { enabled: true } });
+  await deps.saveConfig({ ...config, a2a: { ...config.a2a, enabled: true } });
   if (!config.webBaseUrl) {
     console.log(
       `${W} ${c.bold}webBaseUrl${c.reset} not set — cards will advertise the default port (:8787).` +
@@ -216,7 +221,7 @@ async function a2aEnable(deps: A2aCommandDeps): Promise<void> {
 
 async function a2aDisable(deps: A2aCommandDeps): Promise<void> {
   const config = await requireConfig(deps);
-  await deps.saveConfig({ ...config, a2a: { enabled: false } });
+  await deps.saveConfig({ ...config, a2a: { ...config.a2a, enabled: false } });
   console.log(`${G} A2A disabled. Endpoints 404 and ${c.bold}a2a_send${c.reset} is unavailable.`);
 }
 

@@ -2981,8 +2981,17 @@ export interface EthosConfig {
    * card routes plus the `a2a_send` tool are live only when `a2a.enabled: true`
    * is set explicitly — default false (A2A stays opt-in). Config key:
    * a2a.enabled. Supersedes the deprecated `ETHOS_A2A_ENABLED` env override.
+   *
+   * `peering.allowPrivateUrls` (config key `a2a.peering.allowPrivateUrls`,
+   * default false) lets OPERATOR-initiated peering — `ethos a2a peer add` and
+   * the web "Add peer" dialog — fetch a card from a loopback or private-network
+   * URL. Read by `A2aPeeringService.fetchVerified`
+   * (packages/wiring/src/a2a-peering-service.ts); the model-driven `a2a_send`
+   * never reads it and stays on the personality's `safety.network`. The
+   * cloud-metadata address is refused regardless (`validateUrl` in
+   * packages/safety/network/src/safe-fetch.ts).
    */
-  a2a?: { enabled?: boolean };
+  a2a?: { enabled?: boolean; peering?: { allowPrivateUrls?: boolean } };
   /**
    * Operator-controlled security settings.
    *
@@ -4503,6 +4512,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
   if (config.a2a?.enabled !== undefined) lines.push(`a2a.enabled: ${config.a2a.enabled}`);
+  if (config.a2a?.peering?.allowPrivateUrls !== undefined)
+    lines.push(`a2a.peering.allowPrivateUrls: ${config.a2a.peering.allowPrivateUrls}`);
   // Written even when the list is empty — `""` is how "trust no org" survives
   // a round-trip, and dropping the line would silently restore the default.
   if (config.security?.trustedGitHubOrgs !== undefined)
@@ -5106,6 +5117,19 @@ class ConfigKeyUse {
     }
     return out;
   }
+}
+
+/** `a2a.enabled` + `a2a.peering.allowPrivateUrls`; undefined when neither is set. */
+function buildA2aConfig(kv: Record<string, string>): EthosConfig['a2a'] {
+  const enabled = kv['a2a.enabled'];
+  const allowPrivateUrls = kv['a2a.peering.allowPrivateUrls'];
+  if (enabled === undefined && allowPrivateUrls === undefined) return undefined;
+  return {
+    ...(enabled !== undefined ? { enabled: enabled === 'true' } : {}),
+    ...(allowPrivateUrls !== undefined
+      ? { peering: { allowPrivateUrls: allowPrivateUrls === 'true' } }
+      : {}),
+  };
 }
 
 /** Accepted `logs.level` values, ordered by severity. Mirrors `LogLevel`. */
@@ -5896,6 +5920,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       kv['a2a.enabled'] = parseConfigScalar(a2a[1]);
       continue;
     }
+    // a2a.peering.allowPrivateUrls: <bool>  (operator peering may reach loopback/LAN).
+    const a2ap = line.match(/^a2a\.peering\.allowPrivateUrls:\s*(.+)$/);
+    if (a2ap) {
+      kv['a2a.peering.allowPrivateUrls'] = parseConfigScalar(a2ap[1]);
+      continue;
+    }
     // security.trusted_github_orgs: <org,list>
     // `(.*)` — not `(.+)` — on purpose: an empty value is a meaningful
     // configuration ("trust no org"), distinct from the key being absent.
@@ -6620,7 +6650,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     pluginsAutoInstall,
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
-    a2a: kv['a2a.enabled'] !== undefined ? { enabled: kv['a2a.enabled'] === 'true' } : undefined,
+    a2a: buildA2aConfig(kv),
     // `!== undefined` — not truthiness: an empty value must survive as `[]`
     // (trust no org) instead of collapsing back to the shipped default.
     security:

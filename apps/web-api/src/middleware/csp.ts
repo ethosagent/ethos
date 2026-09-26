@@ -5,7 +5,7 @@ import type { MiddlewareHandler } from 'hono';
 // openclaw-2026.9.6-gaps). Registered first in `createRoutes`
 // (routes/index.ts), so it wraps every route, error envelope included.
 //
-// Two policies, chosen by who built the response:
+// Three policies, chosen by who built the response:
 //
 //  • Strict (`strictPolicy`) — the default. API responses (JSON, SSE, file
 //    downloads) and the server-rendered `/oauth/callback` page. Scripts run
@@ -25,8 +25,13 @@ import type { MiddlewareHandler } from 'hono';
 //    'SPA shell under the policy' cases in
 //    ../__tests__/routes/oauth-callback-xss.test.ts.
 //
+//  • API reference (`OPENAPI_DOCS_CSP`) — set by the `/openapi/` route
+//    (routes/openapi.ts) on the Scalar docs page only: its CDN script by exact
+//    URL and its constant inline bootstrap by hash. Pinned by
+//    ../__tests__/routes/openapi.test.ts.
+//
 // A response that already carries a policy keeps it — that is how the static
-// handler's shell policy survives this middleware.
+// handler's shell policy and the docs page's policy survive this middleware.
 
 export const SPA_SHELL_CSP = "frame-ancestors 'none'";
 
