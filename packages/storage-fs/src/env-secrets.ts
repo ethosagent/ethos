@@ -21,6 +21,15 @@ export const ENV_TO_REF: Record<string, string> = {
   BRAVE_API_KEY: 'providers/brave/apiKey',
   REPLICATE_API_TOKEN: 'providers/replicate/apiToken',
   YOUTUBE_API_KEY: 'providers/google/apiKey',
+  // The `engine_ask` Microsoft engine's four operator-wide values — a Foundry
+  // project endpoint and an Entra service principal (plan
+  // engine-ask-grok-gemini-microsoft D19). The endpoint is not a secret, but
+  // the secrets resolver is the only per-tool configuration channel that tool
+  // has. `AZURE_*` are the Azure SDKs' own names for the same principal.
+  FOUNDRY_PROJECT_ENDPOINT: 'providers/microsoft-foundry/projectEndpoint',
+  AZURE_TENANT_ID: 'providers/microsoft-foundry/tenantId',
+  AZURE_CLIENT_ID: 'providers/microsoft-foundry/clientId',
+  AZURE_CLIENT_SECRET: 'providers/microsoft-foundry/clientSecret',
 
   TELEGRAM_BOT_TOKEN: 'channels/telegram/default/botToken',
   SLACK_BOT_TOKEN: 'channels/slack/default/botToken',

@@ -105,7 +105,7 @@ describe('KEY_CATALOG', () => {
     expect(xai).toHaveLength(1);
     expect(xai[0]?.id).toBe('tools.xai');
     expect(xai[0]?.category).toBe('tools');
-    expect(xai[0]?.label).toBe('xAI (Grok + X search)');
+    expect(xai[0]?.label).toBe('xAI (Grok + X search + answer engine)');
     // `xai` IS a NamedSecretsService provider now (x_search binds one), but
     // the Models pane also writes this exact ref for the Grok LLM provider —
     // so the row stays directly editable here rather than reflect-only.
@@ -123,6 +123,32 @@ describe('KEY_CATALOG', () => {
     // this exact ref into the named-secrets vault.
     expect(perplexity[0]?.probe).toBeUndefined();
     expect(perplexity[0]?.reflectsNamedSecret).toBeUndefined();
+  });
+
+  it('keeps the Gemini answer-engine key as one directly editable tools row with no probe', () => {
+    const gemini = KEY_CATALOG.filter((e) => e.refPattern === 'providers/gemini/apiKey');
+    expect(gemini).toHaveLength(1);
+    expect(gemini[0]?.id).toBe('tools.gemini');
+    expect(gemini[0]?.category).toBe('tools');
+    expect(gemini[0]?.shape).toEqual({ kind: 'single', field: 'apiKey' });
+    expect(gemini[0]?.getKeyUrl).toBe('https://aistudio.google.com/apikey');
+    expect(gemini[0]?.probe).toBeUndefined();
+    expect(gemini[0]?.reflectsNamedSecret).toBeUndefined();
+  });
+
+  it('holds the four Microsoft Foundry refs in one multi-field tools row', () => {
+    const foundry = KEY_CATALOG.find((e) => e.id === 'tools.microsoft-foundry');
+    if (!foundry) throw new Error('expected a tools.microsoft-foundry entry');
+    expect(foundry.category).toBe('tools');
+    expect(foundry.shape.kind).toBe('multi');
+    expect(refsForEntry(foundry)).toEqual([
+      'providers/microsoft-foundry/projectEndpoint',
+      'providers/microsoft-foundry/tenantId',
+      'providers/microsoft-foundry/clientId',
+      'providers/microsoft-foundry/clientSecret',
+    ]);
+    expect(foundry.probe).toBeUndefined();
+    expect(foundry.reflectsNamedSecret).toBeUndefined();
   });
 
   it('gives every indexed entry a <n> placeholder, and no other entry one', () => {

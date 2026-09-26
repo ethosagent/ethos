@@ -143,7 +143,7 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     // tool-side view of the same credential.
     id: 'tools.xai',
     category: 'tools',
-    label: 'xAI (Grok + X search)',
+    label: 'xAI (Grok + X search + answer engine)',
     refPattern: 'providers/xai/apiKey',
     shape: { kind: 'single', field: 'apiKey' },
     getKeyUrl: 'https://console.x.ai/',
@@ -199,6 +199,44 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     refPattern: 'providers/perplexity/apiKey',
     shape: { kind: 'single', field: 'apiKey' },
     getKeyUrl: 'https://console.perplexity.ai/project/keys',
+  },
+  {
+    // The operator-wide key for the `engine_ask` Gemini engine, and the same
+    // ref the Gemini LLM provider reads — so, like `tools.openai` and
+    // `tools.xai`, it stays directly editable rather than
+    // `reflectsNamedSecret`. No `probe`: that field is a closed union of the
+    // live probes and this adds none. `engine_ask` grants `providers/gemini/*`
+    // so a personality can bind its own name; this row is the `apiKey` default
+    // those bindings fall back to (plan engine-ask-grok-gemini-microsoft §8.2).
+    id: 'tools.gemini',
+    category: 'tools',
+    label: 'Google Gemini (answer engine)',
+    refPattern: 'providers/gemini/apiKey',
+    shape: { kind: 'single', field: 'apiKey' },
+    getKeyUrl: 'https://aistudio.google.com/apikey',
+  },
+  {
+    // The `engine_ask` Microsoft engine's four operator-wide values: a Foundry
+    // project endpoint and an Entra service principal holding the Foundry User
+    // role (plan engine-ask-grok-gemini-microsoft §8.3, D19). The endpoint is
+    // not a secret; it lives here because the secrets resolver is the only
+    // per-tool configuration channel that tool has. No `probe`, no
+    // `reflectsNamedSecret`: nothing mints these refs into the named-secrets
+    // vault, and the engine is not bindable per personality.
+    id: 'tools.microsoft-foundry',
+    category: 'tools',
+    label: 'Microsoft Foundry (answer engine)',
+    refPattern: 'providers/microsoft-foundry',
+    shape: {
+      kind: 'multi',
+      fields: [
+        { key: 'projectEndpoint', label: 'Project endpoint', refSuffix: 'projectEndpoint' },
+        { key: 'tenantId', label: 'Tenant ID', refSuffix: 'tenantId' },
+        { key: 'clientId', label: 'Client ID', refSuffix: 'clientId' },
+        { key: 'clientSecret', label: 'Client secret', refSuffix: 'clientSecret' },
+      ],
+    },
+    getKeyUrl: 'https://ai.azure.com/',
   },
   {
     id: 'tools.replicate',

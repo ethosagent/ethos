@@ -50,6 +50,25 @@ describe('resolveEnvKey', () => {
     expect(resolveEnvKey('PERPLEXITY_API_KEY')).toBe('providers/perplexity/apiKey');
   });
 
+  // XAI_API_KEY and GEMINI_API_KEY already cover the grok and gemini
+  // answer engines; Microsoft's engine reads four refs (plan
+  // engine-ask-grok-gemini-microsoft D19).
+  it('maps GEMINI_API_KEY and the four Microsoft Foundry vars to the refs engine_ask reads', () => {
+    expect(resolveEnvKey('GEMINI_API_KEY')).toBe('providers/gemini/apiKey');
+    expect(resolveEnvKey('FOUNDRY_PROJECT_ENDPOINT')).toBe(
+      'providers/microsoft-foundry/projectEndpoint',
+    );
+    expect(resolveEnvKey('AZURE_TENANT_ID')).toBe('providers/microsoft-foundry/tenantId');
+    expect(resolveEnvKey('AZURE_CLIENT_ID')).toBe('providers/microsoft-foundry/clientId');
+    expect(resolveEnvKey('AZURE_CLIENT_SECRET')).toBe('providers/microsoft-foundry/clientSecret');
+  });
+
+  it('resolves providers/microsoft-foundry/clientSecret from AZURE_CLIENT_SECRET', async () => {
+    process.env.AZURE_CLIENT_SECRET = 'azure-secret';
+    const resolver = new EnvSecretsResolver();
+    expect(await resolver.get('providers/microsoft-foundry/clientSecret')).toBe('azure-secret');
+  });
+
   it('returns null for unknown env keys', () => {
     expect(resolveEnvKey('SOME_UNKNOWN_KEY')).toBeNull();
     expect(resolveEnvKey('')).toBeNull();

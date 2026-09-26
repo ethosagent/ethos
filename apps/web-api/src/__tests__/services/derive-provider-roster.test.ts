@@ -77,7 +77,16 @@ function inTreeRegistry() {
     tool('fetch_url', ['providers/exa/apiKey']),
     tool(
       'engine_ask',
-      ['providers/openai/*', 'providers/perplexity/*'],
+      [
+        'providers/openai/*',
+        'providers/perplexity/*',
+        'providers/xai/*',
+        'providers/gemini/*',
+        'providers/microsoft-foundry/projectEndpoint',
+        'providers/microsoft-foundry/tenantId',
+        'providers/microsoft-foundry/clientId',
+        'providers/microsoft-foundry/clientSecret',
+      ],
       [
         binding('answer-engine', {
           provider: 'openai',
@@ -88,6 +97,16 @@ function inTreeRegistry() {
           provider: 'perplexity',
           providerLabel: 'Perplexity (answer engine)',
           getKeyUrl: 'https://console.perplexity.ai/project/keys',
+        }),
+        binding('answer-engine', {
+          provider: 'xai',
+          providerLabel: 'xAI (Grok answer engine)',
+          getKeyUrl: 'https://console.x.ai/',
+        }),
+        binding('answer-engine', {
+          provider: 'gemini',
+          providerLabel: 'Google Gemini (answer engine)',
+          getKeyUrl: 'https://aistudio.google.com/apikey',
         }),
       ],
     ),
@@ -117,7 +136,12 @@ function inTreeRegistry() {
     tool(
       'x_search',
       ['providers/xai/*'],
-      [binding('x-search', { providerLabel: 'xAI (Grok, X search)' })],
+      [
+        binding('x-search', {
+          providerLabel: 'xAI (Grok, X search)',
+          getKeyUrl: 'https://console.x.ai/',
+        }),
+      ],
     ),
     tool('reddit_search', ['providers/reddit/client_id', 'providers/reddit/client_secret']),
     tool('image_generate', ['providers/openai/apiKey', 'providers/replicate/apiToken']),
@@ -217,6 +241,37 @@ describe('deriveProviderRoster', () => {
     expect(diagnostics.filter((d) => d.declared.includes('perplexity'))).toEqual([]);
   });
 
+  // `providers/xai/*` is granted by BOTH `x_search` and `engine_ask` (its grok
+  // engine). One row, both kinds — a key minted from either picker is offered
+  // to the other, because it is the same xAI key. The label is the FIRST
+  // declaration in registry order: `compose-tools.ts` registers `x_search`
+  // before `engine_ask`, so the row reads x_search's label, which already
+  // names Grok — not engine_ask's narrower "Grok answer engine".
+  it('publishes one xai row for x_search and the grok engine, labelled by x_search', () => {
+    const shipped = inTreeRegistry().getAvailable();
+    const byName = (name: string) => {
+      const t = shipped.find((x) => x.name === name);
+      if (!t) throw new Error(`fixture has no ${name}`);
+      return t;
+    };
+    // Production registration order (packages/wiring/src/compose-tools.ts).
+    const { providers } = deriveProviderRoster(
+      registryOf(byName('x_search'), byName('engine_ask')),
+    );
+    expect(providers.find((p) => p.provider === 'xai')).toEqual({
+      provider: 'xai',
+      kinds: ['answer-engine', 'x-search'],
+      label: 'xAI (Grok, X search)',
+      getKeyUrl: 'https://console.x.ai/',
+    });
+    expect(providers.find((p) => p.provider === 'gemini')).toEqual({
+      provider: 'gemini',
+      kinds: ['answer-engine'],
+      label: 'Google Gemini (answer engine)',
+      getKeyUrl: 'https://aistudio.google.com/apikey',
+    });
+  });
+
   it('unions the kinds of two tools declaring the same provider into one row', () => {
     const { providers } = deriveProviderRoster(
       registryOf(
@@ -313,11 +368,12 @@ describe('deriveProviderRoster', () => {
     expect(providers[0]?.label).toBe('First');
   });
 
-  it('derives exactly the eight providers the shipped tools declare', () => {
+  it('derives exactly the nine providers the shipped tools declare', () => {
     const { providers, diagnostics } = deriveProviderRoster(inTreeRegistry());
     expect(providers.map((p) => p.provider)).toEqual([
       'brave',
       'exa',
+      'gemini',
       'google',
       'google-search-console',
       'openai',
@@ -328,6 +384,9 @@ describe('deriveProviderRoster', () => {
     // `reddit` and `replicate` declare exact refs, so they stay unmanageable
     // until their tools widen to a prefix — recorded in the plan's §15, not
     // fixed here: widening a shipped tool's grant is a security-visible edit.
+    // Microsoft Foundry's four refs are exact (the engine is not bindable),
+    // so they publish no namespace either.
+    expect(providers.map((p) => p.provider)).not.toContain('microsoft-foundry');
     expect(providers.map((p) => p.provider)).not.toContain('reddit');
     expect(providers.map((p) => p.provider)).not.toContain('replicate');
     // The one expected ignored declaration: `credentials/*` is not a

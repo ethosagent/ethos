@@ -202,8 +202,13 @@ export const PROBED_PROVIDERS: readonly string[] = [
  *  `perplexity` became a derived namespace when `engine_ask` widened its grant
  *  to `providers/perplexity/*` (plan engine-ask-per-engine-bindings D4); no
  *  Perplexity probe exists (its Keys-catalog row, `tools.perplexity` in
- *  `keys-catalog.ts`, declares none either), so it reports `tested: false`. */
-export const PROBE_EXEMPT_PROVIDERS: readonly string[] = ['x', 'perplexity'];
+ *  `keys-catalog.ts`, declares none either), so it reports `tested: false`.
+ *  `gemini` became one when `engine_ask` added its Gemini engine with the grant
+ *  `providers/gemini/*` (plan engine-ask-grok-gemini-microsoft, bindings §11);
+ *  same reasoning — no Gemini probe exists and `tools.gemini` declares none.
+ *  `xai`, the other namespace that engine added, is shared with `x_search`
+ *  and already has a live branch above. */
+export const PROBE_EXEMPT_PROVIDERS: readonly string[] = ['x', 'perplexity', 'gemini'];
 
 async function probeProvider(
   provider: string,
