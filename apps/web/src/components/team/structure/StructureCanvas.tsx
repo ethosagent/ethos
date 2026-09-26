@@ -1,18 +1,18 @@
-import type { KanbanTask, Personality, TeamDetail } from '@ethosagent/web-contracts';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  formatRelative,
   humanDuration,
   type MemberPresence,
   memberPresence,
   shortTaskId,
-} from '../../../lib/teamPresence';
+} from '@ethosagent/chat-state';
+import type { KanbanTask, Personality, TeamDetail } from '@ethosagent/web-contracts';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   layoutTeamStructure,
   MIN_CANVAS_HEIGHT,
   MIN_CANVAS_WIDTH,
   type TeamStructureLayout,
 } from '../../../lib/teamStructure';
-import { formatRelative } from '../../kanban/KanbanBoard';
 import { modelLabel, openCount, primaryChannel, trustMode } from './helpers';
 import { StructureNode } from './StructureNode';
 

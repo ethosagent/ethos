@@ -1,11 +1,11 @@
-import { allRuns, type RunsState, runCounts } from '@ethosagent/chat-state';
+import { allRuns, type RunsState, resolveRunner, runCounts } from '@ethosagent/chat-state';
 import { isLightSurface } from '@ethosagent/design-tokens/antd';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
 import { getLastPersonalityId } from '../lib/lastPersonality';
 import { getLastSessionId } from '../lib/lastSession';
-import { resolveRunner, runnerAccentVars } from '../lib/runners';
+import { runnerAccentVars } from '../lib/runners';
 import { useResolvedTokens } from '../lib/skin-tokens';
 import { RUN_COPY } from '../lib/worker-copy';
 import { isChatPathname, resolveFallbackPersonalityId } from '../lib/workspaceRoutes';

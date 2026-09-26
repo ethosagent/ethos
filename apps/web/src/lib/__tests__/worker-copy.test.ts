@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { RUNNERS, resolveRunner } from '@ethosagent/chat-state';
 import type { BackgroundJobStatusWire } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
-import { RUNNERS, resolveRunner } from '../runners';
 import { formatElapsed, formatUsd, RUN_COPY } from '../worker-copy';
 
 // T25 — a snapshot of the rendered copy per run state, so a component edit

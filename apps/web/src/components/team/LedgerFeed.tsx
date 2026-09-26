@@ -1,6 +1,6 @@
+import { formatClock, shortTaskId } from '@ethosagent/chat-state';
 import type { LedgerEvent } from '@ethosagent/web-contracts';
 import { Link } from 'react-router-dom';
-import { formatClock, shortTaskId } from '../../lib/teamPresence';
 import { SeverityDot } from './SeverityDot';
 
 // The supervisor ledger as rows (plan/phases/teams-as-a-scope.md §7):

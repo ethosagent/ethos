@@ -1,6 +1,6 @@
+import { boardCounts, humanDuration } from '@ethosagent/chat-state';
 import type { KanbanTask, TeamDetail } from '@ethosagent/web-contracts';
 import { capitalize } from '../../lib/scopeNav';
-import { boardCounts, humanDuration } from '../../lib/teamPresence';
 import { SeverityDot } from './SeverityDot';
 
 // The Overview's status line (plan/phases/teams-as-a-scope.md §4): five

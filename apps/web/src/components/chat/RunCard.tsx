@@ -5,6 +5,7 @@ import {
   type RunState,
   type RunsState,
   resolvedForRun,
+  resolveRunner,
   runCardView,
 } from '@ethosagent/chat-state';
 import { isLightSurface } from '@ethosagent/design-tokens/antd';
@@ -13,7 +14,7 @@ import { Button } from 'antd';
 import { useState } from 'react';
 import { useTaskCancel } from '../../features/tasks/api/mutations';
 import { useTaskDetail } from '../../features/tasks/api/queries';
-import { resolveRunner, runnerAccentVars } from '../../lib/runners';
+import { runnerAccentVars } from '../../lib/runners';
 import { useResolvedTokens } from '../../lib/skin-tokens';
 import { RUN_COPY } from '../../lib/worker-copy';
 import { ClarifyCard } from './ClarifyCard';

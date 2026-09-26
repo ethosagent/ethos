@@ -1,5 +1,4 @@
-import type { MemberPresence } from '../../../lib/teamPresence';
-import { shortTaskId } from '../../../lib/teamPresence';
+import { type MemberPresence, shortTaskId } from '@ethosagent/chat-state';
 import type { TeamStructureNode } from '../../../lib/teamStructure';
 import { NavIcon, type NavIconKey } from '../../ui/NavIcon';
 import { PersonalityMark } from '../../ui/PersonalityMark';

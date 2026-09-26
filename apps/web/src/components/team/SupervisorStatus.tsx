@@ -1,5 +1,5 @@
+import { humanDuration } from '@ethosagent/chat-state';
 import { useTeam } from '../../features/teams/api/queries';
-import { humanDuration } from '../../lib/teamPresence';
 import { SeverityDot } from './SeverityDot';
 
 // The breadcrumb's supervisor line at the team altitude (prototype's right

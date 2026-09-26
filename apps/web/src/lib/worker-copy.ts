@@ -1,5 +1,5 @@
+import { type RunnerIdentity, resolveRunner } from '@ethosagent/chat-state';
 import type { BackgroundJobStatusWire } from '@ethosagent/web-contracts';
-import { type RunnerIdentity, resolveRunner } from './runners';
 
 // Normative copy for delegated runs (pi-delegation §4.10, D8).
 //

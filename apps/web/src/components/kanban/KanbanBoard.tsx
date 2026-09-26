@@ -1,3 +1,4 @@
+import { formatRelative } from '@ethosagent/chat-state';
 import type {
   KanbanBoardSnapshot,
   KanbanEvent,
@@ -931,14 +932,4 @@ export function describeEvent(e: KanbanEvent): string {
     default:
       return e.kind;
   }
-}
-
-export function formatRelative(iso: string): string {
-  const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return iso;
-  const diff = Date.now() - ts;
-  if (diff < 1_000) return 'just now';
-  if (diff < 60_000) return `${Math.floor(diff / 1_000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(iso).toLocaleString();
 }

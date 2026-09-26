@@ -1,3 +1,4 @@
+import { boardCounts, humanDuration } from '@ethosagent/chat-state';
 import type { KanbanTask, KanbanTaskStatus } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Spin } from 'antd';
@@ -16,7 +17,6 @@ import { NewTaskModal } from '../../components/kanban/NewTaskModal';
 import { TaskActions } from '../../components/team/TaskActions';
 import { useKanbanBoard } from '../../features/kanban/api/queries';
 import { useTeam } from '../../features/teams/api/queries';
-import { boardCounts, humanDuration } from '../../lib/teamPresence';
 import { rpc } from '../../rpc';
 
 // The team's board (plan/phases/teams-as-a-scope.md §5): the Control Center's

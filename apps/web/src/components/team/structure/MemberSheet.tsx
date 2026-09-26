@@ -1,3 +1,4 @@
+import { formatClock, memberPresence, shortTaskId } from '@ethosagent/chat-state';
 import type {
   KanbanMemberStats,
   KanbanTask,
@@ -10,7 +11,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from 'antd';
 import { Link, useNavigate } from 'react-router-dom';
 import { teamAccents } from '../../../features/teams/lib/membership';
-import { formatClock, memberPresence, shortTaskId } from '../../../lib/teamPresence';
 import { rpc } from '../../../rpc';
 import { PersonalityMark } from '../../ui/PersonalityMark';
 import { TeamRing } from '../../ui/TeamRing';

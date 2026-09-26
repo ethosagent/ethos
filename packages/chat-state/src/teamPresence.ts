@@ -1,5 +1,4 @@
 import type { KanbanTask, TeamMemberSummary } from '@ethosagent/web-contracts';
-import { formatRelative } from '../components/kanban/KanbanBoard';
 
 // Pure derivations behind the team Overview (plan/phases/teams-as-a-scope.md
 // §4): a member's live state from the runtime status plus the board, the
@@ -114,4 +113,15 @@ export function formatClock(iso: string): string {
   return [d.getHours(), d.getMinutes(), d.getSeconds()]
     .map((n) => String(n).padStart(2, '0'))
     .join(':');
+}
+
+/** `just now`, `12s ago`, `5m ago`, else the local date-time — board and presence ages. */
+export function formatRelative(iso: string): string {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return iso;
+  const diff = Date.now() - ts;
+  if (diff < 1_000) return 'just now';
+  if (diff < 60_000) return `${Math.floor(diff / 1_000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  return new Date(iso).toLocaleString();
 }

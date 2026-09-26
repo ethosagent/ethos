@@ -1,4 +1,4 @@
-import { RUNNER_TEAL, type RunnerAccent } from './runners';
+import { RUNNER_TEAL, type RunnerAccent } from '@ethosagent/chat-state';
 
 // The decision accent — the CSS half of decision-provider identity (plan
 // decision-provider-personality §15.1; DESIGN.md "Decision accent"). The
@@ -8,7 +8,7 @@ import { RUNNER_TEAL, type RunnerAccent } from './runners';
 
 /**
  * DESIGN.md's `decision` token: the runner-teal values (the hex lives only in
- * `lib/runners.ts`). It is not an `--accent` — the personality's hue stays the
+ * `packages/chat-state/src/runners.ts`). It is not an `--accent` — the personality's hue stays the
  * personality's. Stamped once on `:root` as `--decision` by `main.tsx`, per skin.
  */
 export const DECISION_ACCENT: RunnerAccent = RUNNER_TEAL;

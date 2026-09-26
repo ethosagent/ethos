@@ -1,6 +1,6 @@
+import { memberPresence, shortTaskId } from '@ethosagent/chat-state';
 import type { KanbanTask, TeamMemberSummary } from '@ethosagent/web-contracts';
 import { Link } from 'react-router-dom';
-import { memberPresence, shortTaskId } from '../../lib/teamPresence';
 import { buildWorkspaceChatPath } from '../../lib/workspaceRoutes';
 import { PersonalityMark } from '../ui/PersonalityMark';
 import { SeverityDot } from './SeverityDot';

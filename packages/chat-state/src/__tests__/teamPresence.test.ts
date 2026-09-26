@@ -1,9 +1,6 @@
-// @vitest-environment jsdom
-//
 // The Overview's pure derivations (plan/phases/teams-as-a-scope.md §4): a
 // member's state line from the runtime status and the board, and the small
-// counters/formatters the panes share. jsdom only because `formatRelative`
-// lives in the kanban component module.
+// counters/formatters the panes share.
 
 import type { KanbanTask, TeamMemberSummary } from '@ethosagent/web-contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

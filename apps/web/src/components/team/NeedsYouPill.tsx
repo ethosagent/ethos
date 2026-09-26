@@ -1,8 +1,8 @@
+import { needsYou } from '@ethosagent/chat-state';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { kanbanKeys } from '../../features/kanban/api/keys';
 import { outboxKeys } from '../../features/outbox/api/keys';
-import { needsYou } from '../../lib/teamPresence';
 import { buildTeamPath } from '../../lib/workspaceRoutes';
 import { rpc } from '../../rpc';
 

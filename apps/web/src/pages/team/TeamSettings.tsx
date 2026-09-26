@@ -1,8 +1,8 @@
+import { humanDuration } from '@ethosagent/chat-state';
 import { Button, Tooltip, Typography } from 'antd';
 import { useParams } from 'react-router-dom';
 import { useConfig } from '../../features/config/api/queries';
 import { useTeam } from '../../features/teams/api/queries';
-import { humanDuration } from '../../lib/teamPresence';
 
 // The team's Settings pane (plan/phases/teams-as-a-scope.md §8, D13):
 // the manifest as its source file, the runtime block, and the CLI commands

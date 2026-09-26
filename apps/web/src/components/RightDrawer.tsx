@@ -4,6 +4,7 @@ import {
   questionForRun,
   type RunState,
   type RunsState,
+  resolveRunner,
   runsNeedingYou,
   type TrailEntry,
   type TrailState,
@@ -17,7 +18,7 @@ import {
   type UsageState,
   useDrawerStream,
 } from '../hooks/useDrawerStream';
-import { resolveRunner, runnerAccentVars } from '../lib/runners';
+import { runnerAccentVars } from '../lib/runners';
 import { useResolvedTokens } from '../lib/skin-tokens';
 import { RUN_COPY } from '../lib/worker-copy';
 import { TrailRow } from './chat/Trail';

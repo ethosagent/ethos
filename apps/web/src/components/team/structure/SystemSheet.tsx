@@ -1,7 +1,7 @@
+import { humanDuration } from '@ethosagent/chat-state';
 import type { TeamDetail } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { humanDuration } from '../../../lib/teamPresence';
 import { NavIcon } from '../../ui/NavIcon';
 import { primaryChannel, trustMode } from './helpers';
 

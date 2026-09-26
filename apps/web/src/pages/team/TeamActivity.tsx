@@ -1,3 +1,4 @@
+import { formatClock, shortTaskId } from '@ethosagent/chat-state';
 import { Alert, Spin } from 'antd';
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -8,7 +9,6 @@ import { PersonalityMark } from '../../components/ui/PersonalityMark';
 import { useKanbanBoard } from '../../features/kanban/api/queries';
 import { useTeam } from '../../features/teams/api/queries';
 import { useTeamLedger } from '../../hooks/useTeamLedger';
-import { formatClock, shortTaskId } from '../../lib/teamPresence';
 
 // Activity (plan/phases/teams-as-a-scope.md §8): the board's recent events
 // beside the supervisor ledger, two full-height columns. A member's row
