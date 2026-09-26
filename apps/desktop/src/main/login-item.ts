@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { app } from 'electron';
 
 async function setLoginItemMac(enabled: boolean): Promise<void> {
-  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true });
+  app.setLoginItemSettings({ openAtLogin: enabled });
 }
 
 async function getLoginItemMac(): Promise<boolean> {
