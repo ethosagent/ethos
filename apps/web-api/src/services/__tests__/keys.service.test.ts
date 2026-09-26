@@ -403,6 +403,27 @@ describe('indexed catalog entries', () => {
     );
   });
 
+  it('expands OTLP export headers by header name into settings', async () => {
+    const { service } = makeService({
+      'telemetry/export/otlp/headers/Authorization': 'Basic b3RscC1jcmVk',
+      'telemetry/export/otlp/headers/x-honeycomb-team': 'hc-key-0123456789',
+    });
+    const { categories } = await service.list();
+    const headers = category(categories, 'settings').filter((e) =>
+      e.id.startsWith('settings.otlp.'),
+    );
+    expect(headers.map((e) => e.id)).toEqual([
+      'settings.otlp.Authorization',
+      'settings.otlp.x-honeycomb-team',
+    ]);
+    expect(headers.map((e) => e.fields[0]?.ref)).toEqual([
+      'telemetry/export/otlp/headers/Authorization',
+      'telemetry/export/otlp/headers/x-honeycomb-team',
+    ]);
+    // Neither credential fell through to `custom`.
+    expect(category(categories, 'custom')).toEqual([]);
+  });
+
   it('writes and clears through an expanded id', async () => {
     const { service, secrets } = makeService({ 'webhooks/deploy/secret': 'old-hook-secret' });
     await service.set({ id: 'gateway.webhook.deploy', values: { secret: 'new-hook-secret' } });

@@ -110,10 +110,10 @@ register_anchors:
     - { path: packages/safety/redact/src/index.ts, line: 94, contains: "export function detectSecrets" }
     - { path: packages/safety/redact/src/index.ts, line: 106, contains: "export function redactString" }
     - { path: packages/safety/redact/src/index.ts, line: 123, contains: "export function redactJson" }
-    - { path: extensions/observability-sqlite/src/store.ts, line: 179, contains: "redactJson(trace.attrs)" }
-    - { path: extensions/observability-sqlite/src/store.ts, line: 317, contains: "redactJson(span.attrs, extraRedactPatterns)" }
-    - { path: extensions/observability-sqlite/src/store.ts, line: 370, contains: "redactJson(attrs, extraRedactPatterns)" }
-    - { path: extensions/observability-sqlite/src/store.ts, line: 500, contains: "redactJson(event.details, extraRedactPatterns)" }
+    - { path: extensions/observability-sqlite/src/store.ts, line: 206, contains: "redactJson(trace.attrs)" }
+    - { path: extensions/observability-sqlite/src/store.ts, line: 344, contains: "redactJson(span.attrs, extraRedactPatterns)" }
+    - { path: extensions/observability-sqlite/src/store.ts, line: 397, contains: "redactJson(attrs, extraRedactPatterns)" }
+    - { path: extensions/observability-sqlite/src/store.ts, line: 527, contains: "redactJson(event.details, extraRedactPatterns)" }
     - { path: extensions/platform-slack/src/blocks/approval.ts, line: 118, contains: "function formatArgs" }
     - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
 
@@ -155,11 +155,11 @@ register_anchors:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 33, contains: "contextVisibility?:" }
 
   G-AUDIT:
-    - { path: extensions/observability-sqlite/src/store.ts, line: 179, contains: "redactJson(trace.attrs)" }
+    - { path: extensions/observability-sqlite/src/store.ts, line: 206, contains: "redactJson(trace.attrs)" }
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 149 packages: 11 at Tier 0, 27 at Tier 1, 111 at Tier 2.
+# apps/ carries a tier. 150 packages: 11 at Tier 0, 27 at Tier 1, 112 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -622,6 +622,16 @@ tiers:
     package: "@ethosagent/export-langfuse"
     tier: 2
     assigned: 2026-08-20
+
+  # Same rationale as extensions/export-langfuse above: reads the
+  # already-redacted observability.db and ships it (OTLP/HTTP JSON) to an
+  # operator-configured collector; the D6 content gate plus export-time
+  # re-redaction happen in its mapping, but the redaction BOUNDARY stays the
+  # Tier 1 store.
+  extensions/export-otlp:
+    package: "@ethosagent/export-otlp"
+    tier: 2
+    assigned: 2026-09-26
 
   extensions/goal-runner:
     package: "@ethosagent/goal-runner"

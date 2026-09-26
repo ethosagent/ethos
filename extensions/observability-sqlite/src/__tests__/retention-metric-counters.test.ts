@@ -72,6 +72,70 @@ describe('retention prune vs. metric_counters', () => {
     reopened.close();
   });
 
+  it('counts a pruned un-exported trace when the otlp sink is active, and drops its row', () => {
+    const store = new SQLiteObservabilityStore(dbPath);
+
+    // Make the sink "active": one old trace terminally exported for 'otlp'.
+    const exportedId = randomUUID();
+    store.insertTrace({ traceId: exportedId, kind: 'turn', startTs: OLD });
+    store.closeTrace(exportedId, 'ok');
+    const claimed = store.claimTracesForSink('otlp', 10, 120_000, 0);
+    const claim = claimed[0];
+    if (!claim) throw new Error('expected a claim');
+    store.markSinkExported('otlp', exportedId, claim.claimedAt, 'exported');
+
+    // One old trace the sink never terminally stamped — the doomed one.
+    const unexportedId = randomUUID();
+    store.insertTrace({ traceId: unexportedId, kind: 'turn', startTs: OLD });
+    store.closeTrace(unexportedId, 'ok');
+    store.close();
+
+    const result = pruneObservabilityByPath(dbPath, RETENTION_DEFAULTS, {
+      now: NOW,
+      dryRun: false,
+    });
+    expect(result.traces).toBe(2);
+    expect(result.unexportedPruned).toBe(1);
+
+    const reopened = new SQLiteObservabilityStore(dbPath);
+    const pruned = reopened
+      .getMetricCounters()
+      .find((r) => r.metric === 'ethos_otlp_export_traces_total');
+    expect(pruned).toEqual({
+      metric: 'ethos_otlp_export_traces_total',
+      labels: { outcome: 'pruned' },
+      value: 1,
+    });
+
+    // Both trace_exports rows are gone: their traces no longer exist, and
+    // nothing pends for the sink any more.
+    expect(reopened.oldestUnexportedStartTs('otlp')).toBeNull();
+    expect(reopened.claimTracesForSink('otlp', 10, 120_000, 0)).toHaveLength(0);
+    reopened.close();
+  });
+
+  it('with no otlp rows ever written, a prune bumps no otlp counter', () => {
+    const store = new SQLiteObservabilityStore(dbPath);
+    const traceId = randomUUID();
+    store.insertTrace({ traceId, kind: 'turn', startTs: OLD });
+    store.closeTrace(traceId, 'ok');
+    store.close();
+
+    const result = pruneObservabilityByPath(dbPath, RETENTION_DEFAULTS, {
+      now: NOW,
+      dryRun: false,
+    });
+    expect(result.traces).toBe(1);
+    expect(result.unexportedPruned).toBe(0);
+
+    const reopened = new SQLiteObservabilityStore(dbPath);
+    const rows = reopened
+      .getMetricCounters()
+      .filter((r) => r.metric === 'ethos_otlp_export_traces_total');
+    expect(rows).toEqual([]);
+    reopened.close();
+  });
+
   it('a second prune cycle over already-pruned data still leaves counters monotonic', () => {
     const store = new SQLiteObservabilityStore(dbPath);
     const traceId = randomUUID();

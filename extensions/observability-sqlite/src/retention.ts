@@ -1,5 +1,6 @@
 import BetterSqlite3 from '@ethosagent/sqlite';
 import type { RetentionConfig } from '@ethosagent/types';
+import { incrementCounter } from './metric-counters';
 
 /** Parse a duration string to milliseconds, or null for 'forever'. */
 export function parseDuration(s: string): number | null {
@@ -89,6 +90,15 @@ export interface PruneResult {
   events: number;
   snapshots: number;
   messages: number;
+  /**
+   * How many of the pruned traces the `otlp` export sink had never
+   * terminally stamped (otlp-export §4.1/D11) — prune never waits for
+   * export, so these are counted (and the
+   * `ethos_otlp_export_traces_total{outcome="pruned"}` counter bumped)
+   * rather than retained. Always 0 when the sink has never run (no `otlp`
+   * row in `trace_exports`) and on dry runs.
+   */
+  unexportedPruned: number;
 }
 
 /**
@@ -108,7 +118,14 @@ export function pruneObservability(
   } = {},
 ): PruneResult {
   const now = opts.now ?? Date.now();
-  const result: PruneResult = { traces: 0, spans: 0, events: 0, snapshots: 0, messages: 0 };
+  const result: PruneResult = {
+    traces: 0,
+    spans: 0,
+    events: 0,
+    snapshots: 0,
+    messages: 0,
+    unexportedPruned: 0,
+  };
 
   const cutoff = (dur: string | undefined, def: string) => parseDuration(dur ?? def);
 
@@ -121,43 +138,73 @@ export function pruneObservability(
 
   if (traceCutoff !== null) {
     const threshold = now - traceCutoff;
+    // One predicate shared by the dry-run count, the delete, and the doomed-
+    // unexported accounting below, so the three can never disagree about
+    // which rows are in scope.
+    let where = 'start_ts < ?';
+    const values: unknown[] = [threshold];
     if (opts.subjectId) {
-      if (opts.dryRun) {
-        result.traces = (
-          db
-            .prepare('SELECT COUNT(*) as n FROM traces WHERE subject_id = ? AND start_ts < ?')
-            .get(opts.subjectId, threshold) as { n: number }
-        ).n;
-      } else {
-        result.traces = db
-          .prepare('DELETE FROM traces WHERE subject_id = ? AND start_ts < ?')
-          .run(opts.subjectId, threshold).changes;
-      }
+      where = `subject_id = ? AND ${where}`;
+      values.unshift(opts.subjectId);
     } else if (excluded.length > 0) {
       const ph = excluded.map(() => '?').join(',');
-      if (opts.dryRun) {
-        result.traces = (
-          db
-            .prepare(
-              `SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
-            )
-            .get(threshold, ...excluded) as { n: number }
-        ).n;
-      } else {
-        result.traces = db
-          .prepare(
-            `DELETE FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
-          )
-          .run(threshold, ...excluded).changes;
-      }
-    } else if (opts.dryRun) {
+      where = `${where} AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`;
+      values.push(...excluded);
+    }
+    if (opts.dryRun) {
       result.traces = (
-        db.prepare('SELECT COUNT(*) as n FROM traces WHERE start_ts < ?').get(threshold) as {
+        db.prepare(`SELECT COUNT(*) as n FROM traces WHERE ${where}`).get(...values) as {
           n: number;
         }
       ).n;
     } else {
-      result.traces = db.prepare('DELETE FROM traces WHERE start_ts < ?').run(threshold).changes;
+      // `ethos data prune` opens this DB raw, without running the store's
+      // migrations, so `trace_exports` (schema v4) can be missing entirely.
+      const hasTraceExports =
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+          .get('trace_exports') !== undefined;
+      db.transaction(() => {
+        // OTLP export accounting (otlp-export §4.1/D11) — prune never waits
+        // for export, so count the doomed traces the 'otlp' sink had not
+        // terminally stamped, BEFORE they are deleted. Only when the sink
+        // has ever run (at least one 'otlp' row): a deployment without the
+        // exporter must not grow the counter. Any 'otlp' row implies a v4
+        // schema, so `metric_counters` exists for the increment.
+        if (hasTraceExports) {
+          const otlpEverRan =
+            db.prepare(`SELECT 1 AS one FROM trace_exports WHERE sink = 'otlp' LIMIT 1`).get() !==
+            undefined;
+          if (otlpEverRan) {
+            const doomed = (
+              db
+                .prepare(
+                  `SELECT COUNT(*) as n FROM traces WHERE ${where}
+                     AND trace_id NOT IN (
+                       SELECT trace_id FROM trace_exports
+                        WHERE sink = 'otlp' AND exported_at IS NOT NULL)`,
+                )
+                .get(...values) as { n: number }
+            ).n;
+            if (doomed > 0) {
+              result.unexportedPruned = doomed;
+              incrementCounter(
+                db,
+                'ethos_otlp_export_traces_total',
+                { outcome: 'pruned' },
+                doomed,
+                new Date(now).toISOString(),
+              );
+            }
+          }
+        }
+        result.traces = db.prepare(`DELETE FROM traces WHERE ${where}`).run(...values).changes;
+        if (hasTraceExports) {
+          db.prepare(
+            'DELETE FROM trace_exports WHERE trace_id NOT IN (SELECT trace_id FROM traces)',
+          ).run();
+        }
+      }).immediate();
     }
   }
 

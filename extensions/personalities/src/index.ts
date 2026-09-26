@@ -2788,6 +2788,14 @@ function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfi
       }
       observability.redactPatterns = obs.redactPatterns as string[];
     }
+    if (obs.exportTraces !== undefined) {
+      // Same posture as the store values above: a malformed value on a safety
+      // field throws at load rather than silently defaulting to "exported".
+      const exportTraces = nestedBool(obs.exportTraces);
+      if (exportTraces === undefined)
+        throw new Error(`Invalid exportTraces: "${obs.exportTraces}". Expected true or false`);
+      observability.exportTraces = exportTraces;
+    }
     result.observability = observability;
   }
 

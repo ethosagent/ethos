@@ -131,8 +131,10 @@ import {
   type MessagingSendFn,
   markHostApprovalGate,
   notPermittedRefusal,
+  OtlpPollLoop,
   type OutboxWiring,
   resolveKanbanDbPath,
+  resolveOtlpSettings,
   type SmartApproverDecisionSite,
   SQLiteNotifyQueue,
   sanitize,
@@ -195,6 +197,7 @@ import {
   reportUnattendedCronExposure,
   wireUnattendedApprovalGate,
 } from '../unattended-approval-gate';
+import { buildVersionInfo } from '../version-info';
 import { createWebhookServer, type DeliveryRelay, type PrefilterRunner } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
@@ -1618,6 +1621,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   let langfusePoll: LangfusePollLoop | null = null;
   const langfuseCfg = config.telemetry?.export?.langfuse;
   if (langfuseCfg?.enabled) {
+    // D14 (otlp-export): one line, once, at start — release N+1 removes the package.
+    console.warn('telemetry.export.langfuse is deprecated; see extensions/export-otlp/README.md');
     if (!langfuseCfg.baseUrl || !langfuseCfg.publicKey || !langfuseCfg.secretKey) {
       console.error(
         '[langfuse-export] telemetry.export.langfuse.enabled is true but baseUrl/publicKey/secretKey ' +
@@ -1634,6 +1639,34 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       langfusePoll.start();
       console.log(`${c.dim}Langfuse export poller running (${langfuseCfg.baseUrl})${c.reset}`);
     }
+  }
+
+  // OTLP export poller (otlp-export §4.4) — opt-in, off by default. OTel env
+  // vars override values but never enable export (D8), so a disabled
+  // resolution while config says `enabled: true` is worth one warning naming
+  // the deciding input.
+  let otlpPoll: OtlpPollLoop | null = null;
+  const otlpCfg = config.telemetry?.export?.otlp;
+  const otlpSettings = resolveOtlpSettings(otlpCfg, process.env, {
+    serviceVersion: buildVersionInfo().version,
+  });
+  if ('disabled' in otlpSettings) {
+    if (otlpCfg?.enabled === true) {
+      console.warn(`[otlp-export] not starting: ${otlpSettings.reason}`);
+    }
+  } else {
+    otlpPoll = new OtlpPollLoop({
+      store: getObservabilityStore(),
+      settings: otlpSettings,
+      // D12 — the per-personality `safety.observability.exportTraces` gate,
+      // read live from the same registry the loops resolve against. An
+      // unknown/deleted personality is allowed: its opt-out cannot be read.
+      isExportAllowed: (id) =>
+        id == null || seamPersonalities.get(id)?.safety?.observability?.exportTraces !== false,
+      onError: (err) => console.warn(`[otlp-export] tick error: ${err.message}`),
+    });
+    otlpPoll.start();
+    console.log(`${c.dim}OTLP export poller running (${otlpSettings.tracesUrl})${c.reset}`);
   }
 
   // Load watchers.json and seed the backing `source:'system'` tick jobs.
@@ -1850,8 +1883,26 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // serve byte-identical text. `ethos_gateway_adapter_up` reads LIVE adapter
   // health here (this process IS the source of truth for it), not the
   // persisted heartbeat file web-api reads through a staleness gate.
+  // The export-lag gauge (`ethos_trace_export_lag_seconds{store="otlp"}`,
+  // otlp-export §4.1) renders only while this process runs the otlp sink —
+  // on a deployment that never enabled export, `oldestUnexportedStartTs`
+  // would count every closed trace as "lag" for a sink that does not exist.
+  const gatewayObsStore = getObservabilityStore();
   const gatewayMetricsText = createMetricsTextProvider({
-    store: getObservabilityStore(),
+    store: otlpPoll
+      ? {
+          getMetricCounters: () => gatewayObsStore.getMetricCounters(),
+          getExportLag: () => {
+            const oldest = gatewayObsStore.oldestUnexportedStartTs('otlp');
+            return [
+              {
+                sink: 'otlp',
+                lagSeconds: oldest == null ? 0 : Math.max(0, (Date.now() - oldest) / 1000),
+              },
+            ];
+          },
+        }
+      : gatewayObsStore,
     getGatewayAdapters: async () => {
       const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
       return hb.adapters.map((a) => ({ adapter: a.name, up: a.ok ? 1 : 0 }) as const);
@@ -2315,6 +2366,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       cronTriggers.local?.stop();
       dreamExecutor.stop();
       langfusePoll?.stop();
+      otlpPoll?.stop();
       // Stopped BEFORE the gateway drains: a tick that started now would claim
       // a row this process is about to stop being able to deliver, and leave it
       // `sending` for the ten minutes the stale reconciler waits.

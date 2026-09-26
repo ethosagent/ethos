@@ -131,3 +131,4 @@ This removes both containers and their volumes (scraped history, Grafana's own D
 
 - [Config reference](../reference/config-yaml.md) — API-key store wiring.
 - [Run Ethos in Docker](run-in-docker.md) — the three-service compose topology this stack scrapes into, if you run Ethos itself in containers too.
+- [Export traces to an OpenTelemetry collector](export-traces-otlp.md) — ship per-turn traces to Jaeger, Tempo or Langfuse alongside these metrics.

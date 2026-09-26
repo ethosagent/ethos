@@ -196,6 +196,7 @@
       "@ethosagent/tools-personality-design": ["./extensions/tools-personality-design/src"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
       "@ethosagent/export-langfuse": ["./extensions/export-langfuse/src"],
+      "@ethosagent/export-otlp": ["./extensions/export-otlp/src"],
       "@ethosagent/request-dump": ["./extensions/request-dump/src"],
       "@ethosagent/recipes": ["./extensions/recipes/src"],
       "@ethosagent/safety-channel": ["./packages/safety/channel/src"],

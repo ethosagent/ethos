@@ -399,6 +399,7 @@ Controls what the observability store persists for this personality.
 | `safety.observability.storeToolBodies` | `none` \| `redacted` \| `full` | Reserved. Accepted and validated, but tool-call result bodies are never stored at any setting; only the result size is recorded. |
 | `safety.observability.storeLlmPayloads` | `none` \| `metadata` \| `full` | LLM request and response payloads. |
 | `safety.observability.redactPatterns` | string[] | Substrings redacted from anything stored. |
+| `safety.observability.exportTraces` | `true` \| `false` (default `true`) | Whether this personality's turn traces are sent to the OTLP exporter; `false` keeps them local (the poller marks them `opted_out` and never sends them). A value other than `true` or `false` fails the personality load. See [Export traces to an OpenTelemetry collector](../how-to/export-traces-otlp.md#keep-one-personalitys-traces-local). |
 
 ## voice.\* {#voice}
 

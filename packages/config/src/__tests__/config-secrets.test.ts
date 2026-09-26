@@ -461,6 +461,96 @@ describe('telemetry.export.langfuse config round-trip', () => {
 });
 
 // ---------------------------------------------------------------------------
+// OTLP export config round-trip (otlp-export plan, §4.4 / D7 / D8). Every
+// header VALUE is vaulted — header names are free, so there is no safe
+// plaintext subset (D7).
+// ---------------------------------------------------------------------------
+
+describe('telemetry.export.otlp config round-trip', () => {
+  it('every key round-trips through write/parse; header values are vaulted', async () => {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    await storage.mkdir(ethosDir());
+    const config: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      apiKey: 'sk-ant-test',
+      personality: 'researcher',
+      telemetry: {
+        export: {
+          otlp: {
+            enabled: true,
+            endpoint: 'http://localhost:4318',
+            headers: {
+              Authorization: 'Basic cGs6c2s=',
+              'x-honeycomb-team': 'hc-team-key-123',
+            },
+            includeContent: false,
+            intervalMs: 15_000,
+            backlogMaxAgeMs: 86_400_000,
+          },
+        },
+      },
+    };
+
+    await writeConfig(storage, config, secrets);
+    const raw = (await storage.read(join(ethosDir(), 'config.yaml'))) ?? '';
+    expect(raw).toContain('telemetry.export.otlp.enabled: true');
+    expect(raw).toContain('telemetry.export.otlp.endpoint: http://localhost:4318');
+    expect(raw).toContain('telemetry.export.otlp.includeContent: false');
+    expect(raw).toContain('telemetry.export.otlp.intervalMs: 15000');
+    expect(raw).toContain('telemetry.export.otlp.backlogMaxAgeMs: 86400000');
+    // A plaintext header value never reaches a written line — only its ref.
+    expect(raw).not.toContain('cGs6c2s=');
+    expect(raw).not.toContain('hc-team-key-123');
+    expect(raw).toContain(
+      `telemetry.export.otlp.headers.Authorization: ${secretRef(
+        'telemetry/export/otlp/headers/Authorization',
+      )}`,
+    );
+    expect(raw).toContain(
+      `telemetry.export.otlp.headers.x-honeycomb-team: ${secretRef(
+        'telemetry/export/otlp/headers/x-honeycomb-team',
+      )}`,
+    );
+    expect(await secrets.get('telemetry/export/otlp/headers/Authorization')).toBe('Basic cGs6c2s=');
+
+    // readConfig resolves every header ref back to its value.
+    const resolved = await readConfig(storage, secrets);
+    expect(resolved?.telemetry?.export?.otlp).toEqual(config.telemetry?.export?.otlp);
+  });
+
+  it('parses beside langfuse without either block clobbering the other', async () => {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    await storage.mkdir(ethosDir());
+    await secrets.set('providers/anthropic/apiKey', 'sk-ant-main');
+    await secrets.set('telemetry/export/langfuse/secretKey', 'sk-lf-secret');
+    await secrets.set('telemetry/export/otlp/headers/api-key', 'otlp-header-value');
+    const yaml = [
+      'provider: anthropic',
+      'model: claude-sonnet-4-6',
+      `apiKey: ${secretRef('providers/anthropic/apiKey')}`,
+      'personality: researcher',
+      'telemetry.export.langfuse.enabled: true',
+      `telemetry.export.langfuse.secretKey: ${secretRef('telemetry/export/langfuse/secretKey')}`,
+      'telemetry.export.otlp.enabled: true',
+      'telemetry.export.otlp.endpoint: http://localhost:4318',
+      `telemetry.export.otlp.headers.api-key: ${secretRef('telemetry/export/otlp/headers/api-key')}`,
+    ].join('\n');
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+
+    const resolved = await readConfig(storage, secrets);
+    expect(resolved?.telemetry?.export?.langfuse?.secretKey).toBe('sk-lf-secret');
+    expect(resolved?.telemetry?.export?.otlp?.enabled).toBe(true);
+    expect(resolved?.telemetry?.export?.otlp?.endpoint).toBe('http://localhost:4318');
+    expect(resolved?.telemetry?.export?.otlp?.headers).toEqual({
+      'api-key': 'otlp-header-value',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writeConfig externalization (G-SEC — config references a secret by name,
 // never by value). The read path already resolved refs; these cover the write
 // path that used to serialize credential VALUES as plaintext literals.
@@ -531,6 +621,11 @@ function configWithEveryCredential(): EthosConfig {
           publicKey: 'pk-lf-plain',
           secretKey: 'PLAIN-langfuse',
         },
+        otlp: {
+          enabled: true,
+          endpoint: 'http://localhost:4318',
+          headers: { Authorization: 'PLAIN-otlp-header' },
+        },
       },
     },
   };
@@ -598,6 +693,7 @@ describe('writeConfig externalizes every credential field', () => {
         `telegram/bots/${deriveBotKey({ token: 'PLAIN-bot-b' })}/token`,
         'telegram/token',
         'telemetry/export/langfuse/secretKey',
+        'telemetry/export/otlp/headers/Authorization',
         'voice/livekit/apiKey',
         'voice/livekit/apiSecret',
         'voice/trunk/password',

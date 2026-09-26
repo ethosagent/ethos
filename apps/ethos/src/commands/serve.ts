@@ -89,7 +89,9 @@ import {
   createSessionStore,
   declaredWorkdirProjectContext,
   IdentityMap,
+  OtlpPollLoop,
   resolveMcpExportScope,
+  resolveOtlpSettings,
   resolvePersonalityModelFit,
   type SmartApproverDecisionSite,
   sanitize,
@@ -111,6 +113,7 @@ import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
 import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
+import { buildVersionInfo } from '../version-info';
 import {
   buildServeBusySources,
   buildSystemTaskHandlers,
@@ -1001,6 +1004,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let stopLangfusePoll: (() => void) | null = null;
   const langfuseCfg = config.telemetry?.export?.langfuse;
   if (langfuseCfg?.enabled) {
+    // D14 (otlp-export): one line, once, at start — release N+1 removes the package.
+    console.warn('telemetry.export.langfuse is deprecated; see extensions/export-otlp/README.md');
     if (!langfuseCfg.baseUrl || !langfuseCfg.publicKey || !langfuseCfg.secretKey) {
       console.error(
         '[langfuse-export] telemetry.export.langfuse.enabled is true but baseUrl/publicKey/secretKey ' +
@@ -1018,6 +1023,35 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       stopLangfusePoll = () => langfusePoll.stop();
       console.log(`  langfuse export: enabled (${langfuseCfg.baseUrl})`);
     }
+  }
+
+  // OTLP export poller (otlp-export §4.4) — opt-in, off by default. OTel env
+  // vars override values but never enable export (D8), so a disabled
+  // resolution while config says `enabled: true` is worth one warning naming
+  // the deciding input.
+  let otlpPoll: OtlpPollLoop | null = null;
+  const otlpCfg = config.telemetry?.export?.otlp;
+  const otlpSettings = resolveOtlpSettings(otlpCfg, process.env, {
+    serviceVersion: buildVersionInfo().version,
+  });
+  if ('disabled' in otlpSettings) {
+    if (otlpCfg?.enabled === true) {
+      console.warn(`[otlp-export] not starting: ${otlpSettings.reason}`);
+    }
+  } else {
+    otlpPoll = new OtlpPollLoop({
+      store: getObservabilityStore(),
+      settings: otlpSettings,
+      // D12 — the per-personality `safety.observability.exportTraces` gate,
+      // read live from the same registry this process answers policy
+      // questions from. An unknown/deleted personality is allowed: its
+      // opt-out cannot be read.
+      isExportAllowed: (id) =>
+        id == null || personalities.get(id)?.safety?.observability?.exportTraces !== false,
+      onError: (err) => console.warn(`[otlp-export] tick error: ${err.message}`),
+    });
+    otlpPoll.start();
+    console.log(`  otlp export:  enabled (${otlpSettings.tracesUrl})`);
   }
 
   // Web API — always mounts alongside the ACP server.
@@ -1223,8 +1257,26 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       return [];
     }
   };
+  // The export-lag gauge (`ethos_trace_export_lag_seconds{store="otlp"}`,
+  // otlp-export §4.1) renders only while this process runs the otlp sink —
+  // on a deployment that never enabled export, `oldestUnexportedStartTs`
+  // would count every closed trace as "lag" for a sink that does not exist.
+  const serveObsStore = getObservabilityStore();
   const metricsText = createMetricsTextProvider({
-    store: getObservabilityStore(),
+    store: otlpPoll
+      ? {
+          getMetricCounters: () => serveObsStore.getMetricCounters(),
+          getExportLag: () => {
+            const oldest = serveObsStore.oldestUnexportedStartTs('otlp');
+            return [
+              {
+                sink: 'otlp',
+                lagSeconds: oldest == null ? 0 : Math.max(0, (Date.now() - oldest) / 1000),
+              },
+            ];
+          },
+        }
+      : serveObsStore,
     getGatewayAdapters: readGatewayAdapterGauges,
   });
   // P2-counters — ethos_http_requests_total. A plain closure over the same
@@ -1428,6 +1480,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       stopHeartbeat();
       stopPollLoop?.();
       stopLangfusePoll?.();
+      otlpPoll?.stop();
       // Stops the daemon + heartbeat (if this process ever won the ownership
       // claim, including via a later retry tick — see
       // `CallCaptureOwnershipManager`) and releases the lock so a restarted

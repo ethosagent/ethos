@@ -67,7 +67,7 @@ describe('migration: v1 -> v2 adds metric_counters', () => {
     const verify = new Database(legacyPath);
     const version = (verify.pragma('user_version') as Array<{ user_version: number }>)[0]
       ?.user_version;
-    expect(version).toBe(3);
+    expect(version).toBe(4);
     verify.close();
   });
 

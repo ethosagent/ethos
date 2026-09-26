@@ -152,6 +152,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/back-up-and-restore',
             'using/how-to/recover-messages-after-a-crash',
             'using/how-to/monitor-with-grafana',
+            'using/how-to/export-traces-otlp',
             'using/how-to/safe-mode',
           ],
         },
