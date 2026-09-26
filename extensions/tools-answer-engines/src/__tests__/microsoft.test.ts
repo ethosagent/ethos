@@ -209,6 +209,11 @@ describe('microsoft engine — endpoint and credentials', () => {
     'https://services.ai.azure.com.evil.example/api/projects/p',
     'https://.services.ai.azure.com/api/projects/p',
     'not a url',
+    // Host right, path wrong: Foundry would answer 404, not the shape error.
+    'https://contoso-ai.services.ai.azure.com',
+    'https://contoso-ai.services.ai.azure.com/api/projects/',
+    'https://contoso-ai.services.ai.azure.com/other',
+    'https://contoso-ai.services.ai.azure.com/api/projects/p/extra',
   ])('refuses the endpoint %s with a shape error and no fetch at all', async (endpoint) => {
     const spy = vi.spyOn(globalThis, 'fetch');
     const r = makeRouter();

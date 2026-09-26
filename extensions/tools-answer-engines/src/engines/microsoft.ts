@@ -105,6 +105,9 @@ async function mintToken(
   return token;
 }
 
+/** `/api/projects/<project>` — one non-empty segment, trailing slashes already stripped. */
+const FOUNDRY_PROJECT_PATH = /^\/api\/projects\/[^/]+$/;
+
 /**
  * The Foundry Responses URL, or an Error naming the expected shape. Refused
  * BEFORE any fetch (D20): a mistyped endpoint would otherwise surface as a
@@ -116,16 +119,20 @@ function responsesUrlOf(projectEndpoint: string): string {
   const trimmed = projectEndpoint.trim();
   const url = URL.canParse(trimmed) ? new URL(trimmed) : undefined;
   const host = url?.hostname.toLowerCase() ?? '';
+  // The project path too, not just the host: a bare resource URL passes the
+  // host checks and would come back from Foundry as a 404 instead of this error.
+  const path = url?.pathname.replace(/\/+$/, '') ?? '';
   if (
     url?.protocol !== 'https:' ||
     !host.endsWith(FOUNDRY_HOST_SUFFIX) ||
-    host.length <= FOUNDRY_HOST_SUFFIX.length
+    host.length <= FOUNDRY_HOST_SUFFIX.length ||
+    !FOUNDRY_PROJECT_PATH.test(path)
   ) {
     throw new Error(
       `Microsoft Foundry project endpoint at ${PROJECT_ENDPOINT_REF} must look like https://<resource>${FOUNDRY_HOST_SUFFIX}/api/projects/<project> — the stored value does not.`,
     );
   }
-  return `${url.origin}${url.pathname.replace(/\/+$/, '')}/openai/v1/responses`;
+  return `${url.origin}${path}/openai/v1/responses`;
 }
 
 export function parseMicrosoftResponse(

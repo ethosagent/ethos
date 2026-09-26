@@ -16,9 +16,10 @@ import {
 // A named secret is stored at `providers/<provider>/<name>` in the secrets
 // vault — the same namespace a consuming tool's capability prefix grant
 // (`providers/{exa,tavily,brave}/*` for `web_search`, `providers/xai/*` for
-// `x_search`, `providers/openai/*` for `engine_ask`) allows. A personality only ever stores the secret NAME (a
-// reference); the VALUE lives here and NEVER round-trips back to the client —
-// reads are masked previews only.
+// `x_search`, one per engine for `engine_ask` — `providers/{openai,perplexity,
+// xai,gemini,microsoft-foundry}/*`) allows. A personality only ever stores the
+// secret NAME (a reference); the VALUE lives here and NEVER round-trips back to
+// the client — reads are masked previews only.
 //
 // WHICH provider namespaces exist is not stated here: it is derived from those
 // same capability grants by `deriveProviderRoster`, so registering a tool
