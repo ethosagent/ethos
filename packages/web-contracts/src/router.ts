@@ -5863,6 +5863,9 @@ const ToolSettingsSecretBindingFieldSchema = z.object({
   providerLabel: z.string().optional(),
   getKeyUrl: z.string().optional(),
   defaultSecretName: z.string().optional(),
+  /** The one `providers/<segment>/` namespace this field binds when the tool
+   *  grants several; absent → every namespace the tool grants. */
+  provider: z.string().optional(),
 });
 /** A static disclosure row — no key, so nothing round-trips through it. Mirrors
  *  `ToolSettingsInfoField` in `@ethosagent/types`; a tool that needs a

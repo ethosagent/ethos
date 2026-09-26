@@ -75,7 +75,8 @@ export const NAMED_SECRET_SEED_PROVIDERS: readonly DerivedProvider[] = [
  *   1. an `enum` option label / getKeyUrl whose value is the provider id —
  *      per-provider, and the precedent `RecipesService.secretSchemaFor`
  *      already reads for labels;
- *   2. the tool's `secret-binding` `providerLabel` / `getKeyUrl` (D4);
+ *   2. the tool's `secret-binding` `providerLabel` / `getKeyUrl` (D4), taken
+ *      only from bindings whose `provider` is this namespace or absent;
  *   3. the provider id itself (label only).
  */
 export function deriveProviderRoster(
@@ -90,9 +91,6 @@ export function deriveProviderRoster(
     const bindings = fields.filter((f) => f.kind === 'secret-binding');
     const optionLabels = enumOptionLabels(tool);
     const optionUrls = enumOptionUrls(tool);
-    const kinds = bindings.map((f) => f.secretKind);
-    const providerLabel = bindings.find((f) => f.providerLabel)?.providerLabel;
-    const bindingGetKeyUrl = bindings.find((f) => f.getKeyUrl)?.getKeyUrl;
 
     for (const declared of tool.capabilities?.secrets ?? []) {
       if (!declared.endsWith('/*')) continue;
@@ -106,8 +104,16 @@ export function deriveProviderRoster(
         diagnostics.push(malformed(tool.name, declared));
         continue;
       }
+      // A binding that names its `provider` speaks for that namespace only; one
+      // that names none speaks for every namespace the tool grants (the
+      // `web_search` shape). Without this scoping a tool granting several
+      // prefixes would stamp its first binding's label and every binding's
+      // kind onto all of them (plan engine-ask-per-engine-bindings D6).
+      const scoped = bindings.filter((b) => b.provider === undefined || b.provider === provider);
+      const providerLabel = scoped.find((f) => f.providerLabel)?.providerLabel;
+      const bindingGetKeyUrl = scoped.find((f) => f.getKeyUrl)?.getKeyUrl;
       const entry = byProvider.get(provider) ?? { kinds: new Set<string>() };
-      for (const kind of kinds) entry.kinds.add(kind);
+      for (const b of scoped) entry.kinds.add(b.secretKind);
       entry.label ??= optionLabels.get(provider) ?? providerLabel;
       entry.getKeyUrl ??= optionUrls.get(provider) ?? bindingGetKeyUrl;
       byProvider.set(provider, entry);

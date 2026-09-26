@@ -213,6 +213,81 @@ describe('deriveProviderRoster', () => {
     expect(providers[0]?.kinds).toEqual(['gmail-api-key', 'youtube-api-key']);
   });
 
+  // plan engine-ask-per-engine-bindings D6 — the assertion that fails without
+  // the per-namespace `scoped` filter: under per-TOOL attribution both rows
+  // read "OpenAI (ChatGPT answer engine)" and carry OpenAI's key URL.
+  it('attributes label, getKeyUrl and kind per namespace when each binding names its provider', () => {
+    const { providers } = deriveProviderRoster(
+      registryOf(
+        tool(
+          'multi_engine',
+          ['providers/openai/*', 'providers/perplexity/*'],
+          [
+            binding('answer-engine', {
+              provider: 'openai',
+              providerLabel: 'OpenAI (ChatGPT answer engine)',
+              getKeyUrl: 'https://platform.openai.com/api-keys',
+            }),
+            binding('answer-engine', {
+              provider: 'perplexity',
+              providerLabel: 'Perplexity (answer engine)',
+              getKeyUrl: 'https://www.perplexity.ai/account/api/keys',
+            }),
+          ],
+        ),
+      ),
+    );
+    expect(providers).toEqual([
+      {
+        provider: 'openai',
+        kinds: ['answer-engine'],
+        label: 'OpenAI (ChatGPT answer engine)',
+        getKeyUrl: 'https://platform.openai.com/api-keys',
+      },
+      {
+        provider: 'perplexity',
+        kinds: ['answer-engine'],
+        label: 'Perplexity (answer engine)',
+        getKeyUrl: 'https://www.perplexity.ai/account/api/keys',
+      },
+    ]);
+  });
+
+  it('lands one kind on each namespace when two scoped bindings declare different kinds', () => {
+    const { providers } = deriveProviderRoster(
+      registryOf(
+        tool(
+          'two_kinds',
+          ['providers/alpha/*', 'providers/beta/*'],
+          [
+            binding('alpha-kind', { provider: 'alpha' }),
+            binding('beta-kind', { provider: 'beta' }),
+          ],
+        ),
+      ),
+    );
+    expect(providers.map((p) => [p.provider, p.kinds])).toEqual([
+      ['alpha', ['alpha-kind']],
+      ['beta', ['beta-kind']],
+    ]);
+  });
+
+  it('applies an unscoped binding to every namespace the tool grants', () => {
+    const { providers } = deriveProviderRoster(
+      registryOf(
+        tool(
+          'unscoped',
+          ['providers/alpha/*', 'providers/beta/*'],
+          [binding('shared-kind', { providerLabel: 'Shared' })],
+        ),
+      ),
+    );
+    expect(providers.map((p) => [p.provider, p.kinds, p.label])).toEqual([
+      ['alpha', ['shared-kind'], 'Shared'],
+      ['beta', ['shared-kind'], 'Shared'],
+    ]);
+  });
+
   it('resolves a label first-declaration-wins in registry order', () => {
     const { providers } = deriveProviderRoster(
       registryOf(

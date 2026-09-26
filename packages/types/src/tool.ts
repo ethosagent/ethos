@@ -313,6 +313,15 @@ export interface ToolSettingsSecretBindingField {
    * tool's own default without guessing.
    */
   defaultSecretName?: string;
+  /**
+   * The `providers/<segment>/` namespace THIS field binds, when the tool
+   * grants several. Absent → the field applies to every namespace the tool
+   * grants, which is what a single-provider tool means and what `web_search`
+   * (one binding, three prefixes, an enum that picks between them) relies on.
+   * Read by `deriveProviderRoster` to attribute a kind, label and key URL per
+   * namespace, and by the web form to narrow the picker to this vendor.
+   */
+  provider?: string;
 }
 
 /**
