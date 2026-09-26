@@ -1,6 +1,6 @@
 import type { AcceptanceSpec } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { isConverged, judge } from '../judge';
+import { IMPLICIT_GOAL_CHECK, isConverged, judge } from '../judge';
 
 function specWith(overrides?: Partial<AcceptanceSpec>): AcceptanceSpec {
   return { checks: [], rubric: [], threshold: 0.8, ...overrides };
@@ -221,5 +221,70 @@ describe('judge — mixed spec scoring and convergence', () => {
 
     expect(verdict.score).toBe(0);
     expect(isConverged(verdict, mixedSpec.threshold)).toBe(false);
+  });
+});
+
+describe('judge — empty spec', () => {
+  // A spec with no checks and no rubric used to score 1 with every (zero)
+  // check passed, so any output converged after one attempt.
+  it('never converges without a judge, even when the output claims success', async () => {
+    const spec = specWith();
+    const verdict = await judge({
+      output: 'Done. The goal as stated is fully achieved.',
+      spec,
+      goalText: 'register every stock',
+    });
+
+    expect(verdict.score).toBe(0);
+    expect(verdict.perCriterion).toHaveLength(1);
+    expect(verdict.perCriterion[0]).toMatchObject({
+      id: IMPLICIT_GOAL_CHECK.id,
+      pass: false,
+      gap: IMPLICIT_GOAL_CHECK.description,
+    });
+    expect(isConverged(verdict, spec.threshold)).toBe(false);
+  });
+
+  it('judges the goal text as one implicit criterion and converges only when the judge passes', async () => {
+    const spec = specWith();
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: true, evidence: 'all 3,169 rows' });
+
+    const verdict = await judge(
+      { output: 'report', spec, goalText: 'register every stock' },
+      { judgeCheck },
+    );
+
+    expect(judgeCheck).toHaveBeenCalledWith({
+      check: IMPLICIT_GOAL_CHECK,
+      goalText: 'register every stock',
+      output: 'report',
+    });
+    expect(verdict.perCriterion[0]).toMatchObject({ id: 'goal', pass: true, method: 'llm' });
+    expect(verdict.score).toBe(1);
+    expect(isConverged(verdict, spec.threshold)).toBe(true);
+  });
+
+  it('does not converge when the judge fails or throws', async () => {
+    const spec = specWith();
+    for (const judgeCheck of [
+      vi.fn().mockResolvedValue({ pass: false, evidence: '30 of 3,169 rows' }),
+      vi.fn().mockRejectedValue(new Error('provider down')),
+    ]) {
+      const verdict = await judge({ output: 'report', spec, goalText: 'g' }, { judgeCheck });
+      expect(verdict.perCriterion[0]?.pass).toBe(false);
+      expect(verdict.score).toBe(0);
+      expect(isConverged(verdict, spec.threshold)).toBe(false);
+    }
+  });
+
+  it('leaves a spec with checks untouched — no implicit criterion is added', async () => {
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: true, evidence: 'ok' });
+    const spec = specWith({ checks: [{ id: 'c1', description: 'tests pass' }] });
+
+    const verdict = await judge({ output: 'x', spec, goalText: 'g' }, { judgeCheck });
+
+    expect(judgeCheck).toHaveBeenCalledTimes(1);
+    expect(verdict.perCriterion.map((c) => c.id)).toEqual(['c1']);
+    expect(isConverged(verdict, spec.threshold)).toBe(true);
   });
 });

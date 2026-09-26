@@ -51,8 +51,17 @@ export function GoalIntakeModal({
   const [maxIdenticalToolCalls, setMaxIdenticalToolCalls] = useState(25);
   const [maxRecoveryAttempts, setMaxRecoveryAttempts] = useState(2);
   const [allowDangerousToolCalls, setAllowDangerousToolCalls] = useState(false);
+  // Set by a Run click that found a row it would otherwise drop; cleared by the next edit.
+  const [showRowErrors, setShowRowErrors] = useState(false);
 
   if (!open) return null;
+
+  // A check with a verify command but no description is a check the user
+  // wrote. The submit filter below keeps only rows with a description, so such
+  // a row — command included — would be dropped without a word; Run refuses
+  // instead and marks the row.
+  const lacksDescription = (c: Criterion) =>
+    c.type === 'check' && !c.description.trim() && allowCheckCommands && c.command.trim() !== '';
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
@@ -70,10 +79,15 @@ export function GoalIntakeModal({
   };
 
   const updateCriterion = (index: number, updates: Partial<Criterion>) => {
+    setShowRowErrors(false);
     setCriteria((prev) => prev.map((c, i) => (i === index ? { ...c, ...updates } : c)));
   };
 
   const handleRunGoal = () => {
+    if (criteria.some(lacksDescription)) {
+      setShowRowErrors(true);
+      return;
+    }
     const checks = criteria
       .filter((c) => c.type === 'check' && c.description.trim())
       .map((c) => {
@@ -294,10 +308,15 @@ export function GoalIntakeModal({
                       value={c.description}
                       onChange={(e) => updateCriterion(i, { description: e.target.value })}
                       placeholder="Description"
+                      aria-invalid={showRowErrors && lacksDescription(c)}
                       style={{
                         flex: 1,
                         background: 'var(--bg-overlay)',
-                        border: '1px solid var(--border-subtle)',
+                        border: `1px solid ${
+                          showRowErrors && lacksDescription(c)
+                            ? 'var(--error)'
+                            : 'var(--border-subtle)'
+                        }`,
                         color: 'var(--text-primary)',
                         borderRadius: '6px',
                         padding: 8,
@@ -343,6 +362,14 @@ export function GoalIntakeModal({
                       &times;
                     </button>
                   </div>
+                  {showRowErrors && lacksDescription(c) && (
+                    <div
+                      role="alert"
+                      style={{ fontSize: 11, color: 'var(--error)', marginTop: 4, lineHeight: 1.4 }}
+                    >
+                      Describe what this check verifies. A check needs a description to be sent.
+                    </div>
+                  )}
                   {allowCheckCommands && c.type === 'check' && (
                     <div
                       style={{
