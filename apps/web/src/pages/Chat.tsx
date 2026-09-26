@@ -408,7 +408,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
 
   const handleGoalConfiguredRun = async (config: {
     goalText: string;
-    checks: Array<{ description: string }>;
+    checks: Array<{ description: string; command?: string }>;
     rubric: Array<{ description: string; weight: number }>;
     boundaries: string;
     costLimit: number;
