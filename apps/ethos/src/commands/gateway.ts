@@ -64,7 +64,6 @@ import { type BusySource, IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { ConsoleLogger } from '@ethosagent/logger';
-import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
 import {
   createPersonalityRegistry,
@@ -135,6 +134,7 @@ import {
   type OutboxWiring,
   resolveKanbanDbPath,
   type SmartApproverDecisionSite,
+  SQLiteNotifyQueue,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,

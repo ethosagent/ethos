@@ -38,7 +38,6 @@
 // lease must never cover a hardline call anyway.
 
 import type { BridgeApprovalSource } from '@ethosagent/agent-bridge';
-import { redactString } from '@ethosagent/safety-redact';
 import type {
   BeforeToolCallPayload,
   BeforeToolCallResult,
@@ -52,6 +51,7 @@ import {
   createApprovalDangerPredicate,
   hardlineReason,
   markHostApprovalGate,
+  redactString,
   type SmartApproverDecisionSite,
 } from '@ethosagent/wiring';
 import { type ApprovalCoordinator, createSlackApprovalHook } from './approval-coordinator';

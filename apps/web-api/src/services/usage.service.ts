@@ -1,9 +1,5 @@
-import {
-  summarizeUsageRows,
-  type UsageAggregateRow,
-  type UsageTotals,
-} from '@ethosagent/session-sqlite';
 import type { SessionStore } from '@ethosagent/types';
+import { summarizeUsageRows, type UsageAggregateRow, type UsageTotals } from '@ethosagent/wiring';
 
 // Spend and tokens over a window — the web face of `ethos usage`
 // (apps/ethos/src/commands/usage.ts), plan openclaw-2026.9.6-gaps U3.

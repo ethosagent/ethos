@@ -9,9 +9,12 @@ import {
   type VoiceBotIdentity,
   type VoiceChannelAdapter,
 } from '@ethosagent/platform-voice';
-import { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 import type { AgentEvent, PersonalityConfig, VoiceTurnOrigin } from '@ethosagent/types';
-import { FAR_END_VOICE_ORIGIN, type VoiceInboundGates } from '@ethosagent/wiring';
+import {
+  FAR_END_VOICE_ORIGIN,
+  fenceFarEndSpeech,
+  type VoiceInboundGates,
+} from '@ethosagent/wiring';
 
 // ---------------------------------------------------------------------------
 // Inbound SIP dispatch (plan/phases/voice-v4-telephony.md E2/E4/E6)

@@ -1,6 +1,5 @@
 import { basename } from 'node:path';
 import type { AgentBridge, BridgeApprovalRequest } from '@ethosagent/agent-bridge';
-import { haltNotice } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import { describeChatError } from '@ethosagent/surface-kit';
 import {
@@ -10,6 +9,7 @@ import {
   type Session,
   type ToolProgressAudience,
 } from '@ethosagent/types';
+import { haltNotice } from '@ethosagent/wiring';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { backgroundCompletionLines } from '../background';

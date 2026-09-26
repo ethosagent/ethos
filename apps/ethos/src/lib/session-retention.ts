@@ -1,5 +1,5 @@
-import { parseDuration } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS, type RetentionConfig, type SessionStore } from '@ethosagent/types';
+import { parseDuration } from '@ethosagent/wiring';
 
 /**
  * R9 — the one runtime caller of `SessionStore.pruneOldSessions`, run by the

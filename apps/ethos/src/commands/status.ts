@@ -8,8 +8,7 @@ import {
   readRawConfig,
   resolveEffectiveConfig,
 } from '@ethosagent/config';
-import { FileSecretsResolver } from '@ethosagent/storage-fs';
-import { backupDirectory } from '@ethosagent/wiring';
+import { backupDirectory, FileSecretsResolver } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
 import { getSecretsResolver, getStorage } from '../wiring';
@@ -417,7 +416,7 @@ export async function collectPendingSummary(
     // Open only a file that exists — reading must not create one (same rule
     // as `ethos outbox`).
     if (existsSync(outboxPath)) {
-      const { SQLiteOutboxStore } = await import('@ethosagent/outbox');
+      const { SQLiteOutboxStore } = await import('../lib/outbox-wiring');
       const store = new SQLiteOutboxStore(outboxPath);
       try {
         outbox = store.listByState(['awaiting_review', 'awaiting_approval']).length;

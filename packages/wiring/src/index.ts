@@ -1914,7 +1914,17 @@ export function createSessionStore(
 // Core surface the web-api rpc shells need (rpc/context.ts, rpc/clarify.ts) —
 // re-exported so they reach core through wiring, not directly
 // (architecture.config.ts `web-api-rpc-is-thin`).
-export { type AgentLoop, type ClarifyBridge, clarifyUnresolvedMessage } from '@ethosagent/core';
+// Further app-reachable pieces re-exported for the same reason (Law 5): the
+// notify queue both gateway roots open, the secrets resolvers `ethos secrets`
+// and `ethos status` build, the retention-window parser, the far-end speech
+// fence the SIP dispatcher applies, the budget-halt notice the TUI renders, and
+// the usage fold web-api's Activity view shares with `ethos usage`.
+export {
+  type AgentLoop,
+  type ClarifyBridge,
+  clarifyUnresolvedMessage,
+  haltNotice,
+} from '@ethosagent/core';
 export {
   isGated,
   type MemoryApprovalMode,
@@ -1941,10 +1951,19 @@ export {
 // MemoryService can call the exact function the CLI `ethos memory restore`
 // uses, without depending on `apps/ethos`.
 export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
+export { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
+export { parseDuration } from '@ethosagent/observability-sqlite';
 // Secret redaction for app-level output (e.g. the `ethos -z` stream wire in
 // apps/ethos/src/commands/zero-stream.ts) — re-exported so apps reach the
 // safety package through wiring (ARCHITECTURE.md Law 5).
 export { redactString } from '@ethosagent/safety-redact';
+export {
+  summarizeUsageRows,
+  type UsageAggregateRow,
+  type UsageTotals,
+} from '@ethosagent/session-sqlite';
+export { EnvSecretsResolver, FileSecretsResolver } from '@ethosagent/storage-fs';
+export { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 // Backend-aware memory (memory-lifecycle vault gaps, F04). By convention, code
 // outside a loop opens memory through these, so it acts on the configured
 // backend. Nothing enforces that: `HistoryStore` / `TombstoneStore` stay

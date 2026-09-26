@@ -51,7 +51,6 @@ import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { ConsoleLogger } from '@ethosagent/logger';
-import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteContextLog, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
@@ -73,6 +72,7 @@ import {
   IdentityMap,
   initPairingDb,
   type MessagingSendFn,
+  SQLiteNotifyQueue,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,

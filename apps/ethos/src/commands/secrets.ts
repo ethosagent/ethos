@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
-import { EnvSecretsResolver } from '@ethosagent/storage-fs';
 import type { SecretsResolver } from '@ethosagent/types';
+import { EnvSecretsResolver } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
 import { runSecretsCredential } from './secrets-credential';
