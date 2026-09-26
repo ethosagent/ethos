@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from 'react';
+import { useGoalSettings } from '../../features/goals/api/queries';
 
 interface GoalIntakeModalProps {
   open: boolean;
@@ -8,7 +9,7 @@ interface GoalIntakeModalProps {
   onQuickStart: (goalText: string) => void;
   onConfiguredRun: (config: {
     goalText: string;
-    checks: Array<{ description: string }>;
+    checks: Array<{ description: string; command?: string }>;
     rubric: Array<{ description: string; weight: number }>;
     boundaries: string;
     costLimit: number;
@@ -25,6 +26,8 @@ interface Criterion {
   type: 'check' | 'rubric';
   description: string;
   weight: number;
+  /** Shell command the judge runs on the host; only sent when the server allows it. */
+  command: string;
 }
 
 export function GoalIntakeModal({
@@ -37,8 +40,10 @@ export function GoalIntakeModal({
 }: GoalIntakeModalProps): ReactNode {
   const [showForm, setShowForm] = useState(false);
   const [criteria, setCriteria] = useState<Criterion[]>([
-    { id: crypto.randomUUID(), type: 'check', description: '', weight: 50 },
+    { id: crypto.randomUUID(), type: 'check', description: '', weight: 50, command: '' },
   ]);
+  // `goals.allowCheckCommands` — off (or unknown) shows no command field at all.
+  const allowCheckCommands = useGoalSettings(open).data?.allowCheckCommands === true;
   const [boundaries, setBoundaries] = useState('');
   const [costLimit, setCostLimit] = useState(5);
   const [trials, setTrials] = useState(3);
@@ -56,7 +61,7 @@ export function GoalIntakeModal({
   const addCriterion = () => {
     setCriteria((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), type: 'check', description: '', weight: 50 },
+      { id: crypto.randomUUID(), type: 'check', description: '', weight: 50, command: '' },
     ]);
   };
 
@@ -71,7 +76,10 @@ export function GoalIntakeModal({
   const handleRunGoal = () => {
     const checks = criteria
       .filter((c) => c.type === 'check' && c.description.trim())
-      .map((c) => ({ description: c.description }));
+      .map((c) => {
+        const command = allowCheckCommands ? c.command.trim() : '';
+        return command ? { description: c.description, command } : { description: c.description };
+      });
     const rubric = criteria
       .filter((c) => c.type === 'rubric' && c.description.trim())
       .map((c) => ({ description: c.description, weight: c.weight }));
@@ -256,56 +264,38 @@ export function GoalIntakeModal({
                 Judging criteria
               </div>
               {criteria.map((c, i) => (
-                <div
-                  key={c.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 8,
-                  }}
-                >
-                  <select
-                    value={c.type}
-                    onChange={(e) =>
-                      updateCriterion(i, { type: e.target.value as 'check' | 'rubric' })
-                    }
+                <div key={c.id} style={{ marginBottom: 8 }}>
+                  <div
                     style={{
-                      background: 'var(--bg-overlay)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      borderRadius: '6px',
-                      padding: 8,
-                      fontSize: 13,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
                     }}
                   >
-                    <option value="check">check</option>
-                    <option value="rubric">rubric</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={c.description}
-                    onChange={(e) => updateCriterion(i, { description: e.target.value })}
-                    placeholder="Description"
-                    style={{
-                      flex: 1,
-                      background: 'var(--bg-overlay)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      borderRadius: '6px',
-                      padding: 8,
-                      fontSize: 13,
-                    }}
-                  />
-                  {c.type === 'rubric' && (
-                    <input
-                      type="number"
-                      value={c.weight}
-                      onChange={(e) => updateCriterion(i, { weight: Number(e.target.value) })}
-                      min={0}
-                      max={100}
+                    <select
+                      value={c.type}
+                      onChange={(e) =>
+                        updateCriterion(i, { type: e.target.value as 'check' | 'rubric' })
+                      }
                       style={{
-                        width: 60,
+                        background: 'var(--bg-overlay)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                        borderRadius: '6px',
+                        padding: 8,
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="check">check</option>
+                      <option value="rubric">rubric</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={c.description}
+                      onChange={(e) => updateCriterion(i, { description: e.target.value })}
+                      placeholder="Description"
+                      style={{
+                        flex: 1,
                         background: 'var(--bg-overlay)',
                         border: '1px solid var(--border-subtle)',
                         color: 'var(--text-primary)',
@@ -314,27 +304,86 @@ export function GoalIntakeModal({
                         fontSize: 13,
                       }}
                     />
+                    {c.type === 'rubric' && (
+                      <input
+                        type="number"
+                        value={c.weight}
+                        onChange={(e) => updateCriterion(i, { weight: Number(e.target.value) })}
+                        min={0}
+                        max={100}
+                        style={{
+                          width: 60,
+                          background: 'var(--bg-overlay)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-primary)',
+                          borderRadius: '6px',
+                          padding: 8,
+                          fontSize: 13,
+                        }}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeCriterion(i)}
+                      aria-label="Remove criterion"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-tertiary)',
+                        cursor: 'pointer',
+                        fontSize: 14,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 0,
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  {allowCheckCommands && c.type === 'check' && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        marginLeft: 8,
+                        paddingLeft: 12,
+                        borderLeft: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <input
+                        type="text"
+                        value={c.command}
+                        onChange={(e) => updateCriterion(i, { command: e.target.value })}
+                        placeholder="python3 /path/to/check.py"
+                        aria-label="Verify command"
+                        spellCheck={false}
+                        style={{
+                          width: '100%',
+                          boxSizing: 'border-box',
+                          background: 'var(--bg-overlay)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-primary)',
+                          borderRadius: '6px',
+                          padding: 8,
+                          fontSize: 13,
+                          fontFamily: "'Geist Mono', monospace",
+                        }}
+                      />
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--text-tertiary)',
+                          marginTop: 4,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        Optional verify command. Runs on this machine when the goal is judged; the
+                        check passes if it exits 0.
+                      </div>
+                    </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => removeCriterion(i)}
-                    aria-label="Remove criterion"
-                    style={{
-                      width: 24,
-                      height: 24,
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-tertiary)',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: 0,
-                    }}
-                  >
-                    &times;
-                  </button>
                 </div>
               ))}
               <button

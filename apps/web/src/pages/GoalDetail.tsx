@@ -2,6 +2,7 @@ import { Button, Input, Spin, Typography } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ExecutionGraph } from '../components/goals/ExecutionGraph';
+import { GoalChecks } from '../components/goals/GoalChecks';
 import { GoalOutputModal } from '../components/goals/GoalOutputModal';
 import { useGoalCancel, useGoalResume, useGoalSteer } from '../features/goals/api/mutations';
 import { useGoalDetail } from '../features/goals/api/queries';
@@ -476,6 +477,9 @@ export function GoalDetail() {
             </div>
           </div>
         )}
+
+        {/* ---- Acceptance checks (with any host verify command) ---- */}
+        <GoalChecks acceptanceCriteria={goal.acceptanceCriteria} />
 
         {/* ---- Journey section ---- */}
         <div

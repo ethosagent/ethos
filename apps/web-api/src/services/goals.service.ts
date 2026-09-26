@@ -52,15 +52,35 @@ export interface GoalsServiceOptions {
   /** Session store for reading tool-call results out of a goal's attempt
    *  sessions. When absent, `toolResult` returns `{ found: false }`. */
   sessionStore?: SessionStore;
+  /**
+   * Whether a check may carry a `command`, which the goal judge runs via
+   * `sh -c` on the HOST, outside the sandbox (`defaultExecCommand`,
+   * extensions/goal-runner/src/judge.ts). Wired to
+   * `ConfigService.goalCheckCommandsAllowed` (`goals.allowCheckCommands`).
+   * Absent → false: a create carrying a command is refused.
+   */
+  allowCheckCommands?: () => Promise<boolean>;
+}
+
+/** The refusal `create` throws for a command check while the key is off. */
+function checkCommandsDisabled(): EthosError {
+  return new EthosError({
+    code: 'FORBIDDEN',
+    cause:
+      'Check commands are disabled. Set goals.allowCheckCommands: true in ~/.ethos/config.yaml to allow host shell commands in goal checks.',
+    action: 'Remove the verify command from each check, or enable goals.allowCheckCommands.',
+  });
 }
 
 export class GoalsService {
   private goals: GoalsBackend | undefined;
   private readonly goalsFor: GoalsServiceOptions['goalsFor'];
   private sessionStore?: SessionStore;
+  private readonly allowCheckCommands: () => Promise<boolean>;
 
   constructor(opts: GoalsServiceOptions) {
     this.goals = opts.goals;
+    this.allowCheckCommands = opts.allowCheckCommands ?? (async () => false);
     this.goalsFor = opts.goalsFor;
     this.sessionStore = opts.sessionStore;
   }
@@ -120,12 +140,17 @@ export class GoalsService {
     return { ok: await this.requireExecution(await this.backendOf(id)).executor.resume(id) };
   }
 
+  /** Settings the goal creation form needs before it renders. */
+  async settings(): Promise<{ allowCheckCommands: boolean }> {
+    return { allowCheckCommands: await this.allowCheckCommands() };
+  }
+
   async create(input: {
     personalityId: string;
     goalText: string;
     title?: string;
     acceptanceCriteria?: {
-      checks?: Array<{ description: string }>;
+      checks?: Array<{ description: string; command?: string }>;
       rubric?: Array<{ description: string; weight: number }>;
       threshold?: number;
     };
@@ -138,12 +163,22 @@ export class GoalsService {
     maxRecoveryAttempts?: number;
   }): Promise<{ goal: Goal }> {
     const { store, executor } = this.requireExecution(await this.backendFor(input.personalityId));
+    // Refuse the WHOLE create rather than drop the command: a check the user
+    // wrote as "run this" must never be silently judged some other way.
+    const hasCommand = (input.acceptanceCriteria?.checks ?? []).some(
+      (c) => (c.command ?? '').trim() !== '',
+    );
+    if (hasCommand && !(await this.allowCheckCommands())) throw checkCommandsDisabled();
     const acceptanceCriteria: AcceptanceSpec | undefined = input.acceptanceCriteria
       ? {
-          checks: (input.acceptanceCriteria.checks ?? []).map((c, i) => ({
-            id: `check-${i}`,
-            description: c.description,
-          })),
+          checks: (input.acceptanceCriteria.checks ?? []).map((c, i) => {
+            const command = c.command?.trim();
+            return {
+              id: `check-${i}`,
+              description: c.description,
+              ...(command ? { command } : {}),
+            };
+          }),
           rubric: (input.acceptanceCriteria.rubric ?? []).map((r, i) => ({
             id: `rubric-${i}`,
             description: r.description,

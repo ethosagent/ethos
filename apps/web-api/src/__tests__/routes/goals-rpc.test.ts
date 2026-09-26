@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
@@ -79,5 +79,49 @@ describe('goals RPC', () => {
     const body = (await res.json()) as { json: { goal: { id: string } } };
     expect(executor.started).toEqual([body.json.goal.id]);
     expect(store.get(body.json.goal.id)).not.toBeNull();
+  });
+
+  const commandCheck = {
+    personalityId: 'p',
+    goalText: 'Make the tests pass',
+    acceptanceCriteria: { checks: [{ description: 'tests pass', command: 'pnpm test' }] },
+  };
+
+  it('a check command is refused with 403 FORBIDDEN while goals.allowCheckCommands is off', async () => {
+    const store = new InMemoryGoalStore();
+    const call = await boot({ store, executor: recordingExecutor({ canExecute: true }) });
+
+    const settings = (await (await call('settings', undefined)).json()) as {
+      json: { allowCheckCommands: boolean };
+    };
+    expect(settings.json.allowCheckCommands).toBe(false);
+
+    const res = await call('create', commandCheck);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { json: { code: string; message: string } };
+    expect(body.json.code).toBe('FORBIDDEN');
+    expect(body.json.message).toContain('Check commands are disabled');
+    expect(store.list()).toEqual([]);
+  });
+
+  it('the contract carries a check command through to the goal when the key is on', async () => {
+    await writeFile(
+      join(dataDir, 'config.yaml'),
+      'provider: anthropic\nmodel: claude-test\ngoals.allowCheckCommands: true\n',
+    );
+    const store = new InMemoryGoalStore();
+    const call = await boot({ store, executor: recordingExecutor({ canExecute: true }) });
+
+    const settings = (await (await call('settings', undefined)).json()) as {
+      json: { allowCheckCommands: boolean };
+    };
+    expect(settings.json.allowCheckCommands).toBe(true);
+
+    const res = await call('create', commandCheck);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { json: { goal: { id: string } } };
+    expect(store.get(body.json.goal.id)?.acceptanceCriteria?.checks).toEqual([
+      { id: 'check-0', description: 'tests pass', command: 'pnpm test' },
+    ]);
   });
 });

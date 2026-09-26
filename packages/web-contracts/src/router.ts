@@ -4523,7 +4523,12 @@ const GoalCreateInput = z.object({
   title: z.string().optional(),
   acceptanceCriteria: z
     .object({
-      checks: z.array(z.object({ description: z.string() })).optional(),
+      // `command` runs via `sh -c` on the host when the goal is judged; the
+      // server refuses it unless `goals.allowCheckCommands: true`
+      // (`GoalsService.create`, apps/web-api/src/services/goals.service.ts).
+      checks: z
+        .array(z.object({ description: z.string(), command: z.string().optional() }))
+        .optional(),
       rubric: z.array(z.object({ description: z.string(), weight: z.number() })).optional(),
       threshold: z.number().optional(),
     })
@@ -4537,6 +4542,8 @@ const GoalCreateInput = z.object({
   deadline: z.string().optional(),
 });
 const GoalCreateOutput = z.object({ goal: GoalSchema });
+
+const GoalSettingsOutput = z.object({ allowCheckCommands: z.boolean() });
 
 const GoalToolResultInput = z.object({
   goalId: z.string().min(1),
@@ -4557,6 +4564,7 @@ const goals = {
   cancel: oc.input(GoalCancelInput).output(GoalCancelOutput),
   resume: oc.input(GoalResumeInput).output(GoalResumeOutput),
   create: oc.input(GoalCreateInput).output(GoalCreateOutput),
+  settings: oc.output(GoalSettingsOutput),
   toolResult: oc.input(GoalToolResultInput).output(GoalToolResultOutput),
 };
 

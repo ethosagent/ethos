@@ -2434,6 +2434,18 @@ export class ConfigService {
   }
 
   /**
+   * Whether a goal check may carry a host shell `command`. Gated by
+   * `goals.allowCheckCommands: true` in ~/.ethos/config.yaml (parsed for the
+   * CLI by `parseConfigYaml` in packages/config) — default false. Read per
+   * call so an edit takes effect without a restart. Missing config counts as
+   * disabled.
+   */
+  async goalCheckCommandsAllowed(): Promise<boolean> {
+    const raw = await this.opts.config.read();
+    return raw?.passthrough['goals.allowCheckCommands'] === 'true';
+  }
+
+  /**
    * Resolve the stored credentials for a provider so admin health checks
    * probe with the real key. The raw key still never crosses the RPC
    * boundary — it travels provider-ward only. Prefers the provider-chain
