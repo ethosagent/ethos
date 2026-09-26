@@ -2,9 +2,17 @@ import { basename } from 'node:path';
 import type { AgentBridge, BridgeApprovalRequest } from '@ethosagent/agent-bridge';
 import { haltNotice } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
-import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
+import { describeChatError } from '@ethosagent/surface-kit';
+import {
+  answerSuffix,
+  type BackgroundJob,
+  type PendingClarify,
+  type Session,
+  type ToolProgressAudience,
+} from '@ethosagent/types';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { backgroundCompletionLines } from '../background';
 import {
   type CredentialRequest,
   type SetPluginCredential,
@@ -137,6 +145,13 @@ export interface AppProps {
   /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
   onSkillProposed?: (cb: (text: string) => void) => () => void;
   /**
+   * C5 — subscribe to background-job completions (the executor's `onComplete`
+   * shape). Completions land in the transcript as the same dim box the
+   * readline branch prints; `bg:N` in the status bar counts completions since
+   * the user last submitted input. Returns an unsubscribe.
+   */
+  onBackgroundComplete?: (cb: (job: BackgroundJob) => void) => () => void;
+  /**
    * `/fork`, `/branches`, `/branch <n>` over the host's session store. Injected
    * so the TUI never opens `sessions.db` itself; `switchTo` asks the TUI to
    * re-key onto that session. Absent → the commands report they are unavailable.
@@ -211,6 +226,7 @@ export function App({
   slashCommands,
   onNotification,
   onSkillProposed,
+  onBackgroundComplete,
   readMemory,
   branches,
   setPluginCredential,
@@ -269,6 +285,10 @@ export function App({
   const [budgetCapUsd, setBudgetCapUsd] = useState<number | null>(
     () => bridge.getPersonalityBudgetCap(initialPersonality) ?? null,
   );
+  // C5 — background completions the user has not acted after yet: incremented
+  // per rendered completion box, reset when the user next submits input (the
+  // moment we know they were at the terminal with the notice on screen).
+  const [bgCompletedUnseen, setBgCompletedUnseen] = useState(0);
 
   const verboseRef = useRef(initialVerbose);
   const [verboseDisplay, setVerboseDisplay] = useState(initialVerbose);
@@ -286,6 +306,8 @@ export function App({
   const turnUsageRef = useRef<TurnTiming['turnUsage']>(null);
   /** S4/U1 — the turn's budget-halt notice, committed after its reply on `done`. */
   const haltNoticeRef = useRef<string | null>(null);
+  /** A3 — the turn's trace id from `run_start`, for the error render's `trace <id>` line. */
+  const turnTraceIdRef = useRef<string | null>(null);
   const [turnElapsed, setTurnElapsed] = useState(0);
   const fileByToolCallRef = useRef(
     new Map<string, { action: FileActivity['action']; path: string }>(),
@@ -660,7 +682,21 @@ export function App({
       }
     };
 
-    const onToolProgress = (toolName: string, message: string, percent: number | undefined) => {
+    const onToolProgress = (
+      toolName: string,
+      message: string,
+      percent: number | undefined,
+      audience: ToolProgressAudience,
+    ) => {
+      // C5 — Phase 30.2 audience gate: surface code renders only 'user'
+      // progress. Internal events (budget warnings, telemetry) stay off screen.
+      if (audience !== 'user') return;
+      // A4 — the loop's own notices (compaction retry, provider fallback) use
+      // the reserved `_loop` name: a one-line yellow notice, never a tool row.
+      if (toolName === '_loop') {
+        if (message) pushTimeline('warning', message);
+        return;
+      }
       setActiveTools((prev) =>
         prev.map((t) => (t.toolName === toolName ? { ...t, message, percent } : t)),
       );
@@ -675,12 +711,19 @@ export function App({
       toolName: string,
       ok: boolean,
       durationMs: number,
-      result?: string,
+      result: string | undefined,
+      _structured: Record<string, unknown> | undefined,
+      _audience: 'internal' | 'user' | 'dashboard' | undefined,
+      error: string | undefined,
     ) => {
       setActiveTools((prev) => prev.filter((t) => t.toolCallId !== toolCallId));
       setCompletedTools((prev) => [...prev, { id: toolCallId, toolName, ok, durationMs }]);
       turnToolDurationsRef.current.push(durationMs);
-      const preview = result ? ` -> ${result.replace(/\s+/g, ' ').slice(0, 56)}` : '';
+      // C2 — a failed tool shows its reason: the bridge's trailing `error`
+      // argument (set only when ok is false), falling back to the result text.
+      const failureText = error ?? result;
+      const previewSource = ok ? result : failureText;
+      const preview = previewSource ? ` -> ${previewSource.replace(/\s+/g, ' ').slice(0, 56)}` : '';
       pushTimeline(ok ? 'success' : 'error', `tool end: ${toolName} (${durationMs}ms)${preview}`);
       const fileMeta = fileByToolCallRef.current.get(toolCallId);
       const activityId = activityByToolCallRef.current.get(toolCallId);
