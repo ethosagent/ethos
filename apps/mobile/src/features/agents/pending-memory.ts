@@ -52,3 +52,6 @@ export function pendingDetail(p: PendingLike): Array<{ key: string; value: strin
 export function isResolved(list: readonly PendingLike[] | undefined, id: string): boolean {
   return list !== undefined && !list.some((p) => p.id === id);
 }
+
+/** The pending list's query key — the Memory screen and the review sheet share it. */
+export const pendingKey = (personalityId: string) => ['memory', 'pending', personalityId] as const;
