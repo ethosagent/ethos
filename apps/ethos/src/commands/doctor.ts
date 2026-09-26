@@ -78,32 +78,50 @@ const ETHOS_VERSION =
 interface SdkRow {
   label: string;
   module: string;
+  /**
+   * Loads `module`. A literal `import()` per row, never a computed one, so the module graph
+   * stays readable; dynamic because the channel SDKs are optionalDependencies of the CLI.
+   */
+  load: () => Promise<unknown>;
   required: boolean;
   /** Config keys that, if set, mean this SDK is "in use" — missing is a hard error. */
   configuredWhen?: (cfg: EthosConfig) => boolean;
 }
 
 const CORE_SDKS: SdkRow[] = [
-  { label: 'Anthropic provider', module: '@anthropic-ai/sdk', required: true },
-  { label: 'OpenAI-compat provider', module: 'openai', required: true },
+  {
+    label: 'Anthropic provider',
+    module: '@anthropic-ai/sdk',
+    load: () => import('@anthropic-ai/sdk'),
+    required: true,
+  },
+  {
+    label: 'OpenAI-compat provider',
+    module: 'openai',
+    load: () => import('openai'),
+    required: true,
+  },
 ];
 
 const CHANNEL_SDKS: SdkRow[] = [
   {
     label: 'Telegram',
     module: 'grammy',
+    load: () => import('grammy'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.telegramToken),
   },
   {
     label: 'Discord',
     module: 'discord.js',
+    load: () => import('discord.js'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.discordToken),
   },
   {
     label: 'Slack',
     module: '@slack/bolt',
+    load: () => import('@slack/bolt'),
     required: false,
     configuredWhen: (cfg) =>
       Boolean(cfg.slackBotToken && cfg.slackAppToken && cfg.slackSigningSecret),
@@ -111,18 +129,21 @@ const CHANNEL_SDKS: SdkRow[] = [
   {
     label: 'Email (IMAP)',
     module: 'imapflow',
+    load: () => import('imapflow'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
   },
   {
     label: 'Email (parser)',
     module: 'mailparser',
+    load: () => import('mailparser'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
   },
   {
     label: 'Email (SMTP)',
     module: 'nodemailer',
+    load: () => import('nodemailer'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailSmtpHost && cfg.emailUser && cfg.emailPassword),
   },
@@ -275,9 +296,9 @@ function codexModelLine(check: CodexModelCheck): string | null {
   }
 }
 
-async function checkSdk(modulePath: string): Promise<{ ok: boolean; error?: string }> {
+async function checkSdk(row: SdkRow): Promise<{ ok: boolean; error?: string }> {
   try {
-    await import(modulePath);
+    await row.load();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1332,11 +1353,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     }> = [];
 
     for (const row of CORE_SDKS) {
-      const { ok } = await checkSdk(row.module);
+      const { ok } = await checkSdk(row);
       sdks.push({ label: row.label, module: row.module, required: true, loadable: ok });
     }
     for (const row of CHANNEL_SDKS) {
-      const { ok } = await checkSdk(row.module);
+      const { ok } = await checkSdk(row);
       const configured = config ? Boolean(row.configuredWhen?.(config)) : false;
       sdks.push({
         label: row.label,
@@ -1582,7 +1603,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   console.log(`${c.bold}Core SDKs${c.reset}`);
   const coreResults: RowResult[] = [];
   for (const row of CORE_SDKS) {
-    const { ok } = await checkSdk(row.module);
+    const { ok } = await checkSdk(row);
     coreResults.push({ row, ok, inUse: true });
     printRow(coreResults.at(-1) as RowResult);
   }
@@ -1597,7 +1618,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   );
   const channelResults: RowResult[] = [];
   for (const row of CHANNEL_SDKS) {
-    const { ok } = await checkSdk(row.module);
+    const { ok } = await checkSdk(row);
     const inUse = config ? Boolean(row.configuredWhen?.(config)) : false;
     channelResults.push({ row, ok, inUse });
     printRow(channelResults.at(-1) as RowResult);

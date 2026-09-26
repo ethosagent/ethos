@@ -135,7 +135,8 @@
     "@ethosagent/watchers": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
-    "@ethosagent/wiring": "workspace:*"
+    "@ethosagent/wiring": "workspace:*",
+    "@types/nodemailer": "^6.4.17"
   },
   "optionalDependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc13",

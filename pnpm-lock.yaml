@@ -41,8 +41,8 @@ importers:
         specifier: ^19.0.0
         version: 19.2.16
       archcheck:
-        specifier: 0.3.0
-        version: 0.3.0(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3)
+        specifier: 0.3.1
+        version: 0.3.1(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3)
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(tsx@4.23.9)(typescript@6.0.3)(yaml@2.9.0)
@@ -442,6 +442,9 @@ importers:
       '@ethosagent/wiring':
         specifier: workspace:*
         version: link:../../packages/wiring
+      '@types/nodemailer':
+        specifier: ^6.4.17
+        version: 6.4.23
     optionalDependencies:
       '@slack/bolt':
         specifier: ^3.21.0
@@ -7409,8 +7412,8 @@ packages:
       dmg-builder: 26.15.3
       electron-builder-squirrel-windows: 26.15.3
 
-  archcheck@0.3.0:
-    resolution: {integrity: sha512-1Wnmg+/bp3QUxEWSV5lr2kJ8RYtOWN45MmtQA8KMc9oMLoVs9e/mkK7MspS8G7L1bAMNXzG/W2A6JkF3N7VclA==}
+  archcheck@0.3.1:
+    resolution: {integrity: sha512-iXEPpjgUbOLnuN3NB4FbpwNVJxyUjqVYrJISA+H0yQyUEen+1hrjimiylI0dpqjU4+4ZINF8U1RQAbgp8j6Iag==}
     engines: {node: '>=20'}
     hasBin: true
     peerDependencies:
@@ -18948,7 +18951,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  archcheck@0.3.0(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3):
+  archcheck@0.3.1(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3):
     dependencies:
       typescript: 6.0.3
     optionalDependencies:
