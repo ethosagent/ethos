@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "coverage": {
+    "total": 21,
+    "deterministic": 19,
+    "proxy": 2,
+    "model": 0,
+    "unchecked": 0,
+    "automatable": 100
+  },
+  "rules": [
+    {
+      "id": "app-entry-modules-compose",
+      "kind": "layers",
+      "statement": "an app entry module is its thin wiring adapter and may compose anything (§II)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "list a file here only if it IS a composition root, never to silence a finding"
+    },
+    {
+      "id": "core-adapters-wrap-core",
+      "kind": "layers",
+      "statement": "plugin-sdk and agent-bridge wrap core for plugin authors and UI surfaces, and reach nothing concrete",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "take the implementation through a contract; let wiring compose it"
+    },
+    {
+      "id": "every-error-rule-has-a-fixture",
+      "kind": "required-file",
+      "statement": "every error-severity rule has a fixture it catches",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "add a file that deliberately breaks this rule"
+    },
+    {
+      "id": "extensions-implement-contracts",
+      "kind": "layers",
+      "statement": "an extension implements contracts and never reaches wiring or apps",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "depend on the contract in @ethosagent/types; let wiring compose"
+    },
+    {
+      "id": "kernel-reads-contracts",
+      "kind": "layers",
+      "statement": "the security kernel depends only on contracts and vendored shims",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "take the dependency through a contract in @ethosagent/types"
+    },
+    {
+      "id": "l1-contracts-pure",
+      "kind": "layers",
+      "statement": "@ethosagent/types has zero imports and zero deps (§II L1)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "move the shared type into @ethosagent/types, or stop sharing it"
+    },
+    {
+      "id": "l10-silent-libraries",
+      "kind": "banned-syntax",
+      "statement": "library code does not write to the console (Law 10)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "use the injected Logger; only apps/ethos/src may print"
+    },
+    {
+      "id": "l2-core-no-concrete",
+      "kind": "layers",
+      "statement": "core never imports concrete implementations (§II L2)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "receive the implementation through AgentLoopConfig injection"
+    },
+    {
+      "id": "l3-wiring-composes",
+      "kind": "layers",
+      "statement": "wiring is the composition root and may import every layer",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "declare a layer for the new folder in architecture.config.ts"
+    },
+    {
+      "id": "l5-apps-through-wiring",
+      "kind": "layers",
+      "statement": "apps depend on contracts and wiring only; concrete implementations come via wiring (Law 5)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "reach the implementation through @ethosagent/wiring"
+    },
+    {
+      "id": "no-computed-dynamic-import",
+      "kind": "banned-syntax",
+      "statement": "dynamic imports name a literal specifier so the graph stays readable",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "import a literal specifier, or register the module in a table"
+    },
+    {
+      "id": "no-empty-catch",
+      "kind": "banned-syntax",
+      "statement": "a catch block handles, rethrows or explains the error it swallows",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "log, rethrow, or comment why the failure is safe to ignore"
+    },
+    {
+      "id": "no-inline-suppression",
+      "kind": "banned-syntax",
+      "statement": "exceptions live in the manifest with an owner and an expiry, not inline",
+      "severity": "warn",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "fix the code, or record an exception in architecture.config.ts"
+    },
+    {
+      "id": "observability-sqlite-stays-extractable",
+      "kind": "layers",
+      "statement": "observability-sqlite depends only on types, safety-redact and the sqlite shim, so it stays extractable",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "take the dependency as an injected contract from @ethosagent/types"
+    },
+    {
+      "id": "p24-no-fsstorage-in-libraries",
+      "kind": "banned-syntax",
+      "statement": "library code receives an injected Storage and never constructs FsStorage (P2.4)",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "thread the Storage from the composition root (wiring / app entry)"
+    },
+    {
+      "id": "support-packages",
+      "kind": "layers",
+      "statement": "library packages depend only on contracts, the kernel and vendored shims",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "take the dependency through a contract, or move the code into wiring"
+    },
+    {
+      "id": "surface-throws-ethos-error",
+      "kind": "banned-syntax",
+      "statement": "CLI surface code throws EthosError, not raw Error (Phase 30.9)",
+      "severity": "error",
+      "confidence": "proxy",
+      "mark": "◑",
+      "remedy": "throw new EthosError({ code, cause, action })"
+    },
+    {
+      "id": "tests-reach-anything",
+      "kind": "layers",
+      "statement": "test files may import any layer to build fixtures",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "keep production code out of __tests__ and *.test.ts files"
+    },
+    {
+      "id": "tools-read-env-through-ctx",
+      "kind": "banned-syntax",
+      "statement": "tool code reads configuration through ctx.*, not process.env",
+      "severity": "error",
+      "confidence": "proxy",
+      "mark": "◑",
+      "remedy": "use ctx.secrets / ctx.process; boot checks belong in isAvailable()"
+    },
+    {
+      "id": "vendored-shim",
+      "kind": "layers",
+      "statement": "the sqlite shim is a thin platform wrapper with no Ethos semantics",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "keep Ethos semantics out of the shim; put them in its caller"
+    },
+    {
+      "id": "web-api-rpc-is-thin",
+      "kind": "layers",
+      "statement": "web-api rpc handlers validate input, call one service method and return its result",
+      "severity": "error",
+      "confidence": "deterministic",
+      "mark": "✓",
+      "remedy": "move data access into a repository or service under apps/web-api/src"
+    }
+  ]
+}

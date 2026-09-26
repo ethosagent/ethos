@@ -32,12 +32,19 @@
     "bench:voice": "tsx scripts/voice-latency-bench.ts --assert-budget",
     "bench:voice:realtime": "tsx scripts/voice-latency-bench.ts --tier=realtime --assert-budget",
     "bench:voice:live": "tsx scripts/voice-latency-bench.ts --live",
-    "bench:voice:live:realtime": "tsx scripts/voice-latency-bench.ts --live --tier=realtime"
+    "bench:voice:live:realtime": "tsx scripts/voice-latency-bench.ts --live --tier=realtime",
+    "arch": "archcheck",
+    "arch:changed": "archcheck --changed",
+    "arch:json": "archcheck --format json",
+    "arch:emit": "archcheck emit",
+    "arch:prune": "archcheck baseline --prune",
+    "arch:baseline-shrinks": "node scripts/check-archcheck-baseline.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
+    "archcheck": "0.3.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.5",
     "typescript": "^6.0.0",

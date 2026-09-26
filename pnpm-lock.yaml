@@ -40,6 +40,9 @@ importers:
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.16
+      archcheck:
+        specifier: 0.3.0
+        version: 0.3.0(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3)
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(tsx@4.23.9)(typescript@6.0.3)(yaml@2.9.0)
@@ -7368,6 +7371,17 @@ packages:
     peerDependencies:
       dmg-builder: 26.15.3
       electron-builder-squirrel-windows: 26.15.3
+
+  archcheck@0.3.0:
+    resolution: {integrity: sha512-1Wnmg+/bp3QUxEWSV5lr2kJ8RYtOWN45MmtQA8KMc9oMLoVs9e/mkK7MspS8G7L1bAMNXzG/W2A6JkF3N7VclA==}
+    engines: {node: '>=20'}
+    hasBin: true
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.70.0'
+      typescript: ^6.0.0
+    peerDependenciesMeta:
+      '@anthropic-ai/sdk':
+        optional: true
 
   arg@5.0.2:
     resolution: {integrity: sha512-PYjyFOLKQ9y57JvQ6QLo8dAgNqswh8M1RMJYdQduT6xbWSgK36P/Z/v+p888pM69jMMfS8Xd8F6I1kQ/I9HUGg==}
@@ -18896,6 +18910,12 @@ snapshots:
       which: 5.0.0
     transitivePeerDependencies:
       - supports-color
+
+  archcheck@0.3.0(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(typescript@6.0.3):
+    dependencies:
+      typescript: 6.0.3
+    optionalDependencies:
+      '@anthropic-ai/sdk': 0.120.0(zod@4.4.3)
 
   arg@5.0.2: {}
 
