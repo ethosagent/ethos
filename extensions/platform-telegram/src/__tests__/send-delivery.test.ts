@@ -83,6 +83,34 @@ describe('TelegramAdapter.send — partial delivery', () => {
     expect(res.error).toMatch(/partial: 1 of 3 chunks/);
   });
 
+  it('a chunk whose plain-text parse fallback also fails is a missing chunk, not success', async () => {
+    const parseErr = apiError(400, "Bad Request: can't parse entities: unclosed tag");
+    // Only chunk: HTML refused, plain-text fallback refused → nothing landed.
+    mockApi.sendMessage
+      .mockRejectedValueOnce(parseErr)
+      .mockRejectedValueOnce(apiError(502, 'Bad Gateway'));
+    const none = await mk().send('100', { text: 'hi' });
+    expect(none.ok).toBe(false);
+    expect(none.permanent).toBeUndefined();
+    expect(none.error).toContain('Bad Gateway');
+
+    // Fallback refused permanently → the failure carries it.
+    mockApi.sendMessage
+      .mockRejectedValueOnce(parseErr)
+      .mockRejectedValueOnce(apiError(403, 'Forbidden: bot was blocked by the user'));
+    expect(await mk().send('100', { text: 'hi' })).toMatchObject({ ok: false, permanent: true });
+
+    // First chunk landed, second's fallback refused → partial, never full success.
+    mockApi.sendMessage
+      .mockResolvedValueOnce({ message_id: 21 })
+      .mockRejectedValueOnce(parseErr)
+      .mockRejectedValueOnce(apiError(502, 'Bad Gateway'));
+    const partial = await mk().send('100', { text: LONG });
+    expect(partial.ok).toBe(true);
+    expect(partial.messageId).toBe('21');
+    expect(partial.error).toMatch(/partial: 1 of 3 chunks/);
+  });
+
   it('the first chunk failing is still a plain, retryable failure', async () => {
     mockApi.sendMessage.mockRejectedValueOnce(apiError(429, 'Too Many Requests: retry after 5'));
     const res = await mk().send('100', { text: 'hi' });

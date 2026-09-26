@@ -1396,10 +1396,16 @@ export class TelegramAdapter
           console.warn(
             `[telegram] HTML parse fallback chunk=${i + 1}/${totalChunks} hash=${chunkHash(raw)}`,
           );
-          const sent = await this.bot.api
-            .sendMessage(Number(chatId), raw, threadOpt)
-            .catch(() => null);
-          if (sent) ids.push(String(sent.message_id));
+          // A fallback that also fails is a missing chunk, never success:
+          // partial when an earlier chunk landed, else a (possibly
+          // permanent) failure. Pinned by `__tests__/send-delivery.test.ts`.
+          try {
+            const sent = await this.bot.api.sendMessage(Number(chatId), raw, threadOpt);
+            ids.push(String(sent.message_id));
+          } catch (fallbackErr) {
+            if (ids.length > 0) return this.partialSend(ids, totalChunks, fallbackErr);
+            return telegramFailure(fallbackErr);
+          }
         } else {
           if (ids.length > 0) return this.partialSend(ids, totalChunks, err);
           return telegramFailure(err);
