@@ -1,15 +1,18 @@
 # .architecture-state.yaml — the operational state sidecar
 #
 # WHAT THIS IS. The mechanical inventory of what this repository currently
-# CONTAINS: which package sits at which path, which layer it belongs to, which
-# security tier it is held to, and which §VIII exceptions are open right now.
+# CONTAINS: which package sits at which path, which security tier it is held
+# to, what each guarantee-register citation asserts, and which §VIII exceptions
+# to rules archcheck does NOT enforce are open right now. Layer paths and the
+# exceptions to archcheck-enforced rules live in architecture.config.ts.
 #
-# WHAT THIS IS NOT. It is not policy. ARCHITECTURE.md §IX is the authority on
-# what is ALLOWED — layers, dependency direction, laws, exception shape. This
-# file records only what EXISTS. Where the two disagree, §IX wins and this file
-# is the thing to fix. §IX declares this file by name
-# (`state_sidecar: ".architecture-state.yaml"`), and §VIII sends active
-# exceptions here rather than into the constitution.
+# WHAT THIS IS NOT. It is not policy. ARCHITECTURE.md is the authority on what
+# is ALLOWED — laws and exception shape — and architecture.config.ts is its
+# enforced projection for layers and dependency direction. This file records
+# only what EXISTS. Where they disagree, ARCHITECTURE.md wins and this file is
+# the thing to fix. §IX declares this file by name
+# (`state_sidecar: ".architecture-state.yaml"`), and §VIII sends the active
+# exceptions archcheck does not own here rather than into the constitution.
 #
 # HOW IT CHANGES. Freely, in an ordinary PR, in the same commit as the change it
 # records. Adding a package means adding its tier here. That is deliberate: a
@@ -19,179 +22,12 @@
 #
 # READ WITH. docs/content/security/security-boundary.md (the tier roster and the
 # guarantee register), SECURITY.md (the triage decision table), ARCHITECTURE.md
-# §II (layers), §VIII (exceptions), §IX (validator rules).
+# §VIII (exceptions), §IX (validator rules), architecture.config.ts (layers).
 
 version: 1
 
-# ---- Layers (§II) ---------------------------------------------------------
-# The path inventory behind ARCHITECTURE.md §II's layer model. Order matches
-# §IX: a layer may depend on any layer beneath it and none above it.
-#
-# `security-kernel` covers seven packages under packages/safety/ plus the named
-# enforcement files inside packages/core and packages/wiring. §II names the
-# layer and §IX carries its rules, so this entry is the path inventory behind a
-# constitutional layer rather than the record-of-fact-without-policy it was
-# before the Phase 2 amendment (plan/phases/security-boundary.md G1).
-#
-# §II names five layers and does not partition packages/* exhaustively. The
-# library packages not listed below (a2a, agent-bridge, config, design-tokens,
-# logger, oauth-core, plugin-contract, plugin-sdk, pricing, sdk, session-lane,
-# surface-kit, ui-components, web-contracts) have no layer assignment today.
-# They all carry a tier, which is the assignment the security boundary needs.
-# `packages/sqlite` is the one exception: it is classified `vendored` below,
-# which is a positive statement rather than an absence.
-
-layers:
-  - name: contracts
-    paths:
-      - packages/types
-
-  - name: security-kernel
-    paths:
-      - packages/safety/channel
-      - packages/safety/groundtruth
-      - packages/safety/injection
-      - packages/safety/network
-      - packages/safety/redact
-      - packages/safety/scanner
-      - packages/safety/watcher
-      - packages/storage-fs
-    # Enforcement points that live inside other packages. Listed by file
-    # because the packages they sit in are only partly kernel; the same files
-    # appear as `kernel_paths` on the package entries under `tiers:` below.
-    embedded_paths:
-      - packages/core/src/agent-loop.ts
-      - packages/core/src/tool-registry.ts
-      - packages/core/src/agent-loop/approval-posture.ts
-      - packages/core/src/agent-loop/stages/context-assembly.ts
-      - packages/core/src/agent-loop/stages/per-call-enforcement.ts
-      - packages/core/src/agent-loop/stages/tool-processing.ts
-      - packages/core/src/agent-loop/stages/tool-rejection.ts
-      - packages/core/src/agent-loop/result-defense.ts
-      - packages/core/src/scoped/scoped-fs.ts
-      - packages/core/src/scoped/scoped-fetch.ts
-      - packages/core/src/scoped/scoped-process.ts
-      - packages/core/src/scoped/scoped-secrets.ts
-      - packages/core/src/scoped/scoped-attachments.ts
-      - packages/core/src/fs-reach.ts
-      - packages/core/src/path-boundary.ts
-      - packages/core/src/url-validator.ts
-      - packages/core/src/capability-validator.ts
-      - packages/core/src/capability-resolver.ts
-      - packages/core/src/hook-registry.ts
-      - packages/core/src/script-safe.ts
-      - packages/wiring/src/build-agent-loop.ts
-      - packages/wiring/src/danger-predicate.ts
-      - packages/wiring/src/approval-seams.ts
-      - packages/wiring/src/smart-approver.ts
-      - packages/wiring/src/resolve-execution-posture.ts
-      - packages/wiring/src/skill-passthrough.ts
-
-  - name: core
-    paths:
-      - packages/core
-
-  - name: extensions
-    paths:
-      - extensions/*
-
-  - name: wiring
-    paths:
-      - packages/wiring
-
-  - name: apps
-    paths:
-      - apps/*
-
-# ---- Vendored runtime shims ----------------------------------------------
-# Workspace packages that are functionally EXTERNAL dependencies which happen
-# to live in-repo: a thin wrapper over a platform primitive, carrying no Ethos
-# semantics, no contract, and no policy. The layer check reads them the way it
-# reads an npm dependency — a closed layer (contracts / security-kernel / core)
-# may depend on one without that edge being an unclassified reach.
-#
-# This is the narrowest possible carve-out and it is deliberately expensive to
-# claim: `rationale` is REQUIRED and must be non-empty, and the validator fails
-# on an entry without one. The bar is "no Ethos semantics" — not "small", not
-# "infrastructural", not "nobody has assigned it a layer yet". A package that
-# implements an Ethos contract (`@ethosagent/logger` implements `Logger`) or
-# encodes an Ethos decision (`@ethosagent/design-tokens` is DESIGN.md as code)
-# does NOT qualify, however low-level it looks.
-#
-# A vendored package still carries a tier. Vendoring answers "which layer
-# rules apply", never "is this in the security boundary".
-
-vendored:
-  "@ethosagent/sqlite":
-    path: packages/sqlite
-    assigned: 2026-08-12
-    rationale: >-
-      A synchronous shim over Node's built-in `node:sqlite` (`DatabaseSync`),
-      resolved through `process.getBuiltinModule` so a bundler cannot rewrite
-      the `node:` specifier. It has exactly one `@ethosagent/*` edge —
-      `@ethosagent/types`, imported by `packages/sqlite/src/migrate.ts` for
-      `EthosError` — and no other dependencies at all. That edge does not
-      reopen the layer question: `types` is the zero-dep bottom layer every
-      package may import by construction, so an edge to it can neither create a
-      cycle nor reach across a layer, and raising a typed `EthosError` instead
-      of a bare `Error` carries no Ethos semantics INTO the shim. Beyond it the
-      package contains none: no contract, no personality concept, no policy, no
-      boundary decision — only parameter marshalling and a `run/get/all`
-      surface over the platform API. It exists
-      as a workspace package rather than an npm dependency because it is
-      Node-version-coupled glue we must be able to patch in the same commit as
-      its caller. `packages/safety/channel` depends on it for the DM pairing
-      store, which legitimately needs SQLite; routing that through a contract
-      seam would add an indirection whose only purpose is to satisfy a layer
-      rule aimed at Ethos-semantic coupling that this package does not have.
-
-# ---- App entry modules (§II thin wiring adapter, §IX composition_root) -----
-# §II grants an app "its own thin wiring adapter" and §IX grants apps
-# `composition_root: "entry modules only"`. Neither enumerates WHICH modules,
-# so Law 5 had no machine-readable boundary and the validator could only report
-# it at manifest granularity, as advisory. This is that inventory: the files in
-# each app that are permitted to import extensions and the security kernel
-# directly.
-#
-# Derived from what the code actually is, not from what would make findings go
-# away: the module each app's package.json names as its entry point, plus the
-# app's dedicated wiring adapter where one exists by name
-# (`apps/ethos/src/wiring.ts`, the archetype). Everything else in an app is
-# ordinary app code and must reach concrete implementations through
-# `@ethosagent/wiring`.
-#
-# Adding a path here is a claim that the file IS a composition root. It is not
-# a suppression mechanism — the Law 5 file check is advisory today precisely
-# because the repository does not yet match this inventory (see the note on the
-# check in scripts/check-architecture.mjs), and padding the list to green the
-# build would destroy the only signal that says so.
-
-app_entry_modules:
-  apps/acp-server:
-    - apps/acp-server/src/index.ts
-  apps/desktop:
-    - apps/desktop/src/main/index.ts
-    # The desktop's in-process backend composition root, and nothing else: it
-    # builds the agent loop, session store, personality registry and identity
-    # map, hands them to createWebApi, and binds the Hono server. Its only
-    # app-specific state is the module-level server handle / bound port that
-    # start/stop/getPort exist to manage.
-    - apps/desktop/src/main/serve.ts
-  apps/ethos:
-    - apps/ethos/src/index.ts
-    - apps/ethos/src/wiring.ts
-    # Named wiring adapter for the ACP session-scoped MCP grant, extracted from
-    # the acp command: it binds the concrete McpSessionView (@ethosagent/tools-mcp)
-    # into acp-server's SessionViewFactory seam and closes the allowlist resolver
-    # over the personality registry. Composition only — no command logic.
-    - apps/ethos/src/lib/acp-mcp-wiring.ts
-  apps/mcp-server:
-    - apps/mcp-server/src/index.ts
-  apps/tui:
-    - apps/tui/src/index.ts
-    - apps/tui/src/setup/index.ts
-  apps/web-api:
-    - apps/web-api/src/index.ts
+# ---- Layers, vendored shims, app entry modules ----------------------------
+# Moved to architecture.config.ts, which archcheck enforces (ARCHITECTURE.md §IX).
 
 # ---- Register anchors -----------------------------------------------------
 # What each guarantee-register citation is ASSERTING at the line it points to.
@@ -221,33 +57,34 @@ app_entry_modules:
 
 register_anchors:
   G-TOOLS:
-    - { path: packages/core/src/tool-registry.ts, line: 219, contains: "toDefinitions(allowedTools" }
-    - { path: packages/core/src/tool-registry.ts, line: 394, contains: "!allowedTools.includes(call.name)" }
-    - { path: packages/core/src/tool-registry.ts, line: 287, contains: "enforce tool access at execution time" }
+    - { path: packages/core/src/tool-registry.ts, line: 228, contains: "toDefinitions(allowedTools" }
+    - { path: packages/core/src/tool-registry.ts, line: 403, contains: "!allowedTools.includes(call.name)" }
+    - { path: packages/core/src/tool-registry.ts, line: 296, contains: "enforce tool access at execution time" }
     - { path: packages/core/src/agent-loop/stages/tool-rejection.ts, line: 58, contains: "export function* emitToolRejection" }
-    - { path: packages/core/src/script-safe.ts, line: 121, contains: "export function scriptCallableFor" }
+    - { path: packages/core/src/script-safe.ts, line: 130, contains: "export function scriptCallableFor" }
 
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
-    - { path: packages/core/src/capability-resolver.ts, line: 71, contains: "export function resolveCapabilities" }
+    - { path: packages/core/src/capability-resolver.ts, line: 80, contains: "export function resolveCapabilities" }
     - { path: packages/core/src/scoped/scoped-process.ts, line: 8, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
-    - { path: packages/core/src/fs-reach.ts, line: 136, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 102, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 136, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 91, contains: "private check(rawPath" }
+    - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 113, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 152, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 132, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
-    - { path: packages/safety/network/src/safe-fetch.ts, line: 66, contains: "export async function safeFetch" }
-    - { path: packages/safety/network/src/safe-fetch.ts, line: 77, contains: "hop < maxHops" }
-    - { path: packages/safety/network/src/safe-fetch.ts, line: 85, contains: "redirect: 'manual'" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 80, contains: "export async function safeFetch" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 91, contains: "hop < maxHops" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 100, contains: "redirect: 'manual'" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 154, contains: "async function pinnedFetch" }
     - { path: packages/safety/network/src/scheme.ts, line: 21, contains: "parsed.protocol !== 'https:'" }
-    - { path: packages/safety/network/src/safe-fetch.ts, line: 300, contains: "function stripAuthHeaders" }
-    - { path: packages/safety/network/src/safe-fetch.ts, line: 11, contains: "v1 honesty about DNS rebinding" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 378, contains: "function stripAuthHeaders" }
+    - { path: packages/safety/network/src/safe-fetch.ts, line: 11, contains: "DNS rebinding — connection pinning on the default path" }
     - { path: packages/core/src/scoped/scoped-fetch.ts, line: 57, contains: "!this.isHostAllowed(parsed.hostname)" }
     - { path: packages/core/src/url-validator.ts, line: 135, contains: "export function validateUrl" }
 
@@ -255,20 +92,24 @@ register_anchors:
     - { path: packages/safety/injection/src/wrap.ts, line: 35, contains: "export function wrapUntrusted" }
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
-    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 456, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 671, contains: "resolveDowngradedTools(dgConfig?.tools)" }
-    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 756, contains: "await handleUntrustedResult(" }
-    - { path: packages/core/src/agent-loop/result-defense.ts, line: 26, contains: "export async function handleUntrustedResult" }
+    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 457, contains: "deps.safety.injection.prelude" }
+    - { path: packages/core/src/agent-loop.ts, line: 733, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 771, contains: "await handleUntrustedResult(" }
+    - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
+    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
+    - { path: packages/wiring/src/decision-site.ts, line: 222, contains: "export function meetsThreshold" }
+    - { path: packages/wiring/src/decision-site.ts, line: 239, contains: "export async function runDecisionSite" }
+    - { path: packages/core/src/agent-loop/result-defense.ts, line: 91, contains: "const containsInstructions = tier1Hit ||" }
 
   G-SEC:
     - { path: packages/types/src/secrets.ts, line: 18, contains: "export interface SecretsResolver" }
-    - { path: packages/wiring/src/skill-passthrough.ts, line: 31, contains: "export function applySkillPassthrough" }
-    - { path: packages/wiring/src/skill-passthrough.ts, line: 9, contains: "export function deriveSkillPassthrough" }
+    - { path: packages/wiring/src/skill-passthrough.ts, line: 40, contains: "export function applySkillPassthrough" }
+    - { path: packages/wiring/src/skill-passthrough.ts, line: 16, contains: "export function deriveSkillPassthrough" }
 
   G-RED:
-    - { path: packages/safety/redact/src/index.ts, line: 45, contains: "export function detectSecrets" }
-    - { path: packages/safety/redact/src/index.ts, line: 57, contains: "export function redactString" }
-    - { path: packages/safety/redact/src/index.ts, line: 74, contains: "export function redactJson" }
+    - { path: packages/safety/redact/src/index.ts, line: 94, contains: "export function detectSecrets" }
+    - { path: packages/safety/redact/src/index.ts, line: 106, contains: "export function redactString" }
+    - { path: packages/safety/redact/src/index.ts, line: 123, contains: "export function redactJson" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 179, contains: "redactJson(trace.attrs)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 317, contains: "redactJson(span.attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 370, contains: "redactJson(attrs, extraRedactPatterns)" }
@@ -277,36 +118,39 @@ register_anchors:
     - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
 
   G-APP:
-    - { path: packages/wiring/src/danger-predicate.ts, line: 274, contains: "mode === 'smart' && opts.smartApprove" }
-    - { path: packages/wiring/src/danger-predicate.ts, line: 241, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 144, contains: "reviewer gave no usable verdict" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 149, contains: "reviewer error (fail-closed)" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 43, contains: "export async function enforceBeforeToolCall" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 451, contains: "mode === 'smart' && opts.smartApprove" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 405, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 79, contains: "export async function enforceBeforeToolCall" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 83, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
-    - { path: packages/wiring/src/approval-seams.ts, line: 106, contains: "export function createApprovalDangerPredicate" }
+    - { path: packages/wiring/src/approval-seams.ts, line: 142, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
 
   G-EXEC:
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 249, contains: "export function resolveExecutionPosture" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 306, contains: "const dockerUnbuildable" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 345, contains: "posture.hostFallback = { reason: 'docker-disabled' }" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 411, contains: "dockerAvailable === false && !posture.dockerAbsent" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 267, contains: "export function resolveExecutionPosture" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 324, contains: "const dockerUnbuildable" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 365, contains: "posture.hostFallback = { reason: 'docker-disabled' }" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 445, contains: "dockerAvailable === false && !posture.dockerAbsent" }
     # The `execution: remote` requirement this deployment cannot meet. Refused
     # without consulting the constitution — a permitting one is permission to
     # run on THIS host, which is the one place the personality ruled out.
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 388, contains: "if (sshUnconfigured) {" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 422, contains: "if (sshUnconfigured) {" }
 
   G-WATCH:
     - { path: packages/safety/watcher/src/rules.ts, line: 20, contains: "export function rateLimitRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 79, contains: "export function tokenBudgetRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 110, contains: "export function compoundingErrorRule" }
-    - { path: packages/safety/watcher/src/rules.ts, line: 161, contains: "export function suspiciousSequenceRule" }
-    - { path: packages/safety/watcher/src/rules.ts, line: 205, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 553, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
+    - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
+    - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 582, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
-    - { path: packages/safety/channel/src/channel-filter.ts, line: 111, contains: "export function checkMessage" }
-    - { path: packages/safety/channel/src/channel-filter.ts, line: 79, contains: "export function isSenderAllowed" }
+    - { path: packages/safety/channel/src/channel-filter.ts, line: 124, contains: "export function checkMessage" }
+    - { path: packages/safety/channel/src/channel-filter.ts, line: 93, contains: "export function isSenderAllowed" }
     - { path: packages/safety/channel/src/channel-filter.ts, line: 24, contains: "dmPolicy?:" }
     - { path: packages/safety/channel/src/channel-filter.ts, line: 33, contains: "contextVisibility?:" }
 
@@ -315,7 +159,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 148 packages: 11 at Tier 0, 27 at Tier 1, 110 at Tier 2.
+# apps/ carries a tier. 151 packages: 11 at Tier 0, 27 at Tier 1, 113 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -439,6 +283,8 @@ tiers:
       - packages/wiring/src/danger-predicate.ts
       - packages/wiring/src/approval-seams.ts
       - packages/wiring/src/smart-approver.ts
+      - packages/wiring/src/decision-site.ts
+      - packages/wiring/src/decision-injection-classifier.ts
       - packages/wiring/src/resolve-execution-posture.ts
       - packages/wiring/src/skill-passthrough.ts
 
@@ -732,6 +578,14 @@ tiers:
     tier: 2
     assigned: 2026-08-12
 
+  # The Jev decision provider (plan decision-provider-jev §11): calls a third
+  # party, like extensions/llm-anthropic. Its verdicts carry only the authority
+  # the Tier 0 wiring composition grants them (packages/wiring/src/decision-site.ts).
+  extensions/decision-typesafe:
+    package: "@ethosagent/decision-typesafe"
+    tier: 2
+    assigned: 2026-09-24
+
   extensions/digest:
     package: "@ethosagent/digest"
     tier: 2
@@ -793,6 +647,11 @@ tiers:
     package: "@ethosagent/inbound-dedup"
     tier: 2
     assigned: 2026-08-28
+
+  extensions/inbound-spool:
+    package: "@ethosagent/inbound-spool"
+    tier: 2
+    assigned: 2026-09-24
 
   extensions/job-runner:
     package: "@ethosagent/job-runner"
@@ -1028,6 +887,11 @@ tiers:
     tier: 2
     assigned: 2026-08-12
 
+  extensions/tools-decision:
+    package: "@ethosagent/tools-decision"
+    tier: 2
+    assigned: 2026-09-25
+
   extensions/tools-delegation:
     package: "@ethosagent/tools-delegation"
     tier: 2
@@ -1257,33 +1121,10 @@ tiers:
 # Safety Constitution rules take no exceptions at all — they are amended
 # through §VI or not at all, and no Tier 0 package is eligible for one.
 #
-# Empty was the correct state until the first entry below. It is not "no
-# exceptions were needed"; it is "no exception has been granted through §VIII
-# since this file existed".
+# Exceptions to rules archcheck enforces (layers, Law 10, tool env reads,
+# dynamic imports, ...) live in architecture.config.ts `exceptions:` and ONLY
+# there — EX-001 moved there when archcheck took over Law 5. One home per
+# exception. This list is for exceptions to laws that scripts/check-
+# architecture.mjs or another gate here enforces; empty is the correct state.
 
-exceptions:
-  - id: EX-001
-    law: "§III Law 5 — apps depend on [contracts, wiring] only"
-    scope: apps/ethos/src/redact-error.ts
-    reason: >-
-      The crash logger imports @ethosagent/safety-redact directly instead of
-      taking redaction through the composition root. It runs on the bootstrap
-      path, BEFORE wiring exists, and it is synchronous by construction: it
-      must finish writing before the process exits, so it cannot await a
-      composition root that has not been built and in the crash case may never
-      be. Routing it through wiring was measured against the alternatives and
-      is the wrong direction — 18 ms direct versus 121 ms through the narrow
-      subpath, paid on every CLI start to serve a path that runs only when the
-      process is already dying. Redaction on this path is not optional: a crash
-      log is exactly where an unredacted credential ends up, so removing the
-      import rather than the coupling is not available either.
-    owner: "@MiteshSharma"
-    created: 2026-08-12
-    removal_condition: >-
-      apps/ethos/src/redact-error.ts no longer imports @ethosagent/safety-redact
-      — either because the crash logger stops needing redaction, or because the
-      redaction primitives it uses are inlined into apps/ethos and the workspace
-      dependency is dropped from apps/ethos/package.json. Observable as: the
-      import is absent from the file and the validator reports no Law 5 finding
-      for this path with this entry removed.
-    review_by: 2027-02-12
+exceptions: []

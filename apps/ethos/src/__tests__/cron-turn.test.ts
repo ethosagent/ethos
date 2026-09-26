@@ -232,3 +232,27 @@ describe('runCronTurn progress capture', () => {
     expect(result.output).toBe('done');
   });
 });
+
+// R10 — the scheduler's per-run cap reaches the loop as its abortSignal.
+describe('runCronTurn abortSignal', () => {
+  it('forwards the scheduler abortSignal to loop.run', async () => {
+    let seen: AbortSignal | undefined;
+    const controller = new AbortController();
+    await runCronTurn({
+      loop: {
+        run(_text: string, opts: { abortSignal?: AbortSignal }) {
+          seen = opts.abortSignal;
+          return (async function* () {
+            for (const e of okEvents()) yield e;
+          })();
+        },
+      },
+      sessions: makeSessions({}),
+      jobId: 'job-abort',
+      prompt: 'go',
+      personalityId: 'researcher',
+      abortSignal: controller.signal,
+    });
+    expect(seen).toBe(controller.signal);
+  });
+});

@@ -52,6 +52,7 @@ export const srcAliases = {
   '@ethosagent/wiring/conformance': resolve('./packages/wiring/src/conformance/index.ts'),
   '@ethosagent/llm-gemini-native': resolve('./extensions/llm-gemini/src'),
   '@ethosagent/llm-anthropic': resolve('./extensions/llm-anthropic/src'),
+  '@ethosagent/decision-typesafe': resolve('./extensions/decision-typesafe/src'),
   '@ethosagent/llm-azure': resolve('./extensions/llm-azure/src'),
   '@ethosagent/llm-bedrock': resolve('./extensions/llm-bedrock/src'),
   '@ethosagent/llm-openai-compat': resolve('./extensions/llm-openai-compat/src'),

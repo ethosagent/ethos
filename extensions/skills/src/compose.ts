@@ -6,8 +6,8 @@ import type {
   PersonalityRegistry,
   Skill,
   Tool,
+  WiringContext,
 } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
 import {
   bundledSkillsSource,
   createInjectors,

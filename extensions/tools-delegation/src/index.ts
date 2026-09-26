@@ -122,6 +122,13 @@ async function runSubAgent(
     sessionKey: string;
     depth: number;
     abortSignal?: AbortSignal;
+    /**
+     * The parent turn's `ToolContext.toolsetNarrowing`, applied to the child
+     * as `toolsetNarrow`/`toolsetExclude` so it never regains a tool the
+     * parent turn was narrowed out of (S12). Pinned by "forwards the parent
+     * turn's tool narrowing to the child run" in `__tests__/delegation.test.ts`.
+     */
+    narrowing?: ToolContext['toolsetNarrowing'];
   },
 ): Promise<string> {
   let output = '';
@@ -142,6 +149,8 @@ async function runSubAgent(
     personalityId: opts.personalityId,
     abortSignal: opts.abortSignal,
     agentId: childAgentId(opts.depth),
+    ...(opts.narrowing?.narrow ? { toolsetNarrow: opts.narrowing.narrow } : {}),
+    ...(opts.narrowing?.exclude ? { toolsetExclude: opts.narrowing.exclude } : {}),
   })) {
     if (terminal) continue;
     if (event.type === 'text_delta') output += event.text;
@@ -193,6 +202,14 @@ export interface BackgroundToolDeps {
    * outside the gateway; a job then delivers to the channel root.
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+  /**
+   * Resolve the platform user whose message started the live turn — a per-turn
+   * lookup for the same reason as `resolveOriginThreadId` (`ToolContext`
+   * carries no sender; the gateway answers it, `Gateway.originUserIdFor`).
+   * Stamped as `originUserId` so the job's clarify defaults to that user.
+   * Absent outside the gateway; the job then records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
   /**
    * Runners this deployment can execute a job on, beyond the default. Used only
    * to VALIDATE the `runner` arg at the tool boundary — the executor does its
@@ -398,6 +415,13 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
             "Which worker runs the job. Only valid with background: true. Defaults to 'ethos' (an ordinary Ethos sub-agent). " +
             'Any other name must be registered in this deployment — an unregistered name is refused, never silently downgraded.',
         },
+        deliver: {
+          type: 'string',
+          enum: ['user', 'parent'],
+          description:
+            "Who sees the result first. Only valid with background: true. 'user' (default) sends the result to the chat as-is. " +
+            "'parent' lets you review the result in one follow-up turn on a channel chat first, and the user sees your reply instead.",
+        },
       },
       required: ['prompt'],
     },
@@ -410,6 +434,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         return_mode = 'full',
         background: runInBackground,
         runner,
+        deliver,
       } = args as {
         prompt: string;
         personality?: string;
@@ -417,7 +442,30 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         return_mode?: 'full' | 'summary';
         background?: boolean;
         runner?: string;
+        deliver?: 'user' | 'parent';
       };
+
+      // `deliver` routes a background result; a blocking call returns its
+      // result to this turn already. Refused like `runner` rather than ignored.
+      if (deliver !== undefined && runInBackground !== true) {
+        return {
+          ok: false,
+          code: 'input_invalid',
+          error: 'deliver is only valid with background: true',
+        };
+      }
+      if (deliver !== undefined && deliver !== 'user' && deliver !== 'parent') {
+        return { ok: false, code: 'input_invalid', error: "deliver must be 'user' or 'parent'" };
+      }
+      // One review hop, never a chain (plan openclaw-9.5-adoption D10/D30): a
+      // parent-review turn carries `reviewOfJobId` (RunOptions → ToolContext).
+      if (deliver === 'parent' && ctx.reviewOfJobId !== undefined) {
+        return {
+          ok: false,
+          code: 'input_invalid',
+          error: 'a review turn cannot request another parent review',
+        };
+      }
 
       // `runner` selects a background worker; there is nothing to select on the
       // blocking path. Refusing beats ignoring — a silently dropped runner runs
@@ -433,6 +481,12 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
       // ---- Background (detached) path -------------------------------------
       // Same up-front validation as the blocking path, then hand off to the
       // JobStore. When background deps are not wired, degrade to not_available.
+      //
+      // Like the blocking path, a background job carries the parent turn's
+      // `ctx.toolsetNarrowing` (S12): it is persisted on the row
+      // (`BackgroundJob.toolsetNarrowing`) and re-applied when the child runs
+      // (`EthosJobRunner.run`; the ACP/Pi runners via `narrowedToolset`).
+      // Pinned by extensions/job-runner/src/__tests__/toolset-narrowing.test.ts.
       if (runInBackground === true) {
         if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
@@ -520,6 +574,9 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         const originThreadId = originPlatform
           ? background.resolveOriginThreadId?.(ctx.sessionKey)
           : undefined;
+        const originUserId = originPlatform
+          ? background.resolveOriginUserId?.(ctx.sessionKey)
+          : undefined;
         const job = await background.store.create({
           owner: background.owner,
           parentSessionKey: ctx.sessionKey,
@@ -530,11 +587,14 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           label: jobLabel,
           prompt,
           runner: jobRunner,
+          ...(deliver === 'parent' ? { deliver } : {}),
           ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
           ...(originPlatform ? { originPlatform } : {}),
           ...(originBotKey ? { originBotKey } : {}),
           ...(originChatId ? { originChatId } : {}),
           ...(originThreadId ? { originThreadId } : {}),
+          ...(originUserId ? { originUserId } : {}),
+          ...(ctx.toolsetNarrowing ? { toolsetNarrowing: ctx.toolsetNarrowing } : {}),
         });
 
         background.nudge();
@@ -589,6 +649,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           sessionKey,
           depth: depth + 1,
           abortSignal: ctx.abortSignal,
+          narrowing: ctx.toolsetNarrowing,
         });
 
         const header = label ? `[${label}]\n\n` : '';
@@ -701,6 +762,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
+            narrowing: ctx.toolsetNarrowing,
           });
           return { label, output };
         }),
@@ -739,9 +801,14 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
 
         try {
           const synthesis = await runSubAgent(loop, synthesisInput, {
+            // The caller's personality, so its toolset, deny rules and memory
+            // scope bound the synthesis turn too. Pinned by "runs the synthesis
+            // pass as the caller's personality" in __tests__/delegation.test.ts.
+            personalityId: ctx.personalityId,
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
+            narrowing: ctx.toolsetNarrowing,
           });
 
           return {

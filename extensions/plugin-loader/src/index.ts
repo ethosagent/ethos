@@ -259,6 +259,7 @@ export class PluginLoader {
     this.logger = opts.logger ?? noopLogger;
     this.compatCallbacks = {
       onPlatformAdapter: opts.onPlatformAdapterRegistered,
+      logger: this.logger,
     };
     this.onRouteRegistered = opts.onRouteRegistered;
   }

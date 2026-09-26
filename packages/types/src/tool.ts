@@ -113,6 +113,26 @@ export interface ToolContext {
    */
   jobId?: string;
   /**
+   * Set only inside a parent-review turn — the gateway's review of a finished
+   * `deliver: 'parent'` background job — to that job's id (plan
+   * openclaw-9.5-adoption D30). Threaded from `RunOptions.reviewOfJobId`, like
+   * `jobId`, with no fallback. `delegate_task` reads it to refuse a second
+   * review hop (D10).
+   */
+  reviewOfJobId?: string;
+  /**
+   * The running turn's tool narrowing (S12, plan openclaw-2026.9.6-gaps):
+   * `narrow` is its effective allowlist (the personality toolset after
+   * `toolsetOverride`/`toolsetNarrow`/small-window narrowing), `exclude` its
+   * surface exclusion (`RunOptions.toolsetExclude`). Set by `processTools`
+   * (`packages/core/src/agent-loop/stages/tool-processing.ts`); absent when the
+   * turn has neither. A tool that starts a sub-agent turn passes these on as
+   * that turn's `toolsetNarrow`/`toolsetExclude` (`runSubAgent` in
+   * `@ethosagent/tools-delegation`), so a child never regains what the parent
+   * turn was narrowed out of.
+   */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
+  /**
    * Where this turn originated, as `platform:chatId` for channel turns (else unset).
    * Generic per-run context; goal_create reads it to stamp Goal.origin.
    */
@@ -394,6 +414,10 @@ export interface ToolExecuteRequest {
   rootSessionKey?: string;
   /** D22 (pi-delegation plan) — mirrors `ToolContext.jobId`; see its doc there. */
   jobId?: string;
+  /** Mirrors `ToolContext.reviewOfJobId`; see its doc there. */
+  reviewOfJobId?: string;
+  /** Mirrors `ToolContext.toolsetNarrowing`; see its doc there. */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   origin?: string;
   memoryScopeId?: string;
   userScopeId?: string;

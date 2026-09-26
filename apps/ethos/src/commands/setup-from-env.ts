@@ -198,14 +198,26 @@ export async function runSetupFromEnv(): Promise<void> {
     console.log('config.yaml already exists — secrets re-synced from env, config preserved.');
   } else {
     const ownerId = env.TELEGRAM_OWNER_ID;
+    const personality = env.ETHOS_PERSONALITY || 'researcher';
     const config: EthosConfig = {
       provider: prov.provider,
       model: prov.model,
       apiKey: `\${secrets:${providerRef}}`,
-      personality: env.ETHOS_PERSONALITY || 'researcher',
+      personality,
       baseUrl: prov.baseUrl,
       apiVersion: prov.apiVersion,
-      telegramToken: telegramConfigured ? `\${secrets:telegram/token}` : undefined,
+      // B4 — the list form the gateway reads natively (`telegram.bots.0.*`),
+      // not the deprecated `telegramToken` scalar.
+      telegram: telegramConfigured
+        ? {
+            bots: [
+              {
+                token: `\${secrets:telegram/token}`,
+                bind: { type: 'personality', name: personality },
+              },
+            ],
+          }
+        : undefined,
       channelFilter:
         telegramConfigured && ownerId ? { telegram: { ownerUserId: ownerId } } : undefined,
     };

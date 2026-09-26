@@ -1,11 +1,18 @@
-import { unstreamedAnswer, VOICE_ORIGIN_TAG } from '@ethosagent/types';
+import {
+  COMPACTION_MARKER,
+  COMPACTION_ROW_TOOL_NAME,
+  unstreamedAnswer,
+  VOICE_ORIGIN_TAG,
+} from '@ethosagent/types';
 import {
   type ApprovalRequest,
   type BackgroundJobStatusWire,
   type CardEnvelope,
   CardEnvelopeSchema,
   type ClarifyRequestEvent,
+  type CredentialRequiredEvent,
   type SessionCard,
+  type SessionDecision,
   type SseEvent,
   type SseEventType,
   type StoredMessage,
@@ -20,8 +27,10 @@ import {
 } from './clarify-queue';
 import { applyRunEvent, emptyRunsState, type RunsState, seedRun } from './pi-run-reducer';
 import {
+  appendTrailEntry,
   applyTrailEvent,
   closeTrail,
+  decisionStatusLabel,
   type TrailAction,
   type TrailEntry,
   type TrailState,
@@ -52,6 +61,13 @@ export interface UserMessage {
   /** Optimistically-rendered attachments shown as chips in the user bubble.
    *  Carries no base64 data — render-only metadata. */
   attachments?: MessageAttachment[];
+  /**
+   * W1 — a send the server refused. The bubble STAYS (DESIGN.md item 7,
+   * nothing vanishes) with a `⚠ not sent · Retry · Discard` row under it;
+   * `error` is the refusal, verbatim.
+   */
+  status?: 'failed';
+  error?: string;
   /**
    * How the turn ARRIVED. `'voice'` means the user spoke it; absent means they
    * typed it.
@@ -131,6 +147,35 @@ export interface AssistantTurn {
 
 export type ChatMessage = UserMessage | AssistantTurn;
 
+/**
+ * A3 — a turn error as the banner renders it: the raw message, the loop's
+ * error `code` (the key into `describeChatError`'s shared map), and the turn's
+ * trace id when its `run_start` carried one.
+ */
+export interface ChatError {
+  message: string;
+  code?: string;
+  traceId?: string;
+}
+
+/** The deviation shape `run_start` may carry (`ModelDeviationSchema`). */
+export type RunDeviation = NonNullable<Extract<SseEvent, { type: 'run_start' }>['deviation']>;
+
+/**
+ * A4 — what the turn actually ran on, from its `run_start`. The trail footer
+ * renders `{provider} · {model}`; a deviation additionally lands as a notice
+ * row in the turn's trail the moment it arrives.
+ */
+export interface TurnRunMeta {
+  provider: string;
+  model: string;
+  deviation?: RunDeviation;
+  traceId?: string;
+}
+
+/** W2 — where the shared SSE connection stands, as `lib/sse.ts` reports it. */
+export type ChatConnectionState = 'open' | 'reconnecting' | 'closed';
+
 export interface ChatState {
   /** Finalised history. Most recent at the end. */
   messages: ChatMessage[];
@@ -147,8 +192,25 @@ export interface ChatState {
    * `clarify.resolved` SSE event (so every tab collapses the card together).
    */
   pendingClarifies: ClarifyRequestEvent[];
+  /**
+   * openclaw-9.5 item 1 — the last turn was refused pre-turn because a plugin
+   * is missing a credential. The chat pane draws a masked prompt for it. This
+   * holds only WHICH credential is missing and the message to resend — the
+   * value the user types lives in `CredentialCard`'s local state and never
+   * enters this store. Cleared by the next submission (the resend included),
+   * by `dismiss-credential`, and by `reset`.
+   */
+  pendingCredential: CredentialRequiredEvent | null;
+  /**
+   * The optimistic user bubble of the turn `pendingCredential` refused. The
+   * resend (`submit-user-message` with `replacesRefused`) takes its place
+   * instead of appending a second bubble with the same text; a store that
+   * fails resends nothing, so the bubble simply stays. Cleared with
+   * `pendingCredential`.
+   */
+  credentialRefusedMessageId: string | null;
   isStreaming: boolean;
-  error: string | null;
+  error: ChatError | null;
   /** Wall-clock ms of the most recent streaming event (text_delta, tool_start, tool_end).
    *  Null when not streaming. Used to detect stall in the UI. */
   lastStreamEventAt: number | null;
@@ -190,6 +252,19 @@ export interface ChatState {
   /** Turns the user stopped. Their footer reads `✗ stopped · N actions`. */
   stoppedTurnIds: string[];
   /**
+   * A5 — a capped preview of the live turn's extended thinking, for the
+   * collapsed `thinking ▸ "…"` line in the STATUS SLOT (never in the bubble,
+   * DESIGN.md item 1). Null when the turn is not reasoning.
+   */
+  thinking: string | null;
+  /** A4 — the live turn's `run_start` facts. Moved into `turnMeta` under the
+   *  turn's final id when the turn finalises. */
+  runMeta: TurnRunMeta | null;
+  /** A4 — per-finalised-turn run meta, keyed like `trail`. */
+  turnMeta: Record<string, TurnRunMeta>;
+  /** W2 — the SSE connection's health, from `subscribeToSession`. */
+  connection: ChatConnectionState;
+  /**
    * The user pressed Stop and the events already on the wire have not drained.
    *
    * An abort is a local decision plus an RPC: the server keeps streaming until
@@ -214,15 +289,19 @@ export interface ChatState {
 
 /**
  * Status-line phases (feedback-activity-contract §2). `received` is set on send,
- * BEFORE any event, so every request is visibly acknowledged.
+ * BEFORE any event, so every request is visibly acknowledged. `decision` is an
+ * `on` decision site holding the loop (plan decision-provider-personality
+ * §15.1, PD20); shadow never blocks, so it never sets it.
  */
-export type TurnPhase = 'received' | 'thinking' | 'tool' | 'writing';
+export type TurnPhase = 'received' | 'thinking' | 'tool' | 'decision' | 'writing';
 
 export const initialChatState: ChatState = {
   messages: [],
   currentTurn: null,
   pendingApprovals: [],
   pendingClarifies: [],
+  pendingCredential: null,
+  credentialRefusedMessageId: null,
   isStreaming: false,
   error: null,
   lastStreamEventAt: null,
@@ -234,6 +313,10 @@ export const initialChatState: ChatState = {
   trail: {},
   phase: null,
   stoppedTurnIds: [],
+  thinking: null,
+  runMeta: null,
+  turnMeta: {},
+  connection: 'open',
   abortedTurn: false,
   streamAnchored: false,
 };
@@ -251,16 +334,29 @@ export type ChatAction =
       attachments?: MessageAttachment[];
       /** `'voice'` when the turn was spoken. Typed sends omit it. */
       origin?: 'voice';
+      /** The resend after a credential was stored: replace the refused
+       *  turn's bubble (`credentialRefusedMessageId`) rather than add one. */
+      replacesRefused?: true;
     }
   | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
-  | { type: 'history-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-loaded';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   /**
    * One next-older page of paged history (`sessions.messages` with a cursor),
    * prepended ahead of what is already loaded. Unlike `history-loaded` it
    * REPLACES nothing: the turn in flight, streaming, runs and clarify state are
    * left exactly as they are.
    */
-  | { type: 'history-older-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-older-loaded';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   /**
    * The newest page of history, fetched again because the session grew outside
    * this tab's stream (a `cron.fired` turn). MERGED: when the page starts inside
@@ -269,9 +365,22 @@ export type ChatAction =
    * history. The turn in flight, streaming, phase, runs and clarify state are
    * left exactly as they are.
    */
-  | { type: 'history-newest-merged'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-newest-merged';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   | { type: 'send-failed'; userMessageId: string; error: string }
   | { type: 'clear-error' }
+  /**
+   * W1 — the user discarded a failed send's bubble (its text goes back into
+   * the composer, which the hook owns) or is retrying it (the retry submits a
+   * fresh bubble, so the failed copy goes first).
+   */
+  | { type: 'discard-failed-message'; id: string }
+  /** W2 — the shared SSE connection changed state. */
+  | { type: 'connection-changed'; connection: ChatConnectionState }
   /**
    * Wipe state for a session change — starting a new session, or opening a
    * different one. Without this, the new session would briefly render with
@@ -279,6 +388,8 @@ export type ChatAction =
    */
   | { type: 'reset' }
   | { type: 'undo-turns'; count: number }
+  /** The user closed the masked credential prompt without storing a value. */
+  | { type: 'dismiss-credential' }
   /**
    * Remember the answer this tab just sent for a run's question. `clarify.resolved`
    * carries only the source, so without this the resolved card could say a
@@ -361,6 +472,15 @@ const TURN_ADVANCING_EVENTS = new Set<SseEventType>([
   'tool_end',
   'tool_progress',
   'tool.approval_required',
+  'decision',
+  // A halt mints a turn (`ensureTurn`) for its trail row, so a stopped turn
+  // must not see one.
+  'halt',
+  // A2 — the loop yields `{ type: 'error', code: 'aborted' }` after a user
+  // abort; letting it through painted an error banner over a Stop the user
+  // was just told succeeded. A REAL post-Stop failure is not lost: `abort-failed`
+  // lifts this guard when the Stop RPC itself fails.
+  'error',
   'done',
 ]);
 
@@ -520,7 +640,13 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       // approval it was parked on goes with it — see `closeTurn`.
       const turn = state.currentTurn;
       const closed = turn ? { ...state, ...closeTurn(state, turn.id, 'errored') } : state;
-      return { ...finaliseTurn(closed), error: event.error };
+      // A3 — `code` keys the shared error map, and the trace id (from this
+      // turn's `run_start`) is what a bug report quotes.
+      const traceId = state.runMeta?.traceId;
+      return {
+        ...finaliseTurn(closed),
+        error: { message: event.error, code: event.code, ...(traceId ? { traceId } : {}) },
+      };
     }
 
     case 'tool.approval_required': {
@@ -591,11 +717,52 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       };
     }
 
-    case 'run_start':
+    case 'credential_required':
+      // The turn was refused before it ran; the `done` that follows closes it.
+      // Only the latest refusal matters — the resend re-checks every
+      // credential, so an older prompt is never still owed.
+      return {
+        ...state,
+        pendingCredential: event,
+        credentialRefusedMessageId:
+          [...state.messages].reverse().find((m) => m.role === 'user')?.id ?? null,
+      };
+
+    case 'run_start': {
+      // A4 — keep what the turn actually runs on. A deviation is a finding-
+      // class row (DESIGN.md item 5), so it joins the turn's trail NOW — which
+      // mints the turn, so the row cannot be lost if the turn never streams.
+      const runMeta: TurnRunMeta = {
+        provider: event.provider,
+        model: event.model,
+        ...(event.deviation ? { deviation: event.deviation } : {}),
+        ...(event.traceId ? { traceId: event.traceId } : {}),
+      };
+      const deviated = event.deviation
+        ? (() => {
+            const turn = ensureTurn(state.currentTurn, now);
+            const seq = state.trail[turn.id]?.length ?? 0;
+            return {
+              currentTurn: turn,
+              trail: appendTrailEntry(state.trail, turn.id, {
+                kind: 'notice' as const,
+                id: `${turn.id}-deviation-${seq}`,
+                tone: 'warning' as const,
+                word: 'model deviation',
+                subject: `${event.deviation.declared} → ${event.deviation.effective}`,
+                detail: event.deviation.fix
+                  ? `${event.deviation.reason} — ${event.deviation.fix}`
+                  : event.deviation.reason,
+              }),
+            };
+          })()
+        : {};
       // The clock starts when the user pressed Send, not when the server got
       // round to us — `submit-user-message` already set it.
       return {
         ...state,
+        ...deviated,
+        runMeta,
         turnStartedAt: state.turnStartedAt ?? now,
         currentOp: null,
         phase: 'thinking',
@@ -603,6 +770,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         // `streamAnchored`.
         streamAnchored: true,
       };
+    }
 
     case 'usage':
       // Track the most recent input-token count as the current context size.
@@ -620,7 +788,67 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       return { ...state, currentOp: event.message, phase: 'tool', lastStreamEventAt: now };
     }
 
+    case 'decision': {
+      // plan decision-provider-personality §15.1. A decision in a turn in
+      // flight joins that turn (the router's arrives before any other event
+      // could mint it). One that settles after `done` (a late shadow reading,
+      // PD17) finds its turn by its call or trace (`applyTrailEvent`), else
+      // the newest assistant turn — never a fresh one.
+      const inFlight = state.phase !== null;
+      const turn = inFlight ? ensureTurn(state.currentTurn, now) : null;
+      const target = turn?.id ?? lastAssistantId(state.messages) ?? '';
+      const trail = applyTrailEvent(state.trail, target, event) ?? state.trail;
+      if (!turn) return trail === state.trail ? state : { ...state, trail };
+      // The status line names an `on` decision while the loop waits on it, and
+      // hands back to `thinking` once none is left open.
+      const label = decisionStatusLabel(trail[turn.id] ?? []);
+      const status =
+        label !== null
+          ? { phase: 'decision' as const, currentOp: label }
+          : state.phase === 'decision'
+            ? { phase: 'thinking' as const, currentOp: null }
+            : {};
+      return {
+        ...state,
+        currentTurn: turn,
+        trail,
+        isStreaming: true,
+        lastStreamEventAt: now,
+        ...status,
+      };
+    }
+
     case 'thinking_delta':
+      // A5 — extended reasoning is a live stream: it refreshes the stall
+      // clock (20 s of visible thinking is not a stall) and feeds the status
+      // slot's collapsed `thinking ▸ "…"` preview. Never the bubble (item 1).
+      return {
+        ...state,
+        isStreaming: true,
+        lastStreamEventAt: now,
+        phase: 'thinking',
+        thinking: appendThinkingPreview(state.thinking, event.thinking),
+      };
+
+    case 'halt': {
+      // A1 — an early safety stop joins the turn's trail as a finding row
+      // (`⚠ stopped early · budget · tool_calls`). A normal `done` follows,
+      // so nothing else about the turn moves here.
+      const turn = ensureTurn(state.currentTurn, now);
+      const trail = applyTrailEvent(state.trail, turn.id, event) ?? state.trail;
+      return { ...state, currentTurn: turn, trail, lastStreamEventAt: now };
+    }
+
+    case 'memory.captured': {
+      // W4 — `✓ remembered · "…"` is a trail row on the turn that produced it
+      // (item 6, rows not toasts). Capture completes after `done`, so the row
+      // usually joins the newest finalised turn rather than a live one.
+      const target = state.currentTurn?.id ?? lastAssistantId(state.messages);
+      if (!target) return state;
+      const trail = applyTrailEvent(state.trail, target, event) ?? state.trail;
+      return trail === state.trail ? state : { ...state, trail };
+    }
+
     case 'context_meta':
     case 'message_persisted':
     case 'cron.fired':
@@ -631,6 +859,15 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       return state;
   }
   return state;
+}
+
+/** A5 — first ~200 chars of the turn's reasoning; the slot shows 60. */
+const THINKING_PREVIEW_CAP = 200;
+
+function appendThinkingPreview(current: string | null, delta: string): string {
+  const base = current ?? '';
+  if (base.length >= THINKING_PREVIEW_CAP) return base;
+  return (base + delta).slice(0, THINKING_PREVIEW_CAP);
 }
 
 export function applyAction(state: ChatState, action: ChatAction): ChatState {
@@ -646,9 +883,14 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       };
       const hasTrail = (state.trail[state.currentTurn?.id ?? '']?.length ?? 0) > 0;
       const interrupted = state.currentTurn;
+      // A credential resend is the refused turn asked again: its bubble is
+      // dropped so the new one is the only copy (the refused turn persisted
+      // no user message — core refuses before appending it).
+      const refusedId = action.replacesRefused ? state.credentialRefusedMessageId : null;
+      const kept = keepInterruptedTurn(state.messages, interrupted, hasTrail);
       return {
         ...state,
-        messages: [...keepInterruptedTurn(state.messages, interrupted, hasTrail), message],
+        messages: [...(refusedId ? kept.filter((m) => m.id !== refusedId) : kept), message],
         // A turn cut off by the next question ENDED, exactly as Stop ends one.
         // Without this its actions stay `running` for ever and its footer leads
         // with a ✓ it never earned.
@@ -658,6 +900,9 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         error: null,
         lastStreamEventAt: null,
         currentOp: null,
+        // The next turn's reasoning and run facts are its own.
+        thinking: null,
+        runMeta: null,
         // Acknowledged before a single byte comes back (contract §2). The clock
         // starts here too, so elapsed measures what the user actually waited.
         phase: 'received',
@@ -666,7 +911,14 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         abortedTurn: false,
         // We are the client that asked for this turn, so we see all of it.
         streamAnchored: true,
+        // A new turn re-runs the credential check, so an open prompt is stale.
+        pendingCredential: null,
+        credentialRefusedMessageId: null,
       };
+    }
+
+    case 'dismiss-credential': {
+      return { ...state, pendingCredential: null, credentialRefusedMessageId: null };
     }
 
     case 'steer-user-message': {
@@ -686,7 +938,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
     case 'history-loaded': {
       // One walk builds both — durations and results live on the stored rows,
       // which the parsed `ChatMessage[]` no longer carries (see trail.ts).
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       return {
         ...state,
         messages: parsed.messages,
@@ -697,10 +949,10 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
 
     case 'history-older-loaded': {
       // A page is whole turns starting at a user row (web-contracts
-      // `sessions.messages`), and `parseHistory` flushes at every user and steer
-      // row — so the page parses on its own, cards included, with no state from
-      // the page after it.
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      // `sessions.messages`), and `parseHistory` flushes at every user row (a
+      // steer stays inside its turn) — so the page parses on its own, cards
+      // included, with no state from the page after it.
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       const known = new Set(state.messages.map((m) => m.id));
       const older = parsed.messages.filter((m) => !known.has(m.id));
       if (older.length === 0) return state;
@@ -714,7 +966,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
     }
 
     case 'history-newest-merged': {
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       const first = parsed.messages[0];
       if (!first) return state;
       // Contiguous: rows older than the page's first stay as loaded, earlier
@@ -746,19 +998,39 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       // still climbing, and `⚠ still working` arriving at 20 s for a request
       // that was already dead.
       //
-      // The optimistic user bubble is removed AFTER finalising: nothing came
-      // back, so there is nothing for it to have asked. On the rare path where
-      // the RPC failed only once the stream was already running, `closeTurn`
-      // settles what it left in flight rather than dropping the turn's trail on
-      // the floor.
+      // W1 — the optimistic bubble STAYS (DESIGN.md item 7): it flips to
+      // `status: 'failed'` and carries the refusal, so the `⚠ not sent ·
+      // Retry · Discard` row renders under the user's own words instead of
+      // the words vanishing. On the rare path where the RPC failed only once
+      // the stream was already running, `closeTurn` settles what it left in
+      // flight rather than dropping the turn's trail on the floor.
       const turn = state.currentTurn;
       const closed = turn ? { ...state, ...closeTurn(state, turn.id, 'errored') } : state;
       const finalised = finaliseTurn(closed);
       return {
         ...finalised,
-        messages: finalised.messages.filter((m) => m.id !== action.userMessageId),
-        error: action.error,
+        messages: finalised.messages.map((m) =>
+          m.id === action.userMessageId && m.role === 'user'
+            ? { ...m, status: 'failed' as const, error: action.error }
+            : m,
+        ),
+        error: { message: action.error },
       };
+    }
+
+    case 'discard-failed-message': {
+      // The bubble goes because the user said so — its text returns to the
+      // composer (the hook's half of Discard), so nothing is lost.
+      return {
+        ...state,
+        messages: state.messages.filter((m) => m.id !== action.id),
+        error: null,
+      };
+    }
+
+    case 'connection-changed': {
+      if (state.connection === action.connection) return state;
+      return { ...state, connection: action.connection };
     }
 
     case 'clear-error': {
@@ -835,7 +1107,9 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         abortedTurn: false,
-        error: `Stop did not reach the server — the turn may still be running. ${action.reason}`,
+        error: {
+          message: `Stop did not reach the server — the turn may still be running. ${action.reason}`,
+        },
       };
     }
 
@@ -863,6 +1137,14 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
 
 function ensureTurn(turn: AssistantTurn | null, now: number): AssistantTurn {
   return turn ?? { id: `asst-${now}`, role: 'assistant', blocks: [], timestamp: now };
+}
+
+function lastAssistantId(messages: ChatMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === 'assistant') return message.id;
+  }
+  return undefined;
 }
 
 /**
@@ -896,8 +1178,14 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
     currentOp: null,
     phase: null,
     turnStartedAt: null,
+    thinking: null,
+    runMeta: null,
     streamAnchored: false,
   } as const;
+  // A4 — the live turn's run meta follows the turn into history under its
+  // FINAL id, so the footer keeps naming what the turn ran on.
+  const keepMeta = (finalId: string): Partial<Pick<ChatState, 'turnMeta'>> =>
+    state.runMeta ? { turnMeta: { ...state.turnMeta, [finalId]: state.runMeta } } : {};
   if (!turn || (turn.blocks.length === 0 && (state.trail[turn.id]?.length ?? 0) === 0)) {
     return { ...state, ...cleared };
   }
@@ -913,7 +1201,7 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
   // gives the live turn — and this one comparison covers it.
   const last = state.messages[state.messages.length - 1];
   if (last?.role === 'assistant' && turnsMatch(last, turn)) {
-    return { ...state, ...rekeyTrail(state, turn.id, last.id), ...cleared };
+    return { ...state, ...rekeyTrail(state, turn.id, last.id), ...keepMeta(last.id), ...cleared };
   }
   // History written before core persisted that row: the twin cannot carry the
   // answer (it exists only as a tool_result row, which `parseHistory` files in
@@ -921,10 +1209,16 @@ function finaliseTurn(state: ChatState, doneText?: string): ChatState {
   // it the answer — one turn, and it shows what the user was told.
   if (last?.role === 'assistant' && streamed && turn !== streamed && turnsMatch(last, streamed)) {
     const messages = [...state.messages.slice(0, -1), { ...last, blocks: turn.blocks }];
-    return { ...state, messages, ...rekeyTrail(state, turn.id, last.id), ...cleared };
+    return {
+      ...state,
+      messages,
+      ...rekeyTrail(state, turn.id, last.id),
+      ...keepMeta(last.id),
+      ...cleared,
+    };
   }
 
-  return { ...state, messages: [...state.messages, turn], ...cleared };
+  return { ...state, messages: [...state.messages, turn], ...keepMeta(turn.id), ...cleared };
 }
 
 /**
@@ -1004,6 +1298,13 @@ function closeTurn(
 /**
  * Move a live turn's trail onto the history turn the replay defense kept, and
  * carry the stopped marker with it. Returns only the keys it changes.
+ *
+ * The history turn's decision rows survive the move. A replayed `decision`
+ * event resolves the row that carries its id WHEREVER it lives
+ * (`applyTrailEvent`), so on a replay over loaded history it updates the
+ * history turn's row in place and never joins the live turn — replacing the
+ * history trail wholesale would drop every decision of the turn. Each one the
+ * live trail lacks is placed back by the one placement rule.
  */
 function rekeyTrail(
   state: ChatState,
@@ -1016,7 +1317,13 @@ function rekeyTrail(
   const stoppedTurnIds = state.stoppedTurnIds.includes(fromTurnId)
     ? [...state.stoppedTurnIds.filter((id) => id !== fromTurnId), toTurnId]
     : state.stoppedTurnIds;
-  return { trail: { ...rest, [toTurnId]: live }, stoppedTurnIds };
+  let moved: TrailState = { [toTurnId]: live };
+  for (const entry of rest[toTurnId] ?? []) {
+    if (entry.kind !== 'decision') continue;
+    if (live.some((e) => e.kind === 'decision' && e.id === entry.id)) continue;
+    moved = applyTrailEvent(moved, toTurnId, entry.event) ?? moved;
+  }
+  return { trail: { ...rest, ...moved }, stoppedTurnIds };
 }
 
 /**
@@ -1210,10 +1517,16 @@ export function parseUserContent(content: string): { text: string; origin?: 'voi
  *
  * `cards` are the envelopes the session replayed alongside the messages; each
  * one is placed where the tool call that emitted it sat.
+ *
+ * `decisions` are the persisted decision rows (plan decision-provider-personality
+ * §15.5). Each is replayed through `applyTrailEvent` — the same transition the
+ * live event takes — into the turn it anchors to: its call (approver /
+ * injection) or, for the router, the turn whose messages carry its `traceId`.
  */
 function parseHistory(
   stored: StoredMessage[],
   cards: SessionCard[] = [],
+  decisions: SessionDecision[] = [],
 ): { messages: ChatMessage[]; trail: TrailState } {
   const ui: ChatMessage[] = [];
   const trail: TrailState = {};
@@ -1222,6 +1535,10 @@ function parseHistory(
   // passes it and kept correct as cards are spliced in.
   const anchors = new Map<string, CardAnchor>();
   const actionsById = new Map<string, TrailAction>();
+  // Which assistant turn each trace's messages landed in — the router
+  // decision's only anchor. A user row's trace carries to the turn it opens.
+  const turnByTrace = new Map<string, string>();
+  let pendingTrace: string | undefined;
   let current: AssistantTurn | null = null;
   let entries: TrailEntry[] = [];
 
@@ -1239,6 +1556,7 @@ function parseHistory(
   for (const m of stored) {
     if (m.role === 'user') {
       flush();
+      pendingTrace = m.traceId;
       const { text, origin } = parseUserContent(m.content);
       ui.push({
         id: m.id,
@@ -1251,7 +1569,11 @@ function parseHistory(
     }
 
     if (m.role === 'user_steer') {
-      flush();
+      // A steer does NOT close the turn: it was folded into the running turn,
+      // so the rows after it belong to the same turn and the same trail. The
+      // turn is pushed at the next flush, which puts it after the steer — the
+      // order live renders it in (`steer-user-message` appends the steer while
+      // the in-flight turn stays at the bottom). One trail, two renderers.
       // No parseUserContent here: a steer is persisted as the raw steer text
       // (`stages/tool-processing.ts`) and never carries an annotation.
       ui.push({
@@ -1272,8 +1594,19 @@ function parseHistory(
           blocks: [],
           timestamp: new Date(m.timestamp).getTime(),
         };
+        if (pendingTrace !== undefined) turnByTrace.set(pendingTrace, m.id);
+        pendingTrace = undefined;
       }
       const turn = current;
+      if (m.traceId !== undefined && !turnByTrace.has(m.traceId)) {
+        turnByTrace.set(m.traceId, turn.id);
+      }
+      // Item 7 — a provider-side compaction row renders as its one-line
+      // marker; the summary under it is context for the model, not the chat.
+      if (m.toolName === COMPACTION_ROW_TOOL_NAME) {
+        turn.blocks.push({ kind: 'text', content: COMPACTION_MARKER });
+        continue;
+      }
       const text = m.content.trim();
       if (text !== '') {
         turn.blocks.push({ kind: 'text', content: m.content });
@@ -1319,7 +1652,31 @@ function parseHistory(
   }
   flush();
   insertReplayedCards(ui, cards, anchors);
-  return { messages: ui, trail };
+  return { messages: ui, trail: replayDecisions(trail, decisions, turnByTrace) };
+}
+
+/**
+ * Place persisted decision rows, oldest first, through the live transition.
+ *
+ * A row anchored by its call finds its turn inside `applyTrailEvent`. A router
+ * row (no call) goes to the turn whose messages carry its trace. A router row
+ * with no trace, or whose trace no loaded message carries, is DROPPED: that is
+ * the known limit in plan decision-provider-personality §15.5 (an untraced
+ * turn's router row has no anchor on reload), and appending it to some other
+ * turn would put a decision under an answer it did not shape.
+ */
+function replayDecisions(
+  trail: TrailState,
+  decisions: SessionDecision[],
+  turnByTrace: Map<string, string>,
+): TrailState {
+  let next = trail;
+  for (const row of [...decisions].sort((a, b) => a.seq - b.seq)) {
+    const trace = row.event.traceId;
+    const turnId = trace !== undefined ? (turnByTrace.get(trace) ?? '') : '';
+    next = applyTrailEvent(next, turnId, row.event) ?? next;
+  }
+  return next;
 }
 
 /**

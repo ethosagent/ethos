@@ -32,12 +32,14 @@ function start(
     relayTargets?: DeliveryRelay;
     onRejected?: WebhookRejectionSink;
     now?: () => number;
+    /** `'::'` gives a dual-stack listener, so 127.0.0.1 and ::1 are two sources. */
+    host?: string;
   } = {},
 ): Promise<number> {
   return new Promise((resolve) => {
     const s = createWebhookServer(
       0,
-      '127.0.0.1',
+      opts.host ?? '127.0.0.1',
       gateway,
       opts.webhooks ?? webhooks,
       createCapturingAdapter,
@@ -1227,19 +1229,93 @@ describe('createWebhookServer — rate limiting', () => {
     expect((await postFull(port, '/webhook/hookB', HI, 'Bearer s3cret')).status).toBe(200);
   });
 
-  it('rate-limits BEFORE the bearer check — a bad token still gets 429', async () => {
-    const clock = fakeClock();
-    const { gateway } = recordingGateway();
-    const port = await start(gateway, {
-      webhooks: rateLimitedHooks({ maxPerMinute: 1, lockoutSeconds: 120 }),
-      now: clock.now,
+  // S14 (plan openclaw-2026.9.6-gaps). The per-hook bucket used to be spent
+  // BEFORE the bearer check, so an unauthenticated flood locked the real
+  // sender out for `lockoutSeconds`. Now a failed bearer spends only a
+  // per-SOURCE pre-auth bucket, and the per-hook bucket only ever sees callers
+  // that authenticated.
+  describe('two buckets (S14)', () => {
+    /** POST from a chosen loopback address: 127.0.0.1 and ::1 are two sources. */
+    function postFrom(
+      host: '127.0.0.1' | '[::1]',
+      port: number,
+      auth: string,
+      headers: Record<string, string> = {},
+    ): Promise<number> {
+      return fetch(`http://${host}:${port}/webhook/hook1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: auth, ...headers },
+        body: HI,
+      }).then((res) => res.status);
+    }
+
+    it('N unauthenticated posts do not lock out a subsequent authenticated one', async () => {
+      const clock = fakeClock();
+      const { gateway, calls } = recordingGateway();
+      const port = await start(gateway, {
+        webhooks: rateLimitedHooks({ maxPerMinute: 2, lockoutSeconds: 120 }),
+        now: clock.now,
+        host: '::',
+      });
+
+      for (let i = 0; i < 10; i++) await postFrom('127.0.0.1', port, 'Bearer wrong');
+
+      // The real sender, from its own address, is untouched by the flood.
+      expect(await postFrom('[::1]', port, 'Bearer s3cret')).toBe(200);
+      expect(await postFrom('[::1]', port, 'Bearer s3cret')).toBe(200);
+      expect(calls).toHaveLength(2);
     });
 
-    expect((await postFull(port, '/webhook/hook1', HI, 'Bearer s3cret')).status).toBe(200);
-    // Ordering proof: were auth first, this would be a 401.
-    const res = await postFull(port, '/webhook/hook1', HI, 'Bearer wrong');
-    expect(res.status).toBe(429);
-    expect(JSON.parse(res.body)).toEqual({ error: 'rate limited' });
+    it('throttles a guessing source: past its budget it is refused before the bearer check', async () => {
+      const clock = fakeClock();
+      const { gateway, calls } = recordingGateway();
+      const port = await start(gateway, {
+        webhooks: rateLimitedHooks({ maxPerMinute: 2, lockoutSeconds: 120 }),
+        now: clock.now,
+      });
+
+      expect(await postFrom('127.0.0.1', port, 'Bearer wrong')).toBe(401);
+      expect(await postFrom('127.0.0.1', port, 'Bearer wrong')).toBe(401);
+      // Budget spent: the source is locked, and a guess is not even evaluated —
+      // so a correct one from the SAME address is refused too. This is also the
+      // documented limit behind a reverse proxy, where every caller shares the
+      // proxy's address (webhook-server.ts, `preAuthSource`).
+      expect(await postFrom('127.0.0.1', port, 'Bearer wrong')).toBe(429);
+      expect(await postFrom('127.0.0.1', port, 'Bearer s3cret')).toBe(429);
+      expect(calls).toHaveLength(0);
+
+      clock.advanceSeconds(121);
+      expect(await postFrom('127.0.0.1', port, 'Bearer s3cret')).toBe(200);
+    });
+
+    it('keys the pre-auth bucket on the socket, not a spoofable X-Forwarded-For', async () => {
+      const clock = fakeClock();
+      const { gateway } = recordingGateway();
+      const port = await start(gateway, {
+        webhooks: rateLimitedHooks({ maxPerMinute: 1, lockoutSeconds: 120 }),
+        now: clock.now,
+      });
+      // A fresh forwarded address per request does not buy a fresh bucket.
+      expect(
+        await postFrom('127.0.0.1', port, 'Bearer wrong', { 'x-forwarded-for': '1.1.1.1' }),
+      ).toBe(401);
+      expect(
+        await postFrom('127.0.0.1', port, 'Bearer wrong', { 'x-forwarded-for': '2.2.2.2' }),
+      ).toBe(429);
+    });
+
+    it('an authenticated caller never spends the pre-auth bucket', async () => {
+      const clock = fakeClock();
+      const { gateway } = recordingGateway();
+      const port = await start(gateway, {
+        webhooks: rateLimitedHooks({ maxPerMinute: 1, lockoutSeconds: 120 }),
+        now: clock.now,
+      });
+      // Spends the per-hook token (now empty) but not the source's pre-auth one:
+      // a following bad token is a plain 401, not a 429.
+      expect(await postFrom('127.0.0.1', port, 'Bearer s3cret')).toBe(200);
+      expect(await postFrom('127.0.0.1', port, 'Bearer wrong')).toBe(401);
+    });
   });
 
   it('no rateLimit configured → unlimited (regression)', async () => {

@@ -1,5 +1,14 @@
 export interface PersonalityObservabilityConfig {
   storeToolArgs?: 'none' | 'redacted' | 'full';
+  /**
+   * RESERVED — parsed and validated, but no write path reads it. Nothing
+   * stores a tool's result body at any setting: the tool_call span is closed
+   * with `result_size_bytes` and `durationMs` only (`processTools`,
+   * packages/core/src/agent-loop/stages/tool-processing.ts), pinned by
+   * packages/core/src/__tests__/tool-body-not-stored.test.ts. Kept on the type
+   * so existing personality files that set it still load; the character sheet
+   * labels it reserved.
+   */
   storeToolBodies?: 'none' | 'redacted' | 'full';
   storeLlmPayloads?: 'none' | 'metadata' | 'full';
   redactPatterns?: string[];
@@ -43,11 +52,18 @@ export interface PersonalitySafetyConfig {
    * Each entry is a case-sensitive substring matched against
    * `` `${toolName} ${canonical-json-args}` ``, so a rule like
    * `git push --force` matches a `terminal` call whose `command` argument
-   * contains that text. A match denies the call outright.
+   * contains that text. A match denies the call outright: no approval card,
+   * no allowlist, no human override.
    *
-   * **The law:** deny rules are evaluated BEFORE the approval-mode dispatch.
-   * Modes can only make things stricter, never looser — a deny rule binds even
-   * under `approvalMode: 'off'` with the auto-approve capability flag set.
+   * **The law:** deny rules are evaluated BEFORE every `before_tool_call` hook,
+   * and therefore before the approval-mode dispatch. Modes can only make things
+   * stricter, never looser — a deny rule binds even under `approvalMode: 'off'`
+   * with the auto-approve capability flag set. Enforced by
+   * `enforceBeforeToolCall` (`packages/core/src/agent-loop/stages/per-call-enforcement.ts`),
+   * the one per-call site the LLM batch path, the script bridge and the
+   * realtime voice host (`extensions/tools-voice/src/realtime-host.ts`) cross;
+   * pinned by `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`
+   * and, for the realtime host, `extensions/tools-voice/src/__tests__/realtime-host.test.ts`.
    */
   denyRules?: string[];
   /**
@@ -419,6 +435,42 @@ export interface LivingSoul {
   learningLog: LearningLogEntry[];
 }
 
+/**
+ * Decision site ids a personality can enable (plan decision-provider-personality
+ * §4.1). Literal unions, not imports: `@ethosagent/types` has zero deps.
+ * Pinned equal to `DECISION_SITES` / `DECISION_SITE_MODES` in
+ * `packages/config/src/decisions.ts` by
+ * `packages/config/src/__tests__/personality-decision-sites-lockstep.test.ts`.
+ */
+export type PersonalityDecisionSiteId = 'injection' | 'approver' | 'router';
+/** `off` = today's path; `shadow` = both run, today's verdict used; `on` = the provider's verdict used. */
+export type PersonalityDecisionSiteMode = 'off' | 'shadow' | 'on';
+
+/**
+ * Which decision model a personality uses, and at which sites. ENABLEMENT
+ * only — the provider itself (credentials, endpoint, model pin, per-site
+ * budgets, measured thresholds) is the operator's, in `decisions.*` in
+ * `~/.ethos/config.yaml` (`packages/config/src/decisions.ts`).
+ *
+ * Parsed from the dotted `decisions.provider` / `decisions.sites.<site>` keys
+ * of the personality's `config.yaml` by `buildDecisionsConfig`
+ * (`extensions/personalities/src/index.ts`), which drops a mode outside
+ * `off | shadow | on` and keeps `provider` verbatim (a name this machine has
+ * not configured is not a load failure).
+ *
+ * Read per call by `resolvePersonalityDecisionSite`
+ * (`packages/config/src/decisions.ts`) at each decision site in
+ * `packages/wiring` (router, injection classifier, smart approver).
+ */
+export interface PersonalityDecisionsConfig {
+  /** A decision provider the OPERATOR configured (`decisions.provider` in
+   *  `~/.ethos/config.yaml`, today only `typesafe`). Kept verbatim; never
+   *  validated at load. Absent → no site runs, whatever `sites` says. */
+  provider?: string;
+  /** Per-site mode. An unset site is `off`. */
+  sites?: Partial<Record<PersonalityDecisionSiteId, PersonalityDecisionSiteMode>>;
+}
+
 // Phase 30.8 — this schema is FROZEN.
 //
 // Adding a top-level field to `PersonalityConfig` requires:
@@ -436,6 +488,15 @@ export interface LivingSoul {
 // how it looks — is identity, and lives as sub-keys of an identity block
 // below (`voice`, `display`; the personality-presentation amendment). It is
 // not a new top-level field, and it is not a licence for one.
+//
+// Decision-layer enablement is identity (decision-provider-personality
+// amendment): which decision model a personality uses (`decisions.provider`)
+// and whether each decision site runs for it (`decisions.sites.<site>`) belong
+// to the personality — the same agent with and without a calibrated judgement
+// layer on its approvals is a different agent. The decision provider itself —
+// credentials, endpoint, model pin, per-site budgets, measured thresholds —
+// stays a setting in `decisions.*` in `~/.ethos/config.yaml`: a machine with no
+// key can always veto, and a threshold is a measurement, not a preference.
 //
 // Common rejections — these belong in skills, in `~/.ethos/config.yaml`, or in
 // per-channel adapter config, NOT here:
@@ -856,6 +917,20 @@ export interface PersonalityConfig {
    * Counts as ONE field for the schema-freeze gate.
    */
   execution?: 'remote' | 'none';
+  /**
+   * Which decision model this personality uses and where (plan
+   * decision-provider-personality). Enablement only: provider, key, endpoint,
+   * budgets and thresholds are the operator's (`decisions.*`,
+   * `packages/config/src/decisions.ts`). A site runs only when the
+   * personality enables it AND the operator configured the named provider
+   * (`resolvePersonalityDecisionSite`, same file) — and, with no key stored,
+   * the provider handle yields no provider, so the site takes today's path
+   * (`createDecisionProviderHandle`, packages/wiring/src/decision-provider.ts).
+   * Absent = nothing declared: every site `off` for this personality.
+   * Counts as ONE field for the schema-freeze gate (the nested shape is a
+   * leaf type — same precedent as `voice`).
+   */
+  decisions?: PersonalityDecisionsConfig;
 }
 
 /**

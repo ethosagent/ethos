@@ -1,5 +1,5 @@
 import type { PlatformAdapter } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildGatewayHeartbeat } from '../gateway';
 
 function stubAdapter(
@@ -66,5 +66,77 @@ describe('buildGatewayHeartbeat', () => {
 
     expect(hb.adapters).toEqual([]);
     expect(hb.pid).toBe(process.pid);
+  });
+});
+
+// R9 (plan/phases/openclaw-2026.9.6-gaps.md) — the heartbeat writer runs every
+// HEARTBEAT_INTERVAL_MS (10s) and `/healthz`, `/readyz` and `/metrics` each
+// build a heartbeat per request, so an adapter whose `health()` is a network
+// round trip (the email adapter's is a full IMAP connect + logout) was probed
+// on every tick and every scrape. Results are cached per adapter for ~60s.
+describe('buildGatewayHeartbeat health cache', () => {
+  function countingAdapter(id: string) {
+    const adapter = stubAdapter(id, { ok: true });
+    let probes = 0;
+    adapter.health = async () => {
+      probes += 1;
+      return { ok: true };
+    };
+    return { adapter, probes: () => probes };
+  }
+
+  it('two probes inside the window make one health() call', async () => {
+    const { adapter, probes } = countingAdapter('email:inbox');
+    await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+    await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+    expect(probes()).toBe(1);
+  });
+
+  it('probes again once the window has passed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const { adapter, probes } = countingAdapter('email:inbox2');
+      await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+      vi.setSystemTime(Date.now() + 61_000);
+      await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+      expect(probes()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares one in-flight probe between concurrent callers', async () => {
+    const { adapter, probes } = countingAdapter('email:inbox3');
+    await Promise.all([
+      buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z'),
+      buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z'),
+    ]);
+    expect(probes()).toBe(1);
+  });
+
+  it('two heartbeats inside the window make one IMAP connect (email adapter)', async () => {
+    const { EmailAdapter } = await import('../../../../../extensions/platform-email/src/index');
+    let connects = 0;
+    const imap = {
+      connect: async () => {
+        connects += 1;
+      },
+      logout: async () => {},
+    };
+    const adapter = new EmailAdapter(
+      {
+        imapHost: 'imap.example.com',
+        imapPort: 993,
+        user: 'agent@example.com',
+        password: 'secret',
+        smtpHost: 'smtp.example.com',
+        smtpPort: 587,
+        botKey: 'email-health-cache',
+      },
+      { createImapClient: () => imap as never },
+    );
+    await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+    await buildGatewayHeartbeat([adapter], '2026-05-20T08:00:00Z');
+    expect(connects).toBe(1);
   });
 });

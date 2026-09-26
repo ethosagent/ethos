@@ -181,6 +181,7 @@ export async function* runPiHost(spec: PiHostSpec): AsyncIterable<AgentEvent> {
           kind: req.method,
           toolName: parsed.toolName,
           digest: parsed.digest,
+          ...(parsed.input !== undefined ? { input: parsed.input } : {}),
         })
         .then((answer) =>
           send({

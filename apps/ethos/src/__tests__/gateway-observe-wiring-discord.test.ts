@@ -83,7 +83,10 @@ const { buildAdapters } = await import('../commands/gateway');
  */
 const realLoader = async <T>(modulePath: string): Promise<T | null> => {
   if (modulePath === '@ethosagent/platform-discord') {
-    return (await import('../../../../extensions/platform-discord/src/index')) as T;
+    // Same order as production `loadAdapterModule`: the module, then its SDK.
+    const mod = await import('../../../../extensions/platform-discord/src/index');
+    await mod.loadDiscordSdk();
+    return mod as T;
   }
   return null;
 };

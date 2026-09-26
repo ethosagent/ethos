@@ -30,16 +30,20 @@ const STABLE_THRESHOLD_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 10;
 const RESTART_WINDOW_MS = 5 * 60_000;
 /**
- * The slowest child's own bounded SIGTERM path (F06). `ethos gateway` first
- * drains its approval cards (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts)
- * and its in-flight turns (`SHUTDOWN_DRAIN_TIMEOUT_MS`, extensions/gateway),
- * then disposes its runtimes (`DISPOSE_BEFORE_EXIT_GRACE_MS`); `ethos serve`'s
- * chat close + listener flush + disposal is shorter. The two drains are not
- * importable here without loading the whole gateway into the supervisor, so
- * they are restated — and pinned against their definitions by
- * `__tests__/run-all.test.ts`, which fails if either grows past this.
+ * The slowest child's own bounded SIGTERM path (F06). Every await on
+ * `ethos gateway start`'s shutdown has a deadline, and this is their sum:
+ * the approval-card drain (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts),
+ * four `boundedShutdownStep`s — outbox drain, health-file remove, call-capture
+ * ownership stop, adapters stop — at `SHUTDOWN_STEP_TIMEOUT_MS` each
+ * (lib/bounded-shutdown-step.ts), `Gateway.shutdown` whose notices AND drain
+ * share one `SHUTDOWN_DRAIN_TIMEOUT_MS` (extensions/gateway), then runtime
+ * disposal (`DISPOSE_BEFORE_EXIT_GRACE_MS`). `ethos serve`'s path — chat close
+ * (`CLOSE_GRACE_MS`), four steps of its own, disposal — is shorter. The
+ * constants are not importable here without loading the whole gateway into the
+ * supervisor, so they are restated — and pinned against their definitions, and
+ * the step count against gateway.ts, by `__tests__/run-all.test.ts`.
  */
-const CHILD_PRE_DISPOSE_DRAIN_MS = 5_000 + 10_000;
+const CHILD_PRE_DISPOSE_DRAIN_MS = 5_000 + 4 * 3_000 + 10_000;
 const CHILD_SHUTDOWN_BUDGET_MS = CHILD_PRE_DISPOSE_DRAIN_MS + DISPOSE_BEFORE_EXIT_GRACE_MS;
 /** SIGKILL only once a child has overrun its own bounded shutdown, plus a
  *  margin for the exit itself — earlier kills it mid-disposal. */
@@ -72,6 +76,40 @@ export interface ChildSpec {
   name: string;
   /** argv tail handed to the ethos binary — e.g. `['gateway', 'start']`. */
   args: string[];
+  /**
+   * Exit codes that mean "do not restart me": the child refused to run, and
+   * running it again cannot change that. `gateway start` exits 3
+   * (`GATEWAY_LOCK_EXIT_CODE`, packages/wiring/src/gateway-lock.ts) when
+   * another gateway already holds this state dir's lock (plan
+   * reach-and-containment D2-14) — restarting it forever would spam the log
+   * and never succeed. It exits 78 (`CONFIG_INVALID_EXIT_CODE`) when its
+   * config cannot be started from, for the same reason.
+   */
+  terminalExitCodes?: readonly number[];
+}
+
+/** Mirrors `GATEWAY_LOCK_EXIT_CODE` in packages/wiring/src/gateway-lock.ts —
+ *  not imported, so the supervisor does not load the wiring graph. Pinned
+ *  equal by `__tests__/run-all.test.ts`. */
+export const GATEWAY_LOCK_HELD_EXIT_CODE = 3;
+
+/** Mirrors `CONFIG_INVALID_EXIT_CODE` in packages/wiring/src/gateway-lock.ts
+ *  (78, EX_CONFIG): `gateway start` could not start from its config
+ *  (`exitIfConfigInvalid`, lib/config-exit.ts), which a restart cannot fix.
+ *  Not imported, for the same reason as the lock code. Pinned equal by
+ *  `__tests__/run-all.test.ts`. */
+export const CONFIG_INVALID_EXIT_CODE = 78;
+
+/** Pure: does this exit end the child for good, or enter the restart path? */
+export function childExitDecision(
+  spec: ChildSpec,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): 'terminal' | 'restart' {
+  if (signal === null && code !== null && spec.terminalExitCodes?.includes(code)) {
+    return 'terminal';
+  }
+  return 'restart';
 }
 
 export interface RunAllOptions {
@@ -94,7 +132,11 @@ export interface RunAllOptions {
 
 export function defaultChildSpecs(): ChildSpec[] {
   return [
-    { name: 'gateway', args: ['gateway', 'start'] },
+    {
+      name: 'gateway',
+      args: ['gateway', 'start'],
+      terminalExitCodes: [GATEWAY_LOCK_HELD_EXIT_CODE, CONFIG_INVALID_EXIT_CODE],
+    },
     { name: 'serve', args: ['serve'] },
   ];
 }
@@ -390,8 +432,15 @@ function startChild(
   });
 
   let stderrBuf = '';
+  // The child's last complete stderr line — for a terminal exit, its refusal.
+  let lastStderrLine = '';
+  let readySeen = false;
   child.stderr?.on('data', (chunk: Buffer) => {
     sc.logStream?.write(chunk);
+    for (const line of chunk.toString().split('\n')) {
+      if (line.trim()) lastStderrLine = line.trim();
+    }
+    if (readySeen) return;
     stderrBuf += chunk.toString();
     const lines = stderrBuf.split('\n');
     // Last element is either '' (if chunk ended with \n) or an incomplete line
@@ -400,6 +449,7 @@ function startChild(
       if (isReadyLine(line)) {
         onChildReady(sc.spec.name);
         stderrBuf = ''; // no need to buffer further
+        readySeen = true;
         break;
       }
     }
@@ -437,6 +487,17 @@ function startChild(
     const reason = signal ? `signal=${signal}` : `code=${code}`;
     log.log(`${c.yellow}✗${c.reset} ${sc.spec.name} exited (${reason})`);
 
+    // Terminal, not a crash (D2-14): log the child's refusal once, do NOT
+    // enter the restart backoff, and leave the siblings running.
+    if (childExitDecision(sc.spec, code, signal) === 'terminal') {
+      log.error(
+        `${c.yellow}run-all: ${sc.spec.name} refused to start and will not be restarted${
+          lastStderrLine ? ` — ${lastStderrLine}` : ''
+        }${c.reset}`,
+      );
+      return;
+    }
+
     const now = Date.now();
     sc.restarts = pruneRestarts(sc.restarts, now, RESTART_WINDOW_MS);
     sc.restarts.push(now);
@@ -469,6 +530,7 @@ function startChild(
 
 // Test surface: tuning constants + pure helpers + the default specs.
 export const __testing__ = {
+  startChild,
   INITIAL_BACKOFF_MS,
   MAX_BACKOFF_MS,
   STABLE_THRESHOLD_MS,

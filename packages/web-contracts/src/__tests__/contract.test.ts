@@ -105,6 +105,8 @@ describe('entity schemas', () => {
       toolName: 'bash',
       args: { command: 'rm -rf /tmp/x' },
       reason: 'destructive',
+      alwaysAsk: false,
+      hardline: false,
     };
     expect(ApprovalRequestSchema.parse(r)).toEqual(r);
   });
@@ -125,6 +127,18 @@ describe('SSE event union', () => {
     { type: 'context_meta', data: { skill_files_used: ['summarize'] } },
     { type: 'done', text: 'final', turnCount: 1 },
     { type: 'error', error: 'overloaded', code: 'overloaded' },
+    // A1 (ux-feedback plan) — the halt event mirrors the `halt` AgentEvent:
+    // a budget halt carries the tripping tool and count, a watcher halt
+    // needs only its rule and message.
+    {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool-budget',
+      toolName: 'bash',
+      count: 12,
+      message: 'tool budget reached (12/12)',
+    },
+    { type: 'halt', kind: 'watcher', rule: 'repeat-tool', message: 'watcher paused the turn' },
     { type: 'message_persisted', messageId: 'msg_1', role: 'assistant' },
     {
       type: 'tool.approval_required',
@@ -135,6 +149,8 @@ describe('SSE event union', () => {
         toolName: 'bash',
         args: {},
         reason: null,
+        alwaysAsk: false,
+        hardline: false,
       },
     },
     { type: 'approval.resolved', approvalId: 'ap_1', decision: 'allow', decidedBy: 'tab-A' },
@@ -212,6 +228,27 @@ describe('SSE event union', () => {
     ).toThrow();
   });
 
+  it('rejects a halt with kind outside the enum', () => {
+    expect(() =>
+      SseEventSchema.parse({
+        type: 'halt',
+        kind: 'panic', // not 'budget' | 'watcher'
+        rule: 'tool-budget',
+        message: 'x',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a halt missing its message', () => {
+    expect(() =>
+      SseEventSchema.parse({
+        type: 'halt',
+        kind: 'budget',
+        rule: 'tool-budget',
+      }),
+    ).toThrow();
+  });
+
   it('rejects a tool_progress with audience outside the enum', () => {
     expect(() =>
       SseEventSchema.parse({
@@ -280,6 +317,7 @@ describe('contract router', () => {
       'activity',
       'admin',
       'apiKeys',
+      'approvals',
       'backup',
       'batch',
       'channels',
@@ -287,9 +325,11 @@ describe('contract router', () => {
       'clarify',
       'config',
       'context',
+      'credentials',
       'cron',
       'dashboards',
       'debug',
+      'decisions',
       'deliveries',
       'digest',
       'documents',
@@ -322,6 +362,7 @@ describe('contract router', () => {
       'teams',
       'toolSettings',
       'tools',
+      'usage',
       'voice',
     ]);
   });
@@ -413,8 +454,43 @@ describe('sessions.messages / sessions.get inputs', () => {
 
   it('sessions.messages output requires a nullable nextCursor', () => {
     const output = sessionsSchemaOf(contract.sessions.messages, 'outputSchema');
-    expect(output.safeParse({ messages: [], cards: [], nextCursor: null }).success).toBe(true);
-    expect(output.safeParse({ messages: [], cards: [] }).success).toBe(false);
+    expect(
+      output.safeParse({ messages: [], cards: [], decisions: [], nextCursor: null }).success,
+    ).toBe(true);
+    expect(output.safeParse({ messages: [], cards: [], decisions: [] }).success).toBe(false);
+  });
+
+  // plan decision-provider-personality §15.5 — persisted decision rows ride
+  // both history responses, always as an array.
+  it('sessions.messages and sessions.get outputs require decisions', () => {
+    const page = sessionsSchemaOf(contract.sessions.messages, 'outputSchema');
+    expect(page.safeParse({ messages: [], cards: [], nextCursor: null }).success).toBe(false);
+    const row = {
+      seq: 1,
+      createdAt: '2026-09-25T00:00:00.000Z',
+      event: {
+        type: 'decision',
+        id: 'd1',
+        phase: 'settled',
+        site: 'router',
+        provider: 'typesafe',
+        mode: 'shadow',
+        outcome: 'ok',
+        personalityId: 'p',
+        traceId: 'tr',
+      },
+    };
+    expect(
+      page.safeParse({ messages: [], cards: [], decisions: [row], nextCursor: null }).success,
+    ).toBe(true);
+    expect(
+      page.safeParse({
+        messages: [],
+        cards: [],
+        decisions: [{ ...row, seq: 0 }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
   });
 
   it('sessions.get defaults withMessages to true', () => {

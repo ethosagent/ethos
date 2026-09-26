@@ -20,9 +20,11 @@ export {
 } from './acp-connection';
 export {
   type AcpGateAnswer,
+  type AcpGatePersonality,
   type AcpGatePolicy,
   type AcpGateRequest,
   createAutoApproveGate,
+  createPersonalityGate,
   createRouterGate,
 } from './acp-gate';
 export {

@@ -2,6 +2,8 @@
 Description=Ethos Gateway (Telegram + Slack + Discord + Email adapters)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=notify
@@ -12,6 +14,7 @@ EnvironmentFile=-{{ETHOS_HOME}}/.ethos/.env
 ExecStart={{ETHOS_BINARY}} gateway start
 Restart=on-failure
 RestartSec=5
+RestartPreventExitStatus=3 78
 WatchdogSec=30
 StandardOutput=journal
 StandardError=journal

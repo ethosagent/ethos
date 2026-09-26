@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Checkbox, Input, message, Select, Steps, Typography } from 'antd';
+import { App as AntApp, Button, Card, Checkbox, Input, Select, Steps, Typography } from 'antd';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
@@ -22,7 +22,9 @@ export function CreateDashboardFlow() {
   const [selected, setSelected] = useState<SelectedTemplate[]>([]);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [messageApi, contextHolder] = message.useMessage();
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message: messageApi } = AntApp.useApp();
 
   const { data: persData } = useQuery({
     queryKey: ['personalities'],
@@ -88,7 +90,6 @@ export function CreateDashboardFlow() {
 
   return (
     <div style={{ padding: 24, maxWidth: 720, margin: '0 auto' }}>
-      {contextHolder}
       <Typography.Title level={3}>Create Dashboard</Typography.Title>
       <Steps
         current={step}

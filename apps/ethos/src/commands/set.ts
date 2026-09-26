@@ -95,13 +95,20 @@ export async function runSet(args: string[]): Promise<void> {
         `${c.dim}Start the team first: ethos team start ${name}${c.reset}`,
     );
   } else {
+    // B3 / UD1 Option A — `personality:` is the one default-personality key.
+    // A leftover personality-typed activeContext is cleared here (the parser
+    // migrates disk copies, but a same-process object may still carry one);
+    // a team activeContext is deliberately untouched.
+    const { activeContext, ...rest } = config;
     await writeConfig(
       getStorage(),
-      { ...config, activeContext: { type: 'personality', name } },
+      {
+        ...rest,
+        personality: name,
+        ...(activeContext?.type === 'team' ? { activeContext } : {}),
+      },
       await getSecretsResolver(),
     );
-    console.log(
-      `${c.green}✓${c.reset} Active context set to ${c.bold}personality:${name}${c.reset}`,
-    );
+    console.log(`${c.green}✓${c.reset} Default personality set to ${c.bold}${name}${c.reset}`);
   }
 }

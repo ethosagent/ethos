@@ -72,6 +72,19 @@ class Statement {
   }
 }
 
+/** `PRAGMA journal_mode = …` — a journal-mode switch, not a read of it. */
+const JOURNAL_MODE_SWITCH_RE = /^\s*journal_mode\s*=/i;
+/** How long a journal-mode switch keeps retrying a busy database: the same
+ *  5000ms every cross-process store gives `busy_timeout`. */
+const JOURNAL_MODE_RETRY_MS = 5_000;
+const JOURNAL_MODE_BACKOFF_MS = 10;
+const SQLITE_BUSY = 5;
+
+function isBusy(err: unknown): boolean {
+  const code = (err as { errcode?: unknown } | null)?.errcode;
+  return typeof code === 'number' && (code & 0xff) === SQLITE_BUSY;
+}
+
 class _Database {
   // biome-ignore lint/suspicious/noExplicitAny: namespace merge for Database.Database type compat
   static Database: any = _Database;
@@ -101,11 +114,41 @@ class _Database {
   }
 
   pragma(str: string, _opts?: Record<string, unknown>): unknown {
+    if (JOURNAL_MODE_SWITCH_RE.test(str)) {
+      this.switchJournalMode(str);
+      return undefined;
+    }
     if (str.includes('=')) {
       this.inner.exec(`PRAGMA ${str}`);
       return undefined;
     }
     return this.prepare(`PRAGMA ${str}`).all();
+  }
+
+  /**
+   * Switch the journal mode, retrying while another connection holds the lock.
+   *
+   * SQLite answers a contended journal-mode switch with SQLITE_BUSY at once and
+   * never consults the busy handler, so `busy_timeout` does not cover it. Two
+   * processes opening the same fresh file — `ethos run-all` starts gateway and
+   * serve together, and both open every shared store on first boot — collide
+   * here, and the loser used to exit with "database is locked". A retry is
+   * enough: once the winner has converted the file, the switch is a no-op read.
+   * Synchronous like the rest of the shim; the wait is bounded by
+   * JOURNAL_MODE_RETRY_MS. Pinned by __tests__/database.test.ts
+   * ("journal-mode switch").
+   */
+  private switchJournalMode(str: string): void {
+    const deadline = Date.now() + JOURNAL_MODE_RETRY_MS;
+    for (;;) {
+      try {
+        this.inner.exec(`PRAGMA ${str}`);
+        return;
+      } catch (err) {
+        if (!isBusy(err) || Date.now() >= deadline) throw err;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, JOURNAL_MODE_BACKOFF_MS);
+      }
+    }
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: must accept any function signature for better-sqlite3 compat

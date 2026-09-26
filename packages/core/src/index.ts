@@ -1,3 +1,7 @@
+export type { ClarifyRequestInput } from '@ethosagent/types';
+// The declaration grammar itself lives in the contracts layer so
+// `@ethosagent/config` can share it without importing core.
+export { parseModelDeclaration } from '@ethosagent/types';
 export type {
   AgentEvent,
   AgentLoopConfig,
@@ -6,6 +10,8 @@ export type {
   RunOptions,
 } from './agent-loop';
 export { AgentLoop, isKnownAgentEvent, KNOWN_AGENT_EVENT_TYPES } from './agent-loop';
+// plan decision-provider-personality §15.3 — the approver's private sink channel.
+export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
 // tools-as-code-api Lane B — the per-turn bridge (and its budget-counter
 // companions) are exported so integration tests and non-loop surfaces can
 // drive the EXACT enforcement path the loop wires, not a re-statement of it.
@@ -17,11 +23,15 @@ export {
   type CostBudget,
   checkCostBudget,
   checkTurnBudgets,
+  haltNotice,
 } from './agent-loop/budgets';
 // Lane 1(b/c) — the gate's output-reserve constant, shared with wiring's
 // startup floor diagnostic and window-scaled result budget so there is ONE
 // reserve arithmetic, not a drifting copy.
-export { DEFAULT_OUTPUT_RESERVE_TOKENS } from './agent-loop/compaction';
+export { DEFAULT_OUTPUT_RESERVE_TOKENS, pressureGateTokens } from './agent-loop/compaction';
+// Personality deny rules — enforced in `enforceBeforeToolCall`; exported so the
+// smart reviewer's verdict cache keys off the same canonical args form.
+export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/deny-rules';
 // Lane 2b — the production session-replay serialization path, exported so
 // restart-prefix tests (and any surface that rehydrates a session) render
 // stored history through EXACTLY the code the live loop uses. A test-local
@@ -33,19 +43,46 @@ export { reconstructFromWatermark, selectActiveWatermark } from './agent-loop/ma
 export { buildScopedStorage } from './agent-loop/scoped-storage';
 // Lane 3(b) — declared small-window toolset parsing, shared with wiring's
 // startup narrowing diagnostic so both read the declaration identically.
+// Per-personality small-window mode — the seam wiring's resolver implements.
+export type { SmallWindowOverlay, SmallWindowResolver } from './agent-loop/small-window';
 export { parseSmallWindowToolset } from './agent-loop/small-window-toolset';
 export {
+  type BeforeToolCallDecision,
   createTurnBudgetCounters,
+  enforceBeforeToolCall,
   recordToolCallForBudgets,
   type TurnBudgetCounters,
 } from './agent-loop/stages/per-call-enforcement';
+// Exported with `enforceBeforeToolCall` for the one tool path that runs outside
+// `AgentLoop.run()`: the realtime voice host (extensions/tools-voice/src/realtime-host.ts).
+export {
+  type ResultRedactionDeps,
+  redactToolResultSecrets,
+} from './agent-loop/stages/result-redaction';
 export {
   SCRIPT_CALLS_PER_EXECUTION,
   SCRIPT_RESULT_BUDGET_CHARS,
   ScriptToolBridge,
   type ScriptToolBridgeDeps,
 } from './agent-loop/stages/script-tool-bridge';
+// reach-and-containment Part 1 — on-demand tool loading. Exported for wiring's
+// `tool_loading` resolver + startup diagnostic and `ethos bench context`, so
+// the bench measures the SAME composition the loop sends.
+export { persistLoaded } from './agent-loop/stages/tool-search';
 export { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+// plan decision-provider-jev §8.3 — the tier router seam wiring builds against.
+export type { TierRouter } from './agent-loop/tier-router';
+export {
+  buildToolSearchDefinition,
+  composeDefinitions,
+  MAX_LOADED_TOOLS,
+  resolvePinned,
+  searchTools,
+  TOOL_SEARCH_DEFINITION,
+  TOOL_SEARCH_NAME,
+  type ToolLoadingPlan,
+  type ToolLoadingResolver,
+} from './agent-loop/tool-loading';
 // D7 — the turn's model resolution (the six rungs plus the D11b empty-registry
 // shim), exported so wiring's character sheet asks the enforcer the turn runs
 // rather than restating it.
@@ -69,7 +106,6 @@ export {
   type ClarifyOriginLane,
   type ClarifyOriginResolver,
   type ClarifyPresenter,
-  type ClarifyRequestInput,
   type ClarifyResolvedListener,
   ClarifyTimedOutNoDefaultError,
 } from './clarify/clarify-bridge';
@@ -87,7 +123,7 @@ export {
   clarifyUnresolvedMessage,
 } from './clarify/respond-outcome';
 export { isClarifyAnswerableOn } from './clarify/takeover-handback';
-export { clarifyPromptText } from './clarify/takeover-prompt';
+export { clarifyPromptText, webPageUrlFor } from './clarify/takeover-prompt';
 export { type ConformanceResult, validateContextEngine } from './context-engines/conformance';
 export { DropOldestEngine } from './context-engines/drop-oldest';
 export { ReferencePreservingEngine } from './context-engines/reference-preserving';
@@ -124,7 +160,9 @@ export {
   deriveFsReachPaths,
   EmptySubstitutionError,
   type FsReachVars,
+  PERSONALITY_DEFINITION_ENTRIES,
   personalityAssetDir,
+  personalityWriteDeny,
   substitute,
 } from './fs-reach';
 export { DefaultHookRegistry } from './hook-registry';
@@ -150,7 +188,6 @@ export {
   describeDeviation,
   ModelFallbacksExhaustedError,
   mapLegacyModelDeclaration,
-  parseModelDeclaration,
   resolveModel,
 } from './model-resolution';
 export { DefaultNotificationRouter } from './notification-router';
@@ -165,7 +202,9 @@ export type {
 } from './providers/chained-provider';
 export {
   ChainedProvider,
+  markServerCompaction,
   providerEntriesOf,
+  servesServerCompaction,
   tagProviderEntry,
 } from './providers/chained-provider';
 export { DefaultDocumentExtractorRegistry } from './providers/document-extractor-registry';
@@ -229,6 +268,13 @@ export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export type { ScriptExclusionCategory, ScriptSafeToolMeta } from './script-safe';
 export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './script-safe';
+export {
+  type ForkSessionOptions,
+  type ForkSessionResult,
+  forkSession,
+  forkSessionKey,
+  listBranches,
+} from './session-fork';
 export { SimpleCompletionImpl } from './simple-completion';
 export type { SpokenStyleInjectorOptions } from './spoken-style-injector';
 export { createSpokenStyleInjector, SPOKEN_STYLE_BLOCK } from './spoken-style-injector';

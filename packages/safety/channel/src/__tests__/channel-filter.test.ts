@@ -418,3 +418,45 @@ describe('isSenderAllowed', () => {
     expect(isSenderAllowed(msg({ userId: 'stranger' }), config)).toBe(false);
   });
 });
+
+// A WhatsApp sender addressed by LID keeps its LID as `userId`; Baileys' phone
+// alternate rides along in `alternateUserIds` as an extra MATCH key only.
+describe('alternateUserIds (WhatsApp LID + phone alternate)', () => {
+  const LID = '987654321012345@lid';
+  const PHONE = '15559999999@s.whatsapp.net';
+  const lidMsg = (overrides: Partial<InboundMessage> = {}) =>
+    msg({ platform: 'whatsapp', userId: LID, alternateUserIds: [PHONE], ...overrides });
+
+  it('a phone-configured owner matches the LID sender through its alternate', () => {
+    expect(checkMessage(lidMsg(), { ownerUserId: PHONE, dmPolicy: 'allowlist' }).action).toBe(
+      'allow',
+    );
+  });
+
+  it('a LID-configured owner still matches', () => {
+    expect(checkMessage(lidMsg(), { ownerUserId: LID, dmPolicy: 'allowlist' }).action).toBe(
+      'allow',
+    );
+  });
+
+  it('the owner bypasses group mention gating through the alternate', () => {
+    const result = checkMessage(lidMsg({ isDm: false, isGroupMention: false }), {
+      ownerUserId: PHONE,
+    });
+    expect(result.action).toBe('allow');
+  });
+
+  it('a phone recipientAllowlist entry admits the LID sender', () => {
+    const config: ChannelPlatformConfig = { ownerUserId: 'x', recipientAllowlist: [PHONE] };
+    expect(checkMessage(lidMsg(), config).action).toBe('allow');
+    expect(isSenderAllowed(lidMsg(), config)).toBe(true);
+  });
+
+  it('with no alternate, a phone owner does not match a bare LID', () => {
+    const result = checkMessage(lidMsg({ alternateUserIds: undefined }), {
+      ownerUserId: PHONE,
+      dmPolicy: 'allowlist',
+    });
+    expect(result.action).toBe('drop');
+  });
+});

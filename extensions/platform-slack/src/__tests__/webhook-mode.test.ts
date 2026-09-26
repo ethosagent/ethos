@@ -12,8 +12,14 @@ import { createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import boltPkg from '@slack/bolt';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter, type SlackAdapterConfig } from '../adapter';
+import { loadSlackSdk } from '../sdk';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 const { App, HTTPReceiver, SocketModeReceiver } = boltPkg;
 

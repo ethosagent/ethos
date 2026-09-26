@@ -4,7 +4,7 @@ description: "A personality is a frozen schema plus a character sheet — every 
 kind: explanation
 audience: developer
 slug: personality-governance
-updated: 2026-08-14
+updated: 2026-09-25
 ---
 
 ## Context
@@ -60,6 +60,8 @@ VAD tuning, endpointing, barge thresholds, provider rosters, credentials, and pe
 
 Wake routing is the clearest worked example of the second question doing its job. Which spoken phrase reaches which personality looks like identity — it is, after all, the agent's *name* — and it still belongs to the operator. Two households running the same `engineer` would reasonably disagree about whether the kitchen microphone answers to "hey engineer" or "hey work", because the answer depends on the room, the other agents in it, and who else is within earshot. So [wake routes](../../getting-started/glossary.md#wake-route) live in `voice.wake.routes.<id>` in `~/.ethos/config.yaml` and in `WakeRouteConfig` in `packages/config`, not on `PersonalityConfig` — and the personality is not left nameless by that, because the server synthesizes a default route from the name the personality already declares — the bare name, with a greeting in front of it optional. Identity supplies the name; deployment decides what the house answers to.
 
+Decision-layer enablement is the mirror case. Whether a personality's approvals, injection checks and model routing go through a calibrated decision model looks like a machine setting, and half of it is: the provider's credential, endpoint, model pin, budgets and measured thresholds stay in `decisions.*` in `~/.ethos/config.yaml`, where a machine with no key can always veto. The other half passes the first question. The same agent with and without a judgement layer on its approvals is a different agent, so *which* decision model it uses and *at which sites* is `PersonalityConfig.decisions` (`decisions.provider`, `decisions.sites.<site>: off | shadow | on`). Identity chooses among what the operator allowed; the operator keeps the credential and the calibration.
+
 `skin`, `verbosity` and `busyInputMode` stay removed. The amendment does not restore them, and it is not a general licence for per-personality display overrides: each presentation key is argued and added on its own, on an identity block, or it is not added.
 
 **A default, not a form field.** `voice.call_style` is optional, and an undeclared personality is not shapeless — `resolveCallTreatment` in `packages/types/src/personality.ts` derives a treatment from the personality id, deterministically, so every personality has a distinct look before anyone configures anything. Declaring the key overrides the derivation; an operator's `display.call_style` sits between the two. One function holds that order, and the character sheet prints whichever answer applies — the declared treatment, or the derived one, said out loud rather than left blank. Identity you have to opt into is identity most personalities never get.
@@ -92,6 +94,26 @@ The character sheet is deliberately not a file you write. `SOUL.md` is authored 
 
 The split matters for trust. An authored summary of a personality can lie, or simply lag. A generated one cannot: if the toolset changes, the sheet changes on the next call, because it is the toolset. The character sheet supplements `SOUL.md` — it does not replace it. `SOUL.md` is who the agent says it is; the character sheet is what the runtime will actually do.
 
+### A personality cannot rewrite its own definition
+
+A contract the agent can edit is not a contract. The registry hot-reloads a personality whenever one of its files changes on disk, so if a turn could `write_file` its own `toolset.yaml`, it could grant itself any tool on its next turn — and the personality would stop being the architecture.
+
+So the files that define a personality are write-protected from that personality's own turns: `SOUL.md`, `config.yaml`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, `ETHOS.md`, and everything under `skills/`. The list is `PERSONALITY_DEFINITION_ENTRIES` in `packages/core/src/fs-reach.ts`. `deriveFsReachPaths` returns it as `writeDeny` on every branch, so a declared `fs_reach.write` that covers the whole data directory cannot reopen it. No config key turns it off.
+
+The turn can still *read* these files, which is why this is a write-only list and not part of the always-deny floor. Three enforcers carry it:
+
+| Layer | Enforcer |
+|---|---|
+| Storage the tools write through | `ScopedStorage.check` in `packages/storage-fs/src/scoped-storage.ts` (`writeDeny`) |
+| File-tool capability (`ctx.scopedFs`) | `ScopedFsImpl.checkReach` in `packages/core/src/scoped/scoped-fs.ts` (`writeDenyPaths`) |
+| Docker sandbox | `DockerExecutionBackend.mountsFor` in `extensions/execution-docker/src/index.ts` mounts the personality directory read-only, with `files/` writable |
+
+`scaffold_personality` writes through its own Storage rather than the turn's, so it refuses separately: it will not scaffold the calling personality's id, an id already in the personality registry (which covers built-ins), or any id that already has a `config.yaml`. It also refuses a toolset that lists a tool the calling personality does not hold, and refuses outright when the caller cannot be resolved or has no explicit toolset, so creating a personality can never mint a tool its creator lacks. Every refusal runs before anything is written (`scaffoldPersonalityTool` in `extensions/tools-personality-design/src/index.ts`, pinned by `src/__tests__/no-overwrite.test.ts` in that package).
+
+Two things stay writable on purpose. `MEMORY.md` and `USER.md` are content the agent maintains, and the memory provider writes them through its own Storage. `files/` is the personality's asset folder.
+
+The legitimate paths for change run through someone other than the agent. A skill is proposed to the learning inbox and promoted only after a human approves it (`skills_pending_approve`, an always-ask tool). Toolset, `SOUL.md` and config changes are operator edits — the Web Personalities tab or an editor.
+
 ### How a schema change actually happens
 
 When a field genuinely belongs on the personality — it describes identity, it is not expressible as a skill or a tool or a memory section — the change is a frozen-schema bump:
@@ -109,6 +131,8 @@ The bump procedure is not red tape. It is the schema defending the property that
 **The character sheet is read-only.** You cannot edit a personality through its character sheet; it is a derived view. Editing happens in the three source files (or the Web Identity / Toolset / Config tabs). The sheet is the audit surface, not the control surface — that separation keeps the generated artifact trustworthy.
 
 **Display preferences have no general per-personality home.** Removing `skin`, `verbosity`, and `busyInputMode` means a user who wanted one personality to always render in `paper` and another in `mono` still cannot. The presentation amendment did not reopen that door: it added two specific keys that describe how a personality presents *itself* (`voice.tts_voice`, `voice.call_style`), each argued on its own, on an identity block that already existed. A skin is a preference about the whole app; a call treatment is a fact about one agent. The cost of drawing the line there is that every further presentation key is an argument rather than a config entry — which is the friction working, not a gap.
+
+**On local execution, `terminal` can still edit the definition.** A personality with the `terminal` tool running under `execution: local` runs `sh -c` as the Ethos user, and nothing mediates that shell's writes — `echo x >> toolset.yaml` succeeds. This is a known limitation, not a gap to patch with a command-string filter, which `cd ..; sed -i` would defeat. Use `execution: docker` if it matters: there, the same command fails with "Read-only file system".
 
 **The sheet is only as good as `SOUL.md`.** The role prose is the first paragraph of `SOUL.md`. A personality whose `SOUL.md` opens with throat-clearing gets a weak character sheet. The fix is upstream — write a concrete first paragraph — not a richer renderer.
 

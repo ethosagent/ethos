@@ -58,6 +58,27 @@ const runner = new EvalRunner(loop, {
 const stats = await runner.run(tasks, parseExpectedJsonl(src));
 ```
 
+## Decision-site calibration (decision-provider-jev M3)
+
+`runDecisionCalibration({ site, provider, questions, digest, cases, target?, minSupport?, concurrency?, timeoutMs?, now? })` runs a labelled set through a `DecisionProvider` and measures the site's confidence threshold(s): the smallest confidence T at which every verdict the site acts on reaches `target` precision (default 0.99) with at least `minSupport` cases. The per-site objective (which error is the dangerous one) is documented at the top of `src/decision-calibration.ts`. Digests are redacted with `@ethosagent/safety-redact` before `decide()`, failed calls are counted and excluded, and the report carries `configLines` to paste into `~/.ethos/config.yaml`, each preceded by a `#` line naming the date, the returned model id, n, precision and coverage. If the provider returned more than one model id, the lines are emitted commented out.
+
+`questions` and `digest` are inputs, not constants of this package. A threshold is valid only for the exact question and digest the live site sends, and their one owner is `packages/wiring/src/decision-questions.ts` (`INJECTION_QUESTIONS`, `APPROVER_QUESTIONS`, `ROUTER_QUESTIONS`, `approverDigest`, re-exported by `@ethosagent/wiring`). This package cannot import `wiring` (it sits above `extensions/` in the layer model), so the calibration script, which runs above that line, passes them in:
+
+```ts
+import { runDecisionCalibration, APPROVER_SEED_CASES } from '@ethosagent/eval-harness';
+import { APPROVER_QUESTIONS, approverDigest } from '@ethosagent/wiring';
+
+const report = await runDecisionCalibration({
+  site: 'approver',
+  provider,
+  questions: APPROVER_QUESTIONS,
+  digest: (c) => ({ kind: 'json', value: approverDigest(c) }),
+  cases: APPROVER_SEED_CASES,
+});
+```
+
+`src/decision-seeds.ts` holds SEED labelled sets (injection, approver, router). They exist so the harness runs end to end; they are too small to trust a 0.99 target on, and a threshold means something only when measured against a real provider key. No measured threshold ships in this package.
+
 ## Gotchas
 
 - Unlike `batch-runner`, there is no checkpoint — every run re-truncates the output and re-runs every task.
@@ -74,3 +95,5 @@ const stats = await runner.run(tasks, parseExpectedJsonl(src));
 | `src/types.ts` | `EvalExpected`, `EvalRunOptions`, `EvalStats`. |
 | `src/runner.ts` | `EvalRunner`, `parseExpectedJsonl`, local `Writer` + `Semaphore`. |
 | `src/scorers.ts` | `exactMatchScorer`, `containsScorer`, `regexScorer`, `llmJudgeScorer`. |
+| `src/decision-calibration.ts` | `runDecisionCalibration`, `measureThreshold` — decision-site threshold measurement. |
+| `src/decision-seeds.ts` | Seed labelled sets for the three decision sites. |

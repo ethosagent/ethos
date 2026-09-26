@@ -17,16 +17,23 @@
 import { spawnSync } from 'node:child_process';
 // Raw `node:fs` for the same reasons `runDoctorFix` already reaches for
 // `chmod`: Storage has no permissions API, and the integrity check hands a raw
-// path to SQLite (the documented store carve-out in AGENTS.md).
-import { existsSync, readdirSync, statSync } from 'node:fs';
+// path to SQLite (the documented store carve-out in AGENTS.md). `statfsSync`
+// likewise: Storage has no filesystem-type API (`checkStateDirFilesystem`).
+import { existsSync, readdirSync, type StatsFs, statfsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   configParseNotices,
+  DECISIONS_API_KEY_REF,
+  deriveBotKey,
+  describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
+  nearestKey,
   readConfig,
   readRawConfig,
+  resolveDecisionsConfig,
+  secretRefForConfigKey,
 } from '@ethosagent/config';
 import { resolveSttProvider, resolveTtsProvider } from '@ethosagent/core';
 import {
@@ -35,16 +42,24 @@ import {
   type ModelDiscovery,
   unsupportedModelMessage,
 } from '@ethosagent/llm-codex';
+import type { CharacterSheetDecisionSite } from '@ethosagent/personalities';
 import {
   type CallCaptureDependencyCheckResult,
   callCaptureHealthPath,
 } from '@ethosagent/platform-callcapture';
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
-import type { SecretsResolver, Skill } from '@ethosagent/types';
+import { REF_TO_ENV } from '@ethosagent/storage-fs';
+import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
+import {
+  buildExecutionPosture,
+  type ContainerizedDetectionInput,
+  resolveCharacterSheetDecisions,
+} from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
-import { createLLM, getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
+import { createLLM, getSecretsResolver, getStorage } from '../wiring';
+import { formatResolvedLines, resolveEffective } from './status';
 
 const c = {
   reset: '\x1b[0m',
@@ -63,32 +78,50 @@ const ETHOS_VERSION =
 interface SdkRow {
   label: string;
   module: string;
+  /**
+   * Loads `module`. A literal `import()` per row, never a computed one, so the module graph
+   * stays readable; dynamic because the channel SDKs are optionalDependencies of the CLI.
+   */
+  load: () => Promise<unknown>;
   required: boolean;
   /** Config keys that, if set, mean this SDK is "in use" — missing is a hard error. */
   configuredWhen?: (cfg: EthosConfig) => boolean;
 }
 
 const CORE_SDKS: SdkRow[] = [
-  { label: 'Anthropic provider', module: '@anthropic-ai/sdk', required: true },
-  { label: 'OpenAI-compat provider', module: 'openai', required: true },
+  {
+    label: 'Anthropic provider',
+    module: '@anthropic-ai/sdk',
+    load: () => import('@anthropic-ai/sdk'),
+    required: true,
+  },
+  {
+    label: 'OpenAI-compat provider',
+    module: 'openai',
+    load: () => import('openai'),
+    required: true,
+  },
 ];
 
 const CHANNEL_SDKS: SdkRow[] = [
   {
     label: 'Telegram',
     module: 'grammy',
+    load: () => import('grammy'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.telegramToken),
   },
   {
     label: 'Discord',
     module: 'discord.js',
+    load: () => import('discord.js'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.discordToken),
   },
   {
     label: 'Slack',
     module: '@slack/bolt',
+    load: () => import('@slack/bolt'),
     required: false,
     configuredWhen: (cfg) =>
       Boolean(cfg.slackBotToken && cfg.slackAppToken && cfg.slackSigningSecret),
@@ -96,70 +129,78 @@ const CHANNEL_SDKS: SdkRow[] = [
   {
     label: 'Email (IMAP)',
     module: 'imapflow',
+    load: () => import('imapflow'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
   },
   {
     label: 'Email (parser)',
     module: 'mailparser',
+    load: () => import('mailparser'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
   },
   {
     label: 'Email (SMTP)',
     module: 'nodemailer',
+    load: () => import('nodemailer'),
     required: false,
     configuredWhen: (cfg) => Boolean(cfg.emailSmtpHost && cfg.emailUser && cfg.emailPassword),
   },
 ];
 
+/**
+ * A credential the config names. Checked WHERE THE CONFIG POINTS: the
+ * `${secrets:<ref>}` reference(s) in the raw config value, which is what
+ * `resolveConfigSecrets` (packages/config) resolves at runtime. With no value
+ * at all, the ref `secretRefForConfigKey` assigns — the single owner of ref
+ * naming, the same one setup/setup-from-env write through
+ * (`providers/<provider>/apiKey` for the provider key).
+ *
+ * The rows used to carry hard-coded refs (`anthropic-api-key`,
+ * `telegram-bot-token`, …) that nothing writes, so a correctly set up install
+ * was reported "missing".
+ */
 interface SecretCheckRow {
-  key: string;
-  secretRef: string;
-  required: boolean;
-  fillWith: string;
-  configuredWhen?: (cfg: EthosConfig) => boolean;
+  configKey: 'apiKey' | 'telegramToken' | 'slackBotToken' | 'discordToken';
+  /** Display/JSON name when the ref has no env-var alias. */
+  label: (cfg: EthosConfig) => string;
+  configuredWhen: (cfg: EthosConfig) => boolean;
 }
 
 const SECRET_CHECKS: SecretCheckRow[] = [
   {
-    key: 'ANTHROPIC_API_KEY',
-    secretRef: 'anthropic-api-key',
-    required: false,
-    fillWith: 'ethos keys set anthropic-api-key <value>',
-    configuredWhen: (cfg) => cfg.provider === 'anthropic',
+    configKey: 'apiKey',
+    label: (cfg) => `${cfg.provider ?? 'provider'} API key`,
+    // Applies when the config names a key, or when the provider is one that
+    // has a known API-key env var (ENV_TO_REF in packages/storage-fs) — i.e.
+    // cannot run keyless. Keyless providers (ollama, a local openai-compat
+    // server) and codex (OAuth — see checkCodexModel) are not flagged.
+    configuredWhen: (cfg) => {
+      if (!cfg.provider) return false;
+      if ((cfg.apiKey ?? '').trim().length > 0) return true;
+      const ref = secretRefForConfigKey('apiKey', { provider: cfg.provider });
+      return ref !== null && REF_TO_ENV.has(ref);
+    },
   },
   {
-    key: 'OPENAI_API_KEY',
-    secretRef: 'openai-api-key',
-    required: false,
-    fillWith: 'ethos keys set openai-api-key <value>',
-    configuredWhen: (cfg) => cfg.provider === 'openai-compat',
-  },
-  {
-    key: 'TELEGRAM_BOT_TOKEN',
-    secretRef: 'telegram-bot-token',
-    required: false,
-    fillWith: 'ethos keys set telegram-bot-token <value>',
+    configKey: 'telegramToken',
+    label: () => 'TELEGRAM_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.telegramToken),
   },
   {
-    key: 'SLACK_BOT_TOKEN',
-    secretRef: 'slack-bot-token',
-    required: false,
-    fillWith: 'ethos keys set slack-bot-token <value>',
+    configKey: 'slackBotToken',
+    label: () => 'SLACK_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.slackBotToken),
   },
   {
-    key: 'DISCORD_BOT_TOKEN',
-    secretRef: 'discord-bot-token',
-    required: false,
-    fillWith: 'ethos keys set discord-bot-token <value>',
+    configKey: 'discordToken',
+    label: () => 'DISCORD_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.discordToken),
   },
 ];
 
-interface SecretCheckResult {
+export interface SecretCheckResult {
   key: string;
   present: boolean;
   required: boolean;
@@ -167,22 +208,46 @@ interface SecretCheckResult {
   fillWith: string;
 }
 
-async function checkSecrets(config: EthosConfig | null): Promise<SecretCheckResult[]> {
-  const secrets = await getSecretsResolver();
+const SECRET_REF_RE = /\$\{secrets:([^}]+)\}/g;
+
+async function isSet(secrets: SecretsResolver, ref: string): Promise<boolean> {
+  const val = await secrets.get(ref);
+  return val !== null && val.trim().length > 0;
+}
+
+/** Exported for tests; `secrets` is injectable so they never touch a real vault. */
+export async function checkSecrets(
+  config: EthosConfig | null,
+  secrets?: SecretsResolver,
+): Promise<SecretCheckResult[]> {
+  if (!config) return [];
+  const resolver = secrets ?? (await getSecretsResolver());
   const results: SecretCheckResult[] = [];
   for (const row of SECRET_CHECKS) {
-    const hasCondition = Boolean(row.configuredWhen);
-    const conditionMet = hasCondition && config ? row.configuredWhen?.(config) : false;
-    const applicable = row.required || Boolean(conditionMet);
-    if (!applicable) continue;
-    const val = await secrets.get(row.secretRef);
-    const present = val !== null && val.trim().length > 0;
+    if (!row.configuredWhen(config)) continue;
+    const raw = (config[row.configKey] ?? '').trim();
+    const named = [...raw.matchAll(SECRET_REF_RE)].flatMap((m) => (m[1] ? [m[1]] : []));
+    // No reference in the config: the ref this key would be written to.
+    const defaultRef = secretRefForConfigKey(row.configKey, { provider: config.provider });
+    const refs = named.length > 0 ? named : defaultRef ? [defaultRef] : [];
+    // A plaintext value still in config.yaml (pre-externalization install) is present.
+    let missingRef: string | null = null;
+    if (named.length > 0 || raw.length === 0) {
+      for (const ref of refs) {
+        if (!(await isSet(resolver, ref))) {
+          missingRef = ref;
+          break;
+        }
+      }
+    }
+    const present = refs.length > 0 || raw.length > 0 ? missingRef === null : false;
+    const nameRef = missingRef ?? refs[0];
     results.push({
-      key: row.key,
+      key: (nameRef && REF_TO_ENV.get(nameRef)) || row.label(config),
       present,
-      required: row.required,
+      required: false,
       applicable: true,
-      fillWith: row.fillWith,
+      fillWith: nameRef ? `ethos secrets set ${nameRef} <value>` : '',
     });
   }
   return results;
@@ -231,9 +296,9 @@ function codexModelLine(check: CodexModelCheck): string | null {
   }
 }
 
-async function checkSdk(modulePath: string): Promise<{ ok: boolean; error?: string }> {
+async function checkSdk(row: SdkRow): Promise<{ ok: boolean; error?: string }> {
   try {
-    await import(modulePath);
+    await row.load();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -355,7 +420,7 @@ export function computeDoctorExit(f: DoctorFailFlags): number {
 
 type Storage = ReturnType<typeof getStorage>;
 
-interface DbCheckResult {
+export interface DbCheckResult {
   /** false only when the DB exists but cannot be opened/queried. */
   ok: boolean;
   /** true when the file has not been created yet — a healthy fresh-install state. */
@@ -363,23 +428,28 @@ interface DbCheckResult {
   error?: string;
 }
 
-async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
+export async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
   const dbPath = join(ethosDir(), 'sessions.db');
   if (!(await storage.exists(dbPath))) {
     return { ok: true, absent: true };
   }
+  const { default: Database } = await import('@ethosagent/sqlite');
+  let db: InstanceType<typeof Database> | undefined;
   try {
-    const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-    const store = new SQLiteSessionStore(dbPath);
-    try {
-      // Trivial query — exercises open + read path; surfaces WAL/corruption.
-      await store.getMessages('__doctor_probe__', { limit: 1 });
-      return { ok: true, absent: false };
-    } finally {
-      store.close();
-    }
+    // A raw open, never `SQLiteSessionStore`: that constructor runs `migrate()`,
+    // and a NEWER binary's doctor migrating sessions.db is what leaves the
+    // rolled-back binary unable to open it (`ethos upgrade`'s health gate runs
+    // exactly that doctor — plan openclaw-9.5-adoption D24). Read-write for the
+    // same reason as `checkDatabaseIntegrity` below; a SELECT writes nothing.
+    // Pinned by __tests__/diagnostics-never-migrate.test.ts.
+    db = new Database(dbPath);
+    // Trivial query — exercises open + read path; surfaces WAL/corruption.
+    db.prepare('SELECT 1 FROM sessions LIMIT 1').all();
+    return { ok: true, absent: false };
   } catch (err) {
     return { ok: false, absent: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    db?.close();
   }
 }
 
@@ -497,6 +567,188 @@ export async function checkDatabaseIntegrity(dataDir: string): Promise<Integrity
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Inbound spool (plan reach-and-containment §2.6)
+// ---------------------------------------------------------------------------
+
+export interface InboundSpoolReport {
+  /** `absent` — no spool file yet (no gateway has run), not a failure. */
+  status: 'absent' | 'ok' | 'failed';
+  error?: string;
+  counts?: {
+    received: number;
+    processing: number;
+    done: number;
+    dead: number;
+    interrupted: number;
+  };
+  /** Age of the oldest owed (`received`) row, ms. */
+  oldestReceivedAgeMs?: number;
+  /** `received` rows for a botKey the config no longer names. `null` when the
+   *  configured bots could not be determined. */
+  orphaned?: Array<{ id: string; platform: string; botKey: string; chatId: string }> | null;
+  dead?: Array<{
+    id: string;
+    platform: string;
+    chatId: string;
+    attempts: number;
+    lastError: string | null;
+  }>;
+  /** Cut after a tool had started, so never replayed (plan openclaw-9.5-adoption
+   *  D5): waiting on the user's `retry`, or an operator's replay/discard. */
+  interrupted?: Array<{
+    id: string;
+    platform: string;
+    chatId: string;
+    lastError: string | null;
+  }>;
+}
+
+/** The botKeys a gateway started from `config` would serve — the same
+ *  derivations `ethos gateway start` uses. Legacy scalars are included. */
+export async function configuredGatewayBotKeys(config: EthosConfig): Promise<string[]> {
+  const { discordBotKey, emailBotKey, whatsAppBotKey } = await import('./gateway');
+  const keys = new Set<string>();
+  for (const b of config.telegram?.bots ?? []) keys.add(deriveBotKey(b));
+  for (const a of config.slack?.apps ?? []) keys.add(deriveBotKey(a));
+  for (const w of config.whatsapp ?? []) keys.add(whatsAppBotKey(w));
+  if (config.telegramToken) keys.add(deriveBotKey({ token: config.telegramToken }));
+  if (config.discordToken) keys.add(discordBotKey(config.discordToken));
+  if (config.emailUser && config.emailImapHost) {
+    keys.add(emailBotKey(config.emailUser, config.emailImapHost));
+  }
+  // The idle single-loop gateway (no platform) files everything under 'default'.
+  keys.add('default');
+  return [...keys];
+}
+
+/**
+ * Open the spool (only if it exists — a doctor run must not create one) and
+ * report counts, the oldest owed row, orphans, dead letters and interrupted rows.
+ *
+ * A raw open plus the package's read helpers, never `SQLiteInboundSpool`,
+ * whose constructor migrates (plan openclaw-9.5-adoption D24). Pinned by
+ * __tests__/diagnostics-never-migrate.test.ts.
+ */
+export async function checkInboundSpool(
+  dataDir: string,
+  botKeys: readonly string[] | null,
+  now = Date.now(),
+): Promise<InboundSpoolReport> {
+  const path = join(dataDir, 'inbound-spool.db');
+  if (!existsSync(path)) return { status: 'absent' };
+  const { default: Database } = await import('@ethosagent/sqlite');
+  const {
+    readSpoolDead,
+    readSpoolInterrupted,
+    readSpoolOldestReceivedAt,
+    readSpoolOrphaned,
+    readSpoolStats,
+  } = await import('@ethosagent/inbound-spool');
+  let db: InstanceType<typeof Database> | undefined;
+  try {
+    db = new Database(path);
+    const oldest = readSpoolOldestReceivedAt(db);
+    return {
+      status: 'ok',
+      counts: readSpoolStats(db),
+      ...(oldest !== null ? { oldestReceivedAgeMs: Math.max(0, now - oldest) } : {}),
+      orphaned:
+        botKeys === null
+          ? null
+          : readSpoolOrphaned(db, botKeys).map((r) => ({
+              id: r.id,
+              platform: r.platform,
+              botKey: r.botKey,
+              chatId: r.chatId,
+            })),
+      dead: readSpoolDead(db, 500).map((r) => ({
+        id: r.id,
+        platform: r.platform,
+        chatId: r.chatId,
+        attempts: r.attempts,
+        lastError: r.lastError ?? null,
+      })),
+      interrupted: readSpoolInterrupted(db, 500).map((r) => ({
+        id: r.id,
+        platform: r.platform,
+        chatId: r.chatId,
+        lastError: r.lastError ?? null,
+      })),
+    };
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    db?.close();
+  }
+}
+
+/** The human lines for the "Inbound spool" block (colour-free; the caller
+ *  prefixes marks). Up to 10 dead rows are listed, then a count. */
+export function describeInboundSpool(report: InboundSpoolReport): string[] {
+  if (report.status === 'absent')
+    return ['–  No inbound spool yet (created by ethos gateway start).'];
+  if (report.status === 'failed') return [`✗  inbound-spool.db failed to open: ${report.error}`];
+  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
+  const lines = [
+    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead · ${n.interrupted} interrupted`,
+  ];
+  if (report.oldestReceivedAgeMs !== undefined) {
+    lines.push(
+      `   oldest owed message: ${Math.round(report.oldestReceivedAgeMs / 60_000)} min old`,
+    );
+  }
+  if (report.orphaned === null) {
+    lines.push('   orphaned rows: unknown (configured bots could not be read)');
+  } else if (report.orphaned && report.orphaned.length > 0) {
+    lines.push(
+      `⚠  ${report.orphaned.length} owed message(s) for a bot no longer configured — re-add the bot to deliver them:`,
+    );
+    for (const o of report.orphaned.slice(0, 10)) {
+      lines.push(`   ${o.id}  ${o.platform}:${o.chatId}  bot ${o.botKey}`);
+    }
+  }
+  const dead = report.dead ?? [];
+  if (dead.length > 0) {
+    lines.push(`⚠  ${dead.length} dead letter(s):`);
+    for (const d of dead.slice(0, 10)) {
+      lines.push(
+        `   ${d.id}  ${d.platform}:${d.chatId}  attempts ${d.attempts}  ${d.lastError ?? ''}`,
+      );
+    }
+    if (dead.length > 10) lines.push(`   … and ${dead.length - 10} more`);
+    lines.push(
+      '   Replay with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
+    );
+  }
+  const interrupted = report.interrupted ?? [];
+  if (interrupted.length > 0) {
+    lines.push(
+      `⚠  ${interrupted.length} interrupted message(s) — cut after an action started, so not replayed; each chat was asked to reply \`retry\`:`,
+    );
+    for (const r of interrupted.slice(0, 10)) {
+      lines.push(`   ${r.id}  ${r.platform}:${r.chatId}  ${r.lastError ?? ''}`);
+    }
+    if (interrupted.length > 10) lines.push(`   … and ${interrupted.length - 10} more`);
+    lines.push(
+      '   Re-run anyway with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
+    );
+  }
+  return lines;
+}
+
+async function inboundSpoolReportFor(config: EthosConfig | null): Promise<InboundSpoolReport> {
+  let botKeys: string[] | null = null;
+  if (config) {
+    try {
+      botKeys = await configuredGatewayBotKeys(config);
+    } catch {
+      botKeys = null;
+    }
+  }
+  return checkInboundSpool(ethosDir(), botKeys);
+}
+
 export interface VaultModeResult {
   path: string;
   present: boolean;
@@ -538,6 +790,69 @@ export function checkSecretsDirMode(dataDir: string): VaultModeResult {
     present: true,
     mode: mode.toString(8).padStart(3, '0'),
     tooOpen: (mode & 0o077) !== 0,
+  };
+}
+
+/**
+ * Linux `statfs(2)` `f_type` magic numbers (linux/magic.h, fs/smb/client) for
+ * the filesystems SQLite's WAL locking is not safe on. virtiofs and Docker
+ * Desktop's gRPC-FUSE both mount through the FUSE superblock and so report
+ * FUSE_SUPER_MAGIC; Docker Desktop on Windows and WSL2's `/mnt/c` are 9p.
+ */
+const UNSAFE_STATE_FS: ReadonlyMap<number, string> = new Map([
+  [0x65735546, 'fuse'],
+  [0x01021997, '9p'],
+  [0x6969, 'nfs'],
+  [0x517b, 'smb'],
+  [0xff534d42, 'cifs'],
+  [0xfe534d42, 'smb2'],
+]);
+
+export interface StateDirFilesystemResult {
+  path: string;
+  /** `unknown` = this platform's statfs gives no filesystem identity to test. */
+  status: 'ok' | 'warn' | 'unknown' | 'absent';
+  /** Name of the unsafe filesystem, set only on `warn`. */
+  fsType?: string;
+  message: string;
+}
+
+/**
+ * Warns when the state directory sits on a FUSE or network filesystem, where
+ * SQLite's locking can corrupt the databases (R4). Only Linux is classified:
+ * Node's `statfs` exposes `f_type` and no filesystem name, and on macOS that
+ * field is `vfc_typenum`, a registration-order number with no stable meaning
+ * (APFS reads 0x1a on one machine and could read otherwise on another). The
+ * case this exists for — a container on Docker Desktop — is Linux inside.
+ */
+export function checkStateDirFilesystem(
+  dataDir: string,
+  deps: { statfs?: (path: string) => StatsFs; platform?: NodeJS.Platform } = {},
+): StateDirFilesystemResult {
+  const statfs = deps.statfs ?? statfsSync;
+  const platform = deps.platform ?? process.platform;
+  let type: number;
+  try {
+    type = statfs(dataDir).type >>> 0;
+  } catch {
+    return { path: dataDir, status: 'absent', message: 'state directory not created yet.' };
+  }
+  if (platform !== 'linux') {
+    return {
+      path: dataDir,
+      status: 'unknown',
+      message: `filesystem type not checked on ${platform} (statfs reports no filesystem name).`,
+    };
+  }
+  const fsType = UNSAFE_STATE_FS.get(type);
+  if (!fsType) {
+    return { path: dataDir, status: 'ok', message: 'state directory is on a local filesystem.' };
+  }
+  return {
+    path: dataDir,
+    status: 'warn',
+    fsType,
+    message: `state directory is on ${fsType} — SQLite locking is unsafe there and the databases can corrupt. Use a Docker named volume or a local disk.`,
   };
 }
 
@@ -752,6 +1067,252 @@ export function providerChainLines(config: EthosConfig): string[] {
   return lines;
 }
 
+/**
+ * The decision layer as `ethos doctor` reports it (plan decision-provider-jev
+ * §7 / D7 / C4; plan decision-provider-personality §8): which provider and
+ * which HOST data is sent to, then — per personality that declares a
+ * `decisions` block — which sites run and why a site runs less than it asked
+ * for. Each personality row is `resolveCharacterSheetDecisions`
+ * (packages/wiring/src/decision-diagnostics.ts), the function the character
+ * sheet renders `## Decisions` from, so doctor and the sheet cannot disagree.
+ *
+ * Personalities with no `decisions` block are not listed. With no
+ * `decisions.provider` and no personality declaring one, the text form prints
+ * nothing (today's behaviour).
+ *
+ * Known limitations, stated rather than implied:
+ * - A global `decisions.sites.*` line is warned about by the config-notice
+ *   warnings doctor prints right below these lines
+ *   (`describeLegacyDecisionSite`, packages/config/src/decisions.ts) — not
+ *   repeated here. `legacySites` in the JSON is read from
+ *   `DecisionsConfig.legacySites`, which `buildDecisionsConfig` only keeps
+ *   when `decisions.provider` is set; without one the notice is the only trace.
+ * - An invalid site mode in a personality's config.yaml (PD12) is NOT
+ *   reported: the personality loader (`buildDecisionsConfig` in
+ *   extensions/personalities/src/index.ts) drops it silently, so the site
+ *   reads as undeclared (`off`) here and on the character sheet.
+ */
+export interface DecisionLayerReport {
+  configured: boolean;
+  provider?: string;
+  /** `new URL(decisions.baseUrl).host` — where request bodies go. */
+  host?: string;
+  model?: string;
+  /** The vault ref the API key is read from, and whether a value is stored there. */
+  apiKeyRef?: string;
+  apiKeyPresent?: boolean;
+  /** One row per personality that declares a `decisions` block, sorted by id. */
+  personalities: DecisionPersonalityReport[];
+  /** Global `decisions.sites.<site>` lines, no longer read (PD5). */
+  legacySites: Array<{ site: string; value: string }>;
+  /** The ⚠ lines, uncoloured, in the order the text form prints them. */
+  warnings: string[];
+}
+
+export interface DecisionPersonalityReport {
+  id: string;
+  /** The personality's `decisions.provider`, verbatim. */
+  provider?: string;
+  /** The operator configured that provider on this machine. */
+  configured: boolean;
+  sites: CharacterSheetDecisionSite[];
+}
+
+/** One site as a doctor row shows it: `injection shadow`, R6's sentence, or `x shadow → off`. */
+function decisionSiteText(s: CharacterSheetDecisionSite): string {
+  if (s.reason === 'threshold-missing') {
+    return `${s.site} ${describeDecisionSiteDowngrade(s.missingThresholds)}`;
+  }
+  if (s.effective !== s.requested) return `${s.site} ${s.requested} → ${s.effective}`;
+  return `${s.site} ${s.requested}`;
+}
+
+export async function checkDecisionLayer(
+  config: EthosConfig | null,
+  secrets: Pick<SecretsResolver, 'get'>,
+  personalities: readonly PersonalityConfig[] = [],
+): Promise<DecisionLayerReport> {
+  const legacySites = Object.entries(config?.decisions?.legacySites ?? {}).map(([site, value]) => ({
+    site,
+    value: String(value),
+  }));
+  const warnings: string[] = [];
+  const rows: DecisionPersonalityReport[] = [];
+  const globalProvider = config?.decisions?.provider;
+  for (const p of [...personalities].sort((a, b) => a.id.localeCompare(b.id))) {
+    const d = await resolveCharacterSheetDecisions(p, config, secrets);
+    if (!d) continue;
+    const sites = [...d.sites];
+    rows.push({
+      id: p.id,
+      ...(d.provider !== undefined ? { provider: d.provider } : {}),
+      configured: d.configured,
+      sites,
+    });
+    const enabled = sites.filter((s) => s.requested !== 'off').map((s) => s.site);
+    if (d.provider !== undefined && !d.configured) {
+      warnings.push(
+        `decisions: ${p.id} names decision model "${d.provider}", but ~/.ethos/config.yaml ` +
+          (globalProvider ? `configures "${globalProvider}"` : 'has no decisions.provider') +
+          ' — its sites run off.',
+      );
+    } else if (d.provider === undefined && enabled.length > 0) {
+      warnings.push(
+        `decisions: ${p.id} enables ${enabled.join(', ')} but names no decisions.provider — ` +
+          'its sites run off. Add decisions.provider to its config.yaml.',
+      );
+    }
+    const approver = sites.find((s) => s.site === 'approver');
+    if (approver?.inertApprovalMode !== undefined) {
+      warnings.push(
+        `decisions: ${p.id} enables the approver site, but approvalMode is ` +
+          `${approver.inertApprovalMode} — the approver runs only under smart.`,
+      );
+    }
+  }
+
+  if (!config?.decisions) {
+    return { configured: false, personalities: rows, legacySites, warnings };
+  }
+  const r = resolveDecisionsConfig(config.decisions);
+  const key = await secrets.get(DECISIONS_API_KEY_REF).catch(() => null);
+  const apiKeyPresent = key !== null && key.trim().length > 0;
+  // plan §7: with no key stored every site runs today's path — say which ref.
+  if (!apiKeyPresent) {
+    warnings.push(
+      `decisions: no key at vault ref ${DECISIONS_API_KEY_REF} — every site runs today's path.`,
+    );
+  }
+  return {
+    configured: true,
+    provider: r.provider,
+    // `buildDecisionsConfig` only keeps a baseUrl `new URL` accepts.
+    host: new URL(r.baseUrl).host,
+    model: r.model,
+    apiKeyRef: DECISIONS_API_KEY_REF,
+    apiKeyPresent,
+    personalities: rows,
+    legacySites,
+    warnings,
+  };
+}
+
+/** The Config-section lines for {@link checkDecisionLayer}; empty when there is nothing to say. */
+export function decisionLayerLines(report: DecisionLayerReport): string[] {
+  if (!report.configured && report.personalities.length === 0) return [];
+  const lines = [
+    report.configured
+      ? `     decisions:   ${report.provider} → ${report.host} · model ${report.model}`
+      : '     decisions:   no decisions.provider in config.yaml',
+  ];
+  const width = Math.max(...report.personalities.map((p) => p.id.length)) + 1;
+  for (const p of report.personalities) {
+    const enabled = p.sites.filter((s) => s.requested !== 'off');
+    const text =
+      enabled.length > 0 ? enabled.map(decisionSiteText).join(' · ') : 'no sites enabled';
+    lines.push(`                  ${`${p.id}:`.padEnd(width)} ${text}`);
+  }
+  for (const w of report.warnings) {
+    const fix = w.startsWith('decisions: no key at vault ref')
+      ? ` ${c.dim}ethos secrets set ${report.apiKeyRef} <value>${c.reset}`
+      : '';
+    lines.push(`  ${c.yellow}⚠${c.reset}  ${w}${fix}`);
+  }
+  return lines;
+}
+
+/**
+ * Docker sandbox readiness: which personalities resolve to the `docker`
+ * posture on this machine, and whether `execution.docker.image` gives them an
+ * image to run in. Without one every exec tool those personalities call
+ * refuses (`MissingDockerImageError`, extensions/execution-docker) — this is
+ * the command whose job is to say so before a turn finds out.
+ *
+ * The posture is `buildExecutionPosture` (packages/wiring), the same resolver
+ * the character sheet prints, fed the image the config owner kept (an
+ * unpinned value was already dropped and reported as a parse warning). A
+ * warning, not a hard failure: a deployment may carry exec-bearing built-ins
+ * it never runs, and doctor's exit code is read by CI.
+ */
+export interface DockerSandboxReport {
+  /** The pinned image, when configured. */
+  image?: string;
+  /** Ids whose posture is `docker`, sorted. */
+  dockerPersonalities: string[];
+  /** The refusal those personalities' exec tools return — set only when there is no image AND at least one docker personality. */
+  missingMessage?: string;
+}
+
+export async function checkDockerSandbox(
+  config: EthosConfig | null,
+  personalities: readonly PersonalityConfig[],
+  containerized?: ContainerizedDetectionInput,
+): Promise<DockerSandboxReport> {
+  const image = config?.execution?.docker?.image;
+  // The same explicit `execution.containerized` signal the compose path and
+  // the character sheet forward, so doctor agrees with where exec runs.
+  const detect: ContainerizedDetectionInput | undefined =
+    config?.execution?.containerized === true
+      ? { ...containerized, containerizedConfig: true }
+      : containerized;
+  const ids: string[] = [];
+  let missingMessage: string | undefined;
+  for (const p of personalities) {
+    let posture: Awaited<ReturnType<typeof buildExecutionPosture>>;
+    try {
+      posture = await buildExecutionPosture({
+        personality: p,
+        substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
+        ...(detect ? { containerized: detect } : {}),
+        sshConfigured: config?.execution?.ssh?.host !== undefined,
+        dockerImage: image,
+      });
+    } catch {
+      // A personality whose mounts cannot be derived is reported by the
+      // character sheet; it costs this row, never the doctor run.
+      continue;
+    }
+    if (posture.backend !== 'docker') continue;
+    ids.push(p.id);
+    missingMessage ??= posture.dockerImageMissing?.message;
+  }
+  ids.sort();
+  return {
+    ...(image ? { image } : {}),
+    dockerPersonalities: ids,
+    ...(missingMessage ? { missingMessage } : {}),
+  };
+}
+
+/** The Config-section lines for {@link checkDockerSandbox}; empty when nothing runs in docker. */
+export function dockerSandboxLines(report: DockerSandboxReport): string[] {
+  if (report.dockerPersonalities.length === 0) return [];
+  const who = report.dockerPersonalities.join(', ');
+  if (report.image) return [`     docker:      ${report.image} ${c.dim}(${who})${c.reset}`];
+  return [
+    `  ${c.yellow}⚠${c.reset}  docker posture, no image configured → exec tools will fail for: ${who}`,
+    `     ${c.dim}${report.missingMessage ?? ''}${c.reset}`,
+  ];
+}
+
+/**
+ * Every personality doctor can see — built-ins plus `~/.ethos/personalities/`
+ * — for the decision rows. Fail-soft: an unloadable registry costs the rows,
+ * never the doctor run (the "Personality data" section reports the directory).
+ */
+async function loadDoctorPersonalities(
+  storage: ReturnType<typeof getStorage>,
+): Promise<PersonalityConfig[]> {
+  try {
+    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+    const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
+    await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+    return reg.list();
+  } catch {
+    return [];
+  }
+}
+
 export async function runDoctor(args: string[] = [], options?: DoctorOptions): Promise<void> {
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
@@ -792,11 +1353,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     }> = [];
 
     for (const row of CORE_SDKS) {
-      const { ok } = await checkSdk(row.module);
+      const { ok } = await checkSdk(row);
       sdks.push({ label: row.label, module: row.module, required: true, loadable: ok });
     }
     for (const row of CHANNEL_SDKS) {
-      const { ok } = await checkSdk(row.module);
+      const { ok } = await checkSdk(row);
       const configured = config ? Boolean(row.configuredWhen?.(config)) : false;
       sdks.push({
         label: row.label,
@@ -820,6 +1381,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     const db = await checkSessionsDb(storage);
     const integrity = await checkDatabaseIntegrity(ethosDir());
     const secretsDir = checkSecretsDirMode(ethosDir());
+    const stateDirFilesystem = checkStateDirFilesystem(ethosDir());
     const skillIssues = checkSkillsDir(ethosDir());
     const teamIssues = checkTeamsDir(ethosDir());
     const gateway = await checkGatewayHealth(storage);
@@ -869,7 +1431,9 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       awsSecrets: awsSecretsStatus,
       db: { ok: db.ok, absent: db.absent, ...(db.error ? { error: db.error } : {}) },
       storeIntegrity: integrity,
+      inboundSpool: await inboundSpoolReportFor(resolvedConfig ?? config),
       secretsDir,
+      stateDirFilesystem,
       skillIssues,
       teamIssues,
       gateway,
@@ -879,6 +1443,12 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
         ...(c.reason ? { reason: c.reason } : {}),
         ...(c.label ? { label: c.label } : {}),
       })),
+      decisions: await checkDecisionLayer(
+        config,
+        await getSecretsResolver(),
+        await loadDoctorPersonalities(storage),
+      ),
+      dockerSandbox: await checkDockerSandbox(config, await loadDoctorPersonalities(storage)),
       callCapture: {
         configured: callCapture.configured,
         ok: callCapture.ok,
@@ -925,13 +1495,31 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${cfgPath}`);
+    // B3 — the same Resolved block `ethos status` prints, at the top of the
+    // Config section: what this config ACTUALLY selects, and from which key.
+    const resolved = await resolveEffective(config);
+    for (const line of formatResolvedLines(resolved, {
+      stateDirFromEnv: Boolean(process.env.ETHOS_STATE_DIR),
+    })) {
+      console.log(`     ${line}`);
+    }
     console.log(`     provider:    ${config.provider ?? '(not set)'}`);
-    console.log(`     model:       ${config.model ?? '(not set)'}`);
-    console.log(`     personality: ${config.personality ?? '(default)'}`);
     // `ethos gateway` and `ethos listen` surface these at boot; an operator
     // running `ethos serve` and driving the web UI would otherwise never see
     // them, and this is the command whose job is "what is wrong with my config".
     for (const line of providerChainLines(config)) console.log(line);
+    for (const line of decisionLayerLines(
+      await checkDecisionLayer(
+        config,
+        await getSecretsResolver(),
+        await loadDoctorPersonalities(storage),
+      ),
+    ))
+      console.log(line);
+    for (const line of dockerSandboxLines(
+      await checkDockerSandbox(config, await loadDoctorPersonalities(storage)),
+    ))
+      console.log(line);
     const notices = configParseNotices(config);
     for (const err of notices.errors) console.log(`  ${c.red}✗${c.reset}  ${err}`);
     for (const warn of notices.warnings) console.log(`  ${c.yellow}⚠${c.reset}  ${warn}`);
@@ -1015,7 +1603,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   console.log(`${c.bold}Core SDKs${c.reset}`);
   const coreResults: RowResult[] = [];
   for (const row of CORE_SDKS) {
-    const { ok } = await checkSdk(row.module);
+    const { ok } = await checkSdk(row);
     coreResults.push({ row, ok, inUse: true });
     printRow(coreResults.at(-1) as RowResult);
   }
@@ -1030,7 +1618,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   );
   const channelResults: RowResult[] = [];
   for (const row of CHANNEL_SDKS) {
-    const { ok } = await checkSdk(row.module);
+    const { ok } = await checkSdk(row);
     const inUse = config ? Boolean(row.configuredWhen?.(config)) : false;
     channelResults.push({ row, ok, inUse });
     printRow(channelResults.at(-1) as RowResult);
@@ -1144,6 +1732,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     console.log(`  ${c.green}✓${c.reset}  sessions.db opens and queries cleanly`);
   } else {
     console.log(`  ${c.red}✗${c.reset}  sessions.db failed to open: ${c.dim}${db.error}${c.reset}`);
+    // N2 — pair the failure with the next step (same phrasing as the Store
+    // integrity section; `ethos import` is the restore command that exists).
+    console.log(
+      `      ${c.dim}Restore from a backup: ${c.reset}${c.bold}ethos import <archive>${c.reset}`,
+    );
   }
   console.log('');
 
@@ -1172,6 +1765,20 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   console.log('');
 
   // -------------------------------------------------------------------------
+  // Inbound spool (plan reach-and-containment §2.6)
+  // -------------------------------------------------------------------------
+
+  console.log(`${c.bold}Inbound spool${c.reset}`);
+  {
+    const secrets = await getSecretsResolver();
+    const spoolConfig = await readConfig(getStorage(), secrets).catch(() => null);
+    for (const line of describeInboundSpool(await inboundSpoolReportFor(spoolConfig ?? null))) {
+      console.log(`  ${line}`);
+    }
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
   // Secrets vault, skills and teams (plan agent-state-backup §4)
   // -------------------------------------------------------------------------
 
@@ -1185,6 +1792,14 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${describeSecretsDirMode(secretsDir)}`);
+  }
+  const stateFs = checkStateDirFilesystem(ethosDir());
+  if (stateFs.status === 'warn') {
+    console.log(`  ${c.yellow}⚠${c.reset}  ${stateFs.message}`);
+  } else if (stateFs.status === 'ok') {
+    console.log(`  ${c.green}✓${c.reset}  ${stateFs.message}`);
+  } else {
+    console.log(`  ${c.dim}–  ${stateFs.message}${c.reset}`);
   }
   const dirIssues = [...checkSkillsDir(ethosDir()), ...checkTeamsDir(ethosDir())];
   if (dirIssues.length === 0) {
@@ -1331,6 +1946,17 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 // --fix: auto-repair common issues
 // ---------------------------------------------------------------------------
 
+/**
+ * B7 — the provider suggestion for `doctor --fix`'s unknown-provider repair.
+ * Damerau-Levenshtein against the catalog ids (the same `nearestKey` helper
+ * as B2's unknown-config-key suggestion), replacing the first-letter guess
+ * that offered 'azure' for 'antropic'. Falls back to 'anthropic' when nothing
+ * is within two edits. Exported for `__tests__/doctor-funnel.test.ts`.
+ */
+export function suggestProvider(input: string, knownIds: readonly string[]): string {
+  return nearestKey(input, knownIds) ?? 'anthropic';
+}
+
 async function runDoctorFix(): Promise<void> {
   // chmod stays raw node:fs — Storage has no permissions API (keys.json /
   // config.yaml owner-restriction is the whole point of this repair step).
@@ -1409,7 +2035,7 @@ async function runDoctorFix(): Promise<void> {
     const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
     const knownIds = PROVIDER_CATALOG.map((p) => p.id);
     if (!knownIds.includes(config.provider)) {
-      const closest = knownIds.find((id) => id.startsWith(config.provider[0] ?? '')) ?? 'anthropic';
+      const closest = suggestProvider(config.provider, knownIds);
       console.log(
         `  ${c.yellow}→ Action needed:${c.reset}  Unknown provider '${config.provider}'. Did you mean '${closest}'?`,
       );
@@ -1536,7 +2162,11 @@ export async function runFunnelReport(jsonMode: boolean): Promise<void> {
     ? { reset: '', dim: '', bold: '', green: '' }
     : { reset: c.reset, dim: c.dim, bold: c.bold, green: c.green };
 
-  const state = await getFunnelTracker().readState();
+  // `readFunnelState`, not `getFunnelTracker().readState()`: the tracker's
+  // constructor opens the observability store, whose constructor migrates
+  // observability.db (plan openclaw-9.5-adoption D24).
+  const { readFunnelState } = await import('@ethosagent/wiring');
+  const state = await readFunnelState(getStorage(), ethosDir());
 
   if (jsonMode) {
     process.stdout.write(`${JSON.stringify(state ?? {})}\n`);

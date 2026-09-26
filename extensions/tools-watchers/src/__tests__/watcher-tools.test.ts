@@ -8,6 +8,7 @@ const ctx: ToolContext = {
   sessionId: 's',
   sessionKey: 'cli:test',
   platform: 'cli',
+  personalityId: 'ops',
   workingDir: '/tmp',
   currentTurn: 1,
   messageCount: 1,

@@ -16,7 +16,7 @@ Platform adapters (Slack, Telegram, Discord, etc.) all emit the same `InboundMes
 
 **Lane derivation.** Every inbound message is keyed `${platform}:${chatId}` (e.g. `telegram:-1001234`, `slack:C9XYZ`). Each lane gets its own `SessionLane`. Turns within a lane execute strictly in order; different lanes run concurrently. The session key passed into `AgentLoop` defaults to the lane key but can be replaced with `${laneKey}:${Date.now()}` after `/new` to start a fresh history (`src/index.ts:169`).
 
-**Dedup.** Before any work, `isDuplicate(message)` checks a bounded `Set<string>` of recent `(platform, chatId, messageId)` triples. The window defaults to 1024 and is FIFO-evicted (`src/index.ts:130`). Adapters that don't populate `messageId` skip dedup — there's no key. This protects against billing duplication from polling reconnects and webhook retries (OpenClaw #71761).
+**Dedup.** Before any work, `acceptInbound(message)` checks a bounded `Set<string>` of recent `(platform, chatId, messageId)` triples. The window defaults to 1024 and is FIFO-evicted (`src/index.ts:130`). Adapters that don't populate `messageId` skip dedup — there's no key. This protects against billing duplication from polling reconnects and webhook retries (OpenClaw #71761).
 
 **Slash commands.** Handled by Gateway *before* the `AgentLoop` sees the text. The set is fixed: `/new` and `/reset` (fork session, clear usage, reset personality), `/stop` (abort current turn + drop queued), `/usage` (per-lane token / cost totals), `/personality` (show / list / switch — switching also forks a new session so identity takes effect immediately, `src/index.ts:215`), `/help`. Recognition is case-insensitive on the first whitespace-separated token (`src/index.ts:158`).
 
@@ -39,7 +39,7 @@ Platform adapters (Slack, Telegram, Discord, etc.) all emit the same `InboundMes
 - `/new` and `/personality <id>` both fork a session by writing `${laneKey}:${Date.now()}`. If two `/new` commands arrive in the same millisecond, they will collide. In practice impossible, but worth knowing.
 - The reply is always sent as a single `parseMode: 'markdown'` message. Adapters that can't render markdown should normalise on the way out.
 - Send failures inside the turn loop are silently swallowed. There is intentionally no retry — the adapter owns retry semantics for its platform.
-- The slash command list is hard-coded (`PLATFORM_COMMANDS`, `src/index.ts:86`). Adding a command means editing this file, not registering elsewhere.
+- The slash command list is hard-coded (`PLATFORM_COMMANDS` in `src/index.ts`). Adding a command means three edits: the entry in `SLASH_COMMANDS` (`packages/surface-kit/src/slash-commands.ts`) with `'gateway'` in its `surfaces`, the `PLATFORM_COMMANDS` key, and its branch in `Gateway.handleMessage`. `src/__tests__/slash-registry-drift.test.ts` fails when the first two disagree.
 - `sessionLane.length` includes the in-flight task. The "currently processing" task counts as 1.
 - Lanes are never garbage collected — once a chat has produced a message, its `SessionLane` and entries in `sessionKeys` / `personalityIds` / `usageStore` live for the process lifetime. Fine for typical bot deployments; a concern for very long-running multi-tenant gateways.
 

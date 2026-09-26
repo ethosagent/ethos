@@ -82,6 +82,57 @@ describe('GoalRunner planning phase', () => {
     expect(attemptFirstMessage).toContain('STEP 1: investigate. STEP 2: act.');
   });
 
+  // g_a2d7260303f34059: the plan said "parse the CSV, batch 10 symbols" and the
+  // retry never read the CSV — the retry's first message carried the gaps but
+  // not the plan. Every attempt's first message now carries it, and so does
+  // the system-prompt injector (before_prompt_build).
+  it('(a1) carries the plan into every attempt: retry first message + system prompt', async () => {
+    const goal = store.create({
+      userId: 'user-1',
+      personalityId: 'tester',
+      origin: 'cli',
+      title: 'Test goal',
+      goalText: 'Load the CSV',
+      acceptanceCriteria: {
+        checks: [{ id: 'c1', description: 'All CSV symbols loaded' }],
+        rubric: [],
+        threshold: 0.8,
+      },
+      maxAttempts: 2,
+    });
+    const plan = 'STEP 1: parse Nse_All_Stocks.csv. STEP 2: batch 10 symbols.';
+    const firstMessages: string[] = [];
+    const systemPrepends: string[] = [];
+    const hooks = new DefaultHookRegistry();
+    const runner = new GoalRunner({
+      store,
+      hooks,
+      judgeCheck: async () => ({ pass: false, evidence: 'no symbol count shown' }),
+      runPlan: fakeGen([{ type: 'done', text: plan, turnCount: 1 }]),
+      runAttempt: async function* (sk: string, firstMessage: string): AsyncGenerator<AgentEvent> {
+        firstMessages.push(firstMessage);
+        const built = await hooks.fireModifying('before_prompt_build', {
+          sessionId: sk,
+          personalityId: 'tester',
+          platform: 'cli',
+        } as never);
+        systemPrepends.push(String((built as { prependSystem?: string }).prependSystem ?? ''));
+        yield { type: 'done', text: 'started', turnCount: 1 };
+      },
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'exhausted');
+
+    expect(firstMessages).toHaveLength(2);
+    for (const message of firstMessages) expect(message).toContain(plan);
+    for (const prepend of systemPrepends) expect(prepend).toContain(plan);
+    // The retry prompt carries the previous verdict's gaps beside the plan.
+    expect(firstMessages[1]).toContain('## Gap Report');
+    expect(firstMessages[1]).toContain('FAIL All CSV symbols loaded');
+    expect(firstMessages[1]).toContain('## Plan');
+  });
+
   // A `returnDirect` tool's answer reaches a turn only as `done.text`, after any
   // preamble the model streamed: the plan and the attempt output are the whole
   // reply (`answerSuffix`, @ethosagent/types).

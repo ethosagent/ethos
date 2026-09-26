@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import {
@@ -406,20 +406,32 @@ export async function exchangeCode(
 // Refresh flow
 // ---------------------------------------------------------------------------
 
-export async function refreshToken(
-  serverName: string,
+/** What one token-endpoint refresh returned, before anything is stored. */
+interface RefreshedTokens {
+  access_token: string;
+  refresh_token?: string;
+  expires_at?: string;
+}
+
+/** Refreshes in flight or just finished, keyed by sha256(token_endpoint + '\n' + refresh token).
+ *  Process-wide, so every McpManager and every resolver instance in this process
+ *  shares one refresh per grant. A rejection clears its entry at once; a success
+ *  stays for REFRESH_REUSE_WINDOW_MS (D12). Pinned by __tests__/oauth.test.ts
+ *  "coalesced refresh". Not cross-process (D14): the gateway, `ethos serve` and
+ *  `ethos mcp …` each hold their own map, so two processes can still spend one
+ *  refresh token twice. */
+const refreshFlights = new Map<string, Promise<RefreshedTokens>>();
+const REFRESH_REUSE_WINDOW_MS = 30_000;
+
+function refreshFlightKey(tokenEndpoint: string, refreshTokenValue: string): string {
+  return createHash('sha256').update(`${tokenEndpoint}\n${refreshTokenValue}`).digest('hex');
+}
+
+/** One POST to the token endpoint. Stores nothing — every caller stores into its own resolver. */
+async function postRefresh(
   config: OAuthConfig,
-  secrets: SecretsResolver,
-): Promise<string> {
-  // SSRF gate: validate token endpoint before sending credentials
-  validateSsrfUrl(config.token_endpoint);
-
-  // Single read — no exists() check first (TOCTOU-safe)
-  const currentRefreshToken = await secrets.get(refreshTokenRef(serverName));
-  if (!currentRefreshToken) {
-    throw new Error(`No refresh token available for MCP server '${serverName}'`);
-  }
-
+  currentRefreshToken: string,
+): Promise<RefreshedTokens> {
   const { body, headers: refreshHeaders } = buildRefreshParams({
     refreshToken: currentRefreshToken,
     clientId: config.client_id,
@@ -448,19 +460,71 @@ export async function refreshToken(
     expires_in?: number;
   };
 
-  // Atomic store — single set call per secret (TOCTOU-safe)
-  await secrets.set(accessTokenRef(serverName), data.access_token);
-  if (data.refresh_token) {
-    await secrets.set(refreshTokenRef(serverName), data.refresh_token);
-  }
+  const tokens: RefreshedTokens = { access_token: data.access_token };
+  if (data.refresh_token) tokens.refresh_token = data.refresh_token;
   if (data.expires_in) {
-    await secrets.set(
-      expiresAtRef(serverName),
-      new Date(Date.now() + data.expires_in * 1000).toISOString(),
-    );
+    tokens.expires_at = new Date(Date.now() + data.expires_in * 1000).toISOString();
+  }
+  return tokens;
+}
+
+export async function refreshToken(
+  serverName: string,
+  config: OAuthConfig,
+  secrets: SecretsResolver,
+): Promise<string> {
+  // SSRF gate: validate token endpoint before sending credentials
+  validateSsrfUrl(config.token_endpoint);
+
+  // Single read — no exists() check first (TOCTOU-safe)
+  const currentRefreshToken = await secrets.get(refreshTokenRef(serverName));
+  if (!currentRefreshToken) {
+    throw new Error(`No refresh token available for MCP server '${serverName}'`);
   }
 
-  return data.access_token;
+  // Coalesce on the grant being spent, never on serverName: two personalities
+  // hold different refresh tokens under one server name (D11).
+  const key = refreshFlightKey(config.token_endpoint, currentRefreshToken);
+  let flight = refreshFlights.get(key);
+  const isLeader = flight === undefined;
+  if (!flight) {
+    // No await between get and set, so concurrent callers cannot both lead.
+    const started = postRefresh(config, currentRefreshToken);
+    refreshFlights.set(key, started);
+    started.then(
+      () => {
+        setTimeout(() => {
+          if (refreshFlights.get(key) === started) refreshFlights.delete(key);
+        }, REFRESH_REUSE_WINDOW_MS).unref();
+      },
+      () => {
+        if (refreshFlights.get(key) === started) refreshFlights.delete(key);
+      },
+    );
+    flight = started;
+  }
+  const tokens = await flight;
+
+  // D13: the leader always stores. A joiner stores only while its own vault
+  // still holds the token it presented — on shared storage the leader has
+  // already moved it (a joiner that re-reads before the leader's write lands
+  // writes the same values, which is harmless); on separate storage holding a
+  // copied grant it must not keep a spent refresh token.
+  if (!isLeader) {
+    const stillHeld = await secrets.get(refreshTokenRef(serverName));
+    if (stillHeld !== currentRefreshToken) return tokens.access_token;
+  }
+
+  // Atomic store — single set call per secret (TOCTOU-safe)
+  await secrets.set(accessTokenRef(serverName), tokens.access_token);
+  if (tokens.refresh_token) {
+    await secrets.set(refreshTokenRef(serverName), tokens.refresh_token);
+  }
+  if (tokens.expires_at) {
+    await secrets.set(expiresAtRef(serverName), tokens.expires_at);
+  }
+
+  return tokens.access_token;
 }
 
 // ---------------------------------------------------------------------------

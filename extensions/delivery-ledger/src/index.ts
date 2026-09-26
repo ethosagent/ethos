@@ -15,7 +15,8 @@ import Database, { migrate } from '@ethosagent/sqlite';
 //   1. `record()` writes a `pending` row BEFORE the platform call.
 //   2. `markDelivered()` flips it to `delivered` only once the adapter
 //      CONFIRMED (`DeliveryResult.ok === true`).
-//   3. On boot the gateway sweeps `pending` rows it owns and redelivers them.
+//   3. On boot, and then on a timer (`Gateway.startDeliverySweep`), the gateway
+//      sweeps `pending` rows it owns and redelivers them.
 //
 // "Confirmed" deliberately does NOT mean "the promise resolved". Every real
 // adapter catches platform failures and returns `{ ok: false }` rather than
@@ -34,7 +35,8 @@ import Database, { migrate } from '@ethosagent/sqlite';
  *   redelivery sweep by whichever process owns its `botKey`.
  * - `redelivering` — atomically claimed by exactly one sweeping process.
  * - `delivered` — the adapter confirmed. Prunable once past retention.
- * - `abandoned` — given up on by its owner after `abandonStale`. A terminal
+ * - `abandoned` — given up on by its owner, after `abandonStale` or (v6) by
+ *   `abandon` on a permanent refusal or the redelivery attempt cap. A terminal
  *   state that is NOT delivery: it records that the reply was owed and never
  *   arrived, which is a different fact from `delivered` and worth keeping
  *   distinct until retention removes both.
@@ -88,6 +90,27 @@ export interface DeliveryObligation {
   /** The `VoiceAudioFormat` the artifact holds, so redelivery re-sends it
    *  without re-deriving the format from the bytes. */
   mediaFormat?: string;
+  /**
+   * The inbound-spool row whose turn produced this reply (schema v4), or
+   * `undefined` for a send no spooled message owes — a wake notice, a
+   * publication, anything written before v4. See {@link DeliveryLedger.hasObligationFor}.
+   */
+  inboundRef?: string;
+  /**
+   * Failed REDELIVERIES so far (schema v6). The live send that wrote the row
+   * is not counted — only sweeps that claimed it and were refused, recorded by
+   * {@link DeliveryLedger.deferRetry}. `0` for every pre-v6 row.
+   */
+  attempts: number;
+  /**
+   * Earliest time a sweep may try this row again (schema v6), or `undefined`
+   * for a row never refused by a sweep — due at once. The gateway's sweep
+   * skips a row before this time (`Gateway.sweepDeliveriesOnce`).
+   */
+  nextAttemptAt?: number;
+  /** Why an `abandoned` row was given up on (schema v6), when the caller said.
+   *  `undefined` for a row `abandonStale` took, and for every pre-v6 row. */
+  abandonReason?: string;
 }
 
 export interface RecordDeliveryInput {
@@ -103,6 +126,9 @@ export interface RecordDeliveryInput {
   kind?: DeliveryKind;
   artifactRef?: string;
   mediaFormat?: string;
+  /** Spool id of the inbound message this reply answers. Empty string is
+   *  normalized to "none", the same way `threadId` is. */
+  inboundRef?: string;
 }
 
 /** Row counts per {@link DeliveryStatus}. */
@@ -165,6 +191,20 @@ export interface DeliveryLedger {
    */
   findBySession(sessionId: string): Promise<DeliveryObligation[]>;
   /**
+   * Has ANY obligation — in any status — been recorded for the reply to the
+   * spooled inbound message `inboundRef`?
+   *
+   * The inbound spool's double-reply guard (plan reach-and-containment D2-6).
+   * A turn that crashed after its reply was recorded but before its spool row
+   * was marked `done` would, on replay, answer twice. The gateway asks this
+   * before replaying a row; `true` means the outbound half already owns the
+   * reply (a `pending` row the sweep will redeliver, or one already
+   * `delivered`), so the turn is skipped. Status is not filtered for the same
+   * reason `findBySession`'s is not: every status is evidence the reply was
+   * produced.
+   */
+  hasObligationFor(inboundRef: string): Promise<boolean>;
+  /**
    * Give up on obligations older than `cutoffMs` that this process OWNS, and
    * return them so the caller can release whatever they hold (a voice
    * obligation's artifact).
@@ -180,6 +220,39 @@ export interface DeliveryLedger {
    * backstop.
    */
   abandonStale(botKeys: readonly string[], cutoffMs: number): Promise<DeliveryObligation[]>;
+  /**
+   * Hand a row THIS caller claimed back to `pending` after a refused
+   * redelivery: `attempts` goes up by one and the row is not due again until
+   * `nextAttemptAt`. Returns the new attempt count, or `null` when the row was
+   * not `redelivering` (nothing changed). The schedule is the caller's policy
+   * (`Gateway.sweepDeliveriesOnce`); the ledger only stores it.
+   */
+  deferRetry(id: string, nextAttemptAt: number): Promise<number | null>;
+  /**
+   * Give up on one row THIS caller claimed — a permanent platform refusal or
+   * the attempt cap — recording `reason` and counting the refused attempt
+   * that decided it. Returns the abandoned row (so the
+   * caller can release a voice artifact), or `null` when the row was not
+   * `redelivering`.
+   */
+  abandon(id: string, reason: string): Promise<DeliveryObligation | null>;
+  /**
+   * Return every `redelivering` row claimed before `cutoffMs` to `pending`.
+   * Returns rows reclaimed.
+   *
+   * A claim is held only for the length of one adapter call, so a claim older
+   * than a minutes-scale cutoff belongs to a process that died mid-redelivery.
+   * Without this the row sat claimed until {@link abandonStale}'s days-long
+   * cutoff and was then abandoned — a reply lost instead of retried (plan
+   * openclaw-2026.9.6-gaps R11). The gateway calls it at the top of every
+   * sweep (`Gateway.sweepPendingDeliveries`).
+   *
+   * Not ownership-filtered: a reclaimed row goes back to `pending`, where only
+   * a process that owns its `botKey` will list and claim it again. Keyed on
+   * `claimed_at` (schema v5), never `created_at` — an old obligation claimed a
+   * second ago is a live send.
+   */
+  reclaimStaleClaims(cutoffMs: number): Promise<number>;
   /**
    * Delete terminal rows — `delivered` and `abandoned` — created before
    * `cutoffMs`. Returns rows removed.
@@ -230,7 +303,21 @@ const SCHEMA = `
     -- read instead, which is the truth about every pre-v3 row.
     kind         TEXT,
     artifact_ref TEXT,
-    media_format TEXT
+    media_format TEXT,
+    -- v4, appended last for the same column-order reason. NULL for every
+    -- reply no spooled inbound message owes, and for every pre-v4 row.
+    inbound_ref  TEXT,
+    -- v5, appended last for the same reason. When the row was claimed (moved
+    -- to 'redelivering'); set by claim(), cleared by release() and
+    -- reclaimStaleClaims(), which reads it on 'redelivering' rows only to tell
+    -- a stranded claim from a live one.
+    claimed_at   INTEGER,
+    -- v6, appended last for the same reason. Failed redeliveries so far, when
+    -- the next one is due (NULL = due now), and why an abandoned row was given
+    -- up on. The schedule itself is the gateway's (sweepDeliveriesOnce).
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER,
+    abandon_reason  TEXT
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS delivery_status_bot ON delivery_obligations(status, bot_key);
@@ -268,7 +355,39 @@ const MIGRATIONS = {
     db.exec('ALTER TABLE delivery_obligations ADD COLUMN artifact_ref TEXT');
     db.exec('ALTER TABLE delivery_obligations ADD COLUMN media_format TEXT');
   },
+  // v3 → v4: tie a reply to the spooled inbound message it answers, so a
+  // replayed turn can tell that its reply already exists (hasObligationFor).
+  4: (db: Database.Database): void => {
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN inbound_ref TEXT');
+  },
+  // v4 → v5: record when a row was claimed, so a claim stranded by a dead
+  // process can be returned to `pending` (reclaimStaleClaims). A claim that
+  // already exists has no known time; it is stamped NOW rather than left NULL
+  // or treated as ancient, so it is reclaimed only after a full cutoff — an
+  // older process that took it may still be mid-send.
+  5: (db: Database.Database): void => {
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN claimed_at INTEGER');
+    db.prepare(`UPDATE delivery_obligations SET claimed_at = ? WHERE status = 'redelivering'`).run(
+      Date.now(),
+    );
+  },
+  // v5 → v6: redelivery backoff. Every existing row starts at 0 attempts and
+  // due now — the pre-v6 sweep kept no count, so none is invented.
+  6: (db: Database.Database): void => {
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN next_attempt_at INTEGER');
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN abandon_reason TEXT');
+  },
 };
+
+/**
+ * `hasObligationFor`'s lookup. NOT in the baseline: `migrate()` execs the
+ * baseline on every open BEFORE the migration chain, and on a v3 file the
+ * column does not exist yet, so a baseline index on it would fail the open.
+ * Created after `migrate()` instead, where the column exists on every path.
+ */
+const POST_MIGRATION_INDEXES =
+  'CREATE INDEX IF NOT EXISTS delivery_inbound_ref ON delivery_obligations(inbound_ref)';
 
 interface ObligationRow {
   id: string;
@@ -284,6 +403,10 @@ interface ObligationRow {
   kind: string | null;
   artifact_ref: string | null;
   media_format: string | null;
+  inbound_ref: string | null;
+  attempts: number;
+  next_attempt_at: number | null;
+  abandon_reason: string | null;
 }
 
 function rowToObligation(r: ObligationRow): DeliveryObligation {
@@ -303,6 +426,10 @@ function rowToObligation(r: ObligationRow): DeliveryObligation {
     kind: (r.kind ?? 'text') as DeliveryKind,
     artifactRef: r.artifact_ref ?? undefined,
     mediaFormat: r.media_format ?? undefined,
+    inboundRef: r.inbound_ref ?? undefined,
+    attempts: r.attempts,
+    nextAttemptAt: r.next_attempt_at ?? undefined,
+    abandonReason: r.abandon_reason ?? undefined,
   };
 }
 
@@ -348,10 +475,11 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
 
     migrate(this.db, {
       name: 'delivery-ledger',
-      targetVersion: 3,
+      targetVersion: 6,
       baseline: SCHEMA,
       migrations: MIGRATIONS,
     });
+    this.db.exec(POST_MIGRATION_INDEXES);
   }
 
   async record(input: RecordDeliveryInput): Promise<string> {
@@ -361,8 +489,8 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
       .prepare(
         `INSERT INTO delivery_obligations
          (id, bot_key, platform, chat_id, session_id, content_hash, content, created_at, status,
-          thread_id, kind, artifact_ref, media_format)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+          thread_id, kind, artifact_ref, media_format, inbound_ref)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -381,6 +509,7 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
         // is an absent one, and a sweep that tried to load it would fail late.
         input.artifactRef ? input.artifactRef : null,
         input.mediaFormat ? input.mediaFormat : null,
+        input.inboundRef ? input.inboundRef : null,
       );
     return id;
   }
@@ -410,10 +539,10 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
     const claim = this.db.transaction((): boolean => {
       const result = this.db
         .prepare(
-          `UPDATE delivery_obligations SET status = 'redelivering'
+          `UPDATE delivery_obligations SET status = 'redelivering', claimed_at = ?
            WHERE id = ? AND status = 'pending'`,
         )
-        .run(id);
+        .run(Date.now(), id);
       return result.changes === 1;
     });
     return claim();
@@ -428,10 +557,23 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
     // guard keeps a release from resurrecting an already-delivered row.
     this.db
       .prepare(
-        `UPDATE delivery_obligations SET status = 'pending'
+        `UPDATE delivery_obligations SET status = 'pending', claimed_at = NULL
          WHERE id = ? AND status = 'redelivering'`,
       )
       .run(id);
+  }
+
+  async reclaimStaleClaims(cutoffMs: number): Promise<number> {
+    // `claimed_at IS NOT NULL` is deliberate: a NULL on a claimed row can only
+    // come from a pre-v5 process still running on a migrated file (the v5 step
+    // stamps every claim it finds), and that process may be mid-send. Its row
+    // keeps the `abandonStale` backstop it always had.
+    return this.db
+      .prepare(
+        `UPDATE delivery_obligations SET status = 'pending', claimed_at = NULL
+         WHERE status = 'redelivering' AND claimed_at IS NOT NULL AND claimed_at < ?`,
+      )
+      .run(cutoffMs).changes;
   }
 
   async get(id: string): Promise<DeliveryObligation | null> {
@@ -454,6 +596,14 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
       )
       .all(sessionId, MAX_RECENT) as ObligationRow[];
     return rows.map(rowToObligation);
+  }
+
+  async hasObligationFor(inboundRef: string): Promise<boolean> {
+    if (!inboundRef) return false;
+    const row = this.db
+      .prepare('SELECT 1 AS hit FROM delivery_obligations WHERE inbound_ref = ? LIMIT 1')
+      .get(inboundRef) as { hit: number } | undefined;
+    return row !== undefined;
   }
 
   async abandonStale(botKeys: readonly string[], cutoffMs: number): Promise<DeliveryObligation[]> {
@@ -489,6 +639,31 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
     return abandon();
   }
 
+  async deferRetry(id: string, nextAttemptAt: number): Promise<number | null> {
+    const row = this.db
+      .prepare(
+        `UPDATE delivery_obligations
+         SET status = 'pending', claimed_at = NULL, attempts = attempts + 1, next_attempt_at = ?
+         WHERE id = ? AND status = 'redelivering'
+         RETURNING attempts`,
+      )
+      .get(nextAttemptAt, id) as { attempts: number } | undefined;
+    return row ? row.attempts : null;
+  }
+
+  async abandon(id: string, reason: string): Promise<DeliveryObligation | null> {
+    const row = this.db
+      .prepare(
+        `UPDATE delivery_obligations
+         SET status = 'abandoned', claimed_at = NULL, attempts = attempts + 1,
+             abandon_reason = ?
+         WHERE id = ? AND status = 'redelivering'
+         RETURNING *`,
+      )
+      .get(reason, id) as ObligationRow | undefined;
+    return row ? rowToObligation(row) : null;
+  }
+
   async pruneDelivered(cutoffMs: number): Promise<number> {
     // Terminal rows only: `delivered` and `abandoned`. A `pending` row is the
     // whole point of the ledger and is never age-pruned — an aged pending row
@@ -506,26 +681,7 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
   }
 
   async stats(): Promise<DeliveryStats> {
-    // One GROUP BY over (status, kind) rather than eight COUNT(*) round trips.
-    // `kind IS NULL` is a pre-v3 row, which was a text reply — the same
-    // normalization `rowToObligation` applies.
-    const rows = this.db
-      .prepare(
-        `SELECT status, COALESCE(kind, 'text') AS kind, COUNT(*) AS n
-         FROM delivery_obligations
-         GROUP BY status, COALESCE(kind, 'text')`,
-      )
-      .all() as Array<{ status: string; kind: string; n: number }>;
-    const out: DeliveryStats = {
-      ...emptyCounts(),
-      voice: emptyCounts(),
-    };
-    for (const row of rows) {
-      if (!isDeliveryStatus(row.status)) continue;
-      out[row.status] += row.n;
-      if (row.kind === 'voice') out.voice[row.status] += row.n;
-    }
-    return out;
+    return readDeliveryStats(this.db);
   }
 
   async listRecent(limit: number): Promise<DeliveryObligation[]> {
@@ -544,4 +700,37 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * Ledger counts over an already-open handle, for surfaces that must not
+ * migrate: `ethos gateway status` opens `delivery-ledger.db` raw with
+ * `@ethosagent/sqlite` and calls this, because the class constructor runs
+ * `migrate()` and a newer binary migrating the file ahead of its gateway is
+ * what makes `ethos upgrade`'s rollback unsafe (plan openclaw-9.5-adoption
+ * D24). `SQLiteDeliveryLedger.stats` delegates here, so there is one copy of
+ * the query. Pinned by
+ * apps/ethos/src/commands/__tests__/diagnostics-never-migrate.test.ts.
+ */
+export function readDeliveryStats(db: Database.Database): DeliveryStats {
+  // One GROUP BY over (status, kind) rather than eight COUNT(*) round trips.
+  // `kind IS NULL` is a pre-v3 row, which was a text reply — the same
+  // normalization `rowToObligation` applies.
+  const rows = db
+    .prepare(
+      `SELECT status, COALESCE(kind, 'text') AS kind, COUNT(*) AS n
+       FROM delivery_obligations
+       GROUP BY status, COALESCE(kind, 'text')`,
+    )
+    .all() as Array<{ status: string; kind: string; n: number }>;
+  const out: DeliveryStats = {
+    ...emptyCounts(),
+    voice: emptyCounts(),
+  };
+  for (const row of rows) {
+    if (!isDeliveryStatus(row.status)) continue;
+    out[row.status] += row.n;
+    if (row.kind === 'voice') out.voice[row.status] += row.n;
+  }
+  return out;
 }

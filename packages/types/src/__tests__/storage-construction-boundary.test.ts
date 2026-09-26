@@ -10,13 +10,22 @@ import { describe, expect, it } from 'vitest';
 // that reaches for raw disk instead of the storage it was handed defeats the
 // per-personality (and, later, per-tenant) scoping boundary.
 //
-// Composition roots — packages/wiring, apps/ethos/src/wiring.ts +
-// commands/*, apps/desktop main, apps/tui, apps/web-api/src/index.ts — are the
-// sanctioned places to construct FsStorage and thread it down. They are OUT of
-// this scan's scope by construction (the scan only covers the library layers
-// below).
+// Composition roots — packages/wiring and the app entry modules listed in the
+// `app-entry-modules-compose` rule of architecture.config.ts (apps/ethos/src/
+// wiring.ts, apps/desktop main, apps/tui, apps/web-api/src/index.ts, ...) — are
+// the sanctioned places to construct FsStorage and thread it down.
+// apps/ethos/src/commands/* are NOT composition roots: a command gets its
+// Storage through wiring, and the commands that still construct FsStorage are
+// Law 5 debt recorded in .archcheck/baseline.json (l5-apps-through-wiring).
+// Every app file is OUT of this scan's scope by construction (the scan only
+// covers the library layers below).
 //
-// Mirrors the source-scan style of apps/web-api/src/__tests__/layering.test.ts.
+// archcheck's `p24-no-fsstorage-in-libraries` rule enforces the same boundary
+// over every file archcheck reads — the root tsconfig.json program, which
+// includes `extensions/*/src/**` but not every `.ts` under `extensions/`. This
+// test stays for the files outside that program, such as
+// extensions/execution-pi/pi-extension/. Mirrors the source-scan style of
+// apps/web-api/src/__tests__/layering.test.ts.
 
 // __tests__ -> src -> types -> packages -> <repo root>
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');

@@ -50,20 +50,22 @@ const storageStub = {} as Storage;
  * steps the turn takes: derive once (turn-setup), then decorate the base
  * Storage with the derived allowlist (tool-processing).
  */
-function captureScope(personality: PersonalityConfig): { read: string[]; write: string[] } {
-  let captured: { read: string[]; write: string[] } | undefined;
+type Scope = { read: string[]; write: string[]; writeDeny?: string[] };
+
+function captureScope(personality: PersonalityConfig): Scope {
+  let captured: Scope | undefined;
   const safety = {
-    scopedStorageFactory: (base: Storage, scope: { read: string[]; write: string[] }) => {
+    scopedStorageFactory: (base: Storage, scope: Scope) => {
       captured = scope;
       return base;
     },
   } as unknown as AgentSafety;
-  const { read, write } = deriveFsReachPaths(personality, {
+  const { read, write, writeDeny } = deriveFsReachPaths(personality, {
     ethosHome: ETHOS_HOME,
     self: personality.id,
     cwd: CWD,
   });
-  buildScopedStorage(storageStub, safety, { read, write });
+  buildScopedStorage(storageStub, safety, { read, write, writeDeny });
   if (!captured) throw new Error('buildScopedStorage did not build a scope');
   return captured;
 }
@@ -132,9 +134,27 @@ describe('fs_reach parity — ScopedStorage prefixes ≡ docker mounts', () => {
 
     const scope = captureScope(personality);
     const mounts = mountModes(personality);
+    // Containment 3a — the ONE sanctioned difference between the layers. The
+    // personality's own definition is write-denied in ScopedStorage
+    // (`writeDeny`) and mounted read-only in the container. A write prefix
+    // that IS `ownDir` (or sits at/below a definition entry) therefore mounts
+    // `ro`, and `ownDir/files` gains its own rw mount so the asset folder
+    // ScopedStorage still permits stays writable in the sandbox too.
+    const ownDir = `${ETHOS_HOME}/personalities/${SELF}`;
+    const writeDeny = (scope.writeDeny ?? []).map(normalize);
+    const deniedInContainer = (path: string): boolean =>
+      path === ownDir || writeDeny.some((d) => path === d || path.startsWith(`${d}/`));
+    const coversOwnDir = scope.write
+      .map(normalize)
+      .some((w) => ownDir === w || ownDir.startsWith(`${w}/`));
+    if (coversOwnDir) {
+      expect(mounts.get(ownDir)).toBe('ro');
+      expect(mounts.get(`${ownDir}/files`)).toBe('rw');
+    }
 
     for (const prefix of scope.write) {
       const path = normalize(prefix);
+      if (deniedInContainer(path)) continue;
       expect(
         mounts.get(path),
         `SILENT DATA LOSS: ScopedStorage permits WRITES under "${path}" but the container ` +
@@ -157,8 +177,10 @@ describe('fs_reach parity — ScopedStorage prefixes ≡ docker mounts', () => {
       ).toBe(true);
     }
 
-    // And nothing gets mounted that neither layer asked for.
+    // And nothing gets mounted that neither layer asked for — beyond the
+    // containment layout above, whose paths ScopedStorage already covers.
     const scoped = new Set([...scope.read, ...scope.write].map(normalize));
+    if (coversOwnDir) scoped.add(ownDir).add(`${ownDir}/files`);
     for (const path of mounts.keys()) {
       expect(
         scoped.has(path),

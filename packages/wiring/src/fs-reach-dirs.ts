@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { deriveFsReachPaths } from '@ethosagent/core';
 import { isForbiddenMount } from '@ethosagent/execution-docker';
 import type { Logger, PersonalityConfig, Storage } from '@ethosagent/types';
@@ -18,6 +18,11 @@ import type { Logger, PersonalityConfig, Storage } from '@ethosagent/types';
  * A declared `fs_reach.workdir` is part of the derived write set, so it is
  * pre-created here too — the personality's working directory exists before its
  * first relative write.
+ *
+ * When a write path is `ownDir` or an ancestor of it, `ownDir/files` is
+ * created as well: `DockerExecutionBackend.mountsFor` mounts `ownDir`
+ * read-only with a rw `ownDir/files` child in exactly that case, and a missing
+ * bind source would be auto-created by Docker as ROOT (see above).
  *
  * Read-only reach is NOT created: a read prefix that doesn't exist is simply an
  * empty scope, and materializing it would grant the personality a directory it
@@ -52,8 +57,13 @@ export async function ensureFsReachDirs(
     return;
   }
 
-  for (const rawPath of writePaths) {
-    const dir = resolvePath(rawPath);
+  const ownDir = resolvePath(join(vars.ethosHome, 'personalities', personality.id));
+  const within = (child: string, parent: string): boolean =>
+    child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+  const dirs = writePaths.map((p) => resolvePath(p));
+  if (dirs.some((dir) => within(ownDir, dir))) dirs.push(join(ownDir, 'files'));
+
+  for (const dir of dirs) {
     if (isForbiddenMount(dir)) {
       log.warn('fs_reach: refusing to create a directory under a forbidden root', {
         personalityId: personality.id,

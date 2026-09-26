@@ -1,18 +1,26 @@
 import {
+  decisionFooterSegment,
+  decisionRowView,
+  disagreementSegment,
   formatDuration,
   formatJson,
+  noticeFooterSegments,
+  noticeGlyph,
   previewArgs,
   type RowStatus,
   statusGlyph,
   statusWord,
   summariseTrail,
+  type TrailDecision,
   type TrailEntry,
+  type TrailNotice,
+  type TurnRunMeta,
   trailRowId,
 } from '@ethosagent/chat-state';
 import { useState } from 'react';
 
 // The trail — feedback & activity contract §3/§5, DESIGN.md "Feedback &
-// activity". One collapsed footer line under the bubble, expanding into the
+// activity". One collapsed line above the bubble, expanding into the
 // same dense rows the drawer draws. Rows, not boxes: no card chrome, no
 // left-border stripe, no shadow ("cards earn existence").
 //
@@ -26,15 +34,34 @@ export interface TrailProps {
   turnId: string;
   /** The user stopped this turn: the footer reads `✗ stopped · N actions`. */
   stopped?: boolean;
+  /** A4 — what the turn ran on; the footer appends `{provider} · {model}`. */
+  meta?: TurnRunMeta;
 }
 
-export function Trail({ entries, turnId, stopped }: TrailProps) {
+export function Trail({ entries, turnId, stopped, meta }: TrailProps) {
   const [expanded, setExpanded] = useState(false);
   const summary = summariseTrail(entries);
 
+  // Decisions are counted apart from actions (plan decision-provider-personality
+  // §15.1): `3 decisions 118 ms`, `3 decisions observed 104 ms`, or both.
+  const decisions = decisionFooterSegment(summary.decisions);
+  const disagreements = disagreementSegment(summary.decisions);
+  // Loop-level notices (halt / deviation / remembered) — glyph + word, deduped.
+  const notices = noticeFooterSegments(entries);
+
   // Nothing to account for → no footer at all. A reply the agent simply wrote
-  // has no work behind it, and an empty accounting line is noise.
-  if (summary.actions === 0 && summary.findings === 0) return null;
+  // has no work behind it, and an empty accounting line is noise. A turn whose
+  // only work was a decision (a routed turn with no tools) still gets one —
+  // otherwise the decision would vanish (DESIGN.md rule 7). The same rule keeps
+  // a notice-only turn's footer (a halt, a `✓ remembered` capture).
+  if (
+    summary.actions === 0 &&
+    summary.findings === 0 &&
+    decisions === null &&
+    notices.length === 0
+  ) {
+    return null;
+  }
 
   // A turn with findings but NO actions is the `no_tools_at_all` case, which
   // has zero actions by definition — the whole point of the finding is that
@@ -77,10 +104,28 @@ export function Trail({ entries, turnId, stopped }: TrailProps) {
         onClick={() => setExpanded((v) => !v)}
       >
         {actionless ? null : <span className="trail-footer-lead">{lead}</span>}
+        {decisions !== null ? (
+          <span className="trail-footer-decisions">
+            {actionless ? '' : ' · '}
+            {decisions}
+          </span>
+        ) : null}
+        {disagreements !== null ? (
+          <span className="trail-footer-findings">{` · ${disagreements}`}</span>
+        ) : null}
         {summary.findings > 0 ? (
           <span className="trail-footer-findings">
-            {actionless ? '' : ' · '}⚠ {summary.findings} unverified
+            {actionless && decisions === null ? '' : ' · '}⚠ {summary.findings} unverified
           </span>
+        ) : null}
+        {notices.map((segment, i) => (
+          <span key={segment} className="trail-footer-notices">
+            {actionless && decisions === null && summary.findings === 0 && i === 0 ? '' : ' · '}
+            {segment}
+          </span>
+        ))}
+        {meta ? (
+          <span className="trail-footer-meta">{` · ${meta.provider} · ${meta.model}`}</span>
         ) : null}
         {actionless ? null : <span className="trail-footer-duration">{` · ${duration}`}</span>}
         <span className="trail-footer-chevron" aria-hidden="true">
@@ -91,7 +136,7 @@ export function Trail({ entries, turnId, stopped }: TrailProps) {
         <div className="trail-rows">
           {entries.map((entry) => (
             <TrailRow
-              key={entry.kind === 'action' ? `a-${entry.toolCallId}` : `f-${entry.id}`}
+              key={entryKey(entry)}
               entry={entry}
               rowId={trailRowId(turnId, entry.kind === 'action' ? entry.toolCallId : entry.id)}
               {...(entry.kind === 'finding' && entry.citesToolCallId
@@ -105,6 +150,13 @@ export function Trail({ entries, turnId, stopped }: TrailProps) {
   );
 }
 
+function entryKey(entry: TrailEntry): string {
+  if (entry.kind === 'action') return `a-${entry.toolCallId}`;
+  if (entry.kind === 'decision') return `d-${entry.id}`;
+  if (entry.kind === 'notice') return `n-${entry.id}`;
+  return `f-${entry.id}`;
+}
+
 export interface TrailRowProps {
   entry: TrailEntry;
   /** Deterministic DOM id — a finding row moves focus to the row it cites. */
@@ -115,6 +167,10 @@ export interface TrailRowProps {
 
 export function TrailRow({ entry, rowId, citedRowId }: TrailRowProps) {
   const [expanded, setExpanded] = useState(false);
+
+  if (entry.kind === 'decision') return <DecisionRow entry={entry} rowId={rowId} />;
+
+  if (entry.kind === 'notice') return <NoticeRow entry={entry} rowId={rowId} />;
 
   if (entry.kind === 'finding') {
     // The row is a button whose whole job is to take you to the evidence.
@@ -131,9 +187,11 @@ export function TrailRow({ entry, rowId, citedRowId }: TrailRowProps) {
         <RowState status="unverified" />
         {/* The claim is the model's own words, so it is quoted — the quotes the
             wire format carried are stripped on the way in and drawn here. */}
-        <span className="activity-row-subject">{`"${entry.claim}"`}</span>
+        <span className="activity-row-subject" title={entry.claim}>{`"${entry.claim}"`}</span>
         {entry.evidence ? (
-          <span className="activity-row-result">{`— ${entry.evidence}`}</span>
+          <span className="activity-row-result" title={entry.evidence}>
+            {`— ${entry.evidence}`}
+          </span>
         ) : null}
       </button>
     );
@@ -157,6 +215,66 @@ export function TrailRow({ entry, rowId, citedRowId }: TrailRowProps) {
         </span>
       </button>
       {expanded ? <TrailRowDetail entry={entry} /> : null}
+    </div>
+  );
+}
+
+/**
+ * A decision row (plan decision-provider-personality §15.1): glyph + word, the
+ * provider's mono tag, `site · verdict · conf N`, duration right-aligned, and a
+ * detail line under it — the returned model and what happened. Not a button:
+ * there is nothing more to open. The tag and state word take the `--decision`
+ * token (DESIGN.md "Decision accent"); a warning or failure takes the semantic
+ * colour instead, and the glyph + word carry it either way.
+ */
+function DecisionRow({ entry, rowId }: { entry: TrailDecision; rowId: string }) {
+  const view = decisionRowView(entry.event);
+  return (
+    <div className="trail-row-wrapper">
+      <div
+        id={rowId}
+        className={`activity-row trail-row trail-decision trail-decision--${view.tone}`}
+      >
+        <span className="activity-row-state">
+          <span aria-hidden="true">{view.glyph}</span> {view.word}
+        </span>
+        <span className="trail-decision-tag">{view.tag}</span>
+        {/* One line, ellipsised; a decision row has no expansion, so the full
+            text rides in `title`. The duration never shrinks (styles.css
+            `.activity-row-meta`). */}
+        <span className="activity-row-result" title={view.subject}>
+          {view.subject}
+        </span>
+        <span className="activity-row-meta">{view.duration}</span>
+      </div>
+      {view.detail ? (
+        <div className="trail-decision-detail" title={view.detail}>
+          {view.detail}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A loop-level notice (halt / deviation / `_loop` / remembered — ux-feedback
+ * A1/A4/W4): glyph + word, mono subject, optional detail. Not a button —
+ * there is nothing to open, and it never cites a tool row.
+ */
+function NoticeRow({ entry, rowId }: { entry: TrailNotice; rowId: string }) {
+  return (
+    <div id={rowId} className={`activity-row trail-row trail-notice trail-notice--${entry.tone}`}>
+      <span className="activity-row-state">
+        <span aria-hidden="true">{noticeGlyph(entry.tone)}</span> {entry.word}
+      </span>
+      <span className="activity-row-subject" title={entry.subject}>
+        {entry.subject}
+      </span>
+      {entry.detail ? (
+        <span className="activity-row-result" title={entry.detail}>
+          {entry.detail}
+        </span>
+      ) : null}
     </div>
   );
 }

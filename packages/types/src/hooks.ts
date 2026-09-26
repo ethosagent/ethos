@@ -97,6 +97,20 @@ export interface BeforeToolCallPayload {
    * personality the loop was constructed with.
    */
   personalityId?: string;
+  /**
+   * Set only on the RE-JUDGE fire: after a handler rewrote the args, the loop
+   * fires the hook once more on the rewritten args (which are `args` here, and
+   * are what will execute) so guards and approvals judge what actually runs.
+   * This holds the args the call carried before the rewrite. On this fire an
+   * `error` still refuses the call, but any `args` returned are ignored
+   * (`enforceBeforeToolCall`, packages/core/src/agent-loop/stages/per-call-enforcement.ts).
+   * An approval surface asked on the first fire is asked again here; it reads
+   * this field to say the arguments were rewritten
+   * (`createApprovalDangerPredicate`, packages/wiring/src/approval-seams.ts).
+   * Informational only — nothing may treat it as a security signal, since any
+   * handler can mutate the shared payload object.
+   */
+  rewrittenFrom?: unknown;
 }
 
 export interface BeforeToolCallResult {

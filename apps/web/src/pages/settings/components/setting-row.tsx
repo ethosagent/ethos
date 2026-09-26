@@ -22,15 +22,24 @@
 // interactive (D10).
 
 import type { ReactNode } from 'react';
+import { appliesForFormName, type SettingApplies } from '../lib/applies';
 import { isDerivedFormName, keyForFormName, statusForFormName } from '../lib/settings-index';
 import { AdvancedBlock } from './advanced';
 import { StatusCallout } from './status-callout';
+
+/** Glyph + word per applies value (§6.5) — never colour alone. */
+const APPLIES_BADGE: Record<SettingApplies, { glyph: string; word: string }> = {
+  live: { glyph: '·', word: 'live' },
+  'next-turn': { glyph: '⏳', word: 'next turn' },
+  'gateway-restart': { glyph: '⚠', word: 'gateway restart' },
+};
 
 export function SettingRow({
   label,
   formName,
   help,
   advanced,
+  applies,
   children,
 }: {
   label: string;
@@ -38,11 +47,19 @@ export function SettingRow({
   formName?: string | null;
   help?: string;
   advanced?: boolean;
+  /**
+   * When a save of this row takes effect (B6/§6.5). Defaults to the per-key
+   * table in `lib/applies.ts`, resolved by `formName` — pass explicitly only
+   * for a row the index does not name.
+   */
+  applies?: SettingApplies;
   children: ReactNode;
 }) {
   const derived = formName ? isDerivedFormName(formName) : false;
   const configKey = formName ? keyForFormName(formName) : null;
   const status = formName ? statusForFormName(formName) : null;
+  const appliesValue = applies ?? (formName ? appliesForFormName(formName) : null);
+  const badge = appliesValue ? APPLIES_BADGE[appliesValue] : null;
   const row = (
     <div className="settings-row">
       <div className="settings-row-info">
@@ -51,6 +68,14 @@ export function SettingRow({
           <div className="settings-row-key">derived</div>
         ) : configKey ? (
           <div className="settings-row-key">{configKey}</div>
+        ) : null}
+        {badge ? (
+          <div
+            className={`settings-row-applies settings-row-applies-${appliesValue}`}
+            title={`Applies: ${badge.word}`}
+          >
+            <span aria-hidden="true">{badge.glyph}</span> {badge.word}
+          </div>
         ) : null}
         {help ? <div className="settings-row-help">{help}</div> : null}
         {status ? <StatusCallout kind={status} /> : null}

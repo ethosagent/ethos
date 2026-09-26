@@ -11,6 +11,7 @@ export const goalsRouter = {
   cancel: os.goals.cancel.handler(({ input, context }) => context.goals.cancel(input.id)),
   resume: os.goals.resume.handler(({ input, context }) => context.goals.resume(input.id)),
   create: os.goals.create.handler(({ input, context }) => context.goals.create(input)),
+  settings: os.goals.settings.handler(({ context }) => context.goals.settings()),
   toolResult: os.goals.toolResult.handler(({ input, context }) =>
     context.goals.toolResult(input.goalId, input.toolCallId),
   ),

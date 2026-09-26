@@ -1,8 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CONFIG_INVALID_EXIT_CODE, GATEWAY_LOCK_EXIT_CODE } from '@ethosagent/wiring';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __testing__,
   buildChildLaunchArgs,
+  type ChildSpec,
+  CONFIG_INVALID_EXIT_CODE as CONFIG_INVALID_EXIT_CODE_MIRROR,
+  childExitDecision,
   defaultChildSpecs,
+  GATEWAY_LOCK_HELD_EXIT_CODE,
   nextBackoff,
   pruneRestarts,
 } from '../run-all';
@@ -157,14 +166,31 @@ describe('run-all — pure helpers', () => {
         'apps/ethos/src/lib/dispose-before-exit.ts',
         'DISPOSE_BEFORE_EXIT_GRACE_MS',
       );
+      const step = await constant(
+        'apps/ethos/src/lib/bounded-shutdown-step.ts',
+        'SHUTDOWN_STEP_TIMEOUT_MS',
+      );
+      // Every `boundedShutdownStep(` call site on a child's path counts one
+      // step bound — a new bounded await raises the budget or fails here.
+      const steps = async (path: string): Promise<number> =>
+        ((await readFile(join(root, path), 'utf8')).match(/boundedShutdownStep\(/g) ?? []).length;
+      const gatewaySteps = await steps('apps/ethos/src/commands/gateway.ts');
+      expect(gatewaySteps).toBe(4);
       const gateway =
         (await constant('apps/ethos/src/commands/gateway.ts', 'APPROVAL_SHUTDOWN_DRAIN_MS')) +
+        gatewaySteps * step +
+        // `Gateway.shutdown`: notice sends and the turn drain share this one bound.
         (await constant('extensions/gateway/src/index.ts', 'SHUTDOWN_DRAIN_TIMEOUT_MS')) +
         dispose;
+      // serve.ts has five call sites across its two branches (onboarding: one;
+      // full: four); the longer branch is four steps. Its listener step
+      // includes `LISTENER_FLUSH_MS`, so the flush adds nothing on top.
+      expect(await steps('apps/ethos/src/commands/serve.ts')).toBe(5);
       const serve =
         (await constant('apps/web-api/src/features/chat/service.ts', 'CLOSE_GRACE_MS')) +
-        (await constant('apps/ethos/src/commands/serve-listen.ts', 'LISTENER_FLUSH_MS')) +
+        4 * step +
         dispose;
+      expect(__testing__.CHILD_SHUTDOWN_BUDGET_MS).toBe(gateway);
       expect(__testing__.CHILD_SHUTDOWN_BUDGET_MS).toBeGreaterThanOrEqual(Math.max(gateway, serve));
       expect(__testing__.SHUTDOWN_GRACE_MS).toBeGreaterThan(__testing__.CHILD_SHUTDOWN_BUDGET_MS);
     });
@@ -172,5 +198,113 @@ describe('run-all — pure helpers', () => {
     it('default health port is 3004 (moved off 3003 to avoid the gateway webhook collision)', () => {
       expect(__testing__.DEFAULT_HEALTH_PORT).toBe(3004);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gateway lock refusal is terminal, not a crash (plan reach-and-containment
+// D2-14).
+// ---------------------------------------------------------------------------
+
+describe('run-all — gateway exit 3 is terminal', () => {
+  // The log dir is left in the OS tmpdir: `startChild` opens its log stream
+  // asynchronously, and removing the directory under it raises ENOENT after
+  // the test has finished.
+  let dir: string | undefined;
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('mirrors the wiring exit code and marks only the gateway spec terminal on 3', () => {
+    expect(GATEWAY_LOCK_HELD_EXIT_CODE).toBe(GATEWAY_LOCK_EXIT_CODE);
+    const [gateway, serve] = defaultChildSpecs();
+    if (!gateway || !serve) throw new Error('specs');
+    expect(childExitDecision(gateway, 3, null)).toBe('terminal');
+    expect(childExitDecision(gateway, 1, null)).toBe('restart');
+    expect(childExitDecision(gateway, null, 'SIGKILL')).toBe('restart');
+    expect(childExitDecision(serve, 3, null)).toBe('restart');
+  });
+
+  // Plan openclaw-2026.9.6-gaps R3: a gateway that exits 78 has a config it
+  // cannot start from; restarting it cannot change that.
+  it('mirrors the config-invalid exit code and never restarts a gateway that exits 78', () => {
+    expect(CONFIG_INVALID_EXIT_CODE_MIRROR).toBe(CONFIG_INVALID_EXIT_CODE);
+    const [gateway, serve] = defaultChildSpecs();
+    if (!gateway || !serve) throw new Error('specs');
+    expect(childExitDecision(gateway, CONFIG_INVALID_EXIT_CODE, null)).toBe('terminal');
+    expect(childExitDecision(serve, CONFIG_INVALID_EXIT_CODE, null)).toBe('restart');
+  });
+
+  function fakeSpawn() {
+    const spawned: Array<{ name: string; child: EventEmitter & { stderr: EventEmitter } }> = [];
+    const spawn = vi.fn((_exec: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        pid: 1000 + spawned.length,
+      });
+      spawned.push({ name: args.includes('serve') ? 'serve' : 'gateway', child });
+      return child;
+    });
+    return { spawn, spawned };
+  }
+
+  function supervised(spec: ChildSpec) {
+    return {
+      spec,
+      process: null,
+      restarts: [] as number[],
+      backoffMs: __testing__.INITIAL_BACKOFF_MS,
+      shuttingDown: false,
+      stableTimer: null,
+      logStream: null,
+      rotationTimer: null,
+    };
+  }
+
+  it('does not restart a gateway child that exits 3, logs the refusal once, keeps serve up', () => {
+    vi.useFakeTimers();
+    dir = mkdtempSync(join(tmpdir(), 'run-all-'));
+    const logs: string[] = [];
+    const log = { log: (m: string) => logs.push(m), error: (m: string) => logs.push(m) };
+    const { spawn, spawned } = fakeSpawn();
+    const [gatewaySpec, serveSpec] = defaultChildSpecs();
+    if (!gatewaySpec || !serveSpec) throw new Error('specs');
+    const gw = supervised(gatewaySpec);
+    const serve = supervised(serveSpec);
+    const rotation = { ...__testing__.DEFAULT_LOG_ROTATION, enabled: false };
+    for (const sc of [gw, serve]) {
+      __testing__.startChild(sc as never, 'x.js', dir, spawn as never, log, () => {}, rotation);
+    }
+    const gwChild = spawned.find((s) => s.name === 'gateway')?.child;
+    gwChild?.stderr.emit(
+      'data',
+      Buffer.from('Another Ethos gateway is already running for /tmp/x (pid 42).\n'),
+    );
+    gwChild?.emit('exit', 3, null);
+    vi.advanceTimersByTime(10 * 60_000);
+
+    expect(spawned.filter((s) => s.name === 'gateway')).toHaveLength(1);
+    expect(logs.filter((l) => l.includes('refused to start'))).toHaveLength(1);
+    expect(logs.join('\n')).toContain('Another Ethos gateway is already running');
+    expect(logs.join('\n')).not.toContain('restarting gateway');
+    // serve was never touched.
+    expect(serve.process).not.toBeNull();
+    expect(spawned.filter((s) => s.name === 'serve')).toHaveLength(1);
+  });
+
+  it('a genuine gateway crash still restarts after the backoff', () => {
+    vi.useFakeTimers();
+    dir = mkdtempSync(join(tmpdir(), 'run-all-'));
+    const log = { log: () => {}, error: () => {} };
+    const { spawn, spawned } = fakeSpawn();
+    const [gatewaySpec] = defaultChildSpecs();
+    if (!gatewaySpec) throw new Error('specs');
+    const gw = supervised(gatewaySpec);
+    const rotation = { ...__testing__.DEFAULT_LOG_ROTATION, enabled: false };
+    __testing__.startChild(gw as never, 'x.js', dir, spawn as never, log, () => {}, rotation);
+    spawned[0]?.child.emit('exit', 1, null);
+    vi.advanceTimersByTime(__testing__.INITIAL_BACKOFF_MS + 10);
+    expect(spawned).toHaveLength(2);
   });
 });

@@ -43,7 +43,7 @@ describe('POST|GET|DELETE /api/personalities/:id/avatar', () => {
     const tokens = new WebTokenRepository({ dataDir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();
@@ -53,6 +53,10 @@ describe('POST|GET|DELETE /api/personalities/:id/avatar', () => {
     store.close();
     await rm(dataDir, { recursive: true, force: true });
   });
+
+  // Same-origin, as the SPA's fetch sends it — writes here pass the CSRF check
+  // (S8; the cross-origin refusal is pinned in ../middleware/csrf.test.ts).
+  const sameOrigin = { origin: 'http://localhost:3000', host: 'localhost:3000' };
 
   const personalityDir = () => join(dataDir, 'personalities', 'nova');
   const avatarFiles = async () =>
@@ -67,7 +71,7 @@ describe('POST|GET|DELETE /api/personalities/:id/avatar', () => {
   const post = (body: Uint8Array, contentType: string) =>
     app.request('/api/personalities/nova/avatar', {
       method: 'POST',
-      headers: { cookie, 'content-type': contentType },
+      headers: { cookie, ...sameOrigin, 'content-type': contentType },
       body: toBody(body),
     });
 
@@ -146,7 +150,7 @@ describe('POST|GET|DELETE /api/personalities/:id/avatar', () => {
 
     const del = await app.request('/api/personalities/nova/avatar', {
       method: 'DELETE',
-      headers: { cookie },
+      headers: { cookie, ...sameOrigin },
     });
     expect(del.status).toBe(200);
     expect(await avatarFiles()).toEqual([]);

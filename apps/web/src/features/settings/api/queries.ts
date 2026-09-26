@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { rpc } from '../../../rpc';
-import { apiKeyKeys, namedSecretKeys, toolCatalogKeys, toolSettingsKeys } from './keys';
+import {
+  apiKeyKeys,
+  credentialKeys,
+  namedSecretKeys,
+  toolCatalogKeys,
+  toolSettingsKeys,
+} from './keys';
 
 export function useApiKeysList() {
   return useQuery({
@@ -31,6 +37,14 @@ export function useNamedSecretProviders() {
   return useQuery({
     queryKey: namedSecretKeys.providers(),
     queryFn: () => rpc.namedSecrets.providers(),
+  });
+}
+
+/** Stored logins — masked previews and presence flags only, never a value. */
+export function useCredentialsList() {
+  return useQuery({
+    queryKey: credentialKeys.all(),
+    queryFn: () => rpc.credentials.list(),
   });
 }
 

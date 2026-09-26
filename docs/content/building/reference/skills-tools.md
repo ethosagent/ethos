@@ -150,5 +150,5 @@ Without these tools, an agent asked "do you have a skill for handling PRs?" woul
 ## See also {#see-also}
 
 - [`use-skills`](../../using/how-to/use-skills.md) — operator how-to for installing and authoring skills.
-- [`ethos-skill-authoring`](https://github.com/ethosagent/ethos/blob/main/skills/data/framework/ethos-skill-authoring/SKILL.md) — the bundled skill that documents skill authoring.
+- [`ethos-skill-authoring`](https://github.com/ethosagent/ethos/blob/main/skills/framework/ethos-skill-authoring/SKILL.md) — the bundled skill that documents skill authoring.
 - [Add a skill](../how-to/add-a-skill.md) — setting `skills.global_ingest.*` on a personality, with worked examples.

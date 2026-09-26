@@ -7,7 +7,11 @@ import type {
   ToolDefinitionLite,
   ToolOrder,
 } from '@ethosagent/types';
-import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, orderToolDefinitions } from '@ethosagent/types';
+import {
+  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+  flattenCompactionEnvelopes,
+  orderToolDefinitions,
+} from '@ethosagent/types';
 import OpenAI from 'openai';
 import { parseThinkBlocks, withReasoningOnlyRetry } from './reasoning';
 import { classifyLocalRuntime, type LocalOpenAiRuntime } from './runtime-classify';
@@ -177,7 +181,9 @@ export function toOpenAIMessages(
     result.push({ role: 'system', content: system });
   }
 
-  for (const msg of messages) {
+  // Item 7 (D33) — a persisted server-compaction block reaches this provider
+  // as its readable summary; the Anthropic-only encrypted half is dropped.
+  for (const msg of flattenCompactionEnvelopes(messages)) {
     if (typeof msg.content === 'string') {
       result.push({ role: msg.role, content: msg.content });
       continue;

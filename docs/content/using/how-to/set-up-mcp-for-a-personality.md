@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: set-up-mcp-for-a-personality
 time: "10 min"
-updated: 2026-06-03
+updated: 2026-09-25
 ---
 
 ## Task
@@ -31,7 +31,7 @@ The personality can call the server's tools. Tokens are stored per-personality a
 ethos mcp add --url https://mcp.linear.app
 ```
 
-This writes an entry to `~/.ethos/mcp.json`. The [OSV vulnerability scan](../reference/mcp-config.md#osv) runs automatically for npm-backed servers. No token is stored at this step — the server is defined but unauthenticated.
+This writes an entry to `~/.ethos/mcp.json`. No vulnerability scan runs, so check a community server's package yourself (see [OSV](../reference/mcp-config.md#osv)). No token is stored at this step — the server is defined but unauthenticated.
 
 For stdio servers that don't use OAuth:
 
@@ -193,11 +193,11 @@ ethos personality mcp <id> --attach <name>
 ethos mcp login <name> --personality <id>
 ```
 
-**`Token file not found at personalities/<id>/mcp/<name>/access_token`** — The login step was run for a different personality, or the server uses a different name than expected. Check `ethos mcp list` for the registered name and re-run `login` with the correct `--personality` flag.
+**`Token file not found at personalities/<id>/mcp/<name>/access_token`** — The login step was run for a different personality, or the server uses a different name than expected. Run `ethos personality mcp <id>` to see the registered names (it lists every server in `mcp.json`) and re-run `login` with the correct `--personality` flag.
 
-**Server not responding after OAuth** — The OAuth flow completed but the server itself is unreachable. Check `~/.ethos/logs/mcp/<name>.log` for connection errors. Verify the URL in `mcp.json` is correct and the server is running.
+**Server not responding after OAuth** — The OAuth flow completed but the server itself is unreachable. Read the connection error in the output of the process running the agent. Ethos writes no per-server MCP log file. Verify the URL in `mcp.json` is correct and the server is running.
 
-**Tools appear in `personality show` but not in chat** — The personality's `toolset.yaml` may filter out MCP tools. Either add the specific tool names (`mcp__<name>__<tool>`) to the toolset or omit the per-tool list to inherit everything the server exposes.
+**Server appears in `personality show` but some of its tools are missing in chat** — `toolset.yaml` does not gate MCP tools, so it is not the cause. The personality's own `~/.ethos/personalities/<id>/mcp.yaml` narrows the server to a `tools:` list, or sets `enabled: false` for it. Add the bare tool name to `servers.<name>.tools`, or remove the server's entry to expose everything it lists. See [Tool naming](../reference/mcp-config.md#tool-naming).
 
 **Web UI shows no personality dropdown** — The dashboard requires at least one personality. Create one first:
 

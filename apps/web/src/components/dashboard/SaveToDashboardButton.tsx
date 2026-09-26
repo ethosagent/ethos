@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, message, Popover } from 'antd';
+import { App as AntApp, Button, Input, Popover } from 'antd';
 import { useState } from 'react';
 import { rpc } from '../../rpc';
 
@@ -13,7 +13,9 @@ export function SaveToDashboardButton({ blockType, content, metadata }: Props) {
   const [open, setOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const queryClient = useQueryClient();
-  const [messageApi, contextHolder] = message.useMessage();
+  // N5b — the app-level <App> context (main.tsx) themes this; the static
+  // `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message: messageApi } = AntApp.useApp();
 
   const { data } = useQuery({
     queryKey: ['dashboards'],
@@ -98,36 +100,33 @@ export function SaveToDashboardButton({ blockType, content, metadata }: Props) {
   );
 
   return (
-    <>
-      {contextHolder}
-      <Popover
-        content={popoverContent}
-        trigger="click"
-        open={open}
-        onOpenChange={setOpen}
-        placement="bottomRight"
+    <Popover
+      content={popoverContent}
+      trigger="click"
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottomRight"
+    >
+      <button
+        type="button"
+        className="dashboard-save-btn"
+        title="Save to dashboard"
+        style={{
+          position: 'absolute',
+          top: 4,
+          right: 4,
+          background: 'rgba(0,0,0,0.6)',
+          border: 'none',
+          borderRadius: 'var(--radius-sm)',
+          color: '#fff',
+          cursor: 'pointer',
+          padding: '2px 6px',
+          fontSize: 14,
+          zIndex: 10,
+        }}
       >
-        <button
-          type="button"
-          className="dashboard-save-btn"
-          title="Save to dashboard"
-          style={{
-            position: 'absolute',
-            top: 4,
-            right: 4,
-            background: 'rgba(0,0,0,0.6)',
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            color: '#fff',
-            cursor: 'pointer',
-            padding: '2px 6px',
-            fontSize: 14,
-            zIndex: 10,
-          }}
-        >
-          Save
-        </button>
-      </Popover>
-    </>
+        Save
+      </button>
+    </Popover>
   );
 }

@@ -1,4 +1,4 @@
-import { clarifyUnresolvedMessage } from '@ethosagent/core';
+import { clarifyUnresolvedMessage } from '@ethosagent/wiring';
 import { ORPCError } from '@orpc/server';
 import { os } from './context';
 

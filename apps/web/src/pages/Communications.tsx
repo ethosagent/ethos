@@ -1150,8 +1150,11 @@ function GatewayControl() {
   const [status, setStatus] = useState<{
     state: 'running' | 'stopped' | 'crashed' | 'starting';
     serviceInstalled: boolean;
+    pid?: number | null;
+    unhealthy?: boolean;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [attachedPid, setAttachedPid] = useState<number | null | undefined>(undefined);
 
   const refresh = useCallback(() => {
     bridge?.gateway.status().then(setStatus);
@@ -1175,7 +1178,9 @@ function GatewayControl() {
       if (status.state === 'running') {
         await b.gateway.stop();
       } else {
-        await b.gateway.start();
+        const started = await b.gateway.start();
+        // Already running for this state dir: nothing was spawned.
+        setAttachedPid(started.attached ? (started.pid ?? null) : undefined);
       }
       // Wait briefly for state to propagate, then refresh
       setTimeout(refresh, 1500);
@@ -1194,7 +1199,18 @@ function GatewayControl() {
       <Tag color={cfg.color}>
         <Badge status={cfg.color as 'success' | 'default' | 'error' | 'processing'} /> Gateway:{' '}
         {cfg.label}
+        {status.pid ? ` · pid ${status.pid}` : ''}
       </Tag>
+      {status.unhealthy ? (
+        <Typography.Text type="warning" style={{ fontSize: 12 }}>
+          heartbeat stale — check logs
+        </Typography.Text>
+      ) : null}
+      {attachedPid !== undefined ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          connected to running gateway{attachedPid ? ` (pid ${attachedPid})` : ''}
+        </Typography.Text>
+      ) : null}
       <Button
         size="small"
         type={status.state === 'running' ? 'default' : 'primary'}

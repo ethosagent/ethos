@@ -47,6 +47,19 @@ const HANDLED: Array<[string, SseEvent]> = [
   ],
   ['done', { type: 'done', text: 'ok', turnCount: 3 }],
   ['error', { type: 'error', error: 'boom', code: 'E_BOOM' }],
+  // A1 (ux-feedback plan) — an early safety stop is a discrete action worth a
+  // row; the reply that follows is partial and the feed says why.
+  [
+    'halt',
+    {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool_calls',
+      toolName: 'bash',
+      count: 12,
+      message: 'per-turn tool budget reached (12/12)',
+    },
+  ],
   [
     'run_start',
     { type: 'run_start', provider: 'anthropic', model: 'claude', source: 'personality' },
@@ -75,6 +88,8 @@ const HANDLED: Array<[string, SseEvent]> = [
         toolName: 'bash',
         args: { cmd: 'rm' },
         reason: 'destructive',
+        alwaysAsk: false,
+        hardline: false,
       },
     },
   ],
@@ -130,6 +145,24 @@ const HANDLED: Array<[string, SseEvent]> = [
     },
   ],
   ['message_persisted', { type: 'message_persisted', messageId: 'm1', role: 'assistant' }],
+  [
+    'decision',
+    {
+      type: 'decision',
+      id: 'd1',
+      phase: 'settled',
+      site: 'injection',
+      provider: 'typesafe',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'clean',
+      confidence: 0.94,
+      latencyMs: 38,
+      personalityId: 'agent-a',
+      toolCallId: 'tc1',
+    },
+  ],
 ];
 
 // Per-token / per-connection plumbing. Surfacing these would bury every real
@@ -219,6 +252,57 @@ describe('convertSseEvent', () => {
     const merged = mergeRows(mergeRows(new Map(), [a]), [b]);
     expect(merged.size).toBe(1);
     expect(merged.get(a.key)?.summary).toContain('finished');
+  });
+});
+
+// Tool-progress audience boundary (CLAUDE.md, Phase 30.2) — only
+// `audience: 'user'` progress surfaces, the same gate the trail applies; and
+// the reserved `_loop` pseudo-tool (compaction retry, provider fallback) is a
+// notice, not a tool row.
+describe('convertSseEvent — tool_progress gating', () => {
+  it('drops internal-audience progress', () => {
+    expect(
+      convertSseEvent(
+        { type: 'tool_progress', toolName: 'bash', message: 'inner call', audience: 'internal' },
+        CTX,
+      ),
+    ).toBeNull();
+  });
+
+  it('drops dashboard-audience progress — user only, like the trail', () => {
+    expect(
+      convertSseEvent(
+        { type: 'tool_progress', toolName: 'bash', message: 'telemetry', audience: 'dashboard' },
+        CTX,
+      ),
+    ).toBeNull();
+  });
+
+  it('renders _loop as a notice row: message only, no `_loop:` prefix', () => {
+    const row = live({
+      type: 'tool_progress',
+      toolName: '_loop',
+      message: 'context compacted — retrying the call',
+      audience: 'user',
+    });
+    expect(row.kind).toBe('notice');
+    expect(row.summary).toBe('context compacted — retrying the call');
+    expect(row.summary).not.toContain('_loop');
+    expect(row.details).toEqual([
+      { key: 'message', kind: 'text', value: 'context compacted — retrying the call' },
+    ]);
+  });
+
+  it('keeps an ordinary user-audience progress line as a tool row', () => {
+    const row = live({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'half way',
+      percent: 50,
+      audience: 'user',
+    });
+    expect(row.kind).toBe('tool_start');
+    expect(row.summary).toBe('bash: half way');
   });
 });
 
@@ -485,5 +569,66 @@ describe('groupMatchesFilter', () => {
     expect(errorGroup && groupMatchesFilter(errorGroup, 'errors')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'cron')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'tools')).toBe(false);
+  });
+});
+
+// plan decision-provider-personality N7d — the feed draws a decision in the
+// trail's own words, and a `started` collapses into its `settled`.
+describe('convertSseEvent — decision', () => {
+  const base = {
+    type: 'decision' as const,
+    id: 'd1',
+    site: 'injection' as const,
+    provider: 'typesafe',
+    personalityId: 'agent-a',
+    toolCallId: 'tc1',
+  };
+
+  it('summarises a settled decision with glyph, word, tag and subject', () => {
+    const row = live({
+      ...base,
+      phase: 'settled',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'clean',
+      confidence: 0.94,
+      latencyMs: 38,
+    });
+    expect(row.summary).toBe('✓ decided · jev injection · clean · conf 0.94');
+    expect(row.label).toBe('decision');
+    expect(row.kind).toBe('tool_end');
+    expect(row.endedAt).toBe(CTX.timestamp);
+  });
+
+  it('keys started and settled identically so the merge keeps the settled row', () => {
+    const started = live({ ...base, phase: 'started', mode: 'on' });
+    const settled = live(
+      { ...base, phase: 'settled', mode: 'on', outcome: 'timeout', latencyMs: 1200 },
+      { seq: 2, timestamp: 6_000 },
+    );
+    expect(started.key).toBe(settled.key);
+    expect(started.endedAt).toBeNull();
+    const merged = mergeRows(new Map([[started.key, started]]), [settled]);
+    expect(merged.get(settled.key)?.summary).toBe(
+      '✗ unavailable → LLM check · jev injection · timeout',
+    );
+    expect(merged.get(settled.key)?.kind).toBe('error');
+  });
+
+  it('marks a shadow disagreement as a warning row', () => {
+    const row = live({
+      ...base,
+      phase: 'settled',
+      mode: 'shadow',
+      outcome: 'ok',
+      verdict: 'flagged',
+      todayVerdict: 'clean',
+      disagreed: true,
+      latencyMs: 29,
+      todayLatencyMs: 1300,
+    });
+    expect(row.summary).toBe('⚠ observed · jev injection · flagged');
+    expect(row.kind).toBe('approval');
   });
 });

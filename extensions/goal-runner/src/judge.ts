@@ -1,10 +1,30 @@
-import { execFile } from 'node:child_process';
-import type { AcceptanceSpec, CriterionResult, Verdict } from '@ethosagent/types';
+import type { AcceptanceCheck, AcceptanceSpec, CriterionResult, Verdict } from '@ethosagent/types';
 
 export interface JudgeInput {
   output: string;
   spec: AcceptanceSpec;
+  /** The goal text, handed to `judgeCheck` so it can read a check in context. */
+  goalText?: string;
 }
+
+export interface CheckJudgeInput {
+  check: AcceptanceCheck;
+  goalText: string;
+  output: string;
+}
+
+export interface CheckJudgeResult {
+  pass: boolean;
+  evidence: string;
+}
+
+/**
+ * Decides whether an attempt's output demonstrates a command-less check is MET.
+ * Injected at construction (`GoalRunnerConfig.judgeCheck`); production wiring
+ * binds `createLLMCheckJudge` (./llm-check-judge). A throw is a fail-closed
+ * `pass: false` in `judge()` below, never an exception out of it.
+ */
+export type CheckJudge = (input: CheckJudgeInput) => Promise<CheckJudgeResult>;
 
 export interface CommandResult {
   code: number;
@@ -13,39 +33,45 @@ export interface CommandResult {
 }
 
 export interface JudgeOptions {
-  /** Override command execution (tests). Defaults to running via `sh -c`. */
+  /**
+   * Runs a check's `command`. The judge has no shell of its own (S1, plan
+   * openclaw-2026.9.6-gaps): production injects the executor
+   * `createAcceptanceCheckExecutor` builds in packages/wiring, which refuses a
+   * personality without `terminal`, applies the hardline, deny-rule and
+   * approval checks the `terminal` tool's path crosses, and runs the command on
+   * the personality's resolved execution backend. Absent → every command check
+   * fails with {@link NO_EXECUTOR_EVIDENCE}; nothing runs.
+   */
   execCommand?: (command: string) => Promise<CommandResult>;
+  /**
+   * Judge for checks with no `command`. Absent (tests, standalone), such a
+   * check falls back to a verbatim substring match of its description against
+   * the output, marked `method: 'substring'`.
+   */
+  judgeCheck?: CheckJudge;
 }
 
-const COMMAND_TIMEOUT_MS = 30_000;
-const COMMAND_MAX_BUFFER = 1024 * 1024;
+/**
+ * The criterion a spec with no checks and no rubric is judged against. Without
+ * it `judge()` scored an empty spec 1 with every (zero) check passed, so any
+ * attempt output converged. Pinned by __tests__/judge.test.ts ('empty spec').
+ */
+export const IMPLICIT_GOAL_CHECK: AcceptanceCheck = {
+  id: 'goal',
+  description: 'The goal as stated is fully achieved',
+};
+
 const EVIDENCE_SNIPPET_CHARS = 200;
+
+/** Why a command check failed when no executor was injected. */
+export const NO_EXECUTOR_EVIDENCE = 'no execution backend is wired for command checks';
 
 function snippet(text: string): string {
   return text.trim().slice(0, EVIDENCE_SNIPPET_CHARS);
 }
 
-/** Run a check command via `sh -c` with a 30s timeout. Rejects on timeout or spawn failure. */
-function defaultExecCommand(command: string): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'sh',
-      ['-c', command],
-      { timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, cwd: process.cwd() },
-      (error, stdout, stderr) => {
-        if (!error) {
-          resolve({ code: 0, stdout, stderr });
-          return;
-        }
-        if (typeof error.code === 'number') {
-          resolve({ code: error.code, stdout, stderr });
-          return;
-        }
-        // Timeout (killed) or spawn failure — there is no usable exit code.
-        reject(new Error(error.killed ? `timed out after ${COMMAND_TIMEOUT_MS}ms` : error.message));
-      },
-    );
-  });
+function refuseCommand(): Promise<CommandResult> {
+  return Promise.reject(new Error(NO_EXECUTOR_EVIDENCE));
 }
 
 async function runCommandCheck(
@@ -60,6 +86,7 @@ async function runCommandCheck(
         id: check.id,
         pass: true,
         evidence: out ? `command exited 0: ${out}` : 'command exited 0',
+        method: 'command',
       };
     }
     const detail = snippet(stderr) || snippet(stdout);
@@ -68,6 +95,7 @@ async function runCommandCheck(
       pass: false,
       evidence: detail ? `command exited ${code}: ${detail}` : `command exited ${code}`,
       gap: check.description,
+      method: 'command',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -76,26 +104,84 @@ async function runCommandCheck(
       pass: false,
       evidence: `command failed: ${snippet(message)}`,
       gap: check.description,
+      method: 'command',
     };
   }
 }
 
+/** Settle a command-less check through the injected judge. Fails CLOSED: a
+ *  judge that throws (provider error, timeout) is a failed check, not a pass. */
+async function runJudgedCheck(
+  check: AcceptanceCheck,
+  goalText: string,
+  output: string,
+  judgeCheck: CheckJudge,
+): Promise<CriterionResult> {
+  let pass: boolean;
+  let evidence: string;
+  try {
+    ({ pass, evidence } = await judgeCheck({ check, goalText, output }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pass = false;
+    evidence = `judge unavailable: ${snippet(message)}`;
+  }
+  return {
+    id: check.id,
+    pass,
+    evidence,
+    ...(pass ? {} : { gap: check.description }),
+    method: 'llm',
+  };
+}
+
 /**
  * Run mechanical checks and score rubric items.
- * Checks with a `command` execute it via `sh -c` (30s timeout) and pass iff it
- * exits 0; commands run sequentially since they may touch shared state. Checks
- * without a command fall back to a substring match against the attempt output.
+ * Checks with a `command` run it through `opts.execCommand` and pass iff it
+ * exits 0 (a refusal or timeout fails the check with the reason as evidence);
+ * commands run sequentially since they may touch shared state. Checks without
+ * a command go to the injected `judgeCheck` (fail-closed); without one they
+ * fall back to a substring match against the attempt output, marked
+ * `method: 'substring'`.
  * Rubric items still get placeholder scores — the eval-harness integration
  * (plan phase 2) replaces the rubric scoring.
+ *
+ * A spec with no checks and no rubric is NOT vacuously met: it is judged as one
+ * implicit check, `IMPLICIT_GOAL_CHECK` ("the goal as stated is fully
+ * achieved"), through `judgeCheck`. With no judge wired that check fails — the
+ * substring fallback would let an output that merely quotes the sentence pass.
  */
 export async function judge(input: JudgeInput, opts?: JudgeOptions): Promise<Verdict> {
-  const execCommand = opts?.execCommand ?? defaultExecCommand;
+  const execCommand = opts?.execCommand ?? refuseCommand;
   const results: CriterionResult[] = [];
+
+  if (input.spec.checks.length === 0 && input.spec.rubric.length === 0) {
+    const check = IMPLICIT_GOAL_CHECK;
+    const result = opts?.judgeCheck
+      ? await runJudgedCheck(check, input.goalText ?? '', input.output, opts.judgeCheck)
+      : {
+          id: check.id,
+          pass: false,
+          evidence:
+            'no acceptance criteria and no check judge wired: the goal cannot be verified, so it is not met',
+          gap: check.description,
+          // No judge, no progress signal — the same standing as the substring
+          // fallback, so `isPlateau` never reads a flat 0 as a plateau.
+          method: 'substring' as const,
+        };
+    return { score: result.pass ? 1 : 0, perCriterion: [result] };
+  }
 
   for (const check of input.spec.checks) {
     const command = check.command;
     if (command) {
       results.push(await runCommandCheck({ ...check, command }, execCommand));
+      continue;
+    }
+    if (opts?.judgeCheck) {
+      results.push(
+        await runJudgedCheck(check, input.goalText ?? '', input.output, opts.judgeCheck),
+      );
       continue;
     }
     const pass = input.output.toLowerCase().includes(check.description.toLowerCase());
@@ -104,6 +190,7 @@ export async function judge(input: JudgeInput, opts?: JudgeOptions): Promise<Ver
       pass,
       evidence: pass ? `check passed: ${check.description}` : `check failed: ${check.description}`,
       gap: pass ? undefined : check.description,
+      method: 'substring',
     });
   }
 

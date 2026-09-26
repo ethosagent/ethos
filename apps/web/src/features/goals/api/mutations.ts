@@ -24,7 +24,7 @@ export function useGoalCreate() {
       goalText: string;
       title?: string;
       acceptanceCriteria?: {
-        checks?: Array<{ description: string }>;
+        checks?: Array<{ description: string; command?: string }>;
         rubric?: Array<{ description: string; weight: number }>;
         threshold?: number;
       };

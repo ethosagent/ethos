@@ -132,7 +132,7 @@ export type ModelDeclarationKind = 'role' | 'alias';
  * (and of every other slot that names a model): a role, or a registry alias
  * (D1). Nothing else parses.
  *
- * Produced by `parseModelDeclaration` in `packages/core/src/model-resolution.ts`
+ * Produced by `parseModelDeclaration` below
  * (T1.22) — one grammar with one implementation, so a value the UI accepts and
  * the resolver refuses fails the build instead of reaching an operator.
  */
@@ -343,4 +343,89 @@ export interface ModelHealth {
   latencyMs?: number;
   /** The vendor's own words, verbatim and untruncated, when there are any. */
   error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// D25 — one declaration parser, five callers
+// ---------------------------------------------------------------------------
+//
+// Pure: no I/O, no clock, deterministic given its inputs. It lives in the
+// contracts layer (not core) so `@ethosagent/config` can read a declaration
+// without importing core; `@ethosagent/core` re-exports it unchanged.
+
+function isRoleName(value: string): value is ModelRoleName {
+  return (MODEL_ROLE_NAMES as readonly string[]).includes(value);
+}
+
+/**
+ * Near-miss candidates for a declaration nothing matched.
+ *
+ * Case-insensitive, bidirectional substring plus a three-character common
+ * prefix — deliberately cheap. Edit distance would be better copy and a new
+ * dependency in the contracts layer; a refusal that lists every configured alias
+ * is already actionable, and this only orders that list usefully.
+ */
+function nearMisses(value: string, candidates: readonly string[]): string[] {
+  const needle = value.trim().toLowerCase();
+  if (needle.length === 0) return [];
+  const hits: string[] = [];
+  for (const candidate of candidates) {
+    const hay = candidate.toLowerCase();
+    const sharedPrefix =
+      hay.length >= 3 && needle.length >= 3 && hay.slice(0, 3) === needle.slice(0, 3);
+    if (hay.includes(needle) || needle.includes(hay) || sharedPrefix) hits.push(candidate);
+  }
+  return hits;
+}
+
+/**
+ * The two legal values of a model declaration: a role, or a registry alias (D1).
+ *
+ * **Namespace order, and why it is unobservable.** Roles and aliases share one
+ * namespace and the four role names are RESERVED — a registry may not define an
+ * alias called `trivial`, `default`, `deep` or `dreaming`, refused by
+ * `validateModelRegistry` in `packages/config/src/model-registry.ts` (T1.3, not
+ * yet written at the time this landed). So a role and an alias cannot both match
+ * one value, and checking roles first is a statement of that reservation rather
+ * than a precedence rule with teeth.
+ *
+ * The precedence that DOES have teeth is a different pair: an alias literally
+ * named like a vendor id must beat the D11c shim's exact-`modelId` match. That
+ * shim (`mapLegacyModelDeclaration` in `packages/core/src/model-resolution.ts`) calls this parser FIRST and only
+ * guesses when this returns `invalid`, which is what makes the alias win.
+ * Pinned by `an alias literally named like a vendor id wins over the
+ * exact-modelId match` in `packages/core/src/__tests__/model-resolution.test.ts`.
+ */
+export function parseModelDeclaration(
+  value: unknown,
+  ctx: { aliases: readonly string[] },
+): ModelDeclaration | ModelDeclarationError {
+  if (typeof value !== 'string') {
+    return {
+      kind: 'invalid',
+      reason: `A model declaration must be a role or a configured model name, not ${typeof value}.`,
+      suggestions: allCandidates(ctx.aliases),
+    };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return {
+      kind: 'invalid',
+      reason: 'A model declaration must not be empty.',
+      suggestions: allCandidates(ctx.aliases),
+    };
+  }
+  if (isRoleName(trimmed)) return { kind: 'role', role: trimmed };
+  if (ctx.aliases.includes(trimmed)) return { kind: 'alias', alias: trimmed };
+
+  const near = nearMisses(trimmed, allCandidates(ctx.aliases));
+  return {
+    kind: 'invalid',
+    reason: `"${trimmed}" is neither a role nor a model configured on this machine.`,
+    suggestions: near.length > 0 ? near : allCandidates(ctx.aliases),
+  };
+}
+
+function allCandidates(aliases: readonly string[]): string[] {
+  return [...MODEL_ROLE_NAMES, ...aliases];
 }

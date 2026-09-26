@@ -260,6 +260,29 @@ describe('GoalRunner phase b — convergence/retry loop', () => {
     expect(new Set(ns).size).toBe(ns.length);
   });
 
+  it('judges a command-less check through the injected judgeCheck, with the goal text', async () => {
+    const goal = makeGoalWithSpec(store, checkOnlySpec);
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: true, evidence: 'marker file exists' });
+    const runner = new GoalRunner({
+      store,
+      judgeCheck,
+      // The output never contains the description verbatim — the substring
+      // fallback would fail this; the judge decides instead.
+      runAttempt: scriptedRunAttempt([[{ type: 'done', text: 'wrote marker.txt', turnCount: 1 }]]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(judgeCheck).toHaveBeenCalledWith({
+      check: { id: 'c1', description: 'DONE-MARKER' },
+      goalText: 'Do the thing',
+      output: 'wrote marker.txt',
+    });
+    const verdict = store.getAttempts(goal.id)[0]?.verdict;
+    expect(verdict?.perCriterion[0]).toMatchObject({ pass: true, method: 'llm' });
+  });
+
   it('completes a no-criteria goal immediately with exactly one attempt row', async () => {
     const goal = makeGoal(store);
     const runner = new GoalRunner({
@@ -273,6 +296,47 @@ describe('GoalRunner phase b — convergence/retry loop', () => {
     const attempts = store.getAttempts(goal.id);
     expect(attempts).toHaveLength(1);
     expect(store.get(goal.id)?.status).toBe('completed');
+  });
+
+  // An EMPTY spec (the web form's shape when its criteria were lost) is not
+  // "no criteria": it is judged as the implicit goal criterion.
+  const emptySpec: AcceptanceSpec = { checks: [], rubric: [], threshold: 0.8 };
+
+  it('never completes an empty-spec goal without a check judge', async () => {
+    const goal = makeGoalWithSpec(store, emptySpec, 2);
+    const runner = new GoalRunner({
+      store,
+      runAttempt: scriptedRunAttempt([[{ type: 'done', text: 'all done!', turnCount: 1 }]]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'exhausted');
+
+    expect(store.getAttempts(goal.id)).toHaveLength(2);
+    expect(store.getAttempts(goal.id)[0]?.verdict?.score).toBe(0);
+  });
+
+  it('completes an empty-spec goal only once the check judge passes the goal', async () => {
+    const goal = makeGoalWithSpec(store, emptySpec, 3);
+    const judgeCheck = vi
+      .fn()
+      .mockResolvedValueOnce({ pass: false, evidence: '30 of 3,169' })
+      .mockResolvedValueOnce({ pass: true, evidence: '3,169 of 3,169' });
+    const runner = new GoalRunner({
+      store,
+      judgeCheck,
+      runAttempt: scriptedRunAttempt([
+        [{ type: 'done', text: 'partial', turnCount: 1 }],
+        [{ type: 'done', text: 'finished', turnCount: 1 }],
+      ]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(store.getAttempts(goal.id)).toHaveLength(2);
+    expect(judgeCheck).toHaveBeenCalledTimes(2);
+    expect(judgeCheck.mock.calls[0]?.[0]).toMatchObject({ goalText: 'Do the thing' });
   });
 });
 
@@ -794,5 +858,28 @@ describe('GoalRunner.canExecute', () => {
         runAttempt: fakeRunAttempt([{ type: 'done', text: 'x', turnCount: 1 }]),
       }).canExecute(),
     ).toBe(true);
+  });
+});
+
+// S1 — command checks run through the injected executor, bound to the goal's
+// own personality; the runner has no shell of its own.
+describe('GoalRunner — acceptance-check executor', () => {
+  it('hands each command check to execAcceptanceCheck with the goal personality', async () => {
+    const store = new SQLiteGoalStore(':memory:');
+    const goal = makeGoalWithSpec(store, {
+      checks: [{ id: 'c1', description: 'tests pass', command: 'pnpm test' }],
+      rubric: [],
+      threshold: 0,
+    });
+    const execAcceptanceCheck = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+    const runner = new GoalRunner({
+      store,
+      execAcceptanceCheck,
+      runAttempt: fakeRunAttempt([{ type: 'done', text: 'done', turnCount: 1 }]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+    expect(execAcceptanceCheck).toHaveBeenCalledWith('pnpm test', { personalityId: 'tester' });
   });
 });

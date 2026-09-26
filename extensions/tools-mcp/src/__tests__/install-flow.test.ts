@@ -24,6 +24,20 @@ import type { McpInstallFlowOptions, McpServerConfig } from '../index';
 import { McpInstallFlow, McpJsonStore, type McpManager } from '../index';
 import { ConfidentialClientUnsupported, DcrUnsupported, OAuthDiscoveryError } from '../oauth';
 
+// safeFetch's default transport pins each connection to the validated address
+// through undici (`pinnedFetch`, packages/safety/network/src/safe-fetch.ts),
+// which the global-fetch stubs in this file cannot see. Route it to the stubs
+// through the documented, unpinned `fetchImpl` seam; URL validation and
+// redirect handling stay real.
+vi.mock('@ethosagent/safety-network', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ethosagent/safety-network')>();
+  return {
+    ...actual,
+    safeFetch: (url: string, opts: Parameters<typeof actual.safeFetch>[1]) =>
+      actual.safeFetch(url, { ...opts, fetchImpl: (input, init) => globalThis.fetch(input, init) }),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------

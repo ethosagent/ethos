@@ -89,9 +89,10 @@ async function runTurnAuditors(
  *
  * `messages` rows are authoritative (analytics decision 9); the session's
  * `input_tokens / output_tokens / cache_* / estimated_cost_usd` columns are a
- * derived display cache. So this only ever accumulates what `streamStep` wrote
- * onto a message row — tool-incurred costs, which never reach `messages`, stay
- * out of it, or the `rollup == SUM(messages)` invariant would break.
+ * derived display cache. So this only ever accumulates what was written onto a
+ * message row: `streamStep`'s assistant usage, and a tool-reported `cost_usd`
+ * that `processTools` writes onto its tool_result row — anything else would
+ * break the `rollup == SUM(messages)` invariant.
  */
 export interface TurnUsageAccumulator {
   inputTokens: number;

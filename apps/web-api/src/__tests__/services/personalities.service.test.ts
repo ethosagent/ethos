@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { DecisionsConfig } from '@ethosagent/config';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   type CharacterSheetModelFit,
@@ -224,6 +225,56 @@ describe('PersonalitiesService', () => {
     expect(markdown).toContain('Largest contributor: tool schemas (4,800 tokens, 12 tools).');
   });
 
+  it('characterSheet carries the prompt-size numbers, project context included, structured for the tab', async () => {
+    const storage = new InMemoryStorage();
+    const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
+    await storage.mkdir(join(DATA, 'personalities', 'researcher'));
+    await storage.write(soulPath, '# Researcher\n\nI am a careful researcher.\n');
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    const config = { id: 'researcher', name: 'Researcher', soulFile: soulPath };
+    registry.define(config);
+    registry.setDefault('researcher');
+    const library = new SkillsLibrary({ dataDir: DATA, storage });
+    const fitWith = (projectContext?: {
+      workdir?: string;
+      tokens: number;
+    }): CharacterSheetModelFit => ({
+      verdict: 'fits',
+      model: 'm',
+      windowTokens: 200_000,
+      windowSource: 'catalog',
+      floor: {
+        tokens: 9_000,
+        toolCount: 3,
+        components: [{ name: 'tool schemas', tokens: 6_000 }],
+        ...(projectContext ? { projectContext } : {}),
+      },
+      degradations: [],
+      exclusions: [],
+    });
+    const sheet = async (fit: CharacterSheetModelFit) =>
+      new PersonalitiesService({
+        personalities: registry,
+        library,
+        modelFit: async () => fit,
+      }).characterSheet('researcher');
+
+    const declared = await sheet(fitWith({ workdir: '/srv/repo', tokens: 3_000 }));
+    expect(declared.promptSize).toEqual({
+      staticPrefixTokens: 9_000,
+      projectContext: { workdir: '/srv/repo', tokens: 3_000 },
+    });
+    expect(declared.markdown).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md in /srv/repo): ~3000 tokens, included above',
+    );
+
+    const undeclared = await sheet(fitWith({ tokens: 0 }));
+    expect(undeclared.promptSize?.projectContext).toEqual({ workdir: null, tokens: 0 });
+
+    const unmeasured = await sheet(fitWith());
+    expect(unmeasured.promptSize).toEqual({ staticPrefixTokens: 9_000, projectContext: null });
+  });
+
   it('characterSheet renders without the verdict when the modelFit seam is absent or fails', async () => {
     const storage = new InMemoryStorage();
     const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
@@ -245,6 +296,8 @@ describe('PersonalitiesService', () => {
     const a = await absent.characterSheet('researcher');
     const b = await failing.characterSheet('researcher');
     expect(a.markdown).not.toContain('## Model fit');
+    expect(a.promptSize).toBeNull();
+    expect(b.promptSize).toBeNull();
     // Fail-soft: a throwing seam degrades to the same verdict-less sheet.
     expect(b.markdown).toBe(a.markdown);
   });
@@ -1068,6 +1121,178 @@ describe('PersonalitiesService', () => {
         ),
       ).rejects.toThrow();
       expect((await service.mcpExport('agent')).declaration).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // decisions — Edit → Config › Decision model (plan
+  // decision-provider-personality §9), through the real RPC handler: contract
+  // input parse → service → registry → config.yaml → wire, with every site
+  // resolved server-side against the operator's `decisions.*`.
+  // -------------------------------------------------------------------------
+  describe('decisions update', () => {
+    async function makeDecisionsService(global: DecisionsConfig | undefined) {
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({
+        personalities: registry,
+        library,
+        readDecisions: async () => global,
+      });
+      await service.create({ id: 'agent', name: 'Agent', toolset: [], soulMd: '# A' });
+      const context = { personalities: service } as unknown as RpcContext;
+      const file = async () =>
+        (await storage.read(join(DATA, 'personalities/agent/config.yaml'))) ?? '';
+      return { service, context, file };
+    }
+
+    const OPERATOR: DecisionsConfig = { provider: 'typesafe', thresholds: { injection: 0.9 } };
+
+    it('writes decisions lines, reads them back, and resolves each site', async () => {
+      const { service, context, file } = await makeDecisionsService(OPERATOR);
+      const out = await call(
+        personalitiesRouter.update,
+        {
+          id: 'agent',
+          decisions: { provider: 'typesafe', sites: { injection: 'on', approver: 'on' } },
+        },
+        { context },
+      );
+      const text = await file();
+      expect(text).toContain('decisions.provider: typesafe');
+      expect(text).toContain('decisions.sites.injection: on');
+      expect(text).toContain('decisions.sites.approver: on');
+      expect(text).not.toContain('decisions.sites.router');
+
+      const expected = {
+        provider: 'typesafe',
+        sites: { injection: 'on', approver: 'on' },
+        resolved: {
+          configured: true,
+          // No vault wired in this harness: the key reads as absent.
+          apiKeyPresent: false,
+          sites: [
+            { site: 'injection', requested: 'on', effective: 'on', missingThresholds: [] },
+            {
+              site: 'approver',
+              requested: 'on',
+              effective: 'shadow',
+              reason: 'threshold-missing',
+              missingThresholds: [
+                'decisions.thresholds.approver.approve',
+                'decisions.thresholds.approver.deny',
+              ],
+              // Undeclared approvalMode is `manual`: the approver is never consulted.
+              inertApprovalMode: 'manual',
+            },
+            {
+              site: 'router',
+              requested: 'off',
+              effective: 'off',
+              reason: 'undeclared',
+              missingThresholds: [],
+            },
+          ],
+        },
+      };
+      expect(out.personality.decisions).toEqual(expected);
+      expect((await service.get('agent')).personality.decisions).toEqual(expected);
+    });
+
+    it('merges sites one by one, and provider "" clears the reference', async () => {
+      const { context, service } = await makeDecisionsService(OPERATOR);
+      await call(
+        personalitiesRouter.update,
+        { id: 'agent', decisions: { provider: 'typesafe', sites: { injection: 'shadow' } } },
+        { context },
+      );
+      await call(
+        personalitiesRouter.update,
+        { id: 'agent', decisions: { sites: { router: 'shadow' } } },
+        { context },
+      );
+      expect((await service.get('agent')).personality.decisions?.sites).toEqual({
+        injection: 'shadow',
+        router: 'shadow',
+      });
+      const cleared = await call(
+        personalitiesRouter.update,
+        { id: 'agent', decisions: { provider: '' } },
+        { context },
+      );
+      expect(cleared.personality.decisions?.provider).toBeUndefined();
+      // The sites stay, inert: without a provider they resolve `off` (PD10).
+      expect(cleared.personality.decisions?.resolved?.sites[0]).toEqual({
+        site: 'injection',
+        requested: 'shadow',
+        effective: 'off',
+        reason: 'no-provider',
+        missingThresholds: [],
+      });
+    });
+
+    it('resolves not-configured when the operator configured no provider', async () => {
+      const { context } = await makeDecisionsService(undefined);
+      const out = await call(
+        personalitiesRouter.update,
+        { id: 'agent', decisions: { provider: 'typesafe', sites: { injection: 'shadow' } } },
+        { context },
+      );
+      expect(out.personality.decisions?.resolved?.configured).toBe(false);
+      expect(out.personality.decisions?.resolved?.sites[0]?.reason).toBe('not-configured');
+      expect(out.personality.decisions?.resolved?.sites[0]?.effective).toBe('off');
+    });
+
+    it.each([
+      ['an unknown provider', { provider: 'openai' }],
+      ['an unknown mode', { sites: { injection: 'always' } }],
+      ['an unknown site', { sites: { summarizer: 'on' } }],
+      ['an unknown key', { provider: 'typesafe', thresholds: { injection: 0.1 } }],
+    ])('the handler refuses %s before anything is written', async (_label, decisions) => {
+      const { context, file } = await makeDecisionsService(OPERATOR);
+      const before = await file();
+      await expect(
+        call(
+          personalitiesRouter.update,
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid input
+          { id: 'agent', decisions: decisions as any },
+          { context },
+        ),
+      ).rejects.toThrow();
+      expect(await file()).toBe(before);
+    });
+
+    it('characterSheet renders the same ## Decisions section as ethos personality show', async () => {
+      const { service, context } = await makeDecisionsService(OPERATOR);
+      await call(
+        personalitiesRouter.update,
+        { id: 'agent', decisions: { provider: 'typesafe', sites: { injection: 'shadow' } } },
+        { context },
+      );
+      const { markdown } = await service.characterSheet('agent');
+      expect(markdown).toContain('## Decisions');
+      expect(markdown).toContain('- injection: shadow');
+      // The resolved context, not just the declared values: host and key state.
+      expect(markdown).toContain('api.typesafe.ai');
+      expect(markdown).toContain('no key at vault ref providers/typesafe/apiKey');
+    });
+
+    it('omits decisions for a personality that declares none, and resolved without the seam', async () => {
+      const { service } = await makeDecisionsService(OPERATOR);
+      expect((await service.get('agent')).personality.decisions).toBeUndefined();
+
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const bare = new PersonalitiesService({
+        personalities: registry,
+        library: new SkillsLibrary({ dataDir: DATA, storage }),
+      });
+      await bare.create({ id: 'agent', name: 'Agent', toolset: [], soulMd: '# A' });
+      const { personality } = await bare.update('agent', {
+        decisions: { provider: 'typesafe', sites: { router: 'on' } },
+      });
+      expect(personality.decisions).toEqual({ provider: 'typesafe', sites: { router: 'on' } });
     });
   });
 

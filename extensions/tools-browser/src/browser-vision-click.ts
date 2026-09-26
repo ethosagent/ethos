@@ -22,6 +22,9 @@ export function createBrowserVisionClickTool(
     description:
       'Click an element described in natural language. Uses accessibility tree first, falls back to vision model.',
     toolset: 'browser',
+    // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+    // __tests__/untrusted-roster.test.ts).
+    outputIsUntrusted: true,
     maxResultChars: 500,
     capabilities: {
       network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs

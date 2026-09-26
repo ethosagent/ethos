@@ -1,14 +1,18 @@
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import type {
   AdapterCapabilities,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
   PlatformAdapter,
+  Storage,
 } from '@ethosagent/types';
-import { ImapFlow } from 'imapflow';
-import { simpleParser } from 'mailparser';
-import * as nodemailer from 'nodemailer';
+import type { ImapFlow } from 'imapflow';
+import type * as nodemailer from 'nodemailer';
 import { toNativeMarkdown } from './format';
+import { emailSdk } from './sdk';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -28,6 +32,26 @@ export interface EmailAdapterConfig {
   /** Stable bot identity, computed once in wiring (`deriveBotKey`). Required —
    *  the adapter no longer derives its own key; routing is stamped from this. */
   botKey: string;
+  /**
+   * The authserv-id (RFC 8601 §2.5 — the first token of an
+   * `Authentication-Results` header) the mailbox's OWN receiving server
+   * stamps. Only the topmost `Authentication-Results` header carrying this id
+   * is believed; every other one is ignored. Unset → every sender is
+   * unverified (fail closed). Enforced by `resolveEmailSender`, pinned by
+   * `src/__tests__/sender-auth.test.ts`. Wired from the flat `EthosConfig`
+   * key `emailTrustedAuthservId`.
+   */
+  trustedAuthservId?: string;
+  /**
+   * Where the reply-threading state for each chat is persisted
+   * (`<emailDir>/<botKey>/threads.json`), so a reply the delivery ledger
+   * redelivers after a restart still goes to the right address, in-thread.
+   * Absent → in memory only, and a restart loses it (such a redelivery is then
+   * refused as `permanent`).
+   */
+  storage?: Storage;
+  /** Directory for the persisted thread state. Default `'email'`. */
+  emailDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,10 +67,320 @@ function slugify(text: string): string {
     .slice(0, 80);
 }
 
+// Gateway commands an email body may lead with (`/stop`, `/personality list`, …),
+// from the shared registry the gateway's own executor table is pinned against
+// (extensions/gateway/src/__tests__/slash-registry-drift.test.ts).
+const GATEWAY_COMMANDS = new Set(slashCommandsForSurface('gateway').map((c) => `/${c.name}`));
+
+/**
+ * Gateway commands whose argument is free text taken from everything after the
+ * command token, not a single word: `/background` and `/queue` hand
+ * `text.slice('/<cmd> '.length)` to the agent as the prompt, and `/compact`
+ * joins every remaining word into its focus hint (`Gateway.handleMessage` in
+ * `@ethosagent/gateway`). The shared registry's `usage` strings do not record
+ * argument shape reliably (`/queue`'s reads `/queue`), so the set is explicit.
+ */
+const FREE_TEXT_COMMANDS = new Set(['/background', '/queue', '/compact']);
+
+/**
+ * True for the line that starts the client-appended tail of a reply: a quoted
+ * line (`>`), an `On … wrote:` attribution (which some clients wrap so that
+ * `wrote:` ends the NEXT line), or the RFC 3676 signature delimiter `-- `.
+ */
+function isReplyTailStart(line: string, next: string | undefined): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('>') || trimmed === '--') return true;
+  if (!/^On\s/.test(trimmed)) return false;
+  return /wrote:$/.test(trimmed) || /wrote:$/.test((next ?? '').trim());
+}
+
+/**
+ * An email reply carries more than the sender typed: the client appends the
+ * quoted thread and a signature. When the body's first line starts with a
+ * gateway command, only the command is the message, so `/personality engineer`
+ * does not arrive as `/personality engineer On Tue, Bob wrote: …`. A command in
+ * `FREE_TEXT_COMMANDS` keeps every line up to the reply tail
+ * (`isReplyTailStart`), so a multi-line `/background` prompt — or one written
+ * below a bare `/background` — arrives whole; any other command keeps its first
+ * line alone. Any other body — including one that starts with a path or an
+ * unknown `/word` — is passed through whole. Pinned by
+ * `__tests__/email-adapter.test.ts` ('EmailAdapter slash commands').
+ * Limitation: a client footer with no `-- ` delimiter ("Sent from my phone")
+ * is kept as part of a free-text prompt.
+ */
+function commandOrBody(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const firstLine = (lines[0] ?? '').trim();
+  const token = (firstLine.split(/\s+/, 1)[0] ?? '').toLowerCase().split('@', 1)[0] ?? '';
+  if (!GATEWAY_COMMANDS.has(token)) return text;
+  if (!FREE_TEXT_COMMANDS.has(token)) return firstLine;
+  const kept = [firstLine];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (isReplyTailStart(line, lines[i + 1])) break;
+    kept.push(line);
+  }
+  return kept.join('\n').trimEnd();
+}
+
 // chatId encodes both sender and subject so each subject thread is a separate
 // gateway lane (and therefore a separate agent session).
 function makeChatId(from: string, subject: string): string {
   return `${from}:${slugify(subject)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Sender authentication (RFC 8601 Authentication-Results)
+// ---------------------------------------------------------------------------
+//
+// `From:` is whatever the sender typed. It becomes an identity key (userId,
+// and through it the identity map, memory scope, channel_filter owner and
+// allowlists) only when the mailbox's own receiving server says the domain in
+// it authenticated. Everything else — no configured authserv-id, no header
+// from it, a header this parser cannot read, a non-pass verdict, a pass for a
+// different domain — resolves to an unverified identity that cannot collide
+// with a verified one. The parser is deliberately narrow: whatever it does
+// not understand is a refusal, never a pass.
+
+/** One raw header line as `mailparser` delivers it in `ParsedMail.headerLines`. */
+export interface EmailHeaderLine {
+  key: string;
+  line: string;
+}
+
+export interface EmailSenderResolution {
+  verified: boolean;
+  /** `from` when verified; `unverifiedEmailUserId(from)` otherwise. */
+  userId: string;
+  /** Why the sender is unverified. Absent when verified. */
+  reason?: string;
+}
+
+/** Prefix of the one-line notice an unverified message's text carries. */
+export const UNVERIFIED_SENDER_NOTICE = '[unverified sender]';
+
+/**
+ * The identity an unauthenticated sender gets (plan D16): stable per address,
+ * so a real but unauthenticated correspondent keeps one thread of memory, and
+ * unable to equal a verified address (which has no `email-unverified:`
+ * prefix) or that address's identity-map key.
+ */
+export function unverifiedEmailUserId(from: string): string {
+  return `email-unverified:${createHash('sha256').update(from.toLowerCase()).digest('hex')}`;
+}
+
+interface AuthResult {
+  method: string;
+  result: string;
+  props: Map<string, string>;
+}
+
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function unquote(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(.)/g, '$1');
+  }
+  return value;
+}
+
+/**
+ * Drop RFC 5322 comments (nested, with quoted-pairs) outside quoted strings,
+ * and the whitespace around an unquoted `=` or `/`, so `dkim = pass` reads
+ * like `dkim=pass`. `null` on an unbalanced comment or an unterminated
+ * quoted string.
+ */
+function stripComments(input: string): string | null {
+  let out = '';
+  let depth = 0;
+  let inQuote = false;
+  let skipWs = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i] ?? '';
+    if (ch === '\\') {
+      if (depth === 0) out += input.slice(i, i + 2);
+      i++;
+      skipWs = false;
+      continue;
+    }
+    if (inQuote) {
+      out += ch;
+      if (ch === '"') inQuote = false;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+      continue;
+    }
+    if (ch === ')') {
+      if (depth === 0) return null;
+      depth--;
+      if (depth === 0 && !skipWs) out += ' ';
+      continue;
+    }
+    if (depth > 0) continue;
+    if (/\s/.test(ch)) {
+      if (!skipWs) out += ' ';
+      continue;
+    }
+    if (ch === '=' || ch === '/') {
+      out = out.trimEnd() + ch;
+      skipWs = true;
+      continue;
+    }
+    skipWs = false;
+    if (ch === '"') inQuote = true;
+    out += ch;
+  }
+  if (depth !== 0 || inQuote) return null;
+  return out;
+}
+
+/** Split on `;` (or on whitespace, when `sep` is null) outside quoted strings. */
+function splitOutsideQuotes(s: string, sep: ';' | null): string[] {
+  const parts: string[] = [];
+  let cur = '';
+  let inQuote = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i] ?? '';
+    if (ch === '\\') {
+      cur += s.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (ch === '"') inQuote = !inQuote;
+    if (!inQuote && (sep === null ? /\s/.test(ch) : ch === sep)) {
+      parts.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  parts.push(cur);
+  return sep === null ? parts.filter((p) => p.length > 0) : parts.map((p) => p.trim());
+}
+
+/**
+ * Parse one unfolded `Authentication-Results` value (everything after the
+ * colon). `null` when any part of it is outside the grammar this reads — the
+ * caller treats that as a refusal, not a skip.
+ */
+function parseAuthenticationResults(
+  value: string,
+): { authservId: string; results: AuthResult[] } | null {
+  const cleaned = stripComments(value);
+  if (cleaned === null) return null;
+  const [headSegment = '', ...resinfos] = splitOutsideQuotes(cleaned, ';');
+  // authserv-id [ CFWS authres-version ]
+  const head = splitOutsideQuotes(headSegment, null);
+  const [id, version, ...extra] = head;
+  if (!id || extra.length > 0 || (version !== undefined && !/^\d+$/.test(version))) return null;
+  const authservId = normalizeDomain(unquote(id));
+  if (!authservId) return null;
+
+  const present = resinfos.filter((r) => r !== '');
+  // no-result: exactly `; none`.
+  if (present.length === 1 && present[0]?.toLowerCase() === 'none') {
+    return { authservId, results: [] };
+  }
+  const results: AuthResult[] = [];
+  for (const seg of present) {
+    const [methodspec = '', ...propWords] = splitOutsideQuotes(seg, null);
+    const spec = /^([A-Za-z0-9][A-Za-z0-9_-]*)(?:\/\d+)?=(.+)$/.exec(methodspec);
+    const method = spec?.[1];
+    const result = spec?.[2];
+    if (!method || !result) return null;
+    const props = new Map<string, string>();
+    for (const word of propWords) {
+      const eq = word.indexOf('=');
+      if (eq <= 0) return null;
+      const key = word.slice(0, eq).toLowerCase();
+      // A property named twice is ambiguous: refuse rather than pick one.
+      if (props.has(key)) return null;
+      props.set(key, unquote(word.slice(eq + 1)));
+    }
+    results.push({ method: method.toLowerCase(), result: unquote(result).toLowerCase(), props });
+  }
+  return { authservId, results };
+}
+
+/** `header.d` is the `From:` domain or a parent of it (relaxed alignment). */
+function dkimAligned(headerD: string | undefined, fromDomain: string): boolean {
+  if (!headerD) return false;
+  const d = normalizeDomain(headerD);
+  // A single-label `d` (a bare TLD) aligns with nothing.
+  if (!d.includes('.')) return false;
+  return fromDomain === d || fromDomain.endsWith(`.${d}`);
+}
+
+/**
+ * Decide whether `from` may be used as an identity key.
+ *
+ * Verified only when the TOPMOST `Authentication-Results` header whose
+ * authserv-id equals `trustedAuthservId` (case-insensitive) carries
+ * `dmarc=pass` with `header.from` equal to the `From:` domain, or
+ * `dkim=pass` with `header.d` equal to or a parent of the `From:` domain —
+ * and no non-pass `dmarc` result. Headers below it, and headers under any
+ * other authserv-id, are never read. An `Authentication-Results` header this
+ * parser cannot read, appearing before the trusted one, ends the search as
+ * unverified (it could have been the trusted one). More than one `From:`
+ * header is unverified. Every other outcome is unverified too (fail closed,
+ * plan D5).
+ *
+ * `headerLines` is `ParsedMail.headerLines` from `simpleParser`: the root
+ * part's raw folded lines, in delivered order, one entry per occurrence.
+ * (`ParsedMail.headers` keeps the order but decodes the values and collapses
+ * a single occurrence to a string, so the raw text is not what it holds.)
+ *
+ * Pinned by `src/__tests__/sender-auth.test.ts`.
+ */
+export function resolveEmailSender(
+  headerLines: readonly EmailHeaderLine[],
+  from: string,
+  trustedAuthservId: string | undefined,
+): EmailSenderResolution {
+  const unverified = (reason: string): EmailSenderResolution => ({
+    verified: false,
+    userId: unverifiedEmailUserId(from),
+    reason,
+  });
+
+  const trusted = normalizeDomain(trustedAuthservId ?? '');
+  if (!trusted) return unverified('no trusted authserv-id configured (emailTrustedAuthservId)');
+
+  const at = from.lastIndexOf('@');
+  const fromDomain = at >= 0 ? normalizeDomain(from.slice(at + 1)) : '';
+  if (!fromDomain) return unverified('From: address has no domain');
+
+  const fromHeaders = headerLines.filter((h) => h.key.toLowerCase() === 'from').length;
+  if (fromHeaders !== 1) return unverified(`expected one From: header, found ${fromHeaders}`);
+
+  for (const header of headerLines) {
+    if (header.key.toLowerCase() !== 'authentication-results') continue;
+    const colon = header.line.indexOf(':');
+    const value = colon >= 0 ? header.line.slice(colon + 1).replace(/\r?\n[ \t]/g, ' ') : '';
+    const parsed = parseAuthenticationResults(value);
+    if (!parsed) return unverified('unreadable Authentication-Results header');
+    if (parsed.authservId !== trusted) continue;
+
+    const dmarc = parsed.results.filter((r) => r.method === 'dmarc');
+    const dmarcFail = dmarc.find((r) => r.result !== 'pass');
+    if (dmarcFail) return unverified(`dmarc=${dmarcFail.result}`);
+    if (dmarc.some((r) => normalizeDomain(r.props.get('header.from') ?? '') === fromDomain)) {
+      return { verified: true, userId: from };
+    }
+    const dkimPass = parsed.results.some(
+      (r) =>
+        r.method === 'dkim' &&
+        r.result === 'pass' &&
+        dkimAligned(r.props.get('header.d'), fromDomain),
+    );
+    if (dkimPass) return { verified: true, userId: from };
+    return unverified('no aligned dmarc or dkim pass from the trusted authserv-id');
+  }
+  return unverified('no Authentication-Results header from the trusted authserv-id');
 }
 
 // ---------------------------------------------------------------------------
@@ -59,9 +393,34 @@ interface ThreadState {
   inReplyTo?: string;
 }
 
+/** Newest chats kept in the persisted thread file; older ones are dropped. */
+const MAX_PERSISTED_THREADS = 1000;
+
+function isThreadState(v: unknown): v is ThreadState {
+  if (typeof v !== 'object' || v === null) return false;
+  if (!('to' in v) || typeof v.to !== 'string') return false;
+  if (!('replySubject' in v) || typeof v.replySubject !== 'string') return false;
+  return !('inReplyTo' in v) || v.inReplyTo === undefined || typeof v.inReplyTo === 'string';
+}
+
 // ---------------------------------------------------------------------------
 // EmailAdapter
 // ---------------------------------------------------------------------------
+
+/**
+ * SMTP reply codes that are a hard bounce for this recipient: 550 mailbox
+ * unavailable / user unknown, 551 user not local, 553 mailbox name not
+ * allowed. Other 5xx are left retryable on purpose — 535 is this deployment's
+ * own credentials (an operator fixes it and every owed reply should then go),
+ * and 552/554 are as often size or content policy as a dead address.
+ */
+const PERMANENT_SMTP_CODES = new Set([550, 551, 553]);
+
+/** Is `err` (nodemailer's SMTP error, read by shape: `responseCode`) a hard bounce? */
+function isPermanentSmtpError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('responseCode' in err)) return false;
+  return typeof err.responseCode === 'number' && PERMANENT_SMTP_CODES.has(err.responseCode);
+}
 
 export class EmailAdapter implements PlatformAdapter {
   readonly id = 'email';
@@ -86,6 +445,11 @@ export class EmailAdapter implements PlatformAdapter {
 
   // chatId → thread state needed to reply correctly
   private readonly threads = new Map<string, ThreadState>();
+  /** `<emailDir>/<botKey>/threads.json`, when a Storage is wired. */
+  private readonly threadsFile: string | undefined;
+  private threadsLoaded = false;
+  /** Serializes thread-file writes so two polls cannot interleave them. */
+  private threadsWrite: Promise<void> = Promise.resolve();
 
   // Injected in constructor — allows tests to provide mocks
   private readonly createImapClient: (cfg: EmailAdapterConfig) => ImapFlow;
@@ -103,6 +467,59 @@ export class EmailAdapter implements PlatformAdapter {
     this.botKey = config.botKey;
     this.createImapClient = overrides?.createImapClient ?? defaultImapClient;
     this.createTransporter = overrides?.createTransporter ?? defaultTransporter;
+    this.threadsFile = config.storage
+      ? join(config.emailDir ?? 'email', this.botKey, 'threads.json')
+      : undefined;
+  }
+
+  /**
+   * Merge the persisted thread file into memory, once. In-memory entries win:
+   * they are newer than anything a previous process wrote. A missing or
+   * unreadable file is an empty one.
+   */
+  private async loadThreads(): Promise<void> {
+    if (this.threadsLoaded) return;
+    this.threadsLoaded = true;
+    const storage = this.config.storage;
+    if (!storage || !this.threadsFile) return;
+    try {
+      const raw = await storage.read(this.threadsFile);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) return;
+      for (const [chatId, state] of Object.entries(parsed)) {
+        if (isThreadState(state) && !this.threads.has(chatId)) this.threads.set(chatId, state);
+      }
+    } catch {
+      // Unreadable → start empty; the next inbound rewrites it.
+    }
+  }
+
+  /** Record `chatId`'s thread in memory and, when a Storage is wired, on disk
+   *  (atomic whole-file replace, newest {@link MAX_PERSISTED_THREADS} kept).
+   *  Best-effort: a failed write never fails the inbound message. */
+  private async rememberThread(chatId: string, state: ThreadState): Promise<void> {
+    await this.loadThreads();
+    this.threads.delete(chatId); // re-insert so insertion order is recency
+    this.threads.set(chatId, state);
+    while (this.threads.size > MAX_PERSISTED_THREADS) {
+      const oldest = this.threads.keys().next().value;
+      if (oldest === undefined) break;
+      this.threads.delete(oldest);
+    }
+    const storage = this.config.storage;
+    const file = this.threadsFile;
+    if (!storage || !file) return;
+    const body = JSON.stringify(Object.fromEntries(this.threads));
+    this.threadsWrite = this.threadsWrite.then(async () => {
+      try {
+        await storage.mkdir(join(this.config.emailDir ?? 'email', this.botKey));
+        await storage.writeAtomic(file, body);
+      } catch {
+        // Best-effort; memory still has it for this process.
+      }
+    });
+    await this.threadsWrite;
   }
 
   // ---------------------------------------------------------------------------
@@ -127,9 +544,13 @@ export class EmailAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    if (!this.threads.has(chatId)) await this.loadThreads();
     const thread = this.threads.get(chatId);
     if (!thread) {
-      return { ok: false, error: `No thread state for chatId: ${chatId}` };
+      // Neither memory nor the persisted thread file knows this chat, so no
+      // retry can learn where to send — `permanent`, so the delivery sweep
+      // abandons it with this reason instead of retrying to the cap.
+      return { ok: false, error: `No thread state for chatId: ${chatId}`, permanent: true };
     }
 
     const transporter = this.createTransporter(this.config);
@@ -144,7 +565,13 @@ export class EmailAdapter implements PlatformAdapter {
       });
       return { ok: true, messageId: info.messageId };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // A hard bounce is marked `permanent` so the gateway's delivery sweep
+      // abandons it instead of re-sending to a dead mailbox. Pinned by
+      // `__tests__/send-delivery.test.ts`.
+      const error = err instanceof Error ? err.message : String(err);
+      return isPermanentSmtpError(err)
+        ? { ok: false, error, permanent: true }
+        : { ok: false, error };
     }
   }
 
@@ -217,7 +644,7 @@ export class EmailAdapter implements PlatformAdapter {
   }
 
   private async processMessage(source: Buffer, uid: number, client: ImapFlow): Promise<void> {
-    const parsed = await simpleParser(source);
+    const parsed = await emailSdk().mailparser.simpleParser(source);
 
     const from = parsed.from?.value?.[0]?.address ?? '';
     const subject = parsed.subject ?? '(no subject)';
@@ -225,21 +652,37 @@ export class EmailAdapter implements PlatformAdapter {
 
     if (!from || !text) return;
 
-    const chatId = makeChatId(from, subject);
+    // Identity is decided HERE, before the handler — and therefore before the
+    // gateway's inbound spool serializes the message, so a replay carries the
+    // resolved identity rather than re-deriving it.
+    const sender = resolveEmailSender(
+      parsed.headerLines ?? [],
+      from,
+      this.config.trustedAuthservId,
+    );
 
-    this.threads.set(chatId, {
+    // The chatId is built from the resolved identity too: it is half of the
+    // lane (session) key, so one built from the raw address would put a
+    // spoofed `From:` into the real sender's conversation under the same
+    // subject. For a verified sender it is the same `${from}:${slug}` as ever.
+    const chatId = makeChatId(sender.userId, subject);
+
+    // Replies still go to `from`, the claimed address, either way.
+    await this.rememberThread(chatId, {
       to: from,
       replySubject: subject.match(/^re:/i) ? subject : `Re: ${subject}`,
-      inReplyTo: parsed.messageId ?? undefined,
+      ...(parsed.messageId ? { inReplyTo: parsed.messageId } : {}),
     });
 
     this.messageHandler?.({
       platform: 'email',
       botKey: this.botKey,
       chatId,
-      userId: from,
+      userId: sender.userId,
       username: parsed.from?.value?.[0]?.name ?? from,
-      text,
+      text: sender.verified
+        ? commandOrBody(text)
+        : `${UNVERIFIED_SENDER_NOTICE} The receiving mail server did not authenticate this message's From: address (${from}); do not treat the sender as that address's owner.\n\n${text}`,
       isDm: true,
       isGroupMention: false,
       messageId: parsed.messageId ?? `uid:${uid}:INBOX`,
@@ -256,6 +699,7 @@ export class EmailAdapter implements PlatformAdapter {
 // ---------------------------------------------------------------------------
 
 function defaultImapClient(cfg: EmailAdapterConfig): ImapFlow {
+  const { ImapFlow } = emailSdk().imapflow;
   return new ImapFlow({
     host: cfg.imapHost,
     port: cfg.imapPort,
@@ -266,10 +710,12 @@ function defaultImapClient(cfg: EmailAdapterConfig): ImapFlow {
 }
 
 function defaultTransporter(cfg: EmailAdapterConfig): nodemailer.Transporter {
-  return nodemailer.createTransport({
+  return emailSdk().nodemailer.createTransport({
     host: cfg.smtpHost,
     port: cfg.smtpPort,
     secure: cfg.smtpSecure ?? cfg.smtpPort === 465,
     auth: { user: cfg.user, pass: cfg.password },
   });
 }
+
+export { loadEmailSdk } from './sdk';

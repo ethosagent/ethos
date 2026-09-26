@@ -73,6 +73,13 @@ export const StoredMessageSchema = z.object({
    * absent as success.
    */
   isError: z.boolean().optional(),
+  /**
+   * The turn's observability trace id, when the turn was traced. Optional:
+   * absent on untraced turns and on rows written before `trace_id` existed.
+   * It is the anchor a persisted router decision row (`SessionDecision`,
+   * events.ts) is placed by on reload (plan decision-provider-personality §15.5).
+   */
+  traceId: z.string().optional(),
   timestamp: z.string(), // ISO-8601
 });
 export type StoredMessage = z.infer<typeof StoredMessageSchema>;
@@ -91,6 +98,54 @@ export const ModelTierConfigSchema = z.object({
   deep: z.string().optional(),
 });
 export type ModelTierConfigWire = z.infer<typeof ModelTierConfigSchema>;
+
+/**
+ * The decision providers the layer knows. Lockstep with `DECISION_PROVIDERS`
+ * (@ethosagent/config) and with `DECISION_PROVIDER_CATALOG`
+ * (apps/web-api/src/services/decision-catalog.ts) — this package cannot import
+ * either, so the three are pinned equal by
+ * apps/web-api/src/__tests__/services/decisions.service.test.ts ("catalog").
+ * Declared here, not beside the `decisions` namespace in router.ts, because
+ * `personalities.update` validates `decisions.provider` against it.
+ */
+export const DecisionProviderIdSchema = z.enum(['typesafe']);
+
+/** `DECISION_SITES` (@ethosagent/config) / `PersonalityDecisionSiteId` (@ethosagent/types). */
+export const DecisionSiteIdSchema = z.enum(['injection', 'approver', 'router']);
+
+/** `DECISION_SITE_MODES` (@ethosagent/config) / `PersonalityDecisionSiteMode` (@ethosagent/types). */
+export const DecisionSiteModeSchema = z.enum(['off', 'shadow', 'on']);
+
+/** `PersonalityDecisionSiteReason` (@ethosagent/config). */
+export const DecisionSiteReasonSchema = z.enum([
+  'undeclared',
+  'no-provider',
+  'not-configured',
+  'threshold-missing',
+]);
+
+/**
+ * One decision site for one personality, as `resolveCharacterSheetDecisions`
+ * (@ethosagent/wiring — the `## Decisions` resolver, which calls
+ * `resolvePersonalityDecisionSite`, @ethosagent/config) resolves it against the
+ * operator's global `decisions.*`. Computed by web-api (`toDecisionSiteView`,
+ * apps/web-api/src/services/decisions.service.ts); the web never re-derives it.
+ */
+export const DecisionSiteViewSchema = z.object({
+  site: DecisionSiteIdSchema,
+  /** The personality's `decisions.sites.<site>`; `off` when unset. */
+  requested: DecisionSiteModeSchema,
+  /** What runs. */
+  effective: DecisionSiteModeSchema,
+  /** Why `effective` is not simply `requested`, or why the site is off. */
+  reason: DecisionSiteReasonSchema.optional(),
+  /** Full key names whose absence caused an R6 `on` → `shadow` downgrade. */
+  missingThresholds: z.array(z.string()),
+  /** Approver only: the personality's `safety.approvalMode` when it is not
+   *  `smart`, so the approver is never consulted (plan §4.3). */
+  inertApprovalMode: z.string().optional(),
+});
+export type DecisionSiteView = z.infer<typeof DecisionSiteViewSchema>;
 
 export const PersonalitySchema = z.object({
   id: z.string(),
@@ -205,6 +260,34 @@ export const PersonalitySchema = z.object({
       languages: z.record(z.string(), z.string()).optional(),
     })
     .optional(),
+  /** Which decision model this personality uses and where
+   *  (`PersonalityConfig.decisions`, plan decision-provider-personality §9).
+   *  `provider` and `sites` are the declaration as stored — `provider` verbatim,
+   *  even when this machine has not configured it — read back so the editor can
+   *  populate its form. `resolved` is the same resolution the character
+   *  sheet's `## Decisions` section prints: whether the operator configured the
+   *  named provider, whether its key is stored (set only when configured), and
+   *  every site. Absent when the server was not given the global config.
+   *  Omitted when the personality declares no `decisions`. */
+  decisions: z
+    .object({
+      provider: z.string().optional(),
+      sites: z
+        .object({
+          injection: DecisionSiteModeSchema.optional(),
+          approver: DecisionSiteModeSchema.optional(),
+          router: DecisionSiteModeSchema.optional(),
+        })
+        .optional(),
+      resolved: z
+        .object({
+          configured: z.boolean(),
+          apiKeyPresent: z.boolean().optional(),
+          sites: z.array(DecisionSiteViewSchema),
+        })
+        .optional(),
+    })
+    .optional(),
   system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
@@ -223,6 +306,7 @@ export const ApprovalScopeSchema = z.enum([
   'once', // Allow this single invocation
   'exact-args', // Allow this tool with these exact arguments
   'any-args', // Allow this tool with any arguments
+  'lease-1h', // Allow this tool, any args, in this session + personality, for one hour
 ]);
 export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
 
@@ -233,8 +317,29 @@ export const ApprovalRequestSchema = z.object({
   toolName: z.string(),
   args: z.unknown(),
   reason: z.string().nullable(),
+  /** True when the tool is always-ask and so cannot be allowlisted
+   *  (`exact-args`/`any-args` are refused server-side by
+   *  `ApprovalsService.approve`); the modal offers `lease-1h` instead. */
+  alwaysAsk: z.boolean(),
+  /** True for a hardline command: `ApprovalsService.approve` stores nothing
+   *  for it whatever the scope (no allowlist entry, no lease), so the modal
+   *  offers only "just this command". */
+  hardline: z.boolean(),
 });
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+
+/** Mirrors `ApprovalLease` in `@ethosagent/types` — a time-limited grant. */
+export const ApprovalLeaseSchema = z.object({
+  id: z.string(),
+  toolName: z.string(),
+  sessionId: z.string(),
+  personalityId: z.string().nullable(),
+  grantedBy: z.string(),
+  grantedAt: z.string(),
+  expiresAt: z.string(),
+  revokedAt: z.string().nullable(),
+});
+export type ApprovalLeaseWire = z.infer<typeof ApprovalLeaseSchema>;
 
 // ---------------------------------------------------------------------------
 // Onboarding
@@ -672,6 +777,13 @@ export const PluginInfoSchema = z.object({
   error: z.string().nullable(),
   /** Safety-scan findings retained from the load. Omitted when the scan was clean. */
   scanFindings: z.array(PluginScanFindingSchema).optional(),
+  /**
+   * Trust tier from the plugin's install grant (`plugins/grants.json`
+   * `scan.tier`, what `ethos plugin grants` prints), read by
+   * `PluginsService.list`. Null when no grant is recorded (a manual drop, a
+   * project plugin) or the grant file is unreadable.
+   */
+  trustTier: z.enum(['builtin', 'trusted-repo', 'community', 'untrusted']).nullable().optional(),
 });
 export type PluginInfo = z.infer<typeof PluginInfoSchema>;
 
@@ -1075,6 +1187,11 @@ export const PendingMemorySchema = z.object({
   sessionKey: z.string().optional(),
   /** epoch-ms the candidate was queued. */
   proposedAt: z.number(),
+  /** Distinct sessions that extracted this fact (`memoryCapture.evidenceSessions`
+   *  on). The queue orders by its length; absent when evidence is off. */
+  evidenceSessions: z.array(z.string()).optional(),
+  /** epoch-ms of the latest re-extraction merged into this candidate. */
+  lastSeenAt: z.number().optional(),
 });
 export type PendingMemory = z.infer<typeof PendingMemorySchema>;
 

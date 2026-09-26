@@ -4,7 +4,7 @@ description: "Configure two or more Telegram bots in one Ethos gateway, each bou
 kind: how-to
 audience: user
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-09-24
 ---
 
 ## Task
@@ -92,6 +92,8 @@ telegram.bots.0.bind.allowSlashSwitch: true
 ```
 
 With `allowSlashSwitch: true`, users can switch the active personality mid-conversation via `/personality <id>`, and `/new` resets both the session and the personality back to the configured default.
+
+In a group chat, only the owner (`channel_filter.telegram.ownerUserId`) can switch; with no owner configured, group switches are refused. DMs are unaffected.
 
 `allowSlashSwitch` defaults to `false` for identity-bound bots. Do not enable it on bots intended to have a stable, consistent persona.
 

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Modal, message, Space, Tooltip } from 'antd';
+import { App as AntApp, Button, Input, Modal, Space, Tooltip } from 'antd';
 import { useState } from 'react';
 import { rpc } from '../../rpc';
 
@@ -11,6 +11,9 @@ interface Props {
 
 export function McpServerActions({ serverName, transport, authStatus }: Props) {
   const qc = useQueryClient();
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message } = AntApp.useApp();
   const [renameOpen, setRenameOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [tokenOpen, setTokenOpen] = useState(false);

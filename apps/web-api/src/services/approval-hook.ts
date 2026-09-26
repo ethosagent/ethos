@@ -7,9 +7,10 @@ import type { ApprovalsService } from './approvals.service';
 // hook consults the user via the SSE approval flow and proceeds based on
 // their decision.
 //
-// The danger predicate is injected so this file stays free of any
-// extension imports. See `@ethosagent/wiring`'s `createDangerPredicate` for
-// the default rules (terminal `checkCommand` + always-ask list).
+// The danger predicate and the hardline check are injected so this file stays
+// free of any extension imports. See `@ethosagent/wiring`'s
+// `createDangerPredicate` for the default rules (hardline commands + always-ask
+// list) and `hardlineReason` for the hardline check.
 
 export type DangerReason = string | null;
 export type DangerPredicate = (payload: BeforeToolCallPayload) => Promise<DangerReason>;
@@ -17,6 +18,24 @@ export type DangerPredicate = (payload: BeforeToolCallPayload) => Promise<Danger
 export interface CreateApprovalHookOptions {
   approvals: ApprovalsService;
   isDangerous: DangerPredicate;
+  /**
+   * True for a hardline command. `createWebApi` passes
+   * `hardlineReason(payload) !== null` from `@ethosagent/wiring`. A hardline
+   * call is sent with `hardline: true`, so no lease or stored grant can
+   * approve it — only a human, for that one call (`ApprovalsService`).
+   * Consulted only for a call `isDangerous` flagged; the default predicate
+   * flags every hardline call first.
+   */
+  isHardline: (payload: BeforeToolCallPayload) => boolean;
+  /**
+   * Why a flagged call will be refused whatever the human says, or `null` —
+   * `createWebApi` passes `notPermittedRefusal(loop)` from `@ethosagent/wiring`
+   * (a call outside the personality's allowlist, which
+   * `DefaultToolRegistry.executeParallel` refuses). Such a call is refused
+   * with that reason and no modal is raised. Absent → every flagged call is
+   * asked about. Pinned by `__tests__/services/approval-hook.test.ts`.
+   */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
 }
 
 export function createWebApprovalHook(opts: CreateApprovalHookOptions) {
@@ -24,12 +43,18 @@ export function createWebApprovalHook(opts: CreateApprovalHookOptions) {
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
 
+    const refused = opts.refusedAnyway?.(payload);
+    if (refused) return { error: refused };
+
     const decision = await opts.approvals.requestApproval({
       sessionId: payload.sessionId,
       toolCallId: payload.toolCallId,
       toolName: payload.toolName,
       args: payload.args,
       reason,
+      ...(opts.isHardline(payload) ? { hardline: true } : {}),
+      // A lease binds to the personality running the turn (3b, D3-7).
+      ...(payload.personalityId !== undefined ? { personalityId: payload.personalityId } : {}),
     });
 
     if (decision.decision === 'allow') return null;

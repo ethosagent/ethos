@@ -4,9 +4,11 @@
 // its thin harness: it runs the real checker against the real repository so a
 // boundary violation fails `pnpm test` (and therefore `pnpm check`), and it
 // drives the rules that must not depend on the live repository happening to
-// exercise them — the §VIII exception shapes, the vendored-shim carve-out, the
-// file-granularity Law 5 check, and both directions of the register↔code tie —
-// against fixtures, so each is proven to have teeth on its own terms.
+// exercise them — the §VIII exception shapes and both directions of the
+// register↔code tie — against fixtures, so each is proven to have teeth on its
+// own terms. The layer rules (vendored shim, app entry modules, core's kernel
+// imports) moved to archcheck; their fixtures are archcheck-fixtures/, proven
+// by archcheck-fixtures.test.ts.
 //
 // It lives beside the other constitution drift gates (personality-field-count,
 // memory-method-count, agent-event-drift) because it is the same kind of thing:
@@ -54,7 +56,6 @@ function sidecarWith(exceptions: string): string {
     join(dir, 'state.yaml'),
     [
       'version: 1',
-      'layers: []',
       'tiers:',
       '  packages/types:',
       '    package: "@ethosagent/types"',
@@ -199,7 +200,6 @@ describe('architecture validator — register <-> enforcement point (G11)', () =
       sidecar,
       [
         'version: 1',
-        'layers: []',
         'register_anchors:',
         ...(opts?.anchors ?? [
           '  G-LIVE:',
@@ -355,7 +355,7 @@ describe('architecture validator — claims made ABOUT the register', () => {
     );
 
     const sidecar = join(root, 'state.yaml');
-    writeFileSync(sidecar, ['version: 1', 'layers: []', 'tiers: {}', 'exceptions: []'].join('\n'));
+    writeFileSync(sidecar, ['version: 1', 'tiers: {}', 'exceptions: []'].join('\n'));
     return { root, sidecar };
   }
 
@@ -494,285 +494,5 @@ describe('architecture validator — claims made ABOUT the register', () => {
     const { code, output } = runClaims(root, sidecar);
     expect(code, output).toBe(1);
     expect(output).toContain('never says "ten"');
-  });
-});
-
-describe('architecture validator — vendored shims and app entry modules', () => {
-  /**
-   * A fixture with one closed-layer package depending on an unlayered one. That
-   * edge is a violation by default; `vendored:` is the only thing that makes it
-   * legal, and only when it carries a rationale.
-   */
-  function vendorFixture(vendoredBlock: string[]): { root: string; sidecar: string } {
-    const root = scratch();
-    const pkg = (dir: string, json: object) => {
-      mkdirSync(join(root, dir, 'src'), { recursive: true });
-      writeFileSync(join(root, dir, 'package.json'), JSON.stringify(json));
-    };
-    pkg('packages/types', { name: '@ethosagent/types' });
-    pkg('packages/shim', { name: '@ethosagent/shim' });
-    pkg('packages/safety/net', {
-      name: '@ethosagent/kernel-net',
-      dependencies: { '@ethosagent/shim': 'workspace:*' },
-    });
-
-    const sidecar = join(root, 'state.yaml');
-    writeFileSync(
-      sidecar,
-      [
-        'version: 1',
-        'layers:',
-        '  - name: contracts',
-        '    paths: [packages/types]',
-        '  - name: security-kernel',
-        '    paths: [packages/safety/net]',
-        ...vendoredBlock,
-        'tiers:',
-        '  packages/types:',
-        '    package: "@ethosagent/types"',
-        '    tier: 0',
-        '  packages/shim:',
-        '    package: "@ethosagent/shim"',
-        '    tier: 2',
-        '  packages/safety/net:',
-        '    package: "@ethosagent/kernel-net"',
-        '    tier: 0',
-        'exceptions: []',
-      ].join('\n'),
-    );
-    return { root, sidecar };
-  }
-
-  const runLayers = (root: string, sidecar: string) =>
-    run(['--only', 'layers', '--root', root, '--architecture', ARCHITECTURE, '--sidecar', sidecar]);
-
-  it('fails a kernel dependency on an unclassified package', () => {
-    const { root, sidecar } = vendorFixture([]);
-    const { code, output } = runLayers(root, sidecar);
-    expect(code, output).toBe(1);
-    expect(output).toContain('carries no layer assignment');
-  });
-
-  it('accepts the same edge once the package is vendored with a rationale', () => {
-    const { root, sidecar } = vendorFixture([
-      'vendored:',
-      '  "@ethosagent/shim":',
-      '    path: packages/shim',
-      '    rationale: "A wrapper over a platform primitive with no Ethos semantics."',
-    ]);
-    const { code, output } = runLayers(root, sidecar);
-    expect(code, output).toBe(0);
-  });
-
-  it('refuses a vendored classification with no rationale — the flag must cost something', () => {
-    const { root, sidecar } = vendorFixture([
-      'vendored:',
-      '  "@ethosagent/shim":',
-      '    path: packages/shim',
-      '    rationale: "   "',
-    ]);
-    const { code, output } = runLayers(root, sidecar);
-    expect(code, output).toBe(1);
-    expect(output).toContain('carries no rationale');
-  });
-
-  /**
-   * Law 5 at file granularity: the entry module named in `app_entry_modules`
-   * may compose concrete extensions; a sibling file in the same app may not.
-   * The finding is advisory today (exit 0) — the assertion is on WHICH files
-   * are named, not on the exit code.
-   */
-  function appFixture(extra: string[]): { root: string; sidecar: string } {
-    const root = scratch();
-    mkdirSync(join(root, 'apps', 'demo', 'src'), { recursive: true });
-    mkdirSync(join(root, 'extensions', 'thing', 'src'), { recursive: true });
-    mkdirSync(join(root, 'packages', 'types', 'src'), { recursive: true });
-    writeFileSync(
-      join(root, 'apps', 'demo', 'package.json'),
-      JSON.stringify({ name: '@ethosagent/demo' }),
-    );
-    writeFileSync(
-      join(root, 'extensions', 'thing', 'package.json'),
-      JSON.stringify({ name: '@ethosagent/thing' }),
-    );
-    writeFileSync(
-      join(root, 'packages', 'types', 'package.json'),
-      JSON.stringify({ name: '@ethosagent/types' }),
-    );
-    writeFileSync(
-      join(root, 'apps', 'demo', 'src', 'index.ts'),
-      "import { make } from '@ethosagent/thing';\nexport const a = make;\n",
-    );
-    writeFileSync(
-      join(root, 'apps', 'demo', 'src', 'deep.ts'),
-      "import { make } from '@ethosagent/thing';\nexport const b = make;\n",
-    );
-    writeFileSync(
-      join(root, 'apps', 'demo', 'src', 'types-only.ts'),
-      "import type { T } from '@ethosagent/thing';\nexport type U = T;\n",
-    );
-
-    const sidecar = join(root, 'state.yaml');
-    writeFileSync(
-      sidecar,
-      [
-        'version: 1',
-        'layers:',
-        '  - name: contracts',
-        '    paths: [packages/types]',
-        '  - name: extensions',
-        '    paths: [extensions/*]',
-        '  - name: apps',
-        '    paths: [apps/*]',
-        'app_entry_modules:',
-        '  apps/demo:',
-        '    - apps/demo/src/index.ts',
-        'tiers:',
-        '  packages/types:',
-        '    package: "@ethosagent/types"',
-        '    tier: 0',
-        '  extensions/thing:',
-        '    package: "@ethosagent/thing"',
-        '    tier: 2',
-        '  apps/demo:',
-        '    package: "@ethosagent/demo"',
-        '    tier: 2',
-        ...extra,
-      ].join('\n'),
-    );
-    return { root, sidecar };
-  }
-
-  it('exempts the entry module and a type-only import, and reports the sibling', () => {
-    const { root, sidecar } = appFixture(['exceptions: []']);
-    const { output } = runLayers(root, sidecar);
-    expect(output).toContain('apps/demo/src/deep.ts');
-    expect(output).not.toContain('apps/demo/src/index.ts');
-    expect(output).not.toContain('types-only.ts');
-  });
-
-  it('a well-formed §VIII exception suppresses the finding it scopes', () => {
-    const { root, sidecar } = appFixture([
-      'exceptions:',
-      '  - id: EX-TEST',
-      '    law: "§III Law 5"',
-      '    scope: apps/demo/src/deep.ts',
-      '    reason: "bootstrap path, measured"',
-      '    owner: a-maintainer',
-      '    created: 2026-08-12',
-      '    removal_condition: "the import is gone from the file"',
-      '    review_by: 2099-01-01',
-    ]);
-    const { output } = runLayers(root, sidecar);
-    expect(output).not.toContain('apps/demo/src/deep.ts');
-  });
-
-  it('an expired exception fails the run rather than quietly granting itself', () => {
-    const { root, sidecar } = appFixture([
-      'exceptions:',
-      '  - id: EX-TEST',
-      '    law: "§III Law 5"',
-      '    scope: apps/demo/src/deep.ts',
-      '    reason: "bootstrap path, measured"',
-      '    owner: a-maintainer',
-      '    created: 2020-01-01',
-      '    removal_condition: "the import is gone from the file"',
-      '    review_by: 2020-06-01',
-    ]);
-    const { code, output } = run([
-      '--only',
-      'exceptions',
-      '--root',
-      root,
-      '--architecture',
-      ARCHITECTURE,
-      '--sidecar',
-      sidecar,
-    ]);
-    expect(code, output).toBe(1);
-    expect(output).toContain('has passed');
-  });
-});
-
-describe('architecture validator — core must not runtime-import the security kernel', () => {
-  /**
-   * This check REPLACED packages/core/src/__tests__/no-safety-imports.test.ts,
-   * which has been deleted: same rule, but the forbidden set is derived from the
-   * sidecar rather than hand-listed (that list named 4 of the 7 kernel packages),
-   * and dynamic `import(` / `require(` are caught alongside `from`. The fixture
-   * proves both halves: a value import fails, and an `import type` — plus the
-   * package.json edge §IX permits via `type_only_deps` — does not.
-   */
-  it('fails on a value import and passes an import type', () => {
-    const root = scratch();
-    mkdirSync(join(root, 'packages', 'core', 'src'), { recursive: true });
-    mkdirSync(join(root, 'packages', 'safety', 'net', 'src'), { recursive: true });
-    mkdirSync(join(root, 'packages', 'types', 'src'), { recursive: true });
-
-    writeFileSync(
-      join(root, 'packages', 'core', 'package.json'),
-      JSON.stringify({
-        name: '@ethosagent/core',
-        dependencies: { '@ethosagent/kernel-net': 'workspace:*' },
-      }),
-    );
-    writeFileSync(
-      join(root, 'packages', 'safety', 'net', 'package.json'),
-      JSON.stringify({ name: '@ethosagent/kernel-net' }),
-    );
-    writeFileSync(
-      join(root, 'packages', 'types', 'package.json'),
-      JSON.stringify({ name: '@ethosagent/types' }),
-    );
-    writeFileSync(
-      join(root, 'packages', 'core', 'src', 'ok.ts'),
-      "import type { P } from '@ethosagent/kernel-net';\nexport type Q = P;\n",
-    );
-    writeFileSync(
-      join(root, 'packages', 'core', 'src', 'bad.ts'),
-      "import { safeFetch } from '@ethosagent/kernel-net';\nexport const f = safeFetch;\n",
-    );
-
-    const sidecar = join(root, 'state.yaml');
-    writeFileSync(
-      sidecar,
-      [
-        'version: 1',
-        'layers:',
-        '  - name: contracts',
-        '    paths: [packages/types]',
-        '  - name: security-kernel',
-        '    paths: [packages/safety/net]',
-        '  - name: core',
-        '    paths: [packages/core]',
-        'tiers:',
-        '  packages/types:',
-        '    package: "@ethosagent/types"',
-        '    tier: 0',
-        '  packages/safety/net:',
-        '    package: "@ethosagent/kernel-net"',
-        '    tier: 0',
-        '  packages/core:',
-        '    package: "@ethosagent/core"',
-        '    tier: 0',
-        'exceptions: []',
-      ].join('\n'),
-    );
-
-    const { code, output } = run([
-      '--only',
-      'layers',
-      '--root',
-      root,
-      '--architecture',
-      ARCHITECTURE,
-      '--sidecar',
-      sidecar,
-    ]);
-    expect(code, output).toBe(1);
-    expect(output).toContain('packages/core/src/bad.ts:1');
-    expect(output).toContain('runtime-imports @ethosagent/kernel-net');
-    expect(output).not.toContain('ok.ts');
-    expect(output).not.toContain('packages/core/package.json');
   });
 });

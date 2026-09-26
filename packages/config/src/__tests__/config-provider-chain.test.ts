@@ -464,3 +464,72 @@ function refOf(value: string | undefined): string {
   if (!ref) throw new Error(`not a secret reference: ${value}`);
   return ref;
 }
+
+// openclaw-9.5-adoption item 7 (D32) — the server-compaction switch is a
+// modelled chain field, so both writers (this CLI writer and apps/web-api's
+// ConfigRepository, which share the codec) keep it through unrelated saves.
+describe('providers.<n>.serverCompaction', () => {
+  it('parses the flag and trigger as typed fields and renders them back', () => {
+    const lines = [
+      'providers.0.provider: anthropic',
+      'providers.0.serverCompaction: true',
+      'providers.0.serverCompactionTriggerTokens: 120000',
+      'providers.1.provider: openrouter',
+      'providers.1.serverCompaction: false',
+    ];
+    const entries = parseProviderChain(lines);
+    expect(entries).toEqual([
+      { provider: 'anthropic', serverCompaction: true, serverCompactionTriggerTokens: 120_000 },
+      { provider: 'openrouter', serverCompaction: false },
+    ]);
+    expect(renderProviderChain(entries).map(([k, v]) => `${k}: ${v}`)).toEqual(lines);
+  });
+
+  it('refuses an unreadable value out loud instead of guessing', () => {
+    const notices: string[] = [];
+    const entries = parseProviderChain(
+      [
+        'providers.0.provider: anthropic',
+        'providers.0.serverCompaction: yes',
+        'providers.0.serverCompactionTriggerTokens: 12k',
+      ],
+      notices,
+    );
+    expect(entries).toEqual([{ provider: 'anthropic' }]);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain("'providers.0.serverCompaction' must be true or false");
+    expect(notices[1]).toContain("'providers.0.serverCompactionTriggerTokens' must be a positive");
+  });
+
+  it('survives an unrelated CLI write', async () => {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    const path = join(ethosDir(), 'config.yaml');
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      path,
+      `${[
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: researcher',
+        'providers.0.provider: anthropic',
+        'providers.0.serverCompaction: true',
+        'providers.0.serverCompactionTriggerTokens: 120000',
+        'providers.1.provider: openrouter',
+      ].join('\n')}\n`,
+    );
+    const cfg = await readRawConfig(storage);
+    if (!cfg) throw new Error('config did not parse');
+    await writeConfig(storage, { ...cfg, personality: 'engineer' }, secrets);
+
+    const yaml = await storage.read(path);
+    expect(yaml).toContain('providers.0.serverCompaction: true');
+    expect(yaml).toContain('providers.0.serverCompactionTriggerTokens: 120000');
+    const after = await readRawConfig(storage);
+    expect(after?.providers?.[0]).toMatchObject({
+      provider: 'anthropic',
+      serverCompaction: true,
+      serverCompactionTriggerTokens: 120_000,
+    });
+  });
+});

@@ -149,7 +149,98 @@ describe('Orchestrator guardrails', () => {
     // stream call and the closing call share one object literal instead of
     // two. The closing call, its system note and the tool_result for an
     // unoffered tool call live in agent-loop/stages/watcher-pause.ts.
-    expect(lineCount).toBeLessThanOrEqual(1010);
+    // Bumped 1010 -> 1017 (reach-and-containment Part 1, on-demand tool
+    // loading): the optional `toolLoading` resolver — one config field and its
+    // comment line, its private field, one-line constructor assignment and
+    // deps-getter line — plus `setup.toolLoading` handed to the stream-step and
+    // tool-processing contexts. 7 pass-through lines; the pinned/loaded
+    // composition lives in agent-loop/tool-loading.ts and `tool_search` in
+    // agent-loop/stages/tool-search.ts.
+    // Bumped 1017 -> 1018 (openclaw-advisory-fixes Item 2): the turn
+    // personality's `safety.denyRules` handed to the ScriptToolBridge, so
+    // script calls cross the same deny-rule floor as the batch path. One
+    // pass-through line; the check lives in stages/per-call-enforcement.ts.
+    // Bumped 1018 -> 1020 (openclaw-advisory-fixes Item 7): the ScriptToolBridge
+    // construction passes the redaction seam and the turn's personality (2
+    // pass-through lines). The redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    // Bumped 1020 -> 1031 (openclaw-advisory-fixes F-A2): the public
+    // `resultRedaction` getter hands the realtime voice host the loop's
+    // redaction kit and observability (type import, a 3-line doc, a 6-line
+    // getter, one blank). Pass-through only; the redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    // Bumped 1031 -> 1033: the public `resolvePersonality` method (doc + 3
+    // lines) so the realtime voice host resolves a session's personality by
+    // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
+    // The rule lives in agent-loop/stages/turn-setup.ts.
+    // Bumped 1033 -> 1036 (openclaw-9.5-adoption D30): the `reviewOfJobId`
+    // RunOptions field — a one-line doc, its declaration, and one conditional
+    // spread into the internal `opts` passed to `processTools`, exactly the
+    // `jobId` precedent. Pass-through only; the one-hop refusal lives in
+    // extensions/tools-delegation (`delegate_task`).
+    // Bumped 1036 -> 1038 (openclaw-9.5-adoption item 1): the `credentialPrompt`
+    // RunOptions field (one-line doc + declaration) and the `scope` parameter
+    // on `credentialCheck`, whose doc was compressed to its old length. The
+    // gate and the call live in agent-loop/stages/turn-setup.ts.
+    // Bumped 1033 -> 1035 (openclaw-9.5-adoption item 7, D32): the turn's
+    // `serverCompaction` flag read off `setup` (one line) and handed to the
+    // stream-step context (one line); the overflow `meta` carries it on an
+    // existing line. The skips
+    // live in stages/context-assembly.ts, overflow.ts and turn-end.ts; the
+    // chunk handling in stages/stream-step.ts.
+    // Merged 1038 + 2 -> 1040 (openclaw-9.5-adoption integration): lanes A and
+    // F (1033 -> 1038) and lane D (1033 -> 1035) each ratcheted from 1033; the
+    // cap is their sum.
+    // Bumped 1033 -> 1039 (decision-provider-jev §8.3, tier router): the
+    // optional `tierRouter` config field and its 2-line doc, its private field,
+    // the one-line constructor assignment and deps-getter line. 6 pass-through
+    // lines; the call condition and the downgrade-only rule live in
+    // agent-loop/tier-router.ts, called from agent-loop/stages/turn-setup.ts.
+    // Merged 1040 + 6 -> 1046 (decision-provider-jev integration): the
+    // openclaw-9.5-adoption cap (1040) plus the tier router's 6 pass-through
+    // lines, each ratcheted independently; the cap is their sum.
+    // Bumped 1046 -> 1052 (per-personality small-window mode): the optional
+    // `smallWindowResolver` config field (one line), its private field, the
+    // constructor assignment and deps-getter line, the import, and the one
+    // `turnDeps` line that applies the turn's decision (the three call sites
+    // that took `this.deps` now take it, no new lines). The resolver lives in
+    // packages/wiring/src/small-window-resolver.ts, the call in
+    // agent-loop/stages/turn-setup.ts, the overlay in agent-loop/small-window.ts.
+    // Bumped 1052 -> 1053: manual `/compact` reads the session personality's
+    // own history limit — one `historyLimitFor` property in the
+    // `compactSession` call. The resolution lives in agent-loop/small-window.ts
+    // and agent-loop/manual-compact.ts.
+    // Bumped 1046 -> 1059 (decision-provider-personality N7b, §15.3): `run()`
+    // becomes a three-line shell that builds the turn's `TurnDecisions` and
+    // wraps the (renamed, private) `runTurn` generator in `withDecisionEvents`,
+    // plus the import and two pass-through lines handing the queue to
+    // `setupTurn` and to the tool stage / ScriptToolBridge. The merge logic
+    // lives in agent-loop/turn-decisions.ts.
+    // Bumped 1059 -> 1063 (decision-provider-personality §15.3, the approver's
+    // private sink channel): one `AgentLoopConfig.approverDecisionSinks` field
+    // with its one-line doc, its private field, and its constructor assignment,
+    // handed to `new TurnDecisions(...)`. The channel itself lives in
+    // agent-loop/approver-decision-sinks.ts.
+    // Merged 1053 + 17 -> 1070 (decision-provider-personality integration):
+    // main's small-window/compact increases (+7 over 1046) plus this branch's
+    // decision-event increases (+17 over 1046), each ratcheted independently;
+    // the cap is their sum.
+    // Bumped 1070 -> 1071 (tool cost persistence): the turn's rollup
+    // accumulator handed to `processTools` (one pass-through line). The logic
+    // lives in agent-loop/tool-cost.ts.
+    // Bumped 1071 -> 1077 (decision-tool D13): the optional
+    // `personalityToolExclude` config field with its one-line doc, the
+    // `PersonalityConfig` type import, its private field, constructor
+    // assignment and deps-getter line. Pass-through only; the union with the
+    // surface's `toolsetExclude` lives in agent-loop/stages/turn-setup.ts.
+    // Bumped 1077 -> 1083 (terminal approval prompt): the public
+    // `isToolPermitted` delegator (doc line, signature, body, close, blank) and its
+    // import, so an approval surface can skip asking about a call the
+    // allowlist refuses anyway. The logic lives in agent-loop/tool-permitted.ts.
+    // Bumped 1083 -> 1092 (ux A4 overflow-retry notice): the one `_loop`
+    // tool_progress yield (6 lines) and its 3-line comment at the
+    // compact-and-retry point. Pinned by __tests__/overflow-retry-notice.test.ts.
+    expect(lineCount).toBeLessThanOrEqual(1092);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -255,7 +346,30 @@ describe('Orchestrator guardrails', () => {
       // and hands it to the tool's `SimpleCompletionImpl`, a 4th constructor
       // argument that the formatter spreads over five lines. No logic — the
       // scoping lives in providers/chained-provider.ts.
-      if (lineCount > 853) {
+      // Bumped 853 -> 860 (reach-and-containment Part 1, on-demand tool
+      // loading): tool-processing.ts gains one import, one optional context
+      // field, a three-line `answerToolSearch` split before the batch loop, the
+      // `recordDirectLoads` call and its comment, and seeds the tool_result
+      // blocks with the search results. No logic — `tool_search` and D1-1
+      // auto-loading live in agent-loop/stages/tool-search.ts.
+      // Bumped 860 -> 861 (openclaw-advisory-fixes Item 2): tool-processing.ts
+      // hands the turn personality's `safety.denyRules` to
+      // `enforceBeforeToolCall`. One pass-through line; the check lives in
+      // stages/per-call-enforcement.ts.
+      // Bumped 861 -> 864 (decision-provider-personality N7b, §15.3): the
+      // turn's decision queue on the stage context (one line), its import, and
+      // its per-call sink handed to `enforceBeforeToolCall` and
+      // `handleUntrustedResult` (one line each). Measured at 864. The sink
+      // logic lives in agent-loop/turn-decisions.ts.
+      // Bumped 864 -> 866 (openclaw-2026.9.6-gaps S12): tool-processing.ts
+      // spreads the turn's `toolsetNarrowing` into the ToolContext (one line)
+      // and imports its builder (one line). No logic — the builder lives in
+      // agent-loop/toolset-narrowing.ts.
+      // Bumped 866 -> 870 (tool cost persistence): the rollup accumulator on
+      // the stage deps (one line), its type import and the helper's import (one
+      // line each), and one spread onto the tool_result row. The logic lives
+      // in agent-loop/tool-cost.ts.
+      if (lineCount > 870) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }
@@ -279,7 +393,10 @@ describe('Orchestrator guardrails', () => {
       // three in the ToolContext, one import. No logic: the store is created in
       // agent-loop.ts and the parity is pinned by
       // __tests__/tool-context-parity.test.ts.
-      if (lineCount > 517) {
+      // Bumped 517 -> 520 (openclaw-9.5-adoption item 7, D32): the turn's
+      // `serverCompaction` flag on TurnEndCtx (field + one-line doc), copied in
+      // buildTurnEndCtx, and read on the existing auto-compaction condition.
+      if (lineCount > 520) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

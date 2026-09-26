@@ -70,6 +70,8 @@ describe('PushDispatcher', () => {
       toolName: 'bash',
       args: { command: 'rm -rf /secret-arg' },
       reason: null,
+      alwaysAsk: false,
+      hardline: false,
     };
     await dispatcher.approvalPending('sess-1', request, '2026-09-19T10:00:00.000Z');
     const msg = sent[0]?.[0];
@@ -100,6 +102,8 @@ describe('PushDispatcher', () => {
       toolName: 'bash',
       args: {},
       reason: null,
+      alwaysAsk: false,
+      hardline: false,
     };
     await dispatcher.approvalPending('sess-1', request, null);
     await dispatcher.approvalResolved('sess-1', 'appr-1', '__ethos_system__');
@@ -122,6 +126,8 @@ describe('PushDispatcher', () => {
       toolName: 'bash',
       args: {},
       reason: null,
+      alwaysAsk: false,
+      hardline: false,
     };
     await dispatcher.approvalPending('sess-1', request, null);
     await dispatcher.approvalResolved('sess-1', 'appr-1', 'human:key:iphone');
@@ -283,6 +289,8 @@ describe('PushDispatcher', () => {
       toolName: 'bash',
       args: {},
       reason: null,
+      alwaysAsk: false,
+      hardline: false,
     };
     await dispatcher.approvalPending('sess-1', request, null);
     expect(sent.length).toBe(0);
@@ -300,6 +308,8 @@ describe('PushDispatcher', () => {
       toolName: 'bash',
       args: {},
       reason: null,
+      alwaysAsk: false,
+      hardline: false,
     };
     await dispatcher.approvalPending('sess-1', request, null);
     expect(sent.length).toBe(1);

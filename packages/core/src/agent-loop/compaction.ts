@@ -1,12 +1,13 @@
-import type {
-  ContextEngineLLMHandle,
-  ContextEngineRegistry,
-  ContextEngineStore,
-  LLMProvider,
-  Message,
-  PersonalityConfig,
-  SessionStore,
-  Storage,
+import {
+  type ContextEngineLLMHandle,
+  type ContextEngineRegistry,
+  type ContextEngineStore,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type PersonalityConfig,
+  type SessionStore,
+  type Storage,
 } from '@ethosagent/types';
 import {
   estimateMessagesChars,
@@ -14,6 +15,7 @@ import {
   estimateTokens,
 } from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import { compactionFailureCode, withCompactionDeadline } from './compaction-timeout';
 
 // Phase 2 watermark helpers (selectActiveWatermark, reconstructFromWatermark,
 // computeKeptTailBoundary, runManualCompaction, compactSession) live in
@@ -97,6 +99,10 @@ export interface CompactionDeps {
    * (gate is byte-identical to before).
    */
   staticTokens?: number;
+  /** Serialized tool schemas this turn sends: the gate counts them with the system
+   *  prompt, and estimates an unmeasured `staticTokens` (turn 1; a provider that
+   *  reports no `requestTokens`) from both. Absent → the system prompt alone. */
+  toolSchemas?: string;
   /**
    * Phase 1c — configurable headroom (tokens) added to `lastActualInputTokens`
    * so the gate fires slightly BEFORE the next turn actually reaches pressure.
@@ -117,6 +123,8 @@ export interface CompactionDeps {
    * gating on an estimate is moot. Absent/false → the normal gated path.
    */
   force?: boolean;
+  /** R10 — engine + summarizer deadline (`withCompactionDeadline`); fails open. */
+  summarizerTimeoutMs?: number;
 }
 
 /**
@@ -139,15 +147,15 @@ export interface GateEval {
 }
 
 export function evaluateGate(
-  deps: Pick<
+  deps: { llm: Pick<LLMProvider, 'maxContextTokens'> } & Pick<
     CompactionDeps,
-    | 'llm'
     | 'reservedOutputTokens'
     | 'staticTokens'
     | 'maxSingleToolResultTokens'
     | 'charsPerToken'
     | 'lastActualInputTokens'
     | 'gateDelta'
+    | 'toolSchemas'
   >,
   messages: Message[],
   systemPrompt: string,
@@ -157,7 +165,20 @@ export function evaluateGate(
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
 
-  const staticTokens = Math.max(0, Math.min(deps.staticTokens ?? 0, window));
+  // Whole-request units on both sides: the usage estimate counts the tool
+  // schemas with the system prompt, and so does an unmeasured static slice.
+  // One place, so the pre-LLM gate (`maybeCompact`) and the turn-end trigger
+  // (`maybeConsolidateAtTurnEnd`) cannot drift apart again. Pinned by
+  // `__tests__/turn-end-gate-units.test.ts`.
+  const prefix = `${systemPrompt}${deps.toolSchemas ?? ''}`;
+  const charsPerToken = deps.charsPerToken;
+  const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+  const estimateWith = (msgs: Message[]): number =>
+    charsPerToken !== undefined
+      ? Math.ceil((prefix.length + estimateMessagesChars(msgs)) / charsPerToken)
+      : Math.ceil((estimateTokens(prefix) + estimateMessagesTokens(msgs)) * safetyFactor);
+  const measured = deps.staticTokens ?? (deps.toolSchemas === undefined ? 0 : estimateWith([]));
+  const staticTokens = Math.max(0, Math.min(measured, window));
   // Lane 1(a) — the fourth term. One arithmetic for both gates: the reserve
   // narrows `messagesWindow`, so `gateThreshold` (pre-LLM gate + turn-end
   // trigger) and `maybeCompact`'s shrink target all honour it without a second
@@ -165,21 +186,75 @@ export function evaluateGate(
   const maxSingleToolResult = Math.max(0, deps.maxSingleToolResultTokens ?? 0);
   const messagesWindow = Math.max(0, window - staticTokens - maxSingleToolResult);
 
-  const charsPerToken = deps.charsPerToken;
-  let estimate: number;
-  if (charsPerToken !== undefined) {
-    estimate = Math.ceil((systemPrompt.length + estimateMessagesChars(messages)) / charsPerToken);
-  } else {
-    const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
-    estimate = Math.ceil(
-      (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
-    );
-  }
+  const estimate = estimateWith(messages);
   const current =
     deps.lastActualInputTokens !== undefined
       ? Math.max(estimate, deps.lastActualInputTokens + Math.max(0, deps.gateDelta ?? 0))
       : estimate;
   return { current, window, messagesWindow, staticTokens };
+}
+
+/**
+ * Index of the first message of the CURRENT turn: the newest `user` message
+ * that carries the user's input (anything but tool_result blocks — a tool
+ * result also travels as a `user` message). Everything from here to the end is
+ * the turn in flight: the question, plus any tool round-trips it has produced
+ * so far. `messages.length` when no such message exists.
+ *
+ * Compaction (`maybeCompact`, `emergencyCompact`) hands a context engine only
+ * the messages BEFORE this index, so no engine — built-in or third-party — can
+ * drop the question it is supposed to answer. Pinned by
+ * `packages/core/src/__tests__/current-turn-protection.test.ts`.
+ */
+export function currentTurnStart(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== 'user') continue;
+    if (typeof m.content === 'string' || m.content.some((b) => b.type !== 'tool_result')) return i;
+  }
+  return messages.length;
+}
+
+/**
+ * The context-fit preflight: can the static prefix (system prompt + tool
+ * schemas) plus the current turn fit the usable window at all? Nothing a
+ * context engine does can shrink either, so when they cannot fit the turn must
+ * fail loudly rather than reach the provider — before this check a 32k Ollama
+ * window with a ~27k prefix reached drop_oldest, which dropped the user's
+ * message and sent the model the system prompt alone.
+ *
+ * Same arithmetic as the pressure gate (`evaluateGate`: output reserve and
+ * small-window factor; the per-model `charsPerToken` is not threaded to the
+ * call site, so char/4 applies — lenient on dense local tokenizers, never
+ * stricter than the gate). The estimate is linear in characters, so the
+ * serialized tool schemas are counted by appending them to the system text.
+ * Returns an actionable message when the turn cannot fit, `undefined` when it
+ * can. Enforced by `streamStep` (stages/stream-step.ts) before the turn's
+ * first LLM call; pinned by
+ * `packages/core/src/__tests__/current-turn-protection.test.ts`.
+ */
+export function currentTurnFitError(
+  deps: { llm: Pick<LLMProvider, 'maxContextTokens' | 'model'> } & Pick<
+    CompactionDeps,
+    'reservedOutputTokens'
+  >,
+  input: { systemPrompt: string; toolSchemas: string; currentTurn: Message[] },
+): string | undefined {
+  const g = evaluateGate(deps, input.currentTurn, `${input.systemPrompt}${input.toolSchemas}`);
+  if (g.current <= g.window) return undefined;
+  const rawWindow = deps.llm.maxContextTokens || 200_000;
+  const staticOnly = evaluateGate(deps, [], `${input.systemPrompt}${input.toolSchemas}`).current;
+  return (
+    `context window too small: the system prompt and tool schemas (~${staticOnly} tokens) plus ` +
+    `this message (~${g.current - staticOnly} tokens) need ~${g.current} tokens, but ` +
+    `${deps.llm.model || 'the model'} has ${g.window} usable (${rawWindow}-token window minus ` +
+    `${rawWindow - g.window} reserved for the reply). The message was NOT sent. If the server ` +
+    `serves a larger window, set 'contextWindow' in ~/.ethos/config.yaml (for Ollama, size the ` +
+    `served window with OLLAMA_CONTEXT_LENGTH or num_ctx first). Otherwise shrink the static ` +
+    `prefix: 'tool_loading: on' in config.yaml, a small_window_toolset in the personality's ` +
+    `context_engine_options (used in small-window mode), or a smaller AGENTS.md/CLAUDE.md in ` +
+    `the working directory.`
+  );
 }
 
 /** Whole-context token threshold for a pressure fraction `f` in (0,1]. */
@@ -198,6 +273,45 @@ export function effectiveGate(g: GateEval, fraction: number, maxContextTokens?: 
   return maxContextTokens !== undefined && maxContextTokens > 0
     ? Math.min(fractional, maxContextTokens)
     : fractional;
+}
+
+/**
+ * `maybeCompact`'s `targetTokens` before the current turn is subtracted, in the
+ * units every engine measures (`estimate(currentSystem) + estimate(messages)`):
+ * the gate's own threshold at `fraction` (capped at `fraction` of the ceiling),
+ * less the static tokens the engine cannot see (tool schemas), so the engine's
+ * messages budget is exactly `fraction × messagesWindow`. Before, a measured
+ * static slice made this a messages-only budget the engines then shrank by the
+ * system prompt again. Pinned by `__tests__/compaction-target-units.test.ts`.
+ */
+export function compactionTarget(
+  g: GateEval,
+  fraction: number,
+  systemPrompt: string,
+  ceiling?: number,
+): number {
+  const cap = ceiling !== undefined && ceiling > 0 ? Math.floor(ceiling * fraction) : Infinity;
+  const whole = Math.min(gateThreshold(g, fraction), cap);
+  const unseenStatic = Math.max(0, g.staticTokens - estimateTokens(systemPrompt));
+  return Math.max(0, whole - unseenStatic);
+}
+
+/**
+ * openclaw-9.5-adoption item 7 — the whole-context token count at which the
+ * pre-LLM gate would compact a history in a `windowTokens` window, before any
+ * request has measured a static slice: `evaluateGate` with no messages, then
+ * `effectiveGate` with the resolved pressure (0.8 when unset, as in
+ * `maybeCompact`) and the optional absolute ceiling. Wiring uses it as the
+ * default `serverCompactionTriggerTokens`, so switching a provider to
+ * server-side compaction does not move WHEN compaction happens.
+ */
+export function pressureGateTokens(
+  windowTokens: number,
+  pressure?: number,
+  maxContextTokens?: number,
+): number {
+  const g = evaluateGate({ llm: { maxContextTokens: windowTokens } }, [], '');
+  return effectiveGate(g, pressure ?? 0.8, maxContextTokens);
 }
 
 // T3 — gate-hardening constants (generic, no per-model config).
@@ -255,16 +369,16 @@ export async function maybeCompact(
 
   // Phase 3 — the gate arithmetic is shared with the turn-end trigger via
   // `evaluateGate` (output reserve, static-slice subtraction, small-window
-  // factor, charsPerToken, actuals-first floor all live there).
+  // factor, charsPerToken, actuals-first floor, tool schemas all live there).
   const g = evaluateGate(deps, messages, systemPrompt);
-  const { current, window, messagesWindow } = g;
+  const { current, window } = g;
   // Item 7 — the absolute ceiling lowers both the gate and the shrink budget.
   const ceiling =
     deps.maxContextTokens !== undefined && deps.maxContextTokens > 0
       ? deps.maxContextTokens
       : undefined;
-  const target = Math.floor(Math.min(messagesWindow, ceiling ?? messagesWindow) * targetFraction);
   const pressureGate = effectiveGate(g, pressureFraction, ceiling);
+  const target = compactionTarget(g, targetFraction, systemPrompt, ceiling);
 
   // Phase 3 — `force` skips both the pressure gate and the cooldown (used by the
   // overflow→compact-and-retry path, where the provider already rejected the
@@ -291,6 +405,19 @@ export async function maybeCompact(
   const engineName = personality.context_engine ?? deps.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { messages };
+  // Item 7 — an engine (and any summarizer it calls) sees a server-compaction
+  // block as its readable summary, never the in-memory envelope.
+  const flattened = flattenCompactionEnvelopes(messages);
+  // The current turn (the user's question) is never handed to the engine, so
+  // it cannot be dropped (`currentTurnStart`). Only older history competes for
+  // the target, which is reduced by the current turn's own size. No older
+  // history → nothing to compact; a prefix too large for even the question is
+  // the context-fit preflight's job (`currentTurnFitError`), not an engine's.
+  const split = currentTurnStart(flattened);
+  if (split === 0) return { messages };
+  const currentTurn = flattened.slice(split);
+  const history = flattened.slice(0, split);
+  const historyTarget = Math.max(0, target - estimateMessagesTokens(currentTurn));
 
   // Build a per-personality ContextEngineStore when raw storage is available.
   let store: ContextEngineStore | undefined;
@@ -307,10 +434,11 @@ export async function maybeCompact(
 
   try {
     const startedAt = Date.now();
-    const result = await engine.compact({
-      messages,
+    const timed = withCompactionDeadline(engine, deps.summarizerTimeoutMs);
+    const result = await timed.compact({
+      messages: history,
       currentSystem: systemPrompt,
-      targetTokens: target,
+      targetTokens: historyTarget,
       personality,
       sessionMetadata,
       ...(deps.llmHandle ? { llm: deps.llmHandle } : {}),
@@ -318,6 +446,7 @@ export async function maybeCompact(
       ...(deps.countTokens ? { countTokens: deps.countTokens } : {}),
     });
     const durationMs = Date.now() - startedAt;
+    const kept = [...result.messages, ...currentTurn];
     deps.observability?.recordCompaction({
       code: 'context_compacted',
       cause: `${engine.name}: ${result.notes}`,
@@ -326,22 +455,22 @@ export async function maybeCompact(
     // original messages remain in `messages`; this row only records the
     // LLM-facing replay change. Best-effort: a persistence failure must not
     // break the turn, so it never propagates to the fail-open catch below.
-    const changed = result.messages.length !== messages.length || result.summaryText !== undefined;
+    const changed = result.messages.length !== history.length || result.summaryText !== undefined;
     const summaryTokens = result.summaryText ? estimateTokens(result.summaryText) : 0;
     if (changed) {
       try {
         await deps.session.recordCompression({
           sessionId: sessionMetadata.sessionId,
           engineName: engine.name,
-          originalCount: messages.length,
-          keptCount: result.messages.length,
+          originalCount: flattened.length,
+          keptCount: kept.length,
           ...(result.summaryText !== undefined ? { summaryText: result.summaryText } : {}),
           ...(sessionMetadata.keptFromMessageId
             ? { keptFromMessageId: sessionMetadata.keptFromMessageId }
             : {}),
           summaryTokens,
           preTotalTokens: current,
-          postTotalTokens: estimateTokens(systemPrompt) + estimateMessagesTokens(result.messages),
+          postTotalTokens: estimateTokens(systemPrompt) + estimateMessagesTokens(kept),
           durationMs,
         });
         await deps.session.updateUsage(sessionMetadata.sessionId, { compactionCount: 1 });
@@ -364,13 +493,13 @@ export async function maybeCompact(
     // V1 — `notice` lets the caller surface a one-line in-chat compaction
     // notice; only set when the engine actually changed the history.
     return {
-      messages: result.messages,
+      messages: kept,
       ...(changed && result.cacheBreakpoints ? { cacheBreakpoints: result.cacheBreakpoints } : {}),
       ...(changed
         ? {
             notice: {
               engineName: engine.name,
-              droppedCount: messages.length - result.messages.length,
+              droppedCount: history.length - result.messages.length,
               summaryTokens,
             },
           }
@@ -381,9 +510,9 @@ export async function maybeCompact(
     // provider error than to silently drop messages on engine failure.
     deps.observability?.recordCompaction({
       severity: 'warn',
-      code: 'context_engine_failed',
+      code: compactionFailureCode(err),
       cause: err instanceof Error ? err.message : String(err),
     });
-    return { messages };
+    return { messages: flattened };
   }
 }

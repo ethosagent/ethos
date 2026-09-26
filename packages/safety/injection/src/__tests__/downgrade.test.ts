@@ -30,4 +30,12 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
   it('mentions the post-untrusted-read context', () => {
     expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/untrusted/i);
   });
+
+  // A goal attempt never gets a user message; the old text told the model to
+  // wait for one, and the goal gave up. The pause lifts after N model steps.
+  it('states the automatic expiry, not a user-message requirement', () => {
+    expect(DOWNGRADE_REJECTION_MESSAGE).not.toMatch(/user message/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/lifts on its own/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/retry/i);
+  });
 });

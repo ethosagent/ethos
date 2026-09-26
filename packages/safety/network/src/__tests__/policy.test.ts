@@ -15,6 +15,13 @@ describe('hostnameMatches', () => {
     expect(hostnameMatches('notanthropic.com', '*.anthropic.com')).toBe(false);
     expect(hostnameMatches('anthropic.com.evil.com', '*.anthropic.com')).toBe(false);
   });
+
+  it('treats a bare * as matching every host', () => {
+    expect(hostnameMatches('example.com', '*')).toBe(true);
+    expect(hostnameMatches('api.github.com', '*')).toBe(true);
+    // Only a BARE star is special; a star anywhere else stays literal.
+    expect(hostnameMatches('example.com', '*example.com')).toBe(false);
+  });
 });
 
 describe('checkAllowDeny', () => {
@@ -33,6 +40,17 @@ describe('checkAllowDeny', () => {
     expect(checkAllowDeny('api.github.com', policy).allowed).toBe(true);
     expect(checkAllowDeny('api.anthropic.com', policy).allowed).toBe(true);
     expect(checkAllowDeny('example.com', policy).allowed).toBe(false);
+  });
+
+  it("allow: ['*'] admits every host (the floor lives in safeFetch, not here)", () => {
+    expect(checkAllowDeny('example.com', { allow: ['*'] })).toEqual({ allowed: true });
+    expect(checkAllowDeny('api.github.com', { allow: ['api.x.com', '*'] }).allowed).toBe(true);
+  });
+
+  it("deny: ['*'] refuses every host, even one the allow list names", () => {
+    const r = checkAllowDeny('api.github.com', { allow: ['api.github.com'], deny: ['*'] });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/deny list/);
   });
 
   it('deny wins over allow', () => {

@@ -1,3 +1,4 @@
+import { forkSession } from '@ethosagent/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
 
@@ -100,6 +101,105 @@ describe('usageAggregate', () => {
     await seed();
     const past = { since: new Date(0), until: new Date(1) };
     expect(await store.usageAggregate({ ...past, dimension: 'day' })).toEqual([]);
+  });
+
+  // Plan openclaw-2026.9.6-gaps D5 — one bot's spend is the sessions whose key
+  // starts with its lane prefix (`buildLaneKey(platform, botKey)` + ':').
+  it('keyPrefix narrows to sessions whose key starts with it, literally', async () => {
+    for (const [key, cost] of [
+      ['telegram:bot_1:c1', 1],
+      ['telegram:bot_1:c2:1700000000000', 2],
+      ['telegram:botX1:c1', 4], // `_` must not match any character
+      ['slack:bot_1:c1', 8],
+    ] as const) {
+      const s = await store.createSession({ ...base, key } as never);
+      await store.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'x',
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          estimatedCostUsd: cost,
+        },
+      });
+    }
+    const rows = await store.usageAggregate({
+      ...window,
+      dimension: 'day',
+      keyPrefix: 'telegram:bot_1:',
+    });
+    expect(rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0)).toBe(3);
+  });
+
+  // SQLite's LIKE folds ASCII case, so two bots whose ids differ only by case
+  // would each be billed the other's spend.
+  it('keyPrefix is case-sensitive', async () => {
+    for (const [key, cost] of [
+      ['telegram:Sales:c1', 1],
+      ['telegram:sales:c1', 2],
+      ['telegram:SALES:c1', 4],
+      ['telegram:sal%s:c1', 8],
+    ] as const) {
+      const s = await store.createSession({ ...base, key } as never);
+      await store.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'x',
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          estimatedCostUsd: cost,
+        },
+      });
+    }
+    const total = async (keyPrefix: string) =>
+      (await store.usageAggregate({ ...window, dimension: 'day', keyPrefix })).reduce(
+        (sum, r) => sum + r.estimatedCostUsd,
+        0,
+      );
+    expect(await total('telegram:Sales:')).toBe(1);
+    expect(await total('telegram:sales:')).toBe(2);
+    expect(await total('telegram:sal%s:')).toBe(8);
+  });
+
+  // A fork replays its source's history with fresh timestamps. The copies are
+  // history, not spend: counting them bills the source's turns twice in
+  // `ethos usage`, the per-bot daily cap and the web Usage view.
+  it("does not count a fork's copied history as new spend", async () => {
+    await seed();
+    const [source] = await store.listSessions({});
+    if (!source) throw new Error('no source session');
+    const before = await store.usageAggregate({ ...window, dimension: 'day' });
+    await forkSession(store, source.id, { key: `${source.key}:fork` });
+    const after = await store.usageAggregate({ ...window, dimension: 'day' });
+    expect(after).toEqual(before);
+  });
+
+  // A tool-reported `cost_usd` is stored on its tool_result row with zero
+  // tokens (packages/core/src/agent-loop/tool-cost.ts `toolCostFields`).
+  it("counts a tool_result row's tool-reported cost", async () => {
+    const s = await store.createSession({ ...base, key: 'k4' } as never);
+    await store.appendMessage({
+      sessionId: s.id,
+      role: 'tool_result',
+      content: 'painted',
+      toolCallId: 'c1',
+      toolName: 'paint',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0.25,
+      },
+    });
+    const [row] = await store.usageAggregate({ ...window, dimension: 'day' });
+    expect(row).toMatchObject({ estimatedCostUsd: 0.25, inputTokens: 0, messages: 1 });
   });
 
   it('ignores rows with no token counts', async () => {

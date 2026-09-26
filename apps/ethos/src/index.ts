@@ -11,7 +11,7 @@ if (_nodeMajor < 24) {
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
-import { ethosDir, readConfig } from '@ethosagent/config';
+import { adoptConfigNotices, ethosDir, readConfig } from '@ethosagent/config';
 import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
@@ -48,6 +48,7 @@ import { runOutbox } from './commands/outbox';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
+import { renderGroupedHelp, suggestCommand } from './commands/registry-table';
 import { runRequestDump } from './commands/request-dump';
 import { runRetention } from './commands/retention';
 import { runAll } from './commands/run-all';
@@ -66,7 +67,7 @@ import { runTeamCommand } from './commands/team';
 import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { runWhy } from './commands/why';
-import { appendErrorLog } from './error-log';
+import { appendErrorLog, errorLogPath } from './error-log';
 import { writeJson } from './json-output';
 import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
 import { loadRequiredConfig } from './managed-mode';
@@ -167,10 +168,9 @@ try {
   // command switch so it works regardless of positional command parsing.
   const isZeroMode = args.includes('-z') || args.includes('--zero');
   if (isZeroMode) {
-    const zIdx = args.indexOf('-z') !== -1 ? args.indexOf('-z') : args.indexOf('--zero');
-    const prompt = args[zIdx + 1] ?? '';
+    // runZero finds the prompt itself (parseZeroArgs), so flags may come first.
     const { runZero } = await import('./commands/zero');
-    await runZero(args, prompt);
+    await runZero(args);
     // runZero signals failure via process.exitCode — don't clobber it with 0.
     process.exit(process.exitCode ?? 0);
   }
@@ -190,11 +190,15 @@ try {
 
     case '--help':
     case '-h': {
-      console.log(USAGE);
+      // N1 — grouped layout with one-line descriptions (registry-table.ts).
+      console.log(renderGroupedHelp());
       console.log(
         '\nOne-shot mode:\n' +
           '  -z, --zero <prompt>   Run a single turn and exit (non-interactive)\n' +
           '                        Compatible flags: --no-stream, --model, --personality, --provider\n' +
+          '  --format text|json|stream-json\n' +
+          '                        Output for -z (default text). stream-json: one JSON object\n' +
+          '                        per line, ending in a result line; json: the result line only\n' +
           '                        Pipe input: echo "code" | ethos -z "explain this"\n',
       );
       break;
@@ -299,6 +303,9 @@ try {
             setRotationConfig(fresh.logs.rotation);
           }
           let withFlags = { ...fresh };
+          // B2 — the parse-notice side-tables are keyed by object identity;
+          // carry them onto the clone or chat prints zero config warnings.
+          adoptConfigNotices(withFlags, fresh);
           if (verboseFlag) withFlags.verbose = true;
           if (skinFlag) withFlags.skin = skinFlag;
           if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
@@ -318,6 +325,9 @@ try {
           setRotationConfig(config.logs.rotation);
         }
         let withFlags = { ...config };
+        // B2 — the parse-notice side-tables are keyed by object identity;
+        // carry them onto the clone or chat prints zero config warnings.
+        adoptConfigNotices(withFlags, config);
         if (verboseFlag) withFlags.verbose = true;
         if (skinFlag) withFlags.skin = skinFlag;
         if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
@@ -624,8 +634,16 @@ try {
         await launchAfterSetup(gwResult);
       } else if (sub === 'start') {
         await runGatewayStart();
+      } else if (sub === 'status') {
+        const { runGatewayStatus } = await import('./commands/gateway-status');
+        process.exitCode = await runGatewayStatus(args.slice(2));
+      } else if (sub === 'spool') {
+        const { runGatewaySpool } = await import('./commands/gateway-status');
+        process.exitCode = runGatewaySpool(args.slice(2));
       } else {
-        console.log('Usage: ethos gateway [setup | start]');
+        console.log(
+          'Usage: ethos gateway [setup | start | status [--json] | spool <replay|discard> <id>]',
+        );
       }
       break;
     }
@@ -801,7 +819,7 @@ try {
     }
 
     case 'upgrade': {
-      await runUpgrade();
+      process.exitCode = await runUpgrade(args.slice(1));
       break;
     }
 
@@ -988,6 +1006,10 @@ try {
       const entry = registry.get(effectiveCommand);
       if (!entry?.handler) {
         console.log(`Unknown command: ${command}`);
+        // N1 — suggest the nearest registered command (same helper as B2's
+        // unknown-config-key suggestion).
+        const nearest = suggestCommand(effectiveCommand);
+        if (nearest) console.log(`did you mean '${nearest}'?`);
         console.log(USAGE);
         process.exit(1);
       }
@@ -1010,9 +1032,19 @@ try {
   // Phase 30.9 - render every surface-level failure through the EthosError
   // envelope so users see code/cause/action even when a command throws raw.
   const e = toEthosError(err);
-  process.stderr.write(`\n${formatError(e, { color: process.stderr.isTTY })}\n`);
   // Phase 30.10 - append to ~/.ethos/logs/errors.jsonl for local diagnostics.
-  appendErrorLog(e, { command: effectiveCommand });
+  // Logged BEFORE rendering so the diagnostics line can carry the trace id the
+  // log recorded (N2, plan ux-feedback-and-config-clarity).
+  const loggedTraceId = appendErrorLog(e, { command: effectiveCommand });
+  process.stderr.write(
+    `\n${formatError(e, {
+      color: process.stderr.isTTY,
+      diagnostics: {
+        logPath: errorLogPath(),
+        ...(loggedTraceId ? { traceId: loggedTraceId } : {}),
+      },
+    })}\n`,
+  );
   process.exit(1);
 }
 
@@ -1265,8 +1297,11 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   // (backend / network / memory / mounts / macOS caveat) is what `show` audits.
   const {
     buildExecutionPosture,
+    createProjectContextInjector,
+    declaredWorkdirProjectContext,
     formatSshTarget,
     resolveActiveLlmName,
+    resolveCharacterSheetDecisions,
     resolveCharacterSheetRouting,
     resolveMcpExportScope,
     resolvePersonalityModelFit,
@@ -1274,8 +1309,15 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   const posture = await buildExecutionPosture({
     personality: described.config,
     substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
+    // The same explicit signal the compose path forwards, so the sheet's
+    // "containerized (local)" matches where execution actually runs.
+    ...(cfg?.execution?.containerized === true
+      ? { containerized: { containerizedConfig: true } }
+      : {}),
     sshConfigured: sshCfg?.host !== undefined,
     ...(sshCfg ? { sshTarget: formatSshTarget(sshCfg) } : {}),
+    // Already validated by the config owner — an unpinned value was dropped.
+    dockerImage: cfg?.execution?.docker?.image,
   });
 
   // Which model this personality's turns ACTUALLY send. Declared and executed
@@ -1295,6 +1337,18 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
         cfg.modelRegistry,
       )
     : undefined;
+
+  // `## Decisions` — which decision sites run for this personality on THIS
+  // machine, from `resolvePersonalityDecisionSite` (the resolver the live sites
+  // call). Pure config arithmetic plus one vault read, so like routing it sits
+  // outside the loop-construction block. `undefined` when the personality
+  // declares no `decisions` block; with no config it resolves against no
+  // operator provider, i.e. every site `off` and said so.
+  const decisions = await resolveCharacterSheetDecisions(
+    described.config,
+    cfg,
+    await getSecretsResolver(),
+  ).catch(() => undefined);
 
   // Lane 6 — the arithmetic model-fit verdict, rendered as the sheet's
   // `## Model fit` section. The window resolution probes LIVE and rewrites the
@@ -1354,6 +1408,16 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
         storage,
         dataDir: ethosDir(),
         forceProbeRefresh: true,
+        // The AGENTS.md/CLAUDE.md block its declared workdir would put in the
+        // prompt, through the same file-context injector class the loop uses.
+        projectContext: await declaredWorkdirProjectContext({
+          injectors: [
+            createProjectContextInjector({ storage, personalities: result.personalities }),
+          ],
+          personality: described.config,
+          dataDir: ethosDir(),
+          cwd: process.cwd(),
+        }),
       });
       // skill-declared-renderers Lane E — the same `resolveRenderers` derivation
       // the `personalities.renderers` RPC gates the web renderer on, so the
@@ -1376,6 +1440,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       boundary,
       routing,
       mcpExport,
+      decisions,
     )}`,
   );
 

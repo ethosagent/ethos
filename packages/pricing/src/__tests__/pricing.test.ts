@@ -458,6 +458,9 @@ describe('findRate — resolved-id collision guard', () => {
     { id: 'llama3.2', prefix: null },
     { id: 'mistral', prefix: null },
     { id: 'qwen3-coder', prefix: null },
+    // TypeSafe Jev — the alias and a pinned version both price off one row.
+    { id: 'jev-latest', prefix: 'jev-' },
+    { id: 'jev-1.13.0', prefix: 'jev-' },
   ];
 
   /**
@@ -517,5 +520,28 @@ describe('findRate — resolved-id collision guard', () => {
       if (id.includes('grok')) continue;
       expect(prefix === null || !XAI_PREFIXES.has(prefix), `id: ${id}`).toBe(true);
     }
+  });
+});
+
+// Plan decision-provider-jev §14 "Cost" (C4): a Jev call is input tokens ×
+// $0.042 per million, output free — priced by the same `estimateCost` every
+// LLM provider uses, so decision usage lands on the one accounting path.
+describe('estimateCost — TypeSafe Jev', () => {
+  it('prices input at $0.042/M and output at zero, for the alias and a pinned version', () => {
+    for (const model of ['jev-latest', 'jev-1.13.0']) {
+      const { costUsd, basis } = estimateCost(model, {
+        inputTokens: 1_234_567,
+        outputTokens: 999_999,
+      });
+      expect(basis, model).toBe('priced');
+      expect(costUsd, model).toBeCloseTo((1_234_567 * 0.042) / 1_000_000, 12);
+    }
+  });
+
+  it('bills nothing for output alone', () => {
+    expect(estimateCost('jev-latest', { inputTokens: 0, outputTokens: 50_000 })).toEqual({
+      costUsd: 0,
+      basis: 'priced',
+    });
   });
 });

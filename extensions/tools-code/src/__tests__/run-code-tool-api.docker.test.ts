@@ -112,6 +112,9 @@ function makeHarness(image: string) {
     allowedTools,
     allowedPlugins: [],
     filterOpts: {},
+    // Item 7 seam — these tests exercise no secrets, so a kit that detects none.
+    redaction: { redactPii: (t) => t, redactString: (t) => t, detectSecrets: () => [] },
+    personality: { id: 'default', name: 'Default' },
     watcherTap: { observe: () => {}, getHalt: () => null },
     counters,
     checkBudgets: () =>
@@ -193,6 +196,9 @@ describe.skipIf(!dockerAvailable || !pyImage)('run_code tool API over docker —
         allowedTools: ['run_code', 'read_file'],
         allowedPlugins: [],
         filterOpts: {},
+        // Item 7 seam — these tests exercise no secrets, so a kit that detects none.
+        redaction: { redactPii: (t) => t, redactString: (t) => t, detectSecrets: () => [] },
+        personality: { id: 'default', name: 'Default' },
         watcherTap: {
           observe: (event) => {
             if (event.type === 'tool_start') starts++;

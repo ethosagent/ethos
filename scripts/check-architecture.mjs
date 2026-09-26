@@ -10,6 +10,11 @@
  * projection. Rules are READ from the fenced block and the sidecar — they are
  * not restated here, because a second copy is a second thing to drift.
  *
+ * SCOPE. Tier completeness, the guarantee register (both directions), claims
+ * about the register, §VIII exception shape for sidecar entries, and stale
+ * kernel paths. The layer and law import rules are NOT here: archcheck enforces
+ * them from architecture.config.ts (ARCHITECTURE.md §IX).
+ *
  * WHY IT EXISTS. A published control claim once survived the deletion of the
  * code that implemented it (plan/phases/security-boundary.md G11), because
  * nothing tied a claim to an enforcement point. Check 3 is that tie, in both
@@ -22,12 +27,7 @@
  * — an approximate check that fails constitutionally-permitted code gets
  * switched off, and a switched-off check protects nothing.
  *
- * SEVERITY.
- *   error — exits non-zero. The rule is mechanically sound as stated.
- *   warn  — reported, does not fail. The rule has an escape hatch in the prose
- *           that no machine-readable inventory resolves; the finding is real
- *           but the verdict needs a human. Each warn prints what would make it
- *           an error.
+ * SEVERITY. Every finding is an error and exits non-zero.
  *
  * USAGE
  *   node scripts/check-architecture.mjs
@@ -37,11 +37,11 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 
-const CHECKS = ['tiers', 'layers', 'register', 'register-claims', 'exceptions', 'stale-paths'];
+const CHECKS = ['tiers', 'register', 'register-claims', 'exceptions', 'stale-paths'];
 
 /** The register is the published projection of the guarantee table (plan §4.2). */
 const REGISTER_DOC = 'docs/content/security/security-boundary.md';
@@ -74,23 +74,14 @@ const TEXT_EXT =
 // ---------------------------------------------------------------------------
 
 /**
- * @type {{check: string, severity: 'error'|'warn', where: string, what: string,
- *   fix: string, roll?: {label: string, subject: string}}[]}
+ * @type {{check: string, where: string, what: string, fix: string}[]}
  */
 const findings = [];
 /** @type {{rule: string, why: string}[]} */
 const unenforced = [];
 
 function fail(check, where, what, fix) {
-  findings.push({ check, severity: 'error', where, what, fix });
-}
-/**
- * `roll` collapses many findings that share one location and one remedy into a
- * single reported line — `{ label, subject }`. Twenty-one identical sentences
- * differing only in a package name is noise; one sentence and a list is a finding.
- */
-function warn(check, where, what, fix, roll) {
-  findings.push({ check, severity: 'warn', where, what, fix, roll });
+  findings.push({ check, where, what, fix });
 }
 function notEnforced(rule, why) {
   unenforced.push({ rule, why });
@@ -125,15 +116,6 @@ export function parseRulesBlock(markdown) {
 // ---------------------------------------------------------------------------
 // Path / layer helpers
 // ---------------------------------------------------------------------------
-
-/** Match a sidecar layer path, which may be a one-level glob ("extensions/*"). */
-function pathMatches(pattern, path) {
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -1);
-    return path.startsWith(prefix) && !path.slice(prefix.length).includes('/');
-  }
-  return pattern === path;
-}
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf-8'));
@@ -178,23 +160,6 @@ function trackedFiles(root) {
   } catch {
     return null;
   }
-}
-
-function collectSourceFiles(dir) {
-  const out = [];
-  const walk = (d) => {
-    for (const entry of readdirSync(d, { withFileTypes: true })) {
-      const full = join(d, entry.name);
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name) || entry.name === '__tests__') continue;
-        walk(full);
-      } else if (/\.(ts|tsx|mts)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-        out.push(full);
-      }
-    }
-  };
-  if (existsSync(dir)) walk(dir);
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,375 +219,16 @@ function checkTiers(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Check 2 — layer import rules (§IX layers:)
+// Layer import rules — owned by archcheck, not this validator
 // ---------------------------------------------------------------------------
-
-function buildLayerIndex(ctx) {
-  const { sidecar } = ctx;
-  /** @type {Map<string,string>} dir -> layer */
-  const dirLayer = new Map();
-  const layerDirs = new Map();
-  const tierDirs = Object.keys(sidecar.tiers ?? {});
-
-  for (const layer of sidecar.layers ?? []) {
-    const dirs = [];
-    for (const pattern of layer.paths ?? []) {
-      for (const dir of tierDirs) {
-        if (pathMatches(pattern, dir)) dirs.push(dir);
-      }
-    }
-    layerDirs.set(layer.name, dirs);
-    for (const d of dirs) {
-      // First layer wins: the sidecar lists security-kernel before core, and
-      // packages/safety/* must not be re-read as anything else.
-      if (!dirLayer.has(d)) dirLayer.set(d, layer.name);
-    }
-  }
-
-  /** @type {Map<string,string>} package name -> dir */
-  const nameDir = new Map();
-  for (const [dir, entry] of Object.entries(sidecar.tiers ?? {})) {
-    if (entry?.package) nameDir.set(entry.package, dir);
-  }
-
-  return { dirLayer, layerDirs, nameDir };
-}
-
-function internalDeps(root, dir) {
-  const pkg = readJson(join(root, dir, 'package.json'));
-  const all = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies };
-  return Object.keys(all).filter((n) => n.startsWith('@ethosagent/'));
-}
-
-/**
- * Vendored packages (sidecar `vendored:`) are workspace packages that are
- * functionally EXTERNAL: a thin shim over a platform primitive with no Ethos
- * semantics. The layer check reads them the way it reads an npm dependency, so
- * a closed layer may depend on one without that being an unclassified reach.
- *
- * The flag is only as honest as its justification, so `rationale` is required
- * and a blank one fails. Without that, `vendored:` is a one-line escape from
- * every layer rule and the next awkward edge quietly moves in behind it.
- */
-function vendoredNames(ctx) {
-  const { sidecar } = ctx;
-  const entries = sidecar.vendored ?? {};
-  const names = new Set();
-  for (const [name, entry] of Object.entries(entries)) {
-    const rationale = String(entry?.rationale ?? '').trim();
-    if (rationale === '') {
-      fail(
-        'layers',
-        `.architecture-state.yaml vendored[${name}]`,
-        'vendored classification carries no rationale',
-        'state, in the entry, why this package has no Ethos semantics — no contract, no policy, no ' +
-          'boundary decision — and is therefore exempt from the layer rules. An unjustified `vendored: ' +
-          'true` is a hole in Law 11 wide enough for the next package that finds a layer inconvenient.',
-      );
-      continue;
-    }
-    if (!sidecar.tiers?.[entry?.path]) {
-      fail(
-        'layers',
-        `.architecture-state.yaml vendored[${name}]`,
-        `path ${JSON.stringify(entry?.path ?? null)} is not a package in the tier roster`,
-        'point `path` at the package directory as it appears under tiers:. Vendoring answers which ' +
-          'layer rules apply; it never removes a package from the tier roster.',
-      );
-    }
-    names.add(name);
-  }
-  return names;
-}
-
-function checkLayers(ctx) {
-  const { root, rules } = ctx;
-  const { dirLayer, layerDirs, nameDir } = buildLayerIndex(ctx);
-  const layers = new Map((rules.layers ?? []).map((l) => [l.name, l]));
-  const vendored = vendoredNames(ctx);
-
-  const kernelNames = new Set(
-    (layerDirs.get('security-kernel') ?? []).map((d) => {
-      for (const [name, dd] of nameDir) if (dd === d) return name;
-      return d;
-    }),
-  );
-
-  // §II: contracts, security-kernel, and core each "depend on contracts only".
-  // For those three the dependency set is closed, so a dep on a package with no
-  // layer assignment is still a violation. For extensions/wiring/apps the
-  // sidecar states plainly that §II does not partition packages/* exhaustively,
-  // so an unlayered dep there is not judged.
-  const CLOSED_LAYERS = new Set(['contracts', 'security-kernel', 'core']);
-
-  for (const [layerName, spec] of layers) {
-    const dirs = layerDirs.get(layerName) ?? [];
-    if (dirs.length === 0) continue;
-
-    const allowedLayers = new Set([...(spec.depends_on ?? []), layerName]);
-    const typeOnly = new Set(spec.type_only_deps ?? []);
-    const forbidsAllInternal = (spec.forbids ?? []).some(
-      (f) => f?.internal_workspace_deps === 'all',
-    );
-
-    for (const dir of dirs) {
-      for (const dep of internalDeps(root, dir)) {
-        // A vendored shim is an external dependency that happens to live
-        // in-repo. Layer rules constrain Ethos-semantic coupling; this edge
-        // carries none. Justified per-package in the sidecar, checked above.
-        if (vendored.has(dep)) continue;
-
-        const depDir = nameDir.get(dep);
-        const depLayer = depDir ? dirLayer.get(depDir) : undefined;
-
-        if (forbidsAllInternal) {
-          fail(
-            'layers',
-            `${dir}/package.json`,
-            `layer "${layerName}" forbids internal_workspace_deps: all, but depends on ${dep}`,
-            'Law 1 — a contract that imports a sibling becomes structurally bound to it. Move the shared ' +
-              'value into the contracts package or invert the dependency.',
-          );
-          continue;
-        }
-
-        if (depLayer && allowedLayers.has(depLayer)) continue;
-
-        // §IX grants core `type_only_deps: [security-kernel]` — the package.json
-        // edge is legal, only the runtime import is not. That is checked below
-        // against the source, not the manifest.
-        if (depLayer && typeOnly.has(depLayer)) continue;
-
-        if (!depLayer) {
-          if (!CLOSED_LAYERS.has(layerName)) continue;
-          fail(
-            'layers',
-            `${dir}/package.json`,
-            `layer "${layerName}" depends on contracts only (§II), but depends on ${dep}, which carries no layer assignment`,
-            `either give ${dep} a layer in .architecture-state.yaml and prove the edge legal, or drop the ` +
-              'dependency. A Tier 0 package reaching into an unclassified one is exactly the edge Law 11 exists for.',
-          );
-          continue;
-        }
-
-        // Law 5 for apps is checked at FILE granularity below, against the
-        // sidecar's `app_entry_modules` inventory. A manifest edge says only
-        // that the app declared the dependency somewhere; §II's thin-wiring-
-        // adapter grant makes that legal for an entry module and illegal
-        // everywhere else, and only the file check can tell those apart.
-        if (layerName === 'apps') continue;
-
-        fail(
-          'layers',
-          `${dir}/package.json`,
-          `layer "${layerName}" may depend on [${[...allowedLayers].join(', ')}], but depends on ${dep} (layer "${depLayer}")`,
-          'invert the dependency, or move the shared surface down to contracts.',
-        );
-      }
-    }
-  }
-
-  // Runtime imports of the security kernel from core.
-  // This REPLACED packages/core/src/__tests__/no-safety-imports.test.ts, which
-  // has been deleted. Same rule, strictly stronger: the forbidden set is
-  // derived from the sidecar rather than restated by hand (that hand-written
-  // list named 4 of the 7 kernel packages), and dynamic `import(` / `require(`
-  // are caught alongside `from`. The record of why one derivation replaced two
-  // is the point of this note — a hand-kept copy of a rule drifts from the rule.
-  for (const [layerName, spec] of layers) {
-    const runtimeForbidden = new Set(
-      (spec.forbids ?? []).flatMap((f) => f?.runtime_imports_of_layer ?? []),
-    );
-    if (runtimeForbidden.size === 0) continue;
-
-    const forbiddenNames = new Set();
-    for (const forbiddenLayer of runtimeForbidden) {
-      for (const d of layerDirs.get(forbiddenLayer) ?? []) {
-        for (const [name, dd] of nameDir) if (dd === d) forbiddenNames.add(name);
-      }
-    }
-
-    for (const dir of layerDirs.get(layerName) ?? []) {
-      for (const file of collectSourceFiles(join(root, dir, 'src'))) {
-        const lines = readFileSync(file, 'utf-8').split('\n');
-        lines.forEach((line, i) => {
-          for (const name of forbiddenNames) {
-            if (!line.includes(`'${name}'`) && !line.includes(`"${name}"`)) continue;
-            if (!/\bfrom\s|\bimport\s*\(|\brequire\s*\(/.test(line)) continue;
-            if (line.trimStart().startsWith('import type')) continue;
-            if (/^\s*(\/\/|\*)/.test(line)) continue;
-            fail(
-              'layers',
-              `${relative(root, file)}:${i + 1}`,
-              `layer "${layerName}" runtime-imports ${name} (layer "${[...runtimeForbidden][0]}")`,
-              'use `import type`, or take the capability through an injected contract seam bound by wiring. ' +
-                'A kernel that core can import directly is a kernel nobody can replace (§II).',
-            );
-          }
-        });
-      }
-    }
-  }
-
-  checkAppEntryModules(ctx, { dirLayer, layerDirs, nameDir, vendored, layers });
-
-  if (kernelNames.size === 0) {
-    fail(
-      'layers',
-      '.architecture-state.yaml',
-      'the security-kernel layer resolves to no packages',
-      'check that layers[].paths under security-kernel match directories that also appear under tiers:.',
-    );
-  }
-
-  notEnforced(
-    'layers[].forbids.raw_filesystem_apis / raw_filesystem_apis_outside_storage_contract (Law 7)',
-    'covered by apps/ethos/src/__tests__/no-raw-fs.test.ts and the allowed-exception list in CLAUDE.md; ' +
-      'expressing "on a personality boundary" mechanically needs a call-graph, not a grep.',
-  );
-  notEnforced(
-    'layers[].forbids.direct_console_writes (Law 10)',
-    'covered by Biome + review; the §IX rule names no allowed-file inventory for app entry modules.',
-  );
-  notEnforced(
-    'layers[].composition_root: "entry modules only" (apps) and §II\'s thin-wiring-adapter grant',
-    'now checked at file granularity against `app_entry_modules:` in .architecture-state.yaml, but reported ' +
-      'as advisory because the repository does not satisfy it yet. The mechanism is done; the cleanup is not.',
-  );
-}
-
-/**
- * Runtime import specifiers of workspace packages, per file. Type-only
- * `import type … from '…'` statements are removed first: they erase at build
- * time and create no runtime coupling, which is the coupling Law 5 is about.
- */
-function workspaceImportsOf(text) {
-  const runtime = text.replace(/import\s+type\s[\s\S]*?from\s*['"][^'"]+['"]/g, '');
-  const re = /(?:from|import|require)\s*\(?\s*['"](@ethosagent\/[^'"]+)['"]/g;
-  const names = new Set();
-  let m = re.exec(runtime);
-  while (m !== null) {
-    names.add(m[1].split('/').slice(0, 2).join('/'));
-    m = re.exec(runtime);
-  }
-  return names;
-}
-
-/**
- * §VIII exceptions that name a law, keyed by the exact path they scope. Shape
- * is NOT re-checked here — `checkExceptions` fails the whole run on a missing
- * owner, an expired `review_by`, or an unobservable removal condition, so a
- * malformed entry cannot buy quiet: the build is already red when it is read.
- * Matching is on the exact path, never a prefix, so an exception grants itself
- * to one file and never to a directory.
- */
-function exemptPaths(sidecar, lawPattern) {
-  const out = new Set();
-  for (const ex of sidecar.exceptions ?? []) {
-    if (!ex || typeof ex !== 'object') continue;
-    if (!lawPattern.test(String(ex.law ?? ''))) continue;
-    const scope = String(ex.scope ?? '').trim();
-    if (scope) out.add(scope);
-  }
-  return out;
-}
-
-const LAW5_RE = /(law\s*5|\bL5\b)/i;
-
-/**
- * Law 5 at FILE granularity (§II's thin-wiring-adapter grant, §IX's
- * `composition_root: "entry modules only"` for apps).
- *
- * §II lets an app carry its own wiring adapter and §IX confines composition to
- * entry modules, but neither enumerates which modules those are — so this ran
- * at manifest granularity and could only ever be advisory: "apps/ethos declares
- * @ethosagent/gateway" is true of a compliant app and a non-compliant one
- * alike. The sidecar's `app_entry_modules` is that missing inventory, and this
- * check is the rule read against it: an entry module composing concrete
- * implementations is the grant being used; any other app file reaching past
- * wiring is Law 5.
- *
- * STILL ADVISORY — pending cleanup, not pending a mechanism. The inventory is
- * in place and the check is exact; the repository simply does not satisfy it
- * yet (see the count in the report). Flipping `warn` to `fail` below is the
- * whole promotion, and it should happen the moment the count reaches zero. It
- * is deliberately NOT tuned to pass in the meantime: a check trimmed until it
- * goes green measures nothing, and the number it prints is the only honest
- * record of how far the apps are from the constitution.
- */
-function checkAppEntryModules(ctx, idx) {
-  const { root, sidecar } = ctx;
-  const { dirLayer, layerDirs, nameDir, vendored, layers } = idx;
-  const spec = layers.get('apps');
-  if (!spec) return;
-
-  const allowed = new Set([...(spec.depends_on ?? []), 'apps']);
-  const inventory = sidecar.app_entry_modules ?? {};
-  const appDirs = layerDirs.get('apps') ?? [];
-  const exempt = exemptPaths(sidecar, LAW5_RE);
-
-  // The inventory is a claim about files that exist, in the app they name.
-  for (const [app, paths] of Object.entries(inventory)) {
-    for (const p of paths ?? []) {
-      if (!p.startsWith(`${app}/`)) {
-        fail(
-          'layers',
-          '.architecture-state.yaml',
-          `app_entry_modules lists ${p} under ${app}, which does not contain it`,
-          'move the entry under the app that owns the file. An inventory that mis-files a path grants the ' +
-            'exemption to a module nobody meant to grant it to.',
-        );
-        continue;
-      }
-      if (!existsSync(join(root, p))) {
-        fail(
-          'layers',
-          '.architecture-state.yaml',
-          `app_entry_modules lists ${p}, which does not exist on disk`,
-          'remove the stale entry, or restore the entry module. A composition-root grant on a deleted file ' +
-            'is a grant nobody can audit.',
-        );
-      }
-    }
-  }
-
-  for (const app of appDirs) {
-    const entries = new Set(inventory[app] ?? []);
-    for (const file of collectSourceFiles(join(root, app, 'src'))) {
-      const rel = relative(root, file);
-      if (entries.has(rel) || exempt.has(rel)) continue;
-
-      // Grouped by the layer reached, so one file importing six extensions is
-      // one finding rather than six copies of the same sentence.
-      const offending = new Map();
-      for (const dep of workspaceImportsOf(readFileSync(file, 'utf-8'))) {
-        if (vendored.has(dep)) continue;
-        const depDir = nameDir.get(dep);
-        const depLayer = depDir ? dirLayer.get(depDir) : undefined;
-        if (!depLayer || allowed.has(depLayer)) continue;
-        if (!offending.has(depLayer)) offending.set(depLayer, []);
-        offending.get(depLayer).push(dep);
-      }
-
-      for (const [depLayer, deps] of offending) {
-        warn(
-          'layers',
-          app,
-          `Law 5 — ${rel} imports ${deps.sort().join(', ')} (layer "${depLayer}"); only an entry module may`,
-          'ADVISORY pending cleanup, not pending a mechanism: `app_entry_modules` in ' +
-            '.architecture-state.yaml is the §II/§IX inventory this check was missing, and the check is now ' +
-            'exact against it. Route the import through @ethosagent/wiring, or — if the file genuinely IS a ' +
-            'composition root — add it to the inventory and say so in review. Do not widen the inventory to ' +
-            'silence a finding; promoting this to an error is a one-word change once the count is zero.',
-          {
-            label: `Law 5 — non-entry-module app files import layer "${depLayer}"`,
-            subject: rel,
-          },
-        );
-      }
-    }
-  }
-}
+//
+// The layer rules (§II, §III Laws 1–5, including the file-granularity Law 5
+// check against app entry modules) are enforced by archcheck from
+// architecture.config.ts — pre-commit, pre-push, `pnpm test` and CI. This file
+// used to carry a second copy (the `layers` check, reading `layers:`,
+// `vendored:` and `app_entry_modules:` from the sidecar); it was removed when
+// archcheck took the rules over, because two checkers of one rule drift. See
+// ARCHITECTURE.md §IX.
 
 /**
  * Everything §IX declares that this validator does NOT check, derived from the
@@ -631,37 +237,15 @@ function checkAppEntryModules(ctx, idx) {
  * unenforced, which is the failure mode this whole phase exists to end.
  */
 const GATED_ELSEWHERE = {
-  L3_only_wiring_composes:
-    'reported as advisory under the file-granularity Law 5 check above, against `app_entry_modules`.',
-  L7_storage_abstraction:
-    'apps/ethos/src/__tests__/no-raw-fs.test.ts + the allowed-exception list in CLAUDE.md.',
-  L8_toolset_enforcement:
-    'packages/core/src/__tests__/tool-registry*.test.ts (definition time and execution time).',
-  L9_extensionless_imports:
-    'scripts/check-tool-imports.sh and tsx resolution failing loudly in dev.',
-  L10_silent_libraries: 'Biome, plus review.',
-  L11_kernel_guarantees_not_weakenable:
-    'behavioural, not structural — the AgentSafety conformance suite is the gate. The exception check ' +
-    'above enforces its no-exception-path half.',
   S6_inbound_safety_injection:
     'the personality drift gate; §IX marks it `enforcement: mechanical` there.',
 };
 
 function reportUnenforcedRules(ctx) {
   const { rules } = ctx;
-  const enforcedLaws = new Set([
-    'L1_contracts_pure',
-    'L2_core_no_concrete',
-    'L5_apps_through_wiring',
-  ]);
-  for (const law of Object.keys(rules.laws ?? {})) {
-    if (enforcedLaws.has(law)) continue;
-    notEnforced(
-      `laws.${law}`,
-      GATED_ELSEWHERE[law] ??
-        'no mechanical check in this validator and none named elsewhere — a gap.',
-    );
-  }
+  // The §III laws are no longer in the §IX block: each law in ARCHITECTURE.md
+  // carries its own "Enforced by:" line naming the archcheck rule, the test, or
+  // the known gap.
   for (const rule of Object.keys(rules.safety ?? {})) {
     notEnforced(
       `safety.${rule} (§V)`,
@@ -1435,10 +1019,7 @@ function checkStalePaths(ctx) {
 // ---------------------------------------------------------------------------
 
 function report(only) {
-  const errors = findings.filter((f) => f.severity === 'error');
-  const warnings = findings.filter((f) => f.severity === 'warn');
-
-  if (errors.length === 0 && warnings.length === 0) return 0;
+  if (findings.length === 0) return 0;
 
   const groups = new Map();
   for (const f of findings) {
@@ -1455,12 +1036,8 @@ function report(only) {
     if (only && !only.has(check)) continue;
     const group = groups.get(check);
     if (!group) continue;
-    const e = group.filter((f) => f.severity === 'error').length;
-    const w = group.length - e;
-    const mark = e > 0 ? '✗' : '!';
-    out.push(
-      `${mark} ${check} — ${e} violation${e === 1 ? '' : 's'}${w > 0 ? `, ${w} advisory` : ''}`,
-    );
+    const e = group.length;
+    out.push(`✗ ${check} — ${e} violation${e === 1 ? '' : 's'}`);
     out.push('');
 
     // One copy of each remedy, referenced by number. Sixty findings sharing one
@@ -1472,27 +1049,9 @@ function report(only) {
       if (i === -1) i = notes.push(fix) - 1;
       return i + 1;
     };
-    const rolled = new Map();
-    const singles = [];
-    for (const f of group.filter((x) => x.severity === 'error')) singles.push(f);
-    for (const f of group.filter((x) => x.severity === 'warn')) {
-      if (!f.roll) {
-        singles.push(f);
-        continue;
-      }
-      const key = `${f.where}|${f.roll.label}|${f.fix}`;
-      if (!rolled.has(key)) rolled.set(key, { ...f, subjects: [] });
-      rolled.get(key).subjects.push(f.roll.subject);
-    }
-
-    for (const f of singles) {
-      out.push(`  ${f.severity === 'error' ? '·' : '~'} ${f.where}  [${noteOf(f.fix)}]`);
+    for (const f of group) {
+      out.push(`  · ${f.where}  [${noteOf(f.fix)}]`);
       out.push(`      ${f.what}`);
-    }
-    for (const f of rolled.values()) {
-      out.push(`  ~ ${f.where}  [${noteOf(f.fix)}]`);
-      const label = `${f.roll.label} (${f.subjects.length}): ${f.subjects.sort().join(', ')}`;
-      for (const l of wrap(label, 92)) out.push(`      ${l}`);
     }
     out.push('');
     notes.forEach((fix, i) => {
@@ -1503,17 +1062,9 @@ function report(only) {
     });
   }
 
-  out.push(
-    `${errors.length} violation${errors.length === 1 ? '' : 's'}, ` +
-      `${warnings.length} advisory finding${warnings.length === 1 ? '' : 's'}.`,
-  );
-  if (warnings.length > 0) {
-    out.push(
-      'Advisory findings do not fail this check; each prints what would make it enforceable.',
-    );
-  }
+  out.push(`${findings.length} violation${findings.length === 1 ? '' : 's'}.`);
   process.stdout.write(`${out.join('\n')}\n`);
-  return errors.length > 0 ? 1 : 0;
+  return 1;
 }
 
 function wrap(text, width) {
@@ -1573,7 +1124,6 @@ function main(argv) {
   };
 
   run('tiers', checkTiers);
-  run('layers', checkLayers);
   run('register', checkRegister);
   run('register-claims', checkRegisterClaims);
   run('exceptions', checkExceptions);

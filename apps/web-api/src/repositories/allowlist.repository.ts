@@ -14,12 +14,21 @@ import { requireStorage } from './require-storage';
 // `once` is intentionally NOT persisted — it grants a single invocation and
 // dies with the in-memory pending approval.
 //
+// Every entry is bound to the personality whose call it approved
+// (`personalityId`); `matches` only honours an entry for that same
+// personality. Entries written before that field existed still parse, and
+// stay in the file as an audit record, but match nothing — each re-prompts
+// once and the new grant carries its personality.
+//
 // Writes go through Storage.writeAtomic so a crash mid-write leaves the
 // previous file intact (CEO finding 2.1, "Concurrent write to allowlist.json").
 
 export type AllowlistScope = 'exact-args' | 'any-args';
 
 export interface AllowlistEntry {
+  /** Personality whose call this entry approved. Absent on entries written
+   *  before per-personality scoping; such an entry matches nothing. */
+  personalityId?: string;
   toolName: string;
   scope: AllowlistScope;
   /** JSON-serialisable args payload. Required when `scope === 'exact-args'`,
@@ -39,6 +48,7 @@ interface FileShape {
  *  don't match are dropped in `readSafe`, mirroring the per-line guard in
  *  evolver.repository.ts. */
 const allowlistEntrySchema = z.object({
+  personalityId: z.string().optional(),
   toolName: z.string(),
   scope: z.enum(['exact-args', 'any-args']),
   args: z.unknown(),
@@ -50,16 +60,25 @@ export interface AllowlistRepositoryOptions {
   dataDir: string;
   /** Storage backend. Injected by the composition root; required. */
   storage: Storage;
+  /**
+   * Tools no stored entry may auto-approve. The composition root
+   * (`createWebApi`) passes `APPROVAL_SURFACE_ALWAYS_ASK` from
+   * `@ethosagent/wiring`; injected rather than imported so this repository
+   * does not load the whole wiring graph. Absent = none.
+   */
+  alwaysAsk?: ReadonlyArray<string>;
 }
 
 export class AllowlistRepository {
   private readonly storage: Storage;
   private readonly path: string;
+  private readonly alwaysAsk: ReadonlyArray<string>;
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(opts: AllowlistRepositoryOptions) {
     this.storage = requireStorage(opts.storage, 'AllowlistRepository');
     this.path = join(opts.dataDir, 'allowlist.json');
+    this.alwaysAsk = opts.alwaysAsk ?? [];
   }
 
   async list(): Promise<AllowlistEntry[]> {
@@ -80,11 +99,32 @@ export class AllowlistRepository {
     await this.writeChain;
   }
 
-  /** True when `toolName`+`args` are covered by an existing entry. */
-  async matches(toolName: string, args: unknown): Promise<boolean> {
+  /**
+   * True when `toolName`+`args` are covered by an existing entry recorded for
+   * the same `personalityId`.
+   *
+   * Personality-scoped: a grant made for one personality never auto-allows
+   * another's call. A caller with no `personalityId`, or an entry with none
+   * (written before scoping), never matches — fail closed, re-prompt once.
+   * Pinned by `apps/web-api/src/__tests__/services/approvals-scoping.test.ts`.
+   *
+   * Never true for an always-ask tool (the injected `alwaysAsk` list —
+   * `APPROVAL_SURFACE_ALWAYS_ASK` in production — reach-and-containment D3-12): that list means "must never run without a
+   * prompt", so an entry stored for one — before `ApprovalsService.approve`
+   * started refusing them — is ignored, not deleted, and stays visible in the
+   * file. A lease is the widest answer such a tool can get.
+   */
+  async matches(
+    personalityId: string | undefined,
+    toolName: string,
+    args: unknown,
+  ): Promise<boolean> {
+    if (personalityId === undefined) return false;
+    if (this.alwaysAsk.includes(toolName)) return false;
     const file = await this.readSafe();
     const argsKey = canonicalKey(args);
     for (const entry of file.entries) {
+      if (entry.personalityId !== personalityId) continue;
       if (entry.toolName !== toolName) continue;
       if (entry.scope === 'any-args') return true;
       if (entry.scope === 'exact-args' && canonicalKey(entry.args) === argsKey) return true;
@@ -113,8 +153,14 @@ export class AllowlistRepository {
       // Drop malformed entries rather than throwing — a bad file must not
       // brick the approval flow, and a widened entry must not slip through.
       if (!result.success) continue;
-      const { toolName, scope, args, createdAt } = result.data;
-      entries.push({ toolName, scope, args, createdAt });
+      const { personalityId, toolName, scope, args, createdAt } = result.data;
+      entries.push({
+        ...(personalityId !== undefined ? { personalityId } : {}),
+        toolName,
+        scope,
+        args,
+        createdAt,
+      });
     }
     return { entries };
   }

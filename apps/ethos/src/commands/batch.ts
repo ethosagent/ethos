@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { BatchRunner, parseTasksJsonl } from '@ethosagent/batch-runner';
 import type { EthosConfig } from '@ethosagent/config';
 import { EthosError } from '@ethosagent/types';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getStorage } from '../wiring';
 
@@ -101,6 +102,7 @@ export async function runBatch(args: string[], config: EthosConfig): Promise<voi
   console.log(`${c.dim}  checkpoint → ${checkpointPath}${c.reset}\n`);
 
   const runtime = await createAgentLoop(config);
+  gateNonInteractiveLoop(runtime, config, '`ethos batch` has no prompt to answer it');
 
   const runner = new BatchRunner(
     runtime.loop,

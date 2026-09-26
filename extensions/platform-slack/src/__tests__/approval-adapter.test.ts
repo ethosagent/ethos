@@ -1,6 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APPROVE_ACTION_ID, DENY_ACTION_ID } from '../blocks/approval';
 import type { ApprovalDecisionEvent } from '../interactions/actions';
+import { loadSlackSdk } from '../sdk';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 // Mock @slack/bolt so the adapter can be exercised without a socket
 // connection. The mock App records `chat.postMessage` / `chat.update` calls

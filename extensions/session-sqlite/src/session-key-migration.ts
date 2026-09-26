@@ -108,11 +108,23 @@ export function decideMigration(
  */
 export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyMigrationResult {
   const db = new Database(opts.dbPath);
+  // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+  // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+  db.pragma('busy_timeout = 5000');
   let migrated = 0;
   let alreadyMigrated = 0;
   let skippedNoBot = 0;
   let quarantinedStale = 0;
   try {
+    // A sessions.db with no `sessions` table yet is a fresh install whose
+    // creator has opened the file but not yet run its schema — `ethos run-all`
+    // starts gateway and serve together, and serve's SQLiteSessionStore can
+    // create the file a moment before this runs. Nothing to migrate; querying
+    // it anyway threw "no such table: sessions" and exited the gateway.
+    const hasSessions = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'")
+      .get();
+    if (!hasSessions) return { migrated, alreadyMigrated, skippedNoBot, quarantinedStale };
     const rows = db.prepare('SELECT id, key FROM sessions').all() as Array<{
       id: string;
       key: string;

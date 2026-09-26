@@ -7,6 +7,7 @@ import { liveSkillDir } from '@ethosagent/skill-evolver';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Relative on purpose — see `promote.test.ts`: the test exercises the real gate.
+import { vetPromotedSkill } from '../../../skills/src/promotion-vet';
 import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
 import { readAudit } from '../audit';
 import type { ReplayAndResolveResult } from '../auto-promotion';
@@ -43,6 +44,7 @@ function promoteDeps(): PromoteDeps {
     liveSkillDir,
     skillScope: () => undefined,
     checkSkillFrontmatter,
+    vetSkill: vetPromotedSkill,
     expressions: new FilePersonalityRegistry(storage, DATA),
     now,
   };

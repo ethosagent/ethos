@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: least-privilege-tokens
 time: "15 min"
-updated: 2026-05-18
+updated: 2026-09-25
 ---
 
 ## Task
@@ -81,7 +81,7 @@ Since Telegram offers no per-scope restriction, apply these compensating control
 
 #### Verify
 
-Send a message from a non-allowlisted account. Confirm the agent does not respond and that `observability.db` logs a `channel.deny` event.
+Send a message from a non-allowlisted account. Confirm the agent does not respond (a DM gets a pairing code instead) and that `observability.db` logs an `audit.block` event with code `channel.allowlist.blocked` (DM) or `channel.mention_gate` (group).
 
 ### 3. Discord
 

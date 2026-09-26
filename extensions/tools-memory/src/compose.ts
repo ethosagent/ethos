@@ -1,5 +1,4 @@
-import type { MemoryProvider, SessionStore, Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { MemoryProvider, SessionStore, Tool, WiringContext } from '@ethosagent/types';
 import { createMemoryTools, createTeamMemoryTools } from './index';
 
 export interface MemoryToolsCompose {

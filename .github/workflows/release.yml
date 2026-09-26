@@ -51,6 +51,13 @@ jobs:
         # G7 from the gate model — full check gate before any irreversible step.
         run: pnpm check
 
+      - name: Bundle deps declared
+        if: env.SKIP_RELEASE != 'true'
+        # Every bare module bundled into apps/ethos/dist must be a declared
+        # dependency of @ethosagent/cli, or `npm install` ships a CLI that
+        # crashes with ERR_MODULE_NOT_FOUND (0.8.0: undici).
+        run: bash scripts/check-bundle-deps.sh
+
       - name: Pre-release gates (G1, G2, G3, G4, G5, G8)
         if: env.SKIP_RELEASE != 'true'
         env:

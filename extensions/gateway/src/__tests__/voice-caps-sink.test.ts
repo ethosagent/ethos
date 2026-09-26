@@ -10,7 +10,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { AdapterVoiceCaps } from '@ethosagent/types';
 import { voiceAudioMimeType } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { Gateway } from '../index';
+import { Gateway, VOICE_FAILURE_NOTICE } from '../index';
 import type { Transcoder } from '../transcode';
 import {
   fakeAdapter,
@@ -235,8 +235,10 @@ describe('Gateway voice-out — a transcode failure never breaks the turn', () =
     const failure = observability.find('gateway.voice_transcode_failed');
     expect(failure?.details?.code).toBe('unavailable');
     // The written answer went out regardless — a missing voice note must not
-    // cost the user the reply itself.
-    expect(adapter.sent).toHaveLength(1);
+    // cost the user the reply itself — and the lane is TOLD the audio failed
+    // (H5), after the text, exactly once.
+    expect(adapter.sent).toHaveLength(2);
     expect(adapter.sent[0]?.message.text).toBe('here you go');
+    expect(adapter.sent[1]?.message.text).toBe(VOICE_FAILURE_NOTICE);
   });
 });

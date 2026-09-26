@@ -5,6 +5,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { createSessionStore } from '@ethosagent/wiring';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getStorage } from '../wiring';
 
@@ -12,6 +13,16 @@ export async function runAcp(config: EthosConfig): Promise<void> {
   const dir = ethosDir();
   const runtime = await createAgentLoop(config);
   const { loop, mcpManager, activePersonality } = runtime;
+  // Fail closed: this server does not send ACP's `session/request_permission`
+  // (its dialect is `new_session` / `prompt` / `$/stream`, with no outbound
+  // request/response correlation), so nobody can be asked and a flagged call
+  // is refused. The mark also lets the terminal guard hand command
+  // substitution to this gate, which refuses it with the same reason.
+  gateNonInteractiveLoop(
+    runtime,
+    config,
+    'the ACP server cannot show an approval prompt to its client',
+  );
   // separate connection for fork_session / resume_session reads and writes
   const session = createSessionStore({ dataDir: dir });
   const personalities = await createPersonalityRegistry({

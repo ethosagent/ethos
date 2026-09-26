@@ -17,14 +17,17 @@ import { a2aRouter } from './a2a';
 import { activityRouter } from './activity';
 import { adminRouter } from './admin';
 import { apiKeysRouter } from './api-keys';
+import { approvalsRouter } from './approvals';
 import { backupRouter } from './backup';
 import { batchRouter } from './batch';
 import { channelsRouter } from './channels';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
 import { contextRouter, filesRouter } from './context-resolve';
+import { credentialsRouter } from './credentials';
 import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
+import { decisionsRouter } from './decisions';
 import { deliveriesRouter } from './deliveries';
 import { digestRouter } from './digest';
 import { documentsRouter } from './documents';
@@ -56,6 +59,7 @@ import { tasksRouter } from './tasks';
 import { teamsRouter } from './teams';
 import { toolSettingsRouter } from './tool-settings';
 import { toolsRouter } from './tools';
+import { usageRouter } from './usage';
 import { voiceRouter } from './voice';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
@@ -91,6 +95,7 @@ export const apiRouter = {
   config: configRouter,
   onboarding: onboardingRouter,
   tools: toolsRouter,
+  approvals: approvalsRouter,
   clarify: clarifyRouter,
   cron: cronRouter,
   skills: skillsRouter,
@@ -111,6 +116,7 @@ export const apiRouter = {
   meta: metaRouter,
   models: modelsRouter,
   modelRegistry: modelRegistryRouter,
+  decisions: decisionsRouter,
   dashboards: dashboardsRouter,
   admin: adminRouter,
   context: contextRouter,
@@ -119,11 +125,13 @@ export const apiRouter = {
   digest: digestRouter,
   voice: voiceRouter,
   deliveries: deliveriesRouter,
+  usage: usageRouter,
   outbox: outboxRouter,
   learning: learningRouter,
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,
+  credentials: credentialsRouter,
   keys: keysRouter,
   toolSettings: toolSettingsRouter,
   documents: documentsRouter,

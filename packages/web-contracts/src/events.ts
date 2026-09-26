@@ -88,6 +88,38 @@ export const TurnErrorEventSchema = z.object({
   code: z.string(),
 });
 
+/** A1 (ux-feedback plan) — an early safety stop: a per-turn tool budget
+ *  tripped (`kind: 'budget'`) or the safety watcher paused the turn
+ *  (`kind: 'watcher'`). Mirrors the `halt` AgentEvent exactly
+ *  (packages/types/src/agent-event.ts). A normal `done` still follows, so
+ *  the client marks the reply partial rather than ending the turn here. */
+export const HaltEventSchema = z.object({
+  type: z.literal('halt'),
+  kind: z.enum(['budget', 'watcher']),
+  rule: z.string(),
+  toolName: z.string().optional(),
+  count: z.number().optional(),
+  message: z.string(),
+});
+
+// openclaw-9.5 item 1 — the turn was refused pre-turn because an enabled
+// plugin is missing a credential (the web chat sends with
+// `credentialPrompt: true`; see `ChatService.send`). The chat pane collects
+// the value masked, stores it through `plugins.setCredential` (the one writer,
+// `PluginLoader.setCredential`), then resends `pendingUserMessage`. This event
+// never carries a credential VALUE — only which one is missing. A `done` with
+// empty text follows, as for any refused turn.
+export const CredentialRequiredEventSchema = z.object({
+  type: z.literal('credential_required'),
+  pluginId: z.string(),
+  credentialKey: z.string(),
+  kind: z.enum(['oauth', 'api_key', 'text']),
+  label: z.string(),
+  description: z.string().optional(),
+  authUrl: z.string().optional(),
+  pendingUserMessage: z.string(),
+});
+
 export const MessagePersistedEventSchema = z.object({
   type: z.literal('message_persisted'),
   messageId: z.string(),
@@ -289,6 +321,65 @@ export const RunStartEventSchema = z.object({
   traceId: z.string().optional(),
 });
 
+/**
+ * plan decision-provider-personality §15.2 — a decision site ran for this turn.
+ * A zod mirror of the `decision` `AgentEvent` (@ethosagent/types); the two
+ * change together (`__tests__/decision-event.test.ts` pins the key sets
+ * equal). Summaries only (K13): no digest, question text or raw answer. Every
+ * key is optional-or-required exactly as on the AgentEvent.
+ */
+export const DecisionEventSchema = z.object({
+  type: z.literal('decision'),
+  id: z.string(),
+  phase: z.enum(['started', 'settled']),
+  site: z.enum(['injection', 'approver', 'router']),
+  provider: z.string(),
+  model: z.string().optional(),
+  mode: z.enum(['on', 'shadow']),
+  /** `'ok'` or a `DecisionErrorCode` (@ethosagent/types). */
+  outcome: z
+    .enum([
+      'ok',
+      'auth',
+      'invalid',
+      'rate_limited',
+      'overloaded',
+      'timeout',
+      'aborted',
+      'malformed',
+      'too_large',
+      'unavailable',
+      'breaker_open',
+    ])
+    .optional(),
+  acted: z.boolean().optional(),
+  verdict: z.string().optional(),
+  todayVerdict: z.string().optional(),
+  confidence: z.number().optional(),
+  latencyMs: z.number().nonnegative().optional(),
+  todayLatencyMs: z.number().nonnegative().optional(),
+  disagreed: z.boolean().optional(),
+  personalityId: z.string(),
+  toolCallId: z.string().optional(),
+  traceId: z.string().optional(),
+});
+export type DecisionEvent = z.infer<typeof DecisionEventSchema>;
+
+/**
+ * plan decision-provider-personality §15.5 (PD18) — one persisted `settled`
+ * decision row, as `sessions.get` / `sessions.messages` return it for replay.
+ * `seq` is the session-wide write order (oldest first). The row's anchors are
+ * on the event: `toolCallId` (approver / injection) and `traceId` (router →
+ * the turn's messages, `StoredMessage.traceId`). Written by core's sink
+ * (`TurnDecisions`, packages/core/src/agent-loop/turn-decisions.ts).
+ */
+export const SessionDecisionSchema = z.object({
+  seq: z.number().int().positive(),
+  createdAt: z.string(), // ISO-8601
+  event: DecisionEventSchema,
+});
+export type SessionDecision = z.infer<typeof SessionDecisionSchema>;
+
 // B1 — the FIRST frame of every `/sse/sessions/:id` stream. Carries the
 // `x-request-id` of the SSE request itself. The same id is on the response's
 // `x-request-id` header, but `EventSource` gives browser clients no way to
@@ -320,7 +411,9 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   ContextMetaEventSchema,
   TurnDoneEventSchema,
   TurnErrorEventSchema,
+  HaltEventSchema,
   MessagePersistedEventSchema,
+  CredentialRequiredEventSchema,
   ToolApprovalRequiredEventSchema,
   ApprovalResolvedEventSchema,
   ClarifyRequestEventSchema,
@@ -334,6 +427,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   MemoryCapturedEventSchema,
   DryRunSummaryEventSchema,
   RunStartEventSchema,
+  DecisionEventSchema,
   StreamMetaEventSchema,
   ProtocolUpgradeRequiredEventSchema,
 ]);
@@ -344,6 +438,9 @@ export type SseEventType = SseEvent['type'];
 
 /** The `clarify.request` push event — surfaced as a card in the web UI. */
 export type ClarifyRequestEvent = z.infer<typeof ClarifyRequestEventSchema>;
+
+/** The `credential_required` turn event — a masked credential prompt. */
+export type CredentialRequiredEvent = z.infer<typeof CredentialRequiredEventSchema>;
 
 /** The `run.update` push event — the run card's ≤1 Hz liveness digest. */
 export type RunUpdateEvent = z.infer<typeof RunUpdateEventSchema>;
@@ -382,6 +479,11 @@ export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
  * per-connection plumbing, not discrete actions — fanning every streamed token
  * of every session out to every activity listener would also burn the replay
  * buffer down in seconds, collapsing the resume window for everything real.
+ * `credential_required` is excluded too: it is a prompt answered in the chat
+ * pane that asked, and it carries that user's pending message text.
+ * `decision` (plan decision-provider-personality §15.2) is admitted together
+ * with the `convertSseEvent` case that renders it (milestone N7d;
+ * `apps/web/src/lib/__tests__/activityFeed.test.ts` pins the two together).
  */
 export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventType>([
   'tool_start',
@@ -389,6 +491,10 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventT
   'tool_end',
   'done',
   'error',
+  // A1 (ux-feedback plan) — a safety halt is a discrete action worth a row:
+  // an agent that stopped early is exactly what a watcher of the feed wants
+  // to see.
+  'halt',
   'message_persisted',
   'tool.approval_required',
   'approval.resolved',
@@ -403,4 +509,5 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventT
   'notification',
   'memory.captured',
   'dry_run_summary',
+  'decision',
 ]);

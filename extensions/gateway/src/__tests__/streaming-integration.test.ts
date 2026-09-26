@@ -253,6 +253,55 @@ describe('gateway tool-progress surfacing (W3.3, audience boundary)', () => {
   });
 });
 
+// plan decision-provider-personality §15.4 (K9) — a `decision` row is internal
+// judgement: no channel ever shows it, in the draft or in the final, whether it
+// arrives mid-turn or in the post-`done` tail (a late shadow result, PD17).
+describe('gateway decision events (audience boundary, §15.4)', () => {
+  const decision = (id: string, verdict: string): AgentEvent => ({
+    type: 'decision',
+    id,
+    phase: 'settled',
+    site: 'injection',
+    provider: 'DECISION-PROVIDER-MARKER',
+    model: 'DECISION-MODEL-MARKER',
+    mode: 'shadow',
+    outcome: 'ok',
+    verdict,
+    todayVerdict: 'clean',
+    disagreed: true,
+    latencyMs: 29,
+    personalityId: 'DECISION-PERSONALITY-MARKER',
+    toolCallId: 'call_1',
+  });
+  const turn = (): AgentEvent[] => [
+    { type: 'text_delta', text: 'the answer' },
+    decision('d1', 'MID-TURN-VERDICT'),
+    { type: 'done', text: 'the answer', turnCount: 1 },
+    decision('d2', 'TAIL-VERDICT'),
+  ];
+  const bodies = (adapter: ReturnType<typeof editAdapter>) =>
+    [...adapter.sends.map((m) => m.text), ...adapter.edits.map((e) => e.text)].join('\n');
+
+  it('streaming (DM) path delivers text only — the draft never carries a decision', async () => {
+    const loop = loopYielding(turn());
+    const adapter = editAdapter();
+    await gatewayWith(loop).handleMessage(msg(), adapter);
+
+    expect(bodies(adapter)).not.toMatch(/MARKER|VERDICT/);
+    expect(adapter.edits.at(-1)?.text ?? adapter.sends.at(-1)?.text).toBe('the answer');
+  });
+
+  it('non-streaming (group) path sends one final message with text only', async () => {
+    const loop = loopYielding(turn());
+    const adapter = editAdapter();
+    await gatewayWith(loop).handleMessage(msg({ isDm: false }), adapter);
+
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+    expect(adapter.sends[0]?.text).toBe('the answer');
+    expect(bodies(adapter)).not.toMatch(/MARKER|VERDICT/);
+  });
+});
+
 describe('gateway outbound media (W3.2 sendTo convention)', () => {
   function gwForSend(adapter: PlatformAdapter) {
     const loop = loopYielding([{ type: 'done', text: '', turnCount: 1 }]);

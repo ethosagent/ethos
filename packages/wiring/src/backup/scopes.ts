@@ -76,8 +76,8 @@ export interface WalStoreRecord {
 }
 
 /**
- * Every WAL store in the repo. 22 pragma sites across 21 modules, resolving to
- * 16 distinct database files — `sessions.db` has SIX tenants sharing one file
+ * Every WAL store in the repo. 23 pragma sites across 22 modules, resolving to
+ * 17 distinct database files — `sessions.db` has SIX tenants sharing one file
  * and `pairing.db` is opened from two commands.
  *
  * Six, not five, and the difference is that tenants are not modules:
@@ -239,6 +239,15 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     database: 'inbound-dedup.db',
     scope: null,
     reason: 'A short de-duplication window over live traffic. Meaningless once moved.',
+  },
+  {
+    source: 'extensions/inbound-spool/src/index.ts',
+    sites: 1,
+    database: 'inbound-spool.db',
+    scope: null,
+    reason:
+      'Turns owed on THIS machine. Restoring received rows elsewhere replays old messages ' +
+      'as fresh turns and answers real people days late (same exclusion as delivery-ledger).',
   },
   {
     source: 'extensions/notify-queue/src/index.ts',

@@ -43,8 +43,11 @@ export function wrapUntrusted({ content, toolName, source }: WrapInput): WrapRes
 
 // Escape the opening/closing tags that form the provenance fence so an
 // attacker-controlled body cannot close the fence early or open a nested one.
+// Case-insensitive and whitespace-tolerant: a model reads `</UNTRUSTED>` or
+// `</ untrusted>` as a closer too (plan openclaw-2026.9.6-gaps S13; pinned by
+// "escapes the fence tag" in __tests__/wrap.test.ts).
 function escapeBodyTags(body: string): string {
-  return body.replace(/<(\/?untrusted)/g, '&lt;$1');
+  return body.replace(/<(\s*\/?\s*untrusted)/gi, '&lt;$1');
 }
 
 // Quote and strip newlines / angle brackets so a malicious source label can't

@@ -178,6 +178,22 @@ export class ConfigRepository {
     return this.storage.exists(this.path);
   }
 
+  /** Absolute path of the file this repository reads and writes. */
+  get configPath(): string {
+    return this.path;
+  }
+
+  /**
+   * The raw file text, for callers that run the CLI's parser
+   * (`parseConfigYaml` in `@ethosagent/config`) over the same bytes — the
+   * B2 unknown-key warnings and the B3 `resolved` block come from THAT
+   * parser's notices channel, which this repository's passthrough-preserving
+   * reader deliberately does not have.
+   */
+  async readSource(): Promise<string | null> {
+    return this.storage.read(this.path);
+  }
+
   async read(): Promise<RawConfig | null> {
     const src = await this.storage.read(this.path);
     if (src === null) return null;
@@ -292,6 +308,19 @@ export class ConfigRepository {
           config.toolSettings[pid] = slot;
           slot[otherTool] = { secret: value };
         }
+        continue;
+      }
+      // Keys whose EMPTY value means something, distinct from the key being
+      // absent — `parseConfigYaml` (packages/config) reads both with `(.*)`:
+      // `voice.trustedPlugins:` arms the voice-egress gate trusting nothing
+      // non-local, `security.trusted_github_orgs:` trusts no org. The generic
+      // `(.+)` below drops a bare `key:` line, so a web save would silently
+      // disarm the gate / restore the default org list. Kept on passthrough
+      // as '' and written back as `key: `, which both parsers read as empty.
+      // Pinned by `__tests__/repositories/config-empty-values.test.ts`.
+      const empty = line.match(/^(voice\.trustedPlugins|security\.trusted_github_orgs):\s*(.*)$/);
+      if (empty?.[1]) {
+        config.passthrough[empty[1]] = parseConfigScalar(empty[2] ?? '');
         continue;
       }
       const kv = line.match(/^([\w.-]+):\s*(.+)$/);

@@ -34,8 +34,10 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate, proposeSkillFromEvidence } from '@ethosagent/skill-evolver';
 import {
+  EthosError,
   formatError,
   type LLMProvider,
+  type MemoryProvider,
   type MemoryUpdate,
   type PersonalityRegistry,
   type Storage,
@@ -216,17 +218,28 @@ function buildDeps(args: {
   ethosDir: string;
   reg: import('@ethosagent/personalities').FilePersonalityRegistry;
   llm: LLMProvider;
-  memory: import('@ethosagent/types').MemoryProvider;
-  /** Backend root for memory files + the `memory-meta.json` sidecar. */
-  memoryRoot: string;
-  /** Storage confined to the backend (the vault's ScopedStorage under `memory: vault`). */
-  memoryStorage: Storage;
-  /** Backend history store — records the §5 sidecar reconciliation. */
-  history: import('@ethosagent/wiring').HistoryStore;
+  /**
+   * The consolidation write handle, backend root + storage for the
+   * `memory-meta.json` sidecar, and the history store that records the §5
+   * sidecar reconciliation (`nightlyMemory`) — or why this backend has none,
+   * in which case `runNightlyOnce` skips the memory step and the memory deps
+   * below refuse if reached.
+   */
+  memory: Awaited<ReturnType<typeof nightlyMemory>>;
   /** The run's shared `maxCandidatesPerRun` budget. */
   replayBudget: { take(): boolean };
 }): NightlyPassDeps {
-  const { config, ethosDir, reg, llm, memory, memoryRoot, memoryStorage, history } = args;
+  const { config, ethosDir, reg, llm } = args;
+  const fileMemory = (): Exclude<typeof args.memory, { skipReason: string }> => {
+    if ('skipReason' in args.memory) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: args.memory.skipReason,
+        action: 'The nightly memory step runs only under memory: markdown or vault.',
+      });
+    }
+    return args.memory;
+  };
   const learningCtx = { storage: getStorage(), dataDir: ethosDir, personalities: reg };
   const replaySettings = resolveLearningReplay(config);
   // Built on first use: a night with nothing pending never assembles a loop.
@@ -375,7 +388,7 @@ function buildDeps(args: {
     },
 
     async readMemory(id) {
-      const snapshot = await memory.prefetch(memoryCtx(id));
+      const snapshot = await fileMemory().provider.prefetch(memoryCtx(id));
       const find = (key: string): string =>
         snapshot?.entries.find((e) => e.key === key)?.content ?? '';
       return { memory: find('MEMORY.md'), user: find('USER.md') };
@@ -386,22 +399,24 @@ function buildDeps(args: {
     },
 
     async applyMemoryUpdates(id, updates: MemoryUpdate[]) {
-      await memory.sync(updates, memoryCtx(id));
+      await fileMemory().provider.sync(updates, memoryCtx(id));
     },
 
     readMemoryMeta(id) {
-      return readMemoryMeta(memoryRoot, memoryStorage, id);
+      const { memoryRoot, storage } = fileMemory();
+      return readMemoryMeta(memoryRoot, storage, id);
     },
 
     writeMemoryMeta(id, meta) {
-      return writeMemoryMeta(memoryRoot, memoryStorage, id, meta);
+      const { memoryRoot, storage } = fileMemory();
+      return writeMemoryMeta(memoryRoot, storage, id, meta);
     },
 
     // §5 sidecar-drift reconciliation: a hand-deleted section was marked
     // 'user-removed' in the sidecar — history-record the transition so the
     // change is auditable even though no memory file's bytes moved.
     async onSidecarReconciled(id, { before, after }) {
-      await history.record({
+      await fileMemory().history.record({
         scopeId: `personality:${id}`,
         key: 'memory-meta.json',
         actions: ['user-removed'],
@@ -435,6 +450,49 @@ function buildDeps(args: {
   };
 }
 
+/**
+ * The memory the nightly pass consolidates, from `createMemoryBundle` — the one
+ * owner of which backend a surface reads and writes. Consolidation writes are
+ * labelled `consolidation` in the provenance history (§2.1) and pass the
+ * approval gate (`MemoryEditing.consolidation`): under `memoryApproval.mode:
+ * all` they park in the queue `ethos memory pending` reads. The nightly pass is
+ * also the single rotator of the history JSONL (§2.2). Under `memory: vault`
+ * the provider, history (at `<agentRoot>/.ethos-meta`) and the
+ * `memory-meta.json` sidecar all resolve inside the vault.
+ *
+ * Under `memory: vector` there is nothing to consolidate: the pass reads
+ * MEMORY.md / USER.md through `prefetch` (which vector answers with null),
+ * decays sections through a `memory-meta.json` sidecar and moves them to a
+ * `memory-archive.md` restored by the file surfaces — all file memory, which
+ * vector does not have (`fileMemoryUnsupportedReason`). Consolidating would
+ * `replace` the agent's vector MEMORY.md with a summary of an empty read, so
+ * the step is skipped with that reason. Pinned by
+ * `__tests__/nightly-memory-gate.test.ts`.
+ */
+export async function nightlyMemory(
+  config: EthosConfig,
+  dataDir: string,
+  storage: Storage,
+): Promise<
+  | {
+      provider: MemoryProvider;
+      history: import('@ethosagent/wiring').HistoryStore;
+      memoryRoot: string;
+      storage: Storage;
+    }
+  | { skipReason: string }
+> {
+  const { createMemoryBundle } = await import('@ethosagent/wiring');
+  const { editing } = createMemoryBundle({ config, dataDir, storage });
+  if (!editing.supported) return { skipReason: editing.reason };
+  return {
+    provider: editing.consolidation,
+    history: editing.history,
+    memoryRoot: editing.memoryRoot,
+    storage: editing.storage,
+  };
+}
+
 // Reusable entry shared by the `ethos nightly` CLI command and the
 // serve/gateway schedulers. Builds the real per-personality dependencies and
 // runs the pass for one id (`opts.id`) or every user personality. Each
@@ -443,7 +501,6 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   const id = opts?.id;
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { ethosDir } = await import('@ethosagent/config');
-  const { createMemoryProviderFromConfig } = await import('@ethosagent/wiring');
 
   const storage = getStorage();
   const dir = ethosDir();
@@ -480,27 +537,14 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   }
 
   const llm = await createLLM(config);
-  // Consolidation writes are labelled `consolidation` in the provenance
-  // history (§2.1). The nightly pass is also the single rotator of the
-  // history JSONL (§2.2) — no other process renames it. Backend-aware: under
-  // `memory: vault` the provider, history (at `<agentRoot>/.ethos-meta`), and
-  // the `memory-meta.json` sidecar all resolve inside the vault, so the pass
-  // consolidates the store the agent actually reads from.
-  const backend = createMemoryProviderFromConfig({
-    config,
-    dataDir: dir,
-    storage: getStorage(),
-    source: 'consolidation',
-  });
+  const backend = await nightlyMemory(config, dir, getStorage());
+  const memorySkipReason = 'skipReason' in backend ? backend.skipReason : undefined;
   const deps = buildDeps({
     config,
     ethosDir: dir,
     reg,
     llm,
-    memory: backend.provider,
-    memoryRoot: backend.memoryRoot,
-    memoryStorage: backend.storage,
-    history: backend.history,
+    memory: backend,
     replayBudget: runBudget(resolveLearningReplay(config).maxCandidatesPerRun),
   });
 
@@ -518,6 +562,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
     const gates = {
       judge: nightly?.judge?.enabled !== false,
       expression: nightly?.expression !== false,
+      ...(memorySkipReason ? { memorySkipReason } : {}),
     };
     try {
       const result = await runNightlyPass(target, deps, gates);
@@ -526,7 +571,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
         console.log(nightlyStepLine(step));
       }
       // Single-rotator: roll last month's history out of the live JSONL.
-      await backend.history.rotate(`personality:${target}`);
+      if (!('skipReason' in backend)) await backend.history.rotate(`personality:${target}`);
     } catch (err) {
       const e = toEthosError(err);
       console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);

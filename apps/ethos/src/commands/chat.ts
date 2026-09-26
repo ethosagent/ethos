@@ -10,55 +10,98 @@ import {
   type AgentLoop,
   clarifyUnresolvedMessage,
   describeDeviation,
+  haltNotice,
   stripAnsiEscapes,
 } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
-import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-kit';
+import {
+  credentialInstruction,
+  describeChatError,
+  type EventTranslatorCredentialRequired,
+  parseSlashCommand,
+  slashCommandsForSurface,
+} from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
 import {
   type Attachment,
+  type BackgroundJob,
   type JobStore,
   type NotificationAdapter,
   type SteerSink,
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
+import { createLazyProvider, firstRefusal, notPermittedRefusal } from '@ethosagent/wiring';
+import { ApprovalCoordinator } from '../approval-coordinator';
+import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
+import { attachCliApprovalPrompt } from '../lib/cli-approval-prompt';
 import {
   type CommandMeta,
   refreshCommandIfStale,
   scanCommandsIntoRegistry,
 } from '../lib/command-loader';
+import { configWarningLinesOnce } from '../lib/config-warnings';
+import {
+  collectPluginCredential,
+  createMutableOutput,
+  readMaskedLine,
+} from '../lib/credential-prompt';
+import { decisionLine } from '../lib/decision-line';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
+import { createLineArbiter, type LineArbiter } from '../lib/line-arbiter';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
+import {
+  createPersonalityReloadNotifier,
+  type ReloadablePersonalityRegistry,
+} from '../lib/personality-reload';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { formatRecap } from '../lib/recap';
 import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
+import { runBranchCommand } from '../lib/session-branches';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
-import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
+import {
+  buildBaseRegistry,
+  type SlashCommand,
+  type SlashCommandRegistry,
+} from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
-import { renderStatusBar, type Threshold } from '../lib/status-bar';
+import { formatCostUsd, renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
 import {
+  noticeClearsSpinner,
+  repaintTickAction,
+  shouldRestartThinkingSpinner,
+  ToolLiveBlock,
+} from '../lib/tool-spinner';
+import {
+  CLI_SLASH_SENDER,
   formatSkillProposedNotice,
   makeTuiNotificationSubscriber,
   makeTuiSkillProposalSubscriber,
   makeTuiSlashCommands,
 } from '../lib/tui-capabilities';
 import {
-  isVerbosity,
-  nextVerbosity,
+  applyVerbosityCommand,
   projectEvent,
+  thinkingPreview,
   unstreamedDoneText,
   type Verbosity,
 } from '../lib/verbosity';
-import { getFunnelTracker, resolveActiveLoop } from '../wiring';
+import { createTerminalApprovalSource, wireTerminalApprovalGate } from '../terminal-approval';
+import {
+  type ActiveLoop,
+  createLLM,
+  getEthosObservability,
+  getFunnelTracker,
+  resolveActiveLoop,
+} from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -145,6 +188,11 @@ interface ChatState {
   busyMode: BusyInputMode;
   toolPreviewLength: number;
   modelName: string;
+  /** C4 — messages in the current session (user + assistant, this process). */
+  messageCount: number;
+  /** N3 — reload the personality registry before each turn; returns the dim
+   *  `[personality] …` lines to print (createPersonalityReloadNotifier). */
+  refreshPersonalities?: () => Promise<string[]>;
   /** Steer sink used by AgentLoop when `busyMode === 'steer'`. */
   steerSink: SteerSink;
   /** Inputs typed during an in-flight turn (`queue` mode). FIFO. */
@@ -165,10 +213,27 @@ interface ChatState {
   draining: boolean;
   /** FW-15/16 — set by handleSlashCommand when a skill/quick command wants to run a turn. */
   pendingTurn?: string;
+  /** The one owner of the next typed line for every one-line prompt below
+   *  (consent, clarify, approval, masked credential): one prompt at a time,
+   *  the rest FIFO (`createLineArbiter`, lib/line-arbiter.ts). */
+  lines: LineArbiter;
   /** FW-16 — true while awaiting yes/no consent for quick commands. */
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
   awaitingClarify: boolean;
+  /** True while a tool-approval prompt owns the readline loop
+   *  (`attachCliApprovalPrompt`, lib/cli-approval-prompt.ts). */
+  awaitingApproval: boolean;
+  /** Wipe the running turn's spinner — set by `runTurn` for its duration so an
+   *  approval prompt can take the line. */
+  clearSpinner?: () => void;
+  /** openclaw-9.5 item 1 — true while a masked plugin-credential read owns the
+   *  readline loop (`readMaskedLine`, lib/credential-prompt.ts). */
+  awaitingSecret: boolean;
+  /** Collect a missing plugin credential masked and store it; `true` → the
+   *  pending message is resubmitted. Absent → turns do not opt in to the
+   *  pre-turn check (`RunOptions.credentialPrompt`). */
+  collectCredential?: (req: EventTranslatorCredentialRequired) => Promise<boolean>;
   /** Attachments queued via /attach, drained on the next turn. */
   pendingAttachments: Attachment[];
   /** Pending tier override for the next turn (from /tier command). Consumed once. */
@@ -191,6 +256,16 @@ interface RunChatOptions {
   dryRun?: boolean;
 }
 
+// C6 — the mid-turn input-loss notices, worded for the person who typed the
+// message, not for the steer machinery. Exported for chat-slash-feedback.test.ts.
+export const STEER_DISCARDED_NOTICE =
+  'your last message was not used — the agent finished before it could read it; send it again';
+export const STEER_SINK_FULL_NOTICE =
+  'your message was not queued — the agent is not at a point where it can take it; send it again in a moment';
+/** C6 — notifications print through the same dim `·` convention as the other
+ *  notices instead of a raw bracketed console.log. */
+export const CLI_NOTIFICATION_PREFIX = '· ';
+
 function renderStatusBarLine(state: ChatState): void {
   const cols = process.stdout.columns ?? 80;
   const bar = renderStatusBar({
@@ -199,6 +274,10 @@ function renderStatusBarLine(state: ChatState): void {
     contextMax: DEFAULT_CONTEXT_MAX,
     elapsedSecs: Math.floor((Date.now() - state.startedAt) / 1000),
     columns: cols,
+    personality: state.personalityId,
+    sessionKey: state.sessionKey,
+    messageCount: state.messageCount,
+    costUsd: state.usage.costUsd,
   });
   const color = colorForThreshold(bar.threshold);
   out(`${c.dim}⚕ ${color}${bar.text}${c.reset}\n`);
@@ -238,6 +317,35 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   const registry = buildBaseRegistry();
 
   const runtime = await resolveActiveLoop(config, { slashRegistry: registry });
+
+  // Tool approval (terminal-approval.ts). One coordinator per process: it
+  // times out an unanswered prompt (`approvalTimeoutMs`, default 10 min) and
+  // writes each decision to the safety audit trail. Every loop this command
+  // builds — the first and each `/model` rebuild — is gated through it.
+  const approvalCoordinator = new ApprovalCoordinator({
+    observability: {
+      recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+    },
+    ...(config.approvalTimeoutMs !== undefined ? { timeoutMs: config.approvalTimeoutMs } : {}),
+  });
+  const getProvider = createLazyProvider(() => createLLM(config));
+  const gateLoop = (target: ActiveLoop, interactive: boolean, nonInteractive: string): void => {
+    wireTerminalApprovalGate(target.loop.hooks, {
+      personalities: target.personalities,
+      getProvider,
+      model: config.model,
+      ...(target.approverDecision ? { decision: target.approverDecision } : {}),
+      executionPostureFor: target.executionPostureFor,
+      coordinator: interactive ? approvalCoordinator : null,
+      nonInteractive,
+      // Never ask about a call the personality toolset or `--toolsets` will
+      // refuse anyway.
+      refusedAnyway: firstRefusal(
+        notPermittedRefusal(target.loop),
+        cliToolsetsRefusal(target.loop, config.cliToolsets),
+      ),
+    });
+  };
   const {
     loop,
     personalityId,
@@ -292,6 +400,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   let quickConsentGiven = await hasQuickCommandConsent(ethosDir());
 
   if (opts.singleQuery) {
+    // One-shot: nobody is at a prompt to answer, so a flagged call is refused.
+    gateLoop(runtime, false, '`ethos chat -q` has no prompt to answer it');
     try {
       await runSingleQuery(loop, config, {
         query: opts.singleQuery,
@@ -306,6 +416,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
+    gateLoop(runtime, true, '');
     const inventory = await buildInventory(loop, config);
     // Bound to the CURRENT runtime; a `/model` switch rebinds both below,
     // since the replaced runtime's dispose unloads its plugins and drops its
@@ -317,23 +428,48 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     const onSkillProposed = setOnSkillProposed
       ? makeTuiSkillProposalSubscriber(setOnSkillProposed)
       : undefined;
-    const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
-      resolveActiveLoop({ ...config, model: modelId }),
-    );
+    // The writer for the TUI's masked credential modal follows `/model`
+    // switches, since the replaced runtime's dispose unloads its plugins.
+    let activePluginLoader = pluginLoader;
+    // C5 — background completions reach the TUI through one fanout that
+    // follows `/model` switches, the same way the readline branch
+    // re-subscribes its handler on the new runtime's executor.
+    const tuiBgCallbacks = new Set<(job: BackgroundJob) => void>();
+    const tuiBgFanout = (job: BackgroundJob): void => {
+      for (const cb of tuiBgCallbacks) cb(job);
+    };
+    let unsubscribeTuiBg = backgroundExecutor?.onComplete(tuiBgFanout);
+    const rebuild = createLoopRebuilder({ drain, dispose }, async (modelId: string) => {
+      const next = await resolveActiveLoop({ ...config, model: modelId });
+      gateLoop(next, true, '');
+      return next;
+    });
     await runTUI(loop, {
       model: config.model,
       personality: displayName,
       verbose: config.verbose ?? false,
       skin: config.skin,
       inventory,
+      // B2 — the same once-per-process config parse warnings the readline
+      // branch prints; the shared latch keeps a `/model` rebuild from
+      // repeating them.
+      startupNotices: configWarningLinesOnce(config),
       // F06 — each switch hands back the retirement of the runtime it
       // replaced (drain its background jobs + goal runs, then dispose); the
       // TUI runs it once no foreground turn is left on the old loop.
       rebuildLoop: async (modelId: string) => {
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
-        slashCommands.rebind(next.runtime.pluginLoader);
+        // Goals rebind with the loader: the pair captured at construction
+        // belongs to the retired runtime, and `/goal` after a switch must
+        // drive the live store/executor (the readline branch's
+        // `slashCtx.goals = next.runtime.goals` does the same).
+        slashCommands.rebind(next.runtime.pluginLoader, next.runtime.goals);
+        activePluginLoader = next.runtime.pluginLoader;
         onNotification.rebind(next.runtime.notificationRouter);
+        // C5 — completions must keep flowing from the new runtime's executor.
+        unsubscribeTuiBg?.();
+        unsubscribeTuiBg = next.runtime.backgroundExecutor?.onComplete(tuiBgFanout);
         // The replaced loop may still propose while it drains; its slot lets
         // go of the TUI's callback only once that runtime is retired.
         const releaseSkillSlot = onSkillProposed?.rebind(
@@ -355,51 +491,121 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       onNotification,
       // `/memory` on the configured backend (the vault under `memory: vault`).
       readMemory: (scope) => readFileMemorySnapshot(config, scope),
+      // `/fork`, `/branches`, `/branch <n>` — the same handler the readline
+      // fallback uses (lib/session-branches.ts), over this state dir's sessions.db.
+      branches: async (command, arg, sessionKey) => {
+        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+        const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+        try {
+          return await runBranchCommand(store, command, arg, sessionKey);
+        } finally {
+          store.close();
+        }
+      },
       ...(onSkillProposed ? { onSkillProposed } : {}),
+      // C5 — the TUI renders the readline branch's completion box and counts
+      // completions in its status bar (`bg:N`).
+      onBackgroundComplete: (cb) => {
+        tuiBgCallbacks.add(cb);
+        return () => {
+          tuiBgCallbacks.delete(cb);
+        };
+      },
+      // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
+      setPluginCredential: (pluginId, key, value) =>
+        activePluginLoader.setCredential(pluginId, key, value),
+      // Tool approval prompts render as the TUI's modal.
+      approvals: createTerminalApprovalSource(approvalCoordinator, 'tui'),
     });
+    approvalCoordinator.forceSettleAll('chat closed');
+    unsubscribeTuiBg?.();
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
     await releaseCommandRuntime(liveRuntime, { label: 'chat agent loop' });
     return;
   }
 
+  // Readline: a prompt needs a keyboard. Piped stdin cannot answer one, so a
+  // flagged call is refused there instead of waiting on input that never comes.
+  const approvalInteractive = process.stdin.isTTY === true;
+  const nonInteractiveRefusal = 'stdin is not a terminal, so nobody can answer a prompt';
+  gateLoop(runtime, approvalInteractive, nonInteractiveRefusal);
+
+  // C3 — the loop `/model` switches to. Every turn and slash dispatch below
+  // reads this reference, so a switch takes effect on the next turn.
+  let activeLoop = loop;
+  let activePluginLoader = pluginLoader;
+  let activePersonalities: ReloadablePersonalityRegistry = runtime.personalities;
+  const rebuild = createLoopRebuilder({ drain, dispose }, async (modelId: string) => {
+    const next = await resolveActiveLoop(
+      { ...config, model: modelId },
+      { slashRegistry: registry },
+    );
+    gateLoop(next, approvalInteractive, nonInteractiveRefusal);
+    return next;
+  });
+
   const completer = makeCompleter(registry);
+  // Muted while a plugin credential is typed (lib/credential-prompt.ts).
+  const rlOutput = createMutableOutput(process.stdout);
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: rlOutput.stream,
     terminal: true,
     ...(completer ? { completer } : {}),
   });
 
+  // Once the interface closes (`/exit`, Ctrl-D, piped stdin reaching EOF),
+  // `rl.prompt()` throws ERR_USE_AFTER_CLOSE ("readline was closed"), and the
+  // async continuations that re-prompt (a slash handler's `.then`, a finished
+  // turn, a clarify teardown, a background notice) can all land after it, while
+  // the `close` handler below is still releasing the runtime. Every prompt goes
+  // through here. Pinned by apps/ethos/src/__tests__/chat-piped-exit.test.ts.
+  let rlClosed = false;
+  rl.once('close', () => {
+    rlClosed = true;
+  });
+  const reprompt = (): void => {
+    if (!rlClosed) rl.prompt();
+  };
+  // Every one-line prompt claims the input here, so two open at once are asked
+  // one after the other instead of both answered by one typed line.
+  const lines = createLineArbiter(rl);
+
   // Wire skill-evolution notifications into the interactive readline session.
-  setOnSkillProposed?.((skillId, _personalityId) => {
+  // Named so a `/model` switch can re-subscribe on the replacement runtime.
+  const skillProposedHandler = (skillId: string, _personalityId: string): void => {
     clearLine(process.stdout, 0);
     process.stdout.write(`\n${c.dim}${formatSkillProposedNotice(skillId)}${c.reset}\n> `);
-  });
+  };
+  setOnSkillProposed?.(skillProposedHandler);
 
   // memory-experience §3.3 — surface a dim, single-line "remembered" notice when
   // a proactive capture lands (after the turn's event stream has closed). CLI is
   // subtle-on by default; suppressible via `display.memory_notices: false`.
+  const memoryCapturedHandler = (n: { summary: string }): void => {
+    const summary = n.summary.length > 80 ? `${n.summary.slice(0, 79)}…` : n.summary;
+    clearLine(process.stdout, 0);
+    process.stdout.write(`\n${c.dim}· remembered: ${summary}${c.reset}\n> `);
+  };
   if (config.displayMemoryNotices !== false) {
-    onMemoryCaptured?.((n) => {
-      const summary = n.summary.length > 80 ? `${n.summary.slice(0, 79)}…` : n.summary;
-      clearLine(process.stdout, 0);
-      process.stdout.write(`\n${c.dim}· remembered: ${summary}${c.reset}\n> `);
-    });
+    onMemoryCaptured?.(memoryCapturedHandler);
   }
 
   const sessionKey = opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`;
 
   // v2.2 — Register a CLI NotificationAdapter so plugin monitors can deliver
   // messages to the interactive terminal session.
+  // C6 — notifications use the same `out` + dim `·` convention as the other
+  // idle-prompt notices ("· remembered: …"), not a raw bracketed console.log.
   const cliAdapter: NotificationAdapter = {
     async send(message) {
-      console.log(`\n[notification] ${message}`);
+      out(`\n${c.dim}${CLI_NOTIFICATION_PREFIX}${message}${c.reset}\n`);
     },
     async injectUserMessage(message) {
       // Print the notification; actual input injection requires readline
       // integration which is deferred to a future iteration.
-      console.log(`\n[notification] ${message}`);
+      out(`\n${c.dim}${CLI_NOTIFICATION_PREFIX}${message}${c.reset}\n`);
     },
   };
   notificationRouter.register(sessionKey, cliAdapter);
@@ -410,6 +616,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     contextTokens: 0,
     contextInputTokens: 0,
+    messageCount: 0,
     startedAt: Date.now(),
     verbosity: config.displayVerbosity ?? (config.verbose ? 'verbose' : 'default'),
     busyMode: config.displayBusyInputMode ?? 'interrupt',
@@ -422,87 +629,146 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     draining: false,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    lines,
     awaitingConsent: false,
     awaitingClarify: false,
+    awaitingApproval: false,
+    awaitingSecret: false,
     pendingAttachments: [],
     dryRun: opts.dryRun ?? false,
+    collectCredential: async (req: EventTranslatorCredentialRequired) => {
+      state.awaitingSecret = true;
+      try {
+        return await collectPluginCredential(req, {
+          readSecret: (question) => readMaskedLine(rl, rlOutput, process.stdout, question, lines),
+          write: (line) => out(`${c.dim}${line}${c.reset}\n`),
+          // D15 — the one writer; never SecretsResolver.set from here. Reads
+          // the ACTIVE loader so a `/model` switch's replacement is honoured.
+          setCredential: (pluginId, key, value) =>
+            activePluginLoader.setCredential(pluginId, key, value),
+        });
+      } finally {
+        state.awaitingSecret = false;
+      }
+    },
   };
+
+  // N3 — reload the personality registry before each turn (the same seam the
+  // gateway command's `personalityDirectory.refresh()` uses), so a personality
+  // dropped or edited under ~/.ethos/personalities/ is live on the next turn,
+  // and a broken one is NAMED instead of silently serving its last-good copy.
+  state.refreshPersonalities = createPersonalityReloadNotifier(
+    () => activePersonalities,
+    join(ethosDir(), 'personalities'),
+  );
 
   // Clarify surface — when the agent calls the `clarify` tool, pause the
   // readline loop, present the question, read one line, and route the answer
   // back. Ctrl-C aborts the turn, which the bridge resolves as a cancel.
-  loop.clarifyBridge?.registerPresenter('cli', (req) => {
-    state.awaitingClarify = true;
-    out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
-    rl.setPrompt(`${c.cyan}?${c.reset}> `);
-    rl.prompt();
+  // Re-registered on the replacement loop after a `/model` switch (C3).
+  const registerClarifyPresenter = (target: AgentLoop): void => {
+    target.clarifyBridge?.registerPresenter('cli', (req) => {
+      state.awaitingClarify = true;
+      // Wipe the running turn's spinner / thinking preview / live block before
+      // the question takes the line, and keep them wiped: the repaint interval
+      // is gated off while `awaitingClarify` is set (`repaintTickAction`).
+      state.clearSpinner?.();
+      const show = (): void => {
+        out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
+        rl.setPrompt(`${c.cyan}?${c.reset}> `);
+        reprompt();
+      };
 
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      rl.off('line', onLine);
-      unsubscribe();
-      state.awaitingClarify = false;
-      rl.setPrompt(promptString(state));
-      if (!state.abort) rl.prompt();
-    };
-    const onLine = (raw: string) => {
-      const answer = parseClarifyAnswer(raw, req.options);
-      finish();
-      // D7 — a human acted on this surface; a background job's next question
-      // may route here instead of always falling back to its origin lane.
-      loop.clarifyBridge?.recordPresence('cli');
-      // An answer that did not land is said out loud. `finish()` above has
-      // already redrawn the prompt on the assumption it did — nothing else on
-      // this surface would ever mention it, and the CLI can be asked a
-      // `browser_takeover` it cannot hand back (`isClarifyAnswerableOn` in
-      // `packages/core/src/clarify/takeover-handback.ts`), which leaves the
-      // request open and this reader believing it is closed. The sentence is
-      // `clarifyUnresolvedMessage`'s, not ours — the web says the same words
-      // for the same reason.
-      void loop
-        .respondToClarify({ requestId: req.requestId, answer, source: 'user' })
-        .then((outcome) => {
-          if (outcome.resolved) return;
-          out(
-            `\n${c.dim}That answer did not land: ${clarifyUnresolvedMessage(outcome.reason)}.${c.reset}\n`,
-          );
-          if (!state.abort) rl.prompt();
-        });
-    };
-    // Teardown if the request resolves another way first (timeout / abort-cancel).
-    const unsubscribe =
-      loop.clarifyBridge?.onResolved((row) => {
-        if (row.requestId === req.requestId) finish();
-      }) ?? (() => {});
-    rl.once('line', onLine);
-  });
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        claim.release();
+        unsubscribe();
+        state.awaitingClarify = false;
+        // A prompt that owns the line (or is about to) draws its own question.
+        if (lines.busy()) return;
+        rl.setPrompt(promptString(state));
+        if (!state.abort) reprompt();
+      };
+      const onLine = (raw: string) => {
+        const answer = parseClarifyAnswer(raw, req.options);
+        finish();
+        // D7 — a human acted on this surface; a background job's next question
+        // may route here instead of always falling back to its origin lane.
+        target.clarifyBridge?.recordPresence('cli');
+        // An answer that did not land is said out loud. `finish()` above has
+        // already redrawn the prompt on the assumption it did — nothing else on
+        // this surface would ever mention it, and the CLI can be asked a
+        // `browser_takeover` it cannot hand back (`isClarifyAnswerableOn` in
+        // `packages/core/src/clarify/takeover-handback.ts`), which leaves the
+        // request open and this reader believing it is closed. The sentence is
+        // `clarifyUnresolvedMessage`'s, not ours — the web says the same words
+        // for the same reason.
+        void target
+          .respondToClarify({ requestId: req.requestId, answer, source: 'user' })
+          .then((outcome) => {
+            if (outcome.resolved) return;
+            out(
+              `\n${c.dim}That answer did not land: ${clarifyUnresolvedMessage(outcome.reason)}.${c.reset}\n`,
+            );
+            if (!state.abort) reprompt();
+          });
+      };
+      // Teardown if the request resolves another way first (timeout / abort-cancel).
+      const unsubscribe =
+        target.clarifyBridge?.onResolved((row) => {
+          if (row.requestId === req.requestId) finish();
+        }) ?? (() => {});
+      const claim = lines.claim({ show, onLine });
+    });
+  };
+  registerClarifyPresenter(activeLoop);
+
+  // Tool approval — the gate suspends a flagged call and this prompt takes the
+  // input line: the running turn's spinner is wiped first, `line` events go to
+  // the prompt alone (`awaitingApproval`), and parallel calls queue.
+  if (approvalInteractive) {
+    attachCliApprovalPrompt({
+      source: createTerminalApprovalSource(approvalCoordinator, 'cli'),
+      rl,
+      lines,
+      // stdout piped (`ethos chat | tee log`) while stdin is a keyboard: the
+      // question and its preview go to stderr so the user sees what they are
+      // answering; readline still reads the answer.
+      write: process.stdout.isTTY ? out : (s: string) => process.stderr.write(s),
+      questionOnReadline: process.stdout.isTTY === true,
+      onOpen: () => {
+        state.clearSpinner?.();
+        state.awaitingApproval = true;
+      },
+      onClose: () => {
+        state.awaitingApproval = false;
+        // A prompt that owns the line (or is about to) draws its own question.
+        if (lines.busy()) return;
+        rl.setPrompt(promptString(state));
+        if (!state.abort) reprompt();
+      },
+    });
+  }
 
   // Completion notice rendered at the idle prompt — no auto-turn. Auto-triggering
   // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
   // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
-  backgroundExecutor?.onComplete((job) => {
-    if (job.status !== 'done' && job.status !== 'failed') return;
-    const header = `bg:${job.id.slice(0, 8)}`;
-    const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
-    const body = job.status === 'done' ? job.summary : undefined;
-    out(`\n${c.dim}╭─ background [${header}] ${statusLine}${c.reset}\n`);
-    if (body) {
-      const lines = body.split('\n').slice(0, 10);
-      for (const line of lines) {
-        out(`${c.dim}│ ${line}${c.reset}\n`);
-      }
-      if (body.split('\n').length > 10) {
-        out(`${c.dim}│ ... (truncated)${c.reset}\n`);
-      }
-    }
-    out(`${c.dim}╰─${c.reset}\n`);
+  const backgroundCompleteHandler = (job: BackgroundJob): void => {
+    const noticeLines = backgroundCompletionLines(job);
+    if (!noticeLines) return;
+    out('\n');
+    for (const line of noticeLines) out(`${c.dim}${line}${c.reset}\n`);
     if (config.displayBellOnComplete) out('\x07');
-    rl.prompt();
-  });
+    reprompt();
+  };
+  backgroundExecutor?.onComplete(backgroundCompleteHandler);
 
   rl.on('SIGINT', () => {
+    // A suspended approval does not see the abort signal — deny it, or the
+    // aborted turn would wait on it until the timeout.
+    approvalCoordinator.forceSettleAll('approval cancelled (Ctrl-C)');
     if (state.abort) {
       state.abort.abort();
       out(`\n${c.dim}[aborted — press Ctrl+C again to exit]${c.reset}\n`);
@@ -513,6 +779,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   rl.on('close', async () => {
+    approvalCoordinator.forceSettleAll('chat closed');
     notificationRouter.deregister(state.sessionKey);
     // Phase B (T9) — warn if durable background jobs are still active for this
     // session's root. They'll be orphaned when the process exits and reappear as
@@ -537,7 +804,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // drains the executor and the goal runner, then disposes the loop's own
     // stores. Whatever is still running when the bound expires is released back
     // to the queue for the next process to claim (job affinity), not abandoned.
-    await releaseCommandRuntime(runtime, { label: 'chat agent loop' });
+    // `liveRuntime`, not `runtime`: a `/model` switch already retired the one
+    // it replaced, and this command releases whichever is current (C3).
+    await releaseCommandRuntime(liveRuntime, { label: 'chat agent loop' });
     if (config.displayResumeHint !== false && !opts.noResumeHint) {
       try {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
@@ -565,6 +834,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     }
     process.exit(0);
   });
+
+  // B2 — parse warnings (unknown keys with line numbers and suggestions),
+  // once per process, before the welcome line.
+  for (const warning of configWarningLinesOnce(config)) {
+    out(`${c.yellow}⚠ ${warning}${c.reset}\n`);
+  }
 
   // Welcome
   out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${displayName} · /help${c.reset}\n\n`);
@@ -607,22 +882,54 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     cliAdapter,
     pluginLoader,
     goals,
+    // C3 — the live `/model` switch: rebuild the runtime on the new model,
+    // swap every seam the readline REPL holds, and retire the replaced
+    // runtime in the background (drain its jobs, then dispose).
+    switchModel: (modelId) =>
+      performModelSwitch(modelId, rebuild, (next) => {
+        activeLoop = next.loop;
+        liveRuntime = next.runtime;
+        activePluginLoader = next.runtime.pluginLoader;
+        activePersonalities = next.runtime.personalities;
+        state.modelName = modelId;
+        state.jobStore = next.runtime.jobStore;
+        state.backgroundExecutor = next.runtime.backgroundExecutor;
+        slashCtx.notificationRouter = next.runtime.notificationRouter;
+        slashCtx.pluginLoader = next.runtime.pluginLoader;
+        slashCtx.goals = next.runtime.goals;
+        next.runtime.notificationRouter.register(state.sessionKey, cliAdapter);
+        registerClarifyPresenter(next.loop);
+        next.runtime.setOnSkillProposed?.(skillProposedHandler);
+        if (config.displayMemoryNotices !== false) {
+          next.runtime.onMemoryCaptured?.(memoryCapturedHandler);
+        }
+        next.runtime.backgroundExecutor?.onComplete(backgroundCompleteHandler);
+        void next.retirePrevious().catch((err: unknown) => {
+          out(
+            `${c.dim}[previous runtime retire failed: ${err instanceof Error ? err.message : String(err)}]${c.reset}\n`,
+          );
+        });
+      }),
   };
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
   // input can be dispatched on busyMode.
   rl.setPrompt(promptString(state));
-  rl.prompt();
+  reprompt();
 
   rl.on('line', (raw) => {
     // FW-16 — block all input while the consent prompt is active.
     if (state.awaitingConsent) return;
     // A clarify prompt owns the loop via its own one-shot `line` listener.
     if (state.awaitingClarify) return;
+    // So does a tool-approval prompt (`attachCliApprovalPrompt`).
+    if (state.awaitingApproval) return;
+    // So does a masked credential read — and that line is a secret.
+    if (state.awaitingSecret) return;
 
     const input = raw.trim();
     if (!input) {
-      rl.prompt();
+      reprompt();
       return;
     }
 
@@ -633,43 +940,43 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // happened to answer a clarify, never to wherever they're just
     // casually chatting. CLI has no chat identity beyond the process
     // itself, so no `surfaceContext`.
-    loop.clarifyBridge?.recordPresence('cli');
+    activeLoop.clarifyBridge?.recordPresence('cli');
 
     // Slash commands are always dispatched immediately — even mid-turn — except
     // /busy and /steer which have special busy-state semantics handled below.
     const isBusySlash = input.startsWith('/busy') || input.startsWith('/steer');
     if (input.startsWith('/') && !isBusySlash) {
-      handleSlashCommand(input, state, loop, rl, config, registry, slashCtx)
+      handleSlashCommand(input, state, activeLoop, rl, config, registry, slashCtx)
         .then(() => {
           if (state.pendingTurn) {
             const pending = state.pendingTurn;
             state.pendingTurn = undefined;
             state.draining = true;
-            runTurn(pending, state, loop)
+            runTurn(pending, state, activeLoop)
               .then(() => {
                 state.draining = false;
                 if (state.verbosity !== 'quiet') renderStatusBarLine(state);
                 rl.setPrompt(promptString(state));
-                rl.prompt();
+                reprompt();
               })
               .catch((err) => {
                 state.draining = false;
                 out(
                   `${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
                 );
-                rl.prompt();
+                reprompt();
               });
             return;
           }
           // Only re-prompt when idle; a running turn will prompt on completion.
           if (!state.draining && !state.abort) {
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
           }
         })
         .catch((err) => {
           out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-          if (!state.draining && !state.abort) rl.prompt();
+          if (!state.draining && !state.abort) reprompt();
         });
       return;
     }
@@ -683,7 +990,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
     state.draining = true;
     resolveAtRefs(input, process.cwd())
-      .then((resolved) => runTurn(resolved, state, loop))
+      .then((resolved) => runTurn(resolved, state, activeLoop))
       .then(() => {
         const drainNext = () => {
           const next = state.inputQueue.shift();
@@ -691,16 +998,16 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             state.draining = false;
             if (state.verbosity !== 'quiet') renderStatusBarLine(state);
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
             return;
           }
           out(`${c.dim}[draining queue → ${next}]${c.reset}\n`);
-          runTurn(next, state, loop)
+          runTurn(next, state, activeLoop)
             .then(drainNext)
             .catch((err) => {
               state.draining = false;
               out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-              rl.prompt();
+              reprompt();
             });
         };
         drainNext();
@@ -708,7 +1015,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       .catch((err) => {
         state.draining = false;
         out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-        rl.prompt();
+        reprompt();
       });
   });
 }
@@ -764,7 +1071,8 @@ function pushSteer(text: string, state: ChatState): void {
   }
   const ok = state.steerSink.push(text);
   if (!ok) {
-    out(`${c.red}[steer sink full — dropped]${c.reset}\n`);
+    // C6 — worded for the person who typed it, not the steer machinery.
+    out(`${c.red}${STEER_SINK_FULL_NOTICE}${c.reset}\n`);
     return;
   }
   out(`${c.dim}[steer queued — folds in at next iteration]${c.reset}\n`);
@@ -788,26 +1096,98 @@ function handleBusyCommand(arg: string, state: ChatState): void {
 // ---------------------------------------------------------------------------
 
 async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promise<void> {
+  // N3 — pick up personalities dropped or edited on disk since the last turn,
+  // and say which ones failed (serving last-good) or reloaded.
+  if (state.refreshPersonalities) {
+    for (const line of await state.refreshPersonalities()) {
+      out(`${c.dim}${line}${c.reset}\n`);
+    }
+  }
+
   state.abort = new AbortController();
   state.iterationsThisTurn = 0;
+
+  // Piped stdout (`ethos chat | tee log`) gets static feed lines only: no
+  // thinking spinner, no live tool block, no in-place cursor escapes. Pinned
+  // by __tests__/chat-non-tty-render.test.ts.
+  const tty = process.stdout.isTTY === true;
+  // While a one-line prompt (clarify, approval, plugin credential, quick
+  // consent) owns the input line, no in-place repaint may touch the screen —
+  // it would erase the line the user is typing their answer on.
+  const promptOpen = (): boolean =>
+    state.awaitingClarify ||
+    state.awaitingApproval ||
+    state.awaitingSecret ||
+    state.awaitingConsent;
 
   const reducedMotion = process.env.ETHOS_NO_SPINNER_ANIMATION === '1';
   const spinner = new SpinnerState({ reducedMotion });
   spinner.start(Date.now());
 
-  let spinnerCleared = false;
-  if (state.verbosity !== 'quiet') {
-    out(
-      `${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`,
-    );
-  }
+  const thinkingLine = (): string =>
+    `${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`;
+
+  // Non-TTY: the spinner line is never drawn, so it starts (and stays) cleared.
+  let spinnerCleared = !tty;
+  if (tty && state.verbosity !== 'quiet') out(thinkingLine());
+
+  const turnStart = Date.now();
+  let firstTextDeltaAt: number | null = null;
+
+  // C1 — the live per-tool block: one `⠹ ┊ tool · arg · 12.4s` line per
+  // running tool, redrawn in place as the LAST lines on screen. Drawn only
+  // before the first text of the turn — once the answer streams, the feed
+  // lines (`✓ ┊ …`) carry tool activity as before.
+  const toolBlock = new ToolLiveBlock({ reducedMotion, previewLength: state.toolPreviewLength });
+  let drawnBlockLines = 0;
+  const eraseBlock = (): void => {
+    if (drawnBlockLines === 0) return;
+    out('\r\x1b[2K');
+    for (let i = 1; i < drawnBlockLines; i++) out('\x1b[1A\x1b[2K');
+    drawnBlockLines = 0;
+  };
+  const drawBlock = (): void => {
+    if (!tty) return;
+    if (firstTextDeltaAt !== null) return;
+    const blockLines = toolBlock.linesFor(state.verbosity, Date.now());
+    if (blockLines.length === 0) return;
+    out(blockLines.map((line) => `${c.dim}${line}${c.reset}`).join('\n'));
+    drawnBlockLines = blockLines.length;
+  };
+
+  // A5 (UD6) — rolling one-line thinking preview at verbose/debug, overwritten
+  // in place and wiped at the first text, tool, or any other printed line.
+  let thinkingTail = '';
+  let thinkingLineOpen = false;
+  const wipeThinkingPreview = (): void => {
+    if (!thinkingLineOpen) return;
+    thinkingLineOpen = false;
+    out('\r\x1b[2K');
+  };
+
+  // The interval owns every in-place repaint: the thinking line while it runs,
+  // the tool block while tools run. It lives for the whole turn (cleared in
+  // `finally`) so the thinking spinner can RESTART after a tool ends (C1).
   const spinnerInterval = setInterval(
     () => {
-      spinner.tick(Date.now());
-      if (!spinnerCleared && state.verbosity !== 'quiet') {
-        out(
-          `\r${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`,
-        );
+      const now = Date.now();
+      spinner.tick(now);
+      toolBlock.tick();
+      // The tick's one decision lives in `repaintTickAction` (tool-spinner.ts)
+      // so its two hard gates — non-TTY and an open prompt — stay pinned.
+      const action = repaintTickAction({
+        tty,
+        promptOpen: promptOpen(),
+        quiet: state.verbosity === 'quiet',
+        spinnerCleared,
+        drawnBlockLines,
+        activeToolCount: toolBlock.count(),
+      });
+      if (action === 'spinner') {
+        out(`\r${thinkingLine()}`);
+      } else if (action === 'block') {
+        eraseBlock();
+        drawBlock();
       }
     },
     reducedMotion ? 500 : 100,
@@ -817,15 +1197,17 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     if (spinnerCleared) return;
     spinnerCleared = true;
     spinner.stop(Date.now());
-    clearInterval(spinnerInterval);
     if (state.verbosity !== 'quiet') {
       // Wipe the spinner line cleanly so trailing chars don't bleed into output.
       out('\r\x1b[2K');
     }
   }
 
-  const turnStart = Date.now();
-  let firstTextDeltaAt: number | null = null;
+  state.clearSpinner = () => {
+    clearSpinner();
+    wipeThinkingPreview();
+    eraseBlock();
+  };
   const toolDurations: number[] = [];
   let turnUsage: TurnTiming['turnUsage'] = null;
   const toolStartTimes = new Map<string, number>();
@@ -834,6 +1216,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   let hasText = false;
   // Every `text_delta` this turn — what a `returnDirect` answer is checked against.
   let streamedText = '';
+  // openclaw-9.5 item 1 — a pre-turn refusal for a missing plugin credential.
+  let credentialReq: EventTranslatorCredentialRequired | null = null;
   // B3 — the turn's single identity, learned from the first event of the turn.
   // Used to stamp any error this turn writes to `errors.jsonl`, so the log line
   // and the trace in `observability.db` name the same turn.
@@ -857,7 +1241,16 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(tierOverride ? { tierOverride } : {}),
       ...(toolsetNarrow ? { toolsetNarrow } : {}),
       ...(state.dryRun ? { dryRun: true } : {}),
+      ...(state.collectCredential ? { credentialPrompt: true } : {}),
     })) {
+      if (event.type === 'credential_required' && credentialReq === null) {
+        const { type: _type, ...req } = event;
+        credentialReq = req;
+      }
+      // Any event that prints does so ABOVE the live block and the thinking
+      // preview: wipe both first, redraw the block after the render below.
+      if (event.type !== 'thinking_delta') wipeThinkingPreview();
+      eraseBlock();
       // Lane E (tools-as-code-api) — in-script inner calls carry
       // `audience: 'internal'`. They must not drive turn-level UI state
       // (iteration proxy, spinner, duration stats); rendering is gated in
@@ -880,6 +1273,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
         toolStartTimes.set(event.toolCallId, Date.now());
         toolArgs.set(event.toolCallId, event.args);
         toolNames.set(event.toolCallId, event.toolName);
+        toolBlock.start(event.toolCallId, event.toolName, event.args, Date.now());
+      }
+      if (event.type === 'tool_end' && !internalToolEvent) {
+        toolBlock.end(event.toolCallId);
       }
       // A `returnDirect` answer arrives only as `done.text`, possibly after a
       // streamed preamble — rendered once, after it (`unstreamedDoneText`).
@@ -892,6 +1289,11 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       if (event.type === 'tool_start' && !internalToolEvent && !spinnerCleared) {
         clearSpinner();
         if (state.verbosity !== 'quiet') out('\n');
+      }
+      // A settled decision prints a line (§15.6), so the spinner's line must
+      // be wiped first or the two would share it.
+      if (event.type === 'decision' && event.phase === 'settled' && state.verbosity !== 'quiet') {
+        clearSpinner();
       }
       if (event.type === 'tool_end' && !internalToolEvent) {
         toolDurations.push(event.durationMs);
@@ -908,6 +1310,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       }
       if (event.type === 'run_start') turnTraceId = event.traceId;
       if (event.type === 'error') clearSpinner();
+      // The halt and `_loop`/`_watcher` notices print a line of their own, so
+      // the open spinner line is wiped first — same treatment text_delta,
+      // tool_start, decision and error get above (`noticeClearsSpinner`).
+      if (noticeClearsSpinner(event)) clearSpinner();
 
       renderEventForVerbosity(event, state, {
         hasText,
@@ -915,13 +1321,57 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
         toolStartTimes,
         toolArgs,
         toolNames,
+        aborted: state.abort?.signal.aborted === true,
+        ...(turnTraceId ? { traceId: turnTraceId } : {}),
+        isToolActive: (toolName) => toolBlock.has(toolName),
       });
 
       if (event.type === 'text_delta') streamedText += event.text;
       if (event.type === 'text_delta' || doneAnswer) hasText = true;
 
+      // A5 (UD6) — fold reasoning into the rolling preview (verbose/debug
+      // only, and only while the thinking phase owns the screen: no text yet
+      // and no live tool block).
+      if (
+        tty &&
+        event.type === 'thinking_delta' &&
+        firstTextDeltaAt === null &&
+        toolBlock.count() === 0 &&
+        drawnBlockLines === 0
+      ) {
+        const tail = thinkingPreview(thinkingTail, event.thinking, state.verbosity);
+        if (tail !== null) {
+          thinkingTail = tail;
+          clearSpinner();
+          out(`\r\x1b[2K${c.dim}✻ thinking ▸ ${tail}${c.reset}`);
+          thinkingLineOpen = true;
+        }
+      }
+
+      // C1 — after a tool ends with no text yet and nothing else running,
+      // bring the thinking spinner back so the screen never goes silent.
+      if (
+        tty &&
+        event.type === 'tool_end' &&
+        !internalToolEvent &&
+        spinnerCleared &&
+        !promptOpen() &&
+        shouldRestartThinkingSpinner({ textStarted: hasText, activeToolCount: toolBlock.count() })
+      ) {
+        spinnerCleared = false;
+        spinner.start(Date.now());
+        if (state.verbosity !== 'quiet') out(thinkingLine());
+      }
+
+      // C1 — repaint the live block below whatever this event printed.
+      drawBlock();
+
       if (event.type === 'done') {
         clearSpinner();
+        wipeThinkingPreview();
+        eraseBlock();
+        // C4 — the session grew by this turn's user message and its answer.
+        state.messageCount += 2;
         // W4.1 — first-ever completed turn stamps funnel.first_reply (no-op after).
         void getFunnelTracker().recordFirstReply();
         if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
@@ -938,19 +1388,35 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     }
   } catch (err) {
     clearSpinner();
+    wipeThinkingPreview();
+    eraseBlock();
     if (!state.abort?.signal.aborted) {
-      out(`\n${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}`);
+      // A3 — same three-line shape as an in-stream `error` event: title,
+      // next step, and the trace id when the turn had one. The wording is
+      // `describeChatError`'s (surface-kit), never restated here.
+      const ethosErr = toEthosError(err);
+      const described = describeChatError(ethosErr.code, ethosErr.cause, turnTraceId);
+      out(`\n${c.red}✗ ${described.title}${c.reset}\n`);
+      out(`${c.dim}  → ${described.action}${c.reset}\n`);
+      if (described.trace) {
+        out(
+          `${c.dim}  trace ${described.trace} · ethos trace ${described.trace} for detail${c.reset}\n`,
+        );
+      }
       // Phase 30.10 says every error rendered through a surface path lands in
       // `errors.jsonl`; a turn that threw out of `loop.run` was the one path
       // that only printed. B3 makes it worth logging: the row carries the
       // turn's `traceId`, so `ethos trace <id>` resolves the failed turn.
-      appendErrorLog(toEthosError(err), {
+      appendErrorLog(ethosErr, {
         command: 'chat',
         ...(turnTraceId ? { traceId: turnTraceId } : {}),
       });
     }
   } finally {
     clearInterval(spinnerInterval);
+    wipeThinkingPreview();
+    eraseBlock();
+    state.clearSpinner = undefined;
     state.abort = null;
     // Codex P2 #2 — steers attach to an iteration seam (tool_results). A
     // text-only turn (no tools) has no seam, so a steer typed during it
@@ -958,11 +1424,17 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     // anything still queued when this turn ends.
     const stranded = state.steerSink.drain();
     if (stranded.length > 0 && state.verbosity !== 'quiet') {
-      out(
-        `${c.yellow}[discarded ${stranded.length} unread steer${stranded.length === 1 ? '' : 's'} — no tool seam in turn]${c.reset}\n`,
-      );
+      // C6 — one line regardless of how many steers were stranded.
+      out(`${c.yellow}${STEER_DISCARDED_NOTICE}${c.reset}\n`);
     }
     if (state.verbosity !== 'quiet') out('\n\n');
+  }
+
+  // The refused turn has drained (its `done` closed it). Ask for the value
+  // masked, then resubmit the same message as a fresh turn.
+  if (credentialReq && state.collectCredential) {
+    const resubmit = await state.collectCredential(credentialReq);
+    if (resubmit) await runTurn(credentialReq.pendingUserMessage, state, loop);
   }
 }
 
@@ -977,10 +1449,20 @@ interface RenderContext {
   toolStartTimes: Map<string, number>;
   toolArgs: Map<string, unknown>;
   toolNames: Map<string, string>;
+  /** A2 — true when the turn's abort controller fired (user stop). */
+  aborted?: boolean;
+  /** A3 — the turn's trace id from `run_start`, for the `trace <id>` line. */
+  traceId?: string;
+  /** C1 — whether a tool with this name is on the live block right now, so a
+   *  user-audience progress line renders as `      ↳ …` beneath it. */
+  isToolActive?: (toolName: string) => boolean;
 }
 
 function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: RenderContext): void {
-  const lines = projectEvent(event, state.verbosity, { streamedText: ctx.streamedText });
+  const lines = projectEvent(event, state.verbosity, {
+    streamedText: ctx.streamedText,
+    aborted: ctx.aborted === true,
+  });
   if (lines.length === 0) return;
 
   switch (event.type) {
@@ -996,9 +1478,17 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       break;
 
     case 'tool_progress':
-      if (state.verbosity === 'default' && !shouldSurfaceProgress(event)) break;
-      if (event.toolName === '_watcher') {
+      // The audience gate and the budget-chip rule live in `projectEvent`.
+      if (!lines.some((line) => line.kind === 'tool_progress')) break;
+      if (event.toolName === '_loop') {
+        // A4 — loop-level notice (compact-and-retry, provider fallback):
+        // one yellow line, the deviation-notice shape, never a tool row.
+        out(`${c.yellow}⚠ ${stripAnsiEscapes(event.message)}${c.reset}\n`);
+      } else if (event.toolName === '_watcher') {
         out(`${c.yellow}  ${stripAnsiEscapes(event.message)}${c.reset}\n`);
+      } else if (event.audience === 'user' && ctx.isToolActive?.(event.toolName)) {
+        // C1 — progress for a tool on the live block indents beneath its line.
+        out(`${c.dim}      ↳ ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       } else {
         out(`${c.dim}  · ${event.toolName}: ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       }
@@ -1016,9 +1506,13 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
         args,
         durationMs: event.durationMs ?? ms,
         previewLength: state.toolPreviewLength,
+        // C2 — a failed tool carries its reason as a second line.
+        ...(!event.ok && event.error ? { error: event.error } : {}),
       });
+      const [feedLine = line, errorLine] = line.split('\n');
       const mark = event.ok ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
-      out(`${c.dim}  ${mark} ${line}${c.reset}\n`);
+      out(`${c.dim}  ${mark} ${feedLine}${c.reset}\n`);
+      if (errorLine) out(`${c.red}${errorLine}${c.reset}\n`);
       break;
     }
 
@@ -1028,9 +1522,30 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       state.usage.costUsd += event.estimatedCostUsd;
       break;
 
-    case 'error':
-      out(`\n${c.red}[${event.code}] ${event.error}${c.reset}`);
+    case 'error': {
+      // A2 — projectEvent drops the loop's trailing `aborted` error after a
+      // user stop; render only what survived the projection.
+      if (!lines.some((line) => line.kind === 'error')) break;
+      // A3 — title, next step, and trace, from the one shared map.
+      const described = describeChatError(event.code, event.error, ctx.traceId);
+      out(`\n${c.red}✗ ${described.title}${c.reset}\n`);
+      out(`${c.dim}  → ${described.action}${c.reset}\n`);
+      if (described.trace) {
+        out(
+          `${c.dim}  trace ${described.trace} · ethos trace ${described.trace} for detail${c.reset}\n`,
+        );
+      }
       break;
+    }
+
+    case 'halt': {
+      // S4/U1 — the cap and the reset command (`haltNotice`, via projectEvent).
+      const notice = lines.find((line) => line.kind === 'halt');
+      if (!notice) break;
+      if (ctx.hasText) out('\n');
+      out(`${c.yellow}${stripAnsiEscapes(notice.text)}${c.reset}\n`);
+      break;
+    }
 
     case 'run_start': {
       // D17 — a deviation renders at EVERY verbosity, `quiet` included: the
@@ -1065,6 +1580,27 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       // streamed text already is the answer.
       const answer = lines.find((line) => line.kind === 'text');
       if (answer) out(stripAnsiEscapes(answer.text));
+      break;
+    }
+
+    case 'decision': {
+      // plan decision-provider-personality §15.6 — the decision hue is the
+      // terminal's cyan; a warning or failure takes yellow / red. Glyph + word
+      // carry the state whatever the terminal does with colour.
+      const line = decisionLine(event);
+      if (!line) break;
+      if (ctx.hasText) out('\n');
+      const tone =
+        line.tone === 'failed'
+          ? c.red
+          : line.tone === 'warning'
+            ? c.yellow
+            : line.tone === 'ok'
+              ? c.cyan
+              : c.dim;
+      out(
+        `  ${tone}${line.state}${c.reset} ${c.cyan}${line.tag}${c.reset} ${c.dim}${line.rest}${c.reset}\n`,
+      );
       break;
     }
 
@@ -1108,7 +1644,11 @@ async function runSingleQuery(
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,
+    // One-shot: no masked input here, so a missing plugin credential is
+    // reported as the CLI command that sets it.
+    credentialPrompt: true,
   })) {
+    if (event.type === 'credential_required') out(`${credentialInstruction(event)}\n`);
     if (event.type === 'text_delta') {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
       streamedText += event.text;
@@ -1120,6 +1660,10 @@ async function runSingleQuery(
     if (doneAnswer) {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
       out(doneAnswer);
+    }
+    if (event.type === 'halt') {
+      const notice = haltNotice(event);
+      if (notice) out(`\n${c.yellow}${notice}${c.reset}\n`);
     }
     if (event.type === 'tool_end') toolDurations.push(event.durationMs);
     if (event.type === 'usage') {
@@ -1160,53 +1704,93 @@ interface SlashHandlerContext {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   /** The chat loop's goal store + executor pair (`ActiveLoop.goals`). */
   goals: LoopGoals;
+  /** C3 — the readline REPL's live `/model` switch. Absent → the old
+   *  "takes effect on next restart" message. */
+  switchModel?: (modelId: string) => Promise<ModelSwitchOutcome>;
 }
 
 /**
- * Build the /help body. Static built-in commands first, then any
- * plugin-registered slash commands with a `[plugin]` suffix. Exported for
- * unit testing the merge.
+ * The idle-prompt completion notice for a finished background job, as plain
+ * lines (the caller dims them), or `null` for a status that stays silent —
+ * only `done`/`failed` are surfaced; `aborted` is user-requested. Deliberately
+ * blind to `job.deliver` (plan openclaw-9.5-adoption D29): here the user is
+ * already in the parent session, so a `'parent'` job shows the same notice.
+ * Pinned by `__tests__/chat-background-completion.test.ts`.
+ */
+export function backgroundCompletionLines(job: BackgroundJob): string[] | null {
+  if (job.status !== 'done' && job.status !== 'failed') return null;
+  const header = `bg:${job.id.slice(0, 8)}`;
+  const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
+  const body = job.status === 'done' ? job.summary : undefined;
+  const lines = [`╭─ background [${header}] ${statusLine}`];
+  if (body) {
+    for (const line of body.split('\n').slice(0, 10)) lines.push(`│ ${line}`);
+    if (body.split('\n').length > 10) lines.push('│ ... (truncated)');
+  }
+  lines.push('╰─');
+  return lines;
+}
+
+/**
+ * Build the /help body — derived from surface-kit's SLASH_COMMANDS filtered
+ * to surface 'cli' (C5: one table, three surfaces), then any plugin-registered
+ * slash commands with a `[plugin]` suffix. Aliases (`/reset`, `/quit`) are
+ * folded into their canonical command and not listed. Exported for unit
+ * testing the merge.
  */
 export function buildChatHelpText(
   pluginCommands: { name: string; description: string }[] = [],
 ): string {
-  let text =
-    `  /title <name>         set a name for this session\n` +
-    `  /title                show current session title\n` +
-    `  /new                  start a fresh session\n` +
-    `  /personality          show current personality\n` +
-    `  /personality list     list all personalities\n` +
-    `  /personality <id>     start a new session bound to <id>\n` +
-    `  /model <name>         switch model for this session\n` +
-    `  /tier <name>          override tier for next turn (trivial|default|deep)\n` +
-    `  /memory               show the active personality's MEMORY.md and USER.md\n` +
-    `  /usage                show token and cost stats\n` +
-    `  /budget               show session spend against cap\n` +
-    `  /budget reset         reset the session budget counter\n` +
-    `  /verbose              cycle quiet → default → verbose → debug\n` +
-    `  /verbose <level>      set level directly\n` +
-    `  /background <prompt>  spawn a background agent task\n` +
-    `  /background list      show all background tasks\n` +
-    `  /background cancel <id>  abort a running background task\n` +
-    `  /verbose status       show current level\n` +
-    `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
-    `  /attach <path>        attach a file to the next message\n` +
-    `  /compact [focus]      compress older context now (optional focus hint)\n` +
-    `  /compact status       show context anatomy (system/tools/messages tokens)\n` +
-    `  /undo [N]             undo last N turns (default 1)\n` +
-    `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
-    `  /goal <text>          create and start a new goal\n` +
-    `  /goal cancel|resume|steer <id>  manage a running goal\n` +
-    `  /goals                list recent goals\n` +
-    `  /steer <text>         inject [USER STEER] mid-turn\n` +
-    `  /allow <code>         approve a pending channel sender by pairing code\n` +
-    `  /deny <platform> <id> revoke an approved channel sender\n` +
-    `  /communications       list approved senders + pending pairing codes\n` +
-    `  /exit                 quit\n`;
+  let text = '';
+  for (const cmd of slashCommandsForSurface('cli')) {
+    if (cmd.aliasOf) continue;
+    text += `  ${cmd.usage.padEnd(21)} ${cmd.description}\n`;
+  }
   for (const cmd of pluginCommands) {
     text += `  /${cmd.name.padEnd(20)} ${cmd.description} [plugin]\n`;
   }
   return text;
+}
+
+/**
+ * Build the /commands body — the full registry the autocomplete reads:
+ * built-ins plus every `[skill]` / `[command]` / `[quick]` registration (the
+ * surface-kit table advertises `/commands` as "List available commands").
+ * Non-built-ins keep their prefix tag so their origin is visible. Exported
+ * for the pin test (__tests__/chat-slash-feedback.test.ts).
+ */
+export function buildCommandsListText(commands: SlashCommand[]): string {
+  let text = '';
+  for (const cmd of commands) {
+    text += `  ${cmd.usage.padEnd(21)} ${cmd.description}${cmd.prefix ? ` ${cmd.prefix}` : ''}\n`;
+  }
+  return text;
+}
+
+/** C3 — the outcome `/model <id>` prints: switched, or refused via the A3 map. */
+export type ModelSwitchOutcome = { ok: true } | { ok: false; title: string; action: string };
+
+/**
+ * C3 — run the rebuild for a `/model` switch and hand the new runtime to the
+ * caller's `apply` (which swaps the REPL's seams). A rebuild that throws
+ * leaves the current runtime current (`createLoopRebuilder`'s contract) and
+ * maps the failure through `describeChatError`. Exported for
+ * __tests__/chat-model-switch.test.ts.
+ */
+export async function performModelSwitch<T>(
+  modelId: string,
+  rebuild: (modelId: string) => Promise<T>,
+  apply: (next: T) => void,
+): Promise<ModelSwitchOutcome> {
+  try {
+    const next = await rebuild(modelId);
+    apply(next);
+    return { ok: true };
+  } catch (err) {
+    const ethosErr = toEthosError(err);
+    const described = describeChatError(ethosErr.code, ethosErr.cause);
+    return { ok: false, title: described.title, action: described.action };
+  }
 }
 
 async function handleSlashCommand(
@@ -1225,6 +1809,12 @@ async function handleSlashCommand(
       out(`\n${c.dim}${buildChatHelpText(ctx.pluginLoader?.getAllSlashCommands())}${c.reset}\n`);
       break;
 
+    case 'commands':
+      // The table entry /help advertises ("List available commands") — the
+      // live registry, so skills, file-drop commands and quick commands show.
+      out(`\n${c.dim}${buildCommandsListText(registry.getAll())}${c.reset}\n`);
+      break;
+
     case 'new':
     case 'reset':
       loop.resetSessionCost(state.sessionKey);
@@ -1233,9 +1823,39 @@ async function handleSlashCommand(
       ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
       state.contextTokens = 0;
       state.contextInputTokens = 0;
+      state.messageCount = 0;
       state.startedAt = Date.now();
-      out(`${c.dim}[new session started]${c.reset}\n`);
+      // C4 — name the key so `ethos chat --resume <key>` has something to hold.
+      out(`${c.dim}[new session ${state.sessionKey} started]${c.reset}\n`);
       break;
+
+    case 'fork':
+    case 'branches':
+    case 'branch': {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const outcome = await runBranchCommand(store, name, arg, state.sessionKey);
+        if (outcome.switchTo) {
+          // Re-key the REPL onto the branch, resetting what `/new` resets.
+          loop.resetSessionCost(state.sessionKey);
+          ctx.notificationRouter.deregister(state.sessionKey);
+          state.sessionKey = outcome.switchTo.sessionKey;
+          if (outcome.switchTo.personalityId) state.personalityId = outcome.switchTo.personalityId;
+          ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
+          state.contextTokens = 0;
+          state.contextInputTokens = 0;
+          state.messageCount = 0;
+          state.startedAt = Date.now();
+        }
+        out(`${c.dim}${outcome.message}${c.reset}\n`);
+      } catch (err) {
+        out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+      } finally {
+        store.close();
+      }
+      break;
+    }
 
     case 'personality': {
       if (!arg) {
@@ -1261,6 +1881,7 @@ async function handleSlashCommand(
       ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
       state.contextTokens = 0;
       state.contextInputTokens = 0;
+      state.messageCount = 0;
       state.startedAt = Date.now();
       out(
         `${c.dim}[personality: ${arg} — new session started; personality is fixed for a session]${c.reset}\n`,
@@ -1270,12 +1891,30 @@ async function handleSlashCommand(
 
     case 'model': {
       if (!arg) {
-        out(`${c.dim}Current model: ${_config.model}${c.reset}\n`);
+        out(`${c.dim}Current model: ${state.modelName}${c.reset}\n`);
         break;
       }
-      out(
-        `${c.yellow}Model switching takes effect on next restart. Edit ~/.ethos/config.yaml to persist.${c.reset}\n`,
-      );
+      if (!ctx.switchModel) {
+        out(
+          `${c.yellow}Model switching takes effect on next restart. Edit ~/.ethos/config.yaml to persist.${c.reset}\n`,
+        );
+        break;
+      }
+      // C3 — a live switch. Refused mid-turn: the running turn still streams
+      // from the loop a switch would retire.
+      if (state.abort || state.draining) {
+        out(`${c.yellow}a turn is running — try /model again when it finishes${c.reset}\n`);
+        break;
+      }
+      const result = await ctx.switchModel(arg);
+      if (result.ok) {
+        out(
+          `${c.dim}model → ${arg} (this session; edit ~/.ethos/config.yaml to persist)${c.reset}\n`,
+        );
+      } else {
+        // A3 shape — title and next step from the shared map.
+        out(`\n${c.red}✗ ${result.title}${c.reset}\n${c.dim}  → ${result.action}${c.reset}\n`);
+      }
       break;
     }
 
@@ -1318,10 +1957,12 @@ async function handleSlashCommand(
     }
 
     case 'usage':
+      // C4 — two decimals, four below one cent (`formatCostUsd`); the
+      // `ethos usage --json` surface keeps full precision.
       out(
         `${c.dim}` +
           `Tokens  : ${state.usage.inputTokens.toLocaleString()} in · ${state.usage.outputTokens.toLocaleString()} out\n` +
-          `Cost    : $${state.usage.costUsd.toFixed(5)}\n` +
+          `Cost    : $${formatCostUsd(state.usage.costUsd)}\n` +
           `${c.reset}`,
       );
       break;
@@ -1334,31 +1975,22 @@ async function handleSlashCommand(
       }
       const spent = loop.getSessionCost(state.sessionKey);
       out(
-        `${c.dim}Session spend: $${spent.toFixed(5)}\n` +
+        `${c.dim}Session spend: $${formatCostUsd(spent)}\n` +
           `Use /budget reset to clear the counter.\n${c.reset}`,
       );
       break;
     }
 
     case 'verbose': {
-      if (!arg) {
-        state.verbosity = nextVerbosity(state.verbosity);
-        out(`${c.dim}verbosity: ${state.verbosity}${c.reset}\n`);
-        break;
-      }
-      if (arg === 'status') {
-        out(`${c.dim}verbosity: ${state.verbosity}${c.reset}\n`);
-        break;
-      }
-      if (isVerbosity(arg)) {
-        state.verbosity = arg;
-        out(`${c.dim}verbosity: ${arg}${c.reset}\n`);
-        break;
-      }
+      // C6 — an unknown level is refused and the current level KEPT
+      // (`applyVerbosityCommand`, lib/verbosity.ts).
+      const result = applyVerbosityCommand(arg, state.verbosity);
+      state.verbosity = result.level;
       out(
-        `${c.yellow}Invalid level '${arg}' — falling back to default. Valid: quiet|default|verbose|debug${c.reset}\n`,
+        result.refused
+          ? `${c.red}${result.notice}${c.reset}\n`
+          : `${c.dim}${result.notice}${c.reset}\n`,
       );
-      state.verbosity = 'default';
       break;
     }
 
@@ -1620,11 +2252,14 @@ async function handleSlashCommand(
         }
         if (!ctx.isQuickConsentGiven()) {
           state.awaitingConsent = true;
-          process.stdout.write(
-            `Quick commands let you run shell commands as \`${process.env.USER ?? 'user'}\`. Continue? [y/N] `,
-          );
           const answer = await new Promise<string>((resolve) => {
-            rl.once('line', (line) => resolve(line.trim()));
+            state.lines.claim({
+              show: () =>
+                process.stdout.write(
+                  `Quick commands let you run shell commands as \`${process.env.USER ?? 'user'}\`. Continue? [y/N] `,
+                ),
+              onLine: (line) => resolve(line.trim()),
+            });
           });
           state.awaitingConsent = false;
           if (answer.toLowerCase() !== 'y') {
@@ -1645,6 +2280,7 @@ async function handleSlashCommand(
             sessionId: state.sessionKey,
             personalityId: state.personalityId,
             platform: 'cli',
+            sender: CLI_SLASH_SENDER,
             send: async (text) => {
               out(text);
             },

@@ -115,12 +115,40 @@ export interface BackgroundJob {
   originChatId?: string;
   originThreadId?: string;
   /**
+   * Platform user id of whoever's channel turn spawned the job (the gateway's
+   * `SessionRouting.requesterUserId`). Absent when no user is known — cron,
+   * web, CLI, rows written before the column. `resolveJobClarifyOrigin`
+   * (packages/wiring/src/build-agent-loop.ts) stamps it as the clarify
+   * origin's `originatorUserId`, which is what lets a background clarify
+   * default to `answerableBy: 'originator'` (`ClarifyBridge.request`).
+   */
+  originUserId?: string;
+  /**
+   * The spawning turn's `ToolContext.toolsetNarrowing` (S12): the child runs
+   * under the same effective allowlist and exclusion, so a background child
+   * never regains a tool the parent turn was narrowed out of. Applied by
+   * `EthosJobRunner.run` (extensions/job-runner) as the child's
+   * `toolsetNarrow`/`toolsetExclude`, and by the ACP and Pi runners to the
+   * toolset their personality gate checks (`narrowedToolset`, same package).
+   * Absent when the parent turn had neither.
+   */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
+  /**
    * Which runner executed this row (`JobRunner.name`, e.g. `ethos`). Absent on
    * rows written before the seam existed, and on rows that ran on the default
    * runner. Persisted because the badge renders from the row, not from a live
    * handle — `owner` is process identity, not runner kind.
    */
   runner?: string;
+  /**
+   * Who sees the result first (plan openclaw-9.5-adoption item 6). `'user'`
+   * (and absent, the default for every row written before the column) wakes
+   * the origin chat with the result as-is. `'parent'` runs one review turn on
+   * the parent's origin lane first, and the user sees that turn's answer — the
+   * gateway only (`Gateway.admitWakeReview`); CLI chat and web already show the
+   * result inside the parent session and ignore it.
+   */
+  deliver?: 'user' | 'parent';
   // Remote proxy: set when this row tracks a background job running on a mesh peer
   // (created by route_to_agent background:true). A reconciler polls the peer and
   // mirrors status/spend/summary onto this row. No local executor runs a proxy.
@@ -200,10 +228,16 @@ export interface CreateBackgroundJobInput {
   maxCostUsd?: number;
   /** Runner that should execute this job. Omitted means the executor's default. */
   runner?: string;
+  /** See `BackgroundJob.deliver`. Omitted means `'user'`. */
+  deliver?: 'user' | 'parent';
   originPlatform?: string;
   originBotKey?: string;
   originChatId?: string;
   originThreadId?: string;
+  /** See `BackgroundJob.originUserId`. */
+  originUserId?: string;
+  /** See `BackgroundJob.toolsetNarrowing`. */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   remotePeer?: string;
   remoteJobId?: string;
 }

@@ -1,10 +1,16 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type { InboundMessage } from '@ethosagent/types';
 import { isVoiceOutboundAdapter, voiceAudioMimeType } from '@ethosagent/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
 import type { RawSlackFile } from '../routing/triage';
+import { loadSlackSdk } from '../sdk';
 import { stubSlackWebApi } from './stub-slack-web-api';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 // The real Bolt App is constructed but never started (no socket opens), and the
 // client is swapped for a spy — mirrors the outbound-media test harness.

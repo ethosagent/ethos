@@ -206,6 +206,19 @@ describe('browser takeover socket', () => {
     expect(status).toBe(403);
   });
 
+  it('refuses a loopback Origin on another localhost port', async () => {
+    const port = Number(new URL(url).port);
+    const { ws } = open({
+      cookie: COOKIE,
+      origin: `http://127.0.0.1:${port === 1 ? 2 : port - 1}`,
+    });
+    const status = await new Promise<number>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on('error', () => resolve(0));
+    });
+    expect(status).toBe(403);
+  });
+
   it('starts a bounded screencast and reports the page URL on hello', async () => {
     const client = await ready();
     expect(client.frames[0]).toEqual({

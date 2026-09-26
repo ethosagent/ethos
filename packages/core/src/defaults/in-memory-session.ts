@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   CompressionEvent,
   MessagePage,
   MessagePageOptions,
@@ -7,6 +8,7 @@ import type {
   SessionFilter,
   SessionStore,
   SessionUsage,
+  StoredDecision,
   StoredMessage,
 } from '@ethosagent/types';
 
@@ -14,6 +16,7 @@ export class InMemorySessionStore implements SessionStore {
   private sessions = new Map<string, Session>();
   private messages = new Map<string, StoredMessage[]>();
   private compressions = new Map<string, CompressionEvent[]>();
+  private decisions = new Map<string, StoredDecision[]>();
   private turnState = new Map<string, { turnCount: number; lastCompactionTurn: number }>();
   private idCounter = 0;
 
@@ -61,15 +64,21 @@ export class InMemorySessionStore implements SessionStore {
     this.sessions.delete(id);
     this.messages.delete(id);
     this.compressions.delete(id);
+    this.decisions.delete(id);
     this.turnState.delete(id);
   }
 
   async listSessions(filter?: SessionFilter): Promise<Session[]> {
     let results = [...this.sessions.values()];
     if (filter?.platform) results = results.filter((s) => s.platform === filter.platform);
+    // Literal, case-sensitive — the SQLite store's `substr` comparison.
+    const keyPrefix = filter?.keyPrefix;
+    if (keyPrefix) results = results.filter((s) => s.key.startsWith(keyPrefix));
     if (filter?.personalityId)
       results = results.filter((s) => s.personalityId === filter.personalityId);
     if (filter?.workingDir) results = results.filter((s) => s.workingDir === filter.workingDir);
+    if (filter?.parentSessionId)
+      results = results.filter((s) => s.parentSessionId === filter.parentSessionId);
     if (filter?.since) {
       const since = filter.since;
       results = results.filter((s) => s.createdAt >= since);
@@ -166,6 +175,40 @@ export class InMemorySessionStore implements SessionStore {
     return { messages: accepted.flat().reverse(), hasMore };
   }
 
+  /** Twin of the SQLite store's (extensions/session-sqlite/src/decisions.ts):
+   *  refuses an unknown session, as the foreign key does there. */
+  async appendDecision(
+    sessionId: string,
+    event: Extract<AgentEvent, { type: 'decision' }>,
+  ): Promise<StoredDecision> {
+    if (!this.sessions.has(sessionId)) throw new Error(`session not found: ${sessionId}`);
+    const rows = this.decisions.get(sessionId) ?? [];
+    const row: StoredDecision = {
+      sessionId,
+      seq: (rows.at(-1)?.seq ?? 0) + 1,
+      event: structuredClone(event),
+      createdAt: new Date(),
+    };
+    rows.push(row);
+    this.decisions.set(sessionId, rows);
+    return row;
+  }
+
+  async getDecisions(
+    sessionId: string,
+    filter?: { toolCallIds?: readonly string[]; traceIds?: readonly string[] },
+  ): Promise<StoredDecision[]> {
+    const rows = this.decisions.get(sessionId) ?? [];
+    if (!filter) return [...rows];
+    const calls = new Set(filter.toolCallIds ?? []);
+    const traces = new Set(filter.traceIds ?? []);
+    return rows.filter(
+      (r) =>
+        (r.event.toolCallId !== undefined && calls.has(r.event.toolCallId)) ||
+        (r.event.traceId !== undefined && traces.has(r.event.traceId)),
+    );
+  }
+
   async updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -244,9 +287,13 @@ export class InMemorySessionStore implements SessionStore {
   async pruneOldSessions(olderThan: Date): Promise<number> {
     let count = 0;
     for (const [id, session] of this.sessions.entries()) {
-      if (session.updatedAt < olderThan) {
+      // Same rule as SQLiteSessionStore.pruneOldSessions: a session holding a
+      // message at or after the cutoff is kept, whatever its `updatedAt`.
+      const recent = (this.messages.get(id) ?? []).some((m) => m.timestamp >= olderThan);
+      if (session.updatedAt < olderThan && !recent) {
         this.sessions.delete(id);
         this.messages.delete(id);
+        this.decisions.delete(id);
         count++;
       }
     }

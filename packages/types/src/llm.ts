@@ -37,12 +37,188 @@ export type CompletionChunk =
       costBasis?: 'priced' | 'local' | 'unknown';
     }
   | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' }
-  | { type: 'warning'; message: string };
+  | { type: 'warning'; message: string }
+  /**
+   * §VI Substantive amendment (openclaw-9.5-adoption item 7, D31) — a
+   * provider-side compaction block. The provider summarized the conversation
+   * server-side (Anthropic's `compact_20260112` context-management edit) and
+   * the block REPLACES everything before it on later requests, so it must be
+   * round-tripped: `encryptedContent` is opaque provider metadata carried back
+   * byte-for-byte, `content` the readable summary. `content: null` is a failed
+   * compaction the provider treats as a no-op. Emitted only by
+   * `@ethosagent/llm-anthropic`; every other provider never emits it.
+   * Governance: docs/content/building/explanation/llm-provider-governance.md.
+   */
+  | { type: 'compaction'; content: string | null; encryptedContent: string | null };
 
 export interface Message {
   role: 'user' | 'assistant';
   content: string | MessageContent[];
 }
+
+// ---------------------------------------------------------------------------
+// Compaction envelope — how a `compaction` chunk lives in history
+// ---------------------------------------------------------------------------
+//
+// Item 7 (D31) — a compaction block must never be forgeable by model output
+// (or by anything prompt injection can steer into it). Two forms:
+//
+// - STORED (sessions.db): an assistant row marked STRUCTURALLY. `toolName` is
+//   `COMPACTION_ROW_TOOL_NAME` (a field no model-written assistant row ever
+//   carries: `streamStep` sets it only on the compaction path), the payload is
+//   in `contentBlocks` (kept out of the FTS index, like image payloads), and
+//   `content` is a readable marker (`renderCompactionMarker`) — which is what
+//   every transcript, history view and search result shows. Written only by
+//   `compactionStoredRow`; read only by `compactionFromStoredRow`.
+// - IN MEMORY (`Message` handed to a provider): a string whose prefix carries
+//   a random per-process nonce. Built only by `encodeCompactionEnvelope`
+//   (from a structural row or a live chunk) and recognised only by
+//   `decodeCompactionEnvelope`, which requires that nonce — a model reply that
+//   happens to start with the same-looking text is ordinary text. The nonce
+//   never reaches a model: providers either turn the envelope into a block
+//   (Anthropic) or flatten it to its summary (`flattenCompactionEnvelopes`),
+//   and local compaction flattens before summarizing (packages/core
+//   `maybeCompact`, `applyOverflowRetry`). Pinned by
+//   packages/types/src/__tests__/compaction-envelope.test.ts and
+//   packages/core/src/__tests__/server-compaction.test.ts ("forged envelope").
+
+/** The `toolName` that marks a stored assistant row as a compaction block. */
+export const COMPACTION_ROW_TOOL_NAME = '_provider_compaction';
+
+/** The readable marker a compaction row shows in transcripts and history. */
+export const COMPACTION_MARKER = '— context compacted by the provider —';
+
+/** The two fields of a `compaction` chunk. */
+export interface CompactionEnvelope {
+  content: string | null;
+  encryptedContent: string | null;
+}
+
+/** The marker line, followed by the readable summary when there is one. */
+export function renderCompactionMarker(summary: string | null): string {
+  return summary ? `${COMPACTION_MARKER}\n\n${summary}` : COMPACTION_MARKER;
+}
+
+/** The fields of an assistant `StoredMessage` that persist a compaction block. */
+export function compactionStoredRow(c: CompactionEnvelope): {
+  content: string;
+  toolName: string;
+  contentBlocks: MessageContent[];
+} {
+  return {
+    content: renderCompactionMarker(c.content),
+    toolName: COMPACTION_ROW_TOOL_NAME,
+    contentBlocks: [{ type: 'text', text: envelopeJson(c) }],
+  };
+}
+
+/** The block a stored row persists, or `null` when the row is not one. */
+export function compactionFromStoredRow(row: {
+  role: string;
+  toolName?: string;
+  contentBlocks?: MessageContent[];
+}): CompactionEnvelope | null {
+  if (row.role !== 'assistant' || row.toolName !== COMPACTION_ROW_TOOL_NAME) return null;
+  const block = row.contentBlocks?.[0];
+  return block?.type === 'text' ? parseEnvelopeJson(block.text) : null;
+}
+
+let envelopePrefix: string | undefined;
+/** Lazily minted, so importing this module never touches `crypto`. */
+function inMemoryPrefix(): string {
+  envelopePrefix ??= `\u001eethos:compaction:${globalThis.crypto.randomUUID()}\u001e`;
+  return envelopePrefix;
+}
+
+/** Encode a compaction block as the in-memory string content of an assistant `Message`. */
+export function encodeCompactionEnvelope(c: CompactionEnvelope): string {
+  return `${inMemoryPrefix()}${envelopeJson(c)}`;
+}
+
+/** The block `text` carries, or `null` unless it is THIS process's envelope. */
+export function decodeCompactionEnvelope(text: string): CompactionEnvelope | null {
+  const prefix = inMemoryPrefix();
+  return text.startsWith(prefix) ? parseEnvelopeJson(text.slice(prefix.length)) : null;
+}
+
+function envelopeJson(c: CompactionEnvelope): string {
+  return JSON.stringify({ content: c.content, encrypted_content: c.encryptedContent });
+}
+
+function parseEnvelopeJson(json: string): CompactionEnvelope | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { content, encrypted_content } = parsed as Record<string, unknown>;
+  const ok = (v: unknown): v is string | null => v === null || typeof v === 'string';
+  if (!ok(content) || !ok(encrypted_content)) return null;
+  return { content, encryptedContent: encrypted_content };
+}
+
+/**
+ * D33 — `messages` as a provider that cannot take a compaction block must see
+ * them: each envelope becomes its readable summary as assistant text, merged
+ * into the assistant message that follows it (so roles still alternate for
+ * providers that require it), and `encryptedContent` is dropped. A null or
+ * empty summary sends nothing. Returns `messages` itself when there is no
+ * envelope. Core applies it for every provider not marked as compacting
+ * server-side — `toLLMMessages` (packages/core/src/agent-loop/history.ts) by
+ * default, and `ChainedProvider` per hop for a mid-call failover — so a plugin
+ * provider never sees an envelope; the built-in providers except Anthropic
+ * with server compaction on also call it themselves, which is then a no-op.
+ */
+export function flattenCompactionEnvelopes(messages: Message[]): Message[] {
+  if (!messages.some(isCompactionEnvelopeMessage)) return messages;
+  const out: Message[] = [];
+  let pending = '';
+  for (const msg of messages) {
+    if (isCompactionEnvelopeMessage(msg)) {
+      const summary = decodeCompactionEnvelope(msg.content as string)?.content ?? '';
+      if (summary) pending = pending ? `${pending}\n\n${summary}` : summary;
+      continue;
+    }
+    if (pending && msg.role === 'assistant') {
+      out.push({
+        role: 'assistant',
+        content:
+          typeof msg.content === 'string'
+            ? `${pending}\n\n${msg.content}`
+            : [{ type: 'text', text: pending }, ...msg.content],
+      });
+      pending = '';
+      continue;
+    }
+    if (pending) {
+      out.push({ role: 'assistant', content: pending });
+      pending = '';
+    }
+    out.push(msg);
+  }
+  if (pending) out.push({ role: 'assistant', content: pending });
+  return out;
+}
+
+function isCompactionEnvelopeMessage(msg: Message): boolean {
+  return (
+    msg.role === 'assistant' &&
+    typeof msg.content === 'string' &&
+    decodeCompactionEnvelope(msg.content) !== null
+  );
+}
+
+/**
+ * Item 7 — the `warning` chunk message a provider emits when the API refused
+ * its server-side compaction edit and it retried the request without one
+ * (`AnthropicProvider.complete`). `streamStep` (packages/core) matches on it to
+ * record `llm.server_compaction_rejected` and let local compaction run for the
+ * rest of the turn.
+ */
+export const SERVER_COMPACTION_REJECTED_WARNING =
+  'server_compaction_rejected: the API refused the compaction edit; the request was retried without it';
 
 export type MessageContent =
   | { type: 'text'; text: string }

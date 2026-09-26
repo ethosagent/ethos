@@ -1,6 +1,6 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type { Attachment } from '@ethosagent/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // grammy mock — includes sendPhoto / sendDocument and a capturing InputFile.
@@ -54,6 +54,12 @@ vi.mock('grammy', () => {
 });
 
 import { TelegramAdapter } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 let cache: InMemoryAttachmentCache;
 const mk = () => new TelegramAdapter({ token: '1:fake', cache, botKey: 'test-bot' });

@@ -294,6 +294,15 @@ describe('ethos a2a enable/disable/status', () => {
     expect(output(logSpy)).not.toContain('default port');
   });
 
+  it('enable/disable keep the operator peering opt-in (a2a.peering.allowPrivateUrls)', async () => {
+    const config = baseConfig({ a2a: { enabled: false, peering: { allowPrivateUrls: true } } });
+    const { deps, saved } = makeDeps({ config });
+    await runA2aCommand(['enable'], deps);
+    await runA2aCommand(['disable'], deps);
+    expect(saved[0]?.a2a).toEqual({ enabled: true, peering: { allowPrivateUrls: true } });
+    expect(saved[1]?.a2a).toEqual({ enabled: false, peering: { allowPrivateUrls: true } });
+  });
+
   it('disable writes a2a.enabled: false', async () => {
     const { deps, saved } = makeDeps();
     await runA2aCommand(['disable'], deps);

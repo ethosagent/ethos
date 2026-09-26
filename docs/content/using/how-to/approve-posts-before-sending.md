@@ -175,7 +175,7 @@ Then confirm the post arrived in the destination channel, from the bot the card 
 ## Limits
 
 - **The reviewer is advisory.** A human approves every publication; no verdict can approve or block one.
-- **MCP tools and `a2a_send` are not gated.** A watcher's `deliver` is: it is refused at creation, and re-checked on every change, so a watcher stored before you turned the policy on stops posting to a third-party chat on its next change. `watcher_list` shows the withheld reason, which points you at `wake`. A watcher created before owners were recorded names no personality and still delivers — delete and recreate it.
+- **MCP tools and `a2a_send` are not gated.** A watcher's `deliver` is: it is refused at creation, and re-checked on every change, so a watcher stored before you turned the policy on stops posting to a third-party chat on its next change. `watcher_list` shows the withheld reason, which points you at `wake`. A watcher created before owners were recorded names no personality and still delivers — remove its entry from `~/.ethos/watchers/watchers.json` and recreate it.
 - **Delivery is at-least-once.** An item handed to the delivery ledger without confirmation becomes `unconfirmed`, and the ledger — the record of every [delivery obligation](../../getting-started/glossary.md#delivery-obligation) Ethos owes — owns the retry from there. Telegram reports success on a multi-part message even when only part of it landed.
 - **A sent publication cannot be unsent.** Delete it on the platform.
 - **The windows are fixed in code**, not configurable: 7 days waiting for a human, 24 hours holding an approval, 10 minutes before a claimed-but-silent item is reconciled.

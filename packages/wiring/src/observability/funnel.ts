@@ -114,6 +114,28 @@ export function mergeFunnelState(a: FunnelState, b: FunnelState): FunnelState {
   };
 }
 
+function parseFunnelState(raw: string | null): FunnelState | null {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw) as FunnelState;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the stamp state without constructing a {@link FunnelTracker} — for
+ * `ethos doctor --funnel`, which must not open (and so migrate) the
+ * observability store the tracker's host wiring hands it (plan
+ * openclaw-9.5-adoption D24). Null when absent or unparseable.
+ */
+export async function readFunnelState(
+  storage: Storage,
+  dataDir: string,
+): Promise<FunnelState | null> {
+  return parseFunnelState(await storage.read(join(dataDir, FUNNEL_STATE_FILE)));
+}
+
 export class FunnelTracker {
   private readonly storage: Storage;
   private readonly path: string;
@@ -131,15 +153,9 @@ export class FunnelTracker {
     this.now = opts.now ?? Date.now;
   }
 
-  /** Read the current stamp state (for `ethos doctor --funnel`). Null when absent. */
+  /** Read the current stamp state. Null when absent. */
   async readState(): Promise<FunnelState | null> {
-    const raw = await this.storage.read(this.path);
-    if (raw === null) return null;
-    try {
-      return JSON.parse(raw) as FunnelState;
-    } catch {
-      return null;
-    }
+    return parseFunnelState(await this.storage.read(this.path));
   }
 
   async recordSetupCompleted(opts: {

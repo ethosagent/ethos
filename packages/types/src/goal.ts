@@ -49,6 +49,16 @@ export interface CriterionResult {
   score?: number;
   evidence: string;
   gap?: string;
+  /**
+   * How a check was settled. `'substring'` is the no-judge fallback for a
+   * check without a command (the output contains the description verbatim) —
+   * it almost never passes, so its score carries no progress signal and the
+   * goal runner never treats it as a plateau (`isPlateau`,
+   * extensions/goal-runner/src/index.ts). Set by `judge()` in
+   * extensions/goal-runner/src/judge.ts. Absent on verdicts persisted before
+   * this field existed and on rubric items.
+   */
+  method?: 'command' | 'llm' | 'substring';
 }
 
 export interface Verdict {

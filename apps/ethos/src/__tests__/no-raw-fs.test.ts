@@ -32,6 +32,7 @@
 //   extensions/call-log/          delivery-ledger's atomic redelivery claim is a
 //   extensions/notify-queue/      conditional UPDATE and session-cards derives its
 //   extensions/inbound-dedup/     per-session `seq` with MAX()+1 inside the insert
+//   extensions/inbound-spool/
 //   extensions/outbox/
 //   extensions/channel-transcript-sqlite/
 //                                 — both need a real transaction, not file IO.
@@ -50,7 +51,11 @@
 //                                 the answer — "did this approval still match what
 //                                 the approver saw", "did this process win the
 //                                 claim" — which a read-then-write through Storage
-//                                 cannot express.)
+//                                 cannot express.
+//                                 inbound-spool's replay claim is the same shape
+//                                 as delivery-ledger's: a conditional UPDATE inside
+//                                 a transaction whose affected-row count decides
+//                                 which claimant runs the owed turn.)
 //
 //   packages/a2a/                Same rationale as the SQLite stores above:
 //   src/sqlite-task-store.ts     SQLiteA2aTaskStore (T1.6) opens a raw path via
@@ -59,9 +64,11 @@
 //                                 and idempotency key survive an `ethos serve`
 //                                 restart.
 //
-//   extensions/cron/src/index.ts  File lock via fs.open(..., 'wx'): exclusive
-//                                 create is a POSIX-level primitive with no
-//                                 equivalent in the Storage interface.
+//   extensions/cron/src/          jobs.json lock via fs.open(..., 'wx'): exclusive
+//   jobs-lock.ts                  create is a POSIX-level primitive with no
+//                                 equivalent in the Storage interface; stale
+//                                 detection reads the holder body, stats its
+//                                 mtime and unlinks a provably dead lock.
 //
 //   extensions/claw-migrate/     copyFile preserves byte-for-byte content including
 //   src/index.ts                 file metadata. Storage models text (utf-8 strings);
@@ -301,6 +308,7 @@ const ALLOWED_PREFIXES = [
   'extensions/notify-queue/',
   'extensions/outbox/',
   'extensions/inbound-dedup/',
+  'extensions/inbound-spool/',
   'extensions/channel-transcript-sqlite/',
   'extensions/voice-providers/',
   'extensions/agent-mesh/',
@@ -314,7 +322,7 @@ const ALLOWED_PREFIXES = [
 // Specific files (relative to ROOT) that are permitted to import node:fs.
 const ALLOWED_FILES = new Set([
   'packages/core/src/scoped/scoped-fs.ts',
-  'extensions/cron/src/index.ts',
+  'extensions/cron/src/jobs-lock.ts',
   'extensions/claw-migrate/src/index.ts',
   'extensions/skills/src/skill-compat.ts',
   'extensions/skills/src/file-context-injector.ts',

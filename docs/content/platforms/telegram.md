@@ -114,7 +114,7 @@ Group chats share one session across every member. To give each user their own t
 
 Plugin commands registered via `registerSlashCommand()` appear in Telegram's command menu. The gateway calls `registerCommands()` at startup, which pushes the command list to the Telegram Bot API via `setMyCommands`. Command names are sanitized to Telegram's constraints: lowercase, underscores only, max 32 characters.
 
-Commands are dispatched via the gateway's text-matching pipeline — the same path as built-in `/` commands. See [Register plugin slash commands](../building/how-to/register-plugin-commands.md) for the full walkthrough.
+Commands are dispatched via the gateway's text-matching pipeline — the same path as built-in `/` commands. In a group, Telegram's menu sends a command addressed to one bot, `/new@your_bot`. The gateway reads a command addressed to its own `@username` as the plain command, so arguments still follow it (`/branch@your_bot 2`). It ignores a command addressed to another bot, `/new@other_bot`: no reply and no agent turn (`commandForThisBot` in `extensions/gateway/src/index.ts`). See [Register plugin slash commands](../building/how-to/register-plugin-commands.md) for the full walkthrough.
 
 ### 3b. Platform prerequisites for group messages
 

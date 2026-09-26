@@ -64,6 +64,10 @@ export class EthosJobRunner implements JobRunner {
       rootSessionKey: job.rootSessionKey,
       jobId: job.id,
       abortSignal: ctx.signal,
+      // The spawning turn's narrowing (S12), so the child never regains a
+      // tool the parent turn was narrowed out of.
+      ...(job.toolsetNarrowing?.narrow ? { toolsetNarrow: job.toolsetNarrowing.narrow } : {}),
+      ...(job.toolsetNarrowing?.exclude ? { toolsetExclude: job.toolsetNarrowing.exclude } : {}),
     });
   }
 }

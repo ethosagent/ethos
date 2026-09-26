@@ -428,6 +428,8 @@ describe('drawer-reducer', () => {
           toolName: 'terminal',
           args: { command: 'rm -rf /' },
           reason: 'recursive force-delete',
+          alwaysAsk: false,
+          hardline: false,
         },
       },
       { type: 'tool_start', toolCallId: 'c1', toolName: 'terminal', args: { command: 'ls' } },
@@ -463,12 +465,16 @@ describe('drawer-reducer', () => {
       return entries.map((e) =>
         e.kind === 'action'
           ? { kind: e.kind, toolName: e.toolName, status: e.status, durationMs: e.durationMs }
-          : {
-              kind: e.kind,
-              claim: e.claim,
-              evidence: e.evidence,
-              citesToolCallId: e.citesToolCallId,
-            },
+          : e.kind === 'decision'
+            ? { kind: e.kind, event: e.event }
+            : e.kind === 'notice'
+              ? { kind: e.kind, word: e.word, subject: e.subject }
+              : {
+                  kind: e.kind,
+                  claim: e.claim,
+                  evidence: e.evidence,
+                  citesToolCallId: e.citesToolCallId,
+                },
       );
     }
 

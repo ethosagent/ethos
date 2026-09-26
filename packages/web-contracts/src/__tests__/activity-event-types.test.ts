@@ -19,6 +19,9 @@ const EXCLUDED: SseEventType[] = [
   'context_meta',
   'stream_meta',
   'protocol.upgrade_required',
+  // An interactive prompt answered in the requesting chat pane; it carries
+  // the user's pending message text, which has no business fanning out.
+  'credential_required',
 ];
 
 describe('ACTIVITY_EVENT_TYPES', () => {
@@ -43,7 +46,18 @@ describe('ACTIVITY_EVENT_TYPES', () => {
   });
 
   it('admits the discrete-action types the feed exists to show', () => {
-    for (const type of ['tool_start', 'tool_end', 'done', 'error', 'cron.fired'] as const) {
+    // `decision`: plan decision-provider-personality N7d, with its converter.
+    for (const type of [
+      'tool_start',
+      'tool_end',
+      'done',
+      'error',
+      // A1 (ux-feedback plan) — a safety halt is a discrete action, not
+      // token plumbing: the feed exists to show an agent that stopped early.
+      'halt',
+      'cron.fired',
+      'decision',
+    ] as const) {
       expect(ACTIVITY_EVENT_TYPES.has(type)).toBe(true);
     }
   });

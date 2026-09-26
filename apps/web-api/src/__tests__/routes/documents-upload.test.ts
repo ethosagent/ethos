@@ -66,7 +66,7 @@ describe('POST /documents/upload', () => {
     const tokens = new WebTokenRepository({ dataDir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();
@@ -77,10 +77,14 @@ describe('POST /documents/upload', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // Same-origin, as the SPA's fetch sends it — writes here pass the CSRF check
+  // (S8; the cross-origin refusal is pinned in ../middleware/csrf.test.ts).
+  const sameOrigin = { origin: 'http://localhost:3000', host: 'localhost:3000' };
+
   const upload = (query: string, body: BodyInit, headers: Record<string, string> = {}) =>
     app.request(`/documents/upload?${query}`, {
       method: 'POST',
-      headers: { cookie, ...headers },
+      headers: { cookie, ...sameOrigin, ...headers },
       body,
     });
 
@@ -227,7 +231,12 @@ describe('POST /documents/upload', () => {
       '/documents/upload?personality=writer&root=0&path=liar.bin',
       // `duplex` is required by undici for a streaming request body; it is not
       // in the DOM `RequestInit` type, hence the widened literal.
-      { method: 'POST', headers: { cookie }, body: stream, duplex: 'half' } as RequestInit,
+      {
+        method: 'POST',
+        headers: { cookie, ...sameOrigin },
+        body: stream,
+        duplex: 'half',
+      } as RequestInit,
     );
     expect(res.status).toBe(413);
     expect(await codeOf(res)).toBe('PAYLOAD_TOO_LARGE');

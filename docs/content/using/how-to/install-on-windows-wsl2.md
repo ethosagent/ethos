@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: install-on-windows-wsl2
 time: 15 min
-updated: 2026-06-02
+updated: 2026-09-25
 ---
 
 WSL2 runs a real Linux kernel in a lightweight VM, so Ethos inside it behaves identically to an Ubuntu install. Pick this path when you want the dashboard's embedded terminal pane, real POSIX behaviour, or a shared Linux filesystem with your dev tools.
@@ -132,6 +132,10 @@ WSL2 has two filesystems. Where you put files matters for performance and correc
 
 Keep `~/.ethos/` and your projects on the Linux side. Operations on `/mnt/c/` cross a 9P network bridge and are 10–100x slower than native ext4. File watchers (`inotify`) across that bridge are unreliable.
 
+:::warning Never put `~/.ethos/` on `/mnt/c/`
+Ethos keeps its sessions, delivery ledger and inbound spool in SQLite databases under `~/.ethos/`. SQLite's file locking is not reliable over 9P, so a state directory on `/mnt/c/` (or set there with `ETHOS_STATE_DIR`) can corrupt those databases. The same applies to Docker Desktop bind mounts from a Windows path. `ethos doctor` warns under **Data directory** when the state directory sits on 9p, FUSE, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor.ts)).
+:::
+
 To open a WSL2 directory in Windows Explorer:
 
 ```bash
@@ -214,6 +218,8 @@ dos2unix path/to/script.sh
 **Dashboard not reachable from Windows browser.** On NAT-mode WSL2 (Windows 10 or older Windows 11), bind the web server to `0.0.0.0`. If localhost forwarding is off, use the WSL VM's IP: `ip -4 addr show eth0 | grep inet`.
 
 **"Connection refused" to Ollama or LM Studio on Windows.** The server is bound to `127.0.0.1` instead of `0.0.0.0`. Reconfigure the server to listen on all interfaces. Add a Windows Firewall inbound rule for the port if needed.
+
+**`ethos doctor` warns the state directory is on 9p.** `~/.ethos/` (or `ETHOS_STATE_DIR`) points under `/mnt/c/`. Stop Ethos, move the directory to the Linux side, and unset `ETHOS_STATE_DIR`.
 
 **Slow `git status` or `ethos chat` in a repo.** The repo is under `/mnt/c/`. Move it to `~/code/` on the Linux side.
 

@@ -21,6 +21,7 @@ export { BoundedLogBuffer, type RunnerLogLine } from './log-buffer';
 // re-ingests only a bounded digest. Exported so an out-of-process runner
 // appends the SAME instruction rather than growing a third copy of it.
 export { SUMMARY_INSTRUCTION } from './summary';
+export { narrowedToolset } from './toolset-narrowing';
 
 // ---------------------------------------------------------------------------
 // BackgroundExecutor — the detached background engine for background sub-agents.

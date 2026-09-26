@@ -1,5 +1,6 @@
 import type { ActivityHistoryItemWire, SseEvent } from '@ethosagent/web-contracts';
 import { ACTIVITY_EVENT_TYPES } from '@ethosagent/web-contracts';
+import { decisionRowView } from './trail';
 
 // Pure logic behind `pages/Activity.tsx` — the feed has two sources with two
 // different shapes (durable rows from `activity.history`, live envelopes from
@@ -155,7 +156,25 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         ],
       };
 
-    case 'tool_progress':
+    case 'tool_progress': {
+      // Tool-progress audience boundary (CLAUDE.md, Phase 30.2): only
+      // `'user'`-audience progress surfaces here — the same gate the trail
+      // applies in `applyTrailEvent`.
+      if (event.audience !== 'user') return null;
+      // A loop-level notice (compaction retry, provider fallback — A4) rides
+      // `tool_progress` under the reserved `_loop` name. It is a notice, not a
+      // tool that ran: message only, never a `_loop:` prefix — consistent with
+      // the trail's notice row.
+      if (event.toolName === '_loop') {
+        return {
+          ...base,
+          key: `progress:${ctx.sessionId}:${ctx.seq}`,
+          kind: 'notice',
+          label: 'tool_progress',
+          summary: event.message,
+          details: [{ key: 'message', kind: 'text', value: event.message }],
+        };
+      }
       return {
         ...base,
         key: `progress:${ctx.sessionId}:${ctx.seq}`,
@@ -170,6 +189,7 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
             : ([{ key: 'percent', kind: 'text', value: `${event.percent}%` }] as ActivityDetail[])),
         ],
       };
+    }
 
     case 'done':
       return {
@@ -199,6 +219,29 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         details: [
           { key: 'error', kind: 'text', value: event.error },
           { key: 'code', kind: 'text', value: event.code },
+        ],
+      };
+
+    case 'halt':
+      // A1 (ux-feedback plan) — an early safety stop. Not `error` (the turn
+      // still completes, partial) and not `approval` (nothing is waiting on a
+      // human): a neutral notice whose glyph + word carry the warning.
+      return {
+        ...base,
+        key: `halt:${ctx.sessionId}:${ctx.seq}`,
+        kind: 'notice',
+        label: 'halt',
+        summary: `⚠ stopped early · ${event.kind} · ${event.rule}`,
+        details: [
+          { key: 'kind', kind: 'text', value: event.kind },
+          { key: 'rule', kind: 'text', value: event.rule },
+          ...(event.toolName === undefined
+            ? []
+            : ([{ key: 'tool', kind: 'text', value: event.toolName }] as ActivityDetail[])),
+          ...(event.count === undefined
+            ? []
+            : ([{ key: 'count', kind: 'text', value: String(event.count) }] as ActivityDetail[])),
+          { key: 'message', kind: 'text', value: event.message },
         ],
       };
 
@@ -406,6 +449,39 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
           { key: 'plan', kind: 'args', args: event.plan },
         ],
       };
+
+    case 'decision': {
+      // plan decision-provider-personality §15.1 — the same row vocabulary the
+      // trail draws (`decisionRowView`). A `started` and its `settled` share
+      // `id`, so they collapse onto one row and the settled one wins the merge.
+      const view = decisionRowView(event);
+      const settled = event.phase === 'settled';
+      return {
+        ...base,
+        key: `decision:${ctx.sessionId}:${event.id}`,
+        kind: !settled
+          ? 'tool_start'
+          : view.tone === 'failed'
+            ? 'error'
+            : view.tone === 'warning'
+              ? 'approval'
+              : 'tool_end',
+        label: 'decision',
+        endedAt: settled ? ctx.timestamp : null,
+        summary: `${view.glyph} ${view.word} · ${view.tag} ${view.subject}`,
+        details: [
+          { key: 'site', kind: 'text', value: event.site },
+          { key: 'mode', kind: 'text', value: event.mode },
+          { key: 'personality', kind: 'text', value: event.personalityId },
+          ...(view.detail === ''
+            ? []
+            : ([{ key: 'detail', kind: 'text', value: view.detail }] as ActivityDetail[])),
+          ...(settled
+            ? ([{ key: 'duration', kind: 'text', value: view.duration }] as ActivityDetail[])
+            : []),
+        ],
+      };
+    }
 
     case 'message_persisted':
       return {

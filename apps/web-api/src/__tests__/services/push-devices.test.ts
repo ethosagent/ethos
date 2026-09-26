@@ -79,6 +79,8 @@ describe('push devices + Expo transport', () => {
     toolName: 'bash',
     args: { command: 'git push' },
     reason: null,
+    alwaysAsk: false,
+    hardline: false,
   };
 
   beforeEach(() => {

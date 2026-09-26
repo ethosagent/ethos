@@ -18,6 +18,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/tools-messaging": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/watchers": "workspace:*"
   }

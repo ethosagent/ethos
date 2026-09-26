@@ -169,6 +169,9 @@ describe('scriptExclusionFor — per-category mapping', () => {
     { name: 'terminal', meta: { toolset: 'terminal' }, category: 'credentials' },
     { name: 'get_session_events', meta: { toolset: 'debug' }, category: 'credentials' },
     { name: 'get_observability', meta: { toolset: 'debug' }, category: 'credentials' },
+    // plan decision-tool D14 — `decide` is alwaysInclude and hidden per
+    // personality; the advertised script surface must never list it.
+    { name: 'decide', meta: { toolset: 'decision' }, category: 'decision' },
   ];
 
   for (const c of cases) {
@@ -193,11 +196,24 @@ describe('scriptExclusionError', () => {
       'plugin',
       'clarify',
       'credentials',
+      'decision',
     ];
     for (const category of categories) {
       const error = scriptExclusionError('some_tool', category);
       expect(error).toContain('some_tool');
       expect(error).toContain(`excluded category: ${category}`);
     }
+  });
+});
+
+describe('scriptCallableFor — decide (plan decision-tool D14)', () => {
+  it('an alwaysInclude decide tool is never advertised, even to an unrestricted personality', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('read_file', 'file'));
+    registry.register({ ...makeTool('decide', 'decision'), alwaysInclude: true });
+    expect(scriptCallableFor(makePersonality(['read_file', 'run_code']), registry)).toEqual([
+      'read_file',
+    ]);
+    expect(scriptCallableFor(makePersonality(), registry)).toEqual(['read_file']);
   });
 });

@@ -16,6 +16,8 @@
 // Layer purity: imports ONLY `@ethosagent/types` (the AgentCard TYPE), `jose`
 // (decodeJwt — an UNVERIFIED read of MY OWN token's jti), `node:crypto`
 // (randomUUID), and sibling `./` modules. NO core, NO extensions, NO apps.
+// Every request goes through `./egress`'s `a2aFetch` (security-kernel
+// `safeFetch`); there is no plain-`fetch` path (plan openclaw-2026.9.6-gaps S7).
 
 import { randomUUID } from 'node:crypto';
 import type { AgentCard } from '@ethosagent/types';
@@ -24,6 +26,7 @@ import type { A2aChallengeStruct, ChallengeRequest, ChallengeResponse } from './
 import { fetchAndVerifyCard } from './client';
 import { signStruct } from './crypto';
 import { buildDelegationCredentials } from './delegation';
+import { type A2aEgressOptions, A2aUrlRefusedError, a2aFetch, type NetworkPolicy } from './egress';
 import {
   A2A_METHOD_MESSAGE_SEND,
   A2A_REQUEST_POP_CONTEXT,
@@ -70,6 +73,7 @@ export type A2aOutboundResult =
 /** Discriminated failure reasons for the outbound path. */
 export type A2aOutboundErrorCode =
   | 'egress_denied'
+  | 'url_refused'
   | 'fanout_exhausted'
   | 'fetch_failed'
   | 'invalid_response'
@@ -86,8 +90,18 @@ export class A2aOutboundError extends Error {
 }
 
 export interface A2aOutboundClientDeps {
-  /** Inject a `fetch` implementation (tests); defaults to the global `fetch`. */
+  /**
+   * Inject a `fetch` implementation (tests). Every request is still validated
+   * by `safeFetch` first; only the connection pinning is lost (./egress).
+   */
   fetchImpl?: typeof fetch;
+  /**
+   * Default network policy when a call passes none (./egress). Absent → `{}`:
+   * public internet only — cloud-metadata, private and reserved hosts refused.
+   */
+  networkPolicy?: NetworkPolicy;
+  /** Test seam: DNS resolver for the private-range check (./egress). */
+  resolveHost?: (hostname: string) => Promise<string[]>;
   /** Injectable clock (ms epoch). Default `Date.now`. */
   now?: () => number;
   /**
@@ -173,6 +187,8 @@ export interface ConnectArgs {
    * the outbound client stays decoupled from the store type.
    */
   egressCheck?: (peerFingerprint: string) => boolean | Promise<boolean>;
+  /** The acting personality's `safety.network`; overrides the client default. */
+  networkPolicy?: NetworkPolicy;
 }
 
 export interface SendMessageArgs {
@@ -188,6 +204,8 @@ export interface SendMessageArgs {
   idempotencyKey?: string;
   /** Present when this call is spawned while servicing an inbound A2A task (P8). */
   delegation?: OutboundDelegation;
+  /** The acting personality's `safety.network`; overrides the client default. */
+  networkPolicy?: NetworkPolicy;
 }
 
 /**
@@ -195,7 +213,9 @@ export interface SendMessageArgs {
  * in tests; a single instance can drive many peers (state lives in {@link A2aSession}).
  */
 export class A2aOutboundClient {
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: typeof fetch | undefined;
+  private readonly networkPolicy: NetworkPolicy | undefined;
+  private readonly resolveHost: ((hostname: string) => Promise<string[]>) | undefined;
   private readonly now: () => number;
   private readonly sendTimeoutMs: number;
   private readonly handshakeTimeoutMs: number;
@@ -216,7 +236,9 @@ export class A2aOutboundClient {
   private readonly lastPopTimestampByJti = new Map<string, number>();
 
   constructor(deps: A2aOutboundClientDeps = {}) {
-    this.fetchImpl = deps.fetchImpl ?? fetch;
+    this.fetchImpl = deps.fetchImpl;
+    this.networkPolicy = deps.networkPolicy;
+    this.resolveHost = deps.resolveHost;
     this.now = deps.now ?? Date.now;
     this.sendTimeoutMs = deps.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
     this.handshakeTimeoutMs = deps.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
@@ -229,9 +251,27 @@ export class A2aOutboundClient {
 
   /** Fetch + verify the peer's card, then run the auth handshake for a token. */
   async connect(args: ConnectArgs): Promise<A2aSession> {
+    const egress = this.egressFor(args.networkPolicy);
+
+    // Egress default-deny BEFORE the card fetch when the fingerprint is already
+    // known (the out-of-band anchor): a peer that is not approved is never even
+    // contacted. An un-anchored first call has no fingerprint until the card is
+    // fetched, so it is checked after verification below — the network policy
+    // in `a2aFetch` is its only pre-fetch gate.
+    if (
+      args.expectedFingerprint &&
+      args.egressCheck &&
+      !(await args.egressCheck(args.expectedFingerprint))
+    ) {
+      throw new A2aOutboundError(
+        'egress_denied',
+        `peer ${args.expectedFingerprint} is not on this personality's A2A egress allowlist`,
+      );
+    }
+
     const peerCard = await fetchAndVerifyCard(args.wellKnownUrl, {
       ...(args.expectedFingerprint ? { expectedFingerprint: args.expectedFingerprint } : {}),
-      fetchImpl: this.fetchImpl,
+      ...egress,
     });
 
     // Self-loop guard (plan §14): refuse calling my own agent unless explicitly
@@ -246,7 +286,13 @@ export class A2aOutboundClient {
     // Egress default-deny (plan §15): a non-approved peer never even sees a
     // challenge. Checked AFTER the self-loop guard, BEFORE the handshake — no
     // card presented, no token requested to a peer the human has not approved.
-    if (args.egressCheck && !(await args.egressCheck(peerCard.keyFingerprint))) {
+    // An anchored call was already checked before the card fetch above, and
+    // `fetchAndVerifyCard` proved the card carries that same fingerprint.
+    if (
+      !args.expectedFingerprint &&
+      args.egressCheck &&
+      !(await args.egressCheck(peerCard.keyFingerprint))
+    ) {
       throw new A2aOutboundError(
         'egress_denied',
         `peer ${peerCard.keyFingerprint} is not on this personality's A2A egress allowlist`,
@@ -262,6 +308,7 @@ export class A2aOutboundClient {
       challengeBody,
       false,
       this.handshakeTimeoutMs,
+      egress,
     );
     if (!isChallengeIssue(challenge)) {
       throw new A2aOutboundError('invalid_response', 'malformed challenge response from peer');
@@ -285,6 +332,7 @@ export class A2aOutboundClient {
       responseBody,
       false,
       this.handshakeTimeoutMs,
+      egress,
     );
     if (!isTokenIssue(minted)) {
       throw new A2aOutboundError('invalid_response', 'malformed token response from peer');
@@ -304,6 +352,7 @@ export class A2aOutboundClient {
    */
   async sendMessage(args: SendMessageArgs): Promise<A2aOutboundResult> {
     const jsonRpcUrl = args.jsonRpcUrl ?? args.session.peerCard.endpoints.jsonRpc;
+    const egress = this.egressFor(args.networkPolicy);
 
     const jti = decodeJwt(args.session.token).jti;
     if (typeof jti !== 'string') {
@@ -381,13 +430,21 @@ export class A2aOutboundClient {
 
       let response: Response;
       try {
-        response = await this.fetchImpl(jsonRpcUrl, {
-          method: 'POST',
-          headers,
-          body: bodyText,
-          signal: AbortSignal.timeout(this.sendTimeoutMs),
-        });
+        response = await a2aFetch(
+          jsonRpcUrl,
+          {
+            method: 'POST',
+            headers,
+            body: bodyText,
+            signal: AbortSignal.timeout(this.sendTimeoutMs),
+          },
+          egress,
+        );
       } catch (err) {
+        // A policy refusal is not a transport failure: never retried.
+        if (err instanceof A2aUrlRefusedError) {
+          throw new A2aOutboundError('url_refused', `Peer endpoint ${err.message}`);
+        }
         const reason = err instanceof Error ? err.message : String(err);
         const failure = new A2aOutboundError(
           'fetch_failed',
@@ -451,6 +508,16 @@ export class A2aOutboundClient {
    * it — see `lastPopTimestampByJti`'s field comment for why. Falls back to
    * `this.now()` when that is already ahead of the last-used value.
    */
+  /** The egress options for one call: its own policy, else the client default. */
+  private egressFor(networkPolicy: NetworkPolicy | undefined): A2aEgressOptions {
+    const policy = networkPolicy ?? this.networkPolicy;
+    return {
+      ...(policy ? { networkPolicy: policy } : {}),
+      ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
+      ...(this.resolveHost ? { resolveHost: this.resolveHost } : {}),
+    };
+  }
+
   private nextPopTimestamp(jti: string): number {
     const candidate = this.now();
     const last = this.lastPopTimestampByJti.get(jti);
@@ -466,16 +533,24 @@ export class A2aOutboundClient {
     body: unknown,
     allowNonOk: boolean,
     timeoutMs: number,
+    egress: A2aEgressOptions,
   ): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.fetchImpl(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      response = await a2aFetch(
+        url,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
+        },
+        egress,
+      );
     } catch (err) {
+      if (err instanceof A2aUrlRefusedError) {
+        throw new A2aOutboundError('url_refused', `Peer endpoint ${err.message}`);
+      }
       const reason = err instanceof Error ? err.message : String(err);
       throw new A2aOutboundError('fetch_failed', `POST ${url} failed: ${reason}`);
     }

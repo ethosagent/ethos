@@ -77,3 +77,50 @@ describe('discord missed-message-backfill config parsing', () => {
     expect(roundTripped?.discord).toEqual(original.discord);
   });
 });
+
+describe('discord.post_thinking_placeholder', () => {
+  async function load(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    return readRawConfig(storage);
+  }
+
+  const base = ['provider: ollama', 'model: llama3.2', 'apiKey: sk', 'personality: p'];
+
+  it('parses false (the off switch) and true, and is absent = undefined', async () => {
+    const off = await load([...base, 'discord.post_thinking_placeholder: false'].join('\n'));
+    expect(off?.discordPostThinkingPlaceholder).toBe(false);
+    const on = await load([...base, 'discord.post_thinking_placeholder: true'].join('\n'));
+    expect(on?.discordPostThinkingPlaceholder).toBe(true);
+    const absent = await load(base.join('\n'));
+    expect(absent?.discordPostThinkingPlaceholder).toBeUndefined();
+  });
+
+  it('drops a value that is neither literal', async () => {
+    const cfg = await load([...base, 'discord.post_thinking_placeholder: maybe'].join('\n'));
+    expect(cfg?.discordPostThinkingPlaceholder).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig, including false', async () => {
+    for (const value of [true, false]) {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      await writeConfig(
+        storage,
+        {
+          provider: 'ollama',
+          model: 'llama3.2',
+          apiKey: 'sk',
+          personality: 'researcher',
+          discordPostThinkingPlaceholder: value,
+        },
+        new InMemorySecretsResolver(),
+      );
+      const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+      expect(raw).toContain(`discord.post_thinking_placeholder: ${value}`);
+      const roundTripped = await readRawConfig(storage);
+      expect(roundTripped?.discordPostThinkingPlaceholder).toBe(value);
+    }
+  });
+});

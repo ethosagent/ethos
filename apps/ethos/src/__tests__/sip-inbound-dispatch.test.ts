@@ -81,7 +81,8 @@ function harness(
   opts: {
     inbound?: VoiceInboundGates;
     createSipAdapter?: SipInboundVoiceStack['createSipAdapter'];
-    notifyOwner?: (text: string) => Promise<boolean>;
+    notifyOwner?: SipInboundDispatchDeps['notifyOwner'];
+    onError?: (message: string) => void;
     bots?: SipInboundVoiceStack['bots'];
     /** Cost the fake loop reports on every turn, via a `usage` event. */
     turnCostUsd?: number;
@@ -140,7 +141,7 @@ function harness(
         notices.push(text);
         return true;
       }),
-    onError: () => {},
+    onError: opts.onError ?? (() => {}),
   };
 
   return {
@@ -289,17 +290,38 @@ describe('createSipInboundHandler — accepted calls', () => {
     expect(h.inbound.concurrency.active()).toBe(1);
   });
 
-  it('answers an allowlisted caller as the bound personality, with pre-warm', async () => {
+  // INB-001b: caller ID is set by whoever places the call. A match against the
+  // allowlist is a pre-warm hint only; it never selects the owner personality.
+  it('INB-001b: answers an allowlisted caller ID as the receptionist, with pre-warm', async () => {
     const h = harness();
     const outcome = await h.handle(knownCall, {});
 
     expect(outcome).toMatchObject({
       dispatched: true,
-      restricted: false,
+      restricted: true,
       prewarm: true,
-      personalityId: 'assistant',
+      personalityId: 'receptionist',
     });
-    expect(h.adapterOptions[0]?.personality).toBe(ownerPersonality);
+    expect(h.adapterOptions[0]?.personality).toBe(receptionistPersonality);
+    expect(h.turns[0]?.personalityId).toBe('receptionist');
+  });
+
+  it('INB-001b: refuses an allowlisted caller ID when no receptionist is configured', async () => {
+    const h = harness({ inbound: gates({ receptionist: undefined }) });
+    const outcome = await h.handle(knownCall, {});
+
+    expect(outcome).toEqual({ dispatched: false, status: 'screened', reason: 'caller_unverified' });
+    expect(h.turns).toHaveLength(0);
+  });
+
+  // INB-002: the SIP lane calls the loop directly, not through the gateway, so
+  // the transcript must be fenced here as the gateway fences a channel message.
+  it('INB-002: fences the caller transcript as untrusted before the loop sees it', async () => {
+    const h = harness();
+    await h.handle(call, {});
+    expect(h.turns[0]?.text).toBe(
+      '<untrusted source="sip" tool="voice_call">\nhello?\n</untrusted>',
+    );
   });
 
   it('pins every call turn to the far-end origin and the call lane', async () => {
@@ -403,5 +425,30 @@ describe('createSipInboundHandler — post-call summary', () => {
     expect(row).toMatchObject({ status: 'completed', transcript: 'Nothing important.' });
     expect(row?.summary).toContain('Nothing important.');
     expect(h.inbound.concurrency.active()).toBe(0);
+  });
+
+  // A summary held for quiet hours / `/mute` is owed, not lost: the gateway
+  // releases it through the ledger later (`Gateway.releaseHeldNotices`), so it
+  // must not be logged as an unconfirmed delivery.
+  it.each([
+    ['held', false],
+    [false, true],
+  ] as const)('notifyOwner → %s reports "not confirmed": %s', async (outcome, reported) => {
+    const errors: string[] = [];
+    let hangUp: () => Promise<void> = async () => {};
+    const h = harness({
+      notifyOwner: async () => outcome,
+      onError: (message) => errors.push(message),
+      createSipAdapter: async (opts) => {
+        const adapter = fakeAdapter('Nothing important.');
+        adapter.setOnEnded(opts.onEnded);
+        hangUp = adapter.hangUp;
+        return adapter as unknown as VoiceChannelAdapter;
+      },
+    });
+
+    await h.handle(call, {});
+    await hangUp();
+    expect(errors.some((e) => e.includes('not confirmed'))).toBe(reported);
   });
 });

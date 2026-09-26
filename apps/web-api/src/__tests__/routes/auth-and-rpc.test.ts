@@ -47,7 +47,7 @@ describe('createWebApi — auth + rpc happy path', () => {
 
   it('GET /auth/exchange with valid token sets cookie + 302 to /', async () => {
     const res = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
@@ -59,12 +59,12 @@ describe('createWebApi — auth + rpc happy path', () => {
 
   it('exchange rotates the token — replaying the URL fails the second time', async () => {
     const first = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(first.status).toBe(302);
 
     const replay = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(replay.status).toBe(401);
   });
@@ -72,7 +72,11 @@ describe('createWebApi — auth + rpc happy path', () => {
   it('GET /rpc/* without cookie returns 401 (unauthorized envelope)', async () => {
     const res = await app.request('/rpc/sessions/list', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(401);
@@ -83,7 +87,7 @@ describe('createWebApi — auth + rpc happy path', () => {
   it('POST /rpc with the cookie + same-origin succeeds', async () => {
     // Step 1: grab a fresh cookie via the exchange flow.
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
     expect(cookieHeader).toBeTruthy();
@@ -95,6 +99,7 @@ describe('createWebApi — auth + rpc happy path', () => {
         'content-type': 'application/json',
         cookie: cookieHeader as string,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: {} }),
     });
@@ -106,7 +111,7 @@ describe('createWebApi — auth + rpc happy path', () => {
 
   it('POST /rpc from a non-localhost Origin is blocked even with valid cookie', async () => {
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
 
@@ -136,7 +141,7 @@ describe('createWebApi — auth + rpc happy path', () => {
   // explicit `mcp.cancel`.
   it('mcp.complete does NOT clear the ethos_mcp_pending cookie', async () => {
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
 
@@ -146,6 +151,7 @@ describe('createWebApi — auth + rpc happy path', () => {
         'content-type': 'application/json',
         cookie: cookieHeader as string,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: { state: 'test-state', code: 'test-code' } }),
     });
@@ -156,7 +162,7 @@ describe('createWebApi — auth + rpc happy path', () => {
 
   it('mcp.cancel still clears the ethos_mcp_pending cookie', async () => {
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
 
@@ -166,6 +172,7 @@ describe('createWebApi — auth + rpc happy path', () => {
         'content-type': 'application/json',
         cookie: cookieHeader as string,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: { state: 'test-state' } }),
     });

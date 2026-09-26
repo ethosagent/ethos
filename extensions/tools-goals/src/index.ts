@@ -24,6 +24,38 @@ function deriveOrigin(raw: string | undefined): GoalOrigin {
 // goal_create
 // ---------------------------------------------------------------------------
 
+const CHECK_KEYS = new Set(['id', 'description', 'command']);
+
+/**
+ * Why `checks` is not a list of `AcceptanceCheck` items (`{ id, description,
+ * command? }`, packages/types/src/goal.ts), or null when it is. An item's
+ * `command` is run by the goal's judge (S1, plan openclaw-2026.9.6-gaps), so an
+ * unknown shape is refused rather than cast.
+ */
+function checksError(checks: unknown): string | null {
+  if (checks === undefined) return null;
+  if (!Array.isArray(checks)) return 'acceptance_spec.checks must be an array';
+  for (const [i, item] of checks.entries()) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return `acceptance_spec.checks[${i}] must be an object { id, description, command? }`;
+    }
+    const entries = Object.entries(item);
+    const unknown = entries.find(([key]) => !CHECK_KEYS.has(key));
+    if (unknown) return `acceptance_spec.checks[${i}] has an unknown key "${unknown[0]}"`;
+    const { id, description, command } = item as Record<string, unknown>;
+    if (typeof id !== 'string' || id.length === 0) {
+      return `acceptance_spec.checks[${i}].id must be a non-empty string`;
+    }
+    if (typeof description !== 'string') {
+      return `acceptance_spec.checks[${i}].description must be a string`;
+    }
+    if (command !== undefined && typeof command !== 'string') {
+      return `acceptance_spec.checks[${i}].command must be a string`;
+    }
+  }
+  return null;
+}
+
 interface CreateArgs {
   title: string;
   goal_text: string;
@@ -57,7 +89,23 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
           description:
             'AcceptanceSpec: { checks, rubric, threshold }. Optional — system derives if omitted.',
           properties: {
-            checks: { type: 'array' },
+            checks: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['id', 'description'],
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'string' },
+                  description: { type: 'string' },
+                  command: {
+                    type: 'string',
+                    description:
+                      "Shell command that must exit 0. Runs on this personality's execution backend under the terminal tool's checks, and only if the personality holds terminal.",
+                  },
+                },
+              },
+            },
             rubric: { type: 'array' },
             threshold: { type: 'number' },
           },
@@ -90,6 +138,8 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
       if (args.deadline !== undefined && typeof args.deadline !== 'string') {
         return errorResult('deadline must be a string', 'input_invalid');
       }
+      const checksInvalid = checksError(args.acceptance_spec?.checks);
+      if (checksInvalid) return errorResult(checksInvalid, 'input_invalid');
       try {
         // ALWAYS the fallback today: nothing in the framework writes `userId`
         // into the run's ContextStore (see packages/core/src/context-store.ts —

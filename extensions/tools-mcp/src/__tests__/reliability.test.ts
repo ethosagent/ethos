@@ -1,3 +1,4 @@
+import type { Tool } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpServerConfig } from '../index';
 import { McpClient, McpManager } from '../index';
@@ -44,6 +45,13 @@ vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   // biome-ignore lint/complexity/useArrowFunction: must be callable with `new`
   SSEClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'sse-transport' };
+  }),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  // biome-ignore lint/complexity/useArrowFunction: must be callable with `new`
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function () {
+    return { type: 'streamable-http-transport', close: vi.fn().mockResolvedValue(undefined) };
   }),
 }));
 
@@ -506,6 +514,220 @@ describe('MCP reliability bundle', () => {
       expect(collisionWarns).toHaveLength(0);
 
       await manager.disconnect();
+    });
+  });
+  // -------------------------------------------------------------------------
+  // Fix 4 — call failure classification (plan hermes-0.21.4-fixes §6)
+  // -------------------------------------------------------------------------
+
+  describe('call failure classification', () => {
+    const httpConfig: McpServerConfig = {
+      name: 'srv',
+      transport: 'streamable-http',
+      url: 'https://mcp.example.com/mcp',
+      keepaliveSeconds: 0,
+    };
+    const stdioConfig: McpServerConfig = {
+      name: 'srv',
+      transport: 'stdio',
+      command: 'node',
+      keepaliveSeconds: 0,
+    };
+    const ctx = {
+      sessionId: 'test',
+      sessionKey: 'cli:test',
+      platform: 'cli',
+      workingDir: '/tmp',
+      currentTurn: 1,
+      messageCount: 1,
+      abortSignal: new AbortController().signal,
+      emit: () => {},
+      resultBudgetChars: 80_000,
+    };
+
+    /** A Node fetch failure: `TypeError: fetch failed` with the errno on `cause.code`. */
+    function fetchFailed(code: string): TypeError {
+      return Object.assign(new TypeError('fetch failed'), { cause: { code } });
+    }
+
+    /** Connect a manager whose one server lists `send` with the given annotations. */
+    async function connectWithTool(
+      config: McpServerConfig,
+      annotations?: Record<string, unknown>,
+    ): Promise<{ manager: McpManager; run: () => ReturnType<Tool['execute']> }> {
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: 'send',
+            description: 'Sends something',
+            inputSchema: { type: 'object', properties: {} },
+            ...(annotations ? { annotations } : {}),
+          },
+        ],
+      });
+      const manager = new McpManager([config]);
+      await manager.connect();
+      const tool = manager.getTools()[0];
+      if (!tool) throw new Error('tool not registered');
+      return { manager, run: () => tool.execute({}, ctx) };
+    }
+
+    async function lastSdkInstance(): Promise<{ onclose?: (() => void) | null } | undefined> {
+      const { Client } = await import('@modelcontextprotocol/sdk/client');
+      const instances = vi.mocked(Client).mock.results;
+      return instances[instances.length - 1]?.value;
+    }
+
+    it('HTTP ECONNRESET on a tool without annotations is sent once and reported as outcome-unknown', async () => {
+      const { manager, run } = await connectWithTool(httpConfig);
+      mockCallTool.mockRejectedValueOnce(fetchFailed('ECONNRESET'));
+
+      const result = await run();
+
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('execution_failed');
+        expect(result.error).toContain('may or may not have run');
+      }
+      await manager.disconnect();
+    });
+
+    it('HTTP ECONNREFUSED never left, so it reconnects and retries once', async () => {
+      const { manager, run } = await connectWithTool(httpConfig);
+      mockCallTool.mockRejectedValueOnce(fetchFailed('ECONNREFUSED'));
+
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ ok: true, value: 'ok' });
+      await manager.disconnect();
+    });
+
+    it.each([
+      ['readOnlyHint', { readOnlyHint: true }],
+      ['idempotentHint', { idempotentHint: true }],
+    ])('HTTP ECONNRESET on a tool marked %s is retried once', async (_label, annotations) => {
+      const { manager, run } = await connectWithTool(httpConfig, annotations);
+      mockCallTool.mockRejectedValueOnce(fetchFailed('ECONNRESET'));
+
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ ok: true, value: 'ok' });
+      await manager.disconnect();
+    });
+
+    it('a server error whose text only mentions ECONNRESET is not re-sent', async () => {
+      const { manager, run } = await connectWithTool(httpConfig);
+      // The shape of the SDK's McpError for a JSON-RPC error response: numeric
+      // `code`, server-controlled message text.
+      mockCallTool.mockRejectedValueOnce(
+        Object.assign(new Error('MCP error -32603: upstream ECONNRESET'), { code: -32603 }),
+      );
+
+      const result = await run();
+
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        ok: false,
+        error: 'MCP error -32603: upstream ECONNRESET',
+        code: 'execution_failed',
+      });
+      await manager.disconnect();
+    });
+
+    it("the SDK's pre-write 'Not connected' is retried once", async () => {
+      const { manager, run } = await connectWithTool(stdioConfig);
+      mockCallTool.mockRejectedValueOnce(new Error('Not connected'));
+
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ ok: true, value: 'ok' });
+      await manager.disconnect();
+    });
+
+    it('race order (a): the client onclose guard wins → sent once, outcome unknown', async () => {
+      const { manager, run } = await connectWithTool(stdioConfig);
+      mockCallTool.mockReturnValueOnce(new Promise(() => {}));
+
+      const pending = run();
+      (await lastSdkInstance())?.onclose?.();
+      const result = await pending;
+
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('execution_failed');
+        expect(result.error).toContain('may or may not have run');
+      }
+      await manager.disconnect();
+    });
+
+    it("race order (b): the SDK's ConnectionClosed wins → sent once, outcome unknown", async () => {
+      const { manager, run } = await connectWithTool(stdioConfig);
+      mockCallTool.mockRejectedValueOnce(
+        Object.assign(new Error('MCP error -32000: Connection closed'), { code: -32000 }),
+      );
+
+      const result = await run();
+
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('execution_failed');
+        expect(result.error).toContain('may or may not have run');
+      }
+      await manager.disconnect();
+    });
+
+    it('an outcome-unknown failure still reconnects for the next call', async () => {
+      const { manager, run } = await connectWithTool(httpConfig);
+      mockCallTool.mockRejectedValueOnce(fetchFailed('ECONNRESET'));
+
+      await run();
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await run()).toEqual({ ok: true, value: 'ok' });
+      await manager.disconnect();
+    });
+
+    it('listTools maps annotations onto replaySafe', async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: 'plain', inputSchema: { type: 'object' } },
+          { name: 'ro', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+          {
+            name: 'idem',
+            inputSchema: { type: 'object' },
+            annotations: { idempotentHint: true },
+          },
+          {
+            name: 'destructive',
+            inputSchema: { type: 'object' },
+            annotations: { destructiveHint: true },
+          },
+        ],
+      });
+      const client = new McpClient(stdioConfig);
+      await client.connect();
+
+      const tools = await client.listTools();
+
+      expect(tools.map((t) => [t.name, t.replaySafe])).toEqual([
+        ['plain', false],
+        ['ro', true],
+        ['idem', true],
+        ['destructive', false],
+      ]);
+      await client.disconnect();
     });
   });
 });

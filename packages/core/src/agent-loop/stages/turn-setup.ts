@@ -6,12 +6,17 @@ import type {
   ModelResolutionFailure,
   ModelTierName,
   PersonalityConfig,
+  PersonalityRegistry,
   ToolFilterOpts,
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
+import { servesServerCompaction } from '../../providers/chained-provider';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
+import { routeTurnTier } from '../tier-router';
+import { resolveToolLoading } from '../tool-loading';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
+import type { TurnDecisions } from '../turn-decisions';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 
 /**
@@ -45,6 +50,19 @@ function declarationFix(
 }
 
 /**
+ * THE rule for which personality a turn runs as: the named one if it resolves,
+ * otherwise the registry's default. Shared by `setupTurn` below, by
+ * `AgentLoop.resolvePersonality` (which the realtime voice host borrows), and by
+ * `AgentLoop.getPersonalityBudgetCap`, so no surface keeps a second copy.
+ */
+export function resolvePersonality(
+  registry: PersonalityRegistry,
+  personalityId: string | undefined,
+): PersonalityConfig {
+  return (personalityId ? registry.get(personalityId) : null) ?? registry.getDefault();
+}
+
+/**
  * Turn-setup stage: session resolve/create, personality, trace, budget-cap
  * check, turn counter, tier resolution, run_start event, tool filters,
  * session_start hook, credential gate.
@@ -63,7 +81,10 @@ export async function* setupTurn(
     toolsetOverride?: string[];
     toolsetNarrow?: string[];
     toolsetExclude?: string[];
+    credentialPrompt?: boolean;
   },
+  /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
+  decisions?: TurnDecisions,
 ): AsyncGenerator<AgentEvent, TurnSetupResult> {
   const sessionKey = opts.sessionKey ?? `${deps.platform}:default`;
 
@@ -119,9 +140,7 @@ export async function* setupTurn(
     effectivePersonalityId = opts.personalityId;
   }
 
-  const personality =
-    (effectivePersonalityId ? deps.personalities.get(effectivePersonalityId) : null) ??
-    deps.personalities.getDefault();
+  const personality = resolvePersonality(deps.personalities, effectivePersonalityId);
 
   const obsConfig = personality?.safety?.observability;
 
@@ -133,6 +152,9 @@ export async function* setupTurn(
     // this back off the trace at close; previously never recorded.
     attrs: { platform: deps.platform },
   });
+  // plan decision-provider-personality §15.3 — arms only for a personality
+  // that declares decision sites; otherwise no seam gets a sink.
+  decisions?.arm(personality, traceId, sessionId);
 
   // Budget cap check — refuse before any LLM work when the session has already
   // exceeded the personality's per-session spending limit.
@@ -164,7 +186,7 @@ export async function* setupTurn(
   // missing credential: error event, done, `refused` — before
   // `recordTurnStart` burns a turn number.
   let workingDir: string;
-  let fsReach: { read: string[]; write: string[] };
+  let fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   try {
     const derived = deriveFsReachPaths(personality, {
       ethosHome: deps.dataDir ?? join(homedir(), '.ethos'),
@@ -172,7 +194,7 @@ export async function* setupTurn(
       cwd: deps.workingDir,
     });
     workingDir = derived.workdir;
-    fsReach = { read: derived.read, write: derived.write };
+    fsReach = { read: derived.read, write: derived.write, writeDeny: derived.writeDeny };
   } catch (err) {
     if (!(err instanceof EmptySubstitutionError)) throw err;
     if (traceId) deps.observability?.endTrace(traceId, 'error');
@@ -206,7 +228,52 @@ export async function* setupTurn(
     });
   }
 
-  const activeTier = turnTierOverride ?? 'default';
+  // plan decision-provider-jev §8.3 (D15, R1) — with no user override, an
+  // injected tier router may downgrade the turn to `trivial`, and only when
+  // `trivial` and `default` resolve to different models this turn
+  // (`routeTurnTier`, ../tier-router). No router configured → `undefined`, so
+  // this line is exactly `turnTierOverride ?? 'default'`. Routing adds nothing
+  // to the prompt: it changes the model, never the text sent.
+  //
+  // The router's decision rows are held until `run_start` has been yielded
+  // (§15.3: the router row follows `run_start`), see ../turn-decisions.
+  const routerSink = turnTierOverride ? undefined : decisions?.sinkFor();
+  if (routerSink) decisions?.hold();
+  const routedTier = turnTierOverride
+    ? undefined
+    : await routeTurnTier({
+        router: deps.tierRouter,
+        message: text,
+        personality,
+        ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
+        ...(traceId ? { traceId } : {}),
+        ...(routerSink ? { decisionSink: routerSink } : {}),
+        resolve: (role) => {
+          const resolved = resolveTurnModel({
+            personality,
+            role,
+            ctx: deps.modelResolution,
+            ...(opts.modelOverride ? { runOverride: opts.modelOverride } : {}),
+            llmName: deps.llm.name,
+            llmModel: deps.llm.model,
+          });
+          if (resolved.ok === false) return null;
+          // A model this loop cannot reach would refuse the turn: not a
+          // downgrade target.
+          if (!routeTurnModel(deps.llm, resolved, deps.modelResolution).ok) return null;
+          return { provider: resolved.provider, model: resolved.model };
+        },
+      });
+  if (routedTier) {
+    deps.observability?.recordTierOverride({
+      traceId: traceId ?? '',
+      actor: 'framework',
+      tier: routedTier,
+      personalityId: personality.id,
+    });
+  }
+
+  const activeTier = turnTierOverride ?? routedTier ?? 'default';
   // An explicit per-run model pin is rung 0 — it outranks the manifest, the
   // routing override, the personality's own declaration and the deployment
   // default. A caller naming a model for one turn knows something no static
@@ -283,6 +350,7 @@ export async function* setupTurn(
     ...(deviation ? { deviation } : {}),
     ...(traceId ? { traceId } : {}),
   };
+  decisions?.release();
 
   // Allowed tool names for this personality (undefined = no restriction)
   const baseToolset = opts.toolsetOverride ?? personality.toolset ?? undefined;
@@ -298,7 +366,15 @@ export async function* setupTurn(
   // and executeParallel downstream, so a narrowed-out tool is rejected exactly
   // like a disallowed one. Static per loop + personality — never per turn —
   // so the tool payload in the request prefix stays byte-stable.
-  if (deps.smallWindow) {
+  //
+  // Whether small-window mode is on for THIS personality: a wired resolver
+  // answers per personality and workdir (memoized in wiring, so the answer is
+  // constant while its inputs are); without one the loop-level flag applies.
+  const smallWindowOverlay = deps.smallWindowResolver
+    ? await deps.smallWindowResolver(personality, workingDir)
+    : undefined;
+  const smallWindow = smallWindowOverlay ? smallWindowOverlay.smallWindow : deps.smallWindow;
+  if (smallWindow) {
     const declared = parseSmallWindowToolset(
       personality.context_engine_options?.small_window_toolset,
     );
@@ -327,12 +403,33 @@ export async function* setupTurn(
   // outrank `alwaysInclude` and reach MCP/plugin tools too, which only the
   // filterOpts path does. Static per surface, so tool definitions stay
   // byte-identical across turns (see tool-definition-stability.test.ts).
+  // The wiring's per-personality exclusion (plan decision-tool D13) is UNIONED
+  // with it, never replaces it; it depends only on the personality, so the
+  // same stability holds.
+  const personalityExclude = deps.personalityToolExclude?.(personality) ?? [];
+  const excludeTools =
+    personalityExclude.length > 0
+      ? [...new Set([...(opts.toolsetExclude ?? []), ...personalityExclude])]
+      : opts.toolsetExclude;
   const filterOpts: ToolFilterOpts = {
     allowedMcpServers: personality.mcp_servers ?? [],
     allowedPlugins,
     ...(allowedMcpTools && Object.keys(allowedMcpTools).length > 0 ? { allowedMcpTools } : {}),
-    ...(opts.toolsetExclude ? { excludeTools: opts.toolsetExclude } : {}),
+    ...(excludeTools ? { excludeTools } : {}),
   };
+
+  // reach-and-containment Part 1 (C2) — on-demand tool loading runs INSIDE the
+  // allowlist computed above (D1-10: after small-window narrowing). Undefined
+  // unless the wiring resolver engages it, and then everything downstream is
+  // byte-identical to the no-loading path.
+  const toolLoading = resolveToolLoading({
+    resolver: deps.toolLoading,
+    registry: deps.tools,
+    personality,
+    allowedTools,
+    filterOpts,
+    sessionMetadata: ethosSession.metadata,
+  });
 
   // Step 2: Fire session_start hooks
   await deps.hooks.fireVoid(
@@ -347,9 +444,18 @@ export async function* setupTurn(
   );
 
   // v2.2: Pre-turn credential check — surface a credential_required event
-  // before the LLM call so the host can prompt the user for auth.
-  if (deps.credentialCheck) {
-    const missing = await deps.credentialCheck(sessionKey, text);
+  // before the LLM call so the host can prompt the user for auth. Runs only
+  // when the caller says its surface consumes the event
+  // (`RunOptions.credentialPrompt`): every other consumer of this loop —
+  // delegation, background jobs, cron, goals, MCP export — would see a turn
+  // refused with empty text and no explanation, which is worse than letting
+  // the plugin's own call fail with its normal error. Pinned by
+  // `packages/core/src/__tests__/credential-check-gate.test.ts`.
+  if (deps.credentialCheck && opts.credentialPrompt === true) {
+    const missing = await deps.credentialCheck(sessionKey, text, {
+      personalityId: personality.id,
+      allowedPlugins,
+    });
     if (missing) {
       if (traceId) deps.observability?.endTrace(traceId, 'error');
       deps.observability?.flush();
@@ -387,10 +493,13 @@ export async function* setupTurn(
       effectiveModel,
       modelOverride,
       providerEntry,
+      serverCompaction: { active: servesServerCompaction(deps.llm, providerEntry) },
       allowedTools,
       allowedPlugins,
       filterOpts,
       memScopeId,
+      ...(toolLoading ? { toolLoading } : {}),
+      ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
     },
   };
 }

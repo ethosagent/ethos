@@ -28,7 +28,7 @@ Advisory skill. It is loaded together with `plan` and shapes every Ethos plan fi
 
 ## The 7-section Ethos plan template
 
-Every plan under `~/.ethos/plans/` and every long-form plan under `plan/<topic>.md` in the repo follows this shape.
+Every personal plan under `.ethos-work/plans/` and every long-form plan under `plan/<topic>.md` in the repo follows this shape.
 
 1. **Header** — title and one-blockquote summary. Two sentences max. The reader should know what the plan is for from the header alone.
 
@@ -57,7 +57,7 @@ Every plan under `~/.ethos/plans/` and every long-form plan under `plan/<topic>.
 ## File path conventions
 
 - Repo plans: `plan/<topic>.md`. Topic uses snake_case to match the existing files.
-- Personal plans (per personality): `~/.ethos/plans/<personality>/<slug>.md`. Slug uses kebab-case.
+- Personal plans: `.ethos-work/plans/<slug>.md` in the workspace, kept out of git by adding `.ethos-work/` to `.git/info/exclude`. Slug uses kebab-case. Not under `~/.ethos`: the default `fs_reach` refuses a `write_file` there (see the `plan` skill).
 
 ## Cross-link conventions
 

@@ -8,8 +8,9 @@
 // snapshot outlived the edit. These tests pin the resolver behaviour that
 // replaced it, mirroring personality-fs-reach.test.ts.
 
-import { resolveCapabilities, ScopedFetchImpl } from '@ethosagent/core';
+import { resolveCapabilities, type SafeFetchFn, ScopedFetchImpl } from '@ethosagent/core';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { safeFetch as realSafeFetch } from '@ethosagent/safety-network';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { Logger, ToolCapabilities } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
@@ -24,13 +25,15 @@ const logStub: Logger = {
   child: () => logStub,
 };
 
+// The REAL `safeFetch`, with only DNS and the socket injected, so a policy
+// that `checkAllowDeny` (packages/safety/network/src/policy.ts) would refuse is
+// refused here too. A stub that always answered `ok` is what hid that
+// `allow: ['*']` refused every host.
 const response = new Response('ok');
-const safeFetch = async (url: string) => ({
-  ok: true as const,
-  response,
-  finalUrl: url,
-  hops: 0,
-});
+const fetchImpl = (async () => response) as unknown as typeof fetch;
+const resolveHost = async () => ['93.184.216.34'];
+const safeFetch: SafeFetchFn = (url, opts) =>
+  realSafeFetch(url, { ...opts, fetchImpl, resolveHost });
 
 // `engineer` is the deployment default and declares no safety block — the
 // shape that made every other personality's policy invisible.
@@ -122,9 +125,20 @@ describe('personality network policy at the tool boundary', () => {
       "briefer declares allow: ['*'] — its own policy must reach the resolver even though the default personality declares none",
     ).resolves.toBe(response);
 
-    // The other half of the same rule: the default's (absent) policy still
-    // applies to the default's own turns.
-    await expect(forEngineer.scopedFetch?.fetch('https://example.com/article')).rejects.toThrow(
+    // The default's (absent) policy applies to the default's own turns, and
+    // absent means open (subject to the safeFetch floor) — `resolveCapabilities`
+    // in packages/core/src/capability-resolver.ts. The narrow personality below
+    // is what proves each turn reads its OWN policy.
+    await expect(forEngineer.scopedFetch?.fetch('https://example.com/article')).resolves.toBe(
+      response,
+    );
+    const forNarrow = resolveCapabilities(
+      'web_extract',
+      wildcardTool,
+      { sessionId: 's', personalityId: 'narrow' },
+      backends,
+    );
+    await expect(forNarrow.scopedFetch?.fetch('https://example.com/article')).rejects.toThrow(
       /HOST_NOT_ALLOWED/,
     );
   });

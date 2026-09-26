@@ -33,6 +33,9 @@ export const browserPressTool: Tool = {
   description:
     'Send keyboard keys (Enter, Tab, Escape, ArrowDown, Ctrl+A, etc.). Useful for form submission, navigation, and shortcuts.',
   toolset: 'browser',
+  // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+  // __tests__/untrusted-roster.test.ts).
+  outputIsUntrusted: true,
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['*'] },
@@ -97,6 +100,9 @@ export const browserScrollTool: Tool = {
   description:
     'Scroll the page in a given direction. Useful for viewing content below the fold or navigating long pages.',
   toolset: 'browser',
+  // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+  // __tests__/untrusted-roster.test.ts).
+  outputIsUntrusted: true,
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['*'] },
@@ -189,6 +195,9 @@ export function createBrowserBackTool(timeouts: BrowserTimeouts): Tool {
     description:
       'Navigate the browser back to the previous page. Returns the updated page content.',
     toolset: 'browser',
+    // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+    // __tests__/untrusted-roster.test.ts).
+    outputIsUntrusted: true,
     maxResultChars: 20_000,
     capabilities: {
       network: { allowedHosts: ['*'] },
@@ -244,6 +253,9 @@ export const browserConsoleTool: Tool = {
   description:
     'Get browser console messages (log, warn, error, etc.) captured since last read. Useful for debugging JavaScript errors and application state.',
   toolset: 'browser',
+  // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+  // __tests__/untrusted-roster.test.ts).
+  outputIsUntrusted: true,
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['*'] },
@@ -301,6 +313,9 @@ export const browserGetImagesTool: Tool = {
   description:
     'List all images on the current page with their src, alt text, and dimensions. Useful for understanding page media content.',
   toolset: 'browser',
+  // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+  // __tests__/untrusted-roster.test.ts).
+  outputIsUntrusted: true,
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['*'] },
@@ -366,6 +381,9 @@ export const browserDialogTool: Tool = {
   description:
     'Check recent browser dialogs (alert, confirm, prompt). Dialogs are auto-handled to prevent page deadlock: alerts are accepted, confirms/prompts are dismissed. This tool reports what dialogs appeared.',
   toolset: 'browser',
+  // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+  // __tests__/untrusted-roster.test.ts).
+  outputIsUntrusted: true,
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['*'] },

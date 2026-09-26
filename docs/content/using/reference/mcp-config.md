@@ -4,7 +4,7 @@ description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth 
 kind: reference
 audience: user
 slug: mcp-config
-updated: 2026-06-03
+updated: 2026-09-25
 ---
 
 ## Synopsis {#synopsis}
@@ -49,7 +49,7 @@ The CLI splits MCP setup into two steps: **define** the server, then **authentic
 ethos mcp add --url https://mcp.linear.app
 ```
 
-This writes an entry to `~/.ethos/mcp.json` (with OAuth discovery, OSV scan, etc.) but stores **no token**. The server is now available to any personality that lists it in `mcp_servers:`, but unauthenticated calls will fail until a token is acquired.
+This runs OAuth discovery and writes an entry to `~/.ethos/mcp.json`, but stores **no token**. The server is now available to any personality that lists it in `mcp_servers:`, but unauthenticated calls will fail until a token is acquired.
 
 ### 2. Acquire a per-personality token {#acquire-token}
 
@@ -242,7 +242,7 @@ ethos personality mcp engineer            # list current attachments
 
 The personality registry watches `config.yaml`'s mtime and reloads on the next turn — no daemon restart needed.
 
-See also the [`native-mcp`](https://github.com/ethosagent/ethos/blob/main/skills/data/framework/native-mcp/SKILL.md) bundled skill for the operator workflow this reference is the schema for.
+See also the [`native-mcp`](https://github.com/ethosagent/ethos/blob/main/skills/framework/native-mcp/SKILL.md) bundled skill for the operator workflow this reference is the schema for.
 
 ## Tool naming {#tool-naming}
 
@@ -254,22 +254,28 @@ mcp__github__create_issue
 mcp__stripe__list_customers
 ```
 
-A personality's `toolset.yaml` references MCP tools by this full prefixed name. The personality registry's `toolset.yaml` allowlist still applies on top of the `mcp_servers:` attachment — both gates must pass for a tool to surface to the LLM.
+`toolset.yaml` does not gate MCP tools. The toolset allowlist applies to built-in tools only. `DefaultToolRegistry.toDefinitions` and `executeParallel` in `packages/core/src/tool-registry.ts` skip it for any `mcp__` name. Listing `mcp__<name>__<tool>` in `toolset.yaml` therefore neither grants nor narrows anything. Two gates decide which MCP tools a personality gets:
+
+1. **Server attachment.** A tool surfaces only if its server is in the personality's `mcp_servers:` list (`passesFilter`, same file).
+2. **Per-tool allowlist (optional).** The personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/index.ts`) can narrow an attached server to named tools, or switch it off:
+
+```yaml
+servers:
+  linear:
+    tools:
+      - list_issues
+      - get_issue
+  slack:
+    enabled: false
+```
+
+A server with no entry in `mcp.yaml` exposes every tool it lists. Pinned by `packages/core/src/__tests__/tool-registry-mcp-filter.test.ts`.
 
 The agent loop emits the same prefixed name in `tool_start` / `tool_end` events. Channel adapters and the web UI display them verbatim.
 
-## OSV vulnerability scan {#osv}
+## OSV vulnerability scan (not implemented) {#osv}
 
-When a stdio server is added via `ethos mcp add`, Ethos queries `api.osv.dev` for advisories against the npm package version invoked in `args`. The CLI prompts on findings:
-
-| Severity | Behavior |
-|---|---|
-| `critical`, `high` | Connection refused by default. The CLI prints the advisory IDs and links and exits non-zero. |
-| `moderate`, `low` | Surfaced as a warning. The operator confirms before the server is written to `mcp.json`. |
-
-To skip the scan for a server that has known advisories you've evaluated, pass `--force` to `ethos mcp add`. There is no per-server opt-out flag in `mcp.json` itself — the scan runs at install time, not at every boot.
-
-Source of truth: [`osv-check.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-mcp/src/osv-check.ts).
+**Limitation: no scan runs.** `ethos mcp add` does not query osv.dev, and nothing refuses a server over a known advisory. The helper exists, `checkOsvVulnerabilities` in [`osv-check.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-mcp/src/osv-check.ts), but no command or boot path calls it. `ethos mcp add` has no `--force` flag. Check a community server's package for advisories yourself before you add it.
 
 ## Examples {#examples}
 
@@ -360,19 +366,19 @@ Click **Test connection** on the server row to verify tools surface correctly.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Cannot find package '@modelcontextprotocol/sdk'` | Workspace dep missing | `pnpm install` from repo root |
-| Server listed but tools missing | Server failed to start | Check `~/.ethos/logs/mcp/<name>.log` |
+| Server listed but tools missing | Server failed to start | Read the connection error in the output of the process running the agent. Ethos writes no per-server MCP log file |
 | `0 of N server(s) attached to "<personality>"` | Personality has no `mcp_servers` allowlist | `ethos personality mcp <id> --attach <name>` |
 | HTTP server returns 401 on every call | Token expired or wrong | Re-issue and update the secret with `ethos secrets set`; for OAuth, run `ethos mcp logout <name> --personality <id>` and reconnect |
 | Server can't read `~/.ssh` or `~/.aws` | Sandboxed env strips the operator's `HOME` | This is intentional. If the server legitimately needs a file, copy it into `~/.ethos/mcp-runtime/<name>/` or pass the path via an env var listed in `mcpEnvPassthrough` |
 | Credential env var "missing" inside the server | Credential-pattern strip removed it | Add the var name to `mcpEnvPassthrough` |
 | Bearer server shows `missing` status in web UI | Token file not found for this personality | Open the personality detail page and click **Set token**, or write `~/.ethos/secrets/personalities/<id>/mcp/<name>/access_token` directly (mode 0600) |
-| Tool name `mcp__<a>__<tool>` resolves but personality can't call it | Personality's `toolset.yaml` lacks the entry | Add `- mcp__<a>__<tool>` to the personality's toolset, OR omit the per-tool list to inherit everything the server exposes |
+| Tool name `mcp__<a>__<tool>` resolves but personality can't call it | Server `<a>` is not in `mcp_servers:`, or the personality's `mcp.yaml` narrows `<a>` to a `tools:` list without this tool (or sets `enabled: false`) | Attach the server, or add the bare tool name to `servers.<a>.tools` in `~/.ethos/personalities/<id>/mcp.yaml`. `toolset.yaml` plays no part |
 
 ## See also {#see-also}
 
 - [Set up MCP for a personality](../how-to/set-up-mcp-for-a-personality.md) — step-by-step walkthrough of the two-step CLI flow and the web OAuth path.
 - [Use Ethos as an MCP server](../how-to/use-as-mcp-server.md) — the inverse: serving personalities to Claude Desktop, Cursor, Continue, Zed.
-- [`native-mcp`](https://github.com/ethosagent/ethos/blob/main/skills/data/framework/native-mcp/SKILL.md) — bundled skill that wraps the operator workflow.
+- [`native-mcp`](https://github.com/ethosagent/ethos/blob/main/skills/framework/native-mcp/SKILL.md) — bundled skill that wraps the operator workflow.
 - [Config field reference](config-yaml.md) — `~/.ethos/config.yaml` and the `${secrets:<ref>}` pattern.
 - [Personality config](personality-yaml.md) — the `mcp_servers:` attachment list.
 - [`tools-mcp` source](https://github.com/ethosagent/ethos/blob/main/extensions/tools-mcp/src/index.ts) — `McpServerConfig` interface.

@@ -263,6 +263,17 @@ describe('runNightlyPass', () => {
       expect(spies.draftExpression).not.toHaveBeenCalled();
       expect(spies.submitExpression).not.toHaveBeenCalled();
     });
+
+    it('gates.memorySkipReason: memory step skipped with the reason, memory never read or written', async () => {
+      const { deps, spies } = makeDeps();
+      const readMemory = vi.spyOn(deps, 'readMemory');
+      const res = await runNightlyPass('sage', deps, { memorySkipReason: 'no file memory' });
+      const memory = res.steps.find((s) => s.step === 'memory');
+      expect(memory?.status).toBe('skipped');
+      expect(memory?.detail).toBe('no file memory');
+      expect(readMemory).not.toHaveBeenCalled();
+      expect(spies.applyMemoryUpdates).not.toHaveBeenCalled();
+    });
   });
 
   // B-T1 made `user` mode queue instead of apply; L-D2 goes further. The pass has

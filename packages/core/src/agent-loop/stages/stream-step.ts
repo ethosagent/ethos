@@ -1,23 +1,29 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  AgentEvent,
-  HookRegistry,
-  LLMProvider,
-  Message,
-  MessageContent,
-  ModelResolutionContext,
-  ModelTierName,
-  PersonalityConfig,
-  PersonalityObservabilityConfig,
-  RequestDumpStore,
-  SessionStore,
-  ToolFilterOpts,
-  ToolRegistry,
+import {
+  type AgentEvent,
+  type CompactionEnvelope,
+  compactionStoredRow,
+  encodeCompactionEnvelope,
+  type HookRegistry,
+  type LLMProvider,
+  type Message,
+  type MessageContent,
+  type ModelResolutionContext,
+  type ModelTierName,
+  type PersonalityConfig,
+  type PersonalityObservabilityConfig,
+  type RequestDumpStore,
+  SERVER_COMPACTION_REJECTED_WARNING,
+  type SessionStore,
+  type ToolFilterOpts,
+  type ToolRegistry,
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
+import { currentTurnFitError, currentTurnStart } from '../compaction';
 import { routeTurnModel } from '../model-route';
 import { isContextOverflowError } from '../overflow';
+import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
 import type { TurnUsageAccumulator } from './turn-finalizer';
@@ -94,9 +100,15 @@ export interface StreamStepContext {
   effectiveModel: string;
   modelOverride: string | undefined;
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /** Item 7 — `TurnSetup.serverCompaction`; cleared here when the provider
+   *  reports `SERVER_COMPACTION_REJECTED_WARNING`. */
+  serverCompaction?: { active: boolean };
   allowedPlugins: string[];
   allowedTools: string[] | undefined;
   filterOpts: ToolFilterOpts;
+  /** reach-and-containment Part 1 — set only when on-demand tool loading is
+   *  active for the turn (`TurnSetup.toolLoading`). */
+  toolLoading?: ToolLoadingState;
   systemPrompt: string | undefined;
   llmMessages: Message[];
   cacheBreakpoints: number[] | undefined;
@@ -154,6 +166,25 @@ async function persistInterruptedAssistant(
   });
 }
 
+/**
+ * The tool definitions an LLM call of this turn sends. With on-demand loading
+ * active (C3) that is pinned + `tool_search` + loaded; otherwise the allowlist.
+ * Shared with context assembly, whose pre-LLM compaction counts these schemas
+ * as part of the static prefix (`CompactionDeps.toolSchemas`).
+ */
+export function turnToolDefinitions(
+  tools: StreamStepDeps['tools'],
+  ctx: Pick<StreamStepContext, 'toolLoading' | 'allowedTools' | 'filterOpts'>,
+): ReturnType<StreamStepDeps['tools']['toDefinitions']> {
+  return ctx.toolLoading
+    ? composeDefinitions(
+        ctx.toolLoading.universe,
+        ctx.toolLoading.plan,
+        ctx.toolLoading.searchDefinition,
+      )
+    : tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+}
+
 // ---------------------------------------------------------------------------
 // streamStep — one LLM streaming call
 // ---------------------------------------------------------------------------
@@ -163,8 +194,41 @@ export async function* streamStep(
   ctx: StreamStepContext,
   pendingTierEscalation: { value?: string },
 ): AsyncGenerator<AgentEvent, StreamStepResult> {
-  // Compute tool definitions once for hooks, LLM call, and dump store.
-  const toolDefs = deps.tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+  // Compute tool definitions once for hooks, LLM call, and dump store — so
+  // observability measures exactly what was sent.
+  const toolDefs = turnToolDefinitions(deps.tools, ctx);
+
+  // Context-fit preflight, before the turn's first LLM call: when the static
+  // prefix plus the user's message cannot fit the usable window, fail the turn
+  // loudly instead of sending a request (`currentTurnFitError`). Later calls
+  // carry this turn's tool results, which the overflow path owns.
+  if (ctx.turnCount === 0) {
+    const fitError = currentTurnFitError(
+      {
+        llm: deps.llm,
+        ...(ctx.opts.maxCompletionTokens !== undefined
+          ? { reservedOutputTokens: ctx.opts.maxCompletionTokens }
+          : {}),
+      },
+      {
+        systemPrompt: ctx.systemPrompt ?? '',
+        toolSchemas: JSON.stringify(toolDefs),
+        currentTurn: ctx.llmMessages.slice(currentTurnStart(ctx.llmMessages)),
+      },
+    );
+    if (fitError) {
+      deps.observability?.recordCompaction({
+        ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+        severity: 'error',
+        code: 'context_window_too_small',
+        cause: fitError,
+      });
+      deps.observability?.endTrace(ctx.traceId ?? '', 'error');
+      deps.observability?.flush();
+      yield { type: 'error', error: fitError, code: 'context_window_too_small' };
+      return { outcome: 'fatal' };
+    }
+  }
   const requestId = randomUUID();
   const includeContent = ctx.obsConfig?.storeLlmPayloads === 'full';
 
@@ -194,6 +258,8 @@ export async function* streamStep(
   }> = [];
   let chunkText = '';
   let fullTextDelta = '';
+  // Item 7 — server-side compaction blocks, persisted ahead of the reply.
+  const compactions: CompactionEnvelope[] = [];
 
   // Streaming watchdog: cancel the stream if no chunk arrives within the
   // per-personality window. Reset every chunk so slow-but-progressing
@@ -299,6 +365,18 @@ export async function* streamStep(
       if (watchdogController.signal.aborted) break;
       armWatchdog();
       if (chunk.type === 'done') llmFinishReason = chunk.finishReason;
+      if (chunk.type === 'compaction') compactions.push(chunk);
+      if (chunk.type === 'warning' && chunk.message === SERVER_COMPACTION_REJECTED_WARNING) {
+        // D32 failure mode — the API refused the edit and the provider retried
+        // without it, so the local compactions left in this turn run.
+        if (ctx.serverCompaction) ctx.serverCompaction.active = false;
+        deps.observability?.recordCompaction({
+          ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+          severity: 'warn',
+          code: 'llm.server_compaction_rejected',
+          cause: chunk.message,
+        });
+      }
       if (chunk.type === 'usage') {
         if (chunk.providerRequestId) providerRequestId = chunk.providerRequestId;
         if (chunk.costBasis) llmCostBasis = chunk.costBasis;
@@ -452,6 +530,28 @@ export async function* streamStep(
     (tc): tc is typeof tc & { args: unknown } =>
       tc.args !== undefined || tc.parseError !== undefined,
   );
+
+  // Item 7 (D31) — a server compaction block precedes the reply it came with,
+  // and the API drops everything before it on the next request. Persisted as
+  // its own structurally-marked assistant row (no SessionStore change) and
+  // replayed in this turn's later iterations as an in-memory envelope, which
+  // `toAnthropicMessages` (extensions/llm-anthropic) turns back into a block.
+  for (const c of compactions) {
+    // The ONE writer of a compaction row: structural marker + payload out of
+    // `content` (`compactionStoredRow`, packages/types/src/llm.ts).
+    await deps.session.appendMessage({
+      sessionId: ctx.sessionId,
+      role: 'assistant',
+      ...compactionStoredRow(c),
+      traceId: ctx.traceId,
+    });
+    ctx.llmMessages.push({ role: 'assistant', content: encodeCompactionEnvelope(c) });
+    deps.observability?.recordCompaction({
+      ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+      code: 'llm.server_compacted',
+      cause: c.content === null ? 'no summary (no-op block)' : `${c.content.length}-char summary`,
+    });
+  }
 
   // Persist assistant message — include tool_use references so history is LLM-replayable
   // Note: turnCount + 1 matches the original code where turnCount was already incremented

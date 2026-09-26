@@ -11,8 +11,11 @@
 //
 // `voice.artifacts.*` belongs in Data & retention and deliberately stays here
 // for this change (D12) — the move is scheduled, not forgotten.
+//
+// The delivery ledger readout and the dead-inbound table used to sit at the
+// foot of this pane; they are on the Activity page's Deliveries tab now
+// (`DeliveriesPanel`, plan openclaw-2026.9.6-gaps U5). This pane is voice only.
 
-import { useQuery } from '@tanstack/react-query';
 import {
   Button,
   Form,
@@ -21,13 +24,10 @@ import {
   Select,
   Slider,
   Space,
-  Spin,
   Switch,
-  Table,
   Tooltip,
   Typography,
 } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blobToBase64 } from '../../../components/chat/VoiceButton';
@@ -48,7 +48,6 @@ import { SettingRow } from '../components/setting-row';
 import { SettingTable } from '../components/setting-table';
 import { StatusCallout } from '../components/status-callout';
 import { type ConfigGetData, type PersonalityOption, RECORD_KEY_RE } from '../lib/config-types';
-import { deliveryAge } from '../lib/deliveries';
 import type { FormShape } from '../lib/form-shape';
 import { nextRowId } from '../lib/row-id';
 import type { VoiceBotRow } from '../lib/voice-bots';
@@ -172,123 +171,6 @@ const TTS_TEST_DIRTY_FIELDS: (keyof FormShape)[] = [
   'voiceTtsApiKey',
   'voiceTtsCommand',
 ];
-
-// ---------------------------------------------------------------------------
-// Delivery status — the operator's window onto the delivery-obligation ledger.
-//
-// It lives in the Voice card because the voice split is what makes it
-// actionable here: an artifact-backed reply is the one whose loss is invisible
-// otherwise. Read-only by construction — there is no RPC that re-sends, and a
-// settings page must not be able to re-send someone's message.
-// ---------------------------------------------------------------------------
-
-type DeliverySummary = Awaited<ReturnType<typeof rpc.deliveries.summary>>;
-type DeliveryObligation = DeliverySummary['recent'][number];
-
-const DELIVERY_STATUSES = ['pending', 'redelivering', 'delivered', 'abandoned'] as const;
-
-/**
- * `redelivering` is the ledger's word for a claimed obligation mid-sweep. The
- * plan's state table calls what the user sees `redelivered`, because by the
- * time it is on screen the sweep is what happened to it.
- */
-const DELIVERY_STATUS_LABELS: Record<(typeof DELIVERY_STATUSES)[number], string> = {
-  pending: 'pending',
-  redelivering: 'redelivered',
-  delivered: 'delivered',
-  abandoned: 'abandoned',
-};
-
-const DELIVERY_COLUMNS: ColumnsType<DeliveryObligation> = [
-  {
-    title: 'Platform',
-    dataIndex: 'platform',
-    render: (platform: string) => <span className="voice-delivery-mono">{platform}</span>,
-  },
-  {
-    title: 'Kind',
-    key: 'kind',
-    render: (_: unknown, row: DeliveryObligation) => (
-      <span className="voice-delivery-mono">
-        {row.mediaFormat ? `${row.kind} · ${row.mediaFormat}` : row.kind}
-      </span>
-    ),
-  },
-  {
-    title: 'Status',
-    dataIndex: 'status',
-    render: (status: DeliveryObligation['status']) => (
-      <span className="voice-delivery-mono">{DELIVERY_STATUS_LABELS[status]}</span>
-    ),
-  },
-  {
-    title: 'Age',
-    dataIndex: 'createdAt',
-    render: (createdAt: number) => (
-      <span className="voice-delivery-mono">{deliveryAge(createdAt, Date.now())}</span>
-    ),
-  },
-  { title: 'Reply', dataIndex: 'content', ellipsis: true },
-];
-
-function VoiceDeliveryStatus() {
-  const summaryQuery = useQuery({
-    queryKey: ['deliveries', 'summary'],
-    queryFn: () => rpc.deliveries.summary({ limit: 20 }),
-  });
-
-  if (summaryQuery.isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 60 }}>
-        <Spin />
-      </div>
-    );
-  }
-  const data = summaryQuery.data;
-  if (!data) {
-    return (
-      <Typography.Text type="secondary">
-        Delivery ledger unreadable — {(summaryQuery.error as Error | null)?.message ?? 'no data'}.
-      </Typography.Text>
-    );
-  }
-
-  const total = DELIVERY_STATUSES.reduce((sum, s) => sum + data.stats[s], 0);
-  if (total === 0 && data.recent.length === 0) {
-    return (
-      <Typography.Text type="secondary">
-        No outbound obligations recorded. The ledger fills as the gateway sends channel replies —
-        messages in this web chat are not obligations, so they never appear here.
-      </Typography.Text>
-    );
-  }
-
-  return (
-    <>
-      <div className="voice-delivery-stats">
-        {DELIVERY_STATUSES.map((status) => (
-          <div key={status} className="voice-delivery-stat">
-            <span className="voice-delivery-mono">{DELIVERY_STATUS_LABELS[status]}</span>
-            <span className="voice-delivery-count">{data.stats[status]}</span>
-            <span className="voice-delivery-mono voice-delivery-split">
-              voice {data.stats.voice[status]}
-            </span>
-          </div>
-        ))}
-      </div>
-      {data.recent.length > 0 ? (
-        <Table<DeliveryObligation>
-          size="small"
-          rowKey="id"
-          pagination={false}
-          columns={DELIVERY_COLUMNS}
-          dataSource={data.recent}
-          style={{ marginTop: 12 }}
-        />
-      ) : null}
-    </>
-  );
-}
 
 // Synthesizes a fixed phrase via the saved TTS provider and plays it back.
 function TtsTest({ disabled, dirty }: { disabled: boolean; dirty: boolean }) {
@@ -1079,9 +961,6 @@ export function VoicePane() {
           <InputNumber min={1} max={102400} placeholder="512" />
         </Form.Item>
       </SettingRow>
-      {/* OQ7 (plan §12): folded into voice notes, per the plan's own tentative
-          resolution — still an open owner question, not a settled decision. */}
-      <VoiceDeliveryStatus />
       {configData ? (
         <VoiceTelephonySections
           config={configData}

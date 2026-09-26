@@ -86,6 +86,10 @@ vi.mock('../../wiring', () => ({
   },
 }));
 
+// The judge loop's approval gate is pinned by
+// apps/ethos/src/__tests__/non-interactive-approval.test.ts; this fake loop
+// carries no hook registry.
+vi.mock('../../lib/non-interactive-approval', () => ({ gateNonInteractiveLoop: () => {} }));
 vi.mock('../../lib/release-command-runtime', () => ({
   releaseCommandRuntime: async () => {},
 }));

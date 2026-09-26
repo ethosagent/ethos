@@ -260,6 +260,12 @@ function shellQuote(arg: string): string {
   return `'${arg.replaceAll("'", `'\\''`)}'`;
 }
 
+/** `ethos import <archive>`, quoted for pasting — printed by `ethos upgrade`
+ *  when a rollback leaves the operator to restore by hand. */
+export function importCommand(archivePath: string): string {
+  return `ethos import ${shellQuote(archivePath)}`;
+}
+
 /**
  * The one command that restores this archive somewhere else (plan §4).
  *

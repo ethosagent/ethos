@@ -362,4 +362,9 @@ export function createTerminalTools(opts?: {
   return [makeTerminalTool(opts?.route ?? staticExecutionRouter(opts ?? {}))];
 }
 
-export { checkCommand, createTerminalGuardHook } from './guard';
+export {
+  approvalRequiredReason,
+  checkCommand,
+  createTerminalGuardHook,
+  type GuardHookOptions,
+} from './guard';

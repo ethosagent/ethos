@@ -18,7 +18,13 @@ export interface ToolFeedLineInput {
   durationMs: number;
   /** Max characters of `key_arg` to surface. 0 = no truncation. */
   previewLength?: number;
+  /** C2 — failure reason for a failed tool. Adds a second, indented line
+   *  (first line of the error, ≤ ERROR_LINE_MAX chars). */
+  error?: string;
 }
+
+/** Cap for the failed-tool reason line (C2). */
+export const ERROR_LINE_MAX = 120;
 
 /**
  * Format `args` into a one-line preview suitable for the tool feed.
@@ -71,5 +77,12 @@ export function formatToolFeedLine(input: ToolFeedLineInput): string {
   const parts = [input.toolName];
   if (preview) parts.push(preview);
   parts.push(duration);
-  return `${GLYPH} ${parts.join(SEP)}`;
+  const line = `${GLYPH} ${parts.join(SEP)}`;
+  // C2 — a failed tool shows its reason: the error's first line, capped, on a
+  // second indented line. The REPL prints it red under the dim feed line.
+  const reason = input.error?.split('\n', 1)[0]?.trim();
+  if (!reason) return line;
+  const capped =
+    reason.length > ERROR_LINE_MAX ? `${reason.slice(0, ERROR_LINE_MAX - 1)}…` : reason;
+  return `${line}\n      ${capped}`;
 }

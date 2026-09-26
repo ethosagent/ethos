@@ -18,7 +18,12 @@ import {
   SecretUnavailableError,
 } from '@ethosagent/worker-router';
 import { describe, expect, it, vi } from 'vitest';
-import { type AcpGateRequest, createAutoApproveGate, createRouterGate } from '../acp-gate';
+import {
+  type AcpGateRequest,
+  createAutoApproveGate,
+  createPersonalityGate,
+  createRouterGate,
+} from '../acp-gate';
 import type { AcpPermissionOption } from '../acp-protocol';
 
 const JOB = {
@@ -161,6 +166,76 @@ describe('createAutoApproveGate', () => {
     await expect(gate(gateRequest({ options: onlyReject }))).resolves.toEqual({
       outcome: 'cancelled',
     });
+  });
+});
+
+// S12 (plan openclaw-2026.9.6-gaps): the personality's deny rules and toolset
+// bind a delegated ACP agent the way they bind the in-process loop — checked
+// before the inner gate (auto-approve or the router) is ever asked.
+describe('createPersonalityGate', () => {
+  const REJECTED = { outcome: 'selected', optionId: 'opt-reject-once' };
+  const ALLOWED = { outcome: 'selected', optionId: 'opt-allow-always' };
+
+  function gateFor(p: { toolset?: string[]; denyRules?: string[] }) {
+    const inner = vi.fn(createAutoApproveGate());
+    const gate = createPersonalityGate(inner, {
+      id: 'scribe',
+      ...(p.toolset ? { toolset: p.toolset } : {}),
+      ...(p.denyRules ? { safety: { denyRules: p.denyRules } } : {}),
+    });
+    return { gate, inner };
+  }
+
+  it('refuses a request_permission matching a deny rule, without asking the inner gate', async () => {
+    const { gate, inner } = gateFor({ denyRules: ['rm -rf'] });
+    const req = gateRequest({ kind: 'execute', rawInput: { command: 'rm -rf build' } });
+    await expect(gate(req)).resolves.toEqual(REJECTED);
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it('matches a deny rule written against the Ethos tool name the kind maps to', async () => {
+    const { gate } = gateFor({ denyRules: ['terminal {"command":"git push'] });
+    const req = gateRequest({
+      kind: 'execute',
+      toolName: 'Bash',
+      rawInput: { command: 'git push --force' },
+    });
+    await expect(gate(req)).resolves.toEqual(REJECTED);
+  });
+
+  it('an ambiguous kind is denied if a rule matches ANY Ethos tool it maps to', async () => {
+    const { gate } = gateFor({ denyRules: ['patch_file '] });
+    await expect(gate(gateRequest({ kind: 'edit', rawInput: { path: 'a' } }))).resolves.toEqual(
+      REJECTED,
+    );
+  });
+
+  it("an unmapped kind is still checked against the agent's own tool name and input", async () => {
+    const { gate } = gateFor({ denyRules: ['mcp__deploy'] });
+    await expect(
+      gate(gateRequest({ kind: 'other', toolName: 'mcp__deploy__prod', rawInput: {} })),
+    ).resolves.toEqual(REJECTED);
+  });
+
+  it('refuses a kind whose Ethos tools are all outside the toolset', async () => {
+    const { gate, inner } = gateFor({ toolset: ['read_file', 'search_files'] });
+    await expect(
+      gate(gateRequest({ kind: 'execute', rawInput: { command: 'ls' } })),
+    ).resolves.toEqual(REJECTED);
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it('passes a permitted call to the inner gate unchanged', async () => {
+    const { gate, inner } = gateFor({ toolset: ['read_file'], denyRules: ['rm -rf'] });
+    const req = gateRequest({ kind: 'read', rawInput: { path: 'README.md' } });
+    await expect(gate(req)).resolves.toEqual(ALLOWED);
+    expect(inner).toHaveBeenCalledWith(req);
+  });
+
+  it('an unmapped kind is not refused by the toolset — the inner gate decides', async () => {
+    const { gate, inner } = gateFor({ toolset: ['read_file'] });
+    await expect(gate(gateRequest({ kind: 'think', rawInput: {} }))).resolves.toEqual(ALLOWED);
+    expect(inner).toHaveBeenCalled();
   });
 });
 

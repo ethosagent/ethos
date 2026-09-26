@@ -9,7 +9,12 @@ import { join, resolve as resolvePath } from 'node:path';
 // (packages/core/src/fs-reach.ts). Two copies would drift into silent data
 // loss: a write ScopedStorage permits but no mount backs is written into the
 // container's ephemeral layer and discarded by `docker run --rm`.
-import { deriveFsReachPaths, type FsReachVars, substitute } from '@ethosagent/core';
+import {
+  deriveFsReachPaths,
+  type FsReachVars,
+  personalityWriteDeny,
+  substitute,
+} from '@ethosagent/core';
 import type {
   Constitution,
   ExecChunk,
@@ -61,6 +66,46 @@ export class InvalidImageRefError extends Error {
   constructor(public readonly ref: string) {
     super(`Image ref must be digest-pinned (@sha256:): ${ref}`);
     this.name = 'InvalidImageRefError';
+  }
+}
+
+/**
+ * The image this document recommends operators pin for `execution.docker.image`
+ * when they have no project-specific one. Named here so the refusal below, the
+ * doctor line and docs/content/using/reference/config-yaml.md say the same
+ * thing. NEVER used as a default: an unpinned tag is not a sandbox image, and a
+ * baked-in digest would silently age. The operator pins the digest they pulled.
+ */
+export const RECOMMENDED_DOCKER_IMAGE = 'node:24-bookworm';
+
+/** Where the `execution.docker.*` keys are documented. */
+export const DOCKER_IMAGE_DOCS_URL =
+  'https://ethosagent.ai/docs/using/reference/config-yaml#execution-docker';
+
+/**
+ * The refusal every docker-posture exec tool returns when no
+ * `execution.docker.image` is configured. One sentence source, shared by the
+ * backend error, `ethos doctor` and the character sheet (via the posture's
+ * `dockerImageMissing`), so the three cannot drift apart.
+ */
+export const DOCKER_IMAGE_MISSING_MESSAGE =
+  'Docker sandbox has no image configured, so exec tools (terminal, run_code, run_tests, lint, process_*) cannot run. ' +
+  'Set execution.docker.image: <image>@sha256:<digest> in ~/.ethos/config.yaml. ' +
+  `Recommended: ${RECOMMENDED_DOCKER_IMAGE} (bash, node, python3, git) — pin it with ` +
+  `\`docker pull ${RECOMMENDED_DOCKER_IMAGE} && docker inspect --format '{{index .RepoDigests 0}}' ${RECOMMENDED_DOCKER_IMAGE}\`. ` +
+  `Docs: ${DOCKER_IMAGE_DOCS_URL}`;
+
+/**
+ * No `execution.docker.image` — thrown before any `docker` process is spawned.
+ * Distinct from {@link InvalidImageRefError}, which reports a value that IS set
+ * but is not digest-pinned; an empty ref there read as a malformed value when
+ * the actual problem was a key nobody had set.
+ */
+export class MissingDockerImageError extends Error {
+  readonly code = 'DOCKER_IMAGE_MISSING';
+  constructor() {
+    super(DOCKER_IMAGE_MISSING_MESSAGE);
+    this.name = 'MissingDockerImageError';
   }
 }
 
@@ -705,6 +750,118 @@ export function buildKeepAliveArgs(opts: {
   return args;
 }
 
+/** Every confinement property unproven — what `attest()` reports where it cannot tell. */
+const UNPROVEN: SandboxAttestation = {
+  readonlyRootFs: false,
+  noHostMounts: false,
+  egressControlled: false,
+  noDockerSocket: false,
+  nonRoot: false,
+  noPrivileged: false,
+  noCapAdd: false,
+  capDropAll: false,
+  noNewPrivs: false,
+};
+
+const ATTESTATION_KEYS: readonly (keyof SandboxAttestation)[] = [
+  'readonlyRootFs',
+  'noHostMounts',
+  'egressControlled',
+  'noDockerSocket',
+  'nonRoot',
+  'noPrivileged',
+  'noCapAdd',
+  'capDropAll',
+  'noNewPrivs',
+];
+
+/** The daemon socket paths a bind mount must not reach (DKR-001/DKR-002). */
+const DOCKER_SOCKET_PATHS = ['/var/run/docker.sock', '/run/docker.sock'];
+
+/** Delay between `docker inspect` attempts, and the most attempts one container
+ *  gets before it counts as never inspected (~5 s). */
+const INSPECT_RETRY_MS = 100;
+const INSPECT_MAX_ATTEMPTS = 50;
+
+function prop(obj: unknown, key: string): unknown {
+  return typeof obj === 'object' && obj !== null ? Reflect.get(obj, key) : undefined;
+}
+
+function stringList(v: unknown): string[] | null {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null;
+}
+
+/** True when a bind mount's host `source` is a docker socket or any directory above one. */
+function reachesDockerSocket(source: string): boolean {
+  const sources = new Set([resolvePath(source), realPathOrLexical(resolvePath(source))]);
+  for (const socket of DOCKER_SOCKET_PATHS) {
+    for (const target of new Set([socket, realPathOrLexical(socket)])) {
+      for (const src of sources) if (isUnderPath(target, src)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The `SandboxAttestation` of one container, read from its `docker inspect`
+ * output (DKR-001). A property is `true` only when the inspect output shows
+ * it; a missing, malformed or ambiguous field is `false` — unproven, which
+ * `isStrictAttestation` (packages/types/src/sandbox.ts) treats as not strict.
+ * `nonRoot` needs a numeric, non-zero uid in `Config.User`: an empty value is
+ * the image's own USER and a name is resolved inside the image, neither of
+ * which inspect reports.
+ */
+export function attestationFromInspect(raw: unknown): SandboxAttestation {
+  const c = Array.isArray(raw) ? raw[0] : raw;
+  const host = prop(c, 'HostConfig');
+  const user = prop(prop(c, 'Config'), 'User');
+  const uid = typeof user === 'string' ? (user.split(':')[0] ?? '') : '';
+  const capAdd = prop(host, 'CapAdd');
+  const capDrop = stringList(prop(host, 'CapDrop'));
+  const securityOpt = stringList(prop(host, 'SecurityOpt'));
+  const mounts = prop(c, 'Mounts');
+  const mountList = Array.isArray(mounts) ? mounts : null;
+  const sources = mountList?.map((m) => prop(m, 'Source'));
+  return {
+    readonlyRootFs: prop(host, 'ReadonlyRootfs') === true,
+    noHostMounts:
+      mountList?.every((m) => prop(m, 'Type') === 'tmpfs' || prop(m, 'Type') === 'volume') ?? false,
+    egressControlled: prop(host, 'NetworkMode') === 'none',
+    noDockerSocket:
+      sources?.every((src) => typeof src === 'string' && !reachesDockerSocket(src)) ?? false,
+    nonRoot: /^\d+$/.test(uid) && Number(uid) !== 0,
+    noPrivileged: prop(host, 'Privileged') === false,
+    noCapAdd: capAdd === null || (Array.isArray(capAdd) && capAdd.length === 0),
+    capDropAll: capDrop?.some((cap) => ['ALL', 'CAP_ALL'].includes(cap.toUpperCase())) ?? false,
+    noNewPrivs: securityOpt?.some((o) => /^no-new-privileges([:=]true)?$/.test(o)) ?? false,
+  };
+}
+
+/** `docker inspect <name>` → parsed JSON, or null when it cannot be read (not
+ *  yet created, already removed, no daemon). */
+function defaultInspectContainer(name: string): Promise<unknown> {
+  return new Promise<unknown>((resolve) => {
+    try {
+      const child = spawn('docker', ['inspect', name], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout?.on('data', (b: Buffer) => {
+        out += b.toString('utf-8');
+      });
+      child.on('close', (code) => {
+        if (code !== 0) return resolve(null);
+        try {
+          resolve(JSON.parse(out));
+        } catch {
+          resolve(null);
+        }
+      });
+      child.on('error', () => resolve(null));
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 function defaultDockerInfoCheck(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     try {
@@ -753,9 +910,9 @@ class DockerPersistentSession implements ExecSession {
     if (this.started) return;
     if (this.starting) return this.starting;
     this.starting = (async () => {
-      if (!(await this.backend.isAvailable())) throw new DockerUnavailableError();
       const image = this.config.images?.default ?? '';
-      if (!image) throw new InvalidImageRefError(image);
+      if (!image) throw new MissingDockerImageError();
+      if (!(await this.backend.isAvailable())) throw new DockerUnavailableError();
       const memoryMb = this.config.memoryMb ?? 256;
       const diskMb = await this.backend.resolveDiskQuotaMb();
       const containerName = `ethos-sandbox-sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -782,6 +939,7 @@ class DockerPersistentSession implements ExecSession {
         run.on('error', reject);
       });
       this.container = containerName;
+      this.backend.observeContainer(containerName, () => !this.disposed);
       this.shell = spawn('docker', ['exec', '-i', containerName, 'bash'], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -1001,18 +1159,27 @@ export class DockerExecutionBackend implements ExecutionBackend {
   /** Memoised so the `docker info` lookup — and the create/rm probe behind it
    *  — run at most once per backend. */
   private diskQuota: Promise<number | undefined> | null = null;
+  private readonly inspectContainer: (name: string) => Promise<unknown>;
+  /** AND of the attestation of every container inspected so far (DKR-001). */
+  private observed: SandboxAttestation | null = null;
+  /** Containers started whose inspection has not settled yet. */
+  private pendingInspections = 0;
+  /** Set once a container ran that no inspection could read. */
+  private uninspectedContainer = false;
 
   constructor(
     ctx: { config: ExecutionBackendConfig; secrets: SecretsResolver; logger: Logger },
     checkAvailable?: () => Promise<boolean>,
     checkStorageDriver?: () => Promise<StorageDriverInfo | null>,
     probeQuota?: (image: string, diskMb: number) => Promise<boolean>,
+    inspectContainer?: (name: string) => Promise<unknown>,
   ) {
     this.config = ctx.config;
     this.checkAvailable = checkAvailable ?? defaultDockerInfoCheck;
     this.logger = ctx.logger;
     this.checkStorageDriver = checkStorageDriver ?? defaultStorageDriverCheck;
     this.probeQuota = probeQuota ?? defaultQuotaProbe;
+    this.inspectContainer = inspectContainer ?? defaultInspectContainer;
   }
 
   /**
@@ -1061,11 +1228,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
     return this.checkAvailable();
   }
 
-  // Image convention: resolve from config.images[runtime]; runtime defaults to 'default'.
+  // Image convention: resolve from config.images[runtime]; runtime defaults to
+  // 'default', which `execution.docker.image` sets (createExecutionRouting).
+  // The image is checked BEFORE the daemon: a missing key is a config fact the
+  // operator can fix, and it must not hide behind "Docker is not available".
   async *exec(cmd: string, opts: ExecOpts): AsyncIterable<ExecChunk> {
-    if (!(await this.checkAvailable())) throw new DockerUnavailableError();
     const image = this.config.images?.default ?? '';
-    if (!image) throw new InvalidImageRefError(image);
+    if (!image) throw new MissingDockerImageError();
+    if (!(await this.checkAvailable())) throw new DockerUnavailableError();
 
     const memoryMb = this.config.memoryMb ?? 256;
     const diskMb = await this.resolveDiskQuotaMb();
@@ -1094,6 +1264,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
       });
     };
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let running = true;
+    child.on('close', () => {
+      running = false;
+    });
+    child.on('error', () => {
+      running = false;
+    });
+    this.observeContainer(containerName, () => running);
     yield* withByteCeiling(
       streamChild(child, opts, killContainer),
       MAX_EXEC_OUTPUT_BYTES,
@@ -1119,6 +1297,17 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * rw, rw wins: write access subsumes read, so the path is mounted rw. (This
    * is also why the default scope — which lists ownDir/cwd in both read and
    * write — resolves cleanly to rw for those roots.)
+   *
+   * The personality's own DEFINITION is mounted read-only (reach-and-containment
+   * 3a, the OS-layer half of `writeDeny`): when any rw mount is `ownDir` or an
+   * ancestor of it, `ownDir` itself gains a `ro` mount and its asset folder
+   * `ownDir/files` a `rw` one. The nested-mount rule above makes that
+   * ro-dir-with-rw-child layout well defined, and a DIRECTORY ro mount also
+   * blocks CREATING a missing `mcp.yaml`, which per-file mounts could not. A
+   * rw mount AT or BELOW a `writeDeny` entry (a declared `ownDir/skills/`) is
+   * downgraded to `ro`. The consequence is that a direct container write to
+   * `ownDir/MEMORY.md` fails with EROFS, loudly — the memory provider writes
+   * it host-side, never through the container.
    */
   mountsFor(p: PersonalityConfig): MountSpec[] {
     const ethosHome = this.config.substitutionVars?.ethosHome ?? join(homedir(), '.ethos');
@@ -1153,25 +1342,77 @@ export class DockerExecutionBackend implements ExecutionBackend {
     // path is seen; the rw-wins guard above then keeps rw regardless of order.
     for (const path of writePaths) add(path, 'rw');
     for (const path of readPaths) add(path, 'ro');
+
+    const within = (child: string, parent: string): boolean =>
+      child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+    const writeDeny = personalityWriteDeny(ethosHome, p.id).map((d) => resolvePath(d));
+    for (const [path, mount] of byPath) {
+      if (mount.mode === 'rw' && writeDeny.some((deny) => within(path, deny))) {
+        byPath.set(path, { ...mount, mode: 'ro' });
+      }
+    }
+    const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
+    const coversOwnDir = [...byPath.values()].some(
+      (m) => m.mode === 'rw' && within(ownDir, m.hostPath),
+    );
+    if (coversOwnDir) {
+      byPath.set(ownDir, { hostPath: ownDir, containerPath: ownDir, mode: 'ro' });
+      add(join(ownDir, 'files'), 'rw');
+    }
     return [...byPath.values()];
   }
 
+  /**
+   * Inspect a container this backend started and fold what it is into
+   * `attest()` (DKR-001). Runs in the background: it never gates the exec. A
+   * one-shot `--rm` container is only inspectable while it exists, so the
+   * inspect is retried until it answers, `isRunning` goes false, or
+   * `INSPECT_MAX_ATTEMPTS` run out; a container never read marks the backend's
+   * attestation unproven for good.
+   */
+  observeContainer(name: string, isRunning: () => boolean): void {
+    this.pendingInspections += 1;
+    void (async () => {
+      let attestation: SandboxAttestation | null = null;
+      try {
+        for (let attempt = 1; attestation === null; attempt++) {
+          const raw = await this.inspectContainer(name);
+          if (raw !== null) attestation = attestationFromInspect(raw);
+          else if (!isRunning() || attempt >= INSPECT_MAX_ATTEMPTS) break;
+          else await new Promise((r) => setTimeout(r, INSPECT_RETRY_MS));
+        }
+      } catch {
+        attestation = null;
+      }
+      if (attestation === null) {
+        this.uninspectedContainer = true;
+      } else {
+        const prev = this.observed;
+        const next: SandboxAttestation = { ...attestation };
+        if (prev) {
+          for (const key of ATTESTATION_KEYS) {
+            next[key] = next[key] && prev[key];
+          }
+        }
+        this.observed = next;
+      }
+      this.pendingInspections -= 1;
+    })();
+  }
+
+  /**
+   * What every container this backend has run actually was, per
+   * `docker inspect` (`attestationFromInspect`): a property is `true` only
+   * when it held for all of them. Where the backend cannot tell — nothing run
+   * yet, an inspection still in flight, or a container it could not inspect —
+   * every property is `false` (unproven). Nothing on the composition path
+   * reads this yet; see the status note in packages/types/src/sandbox.ts.
+   */
   attest(): SandboxAttestation {
-    // Derive attestation from the backend's actual Docker configuration.
-    // buildDockerArgs always applies: --cap-drop ALL, --security-opt no-new-privileges,
-    // non-root user (when uid/gid >= 0). Whether that earns a strict attestation
-    // depends on what's in config — if images are pinned, no host docker socket, etc.
-    return {
-      readonlyRootFs: false, // Docker run does NOT set --read-only by default
-      noHostMounts: false, // mountsFor derives host bind mounts from fs_reach
-      egressControlled: false, // network mode may be 'bridge' (open) depending on personality
-      noDockerSocket: true, // FORBIDDEN_MOUNT_ROOTS blocks /var/run/docker.sock
-      nonRoot: true, // buildDockerArgs sets --user uid:gid when >= 0
-      noPrivileged: true, // buildDockerArgs never adds --privileged
-      noCapAdd: true, // buildDockerArgs never adds --cap-add
-      capDropAll: true, // buildDockerArgs always sets --cap-drop ALL
-      noNewPrivs: true, // buildDockerArgs always sets --security-opt no-new-privileges
-    };
+    if (this.observed === null || this.pendingInspections > 0 || this.uninspectedContainer) {
+      return { ...UNPROVEN };
+    }
+    return { ...this.observed };
   }
 
   dispose(): Promise<void> {

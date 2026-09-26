@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "ids": [
+    "app-entry-modules-compose",
+    "core-adapters-wrap-core",
+    "every-error-rule-has-a-fixture",
+    "extensions-implement-contracts",
+    "kernel-reads-contracts",
+    "l1-contracts-pure",
+    "l10-silent-libraries",
+    "l2-core-no-concrete",
+    "l3-wiring-composes",
+    "l5-apps-through-wiring",
+    "no-computed-dynamic-import",
+    "no-empty-catch",
+    "no-inline-suppression",
+    "observability-sqlite-stays-extractable",
+    "p24-no-fsstorage-in-libraries",
+    "support-packages",
+    "surface-throws-ethos-error",
+    "tests-reach-anything",
+    "tools-read-env-through-ctx",
+    "vendored-shim",
+    "web-api-rpc-is-thin"
+  ]
+}

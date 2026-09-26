@@ -33,7 +33,9 @@ import { join } from 'node:path';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   loadConfigStrict,
   type WebhookHookConfig,
 } from '@ethosagent/config';
@@ -79,6 +81,7 @@ import {
   IdentityMap,
   initPairingDb,
   type MessagingSendFn,
+  SQLiteNotifyQueue,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,
@@ -113,9 +116,21 @@ import {
   unmountPlatformWebhook,
   type WebBindTarget,
 } from '../config-reload';
-import { createHealthServer } from '../health-server';
+import {
+  createEventLoopLagSampler,
+  createHealthServer,
+  createReadinessCheck,
+} from '../health-server';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
+import { exitIfConfigInvalid } from '../lib/config-exit';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
+import {
+  openInboundSpool,
+  pruneInboundSpool,
+  startInboundSpoolReplay,
+  takeGatewayLockOrExit,
+} from '../lib/gateway-inbound-durability';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -128,10 +143,12 @@ import {
   wireOutboxCardAdapters,
 } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
+import { pruneExpiredSessions } from '../lib/session-retention';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
 import { createPlatformWebhookServer } from '../platform-webhook-server';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createWebhookServer, type PrefilterRunner } from '../webhook-server';
 import {
@@ -167,10 +184,16 @@ import {
   createGatewayMetricsAuthCheck,
   createTelegramGreetingProvider,
   createTelegramPersonalityCardReader,
+  everyStartedAdapter,
   type GatewayBotWiring,
+  gatewayObservability,
+  gatewaySqliteStorePaths,
+  gatewayTurnOrigin,
+  idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
+  warnEmailSenderAuthUnconfigured,
   wireApprovalFlow,
 } from './gateway';
 import {
@@ -306,23 +329,24 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     console.error('Run ethos setup first.');
     process.exit(1);
   }
-  if (loaded.parseErrors.length > 0) {
-    console.log(`${c.red}Config parse errors:${c.reset}`);
-    for (const err of loaded.parseErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Config parse errors', loaded.parseErrors);
   for (const note of loaded.deprecations) {
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
   const cfg = loaded.config;
   const dir = ethosDir();
 
+  // One gateway per state dir (plan reach-and-containment §2.7): this profile
+  // owns platform adapters exactly as `ethos gateway start` does, so it takes
+  // the SAME lock, here — after config load, BEFORE any store is opened or
+  // adapter constructed. Held by a running gateway (or another boot) → the
+  // refusal is printed and this exits 3, which `ethos run-all` and the desktop
+  // app read as "already running". Released after the spool closes in
+  // `shutdown`, and on process exit (`takeGatewayLockOrExit`).
+  const releaseGatewayLock = await takeGatewayLockOrExit(dir);
+
   const bindErrors = await validateBindings(cfg);
-  if (bindErrors.length > 0) {
-    console.log(`${c.red}Bot binding errors:${c.reset}`);
-    for (const err of bindErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Bot binding errors', bindErrors);
 
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, cfg);
@@ -412,11 +436,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   });
   const scheduler = new CronScheduler({
     storage,
-    // See `serve.ts`'s identical line: without this the scheduler defaults
-    // to `~/.ethos/cron` regardless of `ETHOS_STATE_DIR`. `dir` is
-    // `ethosDir()`, which already honors the override.
-    cronDir: join(dir, 'cron'),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger,
+    ...(cfg.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: cfg.cron.defaultMaxRunMs }
+      : {}),
     ...(cfg.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: cfg.cron.maxParallelJobs }
       : {}),
@@ -450,7 +475,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
     // Serve-role turn shape (`runCronTurn`): reuses a web-origin session when
     // the personality matches, which the gateway's simpler runJob does not.
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       const loop = sharedLoop;
       if (!loop) {
         throw new EthosError({
@@ -475,6 +500,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         personalityId: job.personalityId,
         webOrigin,
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
       });
       chatServiceRef?.broadcastAll({
         type: 'cron.fired',
@@ -579,6 +606,22 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     logger,
   });
 
+  // Per-bot routing table. Each personality-bound bot gets its own loop, the
+  // same shape `ethos gateway start` builds today — this is NOT the
+  // double-construction §3c warns about, which is about the two ROLES each
+  // building a system loop. Built BEFORE the system loop only so that loop
+  // knows whether it is also the idle gateway bot's (below); neither build
+  // reads the other.
+  const coldBuilt = await buildGatewayBots(
+    cfg,
+    scheduler,
+    watcherManager,
+    gatewayTurnOrigin(() => gatewayRef),
+    undefined,
+    outbox.wiring,
+  );
+  const bots = coldBuilt.bots;
+
   const shared = await createAgentLoop(cfg, {
     profile: 'web',
     meshRegistryPath: meshRegistryPath(meshName),
@@ -588,23 +631,23 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // personality's `send_message` must queue from this loop exactly as it
     // does from a bot's.
     outbox: outbox.wiring,
+    // No bot configured: this loop is also the idle gateway bot's
+    // (`idleGatewayBotLoopOpts`, ./gateway).
+    ...(bots.length === 0 ? idleGatewayBotLoopOpts(gatewayTurnOrigin(() => gatewayRef)) : {}),
   });
   sharedLoop = shared.loop;
+  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
+  // registers on its systemLoop): here cron and watcher wakes share the web
+  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
+  // flagged call posts a modal card a human can answer (denied at the approval
+  // timeout) — the same shape as `ethos serve`. The unattended gate would
+  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
+  // That web hook's predicate (`buildServeDangerPredicate`, ./serve) never
+  // takes the D12 opt-in, so with no bot configured the idle gateway bot's
+  // channel turns (remote senders) on this loop cannot be auto-approved by
+  // `allowUnattendedDangerousTools` either. Pinned by
+  // `./__tests__/gateway-unattended-gate-wiring.test.ts` ('ethos boot').
   const systemLoop = shared.loop;
-
-  // Per-bot routing table. Each personality-bound bot gets its own loop, the
-  // same shape `ethos gateway start` builds today — this is NOT the
-  // double-construction §3c warns about, which is about the two ROLES each
-  // building a system loop.
-  const coldBuilt = await buildGatewayBots(
-    cfg,
-    scheduler,
-    watcherManager,
-    (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
-    undefined,
-    outbox.wiring,
-  );
-  const bots = coldBuilt.bots;
 
   // Personality-directory seam for hot-reload, shared by the Gateway and by
   // every loop registry in the process.
@@ -679,7 +722,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     routeModules: a2aRouteModules,
     peering: a2aPeering,
     setA2aEnabled,
-  } = buildServeA2aSurface({ config: cfg, core: a2a, toolRegistry: shared.toolRegistry });
+  } = buildServeA2aSurface({
+    config: cfg,
+    core: a2a,
+    toolRegistry: shared.toolRegistry,
+    trustProxy,
+  });
 
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
   // Phone push devices (S5) — after `apiKeys`, whose table its joins read.
@@ -737,6 +785,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     config: cfg,
     dir,
     loop: systemLoop,
+    // The smart approver's decision site from the build `systemLoop` came from
+    // (plan decision-provider-jev §8.2), as `ethos serve` passes its own.
+    ...(shared.approverDecision ? { approverDecision: shared.approverDecision } : {}),
+    executionPostureFor: shared.executionPostureFor,
     session,
     contextLog,
     personalities,
@@ -791,6 +843,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // -------------------------------------------------------------------------
   const { attachmentCache, pruneTimer } = await createGatewayAttachmentCache(storage);
   const adapters = await buildGatewayAdapters(cfg, attachmentCache);
+  warnEmailSenderAuthUnconfigured(cfg);
 
   let gatewayRef: ReturnType<typeof buildGateway> | null = null;
   // Clarify correlators, LIVE and KEYED BY BOT. `registerGatewayClarifySurfaces`
@@ -864,7 +917,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   }
 
   const deliveryLedger = new SQLiteDeliveryLedger(join(dir, 'delivery-ledger.db'));
+  // U11 — notices held for quiet hours or a lane /mute (`held_notices`).
+  const heldNotices = new SQLiteNotifyQueue(join(dir, 'notify-queue.db'));
   const inboundDedup = new SQLiteInboundDedupStore(join(dir, 'inbound-dedup.db'));
+  // Inbound spool (plan reach-and-containment §2.2): the write-ahead record of
+  // every turn this process owes, replayed after a crash. Only AFTER the
+  // gateway lock above, which is what makes its boot-time orphan recovery safe.
+  const { inboundSpool, inboundSpoolOptions } = openInboundSpool(cfg, dir);
 
   // Observe-mode transcript sink (plan/phases/ambient-group-monitoring.md R1).
   // Deliberately NOT eager like the two stores above: this one is opened on
@@ -905,9 +964,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     config: cfg,
     bots,
     systemLoop,
+    idleBotJobs: { jobStore: shared.jobStore, backgroundExecutor: shared.backgroundExecutor },
     adapters,
     deliveryLedger,
     inboundDedup,
+    heldNotices,
+    inboundSpool,
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader: shared.pluginLoader,
     trustedChannelPlugins: shared.activePersonality?.plugins
@@ -944,8 +1007,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // sender resolver picked from, so "which bot may publish for this
     // personality" has one answer at propose time and at delivery time.
     publicationSpeaksFor: botSpeakers.speaksFor,
+    // Every `gateway.*` event, into this process's observability store.
+    observability: gatewayObservability(),
   });
   gatewayRef = gateway;
+  // The durable lane → session map (plan openclaw-9.5-adoption D28), loaded
+  // BEFORE any adapter is wired or started and before `startInboundSpoolReplay`
+  // below (§3b): a replayed row, an interrupted `retry` and a `wake_review` turn all
+  // resolve `sessionKeys`, and an empty map would run them in the lane's
+  // default session instead of the one `/new` / `/fork` / `/branch` left it on.
+  await gateway.restoreLaneSessions();
 
   // Wire the send paths now that the Gateway exists.
   //
@@ -1028,6 +1099,19 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     model: cfg.model,
     ...(cfg.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: cfg.approvalTimeoutMs } : {}),
     forwardDecision: telegramApprovalBridge.decide,
+    // The boot config's filter is the one installed in the Gateway (it is
+    // construction-time; see `prepareBotLive`), so the owner deciding group
+    // approvals is the same owner the gateway's `/personality` check reads.
+    ownerFor: (platform: string) => cfg.channelFilter?.[platform]?.ownerUserId,
+    // Where each personality's shell tools run (S6 / D1(a)) — the shared
+    // build's, for the same reason as the decision site below.
+    executionPostureFor: shared.executionPostureFor,
+    // The provider half of `decisions.*` is operator-level, so every bot's
+    // approval predicate takes the shared build's decision site (plan
+    // decision-provider-jev §8.2), as it takes that config's `createLLM(cfg)`
+    // / `cfg.model` for the reviewer. The site's mode is still resolved per
+    // call from the session's personality (plan decision-provider-personality §7.3).
+    ...(shared.approverDecision ? { decision: shared.approverDecision } : {}),
   };
   /**
    * One approval surface per bot, keyed by botKey. `wireApprovalFlow` binds its
@@ -1350,6 +1434,33 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       `${c.dim}Resumed from a pause of ${reconciliation.pauseOffset.pauseDurationMs}ms${c.reset}`,
     );
   }
+
+  // Inbound spool replay (plan reach-and-containment §2.4). After step 8's
+  // `adapter.start()` for the reason the ledger sweep is — a replayed turn
+  // replies through a live adapter — and after reconciliation, whose delivery
+  // sweep and clarify hydration a replayed message may depend on. The first
+  // call arms the Gateway's 60s replay tick; `gateway.shutdown` stops it.
+  startInboundSpoolReplay(gateway, {
+    info: (message) => console.log(`${c.dim}${message}${c.reset}`),
+    warn: (message) => logger.warn(message, { component: 'boot' }),
+  });
+  // The delivery ledger's periodic sweep (plan openclaw-2026.9.6-gaps R1), after
+  // reconciliation's boot sweep; `gateway.shutdown` stops it.
+  gateway.startDeliverySweep();
+  // Spool retention (D2-11): once now, then hourly — see `pruneInboundSpool`.
+  // Session retention (R9) rides the same tick — see `pruneExpiredSessions`.
+  const pruneSpool = () => {
+    pruneInboundSpool(inboundSpool, {
+      observability: gatewayObservability(),
+      warn: (message) => logger.warn(message, { component: 'boot' }),
+    });
+    void pruneExpiredSessions(session, config.retention).catch((err) => {
+      logger.warn(`session retention prune failed: ${String(err)}`, { component: 'boot' });
+    });
+  };
+  pruneSpool();
+  const spoolPruneTimer = setInterval(pruneSpool, 3_600_000);
+  spoolPruneTimer.unref?.();
   // The mid-run resume seam. `runBootReconciliation` above handles the pause a
   // COLD-BOOTED process learns about from `readPauseOffset()`; this handles the
   // one a RUNNING process lives through, which is what snapshot+restore actually
@@ -1388,7 +1499,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
     try {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      // LIVE, like the metrics closure above: `adapters` is the boot-time
+      // snapshot, still holding a bot a reload retired (reported forever as a
+      // stopped adapter) and missing one a reload added.
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       await storage.writeAtomic(gatewayHealthPath(), JSON.stringify(hb));
     } catch {
       // Best-effort — the consumer treats stale data as degraded.
@@ -1403,11 +1517,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // FULLY reconciled process, ACP included (§11 OQ8, argued above).
   // -------------------------------------------------------------------------
   const metricsApiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  const eventLoopLag = createEventLoopLagSampler();
   const healthServer = createHealthServer(
     healthPort,
     healthHost,
     async () => {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
       return {
         status: allOk ? 'ok' : 'degraded',
@@ -1420,8 +1535,19 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
     metricsText,
     createGatewayMetricsAuthCheck(metricsApiKeys),
+    {
+      // R6 — `/readyz`, live adapters through the 60s `cachedHealth`.
+      readiness: createReadinessCheck({
+        adapters: async () =>
+          (await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt)).adapters,
+        sqlitePaths: gatewaySqliteStorePaths(dir),
+        lagP99Ms: eventLoopLag.p99Ms,
+      }),
+      eventLoopLagP99Ms: eventLoopLag.p99Ms,
+    },
   );
   console.log(`  health:  http://${healthHost}:${healthPort}/healthz`);
+  console.log(`  ready:   http://${healthHost}:${healthPort}/readyz`);
 
   // Inbound webhooks — opt-in, unchanged gate (§11 OQ5: same defaults as today,
   // no new exposure policy for the merged profile).
@@ -1432,6 +1558,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       {
         storage,
         executionBackend: webhookPrefilterBackend,
+        scriptsDir: ethosScriptsDir(),
         stdin: opts.stdin,
         label: 'prefilter',
       },
@@ -1770,7 +1897,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       slice,
       scheduler,
       watcherManager,
-      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      gatewayTurnOrigin(() => gatewayRef),
       undefined,
       // A bot added without a restart is gated exactly like a cold-booted one.
       // This is the drift O-D8 warns about, one call site down: miss it and a
@@ -2006,7 +2133,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       slice,
       scheduler,
       watcherManager,
-      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      gatewayTurnOrigin(() => gatewayRef),
       undefined,
       // A bot added without a restart is gated exactly like a cold-booted one.
       // This is the drift O-D8 warns about, one call site down: miss it and a
@@ -2342,7 +2469,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // -------------------------------------------------------------------------
   //
   // Every step below runs through `guard`. The handlers are invoked as
-  // `void shutdown()`, so a single rejection would both skip `process.exit(0)`
+  // `void shutdown()`, so a single rejection would both skip `process.exit`
   // and surface as an unhandled rejection — leaving the process alive with its
   // adapters half-stopped and still registered in the mesh. `guard` is the
   // sync-throw-safe form of the `.catch(() => {})` this closure already used on
@@ -2362,8 +2489,17 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         },
       );
 
+  // `step` is `guard` with a deadline (`boundedShutdownStep`,
+  // lib/bounded-shutdown-step.ts): for a step whose await has none of its own.
+  const stepReporting = {
+    sink: gatewayObservability,
+    warn: (message: string) => logger.warn(message, { component: 'boot' }),
+  };
+  const step = (label: string, fn: () => unknown): Promise<void> =>
+    boundedShutdownStep(label, fn, stepReporting);
+
   let shuttingDown: Promise<void> | undefined;
-  const shutdown = async () => {
+  const shutdown = async (exitCode = 0) => {
     // Reentrancy: this is registered on BOTH SIGINT and SIGTERM, and a second
     // signal — plausibly during the approval drain, which can take up to 5s —
     // would otherwise start a CONCURRENT teardown of the same mesh
@@ -2393,7 +2529,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // Stopped BEFORE the gateway drains: a tick that started now would claim
       // a row this process is about to stop being able to deliver, and leave it
       // `sending` for the ten minutes the stale reconciler waits.
-      await guard('outbox-dispatcher', async () => {
+      await step('outbox-dispatcher', async () => {
         outboxDispatcher.stop();
         // Reviews and card round trips start from a fire-and-forget hook, so
         // they are drained BEFORE the adapters stop — otherwise the transport
@@ -2430,6 +2566,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       await guard('timers', () => {
         clearInterval(pruneTimer);
         clearInterval(heartbeatTimer);
+        clearInterval(spoolPruneTimer);
         // `configReloadTimer` is NOT cleared here — the `config-reload` step
         // above cleared it and then awaited the reconcile in flight, before
         // any of the resources that reconcile touches were torn down.
@@ -2438,27 +2575,41 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         cronTriggers.local?.stop();
         pauseLifecycle.stop?.();
       });
-      await guard('call-capture-ownership', async () => {
+      await step('call-capture-ownership', async () => {
         await callCaptureOwnershipManager?.stop();
       });
-      await guard('mesh-unregister', async () => {
+      await step('mesh-unregister', async () => {
         await mesh.unregister(agentId);
       });
-      await guard('gateway-health-file', async () => {
+      await step('gateway-health-file', async () => {
         await storage.remove(gatewayHealthPath());
       });
+      // Bounded by its own `drainTimeoutMs`, notice sends included.
       await guard('gateway', async () => {
         await gateway.shutdown({
           notify:
             '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
         });
       });
-      await guard('adapters', () => Promise.allSettled(adapters.map((a) => a.stop())));
+      // Plugin-registered and hot-added adapters too — `everyStartedAdapter`.
+      await step('adapters', () =>
+        Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+      );
       await guard('delivery-ledger', () => {
         deliveryLedger.close();
       });
+      await guard('notify-queue', () => {
+        heldNotices.close();
+      });
       await guard('inbound-dedup', () => {
         inboundDedup.close();
+      });
+      await guard('inbound-spool', () => {
+        inboundSpool.close();
+      });
+      // Last of the gateway-owned state: from here a new gateway may start.
+      await guard('gateway-lock', () => {
+        releaseGatewayLock();
       });
       await guard('outbox', () => {
         // After the loops are disposed: a turn still running could propose.
@@ -2472,7 +2623,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         // The App Home / unfurl readers' lazily opened `sessions.db` handles.
         closeSlackSessionStores();
       });
-      await guard('sockets', () =>
+      await step('sockets', () =>
         Promise.allSettled([
           created.voiceSocket.close(),
           created.satelliteSocket.close(),
@@ -2486,13 +2637,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // the process call itself idle while it is still accepting connections.
       // NOT awaited on the close callback: `/ws` sockets are upgraded out of
       // the server's request cycle, so that callback can wait on a live client
-      // forever — and a shutdown that never reaches `process.exit(0)` is worse
+      // forever — and a shutdown that never reaches `process.exit` is worse
       // than a listener the exit tears down a moment later anyway.
       await guard('acp-server', () => {
         acpHttpServer.closeAllConnections();
         acpHttpServer.close();
       });
-      await guard(
+      await step(
         'web-server',
         // `webServer`, not a captured `server`: a Phase D rebind replaces the
         // listener, and closing the one this process started on would leave
@@ -2534,12 +2685,19 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           (message) => logger.warn(message, { component: 'boot' }),
         ),
       );
-      process.exit(0);
+      process.exit(exitCode);
     })();
     await shuttingDown;
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+  // A stray rejection is logged and survived; an uncaught exception runs this
+  // same bounded shutdown and exits 1 (plan openclaw-2026.9.6-gaps R2).
+  installProcessGuards({
+    command: 'boot',
+    observability: getEthosObservability,
+    shutdown: (exitCode) => shutdown(exitCode),
+  });
 
   // -------------------------------------------------------------------------
   // Idle watcher (plan/phases/idle-watcher.md §5) — CONSTRUCTED LAST, after

@@ -41,7 +41,7 @@ Drafts a structured plan file in the Ethos 7-section shape. This skill writes th
 
 ## Output shape
 
-Plans live under `plan/phases/<topic>.md` (repo-scoped) or `~/.ethos/plans/<personality>/<slug>.md` (personal). File naming: snake_case for repo plans, kebab-case for personal. The file must contain the seven sections the `writing-plans` companion specifies, in that order, with a Status legend at the top.
+Plans live under `plan/phases/<topic>.md` (repo-scoped) or `.ethos-work/plans/<slug>.md` in the workspace (personal). File naming: snake_case for repo plans, kebab-case for personal. `.ethos-work/` is the workspace's scratch directory, kept out of git by adding `.ethos-work/` to `.git/info/exclude`. Personal plans do not go under `~/.ethos`: a personality's default `fs_reach` lets `write_file` write only its own personality directory and its working directory (`deriveFsReachPaths` in `packages/core/src/fs-reach.ts`), so a write there is refused. The file must contain the seven sections the `writing-plans` companion specifies, in that order, with a Status legend at the top.
 
 ## Workflow
 

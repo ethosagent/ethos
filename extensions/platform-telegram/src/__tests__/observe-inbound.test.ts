@@ -9,7 +9,7 @@
 
 import { InMemoryAttachmentCache, InMemoryStorage } from '@ethosagent/storage-fs';
 import type { InboundMessage, Storage } from '@ethosagent/types';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockApi = {
   setMyName: vi.fn().mockResolvedValue(true),
@@ -51,6 +51,12 @@ vi.mock('grammy', () => {
 
 import type { ChannelMode } from '../config';
 import { TelegramAdapter } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 const BOT_KEY = 'test-bot';
 const SENT_AT_SECONDS = 1_699_000_000;

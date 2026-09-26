@@ -1,6 +1,23 @@
 #!/bin/sh
 set -e
 
+# The state dir must be writable by the runtime user. A fresh named volume is
+# (the Dockerfile chowns /home/ethos/.ethos, which Docker copies into it); a
+# bind-mounted host directory keeps the HOST's ownership and mode, and an
+# unwritable one used to crash-loop every child with a raw `EACCES: mkdir …`
+# stack. Refuse it once, by name, with the fix. A real write probe, not
+# `test -w`: through Docker Desktop's file sharing a read-only bind reports
+# writable to access(2) and still fails the mkdir.
+STATE_DIR="${ETHOS_STATE_DIR:-$HOME/.ethos}"
+if [ -d "$STATE_DIR" ]; then
+  probe="$STATE_DIR/.ethos-write-probe.$$"
+  if ! ( : > "$probe" ) 2>/dev/null; then
+    echo "ethos: state dir $STATE_DIR (owner $(stat -c '%u:%g mode %a' "$STATE_DIR" 2>/dev/null || echo '?')) is not writable by uid $(id -u) — on the host, run: sudo chown -R $(id -u):$(id -g) <the directory you mounted there> && sudo chmod -R u+rwX <that directory>" >&2
+    exit 1
+  fi
+  rm -f "$probe"
+fi
+
 # Single-service profile provisions config from env at boot (W1.3). The CLI
 # `ethos setup --from-env` is idempotent by contract: config.yaml is written
 # once (skip-if-exists), secrets re-sync from env every boot, and it emits the

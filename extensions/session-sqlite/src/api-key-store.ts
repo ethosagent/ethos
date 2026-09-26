@@ -52,6 +52,9 @@ export class SqliteApiKeyStore {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
+    // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+    // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.migrate();
   }
@@ -125,9 +128,13 @@ export class SqliteApiKeyStore {
   }
 
   async revoke(prefix: string): Promise<ApiKeyRecord | null> {
+    // Literal, case-sensitive prefix — not LIKE, which folds ASCII case and
+    // reads `%`/`_` as wildcards, so a mistyped prefix could revoke a key.
     const matches = this.db
-      .prepare('SELECT * FROM api_keys WHERE prefix LIKE ? AND revoked_at IS NULL')
-      .all(`${prefix}%`) as ApiKeyRow[];
+      .prepare(
+        'SELECT * FROM api_keys WHERE substr(prefix, 1, length(?)) = ? AND revoked_at IS NULL',
+      )
+      .all(prefix, prefix) as ApiKeyRow[];
 
     if (matches.length === 0) return null;
     if (matches.length > 1) throw new AmbiguousPrefixError(prefix);

@@ -23,6 +23,14 @@ const MAX_SYMLINK_HOPS = 32;
  *     the capability and personality both grant the parent (mirror of
  *     `safety-network`'s cloud-metadata block).
  *
+ *  1b. **Write-only deny list** — `writeDenyPaths` (injected at
+ *     construction, fifth argument) refuses WRITES to the personality's own
+ *     definition files (`personalityWriteDeny` in `../fs-reach.ts`) even
+ *     when the write reach covers them. Reads are unaffected. Mirror of
+ *     `ScopedStorageScope.writeDeny` in
+ *     `packages/storage-fs/src/scoped-storage.ts` — the two MUST change
+ *     together.
+ *
  *  2. **Declared reach allowlist** — the intersection of the tool's
  *     `capabilities.fs_reach` with the personality's `fs_reach`,
  *     resolved at registration time. Paths outside the allow set are
@@ -45,14 +53,17 @@ const MAX_SYMLINK_HOPS = 32;
  */
 export class ScopedFsImpl implements ScopedFs {
   private readonly denyPaths: string[];
+  private readonly writeDenyPaths: string[];
 
   constructor(
     private readonly storage: Storage,
     private readonly readPaths: Set<string>,
     private readonly writePaths: Set<string>,
     alwaysDenyPaths: string[] = [],
+    writeDenyPaths: string[] = [],
   ) {
     this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
+    this.writeDenyPaths = writeDenyPaths.map((p) => normalize(resolve(p)));
   }
 
   async read(path: string): Promise<string> {
@@ -111,6 +122,11 @@ export class ScopedFsImpl implements ScopedFs {
     if (this.hitsDenyFloor(canonical)) {
       throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" hits the always-deny floor`);
     }
+    if (this.hitsWriteDeny(canonical, kind)) {
+      throw new Error(
+        `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
+      );
+    }
 
     let prefix = matchAllowedPrefix(canonical, allowed);
     if (prefix === null) {
@@ -136,6 +152,12 @@ export class ScopedFsImpl implements ScopedFs {
           `PATH_NOT_REACHABLE: ${kind} of "${path}" resolves outside the allowlist through a symbolic link`,
         );
       }
+      // Re-judged on every hop, exactly as the floor is.
+      if (this.hitsWriteDeny(next, kind)) {
+        throw new Error(
+          `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
+        );
+      }
       current = next;
       prefix = nextPrefix;
     }
@@ -144,11 +166,20 @@ export class ScopedFsImpl implements ScopedFs {
     );
   }
 
+  private hitsWriteDeny(canonical: string, kind: string): boolean {
+    return kind === 'write' && matchesAny(canonical, this.writeDenyPaths);
+  }
+
   private hitsDenyFloor(canonical: string): boolean {
     return this.denyPaths.some(
       (deny) => canonical === deny || canonical.startsWith(deny.endsWith('/') ? deny : `${deny}/`),
     );
   }
+}
+
+/** True when `canonical` equals, or lies under, one of the canonical `paths`. */
+function matchesAny(canonical: string, paths: readonly string[]): boolean {
+  return paths.some((p) => canonical === p || canonical.startsWith(p.endsWith('/') ? p : `${p}/`));
 }
 
 /**
@@ -184,14 +215,14 @@ function matchAllowedPrefix(canonical: string, allowed: Iterable<string>): strin
 // The reciprocal notes live in `scoped-storage.ts`'s class doc and in
 // `restore.ts`'s `followFirstSymlink` doc.
 //
-// The fourth copy is NOT equivalent today, and that is why it is named here.
-// It walks with async `lstat` from `node:fs/promises`, so an `lstatSync` grep
-// does not find it, and it swallows every stat error with `.catch(() => null)`
-// and CONTINUES the walk — reading "I could not look" as "nothing to see".
-// The other three abort: `lstatSync(..., { throwIfNoEntry: false })` returns
-// `undefined` for ENOENT alone and throws on EACCES and the rest. That is the
-// same fail-open commit 69e7b26d removed from `restore.ts`. Bringing it into
-// line is a pending fix, not a discrepancy to preserve.
+// The fourth copy walks with async `lstat` from `node:fs/promises`, so an
+// `lstatSync` grep does not find it. Its errno rule is the same as the other
+// three: ENOENT alone ends the walk (here `lstatSync(..., { throwIfNoEntry:
+// false })` returning `undefined`), and every other error — EACCES, ENOTDIR,
+// the rest — refuses. Pinned for that copy by
+// `apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts`.
+// It differs in one deliberate way: it refuses ANY symlink rather than
+// following it and re-judging the target.
 
 /**
  * Walk `target` one segment at a time below `prefixRoot`, `lstat`ing each.

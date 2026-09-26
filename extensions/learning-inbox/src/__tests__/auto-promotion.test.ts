@@ -9,6 +9,7 @@ import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { AgentEvent, CompletionChunk, LLMProvider } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Relative on purpose, as in `promote.test.ts`: the real frontmatter gate.
+import { vetPromotedSkill } from '../../../skills/src/promotion-vet';
 import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
 import {
   type AutoPromotionKnobs,
@@ -189,6 +190,7 @@ function deps(opts: {
       liveSkillDir,
       skillScope: () => opts.scope,
       checkSkillFrontmatter,
+      vetSkill: vetPromotedSkill,
       expressions: {
         evolveExpression:
           opts.evolveExpression ??

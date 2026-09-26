@@ -292,6 +292,15 @@ export const MODEL_PRICING: readonly ModelRate[] = [
       cacheWrite: 0,
     },
   },
+
+  // ── TypeSafe Jev (a decision provider, not a chat model) ──────────────────
+  //
+  // $0.042 per 1M input tokens, output free (plan
+  // plan/phases/decision-provider-jev.md §9 / D13). One `jev-` row serves the
+  // `jev-latest` alias and every pinned version (`jev-1.13.0`). Jev bills no
+  // distinct cache rate, so `cacheRead` equals `input` per the header
+  // convention above.
+  { prefix: 'jev-', input: 0.042, output: 0, cacheRead: 0.042, cacheWrite: 0 },
 ];
 
 /**

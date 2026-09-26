@@ -71,6 +71,20 @@ function isInAllowlist(allowlist: string[], senderId: string): boolean {
 }
 
 /**
+ * Every id this message's sender may be MATCHED by: `userId` first, then the
+ * platform-supplied `alternateUserIds` (a WhatsApp LID sender's phone JID).
+ * Match keys only — identity stays `userId`. The one place owner and
+ * allowlist checks expand the sender; `Gateway.isOwner` uses it too.
+ */
+export function senderIds(message: InboundMessage): string[] {
+  return [message.userId ?? '', ...(message.alternateUserIds ?? [])];
+}
+
+function anySenderInAllowlist(allowlist: string[], message: InboundMessage): boolean {
+  return senderIds(message).some((id) => isInAllowlist(allowlist, id));
+}
+
+/**
  * Allowlist-only check: is this sender approved to talk to the bot at all?
  * Mirrors the `senderAllowed` decision inside `checkMessage` (steps 2–3) but
  * exposes it on its own so callers can authorize side-channels (e.g. the
@@ -82,12 +96,11 @@ export function isSenderAllowed(
 ): boolean {
   if (!config) return true; // backward-compat: no platform config means no filter
   if (config.enabled === false) return true; // filter disabled for this platform
-  const senderId = message.userId ?? '';
   const allowlist: string[] = [];
   if (config.ownerUserId) allowlist.push(config.ownerUserId);
   if (config.recipientAllowlist) allowlist.push(...config.recipientAllowlist);
   if (allowlist.length === 0) return false;
-  return isInAllowlist(allowlist, senderId);
+  return anySenderInAllowlist(allowlist, message);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +139,9 @@ export function checkMessage(
   if (config.ownerUserId) allowlist.push(config.ownerUserId);
   if (config.recipientAllowlist) allowlist.push(...config.recipientAllowlist);
 
-  const senderAllowed = allowlist.length === 0 ? false : isInAllowlist(allowlist, senderId);
+  // Any of the sender's ids (`senderIds`) may match; the pairing code below is
+  // still minted for `userId`, the sender's identity.
+  const senderAllowed = allowlist.length === 0 ? false : anySenderInAllowlist(allowlist, message);
 
   // Step 3 / 4 / 5: allowlist check
   if (!senderAllowed) {
@@ -162,7 +177,9 @@ export function checkMessage(
 
   // Step 6: allowlisted sender in group without mention → drop (mention gating, 1c)
   // Owner bypasses mention gate — must be able to run /allow from any channel.
-  if (!message.isDm && !message.isGroupMention && senderId !== config.ownerUserId) {
+  const isOwner =
+    config.ownerUserId !== undefined && senderIds(message).includes(config.ownerUserId);
+  if (!message.isDm && !message.isGroupMention && !isOwner) {
     return { action: 'drop' };
   }
 

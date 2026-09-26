@@ -1,6 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Database from '@ethosagent/sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHealthServer } from '../health-server';
+import {
+  createEventLoopLagSampler,
+  createHealthServer,
+  createReadinessCheck,
+} from '../health-server';
 
 describe('createHealthServer', () => {
   let server: Server | null = null;
@@ -125,6 +133,155 @@ describe('createHealthServer', () => {
         headers: { authorization: 'Bearer sk-ethos-good' },
       });
       expect(authorized.status).toBe(200);
+    });
+  });
+
+  async function listen(s: Server): Promise<number> {
+    await new Promise<void>((resolve) => s.once('listening', resolve));
+    const addr = s.address();
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address');
+    return addr.port;
+  }
+
+  // R6 (plan/phases/openclaw-2026.9.6-gaps.md) — a readiness tier. `/healthz`
+  // stays liveness; `/readyz` reports not-ready when an adapter is unhealthy,
+  // a SQLite store will not open, or the event loop's p99 lag is over threshold.
+  describe('/readyz', () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+      for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    function readinessServer(opts: Parameters<typeof createReadinessCheck>[0]): Server {
+      return createHealthServer(
+        0,
+        '127.0.0.1',
+        () => ({ status: 'ok', uptime: 0 }),
+        undefined,
+        undefined,
+        { readiness: createReadinessCheck(opts) },
+      );
+    }
+
+    it('404s when no readiness check is wired', async () => {
+      server = createHealthServer(0, '127.0.0.1', () => ({ status: 'ok', uptime: 0 }));
+      const port = await listen(server);
+      expect((await fetch(`http://127.0.0.1:${port}/readyz`)).status).toBe(404);
+    });
+
+    it('returns 503 when the lag sampler reports over threshold, 200 otherwise', async () => {
+      let lag = 5_000;
+      server = readinessServer({
+        adapters: async () => [],
+        sqlitePaths: [],
+        lagP99Ms: () => lag,
+        lagThresholdMs: 1_000,
+      });
+      const port = await listen(server);
+
+      const wedged = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(wedged.status).toBe(503);
+      const body = await wedged.json();
+      expect(body.status).toBe('not_ready');
+      expect(body.checks).toContainEqual(
+        expect.objectContaining({ name: 'event_loop', ok: false }),
+      );
+
+      lag = 12;
+      expect((await fetch(`http://127.0.0.1:${port}/readyz`)).status).toBe(200);
+    });
+
+    it('returns 503 when an adapter is unhealthy', async () => {
+      server = readinessServer({
+        adapters: async () => [
+          { name: 'telegram:a', ok: true },
+          { name: 'email:b', ok: false },
+        ],
+        sqlitePaths: [],
+        lagP99Ms: () => 0,
+      });
+      const port = await listen(server);
+      const res = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.checks).toContainEqual(
+        expect.objectContaining({ name: 'adapter:email:b', ok: false }),
+      );
+    });
+
+    it('returns 503 when a SQLite store will not open, 200 when every store opens', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'ethos-readyz-'));
+      dirs.push(dir);
+      const good = join(dir, 'good.db');
+      const db = new Database(good);
+      db.exec('CREATE TABLE t (x INTEGER)');
+      db.close();
+
+      server = readinessServer({
+        adapters: async () => [],
+        sqlitePaths: [good, join(dir, 'missing.db')],
+        lagP99Ms: () => 0,
+      });
+      const port = await listen(server);
+      const res = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.checks).toContainEqual(
+        expect.objectContaining({ name: 'sqlite:missing.db', ok: false }),
+      );
+      expect(body.checks).toContainEqual(
+        expect.objectContaining({ name: 'sqlite:good.db', ok: true }),
+      );
+
+      server.close();
+      server = readinessServer({
+        adapters: async () => [],
+        sqlitePaths: [good],
+        lagP99Ms: () => 0,
+      });
+      const port2 = await listen(server);
+      expect((await fetch(`http://127.0.0.1:${port2}/readyz`)).status).toBe(200);
+    });
+
+    it('leaves /healthz as liveness even when not ready', async () => {
+      server = readinessServer({
+        adapters: async () => [],
+        sqlitePaths: [],
+        lagP99Ms: () => 9_999,
+      });
+      const port = await listen(server);
+      expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+    });
+  });
+
+  // R6 + U9 — event-loop lag and process memory on `/metrics`.
+  describe('/metrics process gauges', () => {
+    it('carries ethos_process_rss_bytes and the event-loop lag p99', async () => {
+      server = createHealthServer(
+        0,
+        '127.0.0.1',
+        () => ({ status: 'ok', uptime: 0 }),
+        async () => 'ethos_tool_calls_total{tool="bash",outcome="ok"} 1\n',
+        undefined,
+        { eventLoopLagP99Ms: () => 250 },
+      );
+      const port = await listen(server);
+      const body = await (await fetch(`http://127.0.0.1:${port}/metrics`)).text();
+      expect(body).toContain('ethos_tool_calls_total');
+      expect(body).toMatch(/^ethos_process_rss_bytes \d+$/m);
+      expect(body).toMatch(/^ethos_process_heap_used_bytes \d+$/m);
+      expect(body).toContain('ethos_event_loop_lag_p99_seconds 0.25');
+    });
+  });
+
+  describe('createEventLoopLagSampler', () => {
+    it('reports a non-negative p99 in milliseconds and stops cleanly', async () => {
+      const sampler = createEventLoopLagSampler();
+      await new Promise((r) => setTimeout(r, 50));
+      const p99 = sampler.p99Ms();
+      expect(Number.isFinite(p99)).toBe(true);
+      expect(p99).toBeGreaterThanOrEqual(0);
+      sampler.stop();
     });
   });
 });

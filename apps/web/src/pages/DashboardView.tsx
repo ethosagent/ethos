@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  App as AntApp,
   Button,
   Divider,
   Dropdown,
   Empty,
   Input,
-  message,
   Popover,
   Select,
   Skeleton,
@@ -137,7 +137,9 @@ function computeAutoLayout(panels: PanelPos[]): PanelPos[] {
 export function DashboardView() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const [messageApi, contextHolder] = message.useMessage();
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message: messageApi } = AntApp.useApp();
   const gridRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading } = useQuery({
@@ -326,7 +328,6 @@ export function DashboardView() {
 
   return (
     <div style={{ padding: 24 }}>
-      {contextHolder}
       <div
         style={{
           display: 'grid',

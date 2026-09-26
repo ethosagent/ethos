@@ -55,7 +55,8 @@ export type A2aPeeringErrorCode =
   | 'fingerprint_mismatch'
   | 'fetch_failed'
   | 'invalid_card'
-  | 'unknown_personality';
+  | 'unknown_personality'
+  | 'url_refused';
 
 /** Typed error thrown by {@link A2aPeeringService}. */
 export class A2aPeeringError extends Error {
@@ -76,6 +77,15 @@ export interface A2aPeeringServiceDeps {
   fetchCard?: typeof fetchAndVerifyCard;
   /** Injectable clock (ms epoch) for tests; defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * The operator's `a2a.peering.allowPrivateUrls` (default false): whether a
+   * card URL the operator typed may be on loopback or a private network. It is
+   * the whole egress policy for this path — a peer URL here is an operator
+   * action, not a model's, so no personality's `safety.network` applies.
+   * Cloud-metadata stays refused either way (`validateUrl`,
+   * packages/safety/network/src/safe-fetch.ts).
+   */
+  allowPrivateUrls?: boolean;
 }
 
 /** Args for {@link A2aPeeringService.addPeer}. */
@@ -92,12 +102,14 @@ export class A2aPeeringService {
   private readonly allowlist: A2aAllowlistAdmin;
   private readonly peers: A2aPeerStoreAdmin & A2aPeerStore;
   private readonly fetchCard: typeof fetchAndVerifyCard;
+  private readonly allowPrivateUrls: boolean;
 
   constructor(deps: A2aPeeringServiceDeps) {
     this.identityProvider = deps.identity;
     this.allowlist = deps.allowlist;
     this.peers = deps.peers;
     this.fetchCard = deps.fetchCard ?? fetchAndVerifyCard;
+    this.allowPrivateUrls = deps.allowPrivateUrls === true;
   }
 
   /** "Who am I" — the shareable identity card, derived from the internal card. */
@@ -231,11 +243,14 @@ export class A2aPeeringService {
 
   private async fetchVerified(url: string, expectedFingerprint?: string): Promise<AgentCard> {
     try {
-      return await this.fetchCard(
-        url,
-        expectedFingerprint !== undefined ? { expectedFingerprint } : {},
-      );
+      return await this.fetchCard(url, {
+        networkPolicy: { allow_private_urls: this.allowPrivateUrls },
+        ...(expectedFingerprint !== undefined ? { expectedFingerprint } : {}),
+      });
     } catch (err) {
+      if (err instanceof A2aClientError && err.code === 'url_refused') {
+        throw new A2aPeeringError('url_refused', urlRefusedMessage(this.allowPrivateUrls));
+      }
       if (err instanceof A2aClientError) {
         throw new A2aPeeringError(mapClientErrorCode(err.code), err.message);
       }
@@ -262,6 +277,8 @@ export interface BuildA2aPeeringServiceContext {
   /** The A2A base dir, i.e. `<ethosDir>/a2a`. */
   baseDir: string;
   identity: A2aIdentityProvider;
+  /** The operator's `a2a.peering.allowPrivateUrls` — see {@link A2aPeeringServiceDeps}. */
+  allowPrivateUrls?: boolean;
 }
 
 /**
@@ -274,6 +291,7 @@ export function buildA2aPeeringService(ctx: BuildA2aPeeringServiceContext): A2aP
     identity: ctx.identity,
     allowlist: new StorageA2aAllowlist(ctx.storage, ctx.baseDir),
     peers: new StorageA2aPeerStore(ctx.storage, ctx.baseDir),
+    ...(ctx.allowPrivateUrls !== undefined ? { allowPrivateUrls: ctx.allowPrivateUrls } : {}),
   });
 }
 
@@ -286,6 +304,21 @@ function deriveBaseUrl(card: AgentCard): string {
   const suffix = `/a2a/${card.id}`;
   const jsonRpc = card.endpoints.jsonRpc;
   return jsonRpc.endsWith(suffix) ? jsonRpc.slice(0, -suffix.length) : jsonRpc;
+}
+
+/**
+ * The refusal for an operator's card URL. Names the operator knob, not the
+ * personality's `safety.network` (which this path does not read), and — like
+ * `A2A_URL_REFUSED_MESSAGE` — carries no resolved address.
+ */
+function urlRefusedMessage(allowPrivateUrls: boolean): string {
+  return allowPrivateUrls
+    ? 'Card URL refused: it is not http(s), or it names or resolves to a cloud-metadata ' +
+        'address — refused even with a2a.peering.allowPrivateUrls.'
+    : 'Card URL refused: it is on loopback, a private network, or a reserved/cloud-metadata ' +
+        'address. To peer with an agent on this machine or your LAN, set ' +
+        'a2a.peering.allowPrivateUrls: true in ~/.ethos/config.yaml ' +
+        '(cloud-metadata addresses stay refused).';
 }
 
 function mapClientErrorCode(code: A2aClientError['code']): A2aPeeringErrorCode {

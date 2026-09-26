@@ -162,6 +162,31 @@ describe('subscribeToActivity', () => {
     expect(onError).toHaveBeenCalledTimes(1);
   });
 
+  it('advances the replay cursor past an unparseable frame that carried a seq', () => {
+    // A newer server's unknown event type is delivered but fails this build's
+    // schema. The frame still happened: leaving `lastSeq` behind it would make
+    // the browser's reconnect (`Last-Event-ID`) replay every event after it as
+    // duplicates.
+    const onEvent = vi.fn();
+    const sub = subscribeToSession('s1', { onEvent, onError: () => undefined });
+
+    FakeEventSource.instances[0]?.emit({ type: 'from_the_future', payload: 1 }, '5');
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(sub.lastSeq).toBe(5);
+
+    // The next good frame lands with the cursor already past the dropped one.
+    FakeEventSource.instances[0]?.emit(sampleEvent, '6');
+    expect(onEvent).toHaveBeenCalledWith(sampleEvent, 6);
+    expect(sub.lastSeq).toBe(6);
+  });
+
+  it('does not synthesise a cursor for an unparseable frame with no id', () => {
+    const sub = subscribeToSession('s1', { onEvent: vi.fn(), onError: () => undefined });
+
+    FakeEventSource.instances[0]?.emit({ type: 'from_the_future' });
+    expect(sub.lastSeq).toBe(0);
+  });
+
   it('shares one connection per scope and keeps scopes apart', () => {
     subscribeToActivity(null, { onEvent: vi.fn() });
     subscribeToActivity(null, { onEvent: vi.fn() });

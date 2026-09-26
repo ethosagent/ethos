@@ -109,6 +109,7 @@ describe('list_available_tools', () => {
       storage: new InMemoryStorage(),
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const listTool = designTools.find((t) => t.name === 'list_available_tools');
@@ -128,6 +129,7 @@ describe('list_available_tools', () => {
       storage: new InMemoryStorage(),
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const listTool = designTools.find((t) => t.name === 'list_available_tools');
@@ -146,6 +148,7 @@ describe('list_available_models', () => {
       storage: new InMemoryStorage(),
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const listTool = designTools.find((t) => t.name === 'list_available_models');
@@ -166,6 +169,7 @@ describe('list_available_skills', () => {
       storage: new InMemoryStorage(),
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const listTool = designTools.find((t) => t.name === 'list_available_skills');
@@ -188,6 +192,9 @@ describe('scaffold_personality', () => {
       storage,
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([
+        { id: 'architect', name: 'Architect', toolset: ['read_file', 'terminal'] },
+      ]),
     });
 
     const scaffoldTool = designTools.find((t) => t.name === 'scaffold_personality');
@@ -202,7 +209,7 @@ describe('scaffold_personality', () => {
         },
         toolset: ['read_file', 'terminal'],
       },
-      makeCtx(),
+      makeCtx({ personalityId: 'architect' }),
     );
 
     expect(result?.ok).toBe(true);
@@ -233,6 +240,7 @@ describe('scaffold_personality', () => {
       storage,
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const scaffoldTool = designTools.find((t) => t.name === 'scaffold_personality');
@@ -260,6 +268,7 @@ describe('scaffold_personality', () => {
       storage,
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const scaffoldTool = designTools.find((t) => t.name === 'scaffold_personality');
@@ -287,6 +296,7 @@ describe('scaffold_personality', () => {
       storage,
       modelCatalog: TEST_MODELS,
       skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
     });
 
     const scaffoldTool = designTools.find((t) => t.name === 'scaffold_personality');

@@ -14,4 +14,13 @@ export const deliveriesRouter = {
   summary: os.deliveries.summary.handler(({ input, context }) =>
     context.deliveries.summary(input.limit),
   ),
+  listDeadInbound: os.deliveries.listDeadInbound.handler(({ input, context }) =>
+    context.deliveries.listDeadInbound(input.limit),
+  ),
+  requeueInbound: os.deliveries.requeueInbound.handler(({ input, context }) =>
+    context.deliveries.requeueInbound(input.id),
+  ),
+  discardInbound: os.deliveries.discardInbound.handler(({ input, context }) =>
+    context.deliveries.discardInbound(input.id),
+  ),
 };

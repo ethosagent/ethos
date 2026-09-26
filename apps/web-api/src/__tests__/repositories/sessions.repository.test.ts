@@ -105,6 +105,21 @@ describe('SessionsRepository', () => {
     expect(reloaded?.personalityId).toBe('researcher');
   });
 
+  it('list({ parentSessionId }) returns only that session’s forks (the branch switcher)', async () => {
+    const source = await store.createSession({ ...baseSession, key: 'origin' });
+    await store.createSession({ ...baseSession, key: 'unrelated' });
+    // Fork keys carry `Date.now()`, so space the forks a millisecond apart.
+    const tick = () => new Promise((r) => setTimeout(r, 2));
+    const a = await repo.fork(source.id);
+    await tick();
+    const b = await repo.fork(source.id);
+    await tick();
+    await repo.fork(a.id); // a grandchild is not a sibling
+
+    const page = await repo.list({ limit: 50, cursor: null, parentSessionId: source.id });
+    expect(page.sessions.map((s) => s.id).sort()).toEqual([a.id, b.id].sort());
+  });
+
   it('fork rejects with a "session not found" message for unknown ids', async () => {
     await expect(repo.fork('does-not-exist')).rejects.toThrow(/session not found: does-not-exist/);
   });

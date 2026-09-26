@@ -8,9 +8,19 @@
 // LAYER: depends only on `@ethosagent/types`, so any surface (app or
 // extension) can import it without introducing a cycle.
 
+export { BRANCH_USAGE, formatBranchList, pickBranch } from './branches';
+export {
+  CHAT_ERROR_MAP,
+  type ChatErrorDescription,
+  type ChatErrorEntry,
+  describeChatError,
+} from './chat-errors';
 export {
   createEventTranslator,
+  credentialInstruction,
+  credentialSetCommand,
   type EventTranslator,
+  type EventTranslatorCredentialRequired,
   type EventTranslatorDone,
   type EventTranslatorError,
   type EventTranslatorHalt,

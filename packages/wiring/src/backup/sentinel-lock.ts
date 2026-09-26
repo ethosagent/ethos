@@ -1,6 +1,7 @@
 // The advisory `wx` sentinel lock shared by this package's cross-process locks:
-// `acquireBackupLock` (`backup-schedule.ts`, `backups/.lock`) and
-// `acquireIdentityMapLock` (`identity-map.ts`, `users/identity-map.json.lock`).
+// `acquireBackupLock` (`backup-schedule.ts`, `backups/.lock`),
+// `acquireIdentityMapLock` (`identity-map.ts`, `users/identity-map.json.lock`)
+// and `acquireGatewayLock` (`gateway-lock.ts`, `gateway.lock`).
 // One implementation, because two copies of a lock primitive in one package
 // drift. Each caller keeps its own wait bound, poll interval, unreadable-body
 // stale window and refusal text, passed in as options.
@@ -92,6 +93,47 @@ function lockIsStale(lockPath: string, body: string, unreadableStaleMs: number):
   } catch {
     return true; // no mtime to judge by — the lock is gone or unreadable
   }
+}
+
+/** What {@link inspectSentinelLock} found at a lock path. */
+export type SentinelLockInspection =
+  | { holder: 'none' }
+  | {
+      /** `live` — a process from this boot holds it; `stale` — the next
+       *  acquire will take it over (same rule `acquireSentinelLock` applies). */
+      holder: 'live' | 'stale';
+      /** The recorded pid, or `null` when the body carries none readable. */
+      pid: number | null;
+      /** The recorded `startedAt`, when present. */
+      startedAt: string | null;
+    };
+
+/**
+ * Read a lock WITHOUT taking it: is it held, by whom, and would the next
+ * acquire take it over? Classified by the exact rule the acquire uses
+ * (`lockIsStale`), so a status display and the lock can never disagree.
+ * `ethos gateway status` reads `gateway.lock` through this.
+ */
+export function inspectSentinelLock(
+  lockPath: string,
+  unreadableStaleMs: number,
+): SentinelLockInspection {
+  const body = readLockBody(lockPath);
+  if (body === null) return { holder: 'none' };
+  const holder = parseHolder(body);
+  let startedAt: string | null = null;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const raw = (parsed as { startedAt?: unknown } | null)?.startedAt;
+    if (typeof raw === 'string') startedAt = raw;
+  } catch {
+    // unreadable body — no startedAt
+  }
+  return {
+    holder: lockIsStale(lockPath, body, unreadableStaleMs) ? 'stale' : 'live',
+    pid: holder?.pid ?? null,
+    startedAt,
+  };
 }
 
 /**

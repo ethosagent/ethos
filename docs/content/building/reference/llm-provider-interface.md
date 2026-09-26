@@ -1,10 +1,10 @@
 ---
 title: "LLMProvider interface"
-description: "LLMProvider.complete and the seven CompletionChunk variants every Ethos LLM provider streams."
+description: "LLMProvider.complete and the nine CompletionChunk variants every Ethos LLM provider streams."
 kind: reference
 audience: developer
 slug: llm-provider-interface
-updated: 2026-05-12
+updated: 2026-09-24
 ---
 
 `LLMProvider` is the contract every Ethos LLM integration implements. `AgentLoop` calls `complete()` once per LLM round-trip and consumes the returned `AsyncIterable<CompletionChunk>` until a `done` chunk arrives.
@@ -73,7 +73,7 @@ Returns an `AsyncIterable<CompletionChunk>`. The iterable terminates after exact
 
 ### Notes {#llm-provider-notes}
 
-- Providers must translate provider-specific streaming events into the seven `CompletionChunk` variants. Errors should be surfaced via thrown exceptions, not via an out-of-band chunk type.
+- Providers must translate provider-specific streaming events into the nine `CompletionChunk` variants. Errors should be surfaced via thrown exceptions, not via an out-of-band chunk type.
 - `countTokens` may approximate. The framework uses it for budget planning, not exact cost accounting (that comes from the `usage` chunk).
 - `tools` is the filtered list — do not re-filter inside the provider. If the LLM calls a tool not present in `tools`, that is a provider bug.
 
@@ -109,7 +109,7 @@ export interface CompletionOptions {
 
 ## CompletionChunk {#completion-chunk}
 
-The streaming event type yielded by `complete()`. Seven variants.
+The streaming event type yielded by `complete()`. Nine variants, frozen: `packages/types/src/__tests__/llm-provider-drift.test.ts` fails if one is added or removed without a §VI amendment ([LLM provider governance](../explanation/llm-provider-governance.md)).
 
 ### Signature {#completion-chunk-signature}
 
@@ -121,8 +121,12 @@ export type CompletionChunk =
   | { type: 'tool_use_delta'; toolCallId: string; partialJson: string }
   | { type: 'tool_use_end'; toolCallId: string; inputJson: string }
   | { type: 'usage'; usage: TokenUsage }
-  | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' };
+  | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' }
+  | { type: 'warning'; message: string }
+  | { type: 'compaction'; content: string | null; encryptedContent: string | null };
 ```
+
+The `usage` variant carries three optional fields not shown here (`metadata`, `providerRequestId`, `costBasis`); the full declaration is in [`packages/types/src/llm.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/llm.ts).
 
 ### Variants {#completion-chunk-variants}
 
@@ -135,6 +139,8 @@ export type CompletionChunk =
 | [`tool_use_end`](#tool-use-end) | When the LLM finishes the tool-call args. | `toolCallId`, `inputJson` |
 | [`usage`](#usage) | Once, at the end of the response. | `usage: TokenUsage` |
 | [`done`](#done) | Exactly once, last chunk in the stream. | `finishReason` |
+| [`warning`](#warning) | A non-fatal provider notice. | `message: string` |
+| [`compaction`](#compaction) | The provider compacted the conversation server-side. Anthropic only. | `content`, `encryptedContent` |
 
 #### text_delta {#text-delta}
 
@@ -163,6 +169,14 @@ Token accounting for the call. `TokenUsage` carries `inputTokens`, `outputTokens
 #### done {#done}
 
 Final chunk. `finishReason` tells the loop whether to feed tool results back (`tool_use`) or end the turn (`end_turn`, `max_tokens`, `stop_sequence`).
+
+#### warning {#warning}
+
+A non-fatal notice from the provider. The stream continues. `AnthropicProvider` emits `SERVER_COMPACTION_REJECTED_WARNING` when the API refused the compaction edit and the request was retried without it.
+
+#### compaction {#compaction}
+
+A server-side compaction block. `content` is the readable summary, or `null` when the server failed to produce one. `encryptedContent` is opaque provider state that must be sent back byte for byte. The agent loop persists the block and replays it on every later request; the API then ignores everything before it. Emitted only by `AnthropicProvider` with `providers.<i>.serverCompaction: true`. Other providers never emit it and receive the summary as plain assistant text (`flattenCompactionEnvelopes` in `packages/types/src/llm.ts`).
 
 ### Notes {#completion-chunk-notes}
 

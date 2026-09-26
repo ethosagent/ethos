@@ -21,6 +21,7 @@ import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { App } from '../components/App';
+import { act, enableReactActEnvironment, pressKeys } from './helpers/ink-act';
 
 class FakeStdout extends EventEmitter {
   columns = 100;
@@ -71,6 +72,9 @@ async function waitFor(predicate: () => Promise<boolean>, label: string): Promis
   throw new Error(`timed out waiting for: ${label}`);
 }
 
+// Keys and turns are driven inside React's `act` (helpers/ink-act.ts).
+enableReactActEnvironment();
+
 describe('TUI /personality', () => {
   it('rotates the session key so the new personality binds to a fresh session', async () => {
     const session = new InMemorySessionStore();
@@ -82,30 +86,31 @@ describe('TUI /personality', () => {
     const stdout = new FakeStdout();
     const stdin = makeStdin();
     const initialSessionKey = 'cli:tui-personality-test';
-    const instance = render(
-      createElement(App, {
-        bridge,
-        model: 'stub-model',
-        initialPersonality: 'researcher',
-        initialSessionKey,
-        readMemory: async () => null,
-      }),
-      {
-        stdout: stdout as never,
-        stdin: stdin as never,
-        stderr: stdout as never,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
-    );
+    let instance: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      instance = render(
+        createElement(App, {
+          bridge,
+          model: 'stub-model',
+          initialPersonality: 'researcher',
+          initialSessionKey,
+          readMemory: async () => null,
+        }),
+        {
+          stdout: stdout as never,
+          stdin: stdin as never,
+          stderr: stdout as never,
+          debug: true,
+          exitOnCtrlC: false,
+          patchConsole: false,
+        },
+      );
+    });
 
     try {
       const type = async (text: string) => {
-        stdin.write(text);
-        await new Promise((r) => setTimeout(r, 30));
-        stdin.write('\r');
-        await new Promise((r) => setTimeout(r, 30));
+        await pressKeys(stdin, text);
+        await pressKeys(stdin, '\r');
       };
 
       // Turn 1 binds the original session to `researcher`.
@@ -114,10 +119,15 @@ describe('TUI /personality', () => {
         const s = await session.getSessionByKey(initialSessionKey);
         return s !== null && (await session.getMessages(s.id)).some((m) => m.content === 'first');
       }, 'first turn recorded');
+      // The user message is recorded when the turn STARTS. While it runs the
+      // InputBox is disabled and drops every key, so the next command waits
+      // for the turn to end and the App to re-render with `running` false.
+      await act(() => bridge.whenIdle());
 
       // Switch, then take a turn as the new personality.
       await type('/personality engineer');
       await type('second');
+      await act(() => bridge.whenIdle());
       await waitFor(async () => (await session.listSessions()).length === 2, 'second session');
 
       const sessions = await session.listSessions();
@@ -142,7 +152,7 @@ describe('TUI /personality', () => {
         'first',
       ]);
     } finally {
-      instance.unmount();
+      instance?.unmount();
     }
   });
 });

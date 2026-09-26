@@ -6,6 +6,7 @@ import type {
   TokenUsage,
   ToolDefinitionLite,
 } from '@ethosagent/types';
+import { flattenCompactionEnvelopes } from '@ethosagent/types';
 
 export interface GeminiTransportConfig {
   apiKey: string;
@@ -47,7 +48,9 @@ function buildGeminiBody(
   tools: ToolDefinitionLite[],
   options: CompletionOptions,
 ): Record<string, unknown> {
-  const contents = messages
+  // Item 7 (D33) — a persisted server-compaction block reaches this provider
+  // as its readable summary; the Anthropic-only encrypted half is dropped.
+  const contents = flattenCompactionEnvelopes(messages)
     .filter((m) => m.role !== 'user' || typeof m.content === 'string' || m.content.length > 0)
     .map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',

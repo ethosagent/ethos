@@ -20,6 +20,7 @@
 // fires; nobody calls `getIdentity()` before an HTTP request arrives, by which
 // point the server is definitely listening.
 
+import { wrapUntrusted } from '@ethosagent/safety-injection';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { A2aIdentityProvider, AgentCard, SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
@@ -62,6 +63,19 @@ export function echoRunner(prefix: string): A2aTaskRunner {
       yield { type: 'done', text: out, turnCount: 1 };
     },
   };
+}
+
+/**
+ * The text a runner receives for `message` sent by the peer `peerFingerprint`:
+ * the responder fences every inbound peer message (`fencedMessage` in
+ * `../../rpc.ts`, pinned by "untrusted fence" in `rpc.test.ts`).
+ */
+export function fencedPeerMessage(peerFingerprint: string, message: string): string {
+  return wrapUntrusted({
+    content: message,
+    toolName: 'a2a_message',
+    source: `a2a-peer:${peerFingerprint}`,
+  }).content;
 }
 
 /** Boot one real Ethos A2A server on an ephemeral loopback port. */

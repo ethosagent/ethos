@@ -7,7 +7,7 @@
 // None of these overrides are written back to ~/.ethos/config.yaml.
 
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir } from '@ethosagent/config';
+import { adoptConfigNotices, type EthosConfig, ethosDir } from '@ethosagent/config';
 import { EthosError, type Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -115,7 +115,10 @@ export function parseCliOverrideFlags(argv: string[]): CliOverrideFlags {
 
 /**
  * Apply CLI override flags to a loaded config and validate their values.
- * Returns a new config object — never mutates the input.
+ * Never mutates the input: with no override flags set it returns the input
+ * unchanged (preserving object identity), otherwise it returns a clone with
+ * the parse-notice side-tables adopted (`adoptConfigNotices`) so the B2
+ * warnings `configParseNotices` keys by object identity survive the copy.
  *
  * @throws {EthosError} INVALID_PROVIDER      — unknown --provider value
  * @throws {EthosError} PERSONALITY_NOT_FOUND — unknown --personality id
@@ -127,7 +130,16 @@ export async function applyCliOverrides(
   flags: CliOverrideFlags,
   storage: Storage,
 ): Promise<EthosConfig> {
+  const hasOverrides =
+    flags.model !== undefined ||
+    flags.provider !== undefined ||
+    flags.personality !== undefined ||
+    flags.toolsets !== undefined ||
+    (flags.skills !== undefined && flags.skills.length > 0);
+  if (!hasOverrides) return config;
+
   const result = { ...config };
+  adoptConfigNotices(result, config);
 
   // --model: pass-through, no validation
   if (flags.model !== undefined) {
@@ -218,4 +230,27 @@ export async function applyCliOverrides(
   }
 
   return result;
+}
+
+/**
+ * The `--toolsets` refusal for one call, or `null`: a tool whose toolset is
+ * outside `cliToolsets` is disabled. The one predicate behind both the
+ * `before_tool_call` hook that enforces the flag (`applyCliOverrideHooks`,
+ * apps/ethos/src/wiring.ts) and the approval gate, which must not ask about a
+ * call this refuses (`refusedAnyway` in `wireTerminalApprovalGate`,
+ * apps/ethos/src/terminal-approval.ts). No `--toolsets` → refuses nothing.
+ */
+export function cliToolsetsRefusal(
+  loop: { getAvailableTools(): ReadonlyArray<{ name: string; toolset?: string }> },
+  cliToolsets: ReadonlyArray<string> | undefined,
+): (payload: { toolName: string }) => string | null {
+  if (!cliToolsets || cliToolsets.length === 0) return () => null;
+  const allowed = new Set(cliToolsets);
+  return (payload) => {
+    const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
+    if (tool?.toolset && !allowed.has(tool.toolset)) {
+      return `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`;
+    }
+    return null;
+  };
 }

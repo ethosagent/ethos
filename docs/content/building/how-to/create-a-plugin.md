@@ -106,6 +106,18 @@ export function createAuthedTool(api: EthosPluginApi) {
 
 Credential methods: `hasSecret(key)` (sync), `getSecret(key)`, `setSecret(key, value)` (atomic), `onCredentialUpdate(handler)`.
 
+**Required credentials.** Declare a credential as an object with `required: true` (`{ "key": "MY_API_KEY", "label": "My API key", "type": "secret", "required": true }`) and Ethos asks for it before the turn runs, not after your tool fails. When a personality that lists your plugin sends a message and the value is unset, the turn is refused before the model runs and each surface asks for the value outside the conversation:
+
+| Surface | What the user sees |
+|---|---|
+| CLI chat, TUI, web chat | A masked prompt. The value is stored through `PluginLoader.setCredential` and the message is sent again. |
+| Telegram, Slack, other channels | A link to `<webBaseUrl>/plugins?pluginId=<id>&key=<KEY>`, or the CLI command when `webBaseUrl` is unset. A channel never accepts the value as a message. |
+| `ethos -z`, `ethos chat -q`, ACP | One line naming `ethos plugin credentials <id> --set <KEY>`. |
+
+The value goes to the plugin's vault only. It never reaches the session transcript, the model or the event stream (pinned by `packages/wiring/src/__tests__/credential-e2e.test.ts`). Delegated, background, cron and MCP-export turns skip the check, and your tool reports its own missing-key error there. The check is `buildCredentialCheck` in `packages/wiring/src/credential-check.ts`.
+
+Browser logins are separate. `browser_fill_credential` reads logins stored with `ethos secrets credential add` under `credentials/<name>/`, which are not plugin credentials. A missing login stays a refusal from that tool and never triggers this prompt.
+
 ### 6. Add OAuth (optional)
 
 ```ts

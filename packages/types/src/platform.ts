@@ -13,6 +13,20 @@ export interface InboundMessage {
   platform: string;
   chatId: string;
   userId?: string;
+  /**
+   * Other ids the PLATFORM itself gives for this same sender, in the same id
+   * space as `userId`. MATCH-ONLY: an owner or allowlist check accepts the
+   * sender when any of `userId` / these matches (`senderIds` in
+   * packages/safety/channel/src/channel-filter.ts, used by `checkMessage`,
+   * `isSenderAllowed` and `Gateway.isOwner`). Nothing keys identity on them —
+   * sessions, the identity map and pairing rows use `userId`, so adding an
+   * alternate never changes who the sender is.
+   *
+   * Today only WhatsApp sets it: a LID-addressed sender (`<id>@lid`) carries
+   * the phone JID Baileys supplied beside it (`phoneAlternate` in
+   * extensions/platform-whatsapp/src/message-parser.ts).
+   */
+  alternateUserIds?: string[];
   username?: string;
   text: string;
   attachments?: Attachment[];
@@ -143,6 +157,15 @@ export interface DeliveryResult {
   ok: boolean;
   messageId?: string;
   error?: string;
+  /**
+   * Set with `ok: false` when the platform refused in a way no retry can fix —
+   * the bot was blocked or removed, the chat or channel no longer exists. The
+   * gateway's delivery sweep abandons such an obligation at once instead of
+   * retrying it on a backoff (`Gateway.sweepDeliveriesOnce`). Absent means
+   * "possibly transient"; an adapter sets it only on a failure it can
+   * positively identify.
+   */
+  permanent?: boolean;
 }
 
 export interface PlatformAdapter {

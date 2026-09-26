@@ -58,12 +58,28 @@ function digestOf(input: Record<string, unknown> | undefined): string {
   return collapsed.length > DIGEST_CAP ? `${collapsed.slice(0, DIGEST_CAP - 3)}...` : collapsed;
 }
 
+/**
+ * `\n` + the whole input as one line of JSON (`JSON.stringify` escapes
+ * newlines), or '' when it cannot be serialized — the host then matches the
+ * digest instead of an empty object that could match nothing.
+ */
+function inputLineOf(input: Record<string, unknown> | undefined): string {
+  try {
+    const json = JSON.stringify(input ?? {});
+    return json === undefined ? '' : `\n${json}`;
+  } catch {
+    return '';
+  }
+}
+
 export default function (pi: GateExtensionApi): void {
   pi.on('tool_call', async (event, ctx) => {
     // `select` carries a title and options and nothing else, so the title IS
-    // the payload channel: `ethos:tool_call:<toolName>\n<digest>`. The host
-    // parses it back in `parseGateTitle`; the two must change together.
-    const title = `ethos:tool_call:${event.toolName}\n${digestOf(event.input)}`;
+    // the payload channel: `ethos:tool_call:<toolName>\n<digest>\n<input JSON>`.
+    // The full input is what the host matches the personality's deny rules
+    // against (S12) — the digest is truncated. The host parses it back in
+    // `parseGateTitle`; the two must change together.
+    const title = `ethos:tool_call:${event.toolName}\n${digestOf(event.input)}${inputLineOf(event.input)}`;
     if (!ctx.hasUI) {
       // No host is listening (an interactive/`-p` run without our transport).
       // Refuse rather than run ungated: this extension is only ever loaded by

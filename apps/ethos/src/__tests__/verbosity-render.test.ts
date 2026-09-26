@@ -1,7 +1,15 @@
 import { type AgentEvent, describeDeviation } from '@ethosagent/core';
+import { describeChatError } from '@ethosagent/surface-kit';
 import type { ModelDeviation } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { isVerbosity, nextVerbosity, projectEvent, unstreamedDoneText } from '../lib/verbosity';
+import { formatToolFeedLine } from '../lib/tool-feed';
+import {
+  isVerbosity,
+  nextVerbosity,
+  projectEvent,
+  thinkingPreview,
+  unstreamedDoneText,
+} from '../lib/verbosity';
 
 const ev = {
   text(text: string): AgentEvent {
@@ -171,6 +179,141 @@ describe('FW-10 verbosity projection', () => {
       expect(unstreamedDoneText(done('X'), 'X')).toBeUndefined();
       expect(unstreamedDoneText(done('X'), 'preamble')).toBe('\n\nX');
       expect(unstreamedDoneText(ev.text('X'), '')).toBeUndefined();
+    });
+  });
+
+  describe('budget halt (S4/U1)', () => {
+    const halt: AgentEvent = {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'cost-cap',
+      toolName: '_budget',
+      message: 'Stopped: hit $1.00 budget cap for this session ($1.0100 spent)',
+    };
+
+    it('renders the cap and the reset command at every verbosity, quiet included', () => {
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = projectEvent(halt, level).filter((l) => l.kind === 'halt');
+        expect(lines).toHaveLength(1);
+        expect(lines[0]?.text).toContain('$1.00 budget cap');
+        expect(lines[0]?.text).toContain('/budget reset');
+      }
+    });
+
+    // The loop yields the stop twice — a user-audience `_budget` chip, then the
+    // `halt` (`budgetGuardEvents`, packages/core/src/agent-loop/budgets.ts).
+    // The halt line already carries the message, so the chip must not repeat it.
+    it('the budget stop renders once, not as a progress chip and a halt line', () => {
+      const chip: AgentEvent = {
+        type: 'tool_progress',
+        toolName: '_budget',
+        message: halt.type === 'halt' ? halt.message : '',
+        audience: 'user',
+      };
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = [...projectEvent(chip, level), ...projectEvent(halt, level)];
+        expect(lines.filter((l) => l.text.includes('$1.00 budget cap'))).toHaveLength(1);
+      }
+    });
+
+    it('a watcher halt renders no halt line — its pause ends with a reply', () => {
+      const watcher: AgentEvent = { type: 'halt', kind: 'watcher', rule: 'r', message: 'm' };
+      expect(projectEvent(watcher, 'default').filter((l) => l.kind === 'halt')).toEqual([]);
+    });
+  });
+
+  // A2 — a user stop already confirmed itself; the loop's trailing
+  // `error(code: 'aborted')` renders nothing when the turn's abort fired.
+  describe('aborted suppression (A2)', () => {
+    const abortedError: AgentEvent = { type: 'error', error: 'Aborted', code: 'aborted' };
+
+    it('drops the aborted error after a user stop, at every level', () => {
+      for (const level of ['default', 'verbose'] as const) {
+        const lines = projectEvent(abortedError, level, { streamedText: '', aborted: true });
+        expect(lines.filter((l) => l.kind === 'error')).toEqual([]);
+      }
+    });
+
+    it('still renders a non-user abort and every other error code', () => {
+      const notUserStop = projectEvent(abortedError, 'default', {
+        streamedText: '',
+        aborted: false,
+      });
+      expect(notUserStop.filter((l) => l.kind === 'error')).toHaveLength(1);
+
+      const other: AgentEvent = { type: 'error', error: 'boom', code: 'llm_error' };
+      const lines = projectEvent(other, 'default', { streamedText: '', aborted: true });
+      expect(lines.filter((l) => l.kind === 'error')).toHaveLength(1);
+    });
+  });
+
+  // A3 — the CLI's three-line error render draws all wording from
+  // `describeChatError` (surface-kit): title, next step, trace.
+  describe('three-line error wording (A3)', () => {
+    it('a mapped code yields title, action, and the trace id', () => {
+      const described = describeChatError('context_overflow', 'raw provider text', 'tr-123');
+      expect(described.title).toBe('conversation too large for the model');
+      expect(described.action).toContain('/compact');
+      expect(described.trace).toBe('tr-123');
+    });
+
+    it('no trace id → no trace line material', () => {
+      expect(describeChatError('llm_error', 'raw').trace).toBeUndefined();
+    });
+  });
+
+  // A4 — loop-level notices ride `tool_progress` with the reserved `_loop`
+  // name: one line carrying the message, never a tool row, nothing at quiet.
+  describe('_loop notices (A4)', () => {
+    const notice: AgentEvent = {
+      type: 'tool_progress',
+      toolName: '_loop',
+      message: 'context overflow — compacting and retrying',
+      audience: 'user',
+    };
+
+    it('renders the message as one line at default and verbose', () => {
+      for (const level of ['default', 'verbose'] as const) {
+        const lines = projectEvent(notice, level);
+        expect(lines.filter((l) => l.kind === 'tool_progress')).toEqual([
+          { text: 'context overflow — compacting and retrying', kind: 'tool_progress' },
+        ]);
+      }
+    });
+
+    it('renders nothing at quiet', () => {
+      expect(projectEvent(notice, 'quiet')).toEqual([]);
+    });
+  });
+
+  // C2 — a failed tool's feed line carries the reason as a second line.
+  describe('failed-tool reason line (C2)', () => {
+    it('appends the first line of the error under the feed line', () => {
+      const line = formatToolFeedLine({
+        toolName: 'bash',
+        args: { cmd: 'make test' },
+        durationMs: 900,
+        error: 'exit 2: make: *** [test] Error 2\nlong tail',
+      });
+      const [feed, reason] = line.split('\n');
+      expect(feed).toBe('┊ bash · make test · 900ms');
+      expect(reason).toBe('      exit 2: make: *** [test] Error 2');
+    });
+  });
+
+  // A5 (UD6) — thinking preview at verbose only; nothing at default/quiet.
+  describe('thinking preview (A5)', () => {
+    it('rolls the latest ~80 chars at verbose, single line', () => {
+      const tail = thinkingPreview('', 'first\nthoughts here', 'verbose');
+      expect(tail).toBe('first thoughts here');
+      const long = thinkingPreview('x'.repeat(100), 'tail', 'verbose');
+      expect(long).toHaveLength(80);
+      expect(long?.endsWith('tail')).toBe(true);
+    });
+
+    it('returns null at default and quiet', () => {
+      expect(thinkingPreview('', 'reasoning', 'default')).toBeNull();
+      expect(thinkingPreview('', 'reasoning', 'quiet')).toBeNull();
     });
   });
 

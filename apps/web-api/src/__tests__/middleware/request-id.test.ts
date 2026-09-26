@@ -53,7 +53,7 @@ describe('x-request-id middleware (B1)', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
   });
@@ -73,7 +73,12 @@ describe('x-request-id middleware (B1)', () => {
   it('echoes on an authenticated RPC response too', async () => {
     const res = await app.request('/rpc/chat/send', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: { clientId: 'tab-1', text: 'hi' } }),
     });
     expect(res.status).toBe(200);
@@ -118,7 +123,12 @@ describe('x-request-id middleware (B1)', () => {
   it('carries the id on the SSE stream — header AND leading stream_meta frame', async () => {
     const send = await app.request('/rpc/chat/send', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: { clientId: 'tab-1', text: 'hi' } }),
     });
     const { sessionId } = ((await send.json()) as { json: { sessionId: string } }).json;
@@ -142,6 +152,7 @@ describe('x-request-id middleware (B1)', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
         'x-request-id': inbound,
       },
       body: JSON.stringify({ json: { clientId: 'tab-1', text: 'hi' } }),

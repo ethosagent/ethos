@@ -90,6 +90,11 @@ export interface CharacterSheetModelFit {
     tokens: number;
     toolCount: number;
     components: Array<{ name: string; tokens: number }>;
+    /** The AGENTS.md/CLAUDE.md project-context block counted in `tokens`,
+     *  measured in the personality's declared `fs_reach` workdir. `workdir`
+     *  absent → the personality has none, its project context depends on the
+     *  directory it runs in, and `tokens` is 0. Absent → not measured. */
+    projectContext?: { workdir?: string; tokens: number };
   };
   outputReserveTokens?: number;
   /** `window − output reserve − static floor`; ≤ 0 → `refuses`. */
@@ -250,6 +255,92 @@ function routingLines(
   return lines;
 }
 
+/** One decision site as the sheet shows it (plan decision-provider-personality §4.5). */
+export interface CharacterSheetDecisionSite {
+  site: 'injection' | 'approver' | 'router';
+  /** What the personality's `decisions.sites.<site>` asked for (`off` when unset). */
+  requested: 'off' | 'shadow' | 'on';
+  /** What runs. */
+  effective: 'off' | 'shadow' | 'on';
+  /** `resolvePersonalityDecisionSite`'s reason (packages/config/src/decisions.ts). */
+  reason?: 'undeclared' | 'no-provider' | 'not-configured' | 'threshold-missing';
+  /** Threshold keys whose absence ran `on` as `shadow` (R6). */
+  missingThresholds: readonly string[];
+  /** Set when the approver is requested but `safety.approvalMode` (this value)
+   *  is not `smart`, so it is never consulted (plan §4.3 `inert-approval-mode`). */
+  inertApprovalMode?: string;
+}
+
+/**
+ * The RESOLVED `## Decisions` context — per site, what the personality asked
+ * for and what runs on this machine. Computed by
+ * `resolveCharacterSheetDecisions()` in `@ethosagent/wiring`, which calls
+ * `resolvePersonalityDecisionSite` (packages/config/src/decisions.ts), the
+ * resolver the three live sites call, so the sheet cannot claim a mode a call
+ * would not run. `ethos doctor` reads the same function. Absent → the section
+ * prints the declared values only.
+ */
+export interface CharacterSheetDecisions {
+  /** The personality's `decisions.provider`, verbatim. Absent → nothing runs (PD10). */
+  provider?: string;
+  /** The operator configured THIS provider (`decisions.provider` in ~/.ethos/config.yaml). */
+  configured: boolean;
+  /** Set when `configured`: where request bodies go, and the pinned model. */
+  host?: string;
+  model?: string;
+  /** Set when `configured`: the vault ref the key is read from, and whether it holds one. */
+  apiKeyRef?: string;
+  apiKeyPresent?: boolean;
+  sites: readonly CharacterSheetDecisionSite[];
+}
+
+const SHEET_DECISION_SITES = ['injection', 'approver', 'router'] as const;
+
+/** `## Decisions` — rendered only when the personality declares `decisions`. Pure. */
+function decisionsSection(
+  declared: NonNullable<PersonalityConfig['decisions']>,
+  resolved: CharacterSheetDecisions | undefined,
+): string[] {
+  const lines: string[] = ['## Decisions'];
+  if (!resolved) {
+    lines.push(`- Decision model: ${declared.provider ?? '(none)'}`);
+    for (const site of SHEET_DECISION_SITES) {
+      lines.push(`- ${site}: ${declared.sites?.[site] ?? 'off'}`);
+    }
+    return lines;
+  }
+  if (resolved.provider === undefined) {
+    lines.push('- Decision model: (none) — sites need `decisions.provider`; every site runs off');
+  } else if (!resolved.configured) {
+    lines.push(
+      `- Decision model: ${resolved.provider} — not configured on this machine; every site runs off`,
+    );
+  } else {
+    let line = `- Decision model: ${resolved.provider} → ${resolved.host ?? '?'} · model ${resolved.model ?? '?'}`;
+    if (resolved.apiKeyPresent === false) {
+      line += ` — no key at vault ref ${resolved.apiKeyRef ?? '?'}; every site runs today's path`;
+    }
+    lines.push(line);
+    // plan decision-tool D15 — the same two inputs as the loop's gate
+    // (`decisionToolEnabled`, packages/config/src/decisions.ts).
+    lines.push('- tool: decide (via decision model)');
+  }
+  for (const s of resolved.sites) {
+    let line = `- ${s.site}: ${s.requested}`;
+    if (s.reason === 'threshold-missing') {
+      const keys = s.missingThresholds.map((k) => `\`${k}\``).join(', ');
+      line += ` → running ${s.effective}: ${keys} missing`;
+    } else if (s.effective !== s.requested) {
+      line += ` → ${s.effective}`;
+    }
+    if (s.inertApprovalMode !== undefined) {
+      line += ` — inert: approvalMode is ${s.inertApprovalMode}; the approver runs only under smart`;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 /**
  * Optional context for the `## Execution` section. The renderer is pure: it
  * formats whatever posture the caller resolved (via the wiring posture
@@ -345,6 +436,14 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
         rwRoots.length > 0 ? rwRoots.join(', ') : '(none — read-only mounts)'
       }`,
     );
+    // The image, or the refusal every exec tool will return without one — the
+    // resolver's own words, so the sheet cannot drift from the tool error.
+    if (posture.dockerImage) {
+      lines.push(`- Image:      ${posture.dockerImage}`);
+    } else if (posture.dockerImageMissing) {
+      lines.push('- Image:      NOT CONFIGURED — exec tools will fail.');
+      lines.push(`    ${posture.dockerImageMissing.message}`);
+    }
   }
 
   // Containerized note (mirrors the honest trade in the plan).
@@ -536,11 +635,17 @@ function guaranteeRows(
     };
   }
 
+  // A `*` entry matches every host (`hostnameMatches`,
+  // packages/safety/network/src/policy.ts), so a list containing one is the
+  // open policy, not an allowlist — `defaultRecipeSafety` writes exactly that.
+  const netAllow = safety?.network?.allow;
+  const hostAllowlist = netAllow && netAllow.length > 0 && !netAllow.includes('*') ? netAllow : [];
+
   // G-CAP — always enforced per call; the personality's own policy is what the
   // declaration is intersected WITH.
   const capNarrowings = [
     config.fs_reach ? 'fs_reach' : '',
-    safety?.network?.allow?.length ? 'network allowlist' : '',
+    hostAllowlist.length > 0 ? 'network allowlist' : '',
   ].filter((p) => p !== '');
   const cap: GuaranteeRow = {
     status: capNarrowings.length > 0 ? 'narrowed' : 'enforced',
@@ -586,8 +691,8 @@ function guaranteeRows(
     // Every part that is true is stated: a personality can both narrow the
     // destination set AND opt into private destinations, and hiding the second
     // behind the first is exactly the thing this section exists to prevent.
-    const allowPart = net?.allow?.length
-      ? `host allowlist: ${plural(net.allow.length, 'host')} over the always-on floor`
+    const allowPart = hostAllowlist.length
+      ? `host allowlist: ${plural(hostAllowlist.length, 'host')} over the always-on floor`
       : 'safeFetch floor: resolved-IP checks, per-hop redirect revalidation';
     const suffix = joinParts([
       net?.deny?.length ? plural(net.deny.length, 'deny rule') : '',
@@ -604,7 +709,7 @@ function guaranteeRows(
           ]),
         }
       : {
-          status: net?.allow?.length ? 'narrowed' : 'enforced',
+          status: hostAllowlist.length ? 'narrowed' : 'enforced',
           detail: joinParts([allowPart, suffix]),
         };
   }
@@ -644,22 +749,26 @@ function guaranteeRows(
   // G-RED — redaction runs on the observability write path unconditionally.
   // The personality's observability policy changes WHAT is written, which is
   // the honest thing to show next to it.
+  // `storeToolBodies` is reserved: nothing stores a tool result body (the
+  // tool_call span closes with `result_size_bytes` only — `processTools` in
+  // packages/core/src/agent-loop/stages/tool-processing.ts, pinned by
+  // packages/core/src/__tests__/tool-body-not-stored.test.ts), so it is named
+  // but never counted as a change to what is written.
   const obs = safety?.observability;
   const obsParts = [
     obs?.storeToolArgs ? `tool args ${obs.storeToolArgs}` : '',
-    obs?.storeToolBodies ? `tool bodies ${obs.storeToolBodies}` : '',
     obs?.storeLlmPayloads ? `LLM payloads ${obs.storeLlmPayloads}` : '',
     obs?.redactPatterns?.length ? `+${plural(obs.redactPatterns.length, 'pattern')}` : '',
   ].filter((p) => p !== '');
-  const storesFull =
-    obs?.storeToolArgs === 'full' ||
-    obs?.storeToolBodies === 'full' ||
-    obs?.storeLlmPayloads === 'full';
+  const storesFull = obs?.storeToolArgs === 'full' || obs?.storeLlmPayloads === 'full';
   const red: GuaranteeRow = {
     status: obsParts.length === 0 ? 'enforced' : storesFull ? 'relaxed' : 'narrowed',
     detail: joinParts([
       'known credential shapes redacted before observability.db',
       obsParts.join(', '),
+      obs?.storeToolBodies
+        ? `storeToolBodies ${obs.storeToolBodies} is reserved (tool results are never stored)`
+        : '',
     ]),
   };
 
@@ -721,6 +830,9 @@ function guaranteeRows(
           ? `host fallback: ${execution.posture.hostFallback.reason}`
           : '',
         execution.posture.dockerAbsent ? 'Docker required but not running (A1)' : '',
+        execution.posture.dockerImageMissing
+          ? 'no execution.docker.image configured — exec tools unavailable'
+          : '',
       ]),
     };
   }
@@ -853,6 +965,10 @@ function voiceSection(
  * `mcpExport` is the RESOLVED export slice — see {@link CharacterSheetMcpExport}.
  * Absent → `## MCP export` still states whether the personality is exported at
  * all, and says the slice was not resolved rather than inventing one.
+ *
+ * `decisions` is the RESOLVED decision-site context — see
+ * {@link CharacterSheetDecisions}. `## Decisions` renders only when the
+ * personality declares a `decisions` block; absent context → declared values.
  */
 export function renderCharacterSheet(
   config: PersonalityConfig,
@@ -864,6 +980,7 @@ export function renderCharacterSheet(
   boundary?: CharacterSheetBoundary,
   routing?: CharacterSheetRouting,
   mcpExport?: CharacterSheetMcpExport,
+  decisions?: CharacterSheetDecisions,
 ): string {
   const lines: string[] = [`# ${config.id} — ${config.name}`, ''];
 
@@ -882,6 +999,14 @@ export function renderCharacterSheet(
   // said so on every sheet would be noise ("cards earn existence").
   if (config.voice) {
     lines.push(...voiceSection(config.voice, config.id));
+    lines.push('');
+  }
+
+  // Decisions — same rule as Voice: a personality that declares no
+  // `decisions` block runs every site `off`, and saying so on every sheet
+  // would be noise (plan decision-provider-personality §4.5).
+  if (config.decisions) {
+    lines.push(...decisionsSection(config.decisions, decisions));
     lines.push('');
   }
 
@@ -945,6 +1070,16 @@ export function renderCharacterSheet(
     lines.push(
       `- System-prompt tokens: ~${modelFit.floor.tokens} (measured static floor — serialized tool schemas included)`,
     );
+    const projectContext = modelFit.floor.projectContext;
+    if (projectContext?.workdir !== undefined) {
+      lines.push(
+        `- Project context (AGENTS.md/CLAUDE.md in ${projectContext.workdir}): ~${projectContext.tokens} tokens, included above`,
+      );
+    } else if (projectContext) {
+      lines.push(
+        '- Project context (AGENTS.md/CLAUDE.md): depends on the working directory — no fs_reach workdir declared, not included above',
+      );
+    }
   } else {
     lines.push(`- Estimated system-prompt tokens: ~${estimateSystemPromptTokens(soulMd, toolset)}`);
   }

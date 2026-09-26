@@ -1,13 +1,15 @@
 import {
   type ChatMessage,
+  decisionRowView,
   formatDuration,
+  noticeGlyph,
   statusGlyph,
   statusWord,
   summariseTrail,
   type TrailEntry,
   type TurnPhase,
 } from '@ethosagent/chat-state';
-import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
+import type { ClarifyRequestEvent, DecisionEvent } from '@ethosagent/web-contracts';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { color, radius, type } from '../../theme/tokens';
@@ -66,6 +68,7 @@ const PHASE_WORD: Record<TurnPhase, string> = {
   received: 'received',
   thinking: 'thinking',
   tool: 'working',
+  decision: 'checking',
   writing: 'writing',
 };
 
@@ -146,15 +149,42 @@ export function TrailFooter({ entries, stopped }: { entries: TrailEntry[]; stopp
                   time: e.durationMs === undefined ? '—' : formatDuration(e.durationMs),
                 }}
               />
-            ) : (
+            ) : e.kind === 'finding' ? (
               <Row
                 key={e.id}
                 row={{ glyph: '⚠', word: 'unverified', subject: e.claim, result: e.evidence }}
+              />
+            ) : e.kind === 'decision' ? (
+              <DecisionRow key={e.id} event={e.event} />
+            ) : (
+              <Row
+                key={e.id}
+                row={{
+                  glyph: glyphOf(noticeGlyph(e.tone)),
+                  word: e.word,
+                  subject: e.subject,
+                  result: e.detail,
+                }}
               />
             ),
           )
         : null}
     </View>
+  );
+}
+
+function DecisionRow({ event }: { event: DecisionEvent }) {
+  const view = decisionRowView(event);
+  return (
+    <Row
+      row={{
+        glyph: glyphOf(view.glyph),
+        word: view.word,
+        subject: `${view.tag} · ${view.subject}`,
+        result: view.detail,
+        time: view.duration,
+      }}
+    />
   );
 }
 

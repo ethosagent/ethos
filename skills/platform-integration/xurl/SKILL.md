@@ -57,12 +57,12 @@ xurl reply 1823456789012345678 "Good catch — fixed in the next patch."
 xurl quote 1823456789012345678 "This is exactly the tradeoff we discussed last week."
 ```
 
-There is no dedicated "thread" command. Build one by chaining `post` then `reply`, capturing each response's post id with `jq`:
+There is no dedicated "thread" command. Build one by chaining `post` then `reply`, one call at a time: each prints the new post's id, which the next call replies to:
 
 ```bash
-first=$(xurl post "1/ Here's what shipped this week..." | jq -r '.data.id')
-second=$(xurl reply "$first" "2/ The scheduler seam now supports..." | jq -r '.data.id')
-xurl reply "$second" "3/ Full changelog: <link>"
+xurl post "1/ Here's what shipped this week..." | jq -r '.data.id'
+xurl reply <first-id> "2/ The scheduler seam now supports..." | jq -r '.data.id'
+xurl reply <second-id> "3/ Full changelog: <link>"
 ```
 
 ## Media

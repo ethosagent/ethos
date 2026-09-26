@@ -1,5 +1,7 @@
 export {
   AgentBridge,
+  type BridgeApprovalRequest,
+  type BridgeApprovalSource,
   type BridgeOptions,
   type BridgeOpts,
   DEFAULT_TURN_TIMEOUT_MS,

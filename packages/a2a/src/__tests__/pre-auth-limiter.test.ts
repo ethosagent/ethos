@@ -321,3 +321,73 @@ describe('SSE connection cap (plan T1.4)', () => {
     expect(service.acquireSseSlot()).toBeNull();
   });
 });
+
+// S14 (plan openclaw-2026.9.6-gaps). The router used to key the pre-auth
+// limiter on `X-Forwarded-For` / `X-Real-IP` and fall back to one shared
+// `'unknown'` bucket: a direct caller could rotate the header to dodge the cap,
+// and with no header every caller shared ONE bucket, so an anonymous flood
+// refused every peer — authenticated ones included. It now keys on the TCP
+// peer (`@hono/node-server`'s `c.env.incoming.socket`), and reads the forwarded
+// headers only under `trustProxy`.
+describe('pre-auth limiter key — the TCP peer, not a caller-chosen header (S14)', () => {
+  const RATE_LIMITED = -32004;
+
+  function routerWith(opts: { trustProxy?: boolean } = {}) {
+    const target = makeAgent(TARGET_ID);
+    const counter = { runs: 0 };
+    const app = new Hono();
+    app.route(
+      '/a2a',
+      createA2aRpcRouter({
+        getIdentity: stubIdentity(target, { skills: ['search'] }),
+        peerStore: newPeerStore(),
+        runner: countingRunner(HELLO_SCRIPT, counter),
+        preAuthLimiter: new MemoryA2aPreAuthLimiter({ maxPerWindow: 2, now: () => 0 }),
+        ...(opts.trustProxy ? { trustProxy: true } : {}),
+      }),
+    );
+    // One anonymous request "from" `address`, the way @hono/node-server hands
+    // the socket to a route (`c.env.incoming`).
+    const send = async (address: string, headers: Record<string, string> = {}) => {
+      const res = await app.request(
+        `/a2a/${target.id}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: A2A_METHOD_MESSAGE_SEND,
+            params: { skill: 'search', message: 'hi' },
+          }),
+        },
+        { incoming: { socket: { remoteAddress: address } } },
+      );
+      const json = (await res.json()) as { error?: { code: number } };
+      return json.error?.code;
+    };
+    return { send };
+  }
+
+  it('an anonymous flood from one address does not refuse a caller from another', async () => {
+    const { send } = routerWith();
+    for (let i = 0; i < 5; i++) await send('198.51.100.7');
+    expect(await send('198.51.100.7')).toBe(RATE_LIMITED);
+    expect(await send('203.0.113.20')).not.toBe(RATE_LIMITED);
+  });
+
+  it('a rotating X-Forwarded-For does not buy a fresh bucket', async () => {
+    const { send } = routerWith();
+    expect(await send('198.51.100.7', { 'x-forwarded-for': '1.1.1.1' })).not.toBe(RATE_LIMITED);
+    expect(await send('198.51.100.7', { 'x-forwarded-for': '2.2.2.2' })).not.toBe(RATE_LIMITED);
+    expect(await send('198.51.100.7', { 'x-forwarded-for': '3.3.3.3' })).toBe(RATE_LIMITED);
+  });
+
+  it('honours X-Forwarded-For only when the operator declared a trusted proxy', async () => {
+    const { send } = routerWith({ trustProxy: true });
+    // Every request arrives from the proxy; the forwarded client is the key.
+    for (let i = 0; i < 3; i++) await send('10.0.0.1', { 'x-forwarded-for': '1.1.1.1' });
+    expect(await send('10.0.0.1', { 'x-forwarded-for': '1.1.1.1' })).toBe(RATE_LIMITED);
+    expect(await send('10.0.0.1', { 'x-forwarded-for': '2.2.2.2' })).not.toBe(RATE_LIMITED);
+  });
+});

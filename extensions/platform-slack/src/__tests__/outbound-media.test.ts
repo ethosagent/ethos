@@ -1,7 +1,13 @@
 import type { Attachment } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
+import { loadSlackSdk } from '../sdk';
 import { stubSlackWebApi } from './stub-slack-web-api';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 // The real Bolt App is constructed but never started (no socket opens), and the
 // client is swapped for a spy — mirrors the receipt-reactions test harness.

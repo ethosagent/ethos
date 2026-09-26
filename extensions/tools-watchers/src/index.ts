@@ -3,10 +3,12 @@
 // A personality whose toolset includes 'watchers' can own declarative
 // zero-token watchers — the deterministic differ runs on the cron
 // scheduler's tick with no LLM involvement; the agent is only woken (or a
-// channel notified) on a real change. Ownership is toolset membership plus
-// the watcher record's explicit targets — nothing is added to
-// PersonalityConfig (plan gap-event-triggers §3e).
+// channel notified) on a real change. Access is toolset membership; each record
+// is owned by the personality that created it (`WatcherRecord.owner`, scoped by
+// `loadOwnedWatcher` below) — nothing is added to PersonalityConfig (plan
+// gap-event-triggers §3e).
 
+import { type MessagingToolsOptions, messagingTargetRefusal } from '@ethosagent/tools-messaging';
 import type { Tool, ToolResult } from '@ethosagent/types';
 import {
   isForeignDeliverForGatedOwner,
@@ -104,6 +106,47 @@ export interface WatcherToolsOptions {
    * `src/__tests__/outbox-deliver-refusal.test.ts`).
    */
   outbox?: WatcherOutboxGate;
+  /**
+   * The operator messaging allowlist — the same closure `send_message` gets
+   * (`packages/wiring/src/compose-tools.ts`). Checked for EVERY `deliver`
+   * target (S5), before the outbox refusal, whether or not the outbox gates the
+   * owner. Absent = no allowlist applies.
+   */
+  getAllowedTargets?: MessagingToolsOptions['getAllowedTargets'];
+}
+
+// ---------------------------------------------------------------------------
+// Ownership (S5, plan openclaw-2026.9.6-gaps) — mirrors `loadOwnedJob` in
+// `@ethosagent/tools-cron`. Every tool needs a personality context; list shows
+// only the caller's watchers; pause/resume/delete go through `loadOwnedWatcher`,
+// and a wake names the caller. Pinned by `src/__tests__/ownership.test.ts`.
+//
+// Limitations: a record with no `owner` (written before owners were recorded)
+// belongs to no personality, so no agent can see or change it — only an edit of
+// `watchers.json` removes it. The allowlist is checked at creation only; a
+// watcher created before an allowlist entry was narrowed keeps delivering (the
+// delivery-time re-check in `WatcherManager.dispatchChange` covers the outbox
+// policy and the wake owner, not the allowlist). `watcher_create`'s "already
+// exists" refusal is global by id, so it reveals that SOME watcher holds an id.
+// ---------------------------------------------------------------------------
+
+const PERSONALITY_REQUIRED: ToolResult = fail('watchers require a personality context');
+
+/**
+ * The single ownership gate for pause/resume/delete: a watcher owned by another
+ * personality — or by none — returns the SAME result as an id that does not
+ * exist, so the tools are not an existence oracle across personalities.
+ */
+async function loadOwnedWatcher(
+  manager: WatcherManager,
+  id: string,
+  caller: string,
+): Promise<{ ok: true; watcher: WatcherRecord } | { ok: false; result: ToolResult }> {
+  const watcher = await manager.getWatcher(id);
+  if (!watcher || watcher.owner?.personalityId !== caller) {
+    return { ok: false, result: fail(`Watcher not found: ${id}`) };
+  }
+  return { ok: true, watcher };
 }
 
 /**
@@ -193,6 +236,8 @@ export function createWatcherTools(
         deliver?: DeliverArg;
         wake?: WakeArg;
       };
+      if (!ctx.personalityId) return PERSONALITY_REQUIRED;
+      const caller = ctx.personalityId;
       if (!id) return fail('id is required');
       if (!kind) return fail('kind is required');
       if (!target) return fail('target is required');
@@ -203,24 +248,44 @@ export function createWatcherTools(
 
       // The creating turn, recorded so every later delivery can be re-checked
       // against this personality's policy (`WatcherManager.dispatchChange`).
-      const owner: WatcherOwner | undefined = ctx.personalityId
-        ? {
-            personalityId: ctx.personalityId,
-            ...(ctx.origin !== undefined ? { origin: ctx.origin } : {}),
-          }
-        : undefined;
+      const owner: WatcherOwner = {
+        personalityId: caller,
+        ...(ctx.origin !== undefined ? { origin: ctx.origin } : {}),
+      };
 
       const onChange: WatcherOnChange = {};
       if (deliver) {
         if (!deliver.platform || !deliver.chat_id) {
           return fail('deliver requires explicit platform and chat_id');
         }
+        // Every target meets the allowlist `send_message` meets (S5), FIRST and
+        // whatever the outbox says — the same order as `executeSendMessage` in
+        // `@ethosagent/tools-messaging` (O-D3): the outbox exempts a gated
+        // owner's origin chat and the operator's chat, and that exemption must
+        // never widen the destinations the operator allowed. Pinned by "a gated
+        // owner's origin chat outside the allowlist is refused" in
+        // `src/__tests__/ownership.test.ts`.
+        const notAllowed = messagingTargetRefusal(
+          opts.getAllowedTargets,
+          caller,
+          deliver.platform,
+          deliver.chat_id,
+        );
+        if (notAllowed) return fail(notAllowed);
         const refusal = refuseForeignDeliver(opts.outbox, owner, deliver.platform, deliver.chat_id);
         if (refusal) return refusal;
         onChange.deliver = { platform: deliver.platform, chatId: deliver.chat_id };
       }
       if (wake) {
         if (!wake.personality_id) return fail('wake requires personality_id');
+        // A wake is always self: another personality's id would run this
+        // turn's prompt_prefix as an instruction turn with that personality's
+        // toolset. Re-checked at fire time by `WatcherManager.dispatchChange`.
+        if (wake.personality_id !== caller) {
+          return fail(
+            `wake.personality_id must be the calling personality ("${caller}") — a watcher can only wake the personality that created it`,
+          );
+        }
         onChange.wake = {
           personalityId: wake.personality_id,
           ...(wake.prompt_prefix ? { promptPrefix: wake.prompt_prefix } : {}),
@@ -234,7 +299,7 @@ export function createWatcherTools(
           target,
           intervalSeconds: interval_seconds,
           onChange,
-          ...(owner ? { owner } : {}),
+          owner,
         });
         return { ok: true, value: `Watcher created: ${formatWatcher(record)}` };
       } catch (err) {
@@ -245,12 +310,16 @@ export function createWatcherTools(
 
   const listTool: Tool = {
     name: 'watcher_list',
-    description: 'List all configured watchers with their kind, target, interval, and actions.',
+    description: "List this personality's watchers with their kind, target, interval, and actions.",
     toolset: 'watchers',
     capabilities: {},
     schema: { type: 'object', properties: {} },
-    async execute(): Promise<ToolResult> {
-      const watchers = await manager.listWatchers();
+    async execute(_args, ctx): Promise<ToolResult> {
+      if (!ctx.personalityId) return PERSONALITY_REQUIRED;
+      const caller = ctx.personalityId;
+      const watchers = (await manager.listWatchers()).filter(
+        (w) => w.owner?.personalityId === caller,
+      );
       if (watchers.length === 0) return { ok: true, value: 'No watchers configured.' };
       return { ok: true, value: watchers.map(formatWatcher).join('\n') };
     },
@@ -271,9 +340,12 @@ export function createWatcherTools(
       properties: { id: idSchema },
       required: ['id'],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!ctx.personalityId) return PERSONALITY_REQUIRED;
       const { id } = args as { id?: string };
       if (!id) return fail('id is required');
+      const owned = await loadOwnedWatcher(manager, id, ctx.personalityId);
+      if (!owned.ok) return owned.result;
       try {
         await action(id);
         return { ok: true, value: `Watcher ${pastTense}: ${id}` };

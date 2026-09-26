@@ -1,6 +1,7 @@
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { getClientId } from '../../lib/clientId';
 import { rpc } from '../../rpc';
 
@@ -12,18 +13,27 @@ import { rpc } from '../../rpc';
 // The modal owns three pieces of UX:
 //   1. Render the pending tool: name + reason + args preview.
 //   2. Scope choice (stacked radios — DESIGN.md anti-slop rule, no card
-//      grids inside the modal either): once / exact-args / any-args.
+//      grids inside the modal either): once / exact-args / any-args. An
+//      always-ask tool (`request.alwaysAsk`) cannot be allowlisted — the
+//      server refuses both "forever" scopes for it — so it gets once /
+//      lease-1h instead: the widest answer it can have is one hour. A
+//      hardline command (`request.hardline`) gets once only: the server
+//      stores nothing for one whatever scope is sent (`ApprovalsService.approve`).
 //   3. Allow / Deny buttons that fire the matching RPC. The reducer
 //      drops the request from `pendingApprovals` on the SSE
 //      `approval.resolved` event so the modal closes naturally; we
 //      don't manage open/closed state locally.
 
-const SCOPE_OPTIONS: Array<{ value: ApprovalScope; label: string; hint: string }> = [
-  {
-    value: 'once',
-    label: 'Just this command',
-    hint: 'Allow this single invocation, ask again next time.',
-  },
+type ScopeOption = { value: ApprovalScope; label: string; hint: string };
+
+const ONCE_OPTION: ScopeOption = {
+  value: 'once',
+  label: 'Just this command',
+  hint: 'Allow this single invocation, ask again next time.',
+};
+
+const SCOPE_OPTIONS: ScopeOption[] = [
+  ONCE_OPTION,
   {
     value: 'exact-args',
     label: 'This exact command',
@@ -36,6 +46,20 @@ const SCOPE_OPTIONS: Array<{ value: ApprovalScope; label: string; hint: string }
   },
 ];
 
+const ALWAYS_ASK_SCOPE_OPTIONS: ScopeOption[] = [
+  ONCE_OPTION,
+  {
+    value: 'lease-1h',
+    label: 'Allow for 1 hour',
+    hint: 'Allow this tool in this chat, with any arguments, for the next hour. Revoke it in Settings → Security & access.',
+  },
+];
+
+function scopeOptions(request: ApprovalRequest): ScopeOption[] {
+  if (request.hardline) return [ONCE_OPTION];
+  return request.alwaysAsk ? ALWAYS_ASK_SCOPE_OPTIONS : SCOPE_OPTIONS;
+}
+
 export interface ApprovalModalProps {
   request: ApprovalRequest;
 }
@@ -44,6 +68,10 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
   const [scope, setScope] = useState<ApprovalScope>('once');
   const [submitting, setSubmitting] = useState<'allow' | 'deny' | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // W5 — an alertdialog owns focus: first control on open (the `once` radio),
+  // back to wherever the user was when `approval.resolved` unmounts it.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef);
 
   const handle = async (decision: 'allow' | 'deny') => {
     setSubmitting(decision);
@@ -73,10 +101,12 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
 
   return (
     <div
+      ref={panelRef}
       className="approval-modal"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="approval-modal-title"
+      tabIndex={-1}
     >
       <header className="approval-modal-header">
         <span className="approval-modal-icon" aria-hidden="true">
@@ -93,7 +123,7 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
 
       <fieldset className="approval-modal-scope">
         <legend className="approval-modal-scope-legend">Scope</legend>
-        {SCOPE_OPTIONS.map((opt) => (
+        {scopeOptions(request).map((opt) => (
           <label key={opt.value} className="approval-modal-scope-option">
             <input
               type="radio"

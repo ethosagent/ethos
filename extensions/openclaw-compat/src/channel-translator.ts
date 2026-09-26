@@ -1,6 +1,7 @@
 import type {
   DeliveryResult,
   InboundMessage,
+  Logger,
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
@@ -17,9 +18,10 @@ import type { ChannelPlugin, OpenClawPluginChannelRegistration } from './types';
  * - `ChannelOutboundAdapter.send()` parameter shape is inferred from DingTalk plugin
  * - `ChannelGatewayAdapter.onMessage()` shape is inferred from real plugin patterns
  *
- * Both adapter paths include fallback behaviour and log warnings for gaps.
+ * Both adapter paths include fallback behaviour and log warnings for gaps
+ * through `logger` when one is given (Law 10 — library code is silent).
  */
-export function translateChannelPlugin(plugin: ChannelPlugin): PlatformAdapter {
+export function translateChannelPlugin(plugin: ChannelPlugin, logger?: Logger): PlatformAdapter {
   const caps = plugin.capabilities;
 
   return {
@@ -58,7 +60,7 @@ export function translateChannelPlugin(plugin: ChannelPlugin): PlatformAdapter {
 
     async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
       if (!plugin.outbound?.send) {
-        console.warn(
+        logger?.warn(
           `[openclaw-compat] Channel "${plugin.id}" has no outbound.send — message dropped`,
         );
         return { ok: false, error: 'no outbound adapter' };
@@ -82,7 +84,7 @@ export function translateChannelPlugin(plugin: ChannelPlugin): PlatformAdapter {
 
     onMessage(handler: (message: InboundMessage) => void): void {
       if (!plugin.gateway?.onMessage) {
-        console.warn(
+        logger?.warn(
           `[openclaw-compat] Channel "${plugin.id}" has no gateway.onMessage — inbound messages won't arrive`,
         );
         return;

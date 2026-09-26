@@ -36,6 +36,12 @@ import {
   removeAvatar,
   uploadAvatarBytes,
 } from '../components/personality/avatarActions';
+import { DecisionModelField } from '../components/personality/DecisionModelField';
+import {
+  type DecisionFieldValue,
+  decisionFieldValue,
+  decisionsUpdateInput,
+} from '../components/personality/decisionModel';
 import { ExecutionTab } from '../components/personality/ExecutionTab';
 import { ModelDeclarationSelect } from '../components/personality/ModelDeclarationSelect';
 import {
@@ -53,6 +59,7 @@ import { TeamRing } from '../components/ui/TeamRing';
 import { useTeamMembership } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useCreateFlag } from '../hooks/useCreateFlag';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { toolAffordance } from '../lib/execution-posture';
 import { wizardFsReach } from '../lib/personalityFsReach';
 import {
@@ -1465,6 +1472,11 @@ export function EditModal({
     };
   }, []);
 
+  // N5a — a navigation (or reload) while a tab holds a draft is the same loss
+  // handleCancel guards against, just through a different exit. A thunk over
+  // the ref: dirty state deliberately does not re-render this component.
+  useUnsavedGuard(() => Object.values(dirtyTabs.current).some(Boolean));
+
   function handleCancel() {
     if (!Object.values(dirtyTabs.current).some(Boolean)) {
       onClose();
@@ -1921,9 +1933,15 @@ export function ConfigEditor({
   // provider changes), and threading that through registered Form.Items buys
   // nothing but indirection.
   const [voice, setVoice] = useState<PersonalityVoice>(BLANK_VOICE);
+  // Decision model + per-site modes, also outside the Antd form. `null` =
+  // untouched: the patch then omits `decisions`, and the stored block is kept.
+  const [decisions, setDecisions] = useState<DecisionFieldValue | null>(null);
+  // The approver note reads the approval mode as the form holds it, unsaved.
+  const approvalMode = Form.useWatch('safetyApprovalMode', form);
 
   useEffect(() => {
     setModelChoice(null);
+    setDecisions(null);
     form.setFieldsValue({
       name: personality.name,
       description: personality.description ?? '',
@@ -2056,6 +2074,10 @@ export function ConfigEditor({
         // shallow-merges the voice block, so omitting one would preserve the
         // stored value and make "back to the default provider" unexpressible.
         voice: voiceUpdateInput(voice),
+        // Omitted while untouched, so a hand-written block is kept as written.
+        ...(decisions !== null
+          ? { decisions: decisionsUpdateInput(decisions, personality.decisions) }
+          : {}),
         nightly: {
           enabled: values.nightlyEnabled,
           judge: {
@@ -2136,6 +2158,15 @@ export function ConfigEditor({
           }}
         />
       </Form.Item>
+      <DecisionModelField
+        value={decisions ?? decisionFieldValue(personality.decisions)}
+        stored={personality.decisions}
+        approvalMode={approvalMode}
+        onChange={(next) => {
+          setDecisions(next);
+          setDirty(true);
+        }}
+      />
       <Form.Item label="Memory scope">
         <Typography.Text>per-personality</Typography.Text>
       </Form.Item>

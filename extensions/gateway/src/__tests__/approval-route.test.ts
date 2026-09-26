@@ -106,6 +106,10 @@ describe('Gateway.resolveApprovalRoute', () => {
     expect(route?.chatId).toBe('C123');
     expect(route?.threadId).toBe('1700000000.5');
     expect(route?.requesterUserId).toBe('U1');
+    // openclaw-advisory-fixes L-c: the approval flow picks owner vs requester
+    // from these two.
+    expect(route?.isDm).toBe(false);
+    expect(route?.platform).toBe('slack');
 
     endTurn(laneKey);
     await turn;

@@ -53,9 +53,42 @@ describe('evaluateEligibility', () => {
     expect(res).toEqual({ eligible: false, reason: 'child-session' });
   });
 
-  it('excludes background-job wake turns (envelope)', () => {
+  it('excludes background-job wake turns (legacy bracketed envelope, in-flight turns)', () => {
     const res = evaluateEligibility(
       input({ initialPrompt: '[background job ab12cd34 finished — status: done]\n\nresult' }),
+    );
+    expect(res).toEqual({ eligible: false, reason: 'wake-turn' });
+  });
+
+  // The three shapes `Gateway.buildWakeNotice` emits today (H6 — a human
+  // sentence, no brackets). Done/failed also carry the untrusted tag; the
+  // aborted one-liner does not, so the prefix is its only marker.
+  it('excludes the current done wake shape', () => {
+    const res = evaluateEligibility(
+      input({
+        initialPrompt:
+          'background job ab12cd34 "nightly build" finished\n\n<untrusted source="unknown" tool="background_job_summary">all green</untrusted>',
+      }),
+    );
+    expect(res).toEqual({ eligible: false, reason: 'wake-turn' });
+  });
+
+  it('excludes the current failed wake shape', () => {
+    const res = evaluateEligibility(
+      input({
+        initialPrompt:
+          'background job ab12cd34 failed — ethos process logs ab12cd34\n\n<untrusted source="unknown" tool="background_job_summary">boom</untrusted>',
+      }),
+    );
+    expect(res).toEqual({ eligible: false, reason: 'wake-turn' });
+  });
+
+  it('excludes the current aborted wake shape (no untrusted block)', () => {
+    const res = evaluateEligibility(
+      input({
+        initialPrompt:
+          'background job ab12cd34 was interrupted by a restart or config change — ask again to rerun',
+      }),
     );
     expect(res).toEqual({ eligible: false, reason: 'wake-turn' });
   });

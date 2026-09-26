@@ -211,8 +211,13 @@ export interface EthosDesktopBridge {
     status: () => Promise<{
       state: 'running' | 'stopped' | 'crashed' | 'starting';
       serviceInstalled: boolean;
+      /** The gateway lock holder's pid, when known. */
+      pid?: number | null;
+      /** Alive, but its heartbeat is old. */
+      unhealthy?: boolean;
     }>;
-    start: () => Promise<{ ok: boolean }>;
+    /** `attached`: a gateway was already running for this state dir. */
+    start: () => Promise<{ ok: boolean; attached?: boolean; pid?: number | null }>;
     stop: () => Promise<{ ok: boolean }>;
     logPath: () => Promise<{ path: string }>;
   };

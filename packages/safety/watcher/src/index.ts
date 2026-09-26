@@ -7,6 +7,8 @@ export type {
 export {
   compoundingErrorRule,
   defaultRules,
+  EXFIL_TOOL_NAMES,
+  isExfilShapedTool,
   rateLimitRule,
   suspiciousSequenceRule,
   tokenBudgetRule,

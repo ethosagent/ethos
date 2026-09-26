@@ -48,6 +48,11 @@ export interface ResolvePersonalityModelFitOptions {
   smallWindowOverride?: 'auto' | 'on' | 'off';
   storage: Storage;
   dataDir: string;
+  /** The project-context term of the floor for the personality's declared
+   *  workdir (`declaredWorkdirProjectContext`, project-context-floor.ts).
+   *  `workdir` absent → it depends on the working directory, and 0 is counted.
+   *  Absent entirely → not measured; the sheet says nothing about it. */
+  projectContext?: { workdir?: string; chars: number };
   /** D16 — diagnostic commands probe LIVE and rewrite the cache. */
   forceProbeRefresh?: boolean;
   /** Test seam. */
@@ -93,6 +98,7 @@ export async function resolvePersonalityModelFit(
     toolSchemaChars: JSON.stringify(opts.toolDefinitions).length,
     toolCount: opts.toolDefinitions.length,
     preludeChars: INJECTION_DEFENSE_PRELUDE.length,
+    projectContextChars: opts.projectContext?.chars ?? 0,
   });
 
   // Small-window state + declared narrowing — the same derivation
@@ -123,6 +129,16 @@ export async function resolvePersonalityModelFit(
     ...(resolved.contextWindow !== undefined ? { windowTokens: resolved.contextWindow } : {}),
     windowSource: resolved.source,
     floor,
+    ...(opts.projectContext !== undefined
+      ? {
+          projectContext: {
+            ...(opts.projectContext.workdir !== undefined
+              ? { workdir: opts.projectContext.workdir }
+              : {}),
+            chars: opts.projectContext.chars,
+          },
+        }
+      : {}),
     smallWindow,
     ...(narrowedToolset !== undefined ? { narrowedToolset } : {}),
     mcpServerCount: (opts.personality.mcp_servers ?? []).length,

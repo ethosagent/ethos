@@ -58,6 +58,14 @@ const api = {
     setDataDir: (req: { path: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['settings:setDataDir'], req),
   },
+  quickChat: {
+    /** W3 (ux-feedback plan) — a QuickChat reply finished while the window was
+     *  hidden; the main process raises the OS notification
+     *  (`showBackgroundNotification`), whose click navigates the main window
+     *  to the session via `navigate:session`. Fire-and-forget. */
+    notifyDone: (req: { sessionId: string | null; title: string; body: string }) =>
+      ipcRenderer.send('quick-chat:notify-done', req),
+  },
   navigate: {
     onSession: (cb: (sessionId: string) => void) => {
       const listener = (_e: unknown, sessionId: string) => cb(sessionId);

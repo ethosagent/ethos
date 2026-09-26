@@ -42,6 +42,7 @@ import {
   personalityCore,
   submitExpressionCandidate,
 } from '@ethosagent/wiring';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createCliLearningInbox, createLLM, getStorage } from '../wiring';
 
@@ -410,6 +411,7 @@ export async function buildJudgeRunner(
   const runsDir = join(ethosDir(), 'personalities', id, '.judge-history', 'runs');
   await storage.mkdir(runsDir);
   const runtime = await createAgentLoop(config);
+  gateNonInteractiveLoop(runtime, config, 'a judge run has nobody to answer a prompt');
   const llm = await createLLM(config);
   const outputPath = join(runsDir, `${Date.now()}.jsonl`);
   const runner = new EvalRunner(runtime.loop, {

@@ -1,11 +1,10 @@
-import type { Interaction } from 'discord.js';
-import {
+import type {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  Interaction,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
 } from 'discord.js';
 import { CLARIFY_MODAL_INPUT_ID, type clarifyModalPayload } from '../clarify-blocks';
 import {
@@ -15,6 +14,7 @@ import {
   handleClarifyModal,
 } from '../clarify-interactions';
 import type { CommandPayload } from '../commands';
+import { discord } from '../sdk';
 import type { DiscordClarifyInteraction } from '../types';
 
 interface InteractionContext {
@@ -130,6 +130,7 @@ function handleSlashCommand(interaction: Interaction, ctx: InteractionContext): 
 }
 
 export function buildModal(input: ReturnType<typeof clarifyModalPayload>): ModalBuilder {
+  const { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = discord();
   const modal = new ModalBuilder().setCustomId(input.custom_id).setTitle(input.title);
   for (const row of input.components) {
     const arBuilder = new ActionRowBuilder<TextInputBuilder>();
@@ -152,6 +153,7 @@ export function toActionRowBuilder(row: unknown): ActionRowBuilder<ButtonBuilder
     type: number;
     components: Array<{ style: number; label: string; custom_id: string }>;
   };
+  const { ActionRowBuilder, ButtonBuilder } = discord();
   const ar = new ActionRowBuilder<ButtonBuilder>();
   for (const c of r.components) {
     ar.addComponents(
@@ -165,6 +167,7 @@ export function toActionRowBuilder(row: unknown): ActionRowBuilder<ButtonBuilder
 }
 
 function buttonStyleFromInt(n: number): ButtonStyle {
+  const { ButtonStyle } = discord();
   switch (n) {
     case 1:
       return ButtonStyle.Primary;

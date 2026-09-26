@@ -39,11 +39,14 @@ describe('serve.ts — one builder for every serve loop', () => {
 
   it('gives the web API the same danger check in both modes', async () => {
     const src = await readServe();
-    expect(src).toContain(
-      'dangerPredicate: buildServeDangerPredicate(loop, personalities, config),',
+    // Each call also forwards its own build's execution-posture resolver
+    // (S6 / D1(a)) and approver decision site (plan decision-provider-jev
+    // §8.2), so the fourth and fifth arguments differ by branch.
+    expect(src).toMatch(
+      /dangerPredicate: buildServeDangerPredicate\(\s*loop,\s*personalities,\s*config,\s*opts\.executionPostureFor,\s*opts\.approverDecision,\s*\),/,
     );
     expect(src).toMatch(
-      /dangerPredicate: \(loop\) =>\s*buildServeDangerPredicate\(loop, personalities, agentConfig\),/,
+      /dangerPredicate: \(loop\) =>\s*buildServeDangerPredicate\(\s*loop,\s*personalities,\s*agentConfig,\s*agentResult\.executionPostureFor,\s*agentResult\.approverDecision,\s*\),/,
     );
   });
 

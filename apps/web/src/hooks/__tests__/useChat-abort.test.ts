@@ -125,6 +125,23 @@ describe('useChat — Stop is only as good as the RPC behind it', () => {
     expect(latest?.state.currentTurn).toBeNull();
   });
 
+  it('the loop’s own post-Stop `aborted` error never becomes an error banner (A2)', async () => {
+    // agent-loop yields `{ type: 'error', code: 'aborted' }` after a user
+    // abort; the aborted-turn guard drops it, so a Stop the user asked for is
+    // never re-reported as a failure.
+    chatAbort.mockResolvedValue({ ok: true });
+    await mountWithRunningTool();
+
+    await act(async () => {
+      await latest?.abortTurn();
+    });
+    await act(async () => {
+      emit?.({ type: 'error', error: 'Aborted', code: 'aborted' });
+    });
+    expect(latest?.state.error).toBeNull();
+    expect(latest?.state.abortedTurn).toBe(true);
+  });
+
   it('broadcasts the stop so the right drawer settles the same rows', async () => {
     // The drawer is on its own SSE subscription and Stop is never on the wire,
     // so without this broadcast it keeps drawing `running` rows for the calls
@@ -154,8 +171,8 @@ describe('useChat — Stop is only as good as the RPC behind it', () => {
     // The guard is gone, so the turn the server is STILL running becomes
     // visible again instead of being dropped for the rest of the session.
     expect(latest?.state.abortedTurn).toBe(false);
-    expect(latest?.state.error).toContain('Stop did not reach the server');
-    expect(latest?.state.error).toContain('network unreachable');
+    expect(latest?.state.error?.message).toContain('Stop did not reach the server');
+    expect(latest?.state.error?.message).toContain('network unreachable');
 
     await act(async () => {
       emit?.({ type: 'text_delta', text: 'still going' });

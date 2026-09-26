@@ -151,13 +151,13 @@ describe('translateChannelPlugin send()', () => {
 
 describe('translateChannelPlugin onMessage()', () => {
   it('is a no-op and warns when no gateway', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const adapter = translateChannelPlugin(makeChannel());
+    const warn = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), child: vi.fn() };
+    const adapter = translateChannelPlugin(makeChannel(), logger);
     const handler = vi.fn();
     adapter.onMessage(handler);
     expect(handler).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no gateway.onMessage'));
-    warnSpy.mockRestore();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no gateway.onMessage'));
   });
 
   it('registers handler and maps inbound event to InboundMessage', () => {

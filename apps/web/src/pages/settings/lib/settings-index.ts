@@ -138,6 +138,44 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       stateBacked: true,
     },
   ]),
+  // Decision models (plan decision-provider-jev §7, §12): a list of added
+  // decision models, each saving on its own through `decisions.setKey` /
+  // `clearKey` / `remove`; which personalities use each one is listed
+  // read-only (sites are set per personality), and Test sends one call. None
+  // is on the page Save.
+  ...group('models', 'decision-models', [
+    {
+      key: null,
+      label: 'Add or remove a decision model',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Add: rpc.decisions.setKey (writes decisions.provider when absent). Remove: rpc.decisions.remove (deletes the key and that decisions.provider line; personality files are not changed).',
+    },
+    {
+      key: null,
+      label: 'Decision model API key (Jev by TypeSafe)',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Secrets vault ref providers/typesafe/apiKey (rpc.decisions.setKey); also writes decisions.provider when absent.',
+    },
+    {
+      key: null,
+      label: 'Decision model used by (read-only)',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'rpc.decisions.list usedBy: personalities whose decisions.provider names it. Sites are set per personality in Personalities → Edit → Config (personality config.yaml decisions.sites.*).',
+    },
+    {
+      key: null,
+      label: 'Test decision model (Jev)',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Action button (rpc.decisions.test); writes nothing.',
+    },
+  ]),
   ...group('models', 'catalog-and-backends', [
     {
       key: 'modelCatalog.enabled',
@@ -908,6 +946,16 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
     { key: 'approvalMode', formName: 'approvalMode', label: 'Approval mode' },
     { key: 'admin.enabled', formName: 'adminEnabled', label: 'Enable admin panel', advanced: true },
   ]),
+  ...group('security', 'approval-leases', [
+    {
+      key: null,
+      label: 'Active approval leases',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Lease store (rpc.approvals.leases.list/revoke, <dataDir>/approval-leases.json), not a config.yaml key.',
+    },
+  ]),
   ...group('security', 'named-secrets', [
     {
       key: null,
@@ -915,6 +963,16 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       saves: 'self',
       stateBacked: true,
       keyUnresolved: 'Vault-backed store (rpc.namedSecrets.*), not a ~/.ethos/config.yaml key.',
+    },
+  ]),
+  ...group('security', 'logins', [
+    {
+      key: null,
+      label: 'Logins table',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Vault-backed store (rpc.credentials.*) — logins for browser_fill_credential, not a ~/.ethos/config.yaml key.',
     },
   ]),
   ...group('security', 'web-search-defaults', [

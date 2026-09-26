@@ -112,10 +112,11 @@ function makeRouting(
     substitutionVars: SUBSTITUTION,
     // Docker disabled makes the non-remote postures deterministic on any host:
     // a `docker` posture with no buildable backend resolves to an HONEST
-    // `local` one, which is also what a containerized CI box resolves to. Both
-    // roads lead to "runs here", which is the thing a remote personality must
-    // never share.
+    // `local` one (with the operator opt-in `allowLocalFallback`, S6 / D3),
+    // which is also what a containerized CI box resolves to. Both roads lead
+    // to "runs here", which is the thing a remote personality must never share.
     disableDocker: true,
+    allowLocalFallback: true,
     // Pinned so a container-hosted test run cannot silently turn a `docker`
     // posture into `local` and quietly skip what it came to prove.
     containerized: { env: {}, fileExists: () => false, readFile: () => null },
@@ -420,5 +421,31 @@ describe('routing edges', () => {
     expect(hostSpawns.count).toBe(2);
     expect((await routing.exec('solo')).personality?.id).toBe('solo');
     expect((await routing.exec(undefined)).personality?.id).toBe('solo');
+  });
+});
+
+// `execution.containerized: true` in ~/.ethos/config.yaml is the operator's
+// explicit "this deployment is itself the boundary" — `detectContainerized`'s
+// config signal. The compose path forwards it as `containerizedConfig`; the
+// danger predicate and the unattended gate read the SAME `resolvePosture`, so
+// what they treat as containerized is what execution does.
+describe('execution.containerized from operator config', () => {
+  it('marks every turn’s posture containerized, with no auto-detect signal present', async () => {
+    const only = person({ id: 'solo' });
+    const routing = await makeRouting({
+      personalities: registryOf(only),
+      activePerson: only,
+      containerizedConfig: true,
+    });
+
+    expect(routing.posture.containerized).toBe(true);
+    expect(routing.resolvePosture('solo')).toMatchObject({ backend: 'local', containerized: true });
+  });
+
+  it('leaves the posture un-containerized when the key is absent', async () => {
+    const only = person({ id: 'solo' });
+    const routing = await makeRouting({ personalities: registryOf(only), activePerson: only });
+
+    expect(routing.resolvePosture('solo')?.containerized).toBe(false);
   });
 });

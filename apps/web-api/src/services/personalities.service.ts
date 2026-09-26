@@ -1,8 +1,10 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import type { DecisionsConfig } from '@ethosagent/config';
 import { declaredWorkdirs } from '@ethosagent/core';
 import {
   type CharacterSheetBoundary,
+  type CharacterSheetDecisions,
   type CharacterSheetMcpExport,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
@@ -38,9 +40,14 @@ import type {
   Personality,
   PersonalitySkill,
 } from '@ethosagent/web-contracts';
-import { listPendingExpressionCandidates, submitExpressionCandidate } from '@ethosagent/wiring';
+import {
+  listPendingExpressionCandidates,
+  resolveCharacterSheetDecisions,
+  submitExpressionCandidate,
+} from '@ethosagent/wiring';
 import type { ApiKeyRecord } from '../middleware/bearer-auth';
 import type { ConfigRepository } from '../repositories/config.repository';
+import { toDecisionSiteView } from './decisions.service';
 import {
   type LearningRefusalCode,
   type LearningService,
@@ -60,6 +67,24 @@ interface JudgeWire {
 interface NightlyWire {
   windowEnd: string;
   completed: string[];
+}
+
+/** The sheet's `## Prompt size` numbers, structured (the contract's
+ *  `PersonalityCharacterSheetOutput.promptSize`). */
+interface CharacterSheetPromptSize {
+  staticPrefixTokens: number;
+  projectContext: { workdir: string | null; tokens: number } | null;
+}
+
+/** Lift the prompt-size numbers off the computed model fit — the same verdict
+ *  the Markdown sheet renders, so the tab and the sheet cannot disagree. */
+function promptSizeOf(fit: CharacterSheetModelFit | undefined): CharacterSheetPromptSize | null {
+  if (!fit) return null;
+  const pc = fit.floor.projectContext;
+  return {
+    staticPrefixTokens: fit.floor.tokens,
+    projectContext: pc ? { workdir: pc.workdir ?? null, tokens: pc.tokens } : null,
+  };
 }
 
 // Personalities service. Calls into FilePersonalityRegistry for the
@@ -187,6 +212,17 @@ export interface PersonalitiesServiceOptions {
    * read for the section's Recent denials. Absent or throwing → no denials.
    */
   readObservabilityEvents?: (filter: { category: string; limit: number }) => ObsEvent[];
+  /**
+   * The operator's global `decisions.*` (`EthosConfig.decisions`, undefined
+   * when no provider is configured), read per call. Present → for a
+   * personality that declares `decisions`, `resolveCharacterSheetDecisions`
+   * (@ethosagent/wiring — the resolver `ethos personality show` and `ethos
+   * doctor` use) fills the character sheet's `## Decisions` section and the
+   * wire's `decisions.resolved`, which the Edit → Config tab renders as notes.
+   * The vault is read through `secrets`. Absent → the sheet shows the declared
+   * values only and the wire carries no `resolved`.
+   */
+  readDecisions?: () => Promise<DecisionsConfig | undefined>;
 }
 
 /**
@@ -234,8 +270,11 @@ export class PersonalitiesService {
 
   async list(): Promise<{ items: Personality[]; nextCursor: string | null; defaultId: string }> {
     await this.opts.refresh?.();
+    const global = await this.globalDecisions();
+    const described = this.opts.personalities.describeAll();
+    const resolved = await Promise.all(described.map((d) => this.decisionsOf(d.config, global)));
     return {
-      items: this.opts.personalities.describeAll().map(toWire),
+      items: described.map((d, i) => toWire(d, resolved[i])),
       nextCursor: null,
       defaultId: this.opts.personalities.getDefault().id,
     };
@@ -260,7 +299,11 @@ export class PersonalitiesService {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
-    return { personality: toWire(described), soulMd, mcpPolicy: described.mcpPolicy ?? null };
+    return {
+      personality: await this.wire(described),
+      soulMd,
+      mcpPolicy: described.mcpPolicy ?? null,
+    };
   }
 
   /**
@@ -280,9 +323,11 @@ export class PersonalitiesService {
    *  show` prints, rendered for the Web Personalities tab. Also returns the
    *  structured `ExecutionPosture` (Phase 2a, lane E1) so the web Execution UI
    *  renders the posture the resolver produced rather than recomputing it. */
-  async characterSheet(
-    id: string,
-  ): Promise<{ markdown: string; posture: ExecutionPosture | null }> {
+  async characterSheet(id: string): Promise<{
+    markdown: string;
+    posture: ExecutionPosture | null;
+    promptSize: CharacterSheetPromptSize | null;
+  }> {
     await this.opts.refresh?.();
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
@@ -356,6 +401,11 @@ export class PersonalitiesService {
         raw.modelRegistry,
       );
     }
+    const promptSize = promptSizeOf(modelFit);
+    // `## Decisions` — the same resolver `ethos personality show` calls
+    // (plan decision-provider-personality §4.5). No `readDecisions` seam → the
+    // section shows the declared values only.
+    const decisions = await this.decisionsOf(described.config, await this.globalDecisions());
     const dataDir = this.opts.dataDir;
     if (!dataDir) {
       return {
@@ -369,8 +419,10 @@ export class PersonalitiesService {
           boundary,
           routing,
           mcpExport,
+          decisions,
         ),
         posture: null,
+        promptSize,
       };
     }
     // `execution.ssh.*` — the deployment's single remote execution target. Read
@@ -383,6 +435,15 @@ export class PersonalitiesService {
     const sshPort =
       sshPortRaw !== undefined && /^\d+$/.test(sshPortRaw) ? Number(sshPortRaw) : undefined;
 
+    // `execution.docker.image`, through the config owner's own check so this
+    // surface drops exactly the unpinned values the compose path drops.
+    const { dockerImageRefError } = await import('@ethosagent/config');
+    const rawImage = passthrough['execution.docker.image'];
+    const dockerImage =
+      rawImage !== undefined && dockerImageRefError(rawImage) === null
+        ? rawImage.trim()
+        : undefined;
+
     // Same posture resolver + renderer the CLI `personality show` uses — one
     // artifact, no second renderer (Phase 2a, lane E1).
     const { buildExecutionPosture, formatSshTarget } = await import('@ethosagent/wiring');
@@ -390,6 +451,15 @@ export class PersonalitiesService {
       personality: described.config,
       substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
       ...(this.opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
+      // S6 / D3 — the same opt-in the compose path reads, so a desktop sheet
+      // says "refused" or "local" exactly as execution will behave.
+      ...(passthrough['execution.allowLocalFallback'] === 'true'
+        ? { allowLocalFallback: true }
+        : {}),
+      // `execution.containerized` — the compose path's explicit detection signal.
+      ...(passthrough['execution.containerized'] === 'true'
+        ? { containerized: { containerizedConfig: true } }
+        : {}),
       sshConfigured: sshHost !== undefined && sshHost.length > 0,
       ...(sshHost
         ? {
@@ -400,6 +470,7 @@ export class PersonalitiesService {
             }),
           }
         : {}),
+      dockerImage,
     });
     return {
       markdown: renderCharacterSheet(
@@ -412,8 +483,10 @@ export class PersonalitiesService {
         boundary,
         routing,
         mcpExport,
+        decisions,
       ),
       posture,
+      promptSize,
     };
   }
 
@@ -581,12 +654,35 @@ export class PersonalitiesService {
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {
     const created = await this.opts.personalities.create(input);
-    return { personality: toWire(created) };
+    return { personality: await this.wire(created) };
   }
 
   async update(id: string, patch: UpdatePersonalityPatch): Promise<{ personality: Personality }> {
     const updated = await this.opts.personalities.update(id, patch);
-    return { personality: toWire(updated) };
+    return { personality: await this.wire(updated) };
+  }
+
+  /** `readDecisions`, or `null` when the seam is absent. */
+  private async globalDecisions(): Promise<{ decisions?: DecisionsConfig } | null> {
+    if (!this.opts.readDecisions) return null;
+    const decisions = await this.opts.readDecisions();
+    return decisions ? { decisions } : {};
+  }
+
+  /**
+   * One personality's `## Decisions` context — `undefined` when it declares no
+   * `decisions` block or the `readDecisions` seam is absent.
+   */
+  private async decisionsOf(
+    config: PersonalityConfig,
+    global: { decisions?: DecisionsConfig } | null,
+  ): Promise<CharacterSheetDecisions | undefined> {
+    if (global === null || !config.decisions) return undefined;
+    return resolveCharacterSheetDecisions(config, global, this.opts.secrets ?? NO_SECRETS);
+  }
+
+  private async wire(d: DescribedPersonality): Promise<Personality> {
+    return toWire(d, await this.decisionsOf(d.config, await this.globalDecisions()));
   }
 
   /**
@@ -678,7 +774,7 @@ export class PersonalitiesService {
 
   async duplicate(id: string, newId: string): Promise<{ personality: Personality }> {
     const created = await this.opts.personalities.duplicate(id, newId);
-    return { personality: toWire(created) };
+    return { personality: await this.wire(created) };
   }
 
   /**
@@ -1195,7 +1291,13 @@ function toWirePersonalitySkill(record: PersonalitySkillRecord): PersonalitySkil
   };
 }
 
-function toWire(d: DescribedPersonality): Personality {
+/** No vault wired (tests, onboarding): every key reads as absent. */
+const NO_SECRETS = { get: async () => null };
+
+function toWire(
+  d: DescribedPersonality,
+  resolved: CharacterSheetDecisions | undefined,
+): Personality {
   const c = d.config;
   const workdirs = declaredWorkdirs(c);
   return {
@@ -1269,6 +1371,27 @@ function toWire(d: DescribedPersonality): Personality {
             ...(c.voice.tier !== undefined ? { tier: c.voice.tier } : {}),
             ...(c.voice.model !== undefined ? { model: c.voice.model } : {}),
             ...(c.voice.languages !== undefined ? { languages: c.voice.languages } : {}),
+          },
+        }
+      : {}),
+    // The declaration as stored, read back so the editor can populate its
+    // form, plus every site resolved against the operator's config.
+    ...(c.decisions !== undefined
+      ? {
+          decisions: {
+            ...(c.decisions.provider !== undefined ? { provider: c.decisions.provider } : {}),
+            ...(c.decisions.sites !== undefined ? { sites: c.decisions.sites } : {}),
+            ...(resolved !== undefined
+              ? {
+                  resolved: {
+                    configured: resolved.configured,
+                    ...(resolved.apiKeyPresent !== undefined
+                      ? { apiKeyPresent: resolved.apiKeyPresent }
+                      : {}),
+                    sites: resolved.sites.map(toDecisionSiteView),
+                  },
+                }
+              : {}),
           },
         }
       : {}),

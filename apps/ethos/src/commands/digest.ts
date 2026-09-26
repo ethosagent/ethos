@@ -156,8 +156,6 @@ async function emailDigest(
       auth: { user: string; pass: string };
     }): MailTransporter;
   }
-  // @ts-expect-error nodemailer ships no types here (@types/nodemailer is a
-  // devDependency of @ethosagent/platform-email, not visible from apps/ethos).
   const nodemailerImport: unknown = await import('nodemailer');
   const nodemailer = nodemailerImport as NodemailerModule;
   const transporter = nodemailer.createTransport({

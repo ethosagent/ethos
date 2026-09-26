@@ -1,6 +1,6 @@
 ---
 name: export-excel
-description: Export structured tabular data to an Excel .xlsx file using a Node.js script and the exceljs library. The skill writes a generator script to gen-excel.js in the working directory, installs exceljs locally under ~/.ethos/tools if needed, then runs the script to produce the workbook. Handles multiple sheets, column headers, and typed cell values.
+description: Export structured tabular data to an Excel .xlsx file using a Node.js script and the exceljs library. The skill writes a generator script to gen-excel.js in the working directory, installs exceljs locally under .ethos-work/tools in the workspace if needed, then runs the script to produce the workbook. Handles multiple sheets, column headers, and typed cell values.
 version: 1.0.0
 author: ethosagent
 tags: [document, excel, xlsx, export, data]
@@ -56,8 +56,10 @@ Do not proceed further.
 **Step 2: Create the tools directory**
 
 ```bash
-mkdir -p ~/.ethos/tools
+mkdir -p .ethos-work/tools
 ```
+
+`.ethos-work/` is the workspace's scratch directory for agent work. The Ethos state dir (`~/.ethos`) is not usable from the terminal: the terminal guard refuses any command that names it.
 
 **Step 3: Write the generator script**
 
@@ -102,18 +104,18 @@ Replace `<filename>` with a lowercase-hyphenated slug derived from the user's re
 **Step 4: Check if `exceljs` is available**
 
 ```bash
-node -e "require('exceljs')" 2>/dev/null || echo "not found"
+test -d .ethos-work/tools/node_modules/exceljs && echo found || echo "not found"
 ```
 
 If not found, install it locally:
 
 ```bash
-npm install exceljs --prefix ~/.ethos/tools
+npm install exceljs --prefix .ethos-work/tools
 ```
 
 If install fails (no npm, no network, permission denied), stop and tell the user:
 
-> "This skill requires the exceljs npm package. Run: `npm install exceljs --prefix ~/.ethos/tools`
+> "This skill requires the exceljs npm package. Run: `npm install exceljs --prefix .ethos-work/tools`
 > If npm is unavailable, ask your system administrator to install it."
 
 Do not proceed further.
@@ -121,7 +123,7 @@ Do not proceed further.
 **Step 5: Run the generator script**
 
 ```bash
-NODE_PATH=~/.ethos/tools/node_modules node gen-excel.js
+NODE_PATH="$PWD/.ethos-work/tools/node_modules" node gen-excel.js
 ```
 
 **Step 6: Confirm to the user**
@@ -132,7 +134,7 @@ Tell the user:
 
 ## Anti-patterns
 
-- **Do not install `exceljs` globally** — use `--prefix ~/.ethos/tools` to keep it isolated and avoid permission issues.
+- **Do not install `exceljs` globally** — use `--prefix .ethos-work/tools` to keep it isolated and avoid permission issues.
 - **Do not use an absolute output path in the script** — write to a bare relative filename so the workbook lands in the working directory.
 - **Do not write a generic script and ask the user to fill in the data** — embed the actual data in the script before running it.
 - **Do not produce an empty workbook** — always include at least a header row.

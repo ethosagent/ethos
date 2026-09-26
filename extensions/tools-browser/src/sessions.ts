@@ -124,6 +124,13 @@ export interface BrowserSession {
   /** ms epoch of the last create/lookup. Read by the idle sweeper. */
   lastActiveAt: number;
   /**
+   * Values `browser_fill_credential` filled into this session's page (D4-6).
+   * `withSecretMask` (secret-mask.ts) replaces each one in every later browser
+   * tool result. Process memory only, never persisted; dropped by
+   * `closeSessionResources`, which every close path reaches.
+   */
+  filledSecrets?: Set<string>;
+  /**
    * @internal Releases the per-profile mutex. Set only for persistent
    * contexts; `close()` calls it.
    */
@@ -830,6 +837,7 @@ function forgetSession(session: BrowserSession): void {
 }
 
 async function closeSessionResources(session: BrowserSession): Promise<void> {
+  session.filledSecrets = undefined;
   await session.context.close().catch(() => {});
   await session.browser?.close().catch(() => {});
   session.releaseProfile?.();
@@ -1144,9 +1152,44 @@ export async function cleanupOnExit(): Promise<void> {
   await Promise.allSettled(all.map((s) => s.close()));
 }
 
-process.on('SIGTERM', () => {
-  void cleanupOnExit();
-});
-process.on('SIGINT', () => {
-  void cleanupOnExit();
-});
+/** How long `onProcessSignal` waits on `cleanupOnExit` before re-raising a
+ *  signal nothing else handles — a wedged browser must not keep the process up. */
+export const SIGNAL_CLEANUP_BOUND_MS = 5_000;
+
+/**
+ * @internal The SIGTERM/SIGINT listener this module installs at import.
+ * Exported for tests.
+ *
+ * Any listener at all switches off Node's default "terminate on signal", so a
+ * listener that only cleans up turns the signal into a no-op for the whole
+ * process. That silently swallowed the first SIGTERM to `ethos gateway start`
+ * (and `boot` / `serve`, same shape) when it landed after this module was
+ * imported but before the command registered its own shutdown handler — the
+ * process kept running until a second signal.
+ *
+ * So: when the host has its own listener, cleanup only, and the host decides
+ * how to exit. When nothing else listens, clean up (bounded by
+ * `SIGNAL_CLEANUP_BOUND_MS`) and re-raise the signal — by then this listener is
+ * gone (`process.once`), so the re-raise reaches either a host handler
+ * registered in the meantime or Node's default termination. Pinned by
+ * extensions/tools-browser/src/__tests__/signal-exit.test.ts.
+ */
+export function onProcessSignal(signal: NodeJS.Signals): void {
+  // `process.once` removed this listener before calling it: anything still
+  // registered belongs to someone else.
+  if (process.listenerCount(signal) > 0) {
+    void cleanupOnExit();
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, SIGNAL_CLEANUP_BOUND_MS);
+  });
+  void Promise.race([cleanupOnExit(), bound]).then(() => {
+    clearTimeout(timer);
+    process.kill(process.pid, signal);
+  });
+}
+
+process.once('SIGTERM', onProcessSignal);
+process.once('SIGINT', onProcessSignal);

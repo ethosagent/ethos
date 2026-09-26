@@ -33,11 +33,17 @@ export interface RunnerIdentity {
   accent: RunnerAccent | null;
 }
 
+/**
+ * DESIGN.md § "Runner accent" — teal, outside the five personality hues and
+ * outside the semantic four, so it reads as neither identity nor status. Named
+ * because DESIGN.md's `decision` token takes the same values
+ * (`lib/decision-providers.ts`); this file stays the only place the hex lives.
+ */
+export const RUNNER_TEAL: RunnerAccent = { dark: '#2DD4BF', light: '#0D9488' };
+
 export const RUNNERS: Record<string, RunnerIdentity> = {
   ethos: { id: 'ethos', label: 'Ethos', badgeText: 'ETHOS', accent: null },
-  // DESIGN.md § "Runner accent" — teal, outside the five personality hues and
-  // outside the semantic four, so it reads as neither identity nor status.
-  pi: { id: 'pi', label: 'Pi', badgeText: 'PI', accent: { dark: '#2DD4BF', light: '#0D9488' } },
+  pi: { id: 'pi', label: 'Pi', badgeText: 'PI', accent: RUNNER_TEAL },
 };
 
 /**

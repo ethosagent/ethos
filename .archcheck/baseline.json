@@ -1,0 +1,1692 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "identity": "0083b593d48c0842",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0198c7cafe24a97a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "027f99aa746fb354",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "05ef166f715a74f2",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "0639f7bf61b7b0a0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "07a8abfaf4dd5c33",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0a296a70edfc9297",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0bd1f774a269888b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0be9bf8d0a258517",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0c4554044b0778b0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "0caf4766caad7470",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0d910bf6f2ce406a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0e2782addcfc898b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0e4501637f13a742",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0e8ad9932858f801",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "0f304816dc1b3b78",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "104247aba549f37c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "11b0861c7f7ceeca",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "1362bd0085d388c5",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "13add50cc50f9c3d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "143d82f402b520bd",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "14558bfcf693254a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "153663c52e2eae0b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "15a1b54cb2b9f9f7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "17b1e5dff4443da6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "181ac0a5d29b6f31",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "1afbbead765e5409",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 7
+    },
+    {
+      "identity": "1fca5d1d531c855c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "1fddf13d69ad4bf3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "219f1de5779f945f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "21f6f7e9fe067124",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "226e2cb792513ec7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "23569be23584e935",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "24008402a6a0b03c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "24501cb8285f8730",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "246e82442be0a906",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "24b2a2420bd46bf1",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "260f738d1c76c977",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "26cf229e2e493512",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "26f389683bdbbdb9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "28aba6805dcfc13d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2918dff3eb7631d9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2aa5146564532cc1",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2cdc4fd3d0bb808d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2ed02cec28d61978",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2f04b6113a569e28",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "2f3834434c31f481",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "307fd1db98f0db3e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "30d64c0c73d9b7b7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "30f3216fe6988670",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "31a8e0a5f8fbf0c6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "32c85528f35c9b50",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "32caf1be0a3d777b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 3
+    },
+    {
+      "identity": "32e55b76157eea22",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "339be40c7cbe6081",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "33a56722750ef23a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3409c29c3b583bc0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "343c46e40e80e76c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3581be55f4345241",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "362d3c939c10dbb0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3671247544f1d21b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "36b8bd759a0b942b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "390501f0b1ba60b0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3dd6af42e3bf7e95",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3ddc75ec1deb5aa4",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3f007d05ca789905",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3f04b54c8ccde195",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "3f2a8b681886bf6c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "42691d1c222176ba",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "4291fe8a1b620b40",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "43b2cf943207a98c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "4699fea707805363",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "48643269ba10b5fc",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "4c86ece8a09c1dc8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "4e00564b850ed228",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "4e4a460c7ea463f2",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "512d8fbb0ca31bb0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5142b7f371e58cf2",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "51893f34f693fcf3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "51c693fc7ce8e9f1",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5382a21c7fccf6a6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "55d51c5c4051f4f7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "570afc7592af15ec",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5c53f5e1730be97d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5d7928653261eac8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5e6eda4deb8753ea",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5e936545e82f8ace",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "5ebed2232204e2c3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "61d7b88c482bf5d3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "61db1cec73aa417c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6355a9397d103edf",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "64c663d44f5e81f0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "65d16cccfcd18474",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "66c89b92c61dc3c6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "670e50bab1d0b25e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "68a4400831750c85",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "697d7308281b252b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "69df7f7faa9256a8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 3
+    },
+    {
+      "identity": "6a8b2d475ae79a2a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6ba91075f0162a97",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6cb40f15eb980255",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6d0240fb7dccb197",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6dac85d85cc113c5",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "6ec11cdece924c39",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7059d721c409837b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7080c78f7f89aae8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "70d82359bc1d4e9d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "70f011e8647ddf11",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "718b0ab2a7bce27e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "71ce3e70b80287f1",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "71f5931e7a82a98f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "72b0fb81c8a076a9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "73ac00478d76521a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "73beb328ecf81622",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "750e0b6d03e9927b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "75305f06957910e5",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7676012e3542536e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "768315dbcf8e9308",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "79cdde391d85a123",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7b91a317d98743e9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7bda12b74ada3acc",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7cb022f103fa718a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7cde60df1ed1fc4e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7d995ea577260a31",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7e2895857150bcb8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7ec59ad733f14b29",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "7fea88b097ca75f3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "801cf67de5acce49",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8038788a66852354",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "81386130501b6409",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8228eaef578406d0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "85ce345c4a32a3df",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8648833bca98a057",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8705902645b2ff21",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "87c9673321803842",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8a7c2a7053641960",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8aeea8f57c44d112",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8c76b88016d91cf8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8c85b07f955e7295",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8cf5d3a243854476",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8d7dc7b480f4680b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "8efb94f79de8b205",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "900bbaa8ebc81d93",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "91329e841422485d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "91cc31aca39671eb",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "939357eb28813eeb",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "93c3ff7d8d124d26",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "959ddea681d217d5",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "963335fa77eccc08",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "9e93e9401bdd81d2",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a1055ab1ea034a69",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a2fcd0fc7c5b4048",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "a3ab01b448a08405",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "a3dcdd616b6efaeb",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a494989d60a67d60",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a4dd45bda3218a12",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "a502158891f54107",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a5439bb18cd4360a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a54dd3ec1420af8b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "a626cac24b4227ce",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ad099301e7f1f327",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ad2dde49a5329330",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "addf2f9f57aa1b6d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ae4e84034be8930e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "aecffc4d385cf40f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "aee33db322199e52",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "afc9d6e0c8d29101",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b14f77b6bd2b41c3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b1ce90017b9d7e1e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b1dab924328ee84f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b2d8db92302288b0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b3ddb0749881ea8e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b42d82ab2f4ac159",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b4fdd1c4895d873a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b6bd98a8283ccac9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b72ef57b9079c2af",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b8bcdb82e7dfa92a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "b9f117342768c434",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "bc9a21d3e692571c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "be56194b9e7871ea",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "bfde25dc7049d2ef",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c020e1ba66588555",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c16a91cdad288010",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c23fe59c87920733",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c2fffe2fbf7f12c3",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c4042466c1fa6b56",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c40fcdb1cb7463e8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c4d58fd1dcaeea8c",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c4ee7ce0a3cf5a6a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c71aac21a1ca74c4",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c8241b1dbabfbd67",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "c982b496c4e59e87",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ca2811e91b663030",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "cb2437ee4bfd289f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "cce57706a1c14444",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ce296af9d45e8601",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ce776e267667ebf6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "cea6f9f26174bd7d",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "cf03d7a4c1a7244f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d546780e78057d7e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d6f7613af88e2ef9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d7d717ba1dea7817",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d80c6985c3285548",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d88db3c276d064ce",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "d8fe86ce78ebbb3e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "da48461e65a3c6ad",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "daa89042c0dc3c0a",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "dc28cb1053355acc",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "dd360a40f3857b57",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "dde34b6ff4521749",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ddf0f9e6bd40a30e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "dfa9b030e262500b",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "e0e3b23f4fddf9c8",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "e3d079d4efb808bf",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "e705acca1bbc5510",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ea73ca742dffed93",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ea7454573b31fdb1",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "eaecb6ea72b4ed11",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "eb278d76f5fa9158",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "ed41529c73d0cfdf",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "eefdbd0e2b67419f",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "efe334b07d50e447",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 2
+    },
+    {
+      "identity": "f0cf5f81c535b970",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f10863e84c23c2cb",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f1bee196290123ee",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f28a912b20507abd",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f2f3df39df1eeac7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f38bb4eb44b33bde",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f3f60e330bab7055",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f43a7def9b2d4b28",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f4c9fd8894dea85e",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f4ed908899f30f60",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f7a7e50d5fdc28f0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f827cff46221e963",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f83dc3e3f83328c0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "f8fe81a79838cff6",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "fa57634467de5ce7",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "fa61bfa3b2259072",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "fadb84a441c884a9",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "fd13f4cc679c32c0",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    },
+    {
+      "identity": "fe36a1572028f479",
+      "ruleId": "l5-apps-through-wiring",
+      "addedAt": "2026-09-26",
+      "note": "pre-existing at adoption",
+      "occurrences": 1
+    }
+  ]
+}

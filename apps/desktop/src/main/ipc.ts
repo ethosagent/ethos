@@ -1019,8 +1019,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['gateway:start'], async () => {
     try {
-      await startGateway();
-      return { ok: true };
+      const { attached, pid } = await startGateway();
+      return { ok: true, attached, pid };
     } catch {
       return { ok: false };
     }

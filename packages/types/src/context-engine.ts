@@ -39,7 +39,14 @@ export interface ContextEngineCompactInput {
   messages: Message[];
   /** Current system prompt (read-only — engines never mutate it). */
   currentSystem: string;
-  /** Engine should aim to bring the message list under this token count. */
+  /**
+   * Engine should aim to bring `currentSystem` plus the returned message list
+   * under this token count — the whole request as the engine measures it, which
+   * is how every shipped engine compares against it. The framework passes it in
+   * those units (`compactionTarget` in `packages/core/src/agent-loop/compaction.ts`)
+   * with the current turn's size already subtracted, since the current turn is
+   * never part of `messages`.
+   */
   targetTokens: number;
   /** Personality whose `context_engine_options` may carry per-instance config. */
   personality: PersonalityConfig;

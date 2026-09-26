@@ -145,7 +145,7 @@ describe('Gateway — gateway_message claiming hook', () => {
     });
     const gw = makeGateway(loop);
 
-    await gw.handleMessage(makeMessage('/status'), stubAdapter());
+    await gw.handleMessage(makeMessage('/uptime'), stubAdapter());
 
     expect(seen).toEqual([
       {
@@ -153,7 +153,7 @@ describe('Gateway — gateway_message claiming hook', () => {
         chatId: '100',
         botKey: 'test-bot',
         userId: '200',
-        text: '/status',
+        text: '/uptime',
         isDm: true,
       },
     ]);

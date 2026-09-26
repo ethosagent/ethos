@@ -1,24 +1,30 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
-import { backgroundDefaults } from '@ethosagent/config';
+import {
+  backgroundDefaults,
+  decisionToolEnabled,
+  resolveDecisionsConfig,
+} from '@ethosagent/config';
 import {
   AgentLoop,
+  ApproverDecisionSinks,
   type ClarifyOriginLane,
   DefaultJobRunnerRegistry,
   deriveFsReachPaths,
   EagerPrefetchPolicy,
   parseSmallWindowToolset,
+  resolvePinned,
   resolveSttProvider,
   SimpleCompletionImpl,
 } from '@ethosagent/core';
 import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { createRouterGate as createAcpRouterGate } from '@ethosagent/execution-coding-agents';
 import { createRouterGate, PI_RUNNER_NAME, PiJobRunner } from '@ethosagent/execution-pi';
-import { GoalRunner } from '@ethosagent/goal-runner';
+import { createLLMCheckJudge, GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor, ETHOS_RUNNER_NAME, EthosJobRunner } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
-import { PendingMemoryStore, TombstoneStore } from '@ethosagent/memory-approval';
+import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
 import {
   type ConsolidateFn,
   MemoryCaptureRunner,
@@ -46,6 +52,7 @@ import type {
   LLMProvider,
   MemoryContext,
   MemoryProvider,
+  PersonalityConfig,
   RequestDumpStore,
   SessionStore,
 } from '@ethosagent/types';
@@ -55,8 +62,10 @@ import {
   InteractionRouter,
   SECRET_KIND,
 } from '@ethosagent/worker-router';
+import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
+import { buildCredentialCheck } from './credential-check';
 import type { DisposerStack } from './disposer-stack';
 import type {
   CreateAgentLoopOptions,
@@ -77,17 +86,34 @@ import {
   resolveSmallWindowMode,
   scaleHistoryLimit,
 } from './model-catalog';
+import { projectContextFor, resolveTurnWorkdir } from './project-context-floor';
 import { registerAcpJobRunners } from './register-acp-job-runners';
+import { createSmallWindowResolver } from './small-window-resolver';
 import {
+  createToolLoadingResolver,
   evaluateContextFit,
   evaluateToolPayloadGuard,
   evaluateToolSchemaBudget,
   measureStaticFloor,
   RESULT_BUDGET_CEILING_CHARS,
   resolveResultBudgetGate,
+  smallWindowModeMessage,
 } from './static-floor';
 import type { WiringContext } from './types';
 import { buildVoiceStack } from './voice-stack';
+
+/**
+ * The approver's private decision-sink channel (plan decision-provider-personality
+ * §15.3; `ApproverDecisionSinks`, @ethosagent/core). ONE per process, not per
+ * build, because an approval surface is not always paired with the build whose
+ * loop runs the turn: the gateway hands every bot loop's predicate the SYSTEM
+ * build's `approverDecision` (apps/ethos/src/commands/gateway.ts, boot.ts), so a
+ * per-build channel would leave bot turns without approver rows. Entries are keyed
+ * by session + tool call and live only for one `before_tool_call` fire. Injected
+ * into every loop and every `approverDecision` this module builds; not exported
+ * from the package, so nothing but this composition root holds it.
+ */
+const APPROVER_DECISION_SINKS = new ApproverDecisionSinks();
 
 export interface BuildAgentLoopDeps {
   infra: InfrastructureResult;
@@ -163,9 +189,9 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
  * when the job has no recorded origin platform, or that platform has no
  * clarify surface — the bridge's `resolveRouting()` then falls back to the
  * request's own `surfaceType` (today's behaviour). `surfaceContext` reuses
- * the same `chatId`/`botKey`/`threadId` keys the per-platform
- * `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp) write onto a
- * presented row's `surfaceContext`.
+ * the same `chatId`/`botKey`/`threadId`/`originatorUserId` keys the
+ * per-platform `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp)
+ * write onto a presented row's `surfaceContext`.
  *
  * Extracted as a pure function for the same testability reason
  * `isCallCaptureToolsEnabled` above is — `buildAgentLoop` is a full
@@ -174,7 +200,7 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
 export function resolveJobClarifyOrigin(
   job: Pick<
     BackgroundJob,
-    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId'
+    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId' | 'originUserId'
   > | null,
 ): ClarifyOriginLane | null {
   const platform = job?.originPlatform;
@@ -185,6 +211,9 @@ export function resolveJobClarifyOrigin(
       ...(job?.originChatId ? { chatId: job.originChatId } : {}),
       ...(job?.originBotKey ? { botKey: job.originBotKey } : {}),
       ...(job?.originThreadId ? { threadId: job.originThreadId } : {}),
+      // The same key each surface's `gateAnswerer` reads, so an
+      // 'originator' clarify from this job binds to whoever started it.
+      ...(job?.originUserId ? { originatorUserId: job.originUserId } : {}),
     },
   };
 }
@@ -563,7 +592,111 @@ export async function buildAgentLoop(
   // -------------------------------------------------------------------------
 
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
-  const injectionClassifier = createLLMClassifier({ llm });
+  const llmInjectionClassifier = createLLMClassifier({ llm });
+  // plan decision-provider-jev §8.1 — with no `decisions.*` keys the LLM
+  // classifier above is used exactly as before, and no provider handle,
+  // router or `approverDecision` exists (R7, pinned by
+  // `__tests__/decision-wiring.test.ts`).
+  //
+  // plan decision-provider-personality §7 — with `decisions.*` configured, the
+  // three sites below exist, and each resolves ITS mode per call from the
+  // turn's personality (`resolvePersonalityDecisionSite`, @ethosagent/config).
+  // A personality that declares nothing resolves `off` everywhere: the site
+  // calls today's function directly, `decide()` is never called and the vault
+  // is never read. ONE lazy provider handle per build (PD8), shared by every
+  // site this build wires — the injection classifier here, the smart approver
+  // (§8.2), which the approval surfaces construct from `approverDecision` on
+  // the result, and the tier router (§8.3) — so all three see the same
+  // breaker (§5.5).
+  const decisions = config.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
+  const decisionSites = decisions
+    ? await (async () => {
+        const { createDecisionProviderHandle } = await import('./decision-provider');
+        const { createDecisionInjectionClassifier } = await import(
+          './decision-injection-classifier'
+        );
+        const { createDecisionTierRouter } = await import('./decision-router');
+        const { DecisionRecordTracker } = await import('./decision-site');
+        const provider = createDecisionProviderHandle({
+          decisions,
+          secrets: config.secretsResolver,
+          ...(opts.observability ? { observability: opts.observability } : {}),
+        });
+        // R8 — a `shadow` site never waits for the provider, so its recording
+        // can still be in flight when a one-shot command (`ethos -z`) finishes
+        // its turn and exits. Every site of this build registers it here, and
+        // `dispose()` waits for them — at most the longest site budget, which
+        // the provider already enforces per call. Empty → `drain` is a no-op.
+        const tracker = new DecisionRecordTracker(
+          Math.max(
+            decisions.timeouts.injection,
+            decisions.timeouts.approver,
+            decisions.timeouts.router,
+          ),
+        );
+        disposers.push('decision shadow records', () => tracker.drain());
+        const recorder = opts.observability ? { recorder: opts.observability } : {};
+        // plan decision-tool D4/D5 — the `decide` tool, on this SAME handle so
+        // it shares the sites' breaker. Registered here, beside the handle,
+        // because `composeAllTools` ran before it existed. `alwaysInclude`
+        // skips the toolset allowlist; which personalities see it is decided
+        // per turn by `personalityToolExclude` below (D6/D13). No key → the
+        // call answers `not_available` (`handle.get()` resolves undefined).
+        const { createDecideTool } = await import('@ethosagent/tools-decision');
+        const { createDecisionToolDecide } = await import('./decision-tool');
+        tools.register({
+          ...createDecideTool({
+            decide: createDecisionToolDecide({
+              provider,
+              providerName: decisions.provider,
+              timeoutMs: decisions.timeoutMs,
+              ...recorder,
+            }),
+          }),
+          alwaysInclude: true,
+        });
+        return {
+          injectionClassifier: createDecisionInjectionClassifier({
+            provider,
+            fallback: llmInjectionClassifier,
+            global: decisions,
+            // The registry this build's loop resolves turns from (§7.2).
+            personalities,
+            ...(opts.observability ? { observability: opts.observability } : {}),
+            tracker,
+          }),
+          // §8.2 — the approval surfaces build their reviewer from this; the
+          // mode is resolved per call from the predicate's personality.
+          approverDecision: {
+            provider,
+            global: decisions,
+            ...recorder,
+            tracker,
+            sinks: APPROVER_DECISION_SINKS,
+          } satisfies import('./smart-approver').SmartApproverDecisionSite,
+          // §8.3 — injected into the loop below; returns `null` (no routing)
+          // for a personality whose router site resolves `off`.
+          tierRouter: createDecisionTierRouter({
+            provider,
+            global: decisions,
+            ...recorder,
+            tracker,
+          }),
+        };
+      })()
+    : undefined;
+  // plan decision-tool D6/D13 — `decide` is visible only to a personality that
+  // picked the operator's decision model (`decisionToolEnabled`,
+  // @ethosagent/config). Depends only on the personality, so tool definitions
+  // stay byte-stable per personality. With no `decisions.*` there is no
+  // `decide` to hide and no hook.
+  const personalityToolExclude = decisions
+    ? (person: PersonalityConfig): string[] =>
+        decisionToolEnabled(person.decisions, decisions) ? [] : ['decide']
+    : undefined;
+  const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
+  const approverDecision = decisionSites?.approverDecision;
+  const tierRouter = decisionSites?.tierRouter;
 
   // -------------------------------------------------------------------------
   // Phase 2 — Build the AgentSafety bundle for core's injected safety path.
@@ -818,53 +951,139 @@ export async function buildAgentLoop(
   // cap, guidance suppression). Absent → context assembly unchanged.
   const profilePromptBudget = resolvedProfile?.promptBudget;
 
-  // Phase 4 — small-window mode. Resolved ONCE here (never per turn) from static
-  // inputs so the prompt prefix stays byte-stable. Triggers on a small window
-  // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas)
+  // Phase 4 — small-window mode, decided here for the STARTUP personality from
+  // static inputs (other personalities: the per-personality resolver below,
+  // memoized so each prompt prefix stays byte-stable). Triggers on a small window
+  // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas
+  // + the project-context injection for the startup working directory)
   // exceeds 40% of the window. When active, it forces the compact prelude,
   // index-not-content personality memory, index-mode skills, and a scaled
   // history limit. A config `compaction.smallWindow` (auto|on|off) overrides the
   // triggers. NOTE: tool schemas registered AFTER loop construction (delegation,
   // goal, MCP) are not counted in the static estimate — the estimate is
   // best-effort and biases slightly low; the window trigger is exact.
-  let soulChars = 0;
-  if (activePerson.soulFile) {
-    try {
-      soulChars = (await wiringStorage.read(activePerson.soulFile))?.length ?? 0;
-    } catch {
-      soulChars = 0;
-    }
-  }
-  const toolDefinitions = tools.toDefinitions(activePerson.toolset);
-  const toolSchemaChars = JSON.stringify(toolDefinitions).length;
   const preludeChars = (profilePromptBudget?.compactPrelude ? preludeCompact : prelude).length;
-  // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`
-  // and the Lane 1(b) startup diagnostic below. Same number as the previous
-  // inline `ceil((soul + schemas + prelude) / 4)` estimate.
-  const staticFloor = measureStaticFloor({
-    soulChars,
-    toolSchemaChars,
-    toolCount: toolDefinitions.length,
-    preludeChars,
-  });
+  // The per-personality exclusion the loop applies (decision-tool D13), so a
+  // measurement counts only the schemas that personality's turns send.
+  const excludeFor = (person: PersonalityConfig) => {
+    const excludeTools = personalityToolExclude?.(person) ?? [];
+    return excludeTools.length > 0 ? { excludeTools } : undefined;
+  };
+  // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`,
+  // the Lane 1(b) startup diagnostic below and the per-personality resolver.
+  const measureFloor = async (person: PersonalityConfig, projectContextChars: number) => {
+    let soulChars = 0;
+    if (person.soulFile) {
+      try {
+        soulChars = (await wiringStorage.read(person.soulFile))?.length ?? 0;
+      } catch {
+        soulChars = 0;
+      }
+    }
+    const definitions = tools.toDefinitions(person.toolset, excludeFor(person));
+    return measureStaticFloor({
+      soulChars,
+      toolSchemaChars: JSON.stringify(definitions).length,
+      toolCount: definitions.length,
+      preludeChars,
+      projectContextChars,
+    });
+  };
+  const toolDefinitions = tools.toDefinitions(activePerson.toolset, excludeFor(activePerson));
+  // The AGENTS.md/CLAUDE.md "Project Context" block the first turn will send,
+  // asked of the loop's own file-context injector for the directory the turn
+  // resolves — the same text, not a second discovery (project-context-floor.ts).
+  const startupWorkdir = resolveTurnWorkdir(activePerson, { dataDir, cwd: workingDir });
+  const projectContextOf = (person: PersonalityConfig, workdir: string) =>
+    projectContextFor({
+      injectors,
+      personality: person,
+      workdir,
+      platform: profile,
+      model: llm.model,
+    });
+  const projectContext =
+    startupWorkdir !== undefined ? await projectContextOf(activePerson, startupWorkdir) : '';
+  const staticFloor = await measureFloor(activePerson, projectContext.length);
   const staticTokens = staticFloor.tokens;
   const smallWindow = resolveSmallWindowMode({
     contextWindow: llm.maxContextTokens,
     staticTokens,
     ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
   });
+  if (smallWindow) {
+    log.warn(
+      smallWindowModeMessage({
+        personalityId: activePerson.id,
+        windowTokens: llm.maxContextTokens,
+        floor: staticFloor,
+        ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
+      }),
+    );
+  }
   // Small-window defaults first, then let any explicit profile knobs win.
-  const promptBudget = smallWindow
-    ? {
-        compactPrelude: true,
-        suppressMemoryGuidance: true,
-        memoryIndexMode: true,
-        skillsIndexMode: true,
-        memorySnapshotCap: 4_000,
-        ...profilePromptBudget,
-      }
-    : profilePromptBudget;
-  const historyLimit = smallWindow ? scaleHistoryLimit(llm.maxContextTokens) : undefined;
+  const smallWindowOverlay = {
+    promptBudget: {
+      compactPrelude: true,
+      suppressMemoryGuidance: true,
+      memoryIndexMode: true,
+      skillsIndexMode: true,
+      memorySnapshotCap: 4_000,
+      ...profilePromptBudget,
+    },
+    historyLimit: scaleHistoryLimit(llm.maxContextTokens),
+  };
+  // Post-review FIX 2 — ONE hardened local-runtime classification for this
+  // loop's provider endpoint, shared by the payload guard below and the
+  // FIX 1 result-budget gate. Known hosted aliases never classify as local.
+  const localRuntime = detectLocalRuntime(config.provider, config.baseUrl ?? '') !== undefined;
+  // Lane 1(c)+(e) — scale the per-turn tool-result budget DOWN with the served
+  // window; never UP (the flat 80k default is the ceiling, #111762). An
+  // explicit per-personality `context_engine_options.resultBudgetChars` may
+  // lower it further, never raise it past the ceiling. Post-review FIX 1: the
+  // scaling engages ONLY on a detected local runtime or that explicit knob —
+  // hosted providers with small catalog windows keep the flat 80k default and
+  // no gate-reserve term (the hosted-parity law). Sized from EACH personality's
+  // own static floor, per turn, by the resolver below.
+  const resultBudgetFor = (person: PersonalityConfig, staticFloorTokens: number) => {
+    const raw = person.context_engine_options?.resultBudgetChars;
+    return resolveResultBudgetGate({
+      windowTokens: llm.maxContextTokens,
+      staticFloorTokens,
+      localRuntime,
+      ...(typeof raw === 'number' && raw > 0 ? { configured: raw } : {}),
+    });
+  };
+  // Per-personality window decisions. Every personality's turns run with its
+  // OWN static prefix — its SOUL, toolset and the project context of the
+  // workdir its turns resolve — so small-window mode and the tool-result
+  // budget are asked per turn of a resolver (`createSmallWindowResolver`,
+  // small-window-resolver.ts; applied by `setupTurn`,
+  // packages/core/src/agent-loop/stages/turn-setup.ts, and `withSmallWindow`,
+  // packages/core/src/agent-loop/small-window.ts). The loop-level options
+  // below are only the baseline a resolver-less path (manual `/compact`
+  // without one, tests) sees.
+  const smallWindowResolver = createSmallWindowResolver({
+    windowTokens: llm.maxContextTokens,
+    model: config.model,
+    ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
+    smallWindowOverlay,
+    resultBudget: resultBudgetFor,
+    projectContext: projectContextOf,
+    measureFloor,
+    logger: log,
+    ...(startupWorkdir !== undefined
+      ? {
+          seed: {
+            personality: activePerson,
+            workdir: startupWorkdir,
+            projectContext,
+            floor: staticFloor,
+          },
+        }
+      : {}),
+  });
+  const promptBudget = profilePromptBudget;
 
   // Lane 1(b) — startup floor check, WARN-FIRST (plan risk note: some configs
   // that "work" today only work because the server silently truncates; refuse
@@ -894,18 +1113,14 @@ export async function buildAgentLoop(
       : undefined;
   if (narrowedToolset) {
     log.info(
-      `small-window mode narrows personality \`${activePerson.id}\` to its declared ` +
-        `small_window_toolset — surviving tools: ${narrowedToolset.join(', ') || '(none)'}`,
+      `startup personality \`${activePerson.id}\`: small-window mode narrows it to its declared ` +
+        `small_window_toolset — surviving tools: ${narrowedToolset.join(', ') || '(none)'} ` +
+        `(other personalities are decided per turn)`,
     );
   }
   const effectiveToolDefinitions = narrowedToolset
-    ? tools.toDefinitions(narrowedToolset)
+    ? tools.toDefinitions(narrowedToolset, excludeFor(activePerson))
     : toolDefinitions;
-
-  // Post-review FIX 2 — ONE hardened local-runtime classification for this
-  // loop's provider endpoint, shared by the payload guard below and the
-  // FIX 1 result-budget gate. Known hosted aliases never classify as local.
-  const localRuntime = detectLocalRuntime(config.provider, config.baseUrl ?? '') !== undefined;
 
   // Lane 3(a) — total serialized tool-payload guard. On a local dialect an
   // over-limit payload FAILS startup (llamacpp-class runtimes lose tool
@@ -935,24 +1150,31 @@ export async function buildAgentLoop(
     toolDefinitions: effectiveToolDefinitions,
     ...(typeof budgetRatio === 'number' && budgetRatio > 0 ? { ratio: budgetRatio } : {}),
   });
-  if (schemaBudget.message) log.warn(schemaBudget.message);
+  // reach-and-containment Part 1 (C5) — the per-turn on-demand tool-loading
+  // resolver. Passed to the loop only when not `off`, so an `off` loop's config
+  // is byte-identical to before. The startup warning above says when the
+  // startup personality would engage it.
+  const toolLoadingMode = config.toolLoading ?? 'auto';
+  const toolLoading =
+    toolLoadingMode === 'off'
+      ? undefined
+      : createToolLoadingResolver({ mode: toolLoadingMode, windowTokens: llm.maxContextTokens });
+  if (schemaBudget.message) {
+    let clause = '';
+    if (toolLoading?.(activePerson, effectiveToolDefinitions)) {
+      const pinned = resolvePinned(activePerson, effectiveToolDefinitions, tools);
+      clause =
+        ` — on-demand tool loading engaged (${pinned.size} pinned, ` +
+        `${effectiveToolDefinitions.length - pinned.size} searchable)`;
+    }
+    log.warn(schemaBudget.message + clause);
+  }
 
-  // Lane 1(c)+(e) — scale the per-turn tool-result budget DOWN with the served
-  // window; never UP (the flat 80k default is the ceiling, #111762). An
-  // explicit per-personality `context_engine_options.resultBudgetChars` may
-  // lower it further, never raise it past the ceiling. Post-review FIX 1: the
-  // scaling engages ONLY on a detected local runtime or that explicit knob —
-  // hosted providers with small catalog windows keep the flat 80k default and
-  // no gate-reserve term (the hosted-parity law).
-  const rawResultBudget = activePerson.context_engine_options?.resultBudgetChars;
-  const { resultBudgetChars, maxSingleToolResultTokens } = resolveResultBudgetGate({
-    windowTokens: llm.maxContextTokens,
-    staticFloorTokens: staticFloor.tokens,
-    localRuntime,
-    ...(typeof rawResultBudget === 'number' && rawResultBudget > 0
-      ? { configured: rawResultBudget }
-      : {}),
-  });
+  // The startup personality's budget — the loop-level baseline.
+  const { resultBudgetChars, maxSingleToolResultTokens } = resultBudgetFor(
+    activePerson,
+    staticFloor.tokens,
+  );
 
   const loop = new AgentLoop({
     llm,
@@ -993,6 +1215,13 @@ export async function buildAgentLoop(
     memoryProviders: memoryProviderMap,
     safety,
     logger: log,
+    ...(toolLoading ? { toolLoading } : {}),
+    smallWindowResolver,
+    ...(personalityToolExclude ? { personalityToolExclude } : {}),
+    ...(tierRouter ? { tierRouter } : {}),
+    // §15.3 — the approver's private sink channel; the same object is on
+    // `approverDecision.sinks` above. Absent with no `decisions.*`.
+    ...(decisionSites ? { approverDecisionSinks: APPROVER_DECISION_SINKS } : {}),
     documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),
@@ -1004,6 +1233,16 @@ export async function buildAgentLoop(
     ...(toolsResult.turnAuditors.length > 0 ? { turnAuditors: toolsResult.turnAuditors } : {}),
     ...(requestDumpStore ? { requestDumpStore } : {}),
     ...(activeMcpPolicy ? { mcpPolicy: activeMcpPolicy } : {}),
+    // openclaw-9.5 item 1 — set for EVERY host (all of them assemble through
+    // here), but it only runs for a turn whose surface passes
+    // `RunOptions.credentialPrompt` (`stages/turn-setup.ts`). Plugin
+    // credentials only: browser logins (`credentials/<name>/`) stay a
+    // `browser_fill_credential` refusal — see `buildCredentialCheck`.
+    credentialCheck: buildCredentialCheck({
+      pluginLoader,
+      ...(opts.observability ? { observability: opts.observability } : {}),
+      logger: log,
+    }),
     onToolMetric: (metric) => {
       pluginDiagnostics.pushEvent({
         pluginId: metric.pluginId,
@@ -1022,13 +1261,9 @@ export async function buildAgentLoop(
     options: {
       platform: profile,
       workingDir,
-      ...(historyLimit !== undefined ? { historyLimit } : {}),
       // Lane 1(c) — only passed when scaling engaged; at the ceiling the loop
       // default (80k) applies and the config is byte-identical to today.
       ...(resultBudgetChars < RESULT_BUDGET_CEILING_CHARS ? { resultBudgetChars } : {}),
-      // Lane 3(b) — only passed when small-window mode is active, so hosted
-      // frontier-window loop options stay byte-identical to today.
-      ...(smallWindow ? { smallWindow } : {}),
       // Soft-warn tiers — only passed when configured, so an unconfigured loop
       // never produces a warn event.
       ...(config.toolLoop?.maxToolCallsWarnAt !== undefined
@@ -1152,6 +1387,10 @@ export async function buildAgentLoop(
       // rather than failing at spawn time. The docker backend comes from the
       // SAME registry (and, by its cache, is the SAME instance) exec tools
       // use: D4's containment claim rests on one mount derivation, not two.
+      // It is resolved through the execution routing, never the registry
+      // directly: the registry keeps whichever config resolved first, so a
+      // config assembled here would decide the image for every exec tool
+      // (`ExecutionRouting.resolveDockerBackend`, compose-tools.ts).
       //
       // ALWAYS docker, never the personality's posture: a Pi run is a container
       // by construction — a digest-pinned image, a mount set derived from
@@ -1160,14 +1399,7 @@ export async function buildAgentLoop(
       // something a remote shell could host. A personality with `execution:
       // ssh` still gets its Pi jobs in a local container.
       if (piConfig?.image) {
-        const piBackend = await infra.executionBackends.resolve('docker', {
-          config: {
-            substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
-            constitution: infra.constitution,
-          },
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        });
+        const piBackend = await toolsResult.resolveDockerBackend();
         jobRunners.register(
           PI_RUNNER_NAME,
           () =>
@@ -1196,14 +1428,7 @@ export async function buildAgentLoop(
       // container-specific, so an `ssh` posture on the personality does not
       // move it to the remote host.
       if (acpAgentNames.length > 0) {
-        const acpBackend = await infra.executionBackends.resolve('docker', {
-          config: {
-            substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
-            constitution: infra.constitution,
-          },
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        });
+        const acpBackend = await toolsResult.resolveDockerBackend();
         await registerAcpJobRunners({
           jobRunners,
           acpAgents: acpAgentsConfig,
@@ -1271,6 +1496,7 @@ export async function buildAgentLoop(
       staleMs: bg.staleMs,
       ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
       ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+      ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     };
 
     // Mesh proxy reconciler — polls peers for background jobs spawned via
@@ -1351,6 +1577,25 @@ export async function buildAgentLoop(
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
+    // Command-less acceptance checks are judged by the deployment's LLM,
+    // fail-closed and time-bounded (createLLMCheckJudge). Not a Jev site yet:
+    // goal-judge is deferred in plan/phases/decision-provider-jev.md §16.
+    judgeCheck: createLLMCheckJudge({ llm }),
+    // S1 — a goal's `command` acceptance checks run through the same gates
+    // and the same execution route as that personality's `terminal`, never a
+    // raw host shell (`createAcceptanceCheckExecutor`).
+    execAcceptanceCheck: createAcceptanceCheckExecutor({
+      personalities,
+      route: toolsResult.executionRouteFor,
+      postureFor: toolsResult.executionPostureFor,
+      hostBackend: () =>
+        infra.executionBackends.resolve('local', {
+          config: { substitutionVars: { ethosHome: dataDir, cwd: workingDir } },
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        }),
+      workingDir,
+    }),
     runAttempt: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
@@ -1459,36 +1704,27 @@ export async function buildAgentLoop(
       }
     }
 
-    // Inline consolidation fallback (§3.5): only when no macro-loop is
-    // configured. Reuses the pure consolidateMemory(); the consolidation write
-    // is recorded through a history-decorated handle so it lands as
-    // `source: 'consolidation'`.
-    const nightlyConfigured = config.nightlyPass?.enabled === true;
-    const consolidationHandle = withHistory(captureBase, captureHistory, {
-      source: 'consolidation',
-    });
-    const consolidate: ConsolidateFn = async ({ ctx }) => {
-      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
-      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
-      const result = await consolidateMemory(
-        { memory: memBefore, user: userBefore, recentContext: '' },
-        llm,
-      );
-      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
-      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
-    };
-
     // Approve-before-store gate (memory-lifecycle L2). When approval gates the
     // `capture` source, the runner PROPOSES each fresh fact to the pending queue
     // (with its exact fact-hash) instead of writing durably; approval replays it
     // through the history-recording path. The tombstone store is passed
     // unconditionally so a fact rejected while gating was on stays skipped even
     // if approval is later disabled.
+    //
+    // Evidence-gated promotion (plan openclaw-9.5-adoption item 3, D22):
+    // `memoryCapture.evidenceSessions: N > 0` routes capture through the queue
+    // even with approval `off`, as a capture-only queue that promotes an entry
+    // once N distinct sessions have extracted it (`PendingMemoryStore.propose`,
+    // `autoPromote`). Under `automated`/`all` evidence only orders the queue —
+    // a human still approves. Pinned by
+    // `__tests__/memory-evidence-wiring.test.ts`.
     const approvalMode = config.memoryApproval?.mode ?? 'off';
     const captureGated = approvalMode === 'automated' || approvalMode === 'all';
+    const evidenceSessions = captureConfig.evidenceSessions ?? 0;
     const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
     let capturePropose: ProposeFn | undefined;
-    if (captureGated) {
+    let capturePending: PendingMemoryStore | undefined;
+    if (captureGated || evidenceSessions > 0) {
       const pending = new PendingMemoryStore({
         storage: wiringCtx.storage,
         dataDir,
@@ -1496,6 +1732,7 @@ export async function buildAgentLoop(
         // One derivation of cap + TTL, shared with the runtime gate and every
         // out-of-loop queue (`approvalLimits`).
         ...approvalLimits(config.memoryApproval),
+        ...(evidenceSessions > 0 ? { evidenceSessions, autoPromote: !captureGated } : {}),
         // Cap drops must be audible (Curator lesson, plan §3b) — same seam as
         // the build-infrastructure write path.
         observability: {
@@ -1510,6 +1747,11 @@ export async function buildAgentLoop(
           const handle = withHistory(captureBase, captureHistory, {
             source: entry.source,
             approvedBy,
+            // A promoted evidence entry records its hash like a direct capture
+            // write does, so dedup keeps it from being queued a second time.
+            ...(entry.evidenceSessions && entry.factHash
+              ? { captureHashes: [entry.factHash] }
+              : {}),
           });
           const ctx: MemoryContext = {
             scopeId: entry.scopeId,
@@ -1524,7 +1766,40 @@ export async function buildAgentLoop(
       capturePropose = async (proposal) => {
         await pending.propose(proposal);
       };
+      capturePending = pending;
     }
+
+    // Inline consolidation fallback (§3.5): only when no macro-loop is
+    // configured. Reuses the pure consolidateMemory(); the consolidation write
+    // is recorded through a history-decorated handle so it lands as
+    // `source: 'consolidation'`. Under `memoryApproval.mode: all` it parks in
+    // the capture queue instead (`withPendingGate`, `isGated('consolidation',
+    // mode)`), history outside the gate as in `composeGatedMemory`; approve
+    // replays it through that queue's `apply` under its original source.
+    // `off`/`automated` pass straight through. Pinned by
+    // `__tests__/memory-consolidation-gate.test.ts`.
+    const nightlyConfigured = config.nightlyPass?.enabled === true;
+    const consolidationHandle = withHistory(
+      capturePending
+        ? withPendingGate(captureBase, {
+            store: capturePending,
+            mode: approvalMode,
+            source: 'consolidation',
+          })
+        : captureBase,
+      captureHistory,
+      { source: 'consolidation' },
+    );
+    const consolidate: ConsolidateFn = async ({ ctx }) => {
+      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
+      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
+      const result = await consolidateMemory(
+        { memory: memBefore, user: userBefore, recentContext: '' },
+        llm,
+      );
+      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
+      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
+    };
 
     const captureRunner = new MemoryCaptureRunner({
       provider: captureBase,
@@ -1604,6 +1879,8 @@ export async function buildAgentLoop(
       onSkillProposedFn = fn;
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
+    ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor: toolsResult.executionPostureFor,
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,

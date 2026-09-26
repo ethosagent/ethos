@@ -1,5 +1,11 @@
-import type { Skill, Storage, Tool, ToolRegistry } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type {
+  PersonalityRegistry,
+  Skill,
+  Storage,
+  Tool,
+  ToolRegistry,
+  WiringContext,
+} from '@ethosagent/types';
 import { createPersonalityDesignTools, type ModelCatalogEntry } from './index';
 
 export interface PersonalityDesignToolsCompose {
@@ -13,6 +19,7 @@ export function compose(
     storage: Storage;
     modelCatalog: ModelCatalogEntry[];
     skills: Skill[];
+    personalityRegistry: PersonalityRegistry;
   },
 ): PersonalityDesignToolsCompose {
   return {
@@ -21,6 +28,7 @@ export function compose(
       storage: deps.storage,
       modelCatalog: deps.modelCatalog,
       skills: deps.skills,
+      personalityRegistry: deps.personalityRegistry,
     }),
   };
 }

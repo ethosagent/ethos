@@ -47,6 +47,18 @@ export function clarifyPromptText(row: PendingClarify): string {
  * never set the key. Never guess a scheme, host or port.
  */
 export function handbackUrlFor(webBaseUrl: string | undefined): string | undefined {
+  return webPageUrlFor(webBaseUrl, '/chat');
+}
+
+/**
+ * An address under the deployment's web UI (`webBaseUrl`), with the same
+ * refusal rule as {@link handbackUrlFor}: undefined unless `webBaseUrl` is an
+ * absolute http(s) URL, never a guessed scheme, host or port. `path` must
+ * start with `/`; a path prefix on `webBaseUrl` is kept. The gateway's
+ * plugin-credential link (`/plugins?pluginId=…&key=…`, openclaw-9.5 item 1) is
+ * the second caller; `handbackUrlFor` is this with `/chat`.
+ */
+export function webPageUrlFor(webBaseUrl: string | undefined, path: string): string | undefined {
   if (!webBaseUrl) return undefined;
   let base: URL;
   try {
@@ -57,7 +69,7 @@ export function handbackUrlFor(webBaseUrl: string | undefined): string | undefin
   if (base.protocol !== 'http:' && base.protocol !== 'https:') return undefined;
   // `webBaseUrl` may carry a path prefix (the origin check in web-api's
   // rpc-origin allows one); keep it, drop only a trailing slash.
-  return `${base.origin}${base.pathname.replace(/\/+$/, '')}/chat`;
+  return `${base.origin}${base.pathname.replace(/\/+$/, '')}${path}`;
 }
 
 /** The host of a URL, or undefined when there isn't one worth naming. */

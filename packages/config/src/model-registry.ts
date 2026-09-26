@@ -14,17 +14,17 @@
 //
 // The declaration grammar is NOT re-encoded here (D25). `parseModelDeclaration`
 // below is a config-shaped wrapper over the one implementation in
-// `@ethosagent/core`, the same shape `deriveBotKey` in `./index` already uses
-// over core's — so a `modelRouting` value and a registry value are read by the
+// `@ethosagent/types` (packages/types/src/model-registry.ts), the same shape
+// `deriveBotKey` in `./index` already uses over core's — so a `modelRouting` value and a registry value are read by the
 // same parser, and a value one accepts and the other refuses cannot exist.
 
-import { parseModelDeclaration as parseDeclarationAgainstAliases } from '@ethosagent/core';
 import {
   MODEL_ROLE_NAMES,
   type ModelDeclaration,
   type ModelDeclarationError,
   type ModelRegistry,
   type ModelRegistryEntry,
+  parseModelDeclaration as parseDeclarationAgainstAliases,
 } from '@ethosagent/types';
 import { deriveProviderKey, type ProviderChainEntry } from './index';
 
@@ -35,7 +35,7 @@ import { deriveProviderKey, type ProviderChainEntry } from './index';
 /**
  * Read a model declaration against THIS config's registry.
  *
- * The config-shaped half of `parseModelDeclaration` from `@ethosagent/core`:
+ * The config-shaped half of `parseModelDeclaration` from `@ethosagent/types`:
  * callers here hold an `EthosConfig`, not a list of aliases, and threading
  * `Object.keys(config.modelRegistry?.entries ?? {})` through every call site is
  * how the alias set quietly acquires two spellings. Exactly the `deriveBotKey`

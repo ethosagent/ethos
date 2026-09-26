@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: production-hardening-checklist
 time: "30 min"
-updated: 2026-06-09
+updated: 2026-09-25
 ---
 
 ## Task
@@ -88,25 +88,22 @@ ethos personality show <id>
 
 ### 4. Declare network policy per personality
 
-Personalities with web tools (`web_fetch`, `web_post`) should declare `network.allowedHosts` in their safety config. A personality without a network policy gets no egress -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
+Personalities with web tools (`web_extract`, `browse_url`, `browser_navigate`) should declare `safety.network.allow` in their config. A personality without an allow list (absent, `[]`, or `['*']`) can reach any public host -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
 
 ```yaml
-# In the personality's config.yaml safety block
+# In the personality's config.yaml
 safety:
-  networkReach:
-    - host: "api.github.com"
-      ports: [443]
-    - host: "*.slack.com"
-      ports: [443]
+  network:
+    allow:
+      - api.github.com
+      - "*.slack.com"
 ```
 
 **Verify:**
 
 ```bash
-ethos personality show <id>
-# Check the "Network reach" section.
+grep -A6 'network:' ~/.ethos/personalities/<id>/config.yaml
 # Confirm only the hosts this personality needs are listed.
-# Confirm no wildcard entries like "*" that would allow all egress.
 ```
 
 ### 5. Configure channel security
@@ -114,25 +111,21 @@ ethos personality show <id>
 Set up `channel_filter` in `~/.ethos/config.yaml` for every active channel adapter:
 
 - **Sender allowlist:** restrict which user IDs can reach the agent. Unknown senders are dropped before the message enters the agent loop.
-- **DM pairing codes:** require a one-time pairing code before a new sender can interact. Codes are sender-bound, nonce-bound, and atomically consumed.
-- **Context visibility:** set the mode per channel -- `allowlist` (only allowlisted senders' content visible) or `allowlist_quote` (allowlisted senders plus their quoted context). Avoid `all` in production unless the channel is fully trusted.
+- **DM pairing codes:** with `dmPolicy: pairing` (the default), an unknown sender who DMs the bot gets a one-time code, and only the owner can redeem it with `/allow <code>`. Codes are random, bound to the sender they were issued for, single-use, and expire after an hour.
+- **Context visibility:** set `contextVisibility: allowlist` to strip quoted replies to non-allowlisted senders and their lines of channel history. `allowlist_quote` is an alias with the same behaviour. Avoid the default `all` in production unless the channel is fully trusted.
 
 See [Security controls -- channel](./controls.md#channel-level-controls) for the full set of channel-layer controls.
 
 ```yaml
-channel_filter:
-  telegram:
-    allowedSenders:
-      - "123456789"   # numeric user ID
-    pairingEnabled: true
-    contextVisibility: "allowlist"
-  slack:
-    allowedSenders:
-      - "U01ABC123"
-    contextVisibility: "allowlist_quote"
+channel_filter.telegram.ownerUserId: 123456789
+channel_filter.telegram.recipientAllowlist: 234567890,345678901
+channel_filter.telegram.dmPolicy: pairing
+channel_filter.telegram.contextVisibility: allowlist
+channel_filter.slack.ownerUserId: U01ABC123
+channel_filter.slack.contextVisibility: allowlist
 ```
 
-**Verify:** Send a message from a non-allowlisted account. Confirm it is silently dropped and a `channel.deny` event appears in `observability.db`.
+**Verify:** Send a message from a non-allowlisted account. Confirm it is dropped (a DM gets a pairing code instead of an answer) and that an `audit.block` event with code `channel.allowlist.blocked` (DM) or `channel.mention_gate` (group) appears in `observability.db`.
 
 ### 6. Confirm injection defenses are active
 
@@ -140,13 +133,12 @@ The `INJECTION_DEFENSE_PRELUDE` system prompt is always-on -- it is injected int
 
 Confirm that `wrapUntrusted` covers all untrusted input surfaces:
 
-- **Channel messages** from non-owner senders are wrapped with provenance markers.
-- **Tool results** from web fetches, email reads, and skill outputs are wrapped before re-entering the LLM context.
-- **Quoted and forwarded content** is tagged as untrusted by the context-visibility filter.
+- **Channel messages:** the gateway wraps every admitted inbound message, and any channel history attached to it, with provenance markers.
+- **Tool results:** a result is wrapped only when its tool declares `outputIsUntrusted: true` — `web_extract`, `read_file`, `search_files`, `terminal`, the browser page-reading tools and MCP tools among them. A tool that does not declare it is not wrapped, and its results do not arm the post-read downgrade.
 
-The only case where action is required: if you have written **custom tools** that return external content and bypass the standard tool pipeline, those results will not be wrapped automatically. Wrap them manually with the `wrapUntrusted()` helper from `@ethosagent/safety-injection`.
+The only case where action is required: if you have written **custom tools** that return external content, set `outputIsUntrusted: true` on each of them. The agent loop then wraps the result, runs the pattern check, and arms the post-read downgrade (`handleUntrustedResult` in `packages/core/src/agent-loop/result-defense.ts`).
 
-**Verify:** No explicit verification step unless you have custom tools. If you do, confirm each custom tool's `execute()` calls `wrapUntrusted()` on any external content before returning it as a `ToolResult`.
+**Verify:** No explicit verification step unless you have custom tools. If you do, confirm each custom tool that returns external content declares `outputIsUntrusted: true`.
 
 ### 7. Set up observability and retention
 
@@ -250,39 +242,77 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 
 **Verify:** Perform a dry-run rotation of one non-critical token. Confirm the gateway reconnects with the new token and the old token is revoked.
 
-### 11. Enable admin panel token authentication
+### 11. Scope API keys and keep the admin panel off
 
-Generate an admin token via `ethos token create`. Configure the web API to require the token on every request. Confirm unauthenticated requests receive `401 Unauthorized`.
+The web API always requires a credential on `/rpc/*`: the `ethos_auth` cookie from the sign-in URL `ethos serve` prints, or a bearer API key. There is nothing to switch on. Harden what is already there:
+
+- If you do not use the admin panel, leave `admin.enabled` unset. Admin procedures then refuse every caller with `403`.
+- Mint each API key with the narrowest scope it needs: `ethos api-key create --name <label> --scopes sessions:read`.
+- Revoke keys nobody uses. List them with `ethos api-key list`, then run `ethos api-key revoke <prefix>`.
 
 **Verify:**
 
 ```bash
-# Request without token — should return 401
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/sessions
+# No credential — should return 401
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -d '{"json":{}}' http://localhost:3000/rpc/sessions/list
 # 401
 
-# Request with token — should return 200
-curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ETHOS_TOKEN" \
-  http://localhost:3000/api/sessions
+# API key with sessions:read — should return 200
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ETHOS_API_KEY" \
+  -d '{"json":{}}' http://localhost:3000/rpc/sessions/list
 # 200
+
+# The same key against the admin namespace — should return 403
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ETHOS_API_KEY" \
+  -d '{"json":{}}' http://localhost:3000/rpc/admin/getStatus
+# 403
 ```
 
-See [Security controls -- admin panel token authentication](./controls.md#admin-panel-token-auth).
+See [Security controls -- web dashboard and admin authentication](./controls.md#admin-panel-token-auth).
 
-### 12. Restrict CORS for remote desktop connections
+### 12. Enumerate the browser origins allowed to call the web API
 
-If Mission Control connects to a remote Ethos instance, set `cors.allowedOrigins` in `~/.ethos/config.yaml` to the exact origin of the desktop app. Do not use `*`.
+There is no `cors` block in `config.yaml`. Two separate lists control which browser origins may reach the web API.
 
-```yaml
-# ~/.ethos/config.yaml
-cors:
-  allowedOrigins:
-    - "https://mission-control.example.com"
+| Setting | Format | Governs | Enforced by |
+|---|---|---|---|
+| `ETHOS_ALLOWED_ORIGINS` (env var only) | Comma-separated. Exact origins, or `*.domain` wildcards that also match the bare domain. A wildcard on a shared hosting domain such as `*.fly.dev` stops `ethos serve` at startup | Credentialed CORS on every web API route except `/v1/*`, which reflects exact entries only. The CSRF check on `/rpc/*` and `/openapi/*`, which accepts wildcards and, once set, refuses every origin not listed. The WebSocket origin check, which accepts exact entries only | `resolveAllowedOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`; `csrfMiddleware` in `apps/web-api/src/middleware/csrf.ts`; `originAllowed` in `apps/web-api/src/voice/voice-socket.ts` |
+| `ETHOS_API_CORS_ORIGINS` env var, else `web.corsOrigins` in `config.yaml` | Comma-separated exact origins, or `*`. Not credentialed | CORS on `/v1/*`, preflights included. `ETHOS_ALLOWED_ORIGINS` does not apply there | `resolveCorsOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `openAiCors` in `apps/web-api/src/middleware/openai-cors.ts` |
+
+Neither list is needed for the Mission Control desktop app in remote mode: it loads the remote server's own SPA same-origin (see [desktop remote connection security](./controls.md#desktop-remote-connection)). A browser dashboard served from another origin, such as the one in [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md), needs its exact origin in `ETHOS_ALLOWED_ORIGINS`.
+
+- Do not list `*` in `ETHOS_ALLOWED_ORIGINS`. It is not a wildcard there, so it matches nothing.
+- If you also use the server's own web UI, list the server's own origin too. Once the variable is set, the CSRF check refuses cookie requests from any origin not listed, the server's own included.
+- If a browser app calls `/v1/*` directly, list its origin in `ETHOS_API_CORS_ORIGINS` (or `web.corsOrigins`). Listing it in `ETHOS_ALLOWED_ORIGINS` does nothing for `/v1/*`.
+
+```bash
+# ethos serve environment
+export ETHOS_ALLOWED_ORIGINS="https://dashboard.example.com,https://ethos.example.com"
 ```
 
-**Verify:** Open the browser console on the desktop app and confirm no CORS errors. Attempt a request from a different origin and confirm it is rejected.
+**Verify:**
 
-See [Security controls -- desktop remote connection security](./controls.md#desktop-remote-connection) and [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md).
+```bash
+# Listed origin — the preflight reflects it
+curl -s -o /dev/null -D - -X OPTIONS \
+  -H 'Origin: https://dashboard.example.com' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: authorization,content-type' \
+  http://localhost:3000/rpc/sessions/list | grep -i access-control-allow-origin
+# access-control-allow-origin: https://dashboard.example.com
+
+# Any other origin — no access-control-allow-origin header
+curl -s -o /dev/null -D - -X OPTIONS \
+  -H 'Origin: https://other.example.net' \
+  -H 'Access-Control-Request-Method: POST' \
+  http://localhost:3000/rpc/sessions/list | grep -i access-control-allow-origin
+# (no output)
+```
+
+- Pinned by: `apps/ethos/src/commands/__tests__/serve-helpers.test.ts` (both resolvers, including the shared-domain refusal), `apps/web-api/src/__tests__/routes/cors-origin.test.ts` (`resolveCorsOrigin`), `apps/web-api/src/__tests__/middleware/csrf.test.ts`, `apps/web-api/src/__tests__/middleware/openai-cors.test.ts`, `apps/web-api/src/__tests__/routes/v1-cors-preflight.test.ts` (the full app: `/v1/*` preflights answer from the `/v1` list only, and `/rpc/*` preflights are unchanged)
 
 ### 13. Review plugin data source permissions
 
@@ -328,8 +358,9 @@ If every step above passes, the deployment is hardened.
 | `observability.db` is empty | Database path misconfigured or the process lacks write permission | Check `observability.db` path in config; confirm the process user can write to it |
 | Container crashes on startup with read-only FS | `~/.ethos/` not mounted as a writable volume | Mount a persistent volume at the `~/.ethos/` path |
 | `ethos config validate --strict` reports missing personality | Bot binding references a personality ID that does not exist | Create the personality directory or fix the `botKey` mapping |
-| Admin panel returns `401` for all requests | Token not generated or not passed in the `Authorization` header | Run `ethos token create` and pass the token as `Bearer <token>` |
-| CORS error in Mission Control desktop app | `cors.allowedOrigins` does not include the desktop app origin | Add the exact origin to `cors.allowedOrigins` in `config.yaml` |
+| Web UI returns `401` for every request | No `ethos_auth` cookie, or the cookie no longer matches the stored token | Open the sign-in URL `ethos serve` prints (`?t=<token>`) again |
+| Admin panel returns `403` | `admin.enabled: true` is not set, or the request used an API key | Set `admin.enabled: true` in `config.yaml` and use the web UI; API keys cannot reach admin procedures |
+| CORS error in a browser dashboard served from another origin | Its origin is not in `ETHOS_ALLOWED_ORIGINS` (a `*.domain` wildcard does not count for CORS) | Add the exact origin to `ETHOS_ALLOWED_ORIGINS` in the `ethos serve` environment and restart |
 | Dashboard query returns data from a write statement | Plugin bypasses `registerDataSource` with direct DB access | Audit plugin code; route all queries through `registerDataSource` |
 
 ## See also

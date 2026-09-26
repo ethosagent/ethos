@@ -41,6 +41,8 @@ export {
 } from './a2a-identity';
 export {
   type CharacterSheetBoundary,
+  type CharacterSheetDecisionSite,
+  type CharacterSheetDecisions,
   type CharacterSheetExecution,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
@@ -805,10 +807,11 @@ export interface CreatePersonalityInput {
    *
    * `PersonalityConfig.safety` carries more (approvalMode, denyRules,
    * injectionDefense, …); those are edited afterwards through `update`, which
-   * merges onto whatever is already on disk. Network reach is different: it has
-   * to be right in the FIRST write, because a personality with no
-   * `safety.network` resolves every `allowedHosts: ['*']` tool to an EMPTY host
-   * set (`packages/core/src/capability-resolver.ts`) and denies every fetch.
+   * merges onto whatever is already on disk. Network reach is different: it is
+   * set in the FIRST write so a narrowed personality is never briefly open — a
+   * personality with no `safety.network` gets the open public internet under
+   * the `safeFetch` floor (`resolveCapabilities`,
+   * `packages/core/src/capability-resolver.ts`).
    *
    * Narrowing only, per ARCHITECTURE.md §V S6 — the non-overridable floor
    * (cloud-metadata + private ranges blocked, http/https only) is applied
@@ -901,6 +904,18 @@ export interface UpdatePersonalityPatch {
    *  `auth` for when it is turned back on. `enabled` falls back to the stored
    *  value, then to `false` — a patch never turns export ON by omission. */
   mcp_export?: Partial<import('@ethosagent/types').PersonalityMcpExportConfig>;
+  /** `decisions.*` sub-keys, merged by `mergeDecisionsConfig`: `sites` is
+   *  shallow-merged per site, so a patch naming one site leaves the others;
+   *  `provider: ''` clears the reference (the `voice.*` convention). */
+  decisions?: {
+    provider?: string;
+    sites?: Partial<
+      Record<
+        import('@ethosagent/types').PersonalityDecisionSiteId,
+        import('@ethosagent/types').PersonalityDecisionSiteMode
+      >
+    >;
+  };
 }
 
 /**
@@ -918,6 +933,29 @@ function mergeDisplayConfig(
   if (patch === undefined || patch.avatar_url === undefined) return existing;
   if (patch.avatar_url === '') return undefined;
   return { avatar_url: patch.avatar_url };
+}
+
+/**
+ * Apply a `decisions` patch to the stored block. `provider: ''` clears the
+ * reference, `undefined` leaves it, anything else sets it; `sites` is merged
+ * per site so a patch carrying one site keeps the rest. A block left empty is
+ * dropped rather than written empty (the `mergeVoiceConfig` rule).
+ */
+function mergeDecisionsConfig(
+  existing: PersonalityConfig['decisions'],
+  patch: UpdatePersonalityPatch['decisions'],
+): PersonalityConfig['decisions'] {
+  if (patch === undefined) return existing;
+  const next: import('@ethosagent/types').PersonalityDecisionsConfig = { ...existing };
+  if (patch.provider !== undefined) {
+    if (patch.provider === '') delete next.provider;
+    else next.provider = patch.provider;
+  }
+  if (patch.sites !== undefined) {
+    const sites = { ...existing?.sites, ...patch.sites };
+    if (Object.keys(sites).length > 0) next.sites = sites;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /**
@@ -956,6 +994,28 @@ function mergeVoiceConfig(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+/** One personality directory whose load failed (N3, ux-feedback-and-config-
+ *  clarity). The registry keeps serving the last-good copy: `define()` runs
+ *  only after a successful parse, so a broken edit never evicts the config
+ *  already in the `personalities` map. */
+export interface PersonalityLoadFailure {
+  id: string;
+  dir: string;
+  /** Human-readable cause, prefixed with the source file where the parse
+   *  names one (e.g. `config.yaml: …` — see `withSourceFile`). */
+  error: string;
+}
+
+/** Outcome of the most recent `loadFromDirectory` call. */
+export interface PersonalityLoadReport {
+  failures: PersonalityLoadFailure[];
+  /** Personalities whose mtime fingerprint changed on this call — a reload of
+   *  something already registered, with the changed inputs named (basenames
+   *  of the six fingerprinted paths, e.g. `SOUL.md`). First sights are not
+   *  listed. */
+  reloaded: Array<{ id: string; changed: string[] }>;
+}
+
 export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly personalities = new Map<string, PersonalityConfig>();
   /** Per-personality MCP policy loaded from mcp.yaml (sibling artifact, NOT
@@ -968,6 +1028,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly toolsConfigs = new Map<string, PersonalityToolsConfig>();
   // dir → mtime fingerprint of the paths `loadOne` lists (the one owner of that list)
   private readonly fingerprintCache = new Map<string, string>();
+  /** What the most recent `loadFromDirectory` call found (N3). Replaced whole
+   *  per call. A directory the fingerprint fast path skipped contributes
+   *  nothing, so a still-broken personality is reported once per content
+   *  change, not once per refresh tick. */
+  lastLoadReport: PersonalityLoadReport = { failures: [], reloaded: [] };
   private defaultId = 'researcher';
   private readonly storage: Storage;
   /** Directory holding user-created personalities (mutable). When unset,
@@ -1064,12 +1129,44 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       }
     }
 
-    await Promise.all(
+    // allSettled, not all (N3): one malformed personality directory must not
+    // block the others — every successful loadOne is APPLIED before this call
+    // settles, whatever its siblings did.
+    const results = await Promise.allSettled(
       entries.map(async (entry) => {
         const personalityDir = join(dir, entry);
-        await this.loadOne(personalityDir, entry);
+        return await this.loadOne(personalityDir, entry);
       }),
     );
+
+    const report: PersonalityLoadReport = { failures: [], reloaded: [] };
+    results.forEach((result, i) => {
+      const entry = entries[i];
+      if (entry === undefined) return;
+      if (result.status === 'rejected') {
+        const error =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        report.failures.push({ id: entry, dir: join(dir, entry), error });
+      } else if (result.value !== null) {
+        report.reloaded.push({ id: entry, changed: result.value });
+      }
+    });
+    this.lastLoadReport = report;
+
+    if (report.failures.length > 0) {
+      // Still a rejection — deliberately. Every existing caller either treats
+      // a personality-load failure as fatal (CLI wiring, `gateway start`
+      // first boot, `ethos serve`/`boot`, web-api) or already tolerates a
+      // rejection (the gateway refresh's allSettled + the per-turn refresh's
+      // swallow), so resolving here would turn fail-closed boots into silent
+      // ones nobody reads a report for. The successes above are applied
+      // regardless, and `lastLoadReport` survives the throw for callers that
+      // catch. (plan ux-feedback-and-config-clarity §4 N3, §9.)
+      const detail = report.failures.map((f) => `${f.id}: ${f.error}`).join('; ');
+      throw new Error(
+        `personalities: ${report.failures.length} of ${entries.length} failed to load — ${detail} (last-good copies still serve)`,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1239,7 +1336,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.nightly !== undefined ||
       patch.voice !== undefined ||
       patch.display !== undefined ||
-      patch.mcp_export !== undefined
+      patch.mcp_export !== undefined ||
+      patch.decisions !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -1399,6 +1497,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
                 ...patch.mcp_export,
                 enabled: patch.mcp_export.enabled ?? config.mcp_export?.enabled ?? false,
               },
+        decisions: mergeDecisionsConfig(config.decisions, patch.decisions),
       };
       // renderConfigYaml's safety emission is suppressed here (render with
       // `safety: undefined`) so we append exactly one safety block — never a
@@ -1794,7 +1893,13 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async loadOne(dir: string, id: string): Promise<void> {
+  /**
+   * Returns the changed fingerprint inputs (file basenames) when this call
+   * RELOADED a directory already fingerprinted, `null` on a first sight or a
+   * no-change fast path — `loadFromDirectory` turns that into the
+   * `lastLoadReport.reloaded` entries (N3).
+   */
+  private async loadOne(dir: string, id: string): Promise<string[] | null> {
     // Fingerprint guard — invalidate when any of the personality's inputs change.
     // mtime alone is enough: filesystems we run on (APFS / ext4 / NTFS) all
     // expose sub-millisecond mtime, so two writes within the same tick
@@ -1803,16 +1908,30 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     // derives `skillsDirs` from its existence — without it, installing the
     // first skill into a personality that had no `skills/` dir would never be
     // seen until the process restarted.
-    const fingerprint = await this.fileFingerprint([
+    const paths = [
       join(dir, 'config.yaml'),
       join(dir, 'SOUL.md'),
       join(dir, 'toolset.yaml'),
       join(dir, 'mcp.yaml'),
       join(dir, 'tools.yaml'),
       join(dir, 'skills'),
-    ]);
-    if (this.fingerprintCache.get(dir) === fingerprint) return;
+    ];
+    const fingerprint = await this.fileFingerprint(paths);
+    const previous = this.fingerprintCache.get(dir);
+    if (previous === fingerprint) return null;
+    // Set BEFORE buildConfig on purpose: a directory whose parse throws is
+    // retried only when its content changes again, so a broken personality
+    // costs one failed parse (and one report entry) per edit, not one per
+    // refresh tick — and the last-good copy keeps serving meanwhile.
     this.fingerprintCache.set(dir, fingerprint);
+    const changed =
+      previous === undefined
+        ? null
+        : diffFingerprint(
+            previous,
+            fingerprint,
+            paths.map((p) => basename(p)),
+          );
 
     const { config, mcpPolicy, mcpWarnings, toolsConfig } = await this.buildConfig(dir, id);
     if (config) {
@@ -1833,6 +1952,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         this.toolsConfigs.delete(id);
       }
     }
+    return changed;
   }
 
   private async buildConfig(
@@ -1856,7 +1976,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     if (!configSrc && !soulExists) return { config: null };
 
-    const parsed = configSrc ? parseConfigYaml(configSrc) : { flat: {}, nested: {} };
+    const parsed = configSrc
+      ? withSourceFile('config.yaml', () => parseConfigYaml(configSrc))
+      : { flat: {}, nested: {} };
     const cfg = parsed.flat;
 
     const capabilities = cfg.capabilities
@@ -1901,7 +2023,10 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? Number.parseFloat(cfg.budgetCapUsd)
         : undefined;
 
-    const safety = parsed.nested.safety ? buildSafetyConfig(parsed.nested.safety) : undefined;
+    const safetyBlock = parsed.nested.safety;
+    const safety = safetyBlock
+      ? withSourceFile('config.yaml', () => buildSafetyConfig(safetyBlock))
+      : undefined;
 
     // E5 — context_layering.* dotted keys. Mirrors the fs_reach.* pattern so
     // we don't need a new nested-block parser entry for one-off configs.
@@ -1925,9 +2050,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const outboundPolicy = buildOutboundPolicy(cfg);
     const voice = buildVoiceConfig(cfg);
     const display = buildDisplayConfig(cfg);
+    const decisions = buildDecisionsConfig(cfg);
     const execution = parseExecutionPosture(cfg.execution);
 
     const model = buildModelConfig(cfg);
+
+    const toolset = toolsetSrc
+      ? withSourceFile('toolset.yaml', () => parseToolsetYaml(toolsetSrc))
+      : undefined;
 
     const config: PersonalityConfig = {
       id,
@@ -1939,7 +2069,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(capabilities?.length ? { capabilities } : {}),
       soulFile: join(dir, 'SOUL.md'),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),
-      ...(toolsetSrc ? { toolset: parseToolsetYaml(toolsetSrc) } : {}),
+      ...(toolset ? { toolset } : {}),
       ...(streamingTimeoutMs !== undefined ? { streamingTimeoutMs } : {}),
       ...(fsReach ? { fs_reach: fsReach } : {}),
       ...(mcpServers !== undefined ? { mcp_servers: mcpServers } : {}),
@@ -1964,9 +2094,10 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(voice !== undefined ? { voice } : {}),
       ...(display !== undefined ? { display } : {}),
       ...(execution !== undefined ? { execution } : {}),
+      ...(decisions !== undefined ? { decisions } : {}),
     };
 
-    validateUnsafeCombinations(id, config);
+    withSourceFile('config.yaml', () => validateUnsafeCombinations(id, config));
     let mcpPolicy: import('@ethosagent/types').McpPolicy | undefined;
     let mcpWarnings: string[] | undefined;
     if (mcpSrc) {
@@ -2300,6 +2431,46 @@ function buildDisplayConfig(
   return avatarUrl ? { avatar_url: avatarUrl } : undefined;
 }
 
+const PERSONALITY_DECISION_SITES = [
+  'injection',
+  'approver',
+  'router',
+] as const satisfies readonly import('@ethosagent/types').PersonalityDecisionSiteId[];
+
+/**
+ * Parse the dotted `decisions.*` keys into `PersonalityConfig.decisions`
+ * (plan decision-provider-personality §4.2). Same dotted-key convention as
+ * `voice` (see `buildVoiceConfig` above):
+ *
+ *   decisions.provider: typesafe
+ *   decisions.sites.injection: shadow
+ *   decisions.sites.approver: on
+ *   decisions.sites.router: off
+ *
+ * `decisions.provider` names the operator's `decisions.provider` in
+ * `~/.ethos/config.yaml` and is kept verbatim — whether this machine configured
+ * it is a resolution-time question, not a load failure (the
+ * `voice.tts_provider` rule). A site mode outside `off | shadow | on` is
+ * dropped rather than thrown on, exactly like an unknown `voice.tier` (PD12):
+ * the site is then undeclared, i.e. `off`. Unknown `decisions.sites.<x>` keys
+ * are ignored.
+ */
+function buildDecisionsConfig(
+  cfg: Record<string, string>,
+): PersonalityConfig['decisions'] | undefined {
+  const provider = cfg['decisions.provider'];
+  const sites: NonNullable<import('@ethosagent/types').PersonalityDecisionsConfig['sites']> = {};
+  for (const site of PERSONALITY_DECISION_SITES) {
+    const mode = cfg[`decisions.sites.${site}`];
+    if (mode === 'off' || mode === 'shadow' || mode === 'on') sites[site] = mode;
+  }
+  const out: import('@ethosagent/types').PersonalityDecisionsConfig = {
+    ...(provider ? { provider } : {}),
+    ...(Object.keys(sites).length > 0 ? { sites } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 const EXECUTION_REQUIREMENTS = ['remote', 'none'] as const;
 
 /**
@@ -2588,7 +2759,7 @@ function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfi
   // silently accepts garbage reads as protection while gating nothing.
   //
   // Empty and whitespace-only entries are rejected because of how
-  // `matchDenyRule` (packages/wiring/src/danger-predicate.ts) matches: a rule is
+  // `matchDenyRule` (packages/core/src/agent-loop/deny-rules.ts) matches: a rule is
   // a substring of `${toolName} ${canonical-json-args}`, guarded by
   // `rule.length > 0`. So `""` can never match (a silent no-op rule) and `" "`
   // matches every call (the subject always contains a space). Both are config
@@ -2731,6 +2902,38 @@ function validateUnsafeCombinations(id: string, config: PersonalityConfig): void
   }
 }
 
+/**
+ * Which fingerprint components differ between two `fileFingerprint` values —
+ * the fingerprint is per-path mtimes joined with `|` in `names` order, so an
+ * index-wise diff names exactly the inputs that moved (N3's
+ * `reloaded (SOUL.md changed)` lines).
+ */
+function diffFingerprint(previous: string, next: string, names: string[]): string[] {
+  const a = previous.split('|');
+  const b = next.split('|');
+  const changed: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name && a[i] !== b[i]) changed.push(name);
+  }
+  return changed;
+}
+
+/**
+ * Re-throw `fn`'s error with the source file named, so a load failure in
+ * `lastLoadReport` reads `config.yaml: …` instead of a bare message with no
+ * home (N3). The parsers here carry no line numbers, so file-level attribution
+ * is the limit of what this can honestly claim.
+ */
+function withSourceFile<T>(file: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(msg.startsWith(`${file}:`) ? msg : `${file}: ${msg}`);
+  }
+}
+
 function yamlScalar(value: string): string {
   if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
     return JSON.stringify(value);
@@ -2762,6 +2965,7 @@ type RenderConfigInput = Omit<CreatePersonalityInput, 'id' | 'soulMd' | 'safety'
     | 'voice'
     | 'display'
     | 'execution'
+    | 'decisions'
   >;
 
 function renderConfigYaml(input: RenderConfigInput): string {
@@ -2927,6 +3131,14 @@ function renderConfigYaml(input: RenderConfigInput): string {
   }
   if (input.display?.avatar_url !== undefined) {
     lines.push(`display.avatar_url: ${yamlScalar(input.display.avatar_url)}`);
+  }
+  if (input.decisions !== undefined) {
+    const d = input.decisions;
+    if (d.provider !== undefined) lines.push(`decisions.provider: ${yamlScalar(d.provider)}`);
+    for (const site of PERSONALITY_DECISION_SITES) {
+      const mode = d.sites?.[site];
+      if (mode !== undefined) lines.push(`decisions.sites.${site}: ${mode}`);
+    }
   }
   if (input.safety !== undefined && Object.keys(input.safety).length > 0) {
     lines.push('safety:');

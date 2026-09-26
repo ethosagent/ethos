@@ -15,8 +15,8 @@
 # docker-compose.yml.
 #
 # ETHOS_IMAGE pins a specific published tag (the smoke gate sets it to the
-# just-published version). ETHOS_DATA_DIR relocates the state volume,
-# ETHOS_WORKSPACE_DIR the working-directory volume.
+# just-published version). ETHOS_DATA_DIR swaps the `ethos-data` state volume
+# for a host directory, ETHOS_WORKSPACE_DIR relocates the working directory.
 
 services:
   ethos:
@@ -48,9 +48,17 @@ services:
     # it does from a local terminal: writable and persistent across restarts.
     working_dir: /home/ethos/workspace
     volumes:
-      - ${ETHOS_DATA_DIR:-./ethos-data}:/home/ethos/.ethos
+      # State lives in the named volume `ethos-data` by default. To use a host
+      # directory instead, set ETHOS_DATA_DIR to its path (e.g. ./ethos-data).
+      # Not on Docker Desktop: its bind mounts are virtiofs/gRPC-FUSE (macOS)
+      # or 9p (Windows), where SQLite locking is unsafe — `ethos doctor` warns.
+      - ${ETHOS_DATA_DIR:-ethos-data}:/home/ethos/.ethos
       - ${ETHOS_WORKSPACE_DIR:-./ethos-workspace}:/home/ethos/workspace
     read_only: true
     tmpfs:
       - /tmp
     restart: unless-stopped
+
+volumes:
+  ethos-data:
+    name: ethos-data

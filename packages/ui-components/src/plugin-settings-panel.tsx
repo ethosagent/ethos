@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface PluginCredentialSchema {
   ref: string;
@@ -22,6 +22,8 @@ interface PluginSettingsPanelProps {
   version: string;
   description?: string;
   credentials: PluginCredentialSchema[];
+  /** Open this credential's row for editing and focus its input. */
+  focusRef?: string;
   tools: string[];
   getCredential: CredentialOps['getCredential'];
   setCredential: CredentialOps['setCredential'];
@@ -35,6 +37,7 @@ export function PluginSettingsPanel({
   version,
   description,
   credentials,
+  focusRef,
   tools,
   getCredential,
   setCredential,
@@ -89,6 +92,7 @@ export function PluginSettingsPanel({
               <CredentialRow
                 key={cred.ref}
                 credential={cred}
+                focused={cred.ref === focusRef}
                 getCredential={getCredential}
                 setCredential={setCredential}
                 credentialPreview={credentialPreview}
@@ -150,12 +154,14 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function CredentialRow({
   credential,
+  focused,
   getCredential: _getCredential,
   setCredential,
   credentialPreview,
   requestOAuth,
 }: {
   credential: PluginCredentialSchema;
+  focused: boolean;
   getCredential: CredentialOps['getCredential'];
   setCredential: CredentialOps['setCredential'];
   credentialPreview: CredentialOps['credentialPreview'];
@@ -163,6 +169,17 @@ function CredentialRow({
 }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Deep link: open this row and put the cursor in it.
+  useEffect(() => {
+    if (focused && credential.kind !== 'oauth') setEditing(true);
+  }, [focused, credential.kind]);
+  useEffect(() => {
+    if (!focused || !editing) return;
+    inputRef.current?.scrollIntoView({ block: 'nearest' });
+    inputRef.current?.focus();
+  }, [focused, editing]);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -284,6 +301,7 @@ function CredentialRow({
       {editing && (
         <div style={{ display: 'flex', gap: 6 }}>
           <input
+            ref={inputRef}
             type={credential.kind === 'secret' ? 'password' : 'text'}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

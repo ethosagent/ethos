@@ -31,12 +31,18 @@ import { recordMemoryWriteIfApplicable } from '../memory-telemetry';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
+import { toolCostFields } from '../tool-cost';
+import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
+import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
+import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
 import { emitToolRejection, rejectAbortedCall, validateRepairedArgs } from './tool-rejection';
+import { answerToolSearch, recordDirectLoads } from './tool-search';
+import type { TurnUsageAccumulator } from './turn-finalizer';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,6 +68,7 @@ export interface ToolProcessingDeps {
     turnId: string;
   }) => void;
   sessionCosts: Map<string, number>;
+  turnUsage?: TurnUsageAccumulator; // for a tool-reported cost_usd — ../tool-cost
   storage?: Storage;
   dataDir?: string;
   platform: string;
@@ -81,7 +88,7 @@ export interface ToolProcessingContext {
   workingDir: string;
   /** The turn's `fs_reach` allowlist, from the same derivation as
    *  `workingDir` — see `TurnSetup.fsReach`. */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   traceId: string | undefined;
   obsConfig: PersonalityObservabilityConfig | undefined;
   effectiveModel: string;
@@ -89,6 +96,7 @@ export interface ToolProcessingContext {
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
+  toolLoading?: import('../tool-loading').ToolLoadingState; // Part 1 — see ./tool-search
   llmMessages: Message[];
   abortSignal: AbortSignal;
   turnCount: number;
@@ -101,6 +109,7 @@ export interface ToolProcessingContext {
   scriptToolBridge?: ScriptToolBridge;
   /** This run's get/setContext store — one per `AgentLoop.run()` (agent-loop.ts). */
   contextStore: ContextStore;
+  decisions?: TurnDecisions; // decision-provider-personality §15.3 — ../turn-decisions
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
@@ -128,6 +137,7 @@ export interface ToolProcessingContext {
     agentId?: string;
     rootSessionKey?: string;
     jobId?: string;
+    reviewOfJobId?: string;
     origin?: string;
     attachments?: Attachment[];
     dryRun?: boolean;
@@ -179,6 +189,8 @@ export async function* processTools(
     // No `?? sessionKey` fallback (unlike rootSessionKey) — jobId must stay
     // undefined for a foreground turn (D22).
     ...(ctx.opts.jobId !== undefined ? { jobId: ctx.opts.jobId } : {}),
+    ...(ctx.opts.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.opts.reviewOfJobId } : {}),
+    ...toolsetNarrowingOf(ctx.allowedTools, ctx.filterOpts.excludeTools),
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,
@@ -241,7 +253,10 @@ export async function* processTools(
   const observe = ctx.watcherTap.observe;
   const getHalt = ctx.watcherTap.getHalt;
 
-  for (const tc of ctx.completedToolCalls) {
+  // Part 1 (C4) — the loop answers `tool_search` itself (D1-8); the rest is unchanged.
+  const { batchCalls, searchResults } = yield* answerToolSearch(deps, ctx);
+
+  for (const tc of batchCalls) {
     // /stop landed while an earlier call's hook was parked — see rejectAbortedCall.
     if (ctx.abortSignal.aborted) {
       prepped.push(yield* rejectAbortedCall(observe, tc));
@@ -283,9 +298,9 @@ export async function* processTools(
       }
     }
 
-    // Ch.3d — refuse downgraded tools while the post-untrusted-read
-    // counter is positive. The user's next message clears the counter
-    // (run() is invoked fresh; dgRemaining resets to 0).
+    // Ch.3d — refuse downgraded tools while `ctx.dgRemaining` > 0. It expires after `dgTurns`
+    // iterations with no further untrusted read (decrement-then-rearm at the end of processTools);
+    // a fresh run() resets it (`dgRemainingRef` in packages/core/src/agent-loop.ts).
     if (ctx.dgEnabled && ctx.dgRemaining.value > 0 && ctx.dgTools.has(tc.toolName)) {
       deps.observability?.recordSafetyBlock({
         traceId: ctx.traceId,
@@ -318,6 +333,8 @@ export async function* processTools(
         traceId: ctx.traceId,
         ...(ctx.voiceOrigin ? { voiceOrigin: ctx.voiceOrigin } : {}),
         personalityId: ctx.personality.id,
+        denyRules: ctx.personality.safety?.denyRules,
+        ...approverSinkOf(ctx.decisions, ctx.sessionId, tc.toolCallId),
       },
     );
     // ...or while THIS call's hook was parked: no tool_start for a call that cannot run.
@@ -479,8 +496,22 @@ export async function* processTools(
       });
     }
   }
-  const execResults = await toolsPromise;
+  // Item 7 / D17 — the ONE redaction site for executed results: secrets in
+  // `value` OR `error` are redacted here, before anything reads a result —
+  // the returnDirect early exit (its sibling tool_ends, persisted rows and
+  // `done.text`), memory telemetry, spans, `tool_end`, `after_tool_call` and
+  // the LLM-bound copy below. Once per result, so one `secret_in_tool_result`
+  // event per affected result.
+  const redact = (r: ToolResult): ToolResult =>
+    redactToolResultSecrets(
+      r,
+      { redaction: deps.safety.redaction, observability: deps.observability },
+      { personality: ctx.personality, traceId: ctx.traceId },
+    );
+  const execResults = (await toolsPromise).map((r) => ({ ...r, result: redact(r.result) }));
   const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
+  // Part 1, D1-1 — a directly-called allowed tool that ran is loaded for the next step.
+  await recordDirectLoads(deps, ctx, execInputs);
 
   // v2: returnDirect — skip LLM synthesis if a returnDirect tool succeeded
   const directResult = execResults.find((r) => {
@@ -555,7 +586,7 @@ export async function* processTools(
   }
 
   // Persist results + emit tool_end + build tool_result content blocks (original order)
-  const toolResultContent: MessageContent[] = [];
+  const toolResultContent: MessageContent[] = [...searchResults];
   // Ch.3d — set when any tool we ran this iteration was outputIsUntrusted.
   // Decremented at the *top* of the next iteration, so a downgraded tool in
   // the same iteration also catches against the counter we set below.
@@ -565,9 +596,10 @@ export async function* processTools(
 
   for (const p of prepped) {
     let result: ToolResult;
-    // Ch.3a — `result` carries the original raw value for tool_end events
-    // and after_tool_call hooks (the user-visible chip and audit trail
-    // see what the tool actually returned). `llmContent` is the LLM-
+    // Ch.3a — `result` carries the tool's own value (secret-redacted where
+    // `execResults` resolves, nothing else) for tool_end events and
+    // after_tool_call hooks (the user-visible chip and audit trail see what
+    // the tool actually returned). `llmContent` is the LLM-
     // facing string — possibly wrapped in `<untrusted>…</untrusted>` —
     // and is what gets persisted to history so toLLMMessages() replays
     // the exact bytes the model saw on the prior turn.
@@ -609,11 +641,12 @@ export async function* processTools(
       // fallback we construct right here (the registry lost the call). It is
       // identified by its construction site, not by inspecting its text.
       const frameworkAuthored = execResult === undefined;
-      result = execResult?.result ?? {
-        ok: false,
-        error: 'Tool result missing',
-        code: 'execution_failed',
-      };
+      // `execResult.result` was already redacted where `execResults` resolved;
+      // only this framework-authored fallback is new here, so it takes the
+      // same pass (a different result, never a second pass over one).
+      result =
+        execResult?.result ??
+        redact({ ok: false, error: 'Tool result missing', code: 'execution_failed' });
 
       // P2-counters — a successful memory write, not a rejected/invalid call.
       // Uses `p.args` (the full, untruncated effectiveArgs), never the
@@ -707,24 +740,6 @@ export async function* processTools(
 
       llmContent = result.ok ? result.value : result.error;
 
-      if (result.ok && result.value) {
-        const detections = deps.safety.redaction.detectSecrets(result.value);
-        if (detections.length > 0) {
-          deps.observability?.recordSafetyBlock?.({
-            traceId: ctx.traceId,
-            code: 'secret_in_tool_result',
-            cause: detections.map((d) => d.label).join(', '),
-          });
-          // S9 — secret-result blocking is ON by default. Unset (undefined)
-          // blocks; an explicit `false` opts out.
-          if (ctx.personality.safety?.injectionDefense?.blockSecretResults ?? true) {
-            const redactStr = deps.safety.redaction.redactString;
-            result = { ...result, value: redactStr(result.value) };
-            llmContent = result.value;
-          }
-        }
-      }
-
       // Lane 1(c) — ingestion cap, applied BEFORE the untrusted wrap
       // (post-review FIX 7: capping the wrapped content could sever the
       // closing </untrusted> tag, leaving the fence open for everything
@@ -761,6 +776,7 @@ export async function* processTools(
             ctx.traceId,
             deps.safety,
             deps.observability,
+            ctx.decisions?.sinkFor(p.toolCallId),
           );
           llmContent = verdict.wrappedContent;
           passedInjectionPipeline = true;
@@ -809,6 +825,7 @@ export async function* processTools(
       // `result` is ok:false for a hook-rejected/blocked call too, so a
       // rejection persists as the failure it is.
       isError: !result.ok,
+      ...toolCostFields(result, deps.turnUsage), // tool cost_usd — ../tool-cost
     });
 
     toolResultContent.push({

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ethosDir, readRawConfig, writeConfig } from '@ethosagent/config';
+import { ethosDir, parseConfigYaml, readRawConfig, writeConfig } from '@ethosagent/config';
 import { deriveBotKey } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,20 @@ describe('ConfigRepository', () => {
     expect(yaml).not.toContain('123:ABC');
     expect(await secrets.get(`telegram/bots/${botKey}/token`)).toBe('123:ABC');
     expect(yaml).toContain('telegram.bots.1.bind.name: eng');
+  });
+
+  it('an unrelated web save keeps goals.allowCheckCommands, and the CLI reader still reads it', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      `${['provider: anthropic', 'model: claude-opus-4-6', 'goals.allowCheckCommands: true'].join('\n')}\n`,
+    );
+
+    await repo.update({ model: 'claude-opus-4-7' });
+
+    const yaml = (await storage.read(join(DATA, 'config.yaml'))) ?? '';
+    expect(yaml).toContain('goals.allowCheckCommands: true');
+    expect(parseConfigYaml(yaml).goals).toEqual({ allowCheckCommands: true });
   });
 
   it('reads providers.N.field lines into a providers array', async () => {
@@ -385,5 +399,65 @@ describe('ConfigRepository — provider chain written by the CLI', () => {
       fooBar: 'keep-me',
       secretKey: secretRef('providers/1/secretKey'),
     });
+  });
+});
+
+// openclaw-9.5-adoption item 7 (D32) — `providers.<n>.serverCompaction` and its
+// trigger are owned by the shared chain codec, so a web save neither drops nor
+// rewrites them, and a chain written through the repository carries them.
+describe('ConfigRepository — providers.<n>.serverCompaction', () => {
+  let storage: InMemoryStorage;
+  let secrets: InMemorySecretsResolver;
+  let repo: ConfigRepository;
+  const path = join(ethosDir(), 'config.yaml');
+
+  beforeEach(async () => {
+    storage = new InMemoryStorage();
+    secrets = new InMemorySecretsResolver();
+    repo = new ConfigRepository({ dataDir: ethosDir(), storage, secrets });
+    // Written by the CLI writer.
+    await writeConfig(
+      storage,
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: '',
+        personality: 'researcher',
+        providers: [
+          {
+            provider: 'anthropic',
+            apiKey: '',
+            serverCompaction: true,
+            serverCompactionTriggerTokens: 120_000,
+          },
+          { provider: 'openrouter', apiKey: '' },
+        ],
+      },
+      secrets,
+    );
+  });
+
+  it('an unrelated web update keeps both lines', async () => {
+    await repo.update({ verbosity: 'verbose' });
+    const yaml = await storage.read(path);
+    expect(yaml).toContain('providers.0.serverCompaction: true');
+    expect(yaml).toContain('providers.0.serverCompactionTriggerTokens: 120000');
+    expect((await repo.read())?.providers?.[0]).toMatchObject({
+      serverCompaction: true,
+      serverCompactionTriggerTokens: 120_000,
+    });
+  });
+
+  it('a chain written through the repository renders them, and the CLI reader reads them', async () => {
+    const [anthropic, openrouter] = (await repo.read())?.providers ?? [];
+    if (!anthropic || !openrouter) throw new Error('chain did not read back');
+    await repo.update({ providers: [openrouter, anthropic] });
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.providers?.[1]).toMatchObject({
+      provider: 'anthropic',
+      serverCompaction: true,
+      serverCompactionTriggerTokens: 120_000,
+    });
+    expect(cfg?.providers?.[0]?.serverCompaction).toBeUndefined();
   });
 });

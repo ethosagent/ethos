@@ -1,6 +1,5 @@
 import { join } from 'node:path';
-import type { PersonalityConfig, PersonalityRegistry } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { PersonalityConfig, PersonalityRegistry, WiringContext } from '@ethosagent/types';
 import { createPersonalityRegistry, type PersonalityToolsConfig } from './index';
 
 export interface PersonalityCompose {

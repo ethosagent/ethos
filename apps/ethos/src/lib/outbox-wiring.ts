@@ -11,6 +11,10 @@ import {
 import type { PersonalityConfig } from '@ethosagent/types';
 import { type OutboxWiring, wrapUntrusted } from '@ethosagent/wiring';
 
+// `ethos status` counts pending publications through this module, the app's
+// one importer of the outbox package (Law 5).
+export { SQLiteOutboxStore };
+
 // ---------------------------------------------------------------------------
 // The app layer's half of the approval outbox (O-T4 + O-T6,
 // plan/phases/trust-before-reach.md)

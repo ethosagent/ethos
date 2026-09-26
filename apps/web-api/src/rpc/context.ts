@@ -1,7 +1,6 @@
-import type { AgentLoop, ClarifyBridge } from '@ethosagent/core';
-import type { DashboardsService } from '@ethosagent/dashboard';
 import type { ToolRegistry } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
+import type { AgentLoop, ClarifyBridge } from '@ethosagent/wiring';
 import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
 import type { DebugService } from '../features/debug/service';
@@ -11,7 +10,10 @@ import type { ApprovalsService } from '../services/approvals.service';
 import type { BackupService } from '../services/backup.service';
 import type { CallsService } from '../services/calls.service';
 import type { ConfigService } from '../services/config.service';
+import type { CredentialsService } from '../services/credentials.service';
 import type { CronService } from '../services/cron.service';
+import type { DashboardsService } from '../services/dashboards.service';
+import type { DecisionsService } from '../services/decisions.service';
 import type { DeliveriesService } from '../services/deliveries.service';
 import type { DigestService } from '../services/digest.service';
 import type { DocumentsService } from '../services/documents.service';
@@ -37,6 +39,7 @@ import type { RecipesService } from '../services/recipes.service';
 import type { SkillsService } from '../services/skills.service';
 import type { TasksService } from '../services/tasks.service';
 import type { ToolSettingsService } from '../services/tool-settings.service';
+import type { UsageService } from '../services/usage.service';
 import type { VoiceService } from '../services/voice.service';
 import type { VoiceLaneModeService } from '../services/voice-lane-mode.service';
 import type { WakeRoutesService } from '../services/wake-routes.service';
@@ -85,8 +88,15 @@ export interface RpcContext {
    *  registry it lists nothing and a test answers `unconfigured`, which is a
    *  state, not an absence. */
   modelRegistry: ModelRegistryService;
+  /** Settings → Models › decision models: the decision provider's key, its
+   *  read-only site modes and the on-demand test. Not optional: with no
+   *  `decisions.*` keys it lists the provider unconfigured, which is a state,
+   *  not an absence. */
+  decisions: DecisionsService;
   /** Global named-secrets vault manager (Phase 2). */
   namedSecrets: NamedSecretsService;
+  /** Stored logins for `browser_fill_credential` (reach-and-containment §4.2). */
+  credentials: CredentialsService;
   /** Masked inventory of the whole secrets vault, by category. */
   keys: KeysService;
   /** Generic per-personality tool settings (Phase 2). */
@@ -111,6 +121,9 @@ export interface RpcContext {
   /** Read-only delivery-obligation ledger view. Not optional: it degrades to
    *  zeros when the gateway has never run. */
   deliveries: DeliveriesService;
+  /** Spend and tokens over a window (`usage.summary`, U3). Not optional: a
+   *  session store with no aggregation answers zeros. */
+  usage: UsageService;
   /** The personality approval queue — read, and the human's decisions. Not
    *  optional: it reports an empty queue (opening nothing) where no gated
    *  personality has ever proposed a publication. Decisions only; the gateway

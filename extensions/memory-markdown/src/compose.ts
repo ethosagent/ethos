@@ -1,4 +1,4 @@
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { WiringContext } from '@ethosagent/types';
 import { MarkdownFileMemoryProvider, type MemoryCharLimits } from './index';
 
 export interface MemoryMarkdownCompose {

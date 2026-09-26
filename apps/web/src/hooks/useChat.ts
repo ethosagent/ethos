@@ -65,7 +65,9 @@ export interface UseChatResult {
   sendMessage: (
     text: string,
     attachments?: AttachmentPreview[],
-    opts?: { origin?: 'text' | 'voice' },
+    /** `replacesRefused` — a credential resend replaces the refused turn's
+     *  bubble (`ChatState.credentialRefusedMessageId`) instead of adding one. */
+    opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
   ) => Promise<void>;
   /** Steer the running turn. Returns true if accepted, false if the turn
    *  already ended or the RPC failed. */
@@ -106,6 +108,8 @@ export interface UseChatResult {
    * only a source, never the answer.
    */
   noteClarifyAnswer: (requestId: string, answer: string) => void;
+  /** Close the masked credential prompt (`state.pendingCredential`) unanswered. */
+  dismissCredential: () => void;
   /**
    * Fetch the next-older page of history and prepend it. A no-op while a page
    * is in flight or when nothing is older; a page that lands after the session
@@ -116,6 +120,19 @@ export interface UseChatResult {
   /** The session has history older than what is loaded. */
   hasOlder: boolean;
   olderStatus: OlderHistoryStatus;
+  /** A3 — dismiss the error banner (`clear-error`). */
+  clearError: () => void;
+  /**
+   * W1 — retry a failed send: the failed bubble is removed and the SAME text
+   * and attachments are submitted again as a fresh optimistic bubble.
+   */
+  retryMessage: (messageId: string) => Promise<void>;
+  /**
+   * W1 — discard a failed send's bubble. Returns the message text so the
+   * caller can restore it into the composer draft; null when the id is not a
+   * failed send this hook knows.
+   */
+  discardMessage: (messageId: string) => string | null;
 }
 
 type Reducer = (state: ChatState, op: ReducerOp) => ChatState;
@@ -279,7 +296,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         resetPaging(sessionId, page.nextCursor);
         dispatch({
           kind: 'action',
-          action: { type: 'history-loaded', messages: page.messages, cards: page.cards },
+          action: {
+            type: 'history-loaded',
+            messages: page.messages,
+            cards: page.cards,
+            decisions: page.decisions,
+          },
         });
         // Chained off the history load rather than run as its own effect for
         // one reason: `history-loaded` REPLACES `state.messages`, so a restore
@@ -326,7 +348,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         page.nextCursor !== null ? { sessionId: from.sessionId, cursor: page.nextCursor } : null;
       dispatch({
         kind: 'action',
-        action: { type: 'history-older-loaded', messages: page.messages, cards: page.cards },
+        action: {
+          type: 'history-older-loaded',
+          messages: page.messages,
+          cards: page.cards,
+          decisions: page.decisions,
+        },
       });
       setHasOlder(page.nextCursor !== null);
       setOlderStatus('idle');
@@ -361,7 +388,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         if (!contiguous) resetPaging(sessionId, page.nextCursor);
         dispatch({
           kind: 'action',
-          action: { type: 'history-newest-merged', messages: page.messages, cards: page.cards },
+          action: {
+            type: 'history-newest-merged',
+            messages: page.messages,
+            cards: page.cards,
+            decisions: page.decisions,
+          },
         });
       } catch {
         // best-effort
@@ -395,6 +427,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         // server `error` events do.
         return undefined;
       },
+      // W2 — the connection's health is state, not an error: the status slot
+      // says `reconnecting…` while a turn is live instead of silently missing
+      // its events.
+      onConnectionState: (connection) => {
+        dispatch({ kind: 'action', action: { type: 'connection-changed', connection } });
+      },
     });
     return () => sub.close();
   }, [currentSessionId, opts.sessionKey, mergeNewest]);
@@ -403,6 +441,14 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   //    fires chat.send, and lets SSE drive the assistant response.
   const onSessionCreated = opts.onSessionCreated;
   const personalityId = opts.personalityId;
+  // W1 — what a failed send would need to be retried verbatim: the trimmed
+  // text and the ORIGINAL attachment previews (the reducer's bubble carries
+  // render-only metadata, not the bytes). Keyed by the optimistic bubble's id;
+  // an entry leaves the map when the bubble is retried or discarded.
+  const failedSendsRef = useRef(
+    new Map<string, { text: string; attachments?: AttachmentPreview[] }>(),
+  );
+
   // The turn a new question would cut off. `submit-user-message` runs `stopTurn`
   // exactly when `state.currentTurn` is non-null, so this reads the same fact —
   // as an id, so the callback is only rebuilt when the turn changes, not on
@@ -412,7 +458,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     async (
       text: string,
       attachments?: AttachmentPreview[],
-      opts?: { origin?: 'text' | 'voice' },
+      opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
     ): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed && !attachments?.length) return;
@@ -430,6 +476,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           // server is told below — the transcript is shown BESIDE the marker,
           // never instead of it.
           ...(opts?.origin === 'voice' ? { origin: 'voice' as const } : {}),
+          ...(opts?.replacesRefused ? { replacesRefused: true as const } : {}),
         },
       });
       // A question asked over a live turn ends that turn — the reducer closes
@@ -474,6 +521,10 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        failedSendsRef.current.set(userMessageId, {
+          text: trimmed,
+          ...(attachments?.length ? { attachments } : {}),
+        });
         dispatch({
           kind: 'action',
           action: { type: 'send-failed', userMessageId, error: message },
@@ -482,6 +533,31 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     },
     [currentSessionId, personalityId, onSessionCreated, interruptedTurnId],
   );
+
+  // W1 — Retry re-submits the failed send's own text and attachments; the
+  // failed bubble goes first so the fresh optimistic bubble is the only copy.
+  const retryMessage = useCallback(
+    async (messageId: string): Promise<void> => {
+      const failed = failedSendsRef.current.get(messageId);
+      if (!failed) return;
+      failedSendsRef.current.delete(messageId);
+      dispatch({ kind: 'action', action: { type: 'discard-failed-message', id: messageId } });
+      await sendMessage(failed.text, failed.attachments);
+    },
+    [sendMessage],
+  );
+
+  // W1 — Discard removes the bubble and hands the text back for the composer.
+  const discardMessage = useCallback((messageId: string): string | null => {
+    const failed = failedSendsRef.current.get(messageId);
+    failedSendsRef.current.delete(messageId);
+    dispatch({ kind: 'action', action: { type: 'discard-failed-message', id: messageId } });
+    return failed?.text ?? null;
+  }, []);
+
+  const clearError = useCallback(() => {
+    dispatch({ kind: 'action', action: { type: 'clear-error' } });
+  }, []);
 
   const steerMessage = useCallback(
     async (text: string): Promise<boolean> => {
@@ -532,6 +608,9 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   const switchSession = useCallback(
     (sessionId: string) => {
       resetPaging(null, null);
+      // The failed-send registry is keyed by bubbles the reset just wiped —
+      // entries for a previous session would only accumulate.
+      failedSendsRef.current.clear();
       dispatch({ kind: 'action', action: { type: 'reset' } });
       setCurrentSessionId(sessionId);
     },
@@ -540,6 +619,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
 
   const resetSession = useCallback(() => {
     resetPaging(null, null);
+    failedSendsRef.current.clear();
     dispatch({ kind: 'action', action: { type: 'reset' } });
     setCurrentSessionId(null);
     historyLoadedFor.current = null;
@@ -597,6 +677,10 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     });
   }, []);
 
+  const dismissCredential = useCallback(() => {
+    dispatch({ kind: 'action', action: { type: 'dismiss-credential' } });
+  }, []);
+
   return {
     state,
     currentSessionId,
@@ -608,8 +692,12 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     undoTurns,
     compact,
     noteClarifyAnswer,
+    dismissCredential,
     loadOlder,
     hasOlder,
     olderStatus,
+    clearError,
+    retryMessage,
+    discardMessage,
   };
 }

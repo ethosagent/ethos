@@ -201,8 +201,9 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
   // this tool never promotes. The auto resolver (`replayAndResolve` in
   // `extensions/learning-inbox/src/auto-promotion.ts`) is the ONE non-human
   // promotion path, and it promotes only on a measured `pass`. A model
-  // approving its own proposal in chat would be a second one — and on CLI/TUI,
-  // where no approval prompt appears, it would promote with no human at all.
+  // approving its own proposal in chat would be a second one — and in `ethos
+  // chat` under `approvalMode: off`, where no prompt appears, it would promote
+  // with no human at all.
   // Rejecting stays, because rejection only narrows what the agent can do.
   const pendingApproveTool: Tool = {
     name: 'skills_pending_approve',
@@ -231,7 +232,7 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
   const pendingRejectTool: Tool = {
     name: 'skills_pending_reject',
     description:
-      'Reject one proposed skill by id, discarding it from the review queue. Call this only when the user has explicitly asked for that specific skill to be rejected. The id is shown to the user in the confirmation prompt on surfaces that have one (web, desktop, Slack); in the CLI and TUI there is no approval prompt and this runs immediately.',
+      'Reject one proposed skill by id, discarding it from the review queue. Call this only when the user has explicitly asked for that specific skill to be rejected. The user is usually asked first, with the id shown in the approval prompt; where nobody can be asked, such as `ethos chat -q`, the call is refused.',
     toolset: 'skills',
     maxResultChars: 2_000,
     requiresApproval: true,

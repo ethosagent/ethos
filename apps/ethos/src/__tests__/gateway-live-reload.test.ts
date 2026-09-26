@@ -435,7 +435,7 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
     expect(step).toContain('() => configReloadRunner.stop()');
     // …and it runs BEFORE every step that tears down a reload-managed resource.
     expect(at).toBeLessThan(src.indexOf("'web-server',"));
-    expect(at).toBeLessThan(src.indexOf("await guard('adapters'"));
+    expect(at).toBeLessThan(src.indexOf("await step('adapters'"));
     expect(at).toBeLessThan(src.indexOf("await guard('platform-webhook-server'"));
     // A bare `clearInterval` alone is what let a running reconcile outlive it.
     expect(src).not.toMatch(/^\s*clearInterval\(configReloadTimer\);\n\s*clearInterval\(a2a/m);

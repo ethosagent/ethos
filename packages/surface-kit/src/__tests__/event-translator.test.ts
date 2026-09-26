@@ -1,6 +1,11 @@
 import type { AgentEvent } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { createEventTranslator, shouldSurfaceProgress } from '../event-translator';
+import {
+  createEventTranslator,
+  credentialInstruction,
+  credentialSetCommand,
+  shouldSurfaceProgress,
+} from '../event-translator';
 
 describe('createEventTranslator', () => {
   it('accumulates text_delta in arrival order', () => {
@@ -83,6 +88,33 @@ describe('createEventTranslator', () => {
   });
 });
 
+describe('decision events (plan decision-provider-personality §15.4)', () => {
+  it('ignores them entirely: no text, no tool state, not stopped', () => {
+    const t = createEventTranslator();
+    t.push({ type: 'text_delta', text: 'answer' });
+    t.push({
+      type: 'decision',
+      id: 'd1',
+      phase: 'settled',
+      site: 'injection',
+      provider: 'typesafe',
+      model: 'jev-1',
+      mode: 'shadow',
+      outcome: 'ok',
+      verdict: 'flagged',
+      todayVerdict: 'clean',
+      disagreed: true,
+      latencyMs: 30,
+      personalityId: 'p',
+      toolCallId: 'call_1',
+    });
+    expect(t.text).toBe('answer');
+    expect(t.tools.size).toBe(0);
+    expect(t.stopped).toBe(false);
+    expect(t.error).toBeNull();
+  });
+});
+
 describe('shouldSurfaceProgress', () => {
   it('surfaces only user-audience progress', () => {
     expect(
@@ -109,5 +141,51 @@ describe('shouldSurfaceProgress', () => {
         audience: 'dashboard',
       }),
     ).toBe(false);
+  });
+});
+
+describe('credential_required translation (openclaw-9.5 item 1)', () => {
+  const event: AgentEvent = {
+    type: 'credential_required',
+    pluginId: 'weather',
+    credentialKey: 'API_KEY',
+    kind: 'api_key',
+    label: 'Weather API key',
+    description: 'From the dashboard',
+    sessionKey: 'cli:proj',
+    pendingUserMessage: 'forecast?',
+  };
+
+  it('latches the first credential_required with the pending message', () => {
+    const t = createEventTranslator();
+    expect(t.credentialRequired).toBeNull();
+    t.push(event);
+    t.push({ ...event, pluginId: 'other' } as AgentEvent);
+    expect(t.credentialRequired).toEqual({
+      pluginId: 'weather',
+      credentialKey: 'API_KEY',
+      kind: 'api_key',
+      label: 'Weather API key',
+      description: 'From the dashboard',
+      sessionKey: 'cli:proj',
+      pendingUserMessage: 'forecast?',
+    });
+    // Not terminal by itself — the `done` that follows ends the turn.
+    expect(t.stopped).toBe(false);
+    t.push({ type: 'done', text: '', turnCount: 0 });
+    expect(t.stopped).toBe(true);
+  });
+
+  it('the instruction names the real CLI subcommand and no value', () => {
+    expect(credentialSetCommand('weather', 'API_KEY')).toBe(
+      'ethos plugin credentials weather --set API_KEY',
+    );
+    const line = credentialInstruction({
+      pluginId: 'weather',
+      credentialKey: 'API_KEY',
+      label: 'Weather API key',
+    });
+    expect(line).toContain('ethos plugin credentials weather --set API_KEY');
+    expect(line).not.toContain('\n');
   });
 });

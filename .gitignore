@@ -11,6 +11,9 @@ deploy/grafana/metrics-token
 .DS_Store
 coverage
 .turbo
+# archcheck's local cache and graph; .archcheck/baseline.json, ids.json and generated/ ARE committed
+.archcheck/cache/
+.archcheck/graph.json
 packages/*/dist
 extensions/*/dist
 apps/*/dist

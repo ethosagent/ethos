@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { PERSONALITY_DEFINITION_ENTRIES } from '@ethosagent/core';
 import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
@@ -72,6 +73,44 @@ export function isWriteBlocked(abs: string): boolean {
     const np = resolve(prefix);
     return normalized === np || normalized.startsWith(`${np}/`);
   });
+}
+
+/**
+ * True when `abs` is one of a personality's own DEFINITION entries —
+ * `${ethosHome}/personalities/<id>/<entry>` for any
+ * `PERSONALITY_DEFINITION_ENTRIES` entry (`@ethosagent/core`), or anything
+ * below a directory entry (`skills/`). `ethosHome` is `~/.ethos` and, when
+ * set, `ETHOS_STATE_DIR` (the same override `ethosDir()` in
+ * `@ethosagent/config` honours), read per call.
+ *
+ * Defence in depth plus a better message, NOT the enforcer: the write is
+ * refused at the boundary by `ScopedFsImpl.checkReach`'s `writeDenyPaths`
+ * (`packages/core/src/scoped/scoped-fs.ts`), which covers only the CALLING
+ * personality's definition. This check covers every personality directory,
+ * because no turn has a reason to rewrite another personality's toolset.
+ */
+export function isPersonalityDefinitionPath(abs: string): boolean {
+  const normalized = resolve(abs);
+  const homes = [join(homedir(), '.ethos')];
+  const override = process.env.ETHOS_STATE_DIR;
+  if (override) homes.push(resolve(override));
+  for (const home of homes) {
+    const root = `${join(home, 'personalities')}/`;
+    if (!normalized.startsWith(root)) continue;
+    // [<id>, <entry>, ...rest]
+    const entry = normalized.slice(root.length).split('/')[1];
+    if (entry === undefined) continue;
+    if (PERSONALITY_DEFINITION_ENTRIES.some((e) => e.replace(/\/$/, '') === entry)) return true;
+  }
+  return false;
+}
+
+function definitionWriteRefused(abs: string): ToolResult {
+  return {
+    ok: false,
+    error: `Writing to ${abs} is refused: personality definition is operator-owned. The operator edits it (web Personalities tab or an editor); to change a skill, propose one through the learning inbox.`,
+    code: 'execution_failed',
+  };
 }
 
 /**
@@ -148,7 +187,11 @@ function isReachError(err: unknown): err is Error {
   return err instanceof Error && err.message.startsWith('PATH_NOT_REACHABLE:');
 }
 
-function reachFailure(kind: 'read' | 'write', path: string): ToolResult {
+function reachFailure(kind: 'read' | 'write', path: string, err?: Error): ToolResult {
+  // `ScopedFsImpl`'s write-deny refusal is not an out-of-reach path — name it.
+  if (err?.message.includes('personality definition is operator-owned')) {
+    return definitionWriteRefused(path);
+  }
   return {
     ok: false,
     error: `Filesystem boundary: ${kind} of "${path}" is outside this personality's fs_reach allowlist.`,
@@ -357,6 +400,7 @@ export const writeFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
+    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return {
         ok: false,
@@ -410,7 +454,7 @@ export const writeFileTool: Tool = {
         structured: evidence,
       };
     } catch (err) {
-      if (isReachError(err)) return reachFailure('write', abs);
+      if (isReachError(err)) return reachFailure('write', abs, err);
       return {
         ok: false,
         error: `Cannot write ${abs}: ${err instanceof Error ? err.message : String(err)}`,
@@ -455,6 +499,7 @@ export const patchFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
+    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
@@ -552,7 +597,7 @@ export const patchFileTool: Tool = {
         structured: { ...writeEvidence(abs, readBack), changed: patched !== content },
       };
     } catch (err) {
-      if (isReachError(err)) return reachFailure('write', abs);
+      if (isReachError(err)) return reachFailure('write', abs, err);
       throw err;
     }
   },

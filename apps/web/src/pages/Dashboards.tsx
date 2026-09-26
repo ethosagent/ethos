@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Empty, message, Skeleton, Space, Typography } from 'antd';
+import { App as AntApp, Button, Card, Empty, Skeleton, Space, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
@@ -10,6 +10,9 @@ export function Dashboards() {
   });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // N5b — themed message from the app-level <App> context (main.tsx); the
+  // static `message` API renders outside the ConfigProvider and is lint-banned.
+  const { message } = AntApp.useApp();
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => rpc.dashboards.delete({ id }),

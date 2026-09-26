@@ -13,6 +13,13 @@ pre-commit:
       run: pnpm dlx @biomejs/biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
 
+    # Architecture rules (architecture.config.ts), scoped to the changed files. `--changed` with
+    # no value asks git for staged, unstaged and untracked files; the glob only decides whether
+    # the command runs at all. `verdict` prints one blocking answer.
+    archcheck:
+      glob: '*.{ts,tsx}'
+      run: pnpm exec archcheck --changed --format verdict
+
     eof-newline:
       glob: '*'
       run: |
@@ -29,3 +36,18 @@ pre-push:
   commands:
     typecheck-fast:
       run: pnpm typecheck
+    # The whole-repository archcheck run (exit 1 new violation, 2 manifest broken, 4 run
+    # `pnpm exec archcheck baseline --prune`), then the rule that .archcheck/baseline.json only
+    # shrinks unless a commit carries `Architecture-Approved-By:`.
+    archcheck:
+      run: pnpm exec archcheck
+    # The generated rule table in ARCHITECTURE.md and .archcheck/generated/ match the manifest
+    # (exit 3 → run `pnpm arch:emit` and commit the result).
+    archcheck-emit:
+      run: pnpm exec archcheck emit --check
+    archcheck-baseline-shrinks:
+      run: node scripts/check-archcheck-baseline.mjs
+    # Law 7's tool-package half: no direct node:fs / node:child_process imports in
+    # extensions/tools-*/src (archcheck cannot ban a Node built-in import).
+    tool-imports:
+      run: bash scripts/check-tool-imports.sh

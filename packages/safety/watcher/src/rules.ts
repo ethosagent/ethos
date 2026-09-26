@@ -133,7 +133,7 @@ export function compoundingErrorRule(opts: CompoundingErrorOptions = {}): Watche
 }
 
 // ---------------------------------------------------------------------------
-// Suspicious tool sequence — read of credential-shaped path → web_post
+// Suspicious tool sequence — read of credential-shaped path → exfil-shaped call
 // ---------------------------------------------------------------------------
 
 const CREDENTIAL_PATH_PATTERNS: RegExp[] = [
@@ -145,13 +145,54 @@ const CREDENTIAL_PATH_PATTERNS: RegExp[] = [
   /authorized_keys\b/,
 ];
 
-const EXFIL_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'web_post',
-  'web_put',
-  'web_delete',
-  'email_send',
-  'browser_type', // typing into a form is exfil-shaped
+/**
+ * Registered tools that can carry agent-chosen content to a destination the
+ * agent chooses — the second half of a credential exfiltration. The line is
+ * the DESTINATION, not "uses the network": a tool that only talks to a fixed
+ * provider (`web_search`, `x_search`, `image_generate`, …) cannot deliver a
+ * secret to an attacker-run host, while a URL argument, a typed form field, a
+ * message, or a peer agent's prompt can.
+ *
+ *   - URL-taking fetchers: the query string is the carrier.
+ *   - Browser text entry: typing into a page is posting to it.
+ *   - Messaging, telephony and agent-to-agent sends: the payload IS the send.
+ *
+ * Pinned against the real tool definitions by
+ * packages/wiring/src/__tests__/watcher-exfil-tool-names.test.ts: every name
+ * here must be registered by a real factory, and every tool declaring
+ * `allowedHosts: ['*']` must be listed here or exempted there with a reason.
+ */
+export const EXFIL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  // URL-taking fetchers (tools-web, tools-browser, tools-vision, tools-meeting)
+  'web_extract',
+  'browse_url',
+  'browser_navigate',
+  'browser_computed_style',
+  'video_analyze',
+  'meet_join',
+  // Browser text entry (tools-browser)
+  'browser_type',
+  'browser_vision_type',
+  // Messaging and telephony (tools-messaging, tools-voice)
+  'send_message',
+  'call',
+  // Agent-to-agent: the prompt leaves this process (tools-a2a, tools-delegation)
+  'a2a_send',
+  'route_to_agent',
+  'broadcast_to_agents',
+  'dispatch_team',
 ]);
+
+/**
+ * MCP tools are registered as `mcp__<server>__<tool>` (tools-mcp) and cannot
+ * be enumerated here: every one is a call into a third-party process with
+ * arguments the agent chose, so all of them count.
+ */
+const MCP_TOOL_PREFIX = 'mcp__';
+
+export function isExfilShapedTool(toolName: string): boolean {
+  return EXFIL_TOOL_NAMES.has(toolName) || toolName.startsWith(MCP_TOOL_PREFIX);
+}
 
 export interface SequenceRuleOptions {
   /** Window in number of recent tool calls. Default 4. */
@@ -168,7 +209,7 @@ export function suspiciousSequenceRule(opts: SequenceRuleOptions = {}): WatcherR
         state.recentCalls.push({ name: event.toolName, argSnippet: arg });
         if (state.recentCalls.length > window) state.recentCalls.shift();
 
-        if (EXFIL_TOOL_NAMES.has(event.toolName)) {
+        if (isExfilShapedTool(event.toolName)) {
           // Look for a credential-shaped read in the recent window.
           const credRead = state.recentCalls.find(
             (c) =>

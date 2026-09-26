@@ -9,9 +9,9 @@ import type {
   PersonalityConfig,
   SteerSink,
 } from '@ethosagent/types';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PI_RUNNER_CAPABILITIES, PI_RUNNER_NAME } from '../capabilities';
-import { createAutoApproveGate, parseGateTitle } from '../gate';
+import { createAutoApproveGate, createPersonalityGate, parseGateTitle } from '../gate';
 import { PiJobRunner } from '../runner';
 import { WorkspaceOutOfReachError } from '../worktree';
 
@@ -253,10 +253,75 @@ describe('gate policy', () => {
     expect(parseGateTitle(undefined)).toBeNull();
   });
 
+  it('reads the full input the extension appends after the digest', () => {
+    expect(
+      parseGateTitle('ethos:tool_call:bash\n{"command":"ls"}\n{"command":"ls   -la"}'),
+    ).toEqual({ toolName: 'bash', digest: '{"command":"ls"}', input: { command: 'ls   -la' } });
+  });
+
   it('approves everything in Phase 2 — containment is the container, not the gate', async () => {
     const gate = createAutoApproveGate();
     await expect(
       gate({ requestId: 'r1', jobId: 'job-1', kind: 'select', toolName: 'bash', digest: '{}' }),
     ).resolves.toEqual({ allow: true });
+  });
+});
+
+// S12 (plan openclaw-2026.9.6-gaps): the personality's deny rules and toolset
+// bind a delegated Pi run the way they bind the in-process loop — checked
+// before the inner gate (auto-approve or the router) is ever asked.
+describe('createPersonalityGate', () => {
+  function gateFor(p: { toolset?: string[]; denyRules?: string[] }) {
+    const inner = vi.fn(createAutoApproveGate());
+    const gate = createPersonalityGate(inner, {
+      id: 'scribe',
+      ...(p.toolset ? { toolset: p.toolset } : {}),
+      ...(p.denyRules ? { safety: { denyRules: p.denyRules } } : {}),
+    });
+    return { gate, inner };
+  }
+  const call = (toolName: string, input: Record<string, unknown>) => ({
+    requestId: 'r1',
+    jobId: 'job-1',
+    kind: 'select',
+    toolName,
+    digest: JSON.stringify(input).slice(0, 20),
+    input,
+  });
+
+  it('refuses a tool call matching a deny rule, without asking the inner gate', async () => {
+    const { gate, inner } = gateFor({ denyRules: ['rm -rf'] });
+    await expect(gate(call('bash', { command: 'rm -rf build' }))).resolves.toEqual({
+      allow: false,
+      reason: 'denied by personality deny rule: rm -rf',
+    });
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it('matches against the full input, not the truncated digest', async () => {
+    const { gate } = gateFor({ denyRules: ['DROP TABLE'] });
+    const input = { command: `${'x'.repeat(600)} && psql -c "DROP TABLE users"` };
+    await expect(gate(call('bash', input))).resolves.toMatchObject({ allow: false });
+  });
+
+  it('matches a deny rule written against the Ethos tool name', async () => {
+    const { gate } = gateFor({ denyRules: ['terminal {"command":"git push'] });
+    await expect(gate(call('bash', { command: 'git push --force' }))).resolves.toMatchObject({
+      allow: false,
+    });
+  });
+
+  it('refuses a tool whose Ethos equivalents are all outside the toolset', async () => {
+    const { gate, inner } = gateFor({ toolset: ['read_file'] });
+    const answer = await gate(call('bash', { command: 'ls' }));
+    expect(answer.allow).toBe(false);
+    expect(answer.reason).toContain('toolset');
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it('passes a permitted call to the inner gate', async () => {
+    const { gate, inner } = gateFor({ toolset: ['read_file'], denyRules: ['rm -rf'] });
+    await expect(gate(call('read', { path: 'README.md' }))).resolves.toEqual({ allow: true });
+    expect(inner).toHaveBeenCalled();
   });
 });

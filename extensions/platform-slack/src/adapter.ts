@@ -24,7 +24,7 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
-import boltPkg from '@slack/bolt';
+import type { App, HTTPReceiver } from '@slack/bolt';
 import {
   APPROVE_ACTION_ID,
   approvalPendingBlocks,
@@ -69,12 +69,9 @@ import {
 } from './interactions/clarify';
 import { type RawSlackFile, resolveChannelMode } from './routing/triage';
 import { createUsernameResolver, type UsernameResolver } from './routing/usernames';
+import { bolt } from './sdk';
 import { BackfillStateStore } from './store/backfill-state';
 import { ThreadStateStore } from './store/thread-state';
-
-const { App, HTTPReceiver } = boltPkg;
-type App = InstanceType<typeof App>;
-type HTTPReceiver = InstanceType<typeof HTTPReceiver>;
 
 /**
  * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
@@ -327,6 +324,36 @@ function leadMessage(rendered: string, maxLength: number): string {
   return `${first.trimEnd()}${LONG_REPLY_SUFFIX}`;
 }
 
+/**
+ * Slack Web API `error` codes no retry fixes: the channel is gone or archived,
+ * the bot is not in it, or the workspace account is deactivated.
+ */
+const PERMANENT_SLACK_ERRORS = new Set([
+  'channel_not_found',
+  'not_in_channel',
+  'is_archived',
+  'account_inactive',
+]);
+
+/**
+ * Does `err` (@slack/web-api's `slack_webapi_platform_error`, read by shape:
+ * `data.error`) say this bot can never post here as things stand? Only the
+ * codes in {@link PERMANENT_SLACK_ERRORS}; `ratelimited`, `internal_error` and
+ * every transport failure are left to the gateway's backoff.
+ */
+function isPermanentSlackError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return false;
+  const data = err.data;
+  if (typeof data !== 'object' || data === null || !('error' in data)) return false;
+  return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
+}
+
+/** `{ ok: false }` for a failed Web API call, marked `permanent` when it is. */
+function slackFailure(err: unknown): DeliveryResult {
+  const error = err instanceof Error ? err.message : String(err);
+  return isPermanentSlackError(err) ? { ok: false, error, permanent: true } : { ok: false, error };
+}
+
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter {
   readonly id: string;
   readonly displayName = 'Slack';
@@ -475,6 +502,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
       const segment = (config.webhookPath ?? config.botKey).replace(/^\/+|\/+$/g, '');
       this.httpRoute = `/slack/events/${segment}`;
+      const { HTTPReceiver } = bolt();
       this.httpReceiver = new HTTPReceiver({
         signingSecret: config.signingSecret,
         // Bolt matches the request path EXACTLY against this list
@@ -498,6 +526,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
     }
 
+    const { App } = bolt();
     this.app = this.httpReceiver
       ? new App({
           token: config.botToken,
@@ -924,6 +953,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     if (message.attachments && message.attachments.length > 0) {
       return this.sendWithAttachments(chatId, message);
     }
+    // Every message id Slack returned, filled as each post lands — so a
+    // failure after the first can be told from one before it (below).
+    const posted: string[] = [];
+    let total = 0;
     try {
       // `threadId` is the canonical thread routing field. We deliberately
       // do NOT fall back to `replyToId` — that field has Discord/Telegram
@@ -935,16 +968,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
 
       const rendered = toNativeMarkdown(message.text);
       const chunks = chunkText(rendered, this.maxMessageLength);
+      total = chunks.length;
 
       // A reply long enough to become a message wall goes out as a lead
       // message plus the whole answer as `answer.md`. `undefined` means the
       // fallback declined to take the reply — fall through to the wall.
       let ids = this.isLongReply(rendered)
-        ? await this.sendLongAnswer(chatId, rendered, chunks, threadTs)
+        ? await this.sendLongAnswer(chatId, rendered, chunks, threadTs, posted)
         : undefined;
 
       if (!ids) {
-        ids = [];
+        ids = posted;
         for (const chunk of chunks) {
           const result = await this.client.chat.postMessage({
             channel: chatId,
@@ -961,15 +995,34 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
 
       this.rememberChunkIds(ids);
-      // `thread_follow` mode needs to know we've posted in this thread.
-      if (threadTs) {
-        await this.threadState?.recordPost(chatId, threadTs);
+      // Bookkeeping only: the reply is already in the channel, so nothing
+      // below may turn this delivery into a failure.
+      try {
+        // `thread_follow` mode needs to know we've posted in this thread.
+        if (threadTs) {
+          await this.threadState?.recordPost(chatId, threadTs);
+        }
+        // Clear the receipt reaction now that the reply has landed.
+        this.clearReceiptReaction(chatId, threadTs);
+      } catch {
+        // Best-effort.
       }
-      // Clear the receipt reaction now that the reply has landed.
-      this.clearReceiptReaction(chatId, threadTs);
       return { ok: true, messageId: ids[0] };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // Once any part landed, report it delivered: the gateway's delivery
+      // sweep redelivers a whole `ok: false` reply and would re-post what
+      // arrived on every retry. The lost tail is named in `error`. Pinned by
+      // `__tests__/send-delivery.test.ts`.
+      if (posted.length > 0) {
+        this.rememberChunkIds(posted);
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          ok: true,
+          messageId: posted[0],
+          error: `partial: ${posted.length} of ${total} chunks delivered; ${error}`,
+        };
+      }
+      return slackFailure(err);
     }
   }
 
@@ -1005,7 +1058,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       this.clearReceiptReaction(chatId, threadTs);
       return { ok: true, ...(firstTs ? { messageId: firstTs } : {}) };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return slackFailure(err);
     }
   }
 
@@ -1032,7 +1085,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       const ts = res.files?.[0]?.ts;
       return { ok: true, ...(ts ? { messageId: ts } : {}) };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return slackFailure(err);
     }
   }
 
@@ -1080,13 +1133,16 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
    * Post the lead message and attach the full answer. Returns the posted
    * message ids, or `undefined` when Slack accepted the lead but returned no
    * `ts` — without it the upload can't be threaded under the lead, so the
-   * caller posts the ordinary wall instead.
+   * caller posts the ordinary wall instead. The lead's id is pushed onto
+   * `posted` the moment it lands, so a throw after it (in the reflow) is seen
+   * by `send()` as a partial delivery, not a failure.
    */
   private async sendLongAnswer(
     chatId: string,
     rendered: string,
     chunks: string[],
     threadTs: string | undefined,
+    posted: string[],
   ): Promise<string[] | undefined> {
     const lead = await this.client.chat.postMessage({
       channel: chatId,
@@ -1099,6 +1155,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     });
     const leadTs = lead.ts as string | undefined;
     if (!leadTs) return undefined;
+    posted.push(leadTs);
 
     if (await this.uploadAnswerFile(chatId, rendered, threadTs ?? leadTs)) return [leadTs];
 

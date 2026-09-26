@@ -32,7 +32,8 @@ const NO_KEY_MESSAGE =
  * Default Grok model. Confirmed against xAI's own docs (docs.x.ai/developers/tools/x-search
  * and docs.x.ai/docs/guides/live-search, re-fetched during implementation): "grok-4.6" is
  * used throughout xAI's `x_search`/web-search examples and described as the reasoning
- * model with tool access. Overridable per-process via the `XAI_X_SEARCH_MODEL` env var, or
+ * model with tool access. Overridable per-process via the `XAI_X_SEARCH_MODEL` env var (read by
+ * wiring and passed as `createXSearchTool({ env })`), or
  * per-instance via `createXSearchTool({ model })` — never hardcoded with no escape hatch,
  * since xAI's recommended model will move on before this file does.
  */
@@ -159,6 +160,12 @@ export interface XSearchSetting {
 export interface CreateXSearchToolOptions {
   /** Overrides DEFAULT_MODEL / XAI_X_SEARCH_MODEL. See DEFAULT_MODEL's comment. */
   model?: string;
+  /**
+   * Where `XAI_X_SEARCH_MODEL` is read from. The composition root
+   * (`packages/wiring/src/compose-tools.ts`) passes the process environment; tool code
+   * never reads it itself. Absent → no env override.
+   */
+  env?: Readonly<Record<string, string | undefined>>;
   /** Personality-owned binding (source of truth), resolved by personalityId. */
   resolvePersonalitySetting?: (personalityId: string) => XSearchSetting | undefined;
   /** Global FALLBACK map keyed by personalityId or `_default`. */
@@ -166,7 +173,7 @@ export interface CreateXSearchToolOptions {
 }
 
 export function createXSearchTool(opts: CreateXSearchToolOptions = {}): Tool {
-  const model = opts.model ?? process.env.XAI_X_SEARCH_MODEL ?? DEFAULT_MODEL;
+  const model = opts.model ?? opts.env?.XAI_X_SEARCH_MODEL ?? DEFAULT_MODEL;
   const { resolvePersonalitySetting, toolSettings } = opts;
 
   // Same resolution order as web_search: personality tools.yaml → global

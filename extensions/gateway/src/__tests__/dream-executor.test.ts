@@ -1,7 +1,33 @@
-import type { AgentLoop } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultPersonalityRegistry,
+  DefaultToolRegistry,
+  InMemorySessionStore,
+} from '@ethosagent/core';
+import {
+  type MemoryApprovalMode,
+  PendingMemoryStore,
+  TombstoneStore,
+  withPendingGate,
+} from '@ethosagent/memory-approval';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { DreamingConfig, PersonalityConfig } from '@ethosagent/types';
+import { createMemoryWriteTool } from '@ethosagent/tools-memory';
+import type {
+  CompletionChunk,
+  DreamingConfig,
+  GlobalMemoryEntry,
+  GlobalMemoryStore,
+  LLMProvider,
+  MemoryContext,
+  MemoryEntry,
+  MemoryProvider,
+  MemorySnapshot,
+  MemoryUpdate,
+  Message,
+  PersonalityConfig,
+} from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { DreamExecutor } from '../dream-executor';
 
 // ---------------------------------------------------------------------------
@@ -470,5 +496,136 @@ describe('DreamExecutor', () => {
       executor.start();
       expect(internals(executor).timer).toBe(firstTimer);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U6 (plan openclaw-2026.9.6-gaps, D6) — dream output is reviewed, not written.
+//
+// A dream writes memory the only way any turn does: the model calls
+// `memory_write`, which syncs through the agent-facing memory handle. Under
+// `memoryApproval.mode` that handle is `PendingMemoryGate`
+// (extensions/memory-approval/src/gate.ts), which relabels a `dream:` session
+// key as source `dream` and parks the write in `PendingMemoryStore` instead of
+// calling the backend's `sync()`. These cases drive a REAL AgentLoop through
+// `DreamExecutor` so the sessionKey that reaches the gate is the one the
+// executor mints — a scripted loop could not show that.
+// ---------------------------------------------------------------------------
+
+class RecordingMemory implements MemoryProvider, GlobalMemoryStore {
+  readonly synced: MemoryUpdate[][] = [];
+  async prefetch(): Promise<MemorySnapshot | null> {
+    return null;
+  }
+  async read(): Promise<MemoryEntry | null> {
+    return null;
+  }
+  async search(): Promise<MemoryEntry[]> {
+    return [];
+  }
+  async list(): Promise<[]> {
+    return [];
+  }
+  async sync(updates: MemoryUpdate[], _ctx: MemoryContext): Promise<void> {
+    this.synced.push(updates);
+  }
+  async readGlobalEntry(): Promise<GlobalMemoryEntry> {
+    return { content: '', path: null, modifiedAt: null };
+  }
+  async writeGlobalEntry(_store: 'memory' | 'user', content: string): Promise<GlobalMemoryEntry> {
+    return { content, path: null, modifiedAt: null };
+  }
+}
+
+/** First call asks for one `memory_write`; the call after its result answers. */
+function dreamingLLM(): LLMProvider {
+  return {
+    name: 'scripted',
+    model: 'scripted-model',
+    maxContextTokens: 200_000,
+    supportsCaching: false,
+    supportsThinking: false,
+    async *complete(messages: Message[]): AsyncIterable<CompletionChunk> {
+      const last = messages.at(-1);
+      const afterTool =
+        last !== undefined &&
+        typeof last.content !== 'string' &&
+        JSON.stringify(last.content).includes('tool_result');
+      if (!afterTool) {
+        const args = JSON.stringify({ store: 'memory', action: 'add', content: 'dreamt fact' });
+        yield { type: 'tool_use_start', toolCallId: 'call-1', toolName: 'memory_write' };
+        yield { type: 'tool_use_delta', toolCallId: 'call-1', partialJson: args };
+        yield { type: 'tool_use_end', toolCallId: 'call-1', inputJson: args };
+        yield { type: 'done', finishReason: 'tool_use' };
+        return;
+      }
+      yield { type: 'text_delta', text: 'consolidated' };
+      yield { type: 'done', finishReason: 'end_turn' };
+    },
+    async countTokens() {
+      return 1;
+    },
+  };
+}
+
+describe('DreamExecutor under memoryApproval (U6)', () => {
+  const personalityId = 'test-personality';
+
+  async function dreamOnce(mode: MemoryApprovalMode) {
+    const storage = new InMemoryStorage();
+    await seedStorage(storage, personalityId);
+    const backend = new RecordingMemory();
+    const pending = new PendingMemoryStore({
+      storage,
+      dataDir: '/data',
+      tombstones: new TombstoneStore({ storage, dataDir: '/data' }),
+      apply: async () => {},
+    });
+    // The same composition `composeGatedMemory` (packages/wiring) builds: the
+    // gate over the backend, with the agent-facing `tool` source baked in.
+    const memory = withPendingGate(backend, { store: pending, mode, source: 'tool' });
+    const tools = new DefaultToolRegistry();
+    tools.register(createMemoryWriteTool(memory));
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({ id: personalityId, name: 'Test', toolset: ['memory_write'] });
+    const loop = new AgentLoop({
+      llm: dreamingLLM(),
+      tools,
+      session: new InMemorySessionStore(),
+      personalities,
+      memory,
+      safety: createTestSafety(),
+      compaction: { autoCompact: false },
+    });
+    const cfg = makeConfig();
+    const executor = new DreamExecutor(
+      storage,
+      () => loop,
+      () => cfg,
+    );
+    executor.recordUserTurn(personalityId);
+    // Cross the idle threshold without fake timers (the real loop uses them).
+    const lastTurns = (executor as unknown as { lastUserTurnAt: Map<string, number> })
+      .lastUserTurnAt;
+    lastTurns.set(personalityId, Date.now() - 61 * 60_000);
+    await internals(executor).tick();
+    executor.stop();
+    return { backend, pending };
+  }
+
+  it("with approval on, a dream parks its write as a pending 'dream' entry and sync() is not called", async () => {
+    const { backend, pending } = await dreamOnce('automated');
+    expect(backend.synced).toEqual([]);
+    const entries = await pending.list(`personality:${personalityId}`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.source).toBe('dream');
+    expect(entries[0]?.sessionKey).toMatch(new RegExp(`^dream:${personalityId}:`));
+    expect(entries[0]?.update).toEqual({ action: 'add', key: 'MEMORY.md', content: 'dreamt fact' });
+  });
+
+  it('with approval off, the dream writes through to the backend unchanged', async () => {
+    const { backend, pending } = await dreamOnce('off');
+    expect(backend.synced).toEqual([[{ action: 'add', key: 'MEMORY.md', content: 'dreamt fact' }]]);
+    expect(await pending.list(`personality:${personalityId}`)).toEqual([]);
   });
 });

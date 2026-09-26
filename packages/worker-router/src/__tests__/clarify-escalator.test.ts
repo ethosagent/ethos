@@ -3,8 +3,12 @@
 // `InteractionRequest` into a `ClarifyRequestInput`, and a `ClarifyResponse`
 // back into an `InteractionAnswer` carrying D17's scope.
 
-import type { ClarifyRequestInput } from '@ethosagent/core';
-import type { BackgroundJob, ClarifyResponse, InteractionRequest } from '@ethosagent/types';
+import type {
+  BackgroundJob,
+  ClarifyRequestInput,
+  ClarifyResponse,
+  InteractionRequest,
+} from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type ClarifyEscalatorDeps,

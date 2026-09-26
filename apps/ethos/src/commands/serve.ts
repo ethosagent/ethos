@@ -20,7 +20,9 @@ import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   configParseNotices,
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   readConfig,
   readRawConfig,
   resolveLearningReplay,
@@ -87,17 +89,20 @@ import {
   createLazyProvider,
   createMemoryBundle,
   createOutboundPolicyGate,
+  createProjectContextInjector,
   createSessionStore,
+  declaredWorkdirProjectContext,
   IdentityMap,
   resolveMcpExportScope,
   resolvePersonalityModelFit,
+  type SmartApproverDecisionSite,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,
   wrapUntrusted,
 } from '@ethosagent/wiring';
-import { appendErrorLog } from '../error-log';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
@@ -108,6 +113,7 @@ import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { ETHOS_VERSION } from '../version-info';
 import {
@@ -154,9 +160,11 @@ import {
 const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
-// Resilience guard is installed once per process — runServe can be reached
-// twice (onboarding mode then real mode), so guard against double-registration.
-let resilienceGuardInstalled = false;
+/** Where a timed-out or failed `boundedShutdownStep` on `cleanup` is reported. */
+const shutdownStepReporting = {
+  sink: () => getEthosObservability(),
+  warn: (message: string) => console.warn(message),
+};
 
 /** The voice slice `createAgentLoop`/`createTeamAgentLoop` hands back, as
  *  `runServe` holds it and as `buildServeWebApi` below receives it. */
@@ -175,7 +183,11 @@ type ServeVoiceConfig = {
 };
 
 export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
-  installServeResilienceGuard();
+  // A stray rejected SSE write (e.g. to a stream the browser aborted on
+  // tab-switch) must not take down the server and every other live stream:
+  // both handlers log and keep running here — no `shutdown` is passed.
+  // Idempotent, so reaching runServe twice (onboarding, then real) is safe.
+  installProcessGuards({ command: 'serve', observability: getEthosObservability });
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, config);
   const webHost = resolveWebHost(args, process.env, config);
@@ -278,7 +290,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
               web: created,
               tools: lazyToolRegistry,
               dangerPredicate: (loop) =>
-                buildServeDangerPredicate(loop, personalities, agentConfig),
+                buildServeDangerPredicate(
+                  loop,
+                  personalities,
+                  agentConfig,
+                  agentResult.executionPostureFor,
+                  agentResult.approverDecision,
+                ),
             });
             disposeRealLoop = agentResult.dispose;
             realLoop = agentResult.loop;
@@ -331,6 +349,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // Config-independent, so available before boot — same trail as normal mode.
       approvalObservability: {
         recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+        recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
       },
       goals: lateGoals.goals,
       personalities,
@@ -396,7 +415,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         // Chat before the listener: `closeChat` writes the "not sent" notice to
         // each tab's SSE stream, which the listener close then drops.
         await created.closeChat();
-        await webShutdown();
+        await boundedShutdownStep('web listener', webShutdown, shutdownStepReporting);
         // F06 — the web API first (its stand-in forwards to the real one), then
         // the real loop if onboarding booted it. A boot still in flight is
         // awaited first, so its loop cannot come up behind the exit undisposed.
@@ -470,6 +489,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // `toolNamesForPersonality` (a personality's full reach). Every branch below
   // assigns a `CreateAgentLoopResult.toolRegistry`, which already is one.
   let toolRegistry: DefaultToolRegistry | undefined;
+  // The smart approver's decision site from the build `loop` came from
+  // (plan decision-provider-jev §8.2), on every branch below.
+  let approverDecision: SmartApproverDecisionSite | undefined;
+  // Where each personality's shell tools run in the build `loop` came from —
+  // the web approval predicate flags them under a host-local posture (S6 / D1(a)).
+  let executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -630,12 +655,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const outbox = outboxSide.wiring;
   cronScheduler = new CronScheduler({
     storage: getStorage(),
-    // Without this, the scheduler falls back to its own default
-    // (`~/.ethos/cron`, unconditionally) and a server run against an
-    // isolated `ETHOS_STATE_DIR` reads and writes the operator's real cron
-    // jobs. `dir` above is `ethosDir()`, which already honors the override.
-    cronDir: join(dir, 'cron'),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -659,7 +684,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         // observability unavailable — audit is fail-open
       }
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!loop) {
         throw new EthosError({
           code: 'INTERNAL',
@@ -691,6 +716,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         personalityId: pid,
         webOrigin,
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
       });
       if (chatService) {
         chatService.broadcastAll({
@@ -742,6 +769,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -776,12 +805,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       goals: teamGoals,
       memoryBundle: teamMemoryBundle,
       dispose: teamDispose,
+      executionPostureFor: teamExecutionPostureFor,
+      approverDecision: teamApproverDecision,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
       ...(roleFlag ? { role: roleFlag } : {}),
     });
     loop = teamLoop;
     toolRegistry = teamToolRegistry;
+    approverDecision = teamApproverDecision;
+    executionPostureFor = teamExecutionPostureFor;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;
@@ -807,6 +840,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -1176,7 +1211,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     routeModules: a2aRouteModules,
     peering: a2aPeering,
     setA2aEnabled,
-  } = buildServeA2aSurface({ config, core: a2a, toolRegistry });
+  } = buildServeA2aSurface({ config, core: a2a, toolRegistry, trustProxy });
 
   // P2-counters (D2/D16) — `ethos_gateway_adapter_up{adapter}` reads the same
   // heartbeat file `/healthz` does, through the same 30s staleness gate
@@ -1247,6 +1282,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     config,
     dir,
     loop,
+    ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
     session,
     contextLog,
     personalities,
@@ -1408,8 +1445,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // claim, including via a later retry tick — see
       // `CallCaptureOwnershipManager`) and releases the lock so a restarted
       // process, or the other host command, can take it.
-      await callCaptureOwnershipManager?.stop();
-      await mesh.unregister(agentId);
+      await boundedShutdownStep(
+        'call-capture ownership',
+        () => callCaptureOwnershipManager?.stop(),
+        shutdownStepReporting,
+      );
+      await boundedShutdownStep(
+        'mesh unregister',
+        () => mesh.unregister(agentId),
+        shutdownStepReporting,
+      );
       idleWatcher?.stop();
       pauseLifecycle.stop?.();
       cronTriggers.local?.stop();
@@ -1418,10 +1463,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // "not sent" notice to each tab's SSE stream, which the listener close
       // then drops (serve-shutdown-notice.test.ts).
       await created.closeChat();
-      if (webShutdown) await webShutdown();
+      if (webShutdown) {
+        await boundedShutdownStep('web listener', webShutdown, shutdownStepReporting);
+      }
       // Outbox reviews run on the loop, so they finish before it is disposed.
       // Fail-open: a review that cannot finish costs a receipt, never shutdown.
-      await outboxSide.drain().catch(() => {});
+      await boundedShutdownStep('outbox drain', () => outboxSide.drain(), shutdownStepReporting);
       // F06 — the web API first (it borrowed the loop), then the loop's own
       // runtime: background executor, reconciler, stores, MCP, plugins.
       await disposeBeforeExit(
@@ -1512,44 +1559,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   }
 
   await new Promise(() => {});
-}
-
-/**
- * Install process-level resilience handlers for the long-running web/ACP
- * server. A stray rejected SSE write (e.g. writing to a stream the browser
- * aborted on tab-switch) must NOT take down the server and drop every other
- * live stream. We log-and-continue here rather than exit — this is scoped to
- * the serve path only; one-shot CLI commands still fail loudly via the
- * top-level handler. Idempotent via `resilienceGuardInstalled`.
- */
-function installServeResilienceGuard(): void {
-  if (resilienceGuardInstalled) return;
-  resilienceGuardInstalled = true;
-  process.on('unhandledRejection', (reason) => {
-    const cause = reason instanceof Error ? reason.message : String(reason);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Unhandled promise rejection: ${cause}`,
-        action: 'A background promise rejected and was not awaited. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] unhandled rejection (kept alive): ${cause}`);
-  });
-  process.on('uncaughtException', (err) => {
-    const cause = err instanceof Error ? err.message : String(err);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Uncaught exception: ${cause}`,
-        action:
-          'An uncaught exception was trapped by the serve resilience guard. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] uncaught exception (kept alive): ${cause}`);
-  });
 }
 
 /**
@@ -1655,14 +1664,18 @@ export function serveLoopOptions(opts: {
  * and the loop onboarding binds after boot. Same `checkCommand` rules the CLI
  * guard uses, surfaced through the modal instead of a hard block; threaded
  * with the turn's personality (learned from the loop's `session_start`) so
- * `denyRules` and `approvalMode` are enforced, plus a lazy provider handle for
+ * `approvalMode` is enforced, plus a lazy provider handle for
  * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
- * actually reaches the reviewer.
+ * actually reaches the reviewer. `decision` is the smart reviewer's decision
+ * site from the same build as `loop` (`CreateAgentLoopResult.approverDecision`,
+ * plan decision-provider-jev §8.2); absent, the reviewer is the LLM path only.
  */
 export function buildServeDangerPredicate(
   loop: AgentLoop,
   personalities: ServePersonalityRegistry,
   config: EthosConfig,
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'],
+  decision?: SmartApproverDecisionSite,
 ): ReturnType<typeof createApprovalDangerPredicate> {
   return createApprovalDangerPredicate({
     hooks: [loop.hooks],
@@ -1670,6 +1683,8 @@ export function buildServeDangerPredicate(
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+    ...(decision ? { decision } : {}),
+    executionPostureFor,
   });
 }
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
@@ -1914,6 +1929,9 @@ export function buildServeA2aSurface(opts: {
   /** Absent on deployments with no tool registry — `a2a_send` is then not
    *  registered, exactly as before. */
   toolRegistry: ToolRegistry | undefined;
+  /** `ETHOS_TRUST_PROXY` (WEB-006): whether the `/a2a` pre-auth limiter may
+   *  key on `X-Forwarded-For` (`remoteKeyOf`, packages/a2a/src/rpc.ts). */
+  trustProxy: boolean;
 }): {
   routeModules: RouteModule[];
   peering: ReturnType<typeof buildA2aPeeringService>;
@@ -1972,6 +1990,7 @@ export function buildServeA2aSurface(opts: {
     storage: a2aStorage,
     baseDir: a2aBaseDir,
     identity: a2aIdentity,
+    allowPrivateUrls: config.a2a?.peering?.allowPrivateUrls === true,
   });
   const a2aRouteModules: RouteModule[] = [
     {
@@ -2017,6 +2036,7 @@ export function buildServeA2aSurface(opts: {
         taskStore: a2aTaskStore,
         limiter: a2aLimiter,
         preAuthLimiter: a2aPreAuthLimiter,
+        trustProxy: opts.trustProxy,
         delegationGuard: a2aDelegationGuard,
         auditSink: a2aAuditSink,
       }),
@@ -2055,7 +2075,11 @@ export function buildServeA2aSurface(opts: {
     try {
       const raw = await readRawConfig(a2aStorage);
       if (raw)
-        await writeConfig(a2aStorage, { ...raw, a2a: { enabled } }, await getSecretsResolver());
+        await writeConfig(
+          a2aStorage,
+          { ...raw, a2a: { ...raw.a2a, enabled } },
+          await getSecretsResolver(),
+        );
     } catch (err) {
       console.warn(
         `  a2a:          failed to persist a2a.enabled=${enabled} to config.yaml (toggle still applied for this process):`,
@@ -2086,6 +2110,10 @@ export interface BuildServeWebApiOptions {
   /** `~/.ethos` (or the `--data-dir` override). */
   dir: string;
   loop: AgentLoop;
+  /** `CreateAgentLoopResult.approverDecision` of the build `loop` came from. */
+  approverDecision?: SmartApproverDecisionSite;
+  /** `CreateAgentLoopResult.executionPostureFor` of the build `loop` came from. */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   session: ReturnType<typeof createSessionStore>;
   contextLog: SQLiteContextLog;
   personalities: ServePersonalityRegistry;
@@ -2282,6 +2310,14 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
                 : {}),
               storage: getStorage(),
               dataDir: dir,
+              // Same file-context injector class the loop uses, in the
+              // personality's declared workdir (project-context-floor.ts).
+              projectContext: await declaredWorkdirProjectContext({
+                injectors: [createProjectContextInjector({ storage: getStorage(), personalities })],
+                personality: described.config,
+                dataDir: dir,
+                cwd: process.cwd(),
+              }),
             });
           },
           // tools-as-code-api Lane G — the script-callable surface for the
@@ -2340,11 +2376,18 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     },
     // The approval modal's danger check — built by the same function the
     // onboarding boot uses (`buildServeDangerPredicate`).
-    dangerPredicate: buildServeDangerPredicate(loop, personalities, config),
+    dangerPredicate: buildServeDangerPredicate(
+      loop,
+      personalities,
+      config,
+      opts.executionPostureFor,
+      opts.approverDecision,
+    ),
     // Every modal decision (and every allowlist auto-allow) lands in the
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {
       recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+      recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
     },
     // On-demand replay for the `learning.replay` RPC (L-D9): two real dry-run
     // loops built from this config, so the baseline arm measures the agent this

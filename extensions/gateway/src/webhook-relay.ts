@@ -1,6 +1,6 @@
 import type { DeliveryLedger } from '@ethosagent/delivery-ledger';
 import type { PlatformAdapter } from '@ethosagent/types';
-import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 
 // ---------------------------------------------------------------------------
 // Webhook delivery fan-out (plan/phases/webhook-subscriptions.md, Phase 2)
@@ -103,21 +103,26 @@ async function relayOne(
     content,
   });
 
-  const result = await adapter.send(target.chatId, {
-    text: content,
-    ...(target.threadId ? { threadId: target.threadId } : {}),
-  });
+  try {
+    const result = await adapter.send(target.chatId, {
+      text: content,
+      ...(target.threadId ? { threadId: target.threadId } : {}),
+    });
 
-  // "Resolved without throwing" is NOT confirmation: every shipped adapter
-  // catches platform failures and returns `{ ok: false }`, so confirming on a
-  // resolved promise would mark exactly the failures the ledger exists to catch
-  // as delivered. Only `ok === true` confirms; anything else leaves the row
-  // `pending` for the boot sweep.
-  if (!result.ok) {
-    return { target, ok: false, error: result.error ?? 'adapter reported failure' };
+    // "Resolved without throwing" is NOT confirmation: every shipped adapter
+    // catches platform failures and returns `{ ok: false }`, so confirming on a
+    // resolved promise would mark exactly the failures the ledger exists to catch
+    // as delivered. Only `ok === true` confirms; anything else leaves the row
+    // `pending` for the sweep.
+    if (!result.ok) {
+      return { target, ok: false, error: result.error ?? 'adapter reported failure' };
+    }
+    await confirmDelivery(binding, obligationId);
+    return { target, ok: true };
+  } finally {
+    // The gateway's sweep skips this row while the send runs (`isDeliveryInFlight`).
+    endDelivery(binding, obligationId);
   }
-  await confirmDelivery(binding, obligationId);
-  return { target, ok: true };
 }
 
 /**

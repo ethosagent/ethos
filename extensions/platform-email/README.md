@@ -31,6 +31,7 @@ Constructor config:
 | `user`, `password` | yes | Used for both IMAP and SMTP auth. App-passwords required for Gmail / Apple. |
 | `smtpSecure` | no | Defaults to `true` for port 465, otherwise `false` (STARTTLS path). |
 | `pollIntervalMs` | no | Default `60_000`. |
+| `trustedAuthservId` | no | The authserv-id whose `Authentication-Results` verdict is trusted (config key `emailTrustedAuthservId`). Unset: every sender is unverified. |
 
 ## Gotchas
 
@@ -40,7 +41,7 @@ Constructor config:
 - `canSendTyping`, `canEditMessage`, `canReact`, `canSendFiles` are all `false` — the Gateway typing renew is a no-op and there's no edit-in-place.
 - `messageId` is **not** populated on `InboundMessage`, so the Gateway dedup window cannot drop duplicate IMAP delivery — relying on `\Seen` flag arithmetic to dedup. If the `messageFlagsAdd` call fails, the message will be re-emitted on the next poll.
 - A new IMAP connection is opened on every poll and on every health check; there is no connection pool.
-- The `from` half of `chatId` comes from `parsed.from` — spoofed senders share session state with whoever they impersonate.
+- **`From:` is an identity only when authenticated.** `resolveEmailSender` trusts it only on a `dmarc=pass` (or aligned `dkim=pass`) in the topmost `Authentication-Results` header from `trustedAuthservId`. Any other sender, including every sender when `trustedAuthservId` is unset, gets `userId` `email-unverified:<sha256(lowercased address)>` and a `chatId` built from that id, so a spoof never shares the impersonated user's identity or session. Its text starts with an `[unverified sender]` notice. Pinned by `src/__tests__/sender-auth.test.ts`.
 
 ## Files
 

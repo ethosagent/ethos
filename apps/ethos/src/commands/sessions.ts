@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
 import {
@@ -277,6 +277,40 @@ export async function runSessionShow(argv: string[]): Promise<void> {
 // CLI command — ethos sessions <sub> [args]
 // ---------------------------------------------------------------------------
 
+/**
+ * C4 — the chat REPL's session key for this working directory
+ * (`cli:<cwd-basename>`, the convention `runChat` uses; a `/new` session
+ * appends `:<timestamp>` and is a different key). `sessions list` marks the
+ * row this key names with `*`.
+ */
+export function currentCliSessionKey(cwd = process.cwd()): string {
+  return `cli:${basename(cwd)}`;
+}
+
+/** The `sessions list` table, with a `*` on the current CLI session's row.
+ *  Pure — exported for `__tests__/sessions-list-marker.test.ts`. */
+export function formatSessionListLines(
+  items: readonly SessionListItem[],
+  currentKey: string,
+): string[] {
+  const idW = 38; // full 36-char UUID + at least 2 spaces of padding — never truncate
+  const titleW = 24;
+  const keyW = 16;
+  const header = `  ${'ID'.padEnd(idW) + 'TITLE'.padEnd(titleW) + 'KEY'.padEnd(keyW)}LAST ACTIVE`;
+  const lines = [header, '-'.repeat(header.length)];
+  for (const item of items) {
+    const marker = item.key === currentKey ? '* ' : '  ';
+    lines.push(
+      marker +
+        item.id.padEnd(idW) +
+        (item.title ?? '').slice(0, titleW - 1).padEnd(titleW) +
+        item.key.slice(0, keyW - 1).padEnd(keyW) +
+        timeAgo(item.updatedAt),
+    );
+  }
+  return lines;
+}
+
 function timeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime();
   const diffMins = Math.floor(diffMs / 60_000);
@@ -307,19 +341,9 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
           console.log('No sessions found.');
           break;
         }
-        const idW = 38; // full 36-char UUID + at least 2 spaces of padding — never truncate
-        const titleW = 24;
-        const keyW = 16;
-        const header = `${'ID'.padEnd(idW) + 'TITLE'.padEnd(titleW) + 'KEY'.padEnd(keyW)}LAST ACTIVE`;
-        console.log(`\n${header}`);
-        console.log('-'.repeat(header.length));
-        for (const item of items) {
-          console.log(
-            item.id.padEnd(idW) +
-              (item.title ?? '').slice(0, titleW - 1).padEnd(titleW) +
-              item.key.slice(0, keyW - 1).padEnd(keyW) +
-              timeAgo(item.updatedAt),
-          );
+        console.log('');
+        for (const line of formatSessionListLines(items, currentCliSessionKey())) {
+          console.log(line);
         }
         console.log();
         break;

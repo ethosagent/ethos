@@ -22,6 +22,7 @@ import {
   EmptySubstitutionError,
   ForbiddenMountError,
   InvalidImageRefError,
+  MissingDockerImageError,
   resolveNetworkMode,
   scratchTmpfsFor,
   withByteCeiling,
@@ -382,6 +383,11 @@ describe('mountsFor', () => {
       const readResolved = reach?.read?.length ? reach.read.map(sub) : READ_DEFAULT;
       const writeResolved = reach?.write?.length ? reach.write.map(sub) : WRITE_DEFAULT;
       const expected = new Set([...readResolved, ...writeResolved]);
+      // Containment 3a: a rw mount covering the personality's own dir adds
+      // the rw asset-folder child beneath the now-ro `ownDir`.
+      if (writeResolved.some((w) => OWN === w || OWN.startsWith(`${w}/`))) {
+        expected.add(`${OWN}/files`);
+      }
       const got = new Set(mounts.map((m) => m.hostPath));
       expect(got).toEqual(expected);
       // Ephemeral scratch is NOT a host mount and must never appear here.
@@ -694,6 +700,47 @@ describe('DockerExecutionBackend', () => {
         }
       })(),
     ).rejects.toBeInstanceOf(DockerUnavailableError);
+  });
+
+  // The goal-run regression: with no `execution.docker.image` every exec
+  // surfaced `Image ref must be digest-pinned (@sha256:): ` — an EMPTY ref that
+  // read as a malformed value. The refusal must name the key to set, and must
+  // win over the daemon probe (a missing key is fixable config, not an outage).
+  it('refuses a one-shot exec with an actionable error when no image is configured', async () => {
+    let probed = false;
+    const be = new DockerExecutionBackend(
+      { config: {}, secrets: secretsStub, logger: loggerStub },
+      async () => {
+        probed = true;
+        return false;
+      },
+    );
+    const run = (async () => {
+      for await (const _ of be.exec('echo hi', {})) {
+        // drain
+      }
+    })();
+    await expect(run).rejects.toBeInstanceOf(MissingDockerImageError);
+    await expect(run).rejects.toThrow(/execution\.docker\.image: <image>@sha256:<digest>/);
+    await expect(run).rejects.toThrow(/node:24-bookworm/);
+    await expect(run).rejects.not.toThrow(/Image ref must be digest-pinned/);
+    expect(probed).toBe(false);
+  });
+
+  it('refuses a persistent-session exec the same way', async () => {
+    const be = new DockerExecutionBackend(
+      { config: {}, secrets: secretsStub, logger: loggerStub },
+      async () => true,
+    );
+    const session = be.spawnSession('p');
+    await expect(
+      (async () => {
+        for await (const _ of session.exec('echo hi', {})) {
+          // drain
+        }
+      })(),
+    ).rejects.toBeInstanceOf(MissingDockerImageError);
+    await session.dispose();
   });
 });
 

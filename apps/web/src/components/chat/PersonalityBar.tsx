@@ -2,6 +2,7 @@ import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
 import { type ReactNode, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatUsd } from '../../lib/usage-format';
 import { buildWorkspaceChatPath } from '../../lib/workspaceRoutes';
 import { PersonalityMark } from '../ui/PersonalityMark';
 import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
@@ -58,6 +59,9 @@ export interface PersonalityBarProps {
   sessionTitle?: string | null;
   /** Called after the user confirms a new title (empty string → pass null to clear). */
   onRenameSession?: (title: string | null) => void;
+  /** The session's spend so far, USD (`Session.usage.estimatedCostUsd`, U3).
+   *  Read-only, beside the title; undefined = no session, nothing drawn. */
+  sessionCostUsd?: number;
   /** Opaque extra control rendered at the head of the actions cluster (e.g. the
    *  talk-mode toggle). The bar stays agnostic about what it holds. */
   actionsSlot?: ReactNode;
@@ -75,6 +79,7 @@ export function PersonalityBar({
   onNewSession,
   sessionTitle,
   onRenameSession,
+  sessionCostUsd,
   actionsSlot,
   teamContext,
   coordinatorOf,
@@ -162,6 +167,11 @@ export function PersonalityBar({
                   >
                     <PencilIcon />
                   </button>
+                ) : null}
+                {sessionCostUsd !== undefined ? (
+                  <span className="personality-bar-session-cost" title="Spend on this session">
+                    {formatUsd(sessionCostUsd)}
+                  </span>
                 ) : null}
               </div>
             )

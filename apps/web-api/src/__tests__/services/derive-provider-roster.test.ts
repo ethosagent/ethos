@@ -51,6 +51,8 @@ function binding(
  *   extensions/tools-x-search/src/index.ts         x_search
  *   extensions/tools-reddit/src/index.ts           reddit_*
  *   extensions/tools-image/src/index.ts            image_generate
+ *   extensions/tools-browser/src/browser-fill-credential.ts
+ *                                                  browser_fill_credential
  */
 function inTreeRegistry() {
   const webSearchProviders = ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'];
@@ -113,6 +115,9 @@ function inTreeRegistry() {
     ),
     tool('reddit_search', ['providers/reddit/client_id', 'providers/reddit/client_secret']),
     tool('image_generate', ['providers/openai/apiKey', 'providers/replicate/apiToken']),
+    // Logins live in their own namespace (reach-and-containment D4-9), managed
+    // by `CredentialsService`, not the named-secret picker.
+    tool('browser_fill_credential', ['credentials/*']),
   );
 }
 
@@ -234,7 +239,13 @@ describe('deriveProviderRoster', () => {
     // fixed here: widening a shipped tool's grant is a security-visible edit.
     expect(providers.map((p) => p.provider)).not.toContain('reddit');
     expect(providers.map((p) => p.provider)).not.toContain('replicate');
-    expect(diagnostics).toEqual([]);
+    // The one expected ignored declaration: `credentials/*` is not a
+    // `providers/<segment>/*` prefix, so it grants nothing manageable HERE —
+    // logins are managed by `CredentialsService` (reach-and-containment D4-9).
+    // The roster is deliberately not widened to take it.
+    expect(diagnostics.map((d) => [d.toolName, d.declared])).toEqual([
+      ['browser_fill_credential', 'credentials/*'],
+    ]);
   });
 
   it('adds x only through the compatibility seed — no shipped tool declares it', () => {

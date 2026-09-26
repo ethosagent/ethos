@@ -18,7 +18,7 @@ vi.mock('../keychain', () => ({
   getKeychainValue: vi.fn().mockResolvedValue(null),
 }));
 
-import { getPort, readSharedVoiceAndCallCaptureConfig } from '../serve';
+import { getPort, readSharedExecutionFlags, readSharedVoiceAndCallCaptureConfig } from '../serve';
 
 // Builds a literal `${secrets:<path>}` ref via concatenation (not a template
 // literal) so biome's noTemplateCurlyInString rule doesn't mistake the
@@ -119,6 +119,42 @@ describe('readSharedVoiceAndCallCaptureConfig', () => {
     const result = await readSharedVoiceAndCallCaptureConfig(storage, secrets);
 
     expect(result).toEqual({});
+  });
+});
+
+// `execution.allowLocalFallback` / `execution.containerized` — the operator's
+// execution flags from the shared `~/.ethos/config.yaml`, forwarded into the
+// desktop's wiring config so each key means on the desktop what it means for
+// `ethos serve` / `gateway` / `boot` (`createExecutionRouting`,
+// packages/wiring/src/compose-tools.ts).
+describe('readSharedExecutionFlags', () => {
+  async function withConfig(lines: string[]) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: k', 'personality: p', ...lines].join('\n'),
+    );
+    return readSharedExecutionFlags(storage, new InMemorySecretsResolver());
+  }
+
+  it('forwards both flags when set', async () => {
+    expect(
+      await withConfig(['execution.allowLocalFallback: true', 'execution.containerized: true']),
+    ).toEqual({ execution: { allowLocalFallback: true, containerized: true } });
+  });
+
+  it('forwards execution.containerized on its own', async () => {
+    expect(await withConfig(['execution.containerized: true'])).toEqual({
+      execution: { containerized: true },
+    });
+  });
+
+  it('forwards nothing when neither flag is set, or config.yaml is absent', async () => {
+    expect(await withConfig([])).toEqual({});
+    expect(
+      await readSharedExecutionFlags(new InMemoryStorage(), new InMemorySecretsResolver()),
+    ).toEqual({});
   });
 });
 

@@ -78,7 +78,11 @@ describe('createWebApi — static SPA mount', () => {
     const app = makeApp(dist);
     const res = await app.request('/rpc/sessions/list', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: {} }),
     });
     expect(res.status).toBe(401);

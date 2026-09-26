@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { DiscordAdapter } from '../index';
+import { loadDiscordSdk } from '../sdk';
+
+// The adapter reads discord.js through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadDiscordSdk();
+});
 
 // P5.2 — botKey is computed once in wiring and passed as a required
 // constructor param. The adapter no longer derives its own key, so these

@@ -79,7 +79,10 @@ describe('ethos setup re-run keeps stored credentials', () => {
 
     const resolved = await readConfig(storage, secrets);
     expect(resolved?.apiKey).toBe('sk-ant-top-0123456789');
-    expect(resolved?.telegramToken).toBe('123:telegram-token');
+    // B4 — the TUI re-run migrates the legacy scalar to `telegram.bots.0.*`;
+    // the stored key still comes back, not its own reference string.
+    expect(resolved?.telegram?.bots?.[0]?.token).toBe('123:telegram-token');
+    expect(resolved?.telegramToken).toBeUndefined();
     expect(resolved?.providers?.map((p) => p.apiKey)).toEqual(['sk-openai-0123456789', '']);
     // And the chain's other fields ride along.
     expect((await readRawConfig(storage))?.providers?.[1]).toMatchObject({

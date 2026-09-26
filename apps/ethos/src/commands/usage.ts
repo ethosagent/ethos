@@ -6,7 +6,17 @@ import {
   type ToolUsageRow,
   type TurnOutcomeCounts,
 } from '@ethosagent/observability-sqlite';
-import { SQLiteSessionStore, type UsageAggregateRow } from '@ethosagent/session-sqlite';
+import {
+  cacheHitRate,
+  SQLiteSessionStore,
+  summarizeUsageRows,
+  type UsageAggregateRow,
+  type UsageTotals,
+} from '@ethosagent/session-sqlite';
+
+// Re-exported: the fold moved to @ethosagent/session-sqlite so the web
+// `usage.summary` RPC shares it (plan openclaw-2026.9.6-gaps U3).
+export { cacheHitRate };
 
 /** Dimensions `--by` accepts. `tool` and `skill` come from observability.db;
  *  the rest are grouped out of `messages` joined to `sessions`. */
@@ -17,16 +27,7 @@ function isDimension(v: string): v is Dimension {
   return (DIMENSIONS as readonly string[]).includes(v);
 }
 
-interface Totals {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  estimatedCostUsd: number;
-  messages: number;
-  /** Share of billable input served from cache, 0–1. See {@link cacheHitRate}. */
-  cacheHitRate: number;
-}
+type Totals = UsageTotals;
 
 interface UsageResult {
   since: string;
@@ -46,43 +47,6 @@ export function parseDuration(raw: string): number {
   if (unit === 'd') return n * 24 * 60 * 60 * 1000;
   if (unit === 'm') return n * 60 * 1000;
   return 0;
-}
-
-/**
- * Cached share of input tokens.
- *
- * Denominator is every token the model read — fresh input, cache reads, and
- * cache writes — because a cache write is input the provider still charged for.
- * Excluding it would make the first turn of a session look like a 0% hit rate
- * on a smaller base and flatter the number thereafter.
- */
-export function cacheHitRate(t: {
-  inputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}): number {
-  const total = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens;
-  return total === 0 ? 0 : t.cacheReadTokens / total;
-}
-
-function sumRows(rows: UsageAggregateRow[]): Omit<Totals, 'cacheHitRate'> {
-  const t = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    estimatedCostUsd: 0,
-    messages: 0,
-  };
-  for (const r of rows) {
-    t.inputTokens += r.inputTokens;
-    t.outputTokens += r.outputTokens;
-    t.cacheReadTokens += r.cacheReadTokens;
-    t.cacheCreationTokens += r.cacheCreationTokens;
-    t.estimatedCostUsd += r.estimatedCostUsd;
-    t.messages += r.messages;
-  }
-  return t;
 }
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
@@ -164,8 +128,7 @@ export async function runUsage(argv: string[]): Promise<void> {
 
   try {
     const daily = await store.usageAggregate({ since, until, dimension: 'day' });
-    const summed = sumRows(daily);
-    const totals: Totals = { ...summed, cacheHitRate: cacheHitRate(summed) };
+    const totals: Totals = summarizeUsageRows(daily);
 
     const outcomes = obs?.outcomeCounts(since.getTime(), until.getTime()) ?? {
       completed: 0,

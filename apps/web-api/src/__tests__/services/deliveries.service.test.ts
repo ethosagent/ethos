@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
+import { SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DeliveriesService } from '../../services/deliveries.service';
@@ -110,5 +111,94 @@ describe('DeliveriesService', () => {
     await service.summary();
     await service.summary();
     expect(opens).toBe(1);
+  });
+});
+
+describe('DeliveriesService — dead inbound (plan reach-and-containment §2.6)', () => {
+  let dir: string;
+  const storage = new FsStorage();
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ethos-deliveries-inbound-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function deadRow(spool: SQLiteInboundSpool, messageId: string, text: string): string {
+    const { id } = spool.accept({
+      platform: 'telegram',
+      botKey: 'bot-a',
+      chatId: 'chat-1',
+      messageId,
+      laneKey: 'telegram:bot-a:chat-1',
+      payload: JSON.stringify({ text }),
+    });
+    spool.markProcessing(id, 'p');
+    spool.markFailed(id, 'tool exploded', 1);
+    return id;
+  }
+
+  it('lists nothing and creates no database while no gateway has run', async () => {
+    const service = new DeliveriesService({ dataDir: dir, storage });
+    expect(await service.listDeadInbound()).toEqual({ rows: [] });
+    expect(await service.requeueInbound('x')).toEqual({ ok: false });
+    expect(await storage.exists(join(dir, 'inbound-spool.db'))).toBe(false);
+  });
+
+  it('lists dead rows with truncated text, then requeues and discards them', async () => {
+    const spool = new SQLiteInboundSpool(join(dir, 'inbound-spool.db'));
+    const a = deadRow(spool, 'a', 'x'.repeat(500));
+    const b = deadRow(spool, 'b', 'drop me');
+    const service = new DeliveriesService({ dataDir: dir, storage });
+
+    const { rows } = await service.listDeadInbound();
+    expect(rows.map((r) => r.id).sort()).toEqual([a, b].sort());
+    const rowA = rows.find((r) => r.id === a);
+    expect(rowA).toMatchObject({ platform: 'telegram', attempts: 1, lastError: 'tool exploded' });
+    expect(rowA?.text).toHaveLength(200);
+
+    expect(await service.requeueInbound(a)).toEqual({ ok: true });
+    expect(await service.discardInbound(b)).toEqual({ ok: true });
+    // Neither is dead any more.
+    expect(await service.requeueInbound(a)).toEqual({ ok: false });
+    expect((await service.listDeadInbound()).rows).toEqual([]);
+    expect(spool.get(a)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.get(b)).toMatchObject({ status: 'done', lastError: 'discarded' });
+    service.close();
+    spool.close();
+  });
+
+  it('lists interrupted rows beside dead ones, labelled, and replays them (openclaw-9.5 D5)', async () => {
+    let t = 1_000;
+    const spool = new SQLiteInboundSpool(join(dir, 'inbound-spool.db'), { now: () => t });
+    const dead = deadRow(spool, 'dead', 'poison');
+    t = 2_000;
+    const { id: cut } = spool.accept({
+      platform: 'telegram',
+      botKey: 'bot-a',
+      chatId: 'chat-1',
+      messageId: 'cut',
+      laneKey: 'telegram:bot-a:chat-1',
+      payload: JSON.stringify({ text: 'pay the invoice' }),
+    });
+    spool.markProcessing(cut, 'p');
+    spool.markToolStarted(cut);
+    spool.markInterrupted(cut, 'interrupted after a tool started');
+    const service = new DeliveriesService({ dataDir: dir, storage });
+
+    const { rows } = await service.listDeadInbound();
+    // Newest first, each with its status.
+    expect(rows.map((r) => [r.id, r.status])).toEqual([
+      [cut, 'interrupted'],
+      [dead, 'dead'],
+    ]);
+    expect(rows[0]?.text).toBe('pay the invoice');
+    expect((await service.listDeadInbound(1)).rows.map((r) => r.id)).toEqual([cut]);
+
+    expect(await service.requeueInbound(cut)).toEqual({ ok: true });
+    expect(spool.get(cut)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.get(cut)?.toolStartedAt).toBeUndefined();
+    service.close();
+    spool.close();
   });
 });

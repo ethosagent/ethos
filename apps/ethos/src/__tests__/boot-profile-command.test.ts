@@ -145,7 +145,7 @@ describe('ethos boot — §3b construction order', () => {
     }
   });
 
-  it('shuts down at most once, and reaches process.exit(0) even when a step fails', async () => {
+  it('shuts down at most once, and reaches process.exit even when a step fails', async () => {
     const src = await read('apps/ethos/src/commands/boot.ts');
     // Reentrancy: registered on SIGINT *and* SIGTERM and invoked as
     // `void shutdown()`. A second signal — plausibly during the approval
@@ -156,20 +156,21 @@ describe('ethos boot — §3b construction order', () => {
     expect(src).toContain('await shuttingDown;');
 
     // Exception safety: every step of the teardown is individually tolerant of
-    // failure, because a rejection here would BOTH skip `process.exit(0)` and
+    // failure, because a rejection here would BOTH skip `process.exit` and
     // go unhandled — leaving the process alive with adapters half-stopped and
     // still registered in the mesh.
-    const start = src.indexOf('const shutdown = async () => {');
-    const exit = src.indexOf('process.exit(0);', start);
+    const start = src.indexOf('const shutdown = async (exitCode = 0) => {');
+    const exit = src.indexOf('process.exit(exitCode);', start);
     expect(start).toBeGreaterThan(-1);
     expect(exit).toBeGreaterThan(start);
     const body = src.slice(start, exit);
     // Six spaces = the teardown's own statements; deeper indents are inside a
-    // `guard(...)` callback and are already covered by it.
-    const unguarded = body.split('\n').filter((l) => /^ {6}await (?!guard\()/.test(l));
+    // `guard(...)` callback and are already covered by it. `step(...)` is
+    // `guard` with a deadline (`boundedShutdownStep`), equally non-throwing.
+    const unguarded = body.split('\n').filter((l) => /^ {6}await (?!guard\(|step\()/.test(l));
     expect(
       unguarded,
-      `Unguarded awaits in boot shutdown — wrap each in guard(...):\n${unguarded.join('\n')}`,
+      `Unguarded awaits in boot shutdown — wrap each in guard(...) or step(...):\n${unguarded.join('\n')}`,
     ).toEqual([]);
   });
 });
@@ -248,9 +249,9 @@ describe('ethos boot — idle watcher', () => {
 
   it('stops the watcher on the shutdown path', async () => {
     const src = await read('apps/ethos/src/commands/boot.ts');
-    const shutdown = src.indexOf('const shutdown = async () => {');
+    const shutdown = src.indexOf('const shutdown = async (exitCode = 0) => {');
     const stop = src.indexOf('idleWatcher?.stop();');
-    const exit = src.indexOf('process.exit(0);', shutdown);
+    const exit = src.indexOf('process.exit(exitCode);', shutdown);
     expect(stop).toBeGreaterThan(shutdown);
     expect(stop).toBeLessThan(exit);
   });

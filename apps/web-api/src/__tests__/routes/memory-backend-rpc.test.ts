@@ -64,7 +64,7 @@ describe('memory RPC follows the configured backend (F04)', () => {
     }).app;
     const token = await new WebTokenRepository({ dataDir, storage }).getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();
@@ -74,7 +74,12 @@ describe('memory RPC follows the configured backend (F04)', () => {
   async function call<T>(method: string, input: unknown): Promise<{ status: number; body: T }> {
     const res = await app.request(`/rpc/memory/${method}`, {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: input }),
     });
     return { status: res.status, body: ((await res.json()) as { json: T }).json };
@@ -243,8 +248,10 @@ describe('memory RPC follows the configured backend (F04)', () => {
       expect(pending.body.pending).toEqual([]);
     });
 
-    it('refuses to approve a leftover candidate into vector; reject still clears it', async () => {
-      // Parked under an earlier backend — the runtime never gates vector writes.
+    it('lists and rejects a candidate the vector gate parked', async () => {
+      // The vector gate (`composeGatedVectorMemory`) parks into this queue;
+      // approve replaying into memory.db is pinned in the wiring package
+      // (`memory-approval-vector.test.ts`), where embeddings can be stubbed.
       const { store: queue } = createPendingMemoryStore({
         dataDir,
         storage,
@@ -252,20 +259,14 @@ describe('memory RPC follows the configured backend (F04)', () => {
       });
       const entry = await queue.propose({
         scopeId: SCOPE,
-        source: 'capture',
-        factHash: 'h-leftover',
-        update: { action: 'add', key: 'MEMORY.md', content: 'parked under markdown' },
+        source: 'dream',
+        update: { action: 'add', key: 'MEMORY.md', content: 'parked by the vector gate' },
       });
 
-      const approved = await call<{ code: string; message: string }>('pendingApprove', {
+      const listed = await call<{ pending: Array<{ id: string }> }>('pendingList', {
         personalityId: PERSONALITY,
-        id: entry.id,
       });
-      expect(approved.body.code).toBe('NOT_CONFIGURED');
-      expect(approved.body.message).toContain('Cannot approve into the "vector" memory backend');
-      expect(
-        await storage.read(join(dataDir, 'personalities', PERSONALITY, 'MEMORY.md')),
-      ).toBeNull();
+      expect(listed.body.pending.map((p) => p.id)).toEqual([entry.id]);
 
       const rejected = await call<{ ok: boolean }>('pendingReject', {
         personalityId: PERSONALITY,

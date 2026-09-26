@@ -44,6 +44,11 @@ import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { createA2aTools } from '../index';
 
+// The outbound client refuses loopback by default (plan openclaw-2026.9.6-gaps
+// S7); these peers live on `localhost`, so the clients opt in the way a
+// personality with a private-network peer does.
+const LOOPBACK_PEER_POLICY = { allow_private_urls: true };
+
 // ---------------------------------------------------------------------------
 // Fixtures — adapted from packages/a2a/src/__tests__/a2a-fixtures.ts (kept local
 // so this extension does not reach into another package's private test dir).
@@ -231,7 +236,11 @@ describe('a2a_send — full round-trip', () => {
     const { app, counter } = makeServer(target, initiator, clock);
 
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -261,7 +270,7 @@ describe('a2a_send — full round-trip', () => {
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
       allowlist: egressAllow(),
-      client: new A2aOutboundClient(),
+      client: new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY }),
     });
     const result = await tool?.execute(
       { peer_url: WELL_KNOWN_URL, skill: 'search', message: 'hi' },
@@ -277,7 +286,7 @@ describe('a2a_send — full round-trip', () => {
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({}),
       allowlist: egressAllow(),
-      client: new A2aOutboundClient(),
+      client: new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY }),
     });
     const result = await tool?.execute(
       { peer_url: WELL_KNOWN_URL, skill: 'search', message: 'hi' },
@@ -301,7 +310,11 @@ describe('a2a_send — session/token caching (plan T1.2)', () => {
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -339,7 +352,11 @@ describe('a2a_send — session/token caching (plan T1.2)', () => {
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -370,7 +387,11 @@ describe('a2a_send — session/token caching (plan T1.2)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(target, initiator, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     // A MUTABLE egress allowlist so the test can simulate revocation between
     // the two calls (distinct from the target's own INBOUND allowlist).
@@ -440,7 +461,11 @@ describe('a2a_send — session/token caching (plan T1.2)', () => {
       }
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -500,7 +525,11 @@ describe('a2a_send — delegation containment (ctx.a2aDelegation → client → 
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a/')) rpcPosts += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -543,7 +572,11 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(me, me, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(me, ['search']),
@@ -569,7 +602,11 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(me, me, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(me, ['search']),
@@ -622,7 +659,7 @@ describe('a2a_send — live enablement gate (Stage 1c)', () => {
       identity,
       secrets,
       allowlist: egressAllow(),
-      client: new A2aOutboundClient({ fetchImpl }),
+      client: new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY, fetchImpl }),
       isEnabled: () => false,
     });
 
@@ -648,7 +685,11 @@ describe('a2a_send — live enablement gate (Stage 1c)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(target, initiator, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -683,7 +724,11 @@ describe('a2a_send — egress default-deny (plan §15)', () => {
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     // Egress allowlist is EMPTY — the target is not approved for this personality.
     const [tool] = createA2aTools({
@@ -719,7 +764,11 @@ describe('a2a_send — egress default-deny (plan §15)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(target, initiator, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
@@ -740,6 +789,69 @@ describe('a2a_send — egress default-deny (plan §15)', () => {
 
     expect(result?.ok).toBe(true);
     if (result?.ok) expect(result.value).toBe('hello world');
+    expect(counter.runs).toBe(1);
+  });
+});
+
+// S7 (plan openclaw-2026.9.6-gaps): `peer_url` is model-chosen. The client's
+// default path is `safeFetch` (packages/a2a/src/egress.ts `a2aFetch`), and the
+// tool hands it the acting personality's `ctx.networkPolicy`.
+describe('a2a_send — network policy on the model-chosen peer_url (S7)', () => {
+  it('refuses the cloud-metadata address before any request, echoing no probe result', async () => {
+    const initiator = makeAgent('me');
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      calls.push(toUrl(input));
+      return new Response('secret-role-name', { status: 200 });
+    };
+    const [tool] = createA2aTools({
+      identity: stubIdentity(initiator, ['search']),
+      secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(),
+      client: new A2aOutboundClient({ fetchImpl }),
+    });
+    const result = await tool?.execute(
+      { peer_url: 'http://169.254.169.254/latest/meta-data/', skill: 's', message: 'hi' },
+      makeCtx(initiator.id),
+    );
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.error).toContain('url_refused');
+      expect(result.error).not.toMatch(/HTTP \d{3}/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("threads the personality's ctx.networkPolicy: allow_private_urls admits a loopback peer", async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('me');
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(target, initiator, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const toolFor = () =>
+      createA2aTools({
+        identity: stubIdentity(initiator, ['search']),
+        secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+        allowlist: egressAllow(target),
+        // No client-level policy: only the personality's own block can admit loopback.
+        client: new A2aOutboundClient({ fetchImpl, now: () => clock.t }),
+      })[0];
+    const args = {
+      peer_url: WELL_KNOWN_URL,
+      fingerprint: target.fingerprint,
+      skill: 'search',
+      message: 'hi',
+    };
+
+    const refused = await toolFor()?.execute(args, makeCtx(initiator.id));
+    expect(refused?.ok).toBe(false);
+    expect(counter.runs).toBe(0);
+
+    const admitted = await toolFor()?.execute(
+      args,
+      makeCtx(initiator.id, { networkPolicy: { allow_private_urls: true } }),
+    );
+    expect(admitted?.ok).toBe(true);
     expect(counter.runs).toBe(1);
   });
 });

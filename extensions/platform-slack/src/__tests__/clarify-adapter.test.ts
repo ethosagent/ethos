@@ -3,7 +3,7 @@
 // detection for App Home clicks (which Slack delivers as block_actions
 // with no `body.channel`/`body.message` — see codex P4 review HIGH 1).
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLARIFY_ANSWER_ACTION_ID,
   CLARIFY_CANCEL_ACTION_ID,
@@ -11,6 +11,12 @@ import {
   CLARIFY_MODAL_CALLBACK_ID,
 } from '../blocks/clarify';
 import type { ClarifyActionEvent, ClarifyModalSubmissionEvent } from '../interactions/clarify';
+import { loadSlackSdk } from '../sdk';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 const postMessage = vi.fn();
 const update = vi.fn();

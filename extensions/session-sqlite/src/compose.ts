@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { WiringContext } from '@ethosagent/types';
 import { SQLiteContextLog } from './context-log';
 import { createKvStoreFactory, SQLiteSessionStore } from './index';
 

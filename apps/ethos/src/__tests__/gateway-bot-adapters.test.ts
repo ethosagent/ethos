@@ -96,6 +96,7 @@ function gatewayFor(adapters: PlatformAdapter[], botKeys: string[]) {
     greetingProvider: undefined,
     // This suite is about adapter resolution, not about publication bindings.
     publicationSpeaksFor: () => true,
+    observability: undefined,
   });
   return { gw, deliveryLedger };
 }

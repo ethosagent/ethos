@@ -131,8 +131,19 @@ describe('decideInboundCall', () => {
     });
   }
 
-  it('accepts an allowlisted caller unrestricted and pre-warmed', () => {
-    expect(gate()).toEqual({ accept: true, restricted: false, prewarm: true });
+  // INB-001b: PSTN caller ID is set by the calling party and is trivially
+  // spoofed, so an allowlist match is a HINT (pre-warm), never owner identity.
+  it('INB-001b: an allowlisted caller ID is answered restricted, pre-warmed', () => {
+    expect(gate()).toEqual({ accept: true, restricted: true, prewarm: true });
+  });
+
+  it('INB-001b: an allowlisted caller ID is refused when no receptionist is configured', () => {
+    const concurrency = createCallConcurrencyLimiter({ cap: 1 });
+    expect(gate({ receptionist: false, concurrency })).toEqual({
+      accept: false,
+      reason: 'caller_unverified',
+    });
+    expect(concurrency.active()).toBe(0);
   });
 
   it('screens a non-allowlisted caller into the receptionist scope', () => {

@@ -441,7 +441,18 @@ export class WatcherManager {
         });
       }
     }
-    if (wake) {
+    // A wake is always self (S5): `watcher_create` (`@ethosagent/tools-watchers`)
+    // refuses a foreign one, and a record stored before that refusal existed is
+    // stopped here with a named reason. A record with no owner names no
+    // personality to compare against and still wakes.
+    if (wake && watcher.owner && wake.personalityId !== watcher.owner.personalityId) {
+      this.logger.warn(
+        `[watchers] wake of "${wake.personalityId}" refused: this watcher belongs to personality ` +
+          `"${watcher.owner.personalityId}", and a watcher can only wake the personality that ` +
+          `created it. Recreate "${watcher.id}" from that personality.`,
+        { component: 'watchers', watcherId: watcher.id },
+      );
+    } else if (wake) {
       if (this.wake) {
         try {
           await this.wake({

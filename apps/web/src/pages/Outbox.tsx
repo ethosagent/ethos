@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from 'antd';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { EmptyState } from '../components/ui/EmptyState';
+import { LoadingState } from '../components/ui/LoadingState';
 import { useTelegramBots } from '../features/communications/api/queries';
 import { type OutboxScope, outboxKeys } from '../features/outbox/api/keys';
 import { getClientId } from '../lib/clientId';
@@ -207,18 +209,23 @@ export function Outbox() {
         )}
 
         {listQuery.isLoading ? (
-          <div className="outbox-empty">Loading…</div>
+          <LoadingState label="Loading outbox…" height={160} />
         ) : listQuery.isError ? (
           <div className="outbox-empty">
             Could not load the outbox:{' '}
             {listQuery.error instanceof Error ? listQuery.error.message : 'unknown error'}
           </div>
         ) : items.length === 0 ? (
-          <div className="outbox-empty">
-            Nothing queued. A personality with <code>outbound_policy.approve_before_send</code> puts
-            every publication here instead of sending it, and its <code>send_message</code> answers
-            "NOT sent".
-          </div>
+          <EmptyState
+            title="Nothing queued."
+            hint={
+              <>
+                A personality with <code>outbound_policy.approve_before_send</code> puts every
+                publication here instead of sending it, and its <code>send_message</code> answers
+                "NOT sent".
+              </>
+            }
+          />
         ) : (
           OUTBOX_SECTIONS.map((section) => (
             <Section

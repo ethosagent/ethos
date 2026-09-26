@@ -10,7 +10,14 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { A2aOutboundClient, A2aOutboundError, computeA2aBackoffDelayMs } from '../../outbound';
-import { approvePeer, echoRunner, type RealAgentServer, startAgentServer } from './harness';
+import { LOOPBACK_PEER_POLICY } from '../a2a-fixtures';
+import {
+  approvePeer,
+  echoRunner,
+  fencedPeerMessage,
+  type RealAgentServer,
+  startAgentServer,
+} from './harness';
 import {
   type FailNTimesThenProxy,
   type HangingListener,
@@ -43,7 +50,7 @@ describe('A2A real-socket timeouts (plan T0.3)', () => {
 
     // The handshake goes to the REAL responder — only the `message/send` POST
     // under test is redirected to the hanging listener.
-    const client = new A2aOutboundClient();
+    const client = new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY });
     const session = await client.connect({
       wellKnownUrl: responder.wellKnownUrl,
       myCard: initiator.card,
@@ -55,7 +62,11 @@ describe('A2A real-socket timeouts (plan T0.3)', () => {
 
     // sendMaxAttempts: 1 isolates the raw timeout from T1.3's retry loop
     // (covered separately below), same as the stubbed unit test does.
-    const timeoutClient = new A2aOutboundClient({ sendTimeoutMs: 100, sendMaxAttempts: 1 });
+    const timeoutClient = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      sendTimeoutMs: 100,
+      sendMaxAttempts: 1,
+    });
 
     const started = Date.now();
     let thrown: unknown;
@@ -104,7 +115,7 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
     servers.push(initiator, responder);
     await approvePeer(responder, initiator.fingerprint, ['echo']);
 
-    const connectClient = new A2aOutboundClient();
+    const connectClient = new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY });
     const session = await connectClient.connect({
       wellKnownUrl: responder.wellKnownUrl,
       myCard: initiator.card,
@@ -118,6 +129,7 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
 
     const sleeps: number[] = [];
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       randomFn: () => 0.5,
       // Injected so the test doesn't spend real wall-clock time sleeping — the
       // FAILURE and the eventual SUCCESS are both real socket I/O; only the
@@ -138,7 +150,8 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok && result.mode === 'sync') expect(result.text).toBe('echo: hi');
+    if (result.ok && result.mode === 'sync')
+      expect(result.text).toBe(`echo: ${fencedPeerMessage(initiator.fingerprint, 'hi')}`);
     expect(proxy.attempts()).toBe(3);
     // Full jitter, randomFn fixed at 0.5: window = min(cap, base * 2^attempt).
     expect(sleeps).toEqual([
@@ -161,7 +174,7 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
     servers.push(initiator, responder);
     await approvePeer(responder, initiator.fingerprint, ['echo']);
 
-    const connectClient = new A2aOutboundClient();
+    const connectClient = new A2aOutboundClient({ networkPolicy: LOOPBACK_PEER_POLICY });
     const session = await connectClient.connect({
       wellKnownUrl: responder.wellKnownUrl,
       myCard: initiator.card,
@@ -174,6 +187,7 @@ describe('A2A real-socket retry with backoff + jitter (plan T1.3)', () => {
 
     const sleeps: number[] = [];
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       randomFn: () => 0.5,
       sleepFn: async (ms) => {
         sleeps.push(ms);

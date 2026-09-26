@@ -16,6 +16,7 @@
 //
 // See: plan/phases/observability_extractability.md
 
+import type { DecisionBreakerEvent } from '@ethosagent/decision-typesafe';
 import type {
   EventSeverity,
   ObsEvent,
@@ -24,6 +25,8 @@ import type {
   RedactionPolicy,
   SpanKind,
 } from '@ethosagent/types';
+import type { DecisionCallRecord } from '../decision-site';
+import type { DecisionToolCallRecord } from '../decision-tool';
 
 // ---------------------------------------------------------------------------
 // Ethos vocabulary — the only place these literals live in the codebase.
@@ -87,6 +90,22 @@ export const ETHOS_EVENT_CATEGORIES = [
   // vendor said (bounded, key-shaped tokens redacted), what the chain did next.
   // See `recordProviderFailover` below.
   'llm.failover',
+  // plan reach-and-containment D4-8 — one row per `browser_fill_credential`
+  // call, success or refusal. METADATA ONLY: credential name, fields, origins,
+  // personality, session, job — never a value. See `recordCredentialFill`.
+  'browser.credential_fill',
+  // plan decision-provider-jev §9 / D13 — one row per decision-provider call.
+  // Separate categories per mode, so M3 reads the shadow disagreement record
+  // with one indexed read. See `recordDecisionCall` below.
+  'decision.call',
+  'decision.shadow',
+  // plan decision-provider-jev §5.5 — the provider's breaker opened / closed.
+  'decision.breaker_open',
+  'decision.breaker_closed',
+  // plan decision-tool D7 — one row per `decide` tool call. Its own category,
+  // never `decision.call`: model-written questions must not contaminate the
+  // per-site calibration reads. See `recordDecisionToolCall` below.
+  'decision.tool',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -309,6 +328,26 @@ export class EthosObservability {
         pinned: event.pinned,
       },
     );
+  }
+
+  /**
+   * One `browser_fill_credential` call (D4-8), wired as the tool's
+   * `recordCredentialFill` sink in `compose-tools.ts`. `severity` is `info`
+   * for a fill and `warn` for every refusal — a burst of `refused_origin` is
+   * what a prompt-injection attempt looks like. The event carries names and
+   * origins only; the tool never hands this sink a value
+   * (`extensions/tools-browser/src/browser-fill-credential.ts`, pinned by its
+   * audit-scan test).
+   */
+  recordCredentialFill(event: {
+    severity: 'info' | 'warn';
+    code: string;
+    details: Record<string, unknown>;
+  }): void {
+    this.emit('browser.credential_fill', event.severity, {
+      code: event.code,
+      details: event.details,
+    });
   }
 
   recordSafetyTransition(opts: {
@@ -577,6 +616,45 @@ export class EthosObservability {
       ...(opts.msSinceSetup !== undefined ? { msSinceSetup: opts.msSinceSetup } : {}),
       ...(opts.legacy ? { legacy: true } : {}),
     });
+  }
+
+  /**
+   * One decision-provider call (D13), from `runDecisionSite`
+   * (`packages/wiring/src/decision-site.ts`). `code` is the outcome (`ok` or
+   * the error code); details carry the site, provider, returned model,
+   * latency, input tokens, question count and estimated cost, plus both
+   * verdicts and the disagreement flag in `shadow`, and the `personalityId`
+   * whose declaration enabled the site (plan decision-provider-personality
+   * §7.0). `traceId`, when the site knew it, becomes the event's trace so the
+   * row joins its turn.
+   */
+  recordDecisionCall(record: DecisionCallRecord): void {
+    const { mode, outcome, traceId, ...details } = record;
+    this.emit(
+      mode === 'shadow' ? 'decision.shadow' : 'decision.call',
+      outcome === 'ok' ? 'info' : 'warn',
+      { code: outcome, ...(traceId !== undefined ? { traceId } : {}) },
+      { mode, ...details },
+    );
+  }
+
+  /** The decision provider's breaker changed state (plan §5.5); `code` is the trigger. */
+  recordDecisionBreaker(event: DecisionBreakerEvent): void {
+    this.emit(event.type, event.type === 'decision.breaker_open' ? 'warn' : 'info', {
+      ...(event.code !== undefined ? { code: event.code } : {}),
+    });
+  }
+
+  /**
+   * One `decide` tool call (plan decision-tool D7), from
+   * `createDecisionToolDecide` (`packages/wiring/src/decision-tool.ts`).
+   * `code` is the outcome (`ok`, a provider error code, or `no_key`); details
+   * carry the provider, returned model, latency, input tokens, question count,
+   * estimated cost, `personalityId` and `sessionId`. `warn` unless `ok`.
+   */
+  recordDecisionToolCall(record: DecisionToolCallRecord): void {
+    const { outcome, ...details } = record;
+    this.emit('decision.tool', outcome === 'ok' ? 'info' : 'warn', { code: outcome }, details);
   }
 
   // ── Escape hatch ────────────────────────────────────────────────────────

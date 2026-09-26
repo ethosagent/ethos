@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: peer-two-ethos-agents
 time: 30 min
-updated: 2026-08-21
+updated: 2026-09-26
 ---
 
 Ethos agents can call each other directly — one [personality](../../getting-started/glossary.md#personality) asks another to do something and gets a reply back, without a human relaying the message. The wire protocol is A2A: an Ethos-specific JSON-RPC surface that borrows Google A2A's vocabulary (`message/send`, a well-known card path) but is not a conformant implementation of the public spec — a spec client cannot talk to it today. What it does carry, unchanged from the framework's original design, is the trust model: a human anchors each peering by comparing a cryptographic fingerprint out of band, and nothing is reachable until that happens twice — once per direction.
@@ -62,6 +62,15 @@ echo 'webBaseUrl: http://localhost:3000' >> /tmp/ethos-a/config.yaml
 ```bash
 echo 'webBaseUrl: http://localhost:3001' >> /tmp/ethos-b/config.yaml
 ```
+
+Both agents run on `localhost`, and `ethos a2a peer add` refuses a loopback or private-network card URL unless the operator opts in. Opt both agents in:
+
+```bash
+echo 'a2a.peering.allowPrivateUrls: true' >> /tmp/ethos-a/config.yaml
+echo 'a2a.peering.allowPrivateUrls: true' >> /tmp/ethos-b/config.yaml
+```
+
+Leave it unset for peers on the public internet. Cloud-metadata addresses stay refused with it set.
 
 ## 2. See the zero-skills warning
 
@@ -250,6 +259,23 @@ Leave both running. Open two more terminals for the remaining steps (or backgrou
 
 ## 9. Send a message
 
+`a2a_send` runs under the calling personality's own network policy, not the operator key from step 1. `a2a.peering.allowPrivateUrls` lets you *add* a peer on `localhost`; it does nothing for the model's calls. The peer here is on `localhost`, so opt `caller` into private destinations. **Terminal A**:
+
+```bash
+cat >> /tmp/ethos-a/personalities/caller/config.yaml <<'EOF'
+safety:
+  network:
+    allow_private_urls: true
+EOF
+ethos personality show caller | grep G-NET
+```
+
+```
+| G-NET   | relaxed  | allow_private_urls — RFC1918/loopback/link-local permitted (cloud metadata still blocked); …
+```
+
+This widens every network tool on `caller`, not only `a2a_send`. Leave it unset for a peer on the public internet. Cloud-metadata addresses stay refused with it set.
+
 Mint an API key on Agent A for the chat endpoint (new terminal, same `ETHOS_STATE_DIR=/tmp/ethos-a`):
 
 ```bash
@@ -329,9 +355,11 @@ ethos audit --category a2a.rpc
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `FORBIDDEN_SCOPE` (JSON-RPC error `-32003`) | The named skill isn't on the receiving personality's trusted-peer card — either `exposeToAgents` is unset/false, or the skill name doesn't match. | Re-check step 3's frontmatter and re-run `ethos a2a status --personality <id>` to confirm the warning is gone. |
+| `Card URL refused` on `peer add` | The URL is on `localhost` or a private network, and `a2a.peering.allowPrivateUrls` is not set in that install's `config.yaml`. | Add `a2a.peering.allowPrivateUrls: true`, as in step 1. |
 | `fingerprint mismatch` on `peer add` | The `--fingerprint` you typed doesn't match what the URL actually serves — a typo, or `webBaseUrl` pointing at the wrong port so the card came from a different process than you think. | Re-run `peer add` without `--fingerprint` to preview the real value, and confirm `webBaseUrl` matches the port `ethos serve` is actually bound to. |
 | `not_available` from `a2a_send` | Either A2A is disabled on the caller's install, or the calling personality has no signing key yet (identity was never minted). | Run `ethos a2a enable` and `ethos a2a identity --personality <id>` on the caller. |
 | The model never calls `a2a_send` | `a2a_send` isn't on the personality's `toolset.yaml`, or `ethos chat`/`ethos -z` was used instead of `ethos serve`/`gateway` (the only two surfaces that register the tool). | Confirm step 7, and confirm the request went to a running `ethos serve` process. |
+| `a2a_send` fails with `refused by this personality's network policy` | The peer is on `localhost` or a private network, and the calling personality has no `safety.network.allow_private_urls: true`. The operator key `a2a.peering.allowPrivateUrls` does not cover the model's calls. | Add the `safety.network` block to the caller's `config.yaml`, as in step 9. |
 | `a2a_send` call hangs, then fails after ~30s | The peer accepted the connection but never responded — the outbound client times out rather than hanging forever. | Confirm the peer's `ethos serve` is actually up and A2A is enabled there too. |
 | `A2A_SKILL_TOOLS_UNDECLARED` | The named skill's SKILL.md has no `required_tools` key at all (not even `[]`) — the runtime fails the turn closed rather than granting the full toolset. | Add `required_tools: []` (or the real list) to the skill's frontmatter, as in step 3. |
 

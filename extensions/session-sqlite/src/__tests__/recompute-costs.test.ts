@@ -256,4 +256,31 @@ describe('recomputeMessageCosts (A5 backfill)', () => {
       unpricedModels: [],
     });
   });
+
+  // A tool-reported `cost_usd` rides on its tool_result row with zero tokens
+  // (packages/core/src/agent-loop/stages/tool-processing.ts). It is not a
+  // function of tokens, so re-deriving it from them would erase real spend.
+  it("leaves a tool_result row's tool-reported cost alone", async () => {
+    const session = await store.createSession({
+      ...baseSession,
+      key: 'cli:tool-cost',
+      model: 'gemini-2.5-pro',
+      provider: 'gemini-native',
+    });
+    await store.appendMessage({
+      sessionId: session.id,
+      role: 'tool_result',
+      content: 'painted',
+      toolCallId: 'c1',
+      toolName: 'paint',
+      usage: usage({ inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0.25 }),
+    });
+    await store.updateUsage(session.id, { estimatedCostUsd: 0.25 });
+
+    const result = await store.recomputeMessageCosts();
+    expect(result.messagesUpdated).toBe(0);
+    const [row] = await store.getMessages(session.id);
+    expect(row?.usage?.estimatedCostUsd).toBe(0.25);
+    expect(await rollupVsMessages(store, session.id)).toEqual({ rollup: 0.25, sum: 0.25 });
+  });
 });

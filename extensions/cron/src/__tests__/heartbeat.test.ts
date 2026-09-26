@@ -24,6 +24,7 @@ type RecordedDecision = CronDecision & { ranAt: string; delivered: boolean };
 function makeScheduler(opts: Partial<CronSchedulerConfig> = {}): CronScheduler {
   return new CronScheduler({
     cronDir: testDir,
+    scriptsDir: join(testDir, 'scripts'),
     tickIntervalMs: 999_999, // don't auto-tick in tests
     storage: new InMemoryStorage(),
     runJob: async (job): Promise<CronRunResult> => ({

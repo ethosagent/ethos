@@ -32,7 +32,11 @@ describe('deriveSkillPassthrough — item 6: only admitted skills contribute env
         }),
       ],
     ]);
-    const personality = makePersonality({ toolset: ['read_file'] });
+    const personality = makePersonality({
+      toolset: ['read_file'],
+      // SKL-001: passthrough is default-deny; this personality opts in.
+      safety: { allowed_skill_permissions: { mcp_env_passthrough: true } },
+    });
     const result = deriveSkillPassthrough(skills, personality, new Set(['read_file']));
     expect(result.has('GITHUB_TOKEN')).toBe(true);
   });
@@ -93,10 +97,57 @@ describe('deriveSkillPassthrough — item 6: only admitted skills contribute env
         }),
       ],
     ]);
-    const personality = makePersonality({ toolset: ['read_file'] });
+    const personality = makePersonality({
+      toolset: ['read_file'],
+      // SKL-001: passthrough is default-deny; this personality opts in.
+      safety: { allowed_skill_permissions: { mcp_env_passthrough: true } },
+    });
     const result = deriveSkillPassthrough(skills, personality, new Set(['read_file']));
     expect(result.has('SAFE_TOKEN')).toBe(true);
     expect(result.has('DANGER_TOKEN')).toBe(false);
+  });
+});
+
+describe('deriveSkillPassthrough — SKL-001: passthrough is intersected with the personality policy', () => {
+  function promptOnlySkill(vars: string[]): Map<string, Skill> {
+    // No required_tools: filterSkill admits a prose-only skill unconditionally.
+    return new Map([['ethos/prose', makeSkill({ permissions: { mcp_env_passthrough: vars } })]]);
+  }
+
+  it('a personality with no allowed_skill_permissions forwards nothing (default deny)', () => {
+    const result = deriveSkillPassthrough(
+      promptOnlySkill(['ANTHROPIC_API_KEY']),
+      makePersonality(),
+      new Set(),
+    );
+    expect(result.has('ANTHROPIC_API_KEY')).toBe(false);
+    expect(result.size).toBe(0);
+  });
+
+  it('a named policy forwards only the named vars', () => {
+    const skills = new Map([
+      ['ethos/a', makeSkill({ permissions: { mcp_env_passthrough: ['GITHUB_TOKEN'] } })],
+      [
+        'ethos/b',
+        makeSkill({ qualifiedName: 'ethos/b', permissions: { mcp_env_passthrough: ['OTHER'] } }),
+      ],
+    ]);
+    const personality = makePersonality({
+      safety: {
+        allowed_skill_permissions: { mcp_env_passthrough: ['GITHUB_TOKEN', 'NOT_REQUESTED'] },
+      },
+    });
+    // 'ethos/b' is refused by filterSkill (OTHER is not named); the intersection
+    // never adds a policy var no admitted skill asked for.
+    expect([...deriveSkillPassthrough(skills, personality, new Set())]).toEqual(['GITHUB_TOKEN']);
+  });
+
+  it('mcp_env_passthrough: true forwards whatever an admitted skill requests', () => {
+    const personality = makePersonality({
+      safety: { allowed_skill_permissions: { mcp_env_passthrough: true } },
+    });
+    const result = deriveSkillPassthrough(promptOnlySkill(['X_TOKEN']), personality, new Set());
+    expect([...result]).toEqual(['X_TOKEN']);
   });
 });
 

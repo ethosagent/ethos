@@ -9,7 +9,12 @@ import { type AgentEvent, answerSuffix, EthosError } from '@ethosagent/types';
 interface CronTurnLoop {
   run(
     text: string,
-    opts: { sessionKey: string; personalityId: string; toolsetOverride?: string[] },
+    opts: {
+      sessionKey: string;
+      personalityId: string;
+      toolsetOverride?: string[];
+      abortSignal?: AbortSignal;
+    },
   ): AsyncIterable<AgentEvent>;
 }
 
@@ -27,6 +32,8 @@ export interface CronTurnInput {
   toolsetOverride?: string[];
   /** The originating web chat's session key, when the job was created from one. */
   webOrigin?: string | null;
+  /** From the scheduler's `CronRunJobOptions`: aborted at the job's `maxRunMs`. */
+  abortSignal?: AbortSignal;
 }
 
 export interface CronTurnResult {
@@ -57,7 +64,7 @@ export interface CronTurnResult {
  * failed script job uses — silently persisting an empty output is not an option.
  */
 export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult> {
-  const { loop, sessions, jobId, prompt, personalityId, toolsetOverride } = input;
+  const { loop, sessions, jobId, prompt, personalityId, toolsetOverride, abortSignal } = input;
   const webOrigin = input.webOrigin ?? null;
 
   const boundPersonalityId = webOrigin
@@ -75,6 +82,7 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
     sessionKey,
     personalityId,
     ...(toolsetOverride ? { toolsetOverride } : {}),
+    ...(abortSignal ? { abortSignal } : {}),
   })) {
     if (event.type === 'text_delta') output += event.text;
     // A `returnDirect` tool's answer arrives only as `done.text`, after any

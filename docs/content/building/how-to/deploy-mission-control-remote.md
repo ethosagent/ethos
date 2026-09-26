@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: deploy-mission-control-remote
 time: "10 min"
-updated: 2026-05-13
+updated: 2026-09-24
 ---
 
 ## Task
@@ -134,7 +134,7 @@ Check the browser Network tab:
 
 ## Troubleshooting
 
-**CORS errors** — The Ethos server must allow the dashboard's origin. The API key's `allowedOrigins` controls this. Re-mint the key with the correct origin if needed.
+**CORS errors** — The Ethos server reflects only the exact origins in `ETHOS_ALLOWED_ORIGINS` (`resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`). Add the dashboard's origin there and restart `ethos serve`. The API key's `allowedOrigins` is a separate gate: a mismatch returns `403 Forbidden`, not a CORS error.
 
 **SSE timeout or no events** — The reverse proxy is buffering. Add `proxy_buffering off` (Nginx) or equivalent to the proxy config.
 

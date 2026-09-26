@@ -24,6 +24,14 @@ export interface StatusBarInput {
   elapsedSecs: number;
   /** Terminal width in columns — `process.stdout.columns ?? 80`. */
   columns: number;
+  /** C4 — active personality id; prefixed to the model as `researcher · <model>`. */
+  personality?: string;
+  /** C4 — current session key; rendered in the full layout only. */
+  sessionKey?: string;
+  /** C4 — messages in this session; rendered beside the session key. */
+  messageCount?: number;
+  /** C4 — session cost in USD; rendered in full and compact layouts. */
+  costUsd?: number;
 }
 
 export type Layout = 'full' | 'compact' | 'minimal';
@@ -61,6 +69,14 @@ function formatDuration(secs: number): string {
   return rem === 0 ? `${hrs}h` : `${hrs}h${rem}m`;
 }
 
+/**
+ * C4 — the one cost formatter for the status bar, `/usage` and `/budget`:
+ * two decimals, four when below one cent (JSON surfaces keep full precision).
+ */
+export function formatCostUsd(costUsd: number): string {
+  return costUsd > 0 && costUsd < 0.01 ? costUsd.toFixed(4) : costUsd.toFixed(2);
+}
+
 function buildBar(percent: number): string {
   const filled = Math.min(BAR_WIDTH, Math.max(0, Math.round((percent / 100) * BAR_WIDTH)));
   return `[${'█'.repeat(filled)}${'░'.repeat(BAR_WIDTH - filled)}]`;
@@ -83,17 +99,26 @@ export function renderStatusBar(input: StatusBarInput): RenderedStatusBar {
   const layout = pickLayout(input.columns);
   const model = truncateModel(input.model);
   const duration = formatDuration(input.elapsedSecs);
+  // C4 — personality and model form one identity segment; cost drops out at
+  // minimal, session at compact and minimal (the layout-tier rule the file
+  // already follows for the bar and the token counts).
+  const label = input.personality ? `${input.personality} · ${model}` : model;
+  const cost = input.costUsd !== undefined ? `${SEP}$${formatCostUsd(input.costUsd)}` : '';
+  const session =
+    input.sessionKey !== undefined
+      ? `${SEP}${input.sessionKey}${input.messageCount !== undefined ? ` (${input.messageCount} msgs)` : ''}`
+      : '';
 
   let text: string;
   if (layout === 'minimal') {
-    text = `${model}${SEP}${duration}`;
+    text = `${label}${SEP}${duration}`;
   } else if (layout === 'compact') {
     const tokens = `${formatTokens(input.contextTokens)}/${formatTokens(input.contextMax)}`;
-    text = `${model}${SEP}${tokens}${SEP}${Math.round(percent)}%${SEP}${duration}`;
+    text = `${label}${SEP}${tokens}${SEP}${Math.round(percent)}%${cost}${SEP}${duration}`;
   } else {
     const tokens = `${formatTokens(input.contextTokens)}/${formatTokens(input.contextMax)}`;
     const bar = buildBar(percent);
-    text = `${model}${SEP}${tokens}${SEP}${bar} ${Math.round(percent)}%${SEP}${duration}`;
+    text = `${label}${SEP}${tokens}${SEP}${bar} ${Math.round(percent)}%${cost}${SEP}${duration}${session}`;
   }
 
   return { layout, text, columns: text.length, threshold };

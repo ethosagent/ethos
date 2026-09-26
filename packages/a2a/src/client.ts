@@ -10,12 +10,19 @@
 //       card to the peer a human approved.
 //
 // Verification lives here (a `packages/a2a` concern per §7), never in a skill.
+//
+// The fetch itself goes through `a2aFetch` (./egress): `wellKnownUrl` is
+// model-chosen, so a metadata / private / reserved host is refused BEFORE any
+// request, with a refusal that echoes no probe result (plan
+// openclaw-2026.9.6-gaps S7; pinned by `client.test.ts` "network policy (S7)").
 
 import type { AgentCard } from '@ethosagent/types';
 import { verifyCard } from './crypto';
+import { type A2aEgressOptions, A2aUrlRefusedError, a2aFetch } from './egress';
 
 /** Discriminated failure reasons for a card fetch + verify. */
 export type A2aClientErrorCode =
+  | 'url_refused'
   | 'fetch_failed'
   | 'invalid_card'
   | 'bad_signature'
@@ -31,33 +38,32 @@ export class A2aClientError extends Error {
   }
 }
 
-export interface FetchAndVerifyCardOptions {
+export interface FetchAndVerifyCardOptions extends A2aEgressOptions {
   /**
    * The out-of-band key fingerprint (plan §7 trust anchor). When supplied, the
    * fetched card's `keyFingerprint` MUST equal it, or a `fingerprint_mismatch`
    * is thrown. Omit only for a first, un-anchored fetch.
    */
   expectedFingerprint?: string;
-  /** Inject a `fetch` implementation (tests); defaults to the global `fetch`. */
-  fetchImpl?: typeof fetch;
 }
 
 /**
  * Fetch the card at `wellKnownUrl`, verify its signature (and fingerprint when
  * anchored), and return the verified `AgentCard`. Throws a typed
- * {@link A2aClientError} on fetch failure, a malformed body, a bad signature,
- * or a fingerprint mismatch.
+ * {@link A2aClientError} on a network-policy refusal (`url_refused`), fetch
+ * failure, a malformed body, a bad signature, or a fingerprint mismatch.
  */
 export async function fetchAndVerifyCard(
   wellKnownUrl: string,
   opts: FetchAndVerifyCardOptions = {},
 ): Promise<AgentCard> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
-
   let response: Response;
   try {
-    response = await fetchImpl(wellKnownUrl);
+    response = await a2aFetch(wellKnownUrl, {}, opts);
   } catch (err) {
+    if (err instanceof A2aUrlRefusedError) {
+      throw new A2aClientError('url_refused', `Card URL ${err.message}`);
+    }
     const reason = err instanceof Error ? err.message : String(err);
     throw new A2aClientError(
       'fetch_failed',

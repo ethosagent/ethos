@@ -16,14 +16,11 @@ import {
   type ApprovalObservability,
   createSlackApprovalHook,
   type PendingApproval,
+  SYSTEM_DECIDER,
 } from '../approval-coordinator';
 import { wireApprovalFlow } from '../commands/gateway';
 
 type AuditRow = Parameters<ApprovalObservability['recordSafetyApproval']>[0];
-
-/** Mirrors the module-private `SYSTEM_DECIDER` in `../approval-coordinator`
- *  (and its twin in web-api's `approvals.service.ts`). */
-const SYSTEM_DECIDER = '__ethos_system__';
 
 /** Collecting audit sink — stands in for wiring's EthosObservability. */
 function recordingSink(): { rows: AuditRow[]; observability: ApprovalObservability } {
@@ -36,7 +33,7 @@ function toolCall(overrides: Partial<BeforeToolCallPayload> = {}): BeforeToolCal
     sessionId: 'sid-1',
     toolCallId: 'tc-1',
     toolName: 'terminal',
-    args: { command: 'rm -rf /' },
+    args: { command: 'kill $(lsof -t -i:3000)' },
     ...overrides,
   };
 }
@@ -381,13 +378,19 @@ describe('ApprovalCoordinator — safety audit trail', () => {
 });
 
 describe('createSlackApprovalHook', () => {
+  const noSurface = async () => {
+    throw new Error('withoutSurface must not run for a turn with an approval surface');
+  };
+
   it('passes through non-dangerous tool calls without prompting', async () => {
     const coordinator = new ApprovalCoordinator();
     const requestSpy = vi.spyOn(coordinator, 'requestApproval');
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => null,
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const result = await hook(toolCall());
@@ -395,22 +398,28 @@ describe('createSlackApprovalHook', () => {
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
-  it('passes a dangerous call through untouched when the turn has no Slack surface', async () => {
-    // A Discord/Email turn sharing a Slack-bound loop: `resolveApprovalTarget`
-    // returns undefined (no approval-capable route). The hook must NOT
-    // suspend or deny — it passes through so the loop's other guards (the
-    // synchronous terminal hard-block) decide. Registering the hook on a
-    // shared loop must not change behavior for non-Slack channels.
+  it('hands a turn with no approval surface to withoutSurface, never prompting', async () => {
+    // An Email/WhatsApp turn sharing a Slack-bound loop: `resolveApprovalTarget`
+    // returns undefined (no approval-capable route). Nobody can be asked, so
+    // the unattended gate decides — the call is neither suspended nor let
+    // through by this hook.
     const coordinator = new ApprovalCoordinator();
     const requestSpy = vi.spyOn(coordinator, 'requestApproval');
+    const isDangerous = vi.fn(async () => 'recursive force-delete');
+    const withoutSurface = vi.fn(async () => ({ error: 'no human is present' }));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
-      isDangerous: async () => 'recursive force-delete',
+      isDangerous,
       resolveApprovalTarget: () => undefined,
+      withoutSurface,
     });
 
     const result = await hook(toolCall());
-    expect(result).toBeNull();
+    expect(result).toEqual({ error: 'no human is present' });
+    expect(withoutSurface).toHaveBeenCalledTimes(1);
+    // Judged once, by the unattended gate's own predicate.
+    expect(isDangerous).not.toHaveBeenCalled();
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
@@ -419,9 +428,11 @@ describe('createSlackApprovalHook', () => {
     const pending: PendingApproval[] = [];
     coordinator.onPending((p) => pending.push(p));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const hookPromise = hook(toolCall());
@@ -437,9 +448,11 @@ describe('createSlackApprovalHook', () => {
     const pending: PendingApproval[] = [];
     coordinator.onPending((p) => pending.push(p));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const hookPromise = hook(toolCall());
@@ -684,12 +697,14 @@ describe('wireApprovalFlow', () => {
       resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
     } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, bots, [adapter], {
+      executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {
         throw new Error('no provider in this test');
       },
       model: 'test-model',
       ...(approvalTimeoutMs !== undefined ? { approvalTimeoutMs } : {}),
+      ownerFor: () => undefined,
     });
     return { flow, hooks, posted, calls };
   }
@@ -699,7 +714,7 @@ describe('wireApprovalFlow', () => {
       sessionId: 'sid-1',
       toolCallId: 'tc-1',
       toolName: 'terminal',
-      args: { command: 'rm -rf /' },
+      args: { command: 'kill $(lsof -t -i:3000)' },
     } satisfies BeforeToolCallPayload);
   }
 
@@ -823,14 +838,62 @@ describe('wireApprovalFlow', () => {
     }
   });
 
+  it('a card-post failure settles as denied immediately, not at the timeout (S9)', async () => {
+    // The route binds a requester ('U1'), so `ApprovalCoordinator.settle` drops
+    // any decider that is neither the requester nor `SYSTEM_DECIDER`. The
+    // fail-closed deny must use the latter, or it is dropped and the turn
+    // hangs until the timeout backstop.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const adapter = {
+        id: 'slack:test',
+        botKey: 'bot-1',
+        postApprovalCard: async () => ({ error: 'channel_not_found' }),
+        updateApprovalCard: async () => ({ ok: true }),
+        onApprovalDecision: () => {},
+      } as unknown as PlatformAdapter;
+      const hooks = new DefaultHookRegistry();
+      const bots = [
+        { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
+      ] as unknown as GatewayBotConfig[];
+      const gateway = {
+        resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
+      } as unknown as Gateway;
+      const flow = wireApprovalFlow(gateway, bots, [adapter], {
+        personalities: { get: () => undefined } as unknown as PersonalityRegistry,
+        getProvider: async () => {
+          throw new Error('no provider in this test');
+        },
+        model: 'test-model',
+        // No timeout: only the fail-closed deny can settle this call.
+        approvalTimeoutMs: 0,
+        ownerFor: () => undefined,
+        executionPostureFor: () => undefined,
+      });
+
+      const outcome = await Promise.race([
+        fireDangerousCall(hooks),
+        new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 200)),
+      ]);
+
+      expect(outcome).not.toBe('hung');
+      expect(outcome).toMatchObject({ error: expect.stringContaining('denied') });
+      expect(flow.pendingCount()).toBe(0);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it('hands back a no-op shutdown handle when no adapter can present approvals', async () => {
     const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, [], [], {
+      executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {
         throw new Error('no provider in this test');
       },
       model: 'test-model',
+      ownerFor: () => undefined,
     });
     await expect(flow.shutdown()).resolves.toBeUndefined();
   });
@@ -857,6 +920,8 @@ describe('wireApprovalFlow', () => {
         throw new Error('no provider in this test');
       },
       model: 'test-model',
+      ownerFor: () => undefined,
+      executionPostureFor: () => undefined,
       forwardDecision,
     });
     const event: ApprovalDecisionEvent = {

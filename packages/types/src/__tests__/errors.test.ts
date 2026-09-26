@@ -70,4 +70,40 @@ describe('EthosError', () => {
     const out = formatError(err, { color: true });
     expect(out).toContain('\x1b[');
   });
+
+  // N2 — the error path points at the diagnostics it just wrote.
+  it('formatError appends a diagnostics line when diagnostics are given', () => {
+    const err = new EthosError({ code: 'INTERNAL', cause: 'x', action: 'y' });
+    const out = formatError(err, {
+      diagnostics: { logPath: '~/.ethos/errors.log', traceId: '7f3a2c1e' },
+    });
+    const lines = out.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe(
+      '  logged ~/.ethos/errors.log · ethos errors --recent 5 · ethos trace 7f3a2c1e',
+    );
+  });
+
+  it('formatError omits the trace segment when no traceId is given', () => {
+    const err = new EthosError({ code: 'INTERNAL', cause: 'x', action: 'y' });
+    const out = formatError(err, { diagnostics: { logPath: '~/.ethos/errors.log' } });
+    expect(out).toContain('logged ~/.ethos/errors.log · ethos errors --recent 5');
+    expect(out).not.toContain('ethos trace');
+  });
+
+  it('formatError renders no diagnostics line when diagnostics are absent', () => {
+    const err = new EthosError({ code: 'INTERNAL', cause: 'x', action: 'y' });
+    expect(formatError(err).split('\n')).toHaveLength(2);
+    expect(formatError(err)).not.toContain('logged');
+  });
+
+  it('the diagnostics line is dim when color is on', () => {
+    const err = new EthosError({ code: 'INTERNAL', cause: 'x', action: 'y' });
+    const out = formatError(err, {
+      color: true,
+      diagnostics: { logPath: '/tmp/errors.log' },
+    });
+    const last = out.split('\n')[2] ?? '';
+    expect(last).toContain('\x1b[2m');
+  });
 });

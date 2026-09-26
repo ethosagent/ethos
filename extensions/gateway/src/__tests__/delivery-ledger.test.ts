@@ -7,8 +7,8 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Gateway } from '../index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Gateway, relayToTargets } from '../index';
 
 // ---------------------------------------------------------------------------
 // Item 9 — durable delivery obligations.
@@ -585,5 +585,386 @@ describe('Gateway — ownership-checked redelivery', () => {
     await gw.handleMessage(msg(), adapter);
     expect(adapter.sent).toHaveLength(1);
     expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Periodic sweep (plan openclaw-2026.9.6-gaps R1 + R11). Before this the sweep
+// ran once, at boot: a reply that failed on a transient platform error on a
+// long-running gateway stayed `pending` until the next restart.
+// ---------------------------------------------------------------------------
+
+describe('Gateway — periodic delivery sweep (startDeliverySweep)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function owed(store: SQLiteDeliveryLedger, content = 'lost reply'): Promise<string> {
+    return store.record({
+      botKey: 'bot-a',
+      platform: 'telegram',
+      chatId: 'chat-1',
+      sessionId: 'telegram:bot-a:chat-1',
+      content,
+    });
+  }
+
+  it('a reply the platform refused once is delivered after one interval, with no manual sweep', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    vi.mocked(adapter.send).mockResolvedValueOnce({ ok: false, error: 'flood wait' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    await gw.handleMessage(msg(), adapter);
+    const [row] = await store.listPending(['bot-a']);
+    expect(row?.status).toBe('pending');
+
+    vi.useFakeTimers();
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect((await store.get(row?.id ?? ''))?.status).toBe('delivered');
+    // The refused first send bypassed the recorder; the redelivery is the one it saw.
+    expect(adapter.send).toHaveBeenCalledTimes(2);
+    expect(adapter.sent.map((s) => s.message.text)).toEqual(['the answer']);
+  });
+
+  it('deliverySweepIntervalMs: 0 disables the timer', async () => {
+    const store = ledger();
+    const id = await owed(store);
+    const adapter = stubAdapter();
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      deliverySweepIntervalMs: 0,
+    });
+    vi.useFakeTimers();
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect((await store.get(id))?.status).toBe('pending');
+    expect(adapter.sent).toHaveLength(0);
+  });
+
+  it('a tick leaves a row younger than the in-flight grace alone — it may be a live send', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      deliverySweepIntervalMs: 10_000,
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await store.get(id))?.status).toBe('pending');
+    expect(adapter.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect((await store.get(id))?.status).toBe('delivered');
+  });
+
+  it('a slow sweep is not overlapped by the next tick or by a direct call', async () => {
+    const store = ledger();
+    await owed(store);
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    const listPending = vi.spyOn(store, 'listPending');
+    vi.useFakeTimers();
+    gw.startDeliverySweep();
+    gw.startDeliverySweep(); // idempotent: one timer, not two
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(listPending).toHaveBeenCalledTimes(1);
+
+    // The first sweep is stuck in adapter.send: neither the next tick nor the
+    // boot-style direct call starts a second one.
+    await vi.advanceTimersByTimeAsync(60_000);
+    const direct = gw.sweepPendingDeliveries();
+    expect(listPending).toHaveBeenCalledTimes(1);
+
+    finish({ ok: true, messageId: 'x' });
+    expect(await direct).toEqual({ redelivered: 1, failed: 0 });
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('each sweep first returns a stale redelivering claim to pending, then delivers it', async () => {
+    const store = ledger();
+    vi.useFakeTimers();
+    const id = await owed(store);
+    // A process claimed it and died mid-redelivery.
+    expect(await store.claim(id)).toBe(true);
+    const adapter = stubAdapter();
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    gw.startDeliverySweep();
+
+    // Younger than the claim cutoff: still a live claim.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect((await store.get(id))?.status).toBe('redelivering');
+    // Past it: reclaimed at the top of the sweep and delivered in the same pass.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect((await store.get(id))?.status).toBe('delivered');
+    expect(adapter.sent).toHaveLength(1);
+  });
+
+  // A live send that outlasts DELIVERY_SWEEP_MIN_AGE_MS (a Telegram flood-wait
+  // backoff, a large voice upload) is still in flight in THIS process: a tick
+  // must not redeliver it alongside the original.
+  it('a tick never redelivers a send still in flight in this process', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const live = gw.notifyTracked(
+      { platform: 'telegram', chatId: 'chat-1', botKey: 'bot-a', answersInbound: true },
+      'slow reply',
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const [row] = await store.listPending(['bot-a']);
+    expect(row?.content).toBe('slow reply');
+
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+
+    finish({ ok: true, messageId: 'late' });
+    await expect(live).resolves.toBe(true);
+    expect((await store.get(row?.id ?? ''))?.status).toBe('delivered');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('a live send that ends unconfirmed is swept on the next tick', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const live = gw.notifyTracked(
+      { platform: 'telegram', chatId: 'chat-1', botKey: 'bot-a', answersInbound: true },
+      'slow reply',
+    );
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    finish({ ok: false, error: 'flood wait' });
+    await expect(live).resolves.toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(2);
+    expect((await store.listPending(['bot-a'])).length).toBe(0);
+  });
+
+  it('a webhook relay send in flight on the shared ledger is not redelivered', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    // The relay files under the target's adapterId; name the bot after it so
+    // this gateway owns (and would sweep) the row.
+    const relay = relayToTargets(
+      [{ type: 'platform', adapterId: 'bot-a', chatId: 'chat-1' }],
+      'relayed',
+      {
+        hookId: 'h1',
+        sessionKey: 'webhook:h1',
+        adaptersById: new Map([['bot-a', adapter]]),
+        ledger: store,
+        log: () => {},
+      },
+    );
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+    finish({ ok: true, messageId: 'late' });
+    expect((await relay)[0]?.ok).toBe(true);
+  });
+
+  it('shutdown stops the timer', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await gw.shutdown();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect((await store.get(id))?.status).toBe('pending');
+    expect(adapter.sent).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Redelivery backoff — before this, a row the platform kept refusing was
+// re-sent on EVERY tick (once a minute) until abandonStale, seven days later.
+// A Discord send that posted and then reported failure re-posted the reply
+// every minute for a week; a chat that blocked the bot was hit every minute.
+// ---------------------------------------------------------------------------
+
+describe('Gateway — redelivery backoff and cap', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function owed(store: SQLiteDeliveryLedger): Promise<string> {
+    return store.record({
+      botKey: 'bot-a',
+      platform: 'telegram',
+      chatId: 'chat-1',
+      sessionId: 'telegram:bot-a:chat-1',
+      content: 'lost reply',
+    });
+  }
+
+  function refusingAdapter(result: DeliveryResult) {
+    const adapter = stubAdapter();
+    const at: number[] = [];
+    vi.mocked(adapter.send).mockImplementation(async () => {
+      at.push(Date.now());
+      return result;
+    });
+    return Object.assign(adapter, { at });
+  }
+
+  it('a row the platform keeps refusing is retried with doubling gaps, capped at 1h, then abandoned', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // jitter factor exactly 1
+    const store = ledger();
+    const recordSafetyBlock = vi.fn();
+    const adapter = refusingAdapter({ ok: false, error: 'flood wait' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      observability: { recordSafetyBlock },
+    });
+    vi.useFakeTimers();
+    const start = Date.now();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(12 * 3_600_000);
+
+    // Default cap: 10 failed redeliveries.
+    expect(adapter.at).toHaveLength(10);
+    const gapsMin = adapter.at.slice(1).map((t, i) => (t - (adapter.at[i] ?? 0)) / 60_000);
+    expect(gapsMin).toEqual([1, 2, 4, 8, 16, 32, 60, 60, 60]);
+    expect(((adapter.at[0] ?? 0) - start) / 60_000).toBe(1);
+
+    const row = await store.get(id);
+    expect(row?.status).toBe('abandoned');
+    expect(row?.attempts).toBe(10);
+    expect(row?.abandonReason).toMatch(/10 attempts/);
+    expect(row?.abandonReason).toMatch(/flood wait/);
+    expect(recordSafetyBlock).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'gateway.delivery_abandoned' }),
+    );
+  });
+
+  it('deliveryMaxAttempts lowers the cap', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const store = ledger();
+    const adapter = refusingAdapter({ ok: false, error: 'nope' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      deliveryMaxAttempts: 3,
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(adapter.at).toHaveLength(3);
+    expect((await store.get(id))?.status).toBe('abandoned');
+  });
+
+  it('a failure the adapter reports as permanent is abandoned at once', async () => {
+    const store = ledger();
+    const recordSafetyBlock = vi.fn();
+    const adapter = refusingAdapter({
+      ok: false,
+      error: '403: Forbidden: bot was blocked by the user',
+      permanent: true,
+    });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+      observability: { recordSafetyBlock },
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+
+    expect(adapter.at).toHaveLength(1);
+    const row = await store.get(id);
+    expect(row?.status).toBe('abandoned');
+    expect(row?.abandonReason).toMatch(/permanent/);
+    expect(row?.abandonReason).toMatch(/blocked/);
+    expect(recordSafetyBlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'gateway.delivery_abandoned',
+        details: expect.objectContaining({ permanent: true }),
+      }),
+    );
+  });
+
+  it('the boot sweep and a restarted gateway respect a row that is not yet due', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const store = ledger();
+    const adapter = refusingAdapter({ ok: false, error: 'down' });
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const id = await owed(store);
+    // A never-attempted row is due at once on the boot sweep, whatever its age.
+    expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 1 });
+    expect(adapter.at).toHaveLength(1);
+    expect((await store.get(id))?.nextAttemptAt).toBe(Date.now() + 60_000);
+
+    // Before it is due: neither a direct sweep nor a fresh process sends it.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+    const rebooted = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    expect(await rebooted.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+    expect(adapter.at).toHaveLength(1);
+
+    // Once due, it goes again, and a success confirms it.
+    await vi.advanceTimersByTimeAsync(30_000);
+    vi.mocked(adapter.send).mockResolvedValueOnce({ ok: true, messageId: 'x' });
+    expect(await rebooted.sweepPendingDeliveries()).toEqual({ redelivered: 1, failed: 0 });
+    expect((await store.get(id))?.status).toBe('delivered');
   });
 });

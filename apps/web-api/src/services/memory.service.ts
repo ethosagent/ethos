@@ -314,6 +314,8 @@ function toWirePending(e: PendingEntry): PendingMemory {
     ...(e.factHash ? { factHash: e.factHash } : {}),
     ...(e.sessionId ? { sessionId: e.sessionId } : {}),
     ...(e.sessionKey ? { sessionKey: e.sessionKey } : {}),
+    ...(e.evidenceSessions ? { evidenceSessions: e.evidenceSessions } : {}),
+    ...(e.lastSeenAt !== undefined ? { lastSeenAt: e.lastSeenAt } : {}),
   };
 }
 

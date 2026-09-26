@@ -482,9 +482,8 @@ export class RecipesService {
           ...(p.plugins ? { plugins: p.plugins } : {}),
           ...(p.fsReach ? { fs_reach: p.fsReach } : {}),
           // Always present — `renderRecipe` fills in the `allow: ['*']` default
-          // for a bundle that declares none (D15). Writing nothing here is what
-          // shipped an agent whose every `web_extract` call died on
-          // HOST_NOT_ALLOWED.
+          // for a bundle that declares none (D15), so the installed config
+          // states its network policy (see `defaultRecipeSafety`).
           ...(p.safety ? { safety: p.safety } : {}),
         });
         created.personality = personalityId;

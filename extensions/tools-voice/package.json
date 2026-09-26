@@ -17,6 +17,7 @@
     "@ethosagent/call-log": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/platform-voice": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/voice-text": "workspace:*"
   },

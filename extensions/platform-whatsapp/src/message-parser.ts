@@ -7,6 +7,12 @@ export interface RawWhatsAppMessage {
     fromMe: boolean;
     id: string;
     participant?: string;
+    /** Baileys 7: the sender's OTHER address in a DM. When `remoteJid` is a
+     *  `@lid` this is the phone JID (`@s.whatsapp.net`), and vice versa.
+     *  Present only when WhatsApp put it on the stanza. */
+    remoteJidAlt?: string;
+    /** Baileys 7: the same alternate for a group message's `participant`. */
+    participantAlt?: string;
   };
   pushName?: string;
   message?: {
@@ -72,6 +78,29 @@ export function isBotMentioned(msg: RawWhatsAppMessage, botJid: string): boolean
 }
 
 /**
+ * The PHONE form (`<number>@s.whatsapp.net`) of a LID sender, when Baileys
+ * supplied it; `undefined` otherwise.
+ *
+ * WhatsApp increasingly addresses senders by an opaque LID (`<id>@lid`) that
+ * shares no digits with their phone number, so a LID sender never matched a
+ * phone-number `allowedJids` entry. Baileys 7 carries the phone form beside it
+ * as `key.remoteJidAlt` (DM) or `key.participantAlt` (group) when the stanza
+ * has one (`extractAddressingContext` in Baileys' `decode-wa-message.js`).
+ *
+ * An ADDITIONAL match key, never a replacement: the sender's identity stays
+ * the jid as received (`userId` in `parseInboundMessage`), because the owner
+ * config, the identity map and pairing rows are keyed on it — swapping it
+ * silently re-keyed a LID owner and split their USER.md. The adapter's
+ * allowlist accepts either (`WhatsAppAdapter.isSenderAllowed`), and the phone
+ * form rides on `InboundMessage.alternateUserIds` for the gateway's owner and
+ * channel-filter checks. Pinned by `__tests__/readiness.test.ts`.
+ */
+export function phoneAlternate(jid: string, alt: string | undefined): string | undefined {
+  if (jid.endsWith('@lid') && alt?.endsWith('@s.whatsapp.net')) return alt;
+  return undefined;
+}
+
+/**
  * Platform send time in MILLISECONDS, or `undefined` when WhatsApp sent none.
  *
  * WhatsApp reports `messageTimestamp` in seconds — as a plain number, or as a
@@ -99,11 +128,16 @@ export function parseInboundMessage(
   const isGroupMention = !isDm && isBotMentioned(msg, botJid);
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const sender = msg.key.participant ?? jid;
+  const alternate = msg.key.participant
+    ? phoneAlternate(msg.key.participant, msg.key.participantAlt)
+    : phoneAlternate(jid, msg.key.remoteJidAlt);
 
   return {
     platform: 'whatsapp',
     chatId: jid,
-    userId: msg.key.participant ?? jid,
+    userId: sender,
+    ...(alternate ? { alternateUserIds: [alternate] } : {}),
     username: msg.pushName ?? undefined,
     text,
     attachments,

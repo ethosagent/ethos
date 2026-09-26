@@ -264,3 +264,28 @@ export function* budgetGuardEvents(
   }
   return false;
 }
+
+/**
+ * The one sentence a surface shows for a `halt` event (plan
+ * openclaw-2026.9.6-gaps S4/U1), or `null` when the halt needs none.
+ *
+ * Only `kind: 'budget'` halts get a notice: a watcher halt is a pause that
+ * already ends with a reply of its own (`replyAfterWatcherPause`). A
+ * `cost-cap` halt names the reset command, because the session cap outlives
+ * the turn — `turn-setup` refuses every later turn until someone runs it. The
+ * per-turn rules reset by themselves at the next message. Rendered by
+ * `Gateway.runTurn` (extensions/gateway), CLI chat's `projectEvent`
+ * (apps/ethos/src/lib/verbosity.ts) and the TUI's `halt` listener, so the
+ * command spelling has one owner.
+ */
+export function haltNotice(halt: {
+  kind: 'budget' | 'watcher';
+  rule: string;
+  message: string;
+}): string | null {
+  if (halt.kind !== 'budget') return null;
+  if (halt.rule === 'cost-cap') {
+    return `⚠ ${halt.message}. Send /budget reset to start a new budget window.`;
+  }
+  return `⚠ ${halt.message}.`;
+}

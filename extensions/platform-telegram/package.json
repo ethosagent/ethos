@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "grammy": "^1.26.0",
     "zod": "^4.3.6"

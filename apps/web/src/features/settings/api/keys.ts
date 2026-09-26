@@ -14,6 +14,11 @@ export const namedSecretKeys = {
   providers: () => [...namedSecretKeys.all(), 'providers'] as const,
 };
 
+// Stored logins for `browser_fill_credential` (`rpc.credentials.*`).
+export const credentialKeys = {
+  all: () => ['credentials'] as const,
+};
+
 export const toolSettingsKeys = {
   all: () => ['toolSettings'] as const,
   schemas: () => [...toolSettingsKeys.all(), 'schemas'] as const,

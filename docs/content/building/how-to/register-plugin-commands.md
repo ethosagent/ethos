@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: register-plugin-commands
 time: "10 min"
-updated: 2026-06-09
+updated: 2026-09-24
 ---
 
 ## Task
@@ -67,6 +67,7 @@ The `ctx` object provides session state and platform utilities.
 | `personalityId` | `string` | Current [personality](../../getting-started/glossary.md#personality) id. |
 | `platform` | `string` | `'cli'`, `'web'`, `'telegram'`, `'discord'`, or `'slack'`. |
 | `send()` | `(text: string) => Promise<void>` | Send an intermediate reply before the final return. |
+| `sender` | `{ userId: string; isOwner: boolean; isDm: boolean }` (optional) | Who ran the command. `isOwner` is true when `userId` matches `channel_filter.<platform>.ownerUserId`; the CLI always reports `{ userId: 'cli', isOwner: true, isDm: true }`. Absent on an older host — treat that as not the owner. Check `isOwner` before a command changes state other people in a group chat share. |
 | `toolRegistry` | `ToolRegistry` | Access to the [tool registry](../../getting-started/glossary.md#tool-registry) for the current session. |
 | `storage` | `Storage` | Scoped [storage](../../getting-started/glossary.md#storage) for persisting command state. |
 

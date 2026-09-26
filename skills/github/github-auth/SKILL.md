@@ -95,6 +95,8 @@ The next `git push` prompts for username (the GitHub login) and password (paste 
 
 ### Path C — SSH key (best for power users with multiple machines)
 
+The user runs these four commands in their own terminal. Do not run them through the agent's terminal: it refuses any command touching `~/.ssh` (the always-deny floor) and `eval`.
+
 ```bash
 ssh-keygen -t ed25519 -C "<email@example.com>" -f ~/.ssh/id_ed25519_github
 eval "$(ssh-agent -s)"

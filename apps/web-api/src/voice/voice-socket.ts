@@ -8,6 +8,7 @@ import {
   type VoiceServerFrame,
 } from '@ethosagent/web-contracts';
 import { type WebSocket, WebSocketServer } from 'ws';
+import { isSameOriginLocalhost } from '../lib/same-origin';
 import type { RealtimeControlLaneDeps } from './realtime-control-lane';
 import { RealtimeControlLane } from './realtime-control-lane';
 import { refuseUpgrade, registerUpgradeRoute, type UpgradableServer } from './upgrade-router';
@@ -185,7 +186,7 @@ export function createVoiceSocket(opts: VoiceSocketOptions): VoiceSocket {
   // Path matching is the router's job now; this handler only sees requests for
   // `path` and owns the Origin + credential policy.
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (!originAllowed(req.headers.origin, opts.allowedOrigins)) {
+    if (!originAllowed(req.headers.origin, req.headers.host, opts.allowedOrigins)) {
       refuseUpgrade(socket, 403, 'Forbidden');
       return;
     }
@@ -227,20 +228,33 @@ export function createVoiceSocket(opts: VoiceSocketOptions): VoiceSocket {
 }
 
 /**
- * Origin policy for the upgrade. No Origin header (a non-browser client) is
- * allowed — the credential check is what gates those. A browser Origin must be
- * loopback or explicitly allow-listed, which is what stops a random web page
- * from opening a mic lane against a local Ethos (DNS rebinding).
+ * Origin policy for a WebSocket upgrade — the voice socket, the satellite
+ * socket (./satellite-socket.ts) and the browser-takeover socket
+ * (../browser/takeover-socket.ts) all call it with the upgrade's
+ * `req.headers.host`.
+ *
+ *   - No Origin header (a non-browser client, e.g. a voice satellite daemon)
+ *     is allowed — the credential check is what gates those.
+ *   - An Origin in `allowed` (`ETHOS_ALLOWED_ORIGINS`) is allowed.
+ *   - A loopback Origin is allowed only when its host:port equals the upgrade
+ *     request's `Host` (`isSameOriginLocalhost`, ../lib/same-origin.ts, the
+ *     same comparison the HTTP CSRF check uses). A page on another localhost
+ *     port is refused: an upgrade is a GET, so the CSRF middleware never sees
+ *     it, and the `SameSite=Strict` auth cookie ignores port, so without this
+ *     that page would get a cookie-authenticated socket.
+ *   - Anything else is refused, which is what stops a random web page from
+ *     opening a mic lane against a local Ethos (DNS rebinding).
+ *
+ * Pinned by ./__tests__/voice-socket.test.ts.
  */
-export function originAllowed(origin: string | undefined, allowed?: string[]): boolean {
+export function originAllowed(
+  origin: string | undefined,
+  requestHost: string | undefined,
+  allowed?: string[],
+): boolean {
   if (!origin) return true;
   if (allowed?.includes(origin)) return true;
-  try {
-    const { hostname } = new URL(origin);
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-  } catch {
-    return false;
-  }
+  return isSameOriginLocalhost(origin, requestHost);
 }
 
 /**

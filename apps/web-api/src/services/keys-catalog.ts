@@ -12,6 +12,11 @@
 //   • LLM provider keys (`providers/<name>/apiKey` for anthropic, openai-as-a-
 //     model-provider, …) — they stay exclusively in the Models pane. A second
 //     write path onto the same refs is how two UIs start disagreeing.
+//   • The decision provider's key (`providers/typesafe/apiKey`) — same rule;
+//     it is written from Models › decision models (`DecisionsService`).
+//     Limitation, shared with the LLM keys above: a stored ref no entry claims
+//     still surfaces under `custom`, where `KeysService.set`/`clear` can
+//     replace or delete it.
 //   • Memory backends — none needs an external key, and an always-empty
 //     category is worse than no category.
 

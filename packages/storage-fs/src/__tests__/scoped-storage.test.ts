@@ -282,3 +282,93 @@ describe('ScopedStorage', () => {
     });
   });
 });
+
+// Containment 3a — `writeDeny` is a WRITE-only list: the personality's own
+// definition is readable but never writable, even though `write` covers
+// `ownDir`. Mirror cases through `ScopedFsImpl` live in
+// packages/core/src/__tests__/scoped-fs.test.ts — the two boundaries change together.
+describe('ScopedStorage — writeDeny (personality definition)', () => {
+  let home: string;
+  let own: string;
+  let scoped: ScopedStorage;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-write-deny-')));
+    own = join(home, 'personalities', 'bob');
+    const fs = new FsStorage();
+    await fs.mkdir(join(own, 'files'));
+    await fs.mkdir(join(own, 'skills', 'x'));
+    await fs.write(join(own, 'toolset.yaml'), '- read_file\n');
+    scoped = new ScopedStorage(fs, {
+      read: [`${own}/`],
+      write: [`${own}/`],
+      writeDeny: [
+        join(own, 'SOUL.md'),
+        join(own, 'config.yaml'),
+        join(own, 'toolset.yaml'),
+        join(own, 'mcp.yaml'),
+        join(own, 'tools.yaml'),
+        join(own, 'ETHOS.md'),
+        `${join(own, 'skills')}/`,
+      ],
+    });
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('refuses a write to ownDir/toolset.yaml with the operator-owned reason', async () => {
+    const err = await scoped.write(join(own, 'toolset.yaml'), '- terminal\n').catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).kind).toBe('write');
+    expect((err as BoundaryError).message).toContain('personality definition is operator-owned');
+    await expect(scoped.append(join(own, 'toolset.yaml'), '- x\n')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(scoped.writeAtomic(join(own, 'toolset.yaml'), 'x')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+  });
+
+  it('still reads the same path', async () => {
+    await expect(scoped.read(join(own, 'toolset.yaml'))).resolves.toBe('- read_file\n');
+  });
+
+  it('refuses CREATING a missing definition file', async () => {
+    await expect(scoped.write(join(own, 'mcp.yaml'), 'x')).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('allows the asset folder and memory files', async () => {
+    await expect(scoped.write(join(own, 'files', 'a.png'), 'png')).resolves.toBeUndefined();
+    await expect(scoped.write(join(own, 'MEMORY.md'), 'note')).resolves.toBeUndefined();
+  });
+
+  it('refuses a write under ownDir/skills/', async () => {
+    await expect(scoped.write(join(own, 'skills', 'x', 'SKILL.md'), 'x')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(scoped.mkdir(join(own, 'skills', 'y'))).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('refuses a write that reaches toolset.yaml through a symlink in files/, on the hop', async () => {
+    await symlink('../toolset.yaml', join(own, 'files', 't'));
+    const err = await scoped.write(join(own, 'files', 't'), '- terminal\n').catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).message).toContain('personality definition is operator-owned');
+    await expect(new FsStorage().read(join(own, 'toolset.yaml'))).resolves.toBe('- read_file\n');
+  });
+
+  it('refuses removing or renaming a directory that contains a definition entry', async () => {
+    await expect(scoped.remove(own, { recursive: true })).rejects.toBeInstanceOf(BoundaryError);
+    await expect(
+      scoped.rename(join(own, 'skills'), join(own, 'files', 's')),
+    ).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.remove(join(own, 'files'), { recursive: true })).resolves.toBeUndefined();
+  });
+
+  it('without writeDeny the same write succeeds (the list is opt-in per scope)', async () => {
+    const open = new ScopedStorage(new FsStorage(), { read: [`${own}/`], write: [`${own}/`] });
+    await expect(open.write(join(own, 'toolset.yaml'), '- terminal\n')).resolves.toBeUndefined();
+  });
+});

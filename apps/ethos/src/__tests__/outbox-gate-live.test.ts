@@ -120,7 +120,7 @@ describe('ethos serve — the proposal side, and nothing that delivers', () => {
   });
 
   it('drains reviews before the loop is disposed, and closes the store', () => {
-    const drain = serve.indexOf('await outboxSide.drain()');
+    const drain = serve.indexOf("boundedShutdownStep('outbox drain', () => outboxSide.drain()");
     expect(drain).toBeGreaterThan(-1);
     expect(drain).toBeLessThan(serve.indexOf("['agent loop', disposeLoop]"));
     expect(serve).toContain('outboxSide.close()');

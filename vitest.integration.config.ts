@@ -19,7 +19,12 @@ export default defineConfig({
     extensions: ['.mts', '.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
   },
   test: {
-    include: ['packages/*/src/__tests__/integration/**/*.integration.test.ts'],
+    include: [
+      'packages/*/src/__tests__/integration/**/*.integration.test.ts',
+      // Spawned-process suites (e.g. a real `ethos gateway start` SIGKILLed
+      // mid-turn): per-test timeouts are set in the file.
+      'apps/*/src/__tests__/integration/**/*.integration.test.ts',
+    ],
     // Two real server boots per test; generous but still bounded.
     testTimeout: 30_000,
   },

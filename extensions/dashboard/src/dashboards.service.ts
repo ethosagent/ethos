@@ -263,6 +263,13 @@ export class DashboardsService {
   constructor(opts: DashboardsServiceOptions) {
     this.db = new Database(opts.dbPath);
     this.pluginLoader = opts.pluginLoader;
+    // dashboards.db is not only this connection's: the backup (`ethos backup`,
+    // and the `backup` system job in packages/wiring/src/system-jobs.ts) opens
+    // it from another process to snapshot it (packages/wiring/src/backup/
+    // scopes.ts). An explicit busy timeout makes concurrent opens/writes wait
+    // instead of throwing SQLITE_BUSY. Pinned by
+    // __tests__/dashboards.service.test.ts ("busy_timeout").
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.createTables();

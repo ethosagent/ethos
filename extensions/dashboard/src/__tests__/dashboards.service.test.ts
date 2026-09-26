@@ -565,3 +565,14 @@ describe('DashboardsService', () => {
     expect(imported?.panels[0].sqlQuery).toBe('SELECT * FROM sales');
   });
 });
+
+describe('DashboardsService — busy_timeout', () => {
+  it('waits 5000ms for a peer connection instead of throwing SQLITE_BUSY', () => {
+    // dashboards.db is also opened by the backup snapshot from another process.
+    // The @ethosagent/sqlite default is 0, which throws "database is locked".
+    const svc = new DashboardsService({ dbPath: ':memory:' });
+    const rows = svc.getDb().pragma('busy_timeout') as Array<{ timeout: number }>;
+    expect(rows[0]?.timeout).toBe(5000);
+    svc.close();
+  });
+});

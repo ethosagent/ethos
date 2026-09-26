@@ -15,6 +15,8 @@ const request: ApprovalRequest = {
   toolName: 'bash',
   args: { command: 'git push origin main' },
   reason: 'pushes to a shared branch',
+  alwaysAsk: false,
+  hardline: false,
 };
 
 // Case 18: tap Allow, then tap again while the decision is in flight.

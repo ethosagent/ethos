@@ -1,5 +1,5 @@
 import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
-import type { PlatformAdapter } from '@ethosagent/types';
+import type { Logger, PlatformAdapter } from '@ethosagent/types';
 import { translateChannelPlugin, unwrapChannelRegistration } from './channel-translator';
 import {
   translateBeforePromptBuildHook,
@@ -109,6 +109,12 @@ const UNSUPPORTED_METHODS = new Set([
 
 export interface OpenClawCompatCallbacks {
   onPlatformAdapter?: (pluginId: string, adapter: PlatformAdapter) => void;
+  /**
+   * Where the shim reports calls it accepts but cannot translate (Law 10 —
+   * library code is silent). The plugin loader passes its own logger; absent,
+   * those warnings are dropped.
+   */
+  logger?: Logger;
 }
 
 /**
@@ -184,7 +190,7 @@ export class OpenClawPluginApiShim {
 
   registerMemoryFlushPlan(_resolver: MemoryFlushPlanResolver): void {
     // Ethos has no host-controlled flush plan concept — dropped.
-    console.warn(
+    this.callbacks.logger?.warn(
       `[openclaw-compat] Plugin "${this.id}" called api.registerMemoryFlushPlan(). ` +
         `Flush plan control is not supported in Ethos — using Ethos built-in sync timing.`,
     );
@@ -196,7 +202,7 @@ export class OpenClawPluginApiShim {
 
   registerChannel(reg: OpenClawPluginChannelRegistration | ChannelPlugin): void {
     const channelPlugin = unwrapChannelRegistration(reg);
-    const adapter = translateChannelPlugin(channelPlugin);
+    const adapter = translateChannelPlugin(channelPlugin, this.callbacks.logger);
     this.callbacks.onPlatformAdapter?.(this.id, adapter);
   }
 
@@ -211,7 +217,7 @@ export class OpenClawPluginApiShim {
     try {
       this.ethosApi.registerTool(tool as import('@ethosagent/types').Tool);
     } catch (err) {
-      console.warn(
+      this.callbacks.logger?.warn(
         `[openclaw-compat] Plugin "${this.id}" registerTool() failed: ${String(err)}. ` +
           `The tool was not registered.`,
       );
@@ -243,7 +249,7 @@ export class OpenClawPluginApiShim {
 
     // session_end — no Ethos equivalent
     if (hookName === 'session_end') {
-      console.warn(
+      this.callbacks.logger?.warn(
         `[openclaw-compat] Plugin "${this.id}" subscribed to "session_end" which has no Ethos ` +
           `equivalent. Session-end cleanup registered by this plugin will not run.`,
       );
@@ -281,7 +287,7 @@ export class OpenClawPluginApiShim {
             return null;
           }
           if (typeof result !== 'object') {
-            console.warn(
+            this.callbacks.logger?.warn(
               `[openclaw-compat] Plugin "${this.id}" hook "${hookName}" returned a non-object ` +
                 `(${typeof result}). Treating as denial (fail-closed).`,
             );
@@ -298,7 +304,7 @@ export class OpenClawPluginApiShim {
     }
 
     // Unmapped hook — warn + ignore
-    console.warn(
+    this.callbacks.logger?.warn(
       `[openclaw-compat] Plugin "${this.id}" subscribed to hook "${hookName}" which has no ` +
         `Ethos equivalent. This subscription is ignored.`,
     );
@@ -370,7 +376,7 @@ export function createOpenClawApiShim(
       }
       if (typeof prop === 'string' && UNSUPPORTED_METHODS.has(prop)) {
         return () => {
-          console.warn(
+          callbacks.logger?.warn(
             `[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is not supported in Ethos. ` +
               `This call is ignored. The plugin may not function fully.`,
           );

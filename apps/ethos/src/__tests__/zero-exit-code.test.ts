@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // final `process.exit(process.exitCode ?? 0)` propagates a non-zero status
 // to shell pipelines. These tests drive runZero with a mocked wiring layer.
 
+// The approval gate is pinned elsewhere (terminal-approval.test.ts); these
+// fake loops carry no hook registry to wire it on.
+vi.mock('../lib/non-interactive-approval', () => ({ gateNonInteractiveLoop: vi.fn() }));
+
 vi.mock('../wiring', () => ({
   getStorage: vi.fn(() => ({})),
   getSecretsResolver: vi.fn(async () => ({})),
@@ -65,7 +69,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
@@ -81,14 +85,14 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
   it('sets exitCode 1 when no config exists', async () => {
     vi.mocked(readConfig).mockResolvedValue(null as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
@@ -106,7 +110,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     const written = vi
       .mocked(process.stdout.write)
       .mock.calls.map((c) => String(c[0]))
@@ -127,7 +131,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -167,7 +171,7 @@ describe('runZero exit-code propagation (G5)', () => {
       // Never ends: reading it would hang the test until it times out.
       useStdin(new PassThrough(), 'char');
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).toBe('hello');
     }, 2_000);
@@ -179,7 +183,7 @@ describe('runZero exit-code propagation (G5)', () => {
         throw new Error('EBADF');
       });
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       expect(run.mock.calls[0]?.[0]).toBe('hello');
     }, 2_000);
 
@@ -187,7 +191,7 @@ describe('runZero exit-code propagation (G5)', () => {
       const run = mockLoop();
       useStdin(Readable.from([Buffer.from('piped text')]), kind);
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       const prompt = String(run.mock.calls[0]?.[0]);
       expect(prompt.startsWith('hello')).toBe(true);
       expect(prompt).toContain('piped text');

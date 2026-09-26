@@ -46,7 +46,7 @@ describe('admin RPCs — gated by admin.enabled', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const setCookie = exchange.headers.get('set-cookie') ?? '';
     cookie = setCookie.split(/;\s*/)[0] ?? '';
@@ -60,6 +60,7 @@ describe('admin RPCs — gated by admin.enabled', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: input }),
     });

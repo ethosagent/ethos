@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, normalize, resolve, sep } from 'node:path';
 import { Hono } from 'hono';
+import { SPA_SHELL_CSP } from '../middleware/csp';
 import { mimeForPath } from './mime';
 
 // Static handler for the bundled `apps/web/dist/` SPA. We don't use
@@ -76,6 +77,10 @@ async function tryServe(root: string, requestPath: string): Promise<Response | n
     'cache-control': filePath.endsWith('index.html')
       ? 'no-cache'
       : 'public, max-age=31536000, immutable',
+    // Framing-only policy for the SPA's own files; `cspMiddleware` keeps a
+    // policy that is already set, so the strict API policy does not replace
+    // it. Why the SPA cannot take the strict one: ../middleware/csp.ts.
+    'content-security-policy': SPA_SHELL_CSP,
   });
   return new Response(ab, { headers });
 }

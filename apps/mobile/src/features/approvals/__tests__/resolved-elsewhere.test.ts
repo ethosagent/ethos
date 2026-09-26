@@ -12,6 +12,8 @@ function approval(id: string, toolName = 'bash'): ApprovalRequest {
     toolName,
     args: {},
     reason: null,
+    alwaysAsk: false,
+    hardline: false,
   };
 }
 

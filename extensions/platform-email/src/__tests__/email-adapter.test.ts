@@ -1,7 +1,13 @@
 import type { InboundMessage } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EmailAdapterConfig } from '../index';
 import { EmailAdapter } from '../index';
+import { loadEmailSdk } from '../sdk';
+
+// The adapter reads imapflow/mailparser/nodemailer through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadEmailSdk();
+});
 
 const BASE_CONFIG: EmailAdapterConfig = {
   imapHost: 'imap.example.com',
@@ -13,6 +19,10 @@ const BASE_CONFIG: EmailAdapterConfig = {
   // botKey is a required constructor param (computed once in wiring); tests
   // supply a fixed value.
   botKey: 'email-test-bot',
+  // Every fixture below carries a passing Authentication-Results header from
+  // this authserv-id (see buildRawEmail), so these tests exercise the
+  // verified-sender path. The unverified path is sender-auth.test.ts.
+  trustedAuthservId: 'mx.example.com',
 };
 
 // ---------------------------------------------------------------------------
@@ -46,7 +56,9 @@ function buildRawEmail(opts: {
   text: string;
   messageId?: string;
 }): Buffer {
+  const domain = opts.from.slice(opts.from.lastIndexOf('@') + 1);
   const lines = [
+    `Authentication-Results: mx.example.com; dmarc=pass header.from=${domain}`,
     `From: ${opts.fromName ? `"${opts.fromName}" <${opts.from}>` : opts.from}`,
     `To: agent@example.com`,
     `Subject: ${opts.subject}`,
@@ -369,5 +381,80 @@ describe('EmailAdapter messageId', () => {
     expect(received).toHaveLength(2);
     expect(received[0].messageId).toBe('<a@mail>');
     expect(received[1].messageId).toBe('uid:2:INBOX');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slash commands — first line of the body (U2)
+// ---------------------------------------------------------------------------
+
+describe('EmailAdapter slash commands', () => {
+  async function inboundText(text: string): Promise<string | undefined> {
+    const raw = buildRawEmail({ from: 'alice@example.com', subject: 'Re: Project', text });
+    const imap = makeImapMock([{ uid: 1, raw }]);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const received: string[] = [];
+    adapter.onMessage((msg) => received.push(msg.text));
+    await adapter.poll();
+    return received[0];
+  }
+
+  it('a gateway command on the first line is the whole message; quoted reply and signature are dropped', async () => {
+    expect(
+      await inboundText(
+        '/personality engineer\r\n\r\nOn Tue, Bob wrote:\r\n> earlier text\r\n\r\n-- \r\nAlice',
+      ),
+    ).toBe('/personality engineer');
+    expect(await inboundText('/stop\r\n\r\nSent from my phone')).toBe('/stop');
+  });
+
+  it('a free-text command keeps every line of its prompt, minus the quoted reply and signature', async () => {
+    expect(
+      await inboundText(
+        '/background summarise the thread\r\nthen draft a reply\r\n\r\nkeep it short\r\n\r\nOn Tue, Bob wrote:\r\n> earlier text\r\n\r\n-- \r\nAlice',
+      ),
+    ).toBe('/background summarise the thread\nthen draft a reply\n\nkeep it short');
+    expect(await inboundText('/queue first\r\nsecond\r\n> quoted\r\n')).toBe(
+      '/queue first\nsecond',
+    );
+  });
+
+  it('a free-text command alone on the first line takes the lines below as its prompt', async () => {
+    expect(await inboundText('/background\r\nwrite the weekly report\r\n\r\n-- \r\nAlice')).toBe(
+      '/background\nwrite the weekly report',
+    );
+  });
+
+  it('a quoted-reply header wrapped across two lines ends the prompt', async () => {
+    expect(
+      await inboundText(
+        '/compact focus on the budget\r\n\r\nOn Tue, 3 Sep 2026 at 10:00, Bob <bob@example.com>\r\nwrote:\r\n> earlier',
+      ),
+    ).toBe('/compact focus on the budget');
+  });
+
+  it('a first line that is not a gateway command leaves the body untouched', async () => {
+    expect(await inboundText('/etc/hosts is wrong\r\n\r\nsee above')).toBe(
+      '/etc/hosts is wrong\n\nsee above',
+    );
+    expect(await inboundText('/notacommand now\r\n\r\nbody')).toBe('/notacommand now\n\nbody');
+  });
+
+  it('an unverified sender is never read as a command — the sender warning leads the text', async () => {
+    const raw = buildRawEmail({ from: 'alice@example.com', subject: 'Project', text: '/stop' });
+    const imap = makeImapMock([{ uid: 1, raw }]);
+    const { trustedAuthservId: _unset, ...unverified } = BASE_CONFIG;
+    const adapter = new EmailAdapter(unverified, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const received: string[] = [];
+    adapter.onMessage((msg) => received.push(msg.text));
+    await adapter.poll();
+    expect(received[0]?.startsWith('/')).toBe(false);
+    expect(received[0]).toContain('/stop');
   });
 });

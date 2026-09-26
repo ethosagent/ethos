@@ -24,6 +24,9 @@ import type {
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import type { SmallWindowOverlay, SmallWindowResolver } from './small-window';
+import type { TierRouter } from './tier-router';
+import type { ToolLoadingResolver, ToolLoadingState } from './tool-loading';
 
 // ---------------------------------------------------------------------------
 // LoopDeps — dependency bag injected from AgentLoop's private fields
@@ -51,6 +54,24 @@ export interface LoopDeps {
   /** Lane 3(b) — small-window mode (resolved once by wiring); gates declared
    *  `context_engine_options.small_window_toolset` narrowing in turn setup. */
   smallWindow: boolean;
+  /** Per-personality small-window decision (`agent-loop/small-window.ts`),
+   *  asked once per turn by `setupTurn`. Present → it replaces `smallWindow`
+   *  for the turn; absent → `smallWindow` above applies, as before. */
+  smallWindowResolver?: SmallWindowResolver;
+  /** Per-personality tool exclusion (plan decision-tool D13), unioned by
+   *  `setupTurn` with the surface's `toolsetExclude` into `excludeTools`, so it
+   *  outranks `alwaysInclude` in `toDefinitions` and `executeParallel`. Must
+   *  depend only on the personality, keeping tool definitions byte-stable
+   *  across turns. Absent → no personality exclusion, exactly as before. */
+  personalityToolExclude?: (personality: PersonalityConfig) => string[];
+  /** reach-and-containment Part 1 — wiring-built predicate deciding, per turn,
+   *  whether on-demand tool loading engages (`agent-loop/tool-loading.ts`).
+   *  Absent → every allowed schema is sent, exactly as before. */
+  toolLoading?: ToolLoadingResolver;
+  /** plan decision-provider-jev §8.3 — wiring-built downgrade-only tier router
+   *  (`agent-loop/tier-router.ts`). Absent → every turn without a user override
+   *  runs `default`, exactly as before. */
+  tierRouter?: TierRouter;
   /** D7 — the registry, the role bindings, `modelRouting` and (on a team turn)
    *  the manifest's model slots: everything `resolveModel` reads besides the
    *  personality and the role. Replaces the bare `modelRouting` map. */
@@ -139,6 +160,7 @@ export interface LoopDeps {
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
+    scope: { personalityId: string; allowedPlugins: readonly string[] },
   ) => Promise<{
     pluginId: string;
     credentialKey: string;
@@ -181,9 +203,10 @@ export interface TurnSetup {
    * derivation is not idempotent (a declared workdir of `${CWD}/out` would
    * compound if the resolved workdir were fed back in as `cwd`), and one
    * derivation is the only way the app-layer prefixes and the workdir can be
-   * guaranteed to describe the same filesystem.
+   * guaranteed to describe the same filesystem. `writeDeny` (the
+   * personality's own definition files) rides the same scope.
    */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   obsConfig: PersonalityObservabilityConfig | undefined;
   traceId: string | undefined;
   turnNumber: number;
@@ -193,10 +216,28 @@ export interface TurnSetup {
   modelOverride: string | undefined;
   /** Which provider entry `modelOverride` belongs to — `routeTurnModel` (`agent-loop/model-route.ts`). */
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /**
+   * openclaw-9.5-adoption item 7 (D32) — exactly one compactor per turn.
+   * `active` is true when the provider this turn resolves to compacts
+   * server-side (`servesServerCompaction`, providers/chained-provider.ts); the
+   * local compactions then skip: the pre-LLM gate (`assembleContext`), the
+   * overflow retry (`applyOverflowRetry`) and the turn-end trigger
+   * (`maybeConsolidateAtTurnEnd`). Mutable on purpose: `streamStep` clears it
+   * when the provider reports the API refused the compaction edit, so the
+   * local compactions still left in THIS turn run.
+   */
+  serverCompaction: { active: boolean };
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
   memScopeId: string;
+  /** Set only when on-demand tool loading is active for this turn
+   *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
+  toolLoading?: ToolLoadingState;
+  /** Set when `LoopDeps.smallWindowResolver` answered for this turn's
+   *  personality (small-window flag, budgets, history limit); `AgentLoop.run`
+   *  applies it (`withSmallWindow`). */
+  smallWindowOverlay?: SmallWindowOverlay;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };

@@ -1,19 +1,19 @@
 ---
 title: Browser tools
-description: "Browser tools for navigation, interaction, screenshots and vision-click, plus launch posture, persistent profiles, bot-wall detection and human takeover."
+description: "Browser tools for navigation, interaction, screenshots and vision-click, plus launch posture, profiles, bot walls, human takeover and stored-login fill."
 kind: reference
 audience: developer
 slug: browser-tools
-updated: 2026-09-07
+updated: 2026-09-24
 ---
 
 # Browser tools
 
-Ethos ships a Playwright-backed browser surface covering navigation, interaction by accessibility ref, vision-click, page-state introspection, and browser session management — **fourteen tools**, plus `browser_request_takeover` in any deployment that has an interactive surface to hand a browser to. Personality lockdown gates which tools are visible per personality via the `toolset.yaml` allowlist.
+Ethos ships a Playwright-backed browser surface covering navigation, interaction by accessibility ref, vision-click, page-state introspection, and browser session management — **fourteen tools**, plus `browser_request_takeover` in any deployment that has an interactive surface to hand a browser to, and `browser_fill_credential` in any deployment that wires an observability sink. Personality lockdown gates which tools are visible per personality via the `toolset.yaml` allowlist.
 
 ## Source {#source}
 
-Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-browser/src/index.ts) — `createBrowserTools`. Per-tool implementations split across `browser-actions.ts`, `browser-computed-style.ts`, `browser-screenshot.ts`, `browser-takeover.ts`, `browser-vision-click.ts`, `browser-vision-type.ts`, `snapshot.ts`, `sessions.ts`, `launch-options.ts`, `block-detector.ts`, `a11y.ts`. Wiring at [`packages/wiring/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/index.ts).
+Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-browser/src/index.ts) — `createBrowserTools`. Per-tool implementations split across `browser-actions.ts`, `browser-computed-style.ts`, `browser-screenshot.ts`, `browser-takeover.ts`, `browser-fill-credential.ts`, `credential-vault.ts`, `secret-mask.ts`, `totp.ts`, `browser-vision-click.ts`, `browser-vision-type.ts`, `snapshot.ts`, `sessions.ts`, `launch-options.ts`, `block-detector.ts`, `a11y.ts`. Wiring at [`packages/wiring/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/index.ts).
 
 ## Tools {#tools}
 
@@ -34,6 +34,7 @@ Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent
 | `browser_vision_click` | Single tool that screenshots → vision model identifies the element → clicks. For pages with poor accessibility trees. | `vision: true` (transitively via `vision_analyze`) |
 | `browser_vision_type` | Same idea: vision finds the input, then types. | `vision: true` |
 | `browser_request_takeover` | Pause the agent and hand the live browser to a human, then wait for them to hand it back. Registered only when wiring supplies a `ClarifyBridge`. | none |
+| `browser_fill_credential` | Fill a stored login (username, password, TOTP code) into the page by reference — the model never sees the values. Available only when wiring supplies an observability sink. See [stored-login fill](#fill-credential). | `secrets: ['credentials/*']` |
 
 All tools share `toolset: 'browser'`, so a personality opting in lists individual tools in `toolset.yaml` — they're not grouped under a single toolset name in the registry filter.
 
@@ -170,6 +171,39 @@ That link is `<webBaseUrl>/chat`, built from `webBaseUrl` (which resolves `ETHOS
 
 A takeover hands over a live, logged-in session. See [the security note](../../security/controls.md#browser-takeover-exposure) before granting this tool.
 
+## Stored-login fill {#fill-credential}
+
+`browser_fill_credential` fills a login the operator stored, by name. The model passes the credential name and element refs from the latest snapshot; the tool resolves the values itself after every check has passed. No argument carries a value, so `tool_start.args`, the persisted `tool_use` block and traces hold nothing secret.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `credential` | string, required | Credential name. Letters, digits, `-`, `_` (`SECRET_NAME_RE`). |
+| `username_ref` | string | `@eN` of the username field. |
+| `password_ref` | string | `@eN` of the password field. Must be an `<input type="password">`. |
+| `totp_ref` | string | `@eN` of the 2FA code field. The code is generated from the stored seed. |
+| `submit` | boolean | Press Enter in the last filled field. Default `false`. |
+
+At least one `*_ref` is required. On success the result is the post-fill snapshot plus `{"filled": [...], "origin": "..."}`.
+
+**Vault layout.** A credential named `<name>` is four vault refs: `credentials/<name>/username`, `…/password`, `…/totp` (optional base32 seed or `otpauth://totp/` URI), and `…/policy`, JSON `{ "origins": [...], "personalities": [...], "unattended": false }`. Store them with `ethos secrets credential add <name> --origin <origin> --personality <id>` (values are prompted, the password and seed without echo) or in the web app under Settings › Security › logins. Edit grants with `ethos secrets credential grant|revoke <name> --personality <id> [--unattended]`.
+
+**Checks, in order.** Each refusal is a fixed message that names neither the ref nor the value, and each call writes one `browser.credential_fill` event to observability, success or refusal, carrying names and origins only.
+
+| Audit `code` | Refused when |
+|---|---|
+| `not_found` | The credential, a needed field or its policy is missing or unparseable, or a ref is not on the current page. A policy listing a non-https, non-loopback origin counts as unparseable. |
+| `refused_personality` | The active personality is not in `policy.personalities`. An empty list is usable by nobody. The tool must also be in the personality's `toolset.yaml`. |
+| `refused_unattended` | `policy.unattended` is false and the turn is a background job, or no clarify surface is registered for the turn's platform (`ClarifyBridge.canPresent`). |
+| `refused_origin` | The top-level page's origin, or the origin of the frame owning any target field, is not exactly (`===` on `URL.origin`) one of `policy.origins`. `https:` only; `http:` is allowed for `localhost`, `127.0.0.1` and `[::1]`. |
+| `refused_field_type` | `password_ref` is not an `<input type="password">`. |
+| `origin_changed` | The page changed origin between the checks and the end of the fill. The filled fields are cleared. |
+| `error` | Playwright failed. The message is fixed — a Playwright timeout can quote the value it was filling. |
+| `filled` | Success. |
+
+**Masking.** Every tool `createBrowserTools` returns is wrapped by `withSecretMask` (`secret-mask.ts`). After a fill, each filled value is replaced with `••••••` in every later browser tool result, error and progress event for that browser session — the aria snapshot otherwise prints a password input's current value. The values live in process memory until the session closes. Screenshots are not masked; a password field shows the browser's own bullets.
+
+**TOTP.** RFC 6238: SHA-1, 6 digits, 30 s by default; an `otpauth://totp/` URI may set `algorithm` (`SHA1`, `SHA256`, `SHA512`), `digits` (6 or 8) and `period` (1–300 s). Anything else — HOTP, another algorithm or digit count, a `counter` parameter — is refused when the credential is stored. SMS, e-mail and push codes go through [takeover](#takeover).
+
 ## Capability declarations {#capabilities}
 
 The wiring declares capabilities per tool. The personality-lockdown enforcement gate at [`packages/core/src/agent-loop.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop.ts) confirms each call's declared capabilities are satisfied. Today:
@@ -190,6 +224,9 @@ The wiring declares capabilities per tool. The personality-lockdown enforcement 
 | `This browser session is already handed to a human …` | `browser_request_takeover` called on a session that already holds a takeover lock. |
 | `No one took over the browser within <n>s.` | Takeover timed out. The page is unchanged; report the blockage rather than retrying. |
 | `The browser session was closed during the takeover …` | `/new`, an abort, or the operator closing the window while a human held it. |
+| `Refused: the page, or the frame holding a target field, is not on an origin this credential is bound to …` | `browser_fill_credential` on a page (or in a frame) outside `policy.origins`. See [stored-login fill](#fill-credential). |
+| `Refused: credential fills are not allowed in an unattended run …` | A background job, or no surface registered for this platform, and the credential's policy does not set `unattended`. |
+| `This personality is not allowed to use that credential …` | The personality is not in the credential's `policy.personalities`. Grant with `ethos secrets credential grant`. |
 | `⚠ Browser profile '<id>' is in use by another session …` | Not an error — a notice on an otherwise successful result. This session fell back to an ephemeral context and is [not logged in](#profiles). |
 
 ## Examples {#examples}

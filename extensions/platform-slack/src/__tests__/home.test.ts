@@ -505,6 +505,42 @@ describe('home/handlers — registerHomeEvents', () => {
     expect(sectionTexts).not.toContain('Hidden from this user');
   });
 
+  it('shows a non-allowlisted viewer no clarifies, not even an anyone-clarify (S11)', async () => {
+    const app = fakeApp();
+    registerHomeEvents(app as never, {
+      ...deps,
+      clarify: {
+        listPendingForBot: async () => [
+          {
+            requestId: 'r-anyone',
+            sessionId: 's',
+            surfaceType: 'slack',
+            surfaceContext: { chatId: 'C1', botKey: 'b', messageTs: 'ts1' },
+            question: 'Pick one',
+            options: ['a', 'b'],
+            answerableBy: 'anyone',
+            createdAt: '2026-05-15T00:00:00Z',
+            defaultDeadlineAt: '2026-05-15T00:15:00Z',
+          },
+        ],
+      },
+    });
+    const publish = vi.fn().mockResolvedValue(undefined);
+    const handler = app.handlers.get('event:app_home_opened');
+    if (!handler) throw new Error('handler not registered');
+    await handler({
+      event: { user: 'U-stranger', tab: 'home' },
+      client: { views: { publish } },
+    });
+    const view = publish.mock.calls[0]?.[0]?.view as {
+      blocks: Array<{ type: string; text?: { text?: string } }>;
+    };
+    const headers = view.blocks.filter((b) => b.type === 'header').map((b) => b.text?.text);
+    expect(headers).not.toContain('Waiting on you');
+    const texts = view.blocks.map((b) => b.text?.text ?? '').join('\n');
+    expect(texts).not.toContain('Pick one');
+  });
+
   it('hides the "Waiting on you" section entirely when no clarifies match', async () => {
     const app = fakeApp();
     registerHomeEvents(app as never, {

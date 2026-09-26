@@ -20,10 +20,10 @@ function readCommand(file: string): string {
 
 describe('every CronScheduler construction site passes a state-dir-relative cronDir', () => {
   it.each([
-    ['serve.ts', "cronDir: join(dir, 'cron')"],
-    ['boot.ts', "cronDir: join(dir, 'cron')"],
-    ['gateway.ts', "cronDir: join(ethosDir(), 'cron')"],
-    ['cron.ts', "cronDir: join(ethosDir(), 'cron')"],
+    ['serve.ts', 'cronDir: ethosCronDir()'],
+    ['boot.ts', 'cronDir: ethosCronDir()'],
+    ['gateway.ts', 'cronDir: ethosCronDir()'],
+    ['cron.ts', 'cronDir: ethosCronDir()'],
   ])('%s constructs CronScheduler with %s', (file, expected) => {
     const src = readCommand(file);
     const ctor = src.indexOf('new CronScheduler({');

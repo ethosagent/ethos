@@ -190,8 +190,15 @@ vi.mock('@whiskeysockets/baileys', () => ({
 // The adapters
 // ---------------------------------------------------------------------------
 
-const { TelegramAdapter } = await import('../../../../extensions/platform-telegram/src/index');
-const { SlackAdapter } = await import('../../../../extensions/platform-slack/src/index');
+const { TelegramAdapter, loadTelegramSdk } = await import(
+  '../../../../extensions/platform-telegram/src/index'
+);
+const { SlackAdapter, loadSlackSdk } = await import(
+  '../../../../extensions/platform-slack/src/index'
+);
+// The adapters read their SDKs (mocked above) through sdk.ts, as in production.
+await loadTelegramSdk();
+await loadSlackSdk();
 const { WhatsAppAdapter } = await import('../../../../extensions/platform-whatsapp/src/index');
 const { registerMessageHandler } = await import(
   '../../../../extensions/platform-discord/src/events/messages'
@@ -353,9 +360,14 @@ async function deliverWhatsApp(mode: Mode): Promise<Delivery> {
   });
   const envelopes: InboundMessage[] = [];
   adapter.onMessage((m) => envelopes.push(m));
-  await adapter.start();
-  // `botJid` is only known once the connection opens.
+  // `start()` resolves only once the socket opens (R5), and `botJid` is only
+  // known then — so open it while start() is waiting.
+  const started = adapter.start();
+  await vi.waitFor(() => {
+    if (!whatsappHandlers.has('connection.update')) throw new Error('not registered yet');
+  });
   whatsappHandlers.get('connection.update')?.({ connection: 'open' });
+  await started;
   whatsappCalls.length = 0;
 
   const upsert = whatsappHandlers.get('messages.upsert');

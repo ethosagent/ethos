@@ -2,7 +2,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../index';
+import {
+  configParseNotices,
+  type EthosConfig,
+  ethosCronDir,
+  ethosDir,
+  ethosScriptsDir,
+  parseConfigYaml,
+  readRawConfig,
+  writeConfig,
+} from '../index';
 
 describe('ethosDir', () => {
   afterEach(() => {
@@ -17,6 +26,36 @@ describe('ethosDir', () => {
   it('returns ETHOS_STATE_DIR when set', () => {
     process.env.ETHOS_STATE_DIR = '/tmp/custom-ethos';
     expect(ethosDir()).toBe('/tmp/custom-ethos');
+  });
+});
+
+// The cron store once defaulted to `homedir()/.ethos/cron` inside the
+// scheduler and ignored ETHOS_STATE_DIR, so an isolated state dir still wrote
+// the real `~/.ethos/cron/jobs.json`. These resolvers are what every host now
+// hands to `CronScheduler`'s required `cronDir` / `scriptsDir`.
+describe('ethosCronDir / ethosScriptsDir', () => {
+  afterEach(() => {
+    delete process.env.ETHOS_STATE_DIR;
+  });
+
+  it('are unchanged from every earlier release when ETHOS_STATE_DIR is not set', () => {
+    delete process.env.ETHOS_STATE_DIR;
+    expect(ethosCronDir()).toBe(join(homedir(), '.ethos', 'cron'));
+    expect(ethosScriptsDir()).toBe(join(homedir(), '.ethos', 'scripts'));
+  });
+
+  it('resolve under ETHOS_STATE_DIR when set, never under the home directory', () => {
+    process.env.ETHOS_STATE_DIR = '/tmp/custom-ethos';
+    expect(ethosCronDir()).toBe(join('/tmp/custom-ethos', 'cron'));
+    expect(ethosScriptsDir()).toBe(join('/tmp/custom-ethos', 'scripts'));
+    expect(ethosCronDir().startsWith(join(homedir(), '.ethos'))).toBe(false);
+  });
+
+  it('are read per call, so a later override is honoured', () => {
+    process.env.ETHOS_STATE_DIR = '/tmp/a';
+    expect(ethosCronDir()).toBe(join('/tmp/a', 'cron'));
+    process.env.ETHOS_STATE_DIR = '/tmp/b';
+    expect(ethosCronDir()).toBe(join('/tmp/b', 'cron'));
   });
 });
 
@@ -430,6 +469,125 @@ describe('parseConfigYaml — push.transport', () => {
   });
 });
 
+describe('parseConfigYaml — goals.allowCheckCommands', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses goals.allowCheckCommands: true into config.goals', async () => {
+    const cfg = await loadYaml([...base, 'goals.allowCheckCommands: true'].join('\n'));
+    expect(cfg.goals).toEqual({ allowCheckCommands: true });
+  });
+
+  it('parses an explicit false, and leaves config.goals undefined when absent', async () => {
+    const off = await loadYaml([...base, 'goals.allowCheckCommands: false'].join('\n'));
+    expect(off.goals).toEqual({ allowCheckCommands: false });
+    const absent = await loadYaml(base.join('\n'));
+    expect(absent.goals).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      goals: { allowCheckCommands: true },
+    };
+    await writeConfig(storage, original, new InMemorySecretsResolver());
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('goals.allowCheckCommands: true');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.goals).toEqual({ allowCheckCommands: true });
+  });
+});
+
+describe('parseConfigYaml — display.slow_turn_notice_ms (UD3)', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses the number', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: 12000'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBe(12000);
+  });
+
+  it('keeps 0 (disabled) distinct from absent (consumer default)', async () => {
+    const disabled = await loadYaml([...base, 'display.slow_turn_notice_ms: 0'].join('\n'));
+    expect(disabled.displaySlowTurnNoticeMs).toBe(0);
+    const absent = await loadYaml(base.join('\n'));
+    expect(absent.displaySlowTurnNoticeMs).toBeUndefined();
+  });
+
+  it('drops a non-numeric value rather than carrying NaN', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: soon'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBeUndefined();
+  });
+
+  it('clamps a negative value to 0 (disabled), never back to the 8000 default', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: -500'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBe(0);
+  });
+
+  it('round-trips through writeConfig and back, including 0', async () => {
+    for (const value of [8000, 0]) {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      const original: EthosConfig = {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: 'sk',
+        personality: 'researcher',
+        displaySlowTurnNoticeMs: value,
+      };
+      await writeConfig(storage, original, new InMemorySecretsResolver());
+      const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+      expect(raw).toContain(`display.slow_turn_notice_ms: ${value}`);
+      const roundTripped = await readRawConfig(storage);
+      expect(roundTripped?.displaySlowTurnNoticeMs).toBe(value);
+    }
+  });
+});
+
+describe('parseConfigYaml — a2a.peering.allowPrivateUrls', () => {
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk'];
+
+  it('parses the operator peering opt-in beside a2a.enabled', async () => {
+    const cfg = await loadYaml(
+      [...base, 'a2a.enabled: true', 'a2a.peering.allowPrivateUrls: true'].join('\n'),
+    );
+    expect(cfg.a2a).toEqual({ enabled: true, peering: { allowPrivateUrls: true } });
+  });
+
+  it('is read by the parser — no unknown-key notice', () => {
+    const cfg = parseConfigYaml([...base, 'a2a.peering.allowPrivateUrls: true'].join('\n'));
+    const warnings = configParseNotices(cfg).warnings;
+    expect(warnings.join('\n')).not.toContain('a2a.peering');
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(
+      storage,
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: 'sk',
+        personality: 'researcher',
+        a2a: { enabled: false, peering: { allowPrivateUrls: true } },
+      },
+      new InMemorySecretsResolver(),
+    );
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('a2a.peering.allowPrivateUrls: true');
+    expect((await readRawConfig(storage))?.a2a).toEqual({
+      enabled: false,
+      peering: { allowPrivateUrls: true },
+    });
+  });
+});
+
 describe('parseConfigYaml — security.trusted_github_orgs', () => {
   const base = [
     'provider: anthropic',
@@ -526,11 +684,17 @@ describe('parseConfigYaml — storage backend', () => {
     expect(cfg.storage?.s3?.prefix).toBe('ethos');
   });
 
-  it('keeps storage.encryption: true alone yielding { encryption: true }', async () => {
+  // SEC-001 — the flag encrypted none of the files its how-to named, so it was
+  // removed rather than left claiming a protection it did not give. A config
+  // that still sets it is told so by name, not with a generic unknown-key line.
+  it('drops storage.encryption and says it was removed', async () => {
     const cfg = await loadYaml([...base, 'storage.encryption: true'].join('\n'));
-    expect(cfg.storage).toEqual({ encryption: true });
-    expect(cfg.storage?.backend).toBeUndefined();
-    expect(cfg.storage?.s3).toBeUndefined();
+    expect(cfg.storage).toBeUndefined();
+    const { warnings } = configParseNotices(cfg);
+    const notice = warnings.filter((w) => w.includes("'storage.encryption'"));
+    expect(notice).toHaveLength(1);
+    expect(notice[0]).toContain('removed');
+    expect(notice[0]).toContain('not encrypted');
   });
 
   it('omits the s3 block when backend is s3 but no bucket is set', async () => {

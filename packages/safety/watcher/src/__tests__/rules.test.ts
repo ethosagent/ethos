@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   compoundingErrorRule,
+  EXFIL_TOOL_NAMES,
+  isExfilShapedTool,
   rateLimitRule,
   suspiciousSequenceRule,
   tokenBudgetRule,
@@ -86,7 +88,7 @@ describe('compoundingErrorRule', () => {
 });
 
 describe('suspiciousSequenceRule', () => {
-  it('terminates when read of ~/.ssh is followed by web_post', () => {
+  it('terminates when read of ~/.ssh is followed by web_extract', () => {
     const rule = suspiciousSequenceRule();
     const state = makeInitialState();
     rule.evaluate(
@@ -94,14 +96,14 @@ describe('suspiciousSequenceRule', () => {
       state,
     );
     const r = rule.evaluate(
-      { type: 'tool_start', toolName: 'web_post', args: { url: 'http://x' } },
+      { type: 'tool_start', toolName: 'web_extract', args: { url: 'http://x' } },
       state,
     );
     expect(r?.action).toBe('terminate');
     if (r && r.action !== 'allow') expect(r.rule).toBe('suspicious-sequence');
   });
 
-  it('terminates when /etc/passwd read is followed by email_send', () => {
+  it('terminates when /etc/passwd read is followed by send_message', () => {
     const rule = suspiciousSequenceRule();
     const state = makeInitialState();
     rule.evaluate(
@@ -109,7 +111,7 @@ describe('suspiciousSequenceRule', () => {
       state,
     );
     const r = rule.evaluate(
-      { type: 'tool_start', toolName: 'email_send', args: { to: 'evil@x' } },
+      { type: 'tool_start', toolName: 'send_message', args: { target: 'evil@x' } },
       state,
     );
     expect(r?.action).toBe('terminate');
@@ -123,8 +125,49 @@ describe('suspiciousSequenceRule', () => {
       state,
     );
     expect(
-      rule.evaluate({ type: 'tool_start', toolName: 'web_post', args: { url: 'http://x' } }, state),
+      rule.evaluate(
+        { type: 'tool_start', toolName: 'web_extract', args: { url: 'http://x' } },
+        state,
+      ),
     ).toBeNull();
+  });
+
+  // The list used to name `web_post`, `web_put`, `web_delete` and
+  // `email_send` — no tool registers any of them — so the rule could only ever
+  // fire on `browser_type`. The wiring drift gate
+  // (packages/wiring/src/__tests__/watcher-exfil-tool-names.test.ts) pins the
+  // list against the real tool definitions; these cases pin the matching.
+  it.each([
+    'web_extract',
+    'browse_url',
+    'browser_navigate',
+    'browser_type',
+    'send_message',
+    'a2a_send',
+    'route_to_agent',
+    'broadcast_to_agents',
+    'mcp__github__create_issue',
+  ])('terminates on %s after a credential-shaped read', (toolName) => {
+    const rule = suspiciousSequenceRule();
+    const state = makeInitialState();
+    rule.evaluate(
+      { type: 'tool_start', toolName: 'read_file', args: { path: '/home/u/.aws/credentials' } },
+      state,
+    );
+    const r = rule.evaluate({ type: 'tool_start', toolName, args: {} }, state);
+    expect(r?.action, `${toolName} must count as exfil-shaped`).toBe('terminate');
+  });
+
+  it('names no tool that does not exist', () => {
+    for (const ghost of ['web_post', 'web_put', 'web_delete', 'email_send']) {
+      expect(EXFIL_TOOL_NAMES.has(ghost)).toBe(false);
+    }
+  });
+
+  it('does not treat a fixed-provider search tool or a bare mcp_ name as exfil-shaped', () => {
+    expect(isExfilShapedTool('web_search')).toBe(false);
+    expect(isExfilShapedTool('read_file')).toBe(false);
+    expect(isExfilShapedTool('mcp_github')).toBe(false);
   });
 
   it('respects the window — old credential-read drops out', () => {
@@ -143,7 +186,10 @@ describe('suspiciousSequenceRule', () => {
       state,
     );
     expect(
-      rule.evaluate({ type: 'tool_start', toolName: 'web_post', args: { url: 'http://x' } }, state),
+      rule.evaluate(
+        { type: 'tool_start', toolName: 'web_extract', args: { url: 'http://x' } },
+        state,
+      ),
     ).toBeNull();
   });
 });

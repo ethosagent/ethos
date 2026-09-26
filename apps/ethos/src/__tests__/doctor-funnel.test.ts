@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readState = vi.fn();
 vi.mock('../wiring', () => ({
-  getFunnelTracker: () => ({ readState }),
+  getStorage: () => ({}),
+}));
+// The report reads the stamp file through `readFunnelState`, never a
+// FunnelTracker, whose host wiring opens (and migrates) observability.db.
+vi.mock('@ethosagent/wiring', () => ({
+  readFunnelState: () => readState(),
 }));
 
 // Keep the static import of doctor.ts light — the funnel report path never
@@ -20,7 +25,23 @@ vi.mock('@ethosagent/skills', () => ({
   bundledSkillsSource: () => ({}),
 }));
 
-import { formatFunnelDuration, runFunnelReport } from '../commands/doctor';
+import { formatFunnelDuration, runFunnelReport, suggestProvider } from '../commands/doctor';
+
+// B7 (plan ux-feedback-and-config-clarity §6.7) — the `doctor --fix` provider
+// suggestion is Damerau-Levenshtein over the catalog ids, not the old
+// first-letter guess (which offered 'azure' for 'antropic').
+describe('suggestProvider', () => {
+  const ids = ['anthropic', 'openai', 'openrouter', 'azure', 'gemini', 'ollama'];
+
+  it('suggests by edit distance, not first letter', () => {
+    expect(suggestProvider('antropic', ids)).toBe('anthropic');
+    expect(suggestProvider('openia', ids)).toBe('openai');
+  });
+
+  it('falls back to anthropic when nothing is within two edits', () => {
+    expect(suggestProvider('totally-unknown', ids)).toBe('anthropic');
+  });
+});
 
 describe('formatFunnelDuration', () => {
   it('renders sub-minute deltas as seconds', () => {

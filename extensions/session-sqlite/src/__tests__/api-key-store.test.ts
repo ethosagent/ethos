@@ -150,3 +150,18 @@ describe('SqliteApiKeyStore — durability posture', () => {
     store.close();
   });
 });
+
+/** Reads `PRAGMA busy_timeout` off the store's OWN handle — like `synchronous`
+ *  it is a per-connection setting, so a second connection would prove nothing. */
+function busyPragma(store: unknown): number {
+  const rows = (store as { db: { pragma(s: string): unknown } }).db.pragma('busy_timeout');
+  return (rows as Array<{ timeout: number }>)[0]?.timeout ?? -1;
+}
+
+describe('SqliteApiKeyStore — busy posture', () => {
+  it('waits up to 5 s for a peer write lock', () => {
+    const store = new SqliteApiKeyStore(':memory:');
+    expect(busyPragma(store)).toBe(5000);
+    store.close();
+  });
+});

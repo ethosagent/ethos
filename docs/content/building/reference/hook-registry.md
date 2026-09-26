@@ -4,7 +4,7 @@ description: "HookRegistry interface, DefaultHookRegistry implementation, and ev
 kind: reference
 audience: developer
 slug: hook-registry
-updated: 2026-07-10
+updated: 2026-09-25
 ---
 
 A [hook](../../getting-started/glossary.md#hook) is a handler that fires at a named extension point inside [`AgentLoop`](./agent-event.md) or the channel gateway. The `HookRegistry` is the lookup table mapping hook names to handlers; `DefaultHookRegistry` is the in-memory implementation `AgentLoop` ships with.
@@ -128,7 +128,7 @@ Payload + result types live in [`packages/types/src/hooks.ts`](https://github.co
 | Name | Payload → Result | When it fires |
 |---|---|---|
 | `before_prompt_build` | `BeforePromptBuildPayload` → `BeforePromptBuildResult` | Before the system prompt is assembled — handlers can prepend, append, or override. |
-| `before_tool_call` | `BeforeToolCallPayload` → `BeforeToolCallResult` | Before each tool's `execute` runs — handlers can amend `args` or set `error` to reject. |
+| `before_tool_call` | `BeforeToolCallPayload` → `BeforeToolCallResult` | Before each tool's `execute` runs — handlers can amend `args` or set `error` to reject. Amended `args` fire the hook a second time on the amended args, with `rewrittenFrom` set to the originals, so guard handlers judge what will run. That second fire is judge-only: an `error` still refuses the call, any `args` it returns are ignored, and the args that run are the ones it judged (`enforceBeforeToolCall`, `packages/core/src/agent-loop/stages/per-call-enforcement.ts`). An approval surface that asked on the first fire asks again on the second, and the second prompt says the arguments were rewritten (`REWRITTEN_ARGS_NOTE`, `packages/wiring/src/approval-seams.ts`). |
 | `message_sending` | `MessageSendingPayload` → `MessageSendingResult` | Before an outbound message hits an adapter — handlers can rewrite the message. |
 | `personality_switched` | `PersonalitySwitchedPayload` → `PersonalitySwitchedResult` | After `/personality` switches identities — handlers can substitute a different config. |
 | `subagent_spawning` | `SubagentSpawningPayload` → `SubagentSpawningResult` | Before a subagent session starts — handlers can rewrite prompt or pick a different personality. |
@@ -151,7 +151,7 @@ Key payload fields — see [`packages/types/src/hooks.ts`](https://github.com/et
 | `BeforePromptBuildPayload` | `sessionId`, `personalityId?`, `history: StoredMessage[]` |
 | `BeforeLLMCallPayload` | `sessionId`, `model`, `turnNumber` |
 | `AfterLLMCallPayload` | `sessionId`, `text`, `usage: { inputTokens, outputTokens }` |
-| `BeforeToolCallPayload` | `sessionId`, `toolCallId`, `toolName`, `args` |
+| `BeforeToolCallPayload` | `sessionId`, `toolCallId`, `toolName`, `args`, `rewrittenFrom?` (set only on the re-judge fire) |
 | `AfterToolCallPayload` | `sessionId`, `toolName`, `result: ToolResult`, `durationMs` |
 | `ToolEndWithPathPayload` | `sessionId`, `personalityId?`, `toolName`, `filePath`, `workingDir` |
 | `AgentDonePayload` | `sessionId`, `text`, `turnCount`, `personalityId?`, `successfulToolCalls?`, `totalToolCalls?`, `toolNames?`, `initialPrompt?` |

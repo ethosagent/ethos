@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NotificationRouter, NotifyOptions, SlashCommandContext } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CLI_SLASH_SENDER,
   formatSkillProposedNotice,
   makeTuiNotificationSubscriber,
   makeTuiSkillProposalSubscriber,
@@ -70,6 +73,24 @@ describe('makeTuiSlashCommands', () => {
     expect(seen?.sessionId).toBe('cli:proj:123');
     expect(seen?.personalityId).toBe('coach');
     expect(seen?.platform).toBe('cli');
+    expect(seen?.sender).toEqual({ userId: 'cli', isOwner: true, isDm: true });
+  });
+});
+
+// Plan openclaw-advisory-fixes L-b: both local CLI slash surfaces tell a
+// plugin handler the sender is the owner in a DM.
+describe('CLI_SLASH_SENDER', () => {
+  it('is the terminal owner in a DM', () => {
+    expect(CLI_SLASH_SENDER).toEqual({ userId: 'cli', isOwner: true, isDm: true });
+  });
+
+  it('is what the chat.ts readline plugin branch passes as sender', () => {
+    // handleSlashCommand is not exported (it needs a live readline + loop), so
+    // pin the wiring at the source: the one SlashCommandContext chat.ts builds
+    // carries this constant.
+    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'chat.ts'), 'utf8');
+    const built = src.slice(src.indexOf('SlashCommandContext = {'));
+    expect(built.slice(0, 300)).toContain('sender: CLI_SLASH_SENDER,');
   });
 });
 

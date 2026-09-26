@@ -1,8 +1,7 @@
 import { app } from 'electron';
 
 export function isBackgroundMode(): boolean {
-  const isHidden =
-    process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAsHidden;
+  const isHidden = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
   return isHidden;
 }
 

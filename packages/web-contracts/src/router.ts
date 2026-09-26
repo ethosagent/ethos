@@ -8,11 +8,13 @@ import { VOICE_MODES } from '@ethosagent/types';
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { SessionCardSchema } from './cards';
+import { SessionDecisionSchema } from './events';
 import {
   A2aIdentityViewSchema,
   A2aPeerRowSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
+  ApprovalLeaseSchema,
   ApprovalRequestSchema,
   ApprovalScopeSchema,
   BackgroundJobDetailSchema,
@@ -25,6 +27,9 @@ import {
   CronDeliveryTargetSchema,
   CronJobSchema,
   CronRunSchema,
+  DecisionProviderIdSchema,
+  DecisionSiteModeSchema,
+  DecisionSiteViewSchema,
   DigestLatestSchema,
   EvalRunInfoSchema,
   EvalScorerSchema,
@@ -145,6 +150,8 @@ const SessionListInput = z.object({
   personalityId: z.string().optional(),
   /** Only sessions whose origin platform is exactly this (`cli`, `web`, `mcp`, …). */
   platform: z.string().optional(),
+  /** Only the direct forks of this session (`parentSessionId`) — the branch switcher. */
+  parentSessionId: z.string().optional(),
 });
 const SessionListOutput = z.object({
   items: z.array(SessionSchema),
@@ -166,6 +173,8 @@ const SessionGetOutput = z.object({
   messages: z.array(StoredMessageSchema),
   /** Card envelopes emitted during this session, for replay. Empty when none, or when not requested. */
   cards: z.array(SessionCardSchema),
+  /** Settled decision rows, oldest first, for replay (plan decision-provider-personality §15.5). Empty when none, or when not requested. */
+  decisions: z.array(SessionDecisionSchema),
 });
 
 // Turn-based, cursor-paged history, newest page first. A turn starts at a
@@ -185,6 +194,9 @@ const SessionMessagesOutput = z.object({
   messages: z.array(StoredMessageSchema),
   /** Only the cards whose tool call belongs to a message in this page. */
   cards: z.array(SessionCardSchema),
+  /** Only the decision rows this page anchors: their `toolCallId` belongs to a
+   *  message in this page, or their `traceId` is a page message's `traceId`. */
+  decisions: z.array(SessionDecisionSchema),
   /** Pass as `before` for the next-older page. `null` once the page reaches the start of the session. */
   nextCursor: z.string().nullable(),
 });
@@ -395,6 +407,13 @@ const ExecutionPostureSchema = z.object({
    * Nothing downstream may default a port back in.
    */
   sshTarget: z.string().optional(),
+  /** The digest-pinned image a `docker` posture runs in (`execution.docker.image`). */
+  dockerImage: z.string().optional(),
+  /**
+   * A `docker` posture with no `execution.docker.image`: every exec tool
+   * refuses. `message` is the refusal's own wording — render it verbatim.
+   */
+  dockerImageMissing: z.object({ message: z.string() }).optional(),
   /**
    * Why an `ssh` posture will not reach its target. `message` is the canonical
    * wording — render it verbatim rather than composing a second explanation of
@@ -418,6 +437,21 @@ const PersonalityCharacterSheetOutput = z.object({
   /** Resolved execution posture (Phase 2a, lane E1). Null when the server has
    *  no data directory wired and therefore cannot resolve the posture. */
   posture: ExecutionPostureSchema.nullable(),
+  /** The sheet's `## Prompt size` numbers, structured for the Personalities
+   *  tab: the measured static prompt prefix (chars/4, serialized tool schemas
+   *  and project context included) and the AGENTS.md/CLAUDE.md project-context
+   *  term measured in the personality's declared `fs_reach` workdir —
+   *  `workdir: null` when it declares none, so the term depends on the
+   *  directory the agent runs in. Null when the server could not measure (no
+   *  tool registry wired); `projectContext` null when it was not measured.
+   *  Optional so a server predating the field still parses. */
+  promptSize: z
+    .object({
+      staticPrefixTokens: z.number(),
+      projectContext: z.object({ workdir: z.string().nullable(), tokens: z.number() }).nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;
@@ -478,6 +512,30 @@ const PersonalityVoiceInput = z
     model: z.string().optional(),
     languages: z.record(VoiceLanguageTagSchema, z.string().min(1)).optional(),
   })
+  .optional();
+
+/**
+ * `decisions.*` on a personality (plan decision-provider-personality §9) — the
+ * `voice` semantics: `sites` is merged per site onto the stored block
+ * (`mergeDecisionsConfig`, extensions/personalities), so a patch naming one
+ * site keeps the others; `provider: ''` clears the reference. `provider` must
+ * name a catalog id: the editor only offers ones the operator added, and a
+ * typo here would load as a silent `off` (PD3). Both objects are strict, so an
+ * unknown site key is refused rather than stripped.
+ */
+const PersonalityDecisionsInput = z
+  .object({
+    provider: DecisionProviderIdSchema.or(z.literal('')).optional(),
+    sites: z
+      .object({
+        injection: DecisionSiteModeSchema.optional(),
+        approver: DecisionSiteModeSchema.optional(),
+        router: DecisionSiteModeSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
   .optional();
 
 const PersonalityCreateInput = z.object({
@@ -657,6 +715,8 @@ const PersonalityUpdateInput = z.object({
   voice: PersonalityVoiceInput,
   /** `mcp_export.*` — see `PersonalityMcpExportPatchInput`. */
   mcp_export: PersonalityMcpExportPatchInput.optional(),
+  /** `decisions.*` — see `PersonalityDecisionsInput`. */
+  decisions: PersonalityDecisionsInput,
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 
@@ -950,6 +1010,23 @@ const ToolDenyOutput = z.object({ ok: z.literal(true) });
  *  launch). Also the source of the Activity tab's "Needs you" count. */
 const ToolsListPendingInput = z.object({ sessionId: z.string().optional() });
 const ToolsListPendingOutput = z.array(ApprovalRequestSchema);
+// ---------------------------------------------------------------------------
+// Approvals — time-limited grants (reach-and-containment 3b). Listed and
+// revoked from Settings → Approvals; granted through `tools.approve` with
+// scope `lease-1h`. Not in the API-key SCOPE_MAP, so cookie-only.
+// ---------------------------------------------------------------------------
+
+const ApprovalLeasesListOutput = z.object({ leases: z.array(ApprovalLeaseSchema) });
+const ApprovalLeasesRevokeInput = z.object({ id: z.string().min(1) });
+const ApprovalLeasesRevokeOutput = z.object({ ok: z.literal(true) });
+
+/** @stable v1 */
+const approvals = {
+  leases: {
+    list: oc.output(ApprovalLeasesListOutput),
+    revoke: oc.input(ApprovalLeasesRevokeInput).output(ApprovalLeasesRevokeOutput),
+  },
+};
 
 const ToolsCatalogInput = z.object({});
 const ToolsCatalogOutput = z.object({
@@ -1440,6 +1517,51 @@ const VoiceBotUpdateSchema = z.object({
   }),
 });
 
+/**
+ * B3 (plan ux-feedback-and-config-clarity §6.2–6.3) — the `Resolved` block:
+ * which configuration is actually in effect, from `resolveEffectiveConfig`
+ * in `@ethosagent/config`. Settings → General renders it read-only; the same
+ * resolver feeds `ethos status` and `ethos doctor`. `apiKey` carries only the
+ * provider and the SOURCE of the key (env var name / vault ref) — never a
+ * value or preview.
+ */
+const ConfigResolvedSchema = z.object({
+  /** `ETHOS_STATE_DIR` when set, else `~/.ethos`. */
+  stateDir: z.string(),
+  configPath: z.string(),
+  personality: z.object({
+    id: z.string(),
+    /** Which key decided it (`default` = neither key set). */
+    source: z.enum(['activeContext', 'personality', 'default']),
+    /** The `personality:` value an activeContext outranked. */
+    shadowed: z.string().optional(),
+  }),
+  model: z.object({
+    id: z.string(),
+    /** The config-level rung that decided `id` (`model:` or `modelRouting.<id>`). */
+    rung: z.string(),
+  }),
+  apiKey: z.object({
+    provider: z.string(),
+    /**
+     * `missing` = env unset AND the resolver was handed a vault listing that
+     * lacks the ref (see `EffectiveConfig.apiKey.source` in
+     * `@ethosagent/config`). web-api resolves without a vault listing today,
+     * so it never sends `missing` — the variant is here so the schema mirrors
+     * the resolver's enum, additively.
+     */
+    source: z.enum(['env', 'vault', 'inline', 'missing']),
+    /** The vault ref consulted (absent for `inline`). */
+    ref: z.string().optional(),
+    /** The environment variable that supplied the key (source `env`). */
+    envVar: z.string().optional(),
+    /** Present when the env var wins AND the vault also holds the ref. */
+    overrides: z.literal('vault').optional(),
+  }),
+  /** Parse-time warnings for the file as it stands (B2 unknown-key lines). */
+  warnings: z.array(z.string()),
+});
+
 const ConfigGetOutput = z.object({
   provider: z.string(),
   model: z.string(),
@@ -1467,6 +1589,8 @@ const ConfigGetOutput = z.object({
   /** What the provider-chain codec dropped out of config.yaml and why (a
    *  `providers.<n>` index with no `provider` line loses the whole entry). */
   providersNotices: z.array(z.string()),
+  /** The effective configuration (B3) — see `ConfigResolvedSchema`. */
+  resolved: ConfigResolvedSchema,
   approvalMode: z.enum(['manual', 'smart', 'off']),
   verbosity: z.enum(['concise', 'balanced', 'verbose']),
   debugMode: z.boolean(),
@@ -1597,8 +1721,9 @@ const ConfigGetOutput = z.object({
   voiceLivekitApiKeyPreview: z.string().nullable(),
   /** `voice.livekit.apiSecret`, REDACTED. */
   voiceLivekitApiSecretPreview: z.string().nullable(),
-  /** `voice.inbound.allowlist` — caller numbers that reach the owner's own
-   *  personality. Null = key absent, which the consumer reads as "screen
+  /** `voice.inbound.allowlist` — caller numbers treated as known for pre-warm.
+   *  Caller ID is not identity, so a match never reaches the owner's own
+   *  personality (INB-001b, `decideInboundCall`). Null = key absent, which the consumer reads as "screen
    *  everyone through the receptionist". An explicitly EMPTY allowlist is not
    *  expressible on disk; `voiceInboundReceptionist` IS that policy. */
   voiceInboundAllowlist: z.array(z.string()).nullable(),
@@ -2460,6 +2585,13 @@ const ConfigUpdateOutput = z.object({
    * with `id: null` / `''` is never adopted (adopting would write its id back).
    */
   adoptedModels: z.array(ModelRegistryAdoptedModelSchema).optional(),
+  /**
+   * B2 (web save half): the config parser's warnings for the file THIS save
+   * just wrote — `config.yaml:<n> unknown key '<k>' — did you mean …?` lines
+   * for keys the save kept in passthrough but nothing reads. Absent when the
+   * parse raised none. The settings save bar renders the count and the lines.
+   */
+  warnings: z.array(z.string()).optional(),
 });
 
 /** @experimental */
@@ -3991,6 +4123,188 @@ const modelRegistry = {
 };
 
 // ---------------------------------------------------------------------------
+// Decisions — Settings › Models › decision models
+// (plan/phases/decision-provider-jev.md §7, §12). Where Settings sets the
+// decision provider's vault key (`providers/<id>/apiKey`). Per-site modes are
+// set on each personality (`personalities.update` `decisions`, plan
+// decision-provider-personality §9); the list reports which personalities use
+// each provider (`usedBy`). Thresholds stay config.yaml lines. Served by
+// `DecisionsService` (apps/web-api), cookie-only: `decisions` is absent from
+// `SCOPE_MAP` (apps/web-api/src/middleware/dual-auth.ts), so a bearer key is
+// refused the whole namespace.
+// ---------------------------------------------------------------------------
+
+/**
+ * One KIND of decision model the operator can add — an entry of
+ * `DECISION_PROVIDER_CATALOG`. The Add decision model drawer lists these; a
+ * new provider is a new catalog entry, not a new pane.
+ */
+export const DecisionProviderTypeSchema = z.object({
+  id: DecisionProviderIdSchema,
+  /** The model family, e.g. `Jev`. */
+  label: z.string(),
+  /** Who runs it, e.g. `TypeSafe`. */
+  vendor: z.string(),
+  /** One or two sentences for the Add drawer. */
+  description: z.string(),
+  getKeyUrl: z.string(),
+  /** The vault ref its key is stored at. */
+  keyRef: z.string(),
+  /** The model used when `decisions.model` is unset. */
+  defaultModel: z.string(),
+  /** The endpoint used when `decisions.baseUrl` is unset. */
+  defaultBaseUrl: z.string(),
+});
+export type DecisionProviderType = z.infer<typeof DecisionProviderTypeSchema>;
+
+/**
+ * One personality that names a decision provider in `decisions.provider`.
+ * `sites` holds only the sites it enables (`requested` ≠ `off`), each resolved
+ * by `resolveCharacterSheetDecisions` (@ethosagent/wiring) — empty when it
+ * names the provider but enables no site.
+ */
+export const DecisionProviderUserSchema = z.object({
+  personalityId: z.string(),
+  name: z.string(),
+  sites: z.array(DecisionSiteViewSchema),
+});
+export type DecisionProviderUser = z.infer<typeof DecisionProviderUserSchema>;
+
+export const DecisionProviderViewSchema = z.object({
+  id: DecisionProviderIdSchema,
+  /** The model family, e.g. `Jev`. */
+  label: z.string(),
+  /** Who runs it, e.g. `TypeSafe`. */
+  vendor: z.string(),
+  /** `decisions.provider` names this provider — the ACTIVE one (config allows one). */
+  configured: z.boolean(),
+  /** The vault ref the key is read from. */
+  keyRef: z.string(),
+  keyPresent: z.boolean(),
+  /** Masked (`redactSecretValue`) — never the raw value. */
+  keyPreview: z.string(),
+  /** `decisions.model`, else the default alias. */
+  model: z.string(),
+  baseUrl: z.string(),
+  /** The host data is sent to — the host of `baseUrl`. */
+  host: z.string(),
+  getKeyUrl: z.string(),
+  /** The personalities whose `decisions.provider` names this provider, by id.
+   *  Empty when the server was not given the personality registry. */
+  usedBy: z.array(DecisionProviderUserSchema),
+});
+export type DecisionProviderView = z.infer<typeof DecisionProviderViewSchema>;
+
+export const DecisionsListOutput = z.object({
+  /** Every kind of decision model this build knows, added or not. */
+  catalog: z.array(DecisionProviderTypeSchema),
+  /** Only the ADDED ones: a key is stored, or `decisions.provider` names it. */
+  providers: z.array(DecisionProviderViewSchema),
+});
+export type DecisionsListResult = z.infer<typeof DecisionsListOutput>;
+
+/**
+ * `DecisionErrorCode` (@ethosagent/types) plus `no_key`, which the service
+ * answers before any call when nothing is stored. The handler's return type is
+ * checked against this enum, so a provider code missing here fails typecheck.
+ */
+export const DecisionTestErrorCodeSchema = z.enum([
+  'auth',
+  'invalid',
+  'rate_limited',
+  'overloaded',
+  'timeout',
+  'aborted',
+  'malformed',
+  'too_large',
+  'unavailable',
+  'breaker_open',
+  'no_key',
+]);
+export type DecisionTestErrorCode = z.infer<typeof DecisionTestErrorCodeSchema>;
+
+export const DecisionsTestInput = z.object({
+  providerId: DecisionProviderIdSchema,
+  // A transport bound only. The service refuses anything over its own
+  // 8,000-character cap as `invalid`, as data the pane renders, rather than
+  // letting a schema error stand in for the answer.
+  message: z.string().max(65_536),
+});
+
+/**
+ * One test call's outcome — `testDecisionProvider` (@ethosagent/wiring) plus
+ * the service's own refusals. `rate_limited` with `retryAfterSeconds` is the
+ * service's 10s per-caller window (the model Test's D19 policy); without it,
+ * the vendor said 429.
+ */
+export const DecisionsTestOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    providerName: z.string(),
+    /** The model id the provider RETURNED, not the one requested (D8). */
+    model: z.string(),
+    answer: z.object({
+      p: z.number().min(0).max(1),
+      confidence: z.number().min(0).max(1),
+      /** `p ≥ 0.5` — the reading shadow mode records. */
+      containsInstructions: z.boolean(),
+    }),
+    latencyMs: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    estimatedCostUsd: z.number().nonnegative(),
+    /** Present only when redaction changed the message: what was actually sent. */
+    redactedMessage: z.string().optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: DecisionTestErrorCodeSchema,
+    message: z.string(),
+    retryAfterSeconds: z.number().int().nonnegative().optional(),
+  }),
+]);
+export type DecisionsTestResult = z.infer<typeof DecisionsTestOutput>;
+
+/** @experimental */
+const decisions = {
+  list: oc.output(DecisionsListOutput),
+  /** Writes the vault key; also writes `decisions.provider` when it is absent.
+   *  Never enables a site. */
+  setKey: oc
+    .input(
+      z.object({
+        providerId: DecisionProviderIdSchema,
+        // 8 KiB cap, the named-secrets bound — real keys are far under it.
+        value: z.string().min(1).max(8192),
+      }),
+    )
+    .output(
+      z.object({
+        ok: z.literal(true),
+        preview: z.string(),
+        /** `decisions.provider` was absent and this call wrote it. */
+        providerWritten: z.boolean(),
+      }),
+    ),
+  /** Deletes the vault key. Idempotent; config.yaml is left alone. */
+  clearKey: oc
+    .input(z.object({ providerId: DecisionProviderIdSchema }))
+    .output(z.object({ ok: z.literal(true) })),
+  /** Removes the provider from the list: deletes the vault key AND the
+   *  `decisions.provider` line when it names this provider. The other
+   *  `decisions.*` lines stay (inert without a provider), and so does every
+   *  personality's `decisions` block — its sites resolve `off`
+   *  (`not-configured`) until the provider is added again. Idempotent. */
+  remove: oc.input(z.object({ providerId: DecisionProviderIdSchema })).output(
+    z.object({
+      ok: z.literal(true),
+      /** `decisions.provider` named this provider and this call removed it. */
+      providerRemoved: z.boolean(),
+    }),
+  ),
+  test: oc.input(DecisionsTestInput).output(DecisionsTestOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Dashboards — widget templates from plugins + dashboard/panel CRUD
 // ---------------------------------------------------------------------------
 
@@ -4373,7 +4687,13 @@ const GoalCreateInput = z.object({
   title: z.string().optional(),
   acceptanceCriteria: z
     .object({
-      checks: z.array(z.object({ description: z.string() })).optional(),
+      // `command` runs as the goal personality's `terminal` would when the
+      // goal is judged (`createAcceptanceCheckExecutor`, packages/wiring); the
+      // server refuses it unless `goals.allowCheckCommands: true`
+      // (`GoalsService.create`, apps/web-api/src/services/goals.service.ts).
+      checks: z
+        .array(z.object({ description: z.string(), command: z.string().optional() }))
+        .optional(),
       rubric: z.array(z.object({ description: z.string(), weight: z.number() })).optional(),
       threshold: z.number().optional(),
     })
@@ -4387,6 +4707,8 @@ const GoalCreateInput = z.object({
   deadline: z.string().optional(),
 });
 const GoalCreateOutput = z.object({ goal: GoalSchema });
+
+const GoalSettingsOutput = z.object({ allowCheckCommands: z.boolean() });
 
 const GoalToolResultInput = z.object({
   goalId: z.string().min(1),
@@ -4407,6 +4729,7 @@ const goals = {
   cancel: oc.input(GoalCancelInput).output(GoalCancelOutput),
   resume: oc.input(GoalResumeInput).output(GoalResumeOutput),
   create: oc.input(GoalCreateInput).output(GoalCreateOutput),
+  settings: oc.output(GoalSettingsOutput),
   toolResult: oc.input(GoalToolResultInput).output(GoalToolResultOutput),
 };
 
@@ -4925,9 +5248,16 @@ const voice = {
 // abandoned, and — for a voice deployment — the same counts for voice notes,
 // whose payload is an artifact on disk.
 //
-// Read-only by construction: there is no RPC that records, claims, delivers or
-// prunes. Redelivery is the gateway's decision, made against its own botKeys;
-// a settings page must not be able to re-send someone's message.
+// The OUTBOUND half is read-only by construction: there is no RPC that
+// records, claims, delivers or prunes an obligation. Redelivery is the
+// gateway's decision, made against its own botKeys; a settings page must not be
+// able to re-send someone's message.
+//
+// The INBOUND half (plan reach-and-containment §2.6) lists dead-lettered
+// inbound messages and offers exactly two operator decisions on one: requeue
+// (the running gateway's replay tick runs the turn again) or discard. Neither
+// sends anything from here — a requeue hands the message back to the gateway,
+// which re-runs its safety filter and its own delivery path.
 // ---------------------------------------------------------------------------
 
 const DeliveryStatusCountsSchema = z.object({
@@ -4975,9 +5305,93 @@ const DeliveriesSummaryOutput = z.object({
   recent: z.array(DeliveryObligationSchema),
 });
 
+const DeadInboundSchema = z.object({
+  id: z.string(),
+  /** `dead` — given up on. `interrupted` — cut after a tool had started, so
+   *  never replayed; the chat was asked to reply `retry`. Replay re-runs it. */
+  status: z.enum(['dead', 'interrupted']),
+  platform: z.string(),
+  chatId: z.string(),
+  /** Null for the root chat. */
+  threadId: z.string().nullable(),
+  attempts: z.number(),
+  /** Why it died: the turn's last error, `stale`, or `unreadable payload`;
+   *  for an interrupted row, why it was cut. */
+  lastError: z.string().nullable(),
+  /** The message text, truncated to 200 characters, for the same reason
+   *  `DeliveryObligationSchema.content` is. Empty when the payload is gone. */
+  text: z.string(),
+  /** Epoch milliseconds. */
+  receivedAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const ListDeadInboundInput = z.object({
+  limit: z.number().int().min(1).max(500).optional(),
+});
+const ListDeadInboundOutput = z.object({ rows: z.array(DeadInboundSchema) });
+const InboundActionInput = z.object({ id: z.string().min(1) });
+/** `false` when the row is no longer dead or interrupted (already requeued,
+ *  retried or discarded). */
+const InboundActionOutput = z.object({ ok: z.boolean() });
+
+// ---------------------------------------------------------------------------
+// Usage — spend and tokens over a window (plan openclaw-2026.9.6-gaps U3)
+//
+// The web face of `ethos usage`: the same `usageAggregate` rows folded by the
+// same `summarizeUsageRows` (@ethosagent/session-sqlite), so a window reads the
+// same in the terminal and the browser. The CLI's observability-backed parts
+// (turn outcomes, `--by tool|skill`) are not here.
+// ---------------------------------------------------------------------------
+
+const UsageRowSchema = z.object({
+  /** The group: a UTC date, model, personality id, platform, or session id. */
+  key: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheCreationTokens: z.number(),
+  estimatedCostUsd: z.number(),
+  messages: z.number(),
+});
+
+const UsageDimensionSchema = z.enum(['model', 'personality', 'channel', 'session']);
+
+const UsageSummaryInput = z.object({
+  /** Window length ending now, in ms. 1 minute to 366 days. */
+  windowMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(366 * 24 * 60 * 60 * 1000),
+  /** Optional breakdown, as `ethos usage --by`. */
+  by: UsageDimensionSchema.optional(),
+});
+
+const UsageSummaryOutput = z.object({
+  /** Epoch milliseconds. */
+  since: z.number(),
+  until: z.number(),
+  totals: UsageRowSchema.omit({ key: true }).extend({
+    /** Share of billable input served from cache, 0–1. */
+    cacheHitRate: z.number(),
+  }),
+  /** One row per UTC day with spend, `key` = `YYYY-MM-DD`. */
+  daily: z.array(UsageRowSchema),
+  by: z.object({ dimension: UsageDimensionSchema, rows: z.array(UsageRowSchema) }).optional(),
+});
+
+/** @experimental */
+const usage = {
+  summary: oc.input(UsageSummaryInput).output(UsageSummaryOutput),
+};
+
 /** @experimental */
 const deliveries = {
   summary: oc.input(DeliveriesSummaryInput).output(DeliveriesSummaryOutput),
+  listDeadInbound: oc.input(ListDeadInboundInput).output(ListDeadInboundOutput),
+  requeueInbound: oc.input(InboundActionInput).output(InboundActionOutput),
+  discardInbound: oc.input(InboundActionInput).output(InboundActionOutput),
 };
 
 // ---------------------------------------------------------------------------
@@ -5392,6 +5806,54 @@ const namedSecrets = {
         tested: z.boolean().optional(),
       }),
     ),
+};
+
+// ---------------------------------------------------------------------------
+// Credentials — stored logins for `browser_fill_credential`
+// (plan reach-and-containment §4.2)
+//
+// A login is four vault refs under `credentials/<name>/`. Values are
+// write-only: `list` returns a masked username preview and presence flags,
+// never a value, and `set` echoes nothing back. Field validation (bare https
+// origins, personality ids, TOTP seeds) is the server's — the wire only bounds
+// sizes and shapes.
+// ---------------------------------------------------------------------------
+
+const CredentialViewSchema = z.object({
+  name: z.string(),
+  origins: z.array(z.string()),
+  personalities: z.array(z.string()),
+  unattended: z.boolean(),
+  /** Masked via `redactSecretValue` — never the raw username. */
+  usernamePreview: z.string(),
+  hasPassword: z.boolean(),
+  hasTotp: z.boolean(),
+  /** False when the stored policy is missing or unparseable; the tool refuses it. */
+  policyValid: z.boolean(),
+});
+
+/** @experimental */
+const credentials = {
+  list: oc.output(z.object({ credentials: z.array(CredentialViewSchema) })),
+  set: oc
+    .input(
+      z.object({
+        name: NamedSecretNameSchema,
+        /** Required for a new login; omitted keeps the stored value. */
+        username: z.string().min(1).max(8192).optional(),
+        /** Required for a new login; omitted keeps the stored value. */
+        password: z.string().min(1).max(8192).optional(),
+        /** Omitted keeps the stored seed; `null` removes it. */
+        totp: z.string().max(8192).nullable().optional(),
+        origins: z.array(z.string().min(1).max(2048)).min(1).max(32),
+        personalities: z.array(z.string().min(1).max(128)).max(64),
+        unattended: z.boolean(),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+  delete: oc
+    .input(z.object({ name: NamedSecretNameSchema }))
+    .output(z.object({ ok: z.literal(true) })),
 };
 
 // ---------------------------------------------------------------------------
@@ -6078,6 +6540,7 @@ export const contract = {
   personalities,
   chat,
   tools,
+  approvals,
   clarify,
   onboarding,
   config,
@@ -6100,6 +6563,7 @@ export const contract = {
   meta,
   models,
   modelRegistry,
+  decisions,
   dashboards,
   admin,
   context,
@@ -6109,11 +6573,13 @@ export const contract = {
   digest,
   voice,
   deliveries,
+  usage,
   outbox,
   learning,
   channels,
   a2a,
   namedSecrets,
+  credentials,
   keys,
   toolSettings,
   documents,

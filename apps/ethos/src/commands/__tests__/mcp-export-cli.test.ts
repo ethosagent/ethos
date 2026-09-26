@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PersonalityConfig } from '@ethosagent/types';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // --- module mocks ----------------------------------------------------------
 
@@ -114,6 +114,16 @@ let previousStateDir: string | undefined;
 // restore them so the suite leaves the process exactly as it found it.
 type Signal = 'SIGINT' | 'SIGTERM';
 let signalListeners: Record<Signal, NodeJS.SignalsListener[]>;
+
+// `import('../mcp')` loads the whole CLI composition graph: ~3s cold, far more
+// on a loaded host. Paid inside the first test, it could outrun that test's
+// timeout — and vitest does not cancel a timed-out test, so its run finished
+// later and wrote its `unknown_personality` line into the NEXT test's freshly
+// reset `stderr` ("expected 'unknown_personality' to be 'export_disabled'";
+// reproduced with --testTimeout=1500). Pay it once here, under its own budget.
+beforeAll(async () => {
+  await import('../mcp');
+}, 120_000);
 
 beforeEach(() => {
   signalListeners = {

@@ -1,6 +1,5 @@
 import type { AgentLoop } from '@ethosagent/core';
-import type { Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Tool, WiringContext } from '@ethosagent/types';
 import { createDelegationTools } from './index';
 
 export interface DelegationToolsCompose {

@@ -9,6 +9,8 @@ const approval = (id: string): ApprovalRequest => ({
   toolName: 'bash',
   args: { command: 'ls' },
   reason: null,
+  alwaysAsk: false,
+  hardline: false,
 });
 
 describe('needs-you', () => {

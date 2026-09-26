@@ -91,7 +91,7 @@ describe('createWebApi — route-module seam', () => {
 
   it('auth-gated module passes with a valid credential', async () => {
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
     expect(cookieHeader).toBeTruthy();
@@ -112,7 +112,11 @@ describe('createWebApi — route-module seam', () => {
   it('built-in routes still work unchanged (rpc still 401 without auth)', async () => {
     const res = await app.request('/rpc/sessions/list', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(401);

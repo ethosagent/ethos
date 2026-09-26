@@ -187,7 +187,7 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
     const src = await read('apps/ethos/src/commands/serve.ts');
     expect(
       src.match(
-        /await created\.closeChat\(\);\n(?:\s*\/\/.*\n)*\s*(?:if \(webShutdown\) )?await webShutdown\(\);/g,
+        /await created\.closeChat\(\);\n(?:\s*\/\/.*\n)*\s*(?:if \(webShutdown\) \{\n\s*)?await boundedShutdownStep\('web listener', webShutdown,/g,
       ) ?? [],
     ).toHaveLength(2);
     expect(src).not.toMatch(/server\.close\(\(\) => resolve\(\)\)/);

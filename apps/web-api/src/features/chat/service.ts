@@ -308,6 +308,12 @@ export class ChatService {
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
+        // openclaw-9.5 item 1 — this surface can answer a missing plugin
+        // credential (the chat pane's masked prompt), so the loop refuses the
+        // turn pre-turn with `credential_required` instead of running it
+        // without the credential. `/v1/chat/completions` does not opt in: it
+        // has no UI to answer with.
+        credentialPrompt: true,
         ...(loopAttachments?.length ? { attachments: loopAttachments } : {}),
         // Talk-mode turn: the loop renders a message-level `<voice-origin>`
         // annotation on the persisted user message so the model knows it is
@@ -660,15 +666,16 @@ export class ChatService {
         ...(audience !== undefined ? { audience } : {}),
       }),
     );
-    bridge.on('tool_progress', (toolName, message, percent) =>
+    bridge.on('tool_progress', (toolName, message, percent, audience) =>
       this.append(sessionId, {
         type: 'tool_progress',
         toolName,
         message,
         ...(percent !== undefined ? { percent } : {}),
-        // The agent loop already gates `audience: 'internal'` events; bridge
-        // events flow only when audience would surface them.
-        audience: 'user',
+        // C5 (ux-feedback plan) — pass the Phase 30.2 audience through as the
+        // bridge forwards it, instead of stamping everything 'user': the
+        // client is the surface, so it must see which events opted in.
+        audience,
       }),
     );
     bridge.on('tool_end', (toolCallId, toolName, ok, durationMs, result, structured, audience) => {
@@ -703,6 +710,21 @@ export class ChatService {
     bridge.on('dry_run_summary', (plan, capped) =>
       this.append(sessionId, { type: 'dry_run_summary', plan, capped }),
     );
+    // Forwarded field by field: the bridge payload also carries `sessionKey`,
+    // which the per-session stream does not need, and nothing here may ever
+    // add a credential VALUE (the event only names what is missing).
+    bridge.on('credential_required', (request) =>
+      this.append(sessionId, {
+        type: 'credential_required',
+        pluginId: request.pluginId,
+        credentialKey: request.credentialKey,
+        kind: request.kind,
+        label: request.label,
+        ...(request.description !== undefined ? { description: request.description } : {}),
+        ...(request.authUrl !== undefined ? { authUrl: request.authUrl } : {}),
+        pendingUserMessage: request.pendingUserMessage,
+      }),
+    );
     // B3 — the turn's `traceId` is passed straight through onto the stream on
     // both the opening and closing event of the turn. This is the only turn
     // identity web-api publishes; it does not mint one of its own.
@@ -715,6 +737,15 @@ export class ChatService {
         ...(traceId ? { traceId } : {}),
       }),
     );
+    // plan decision-provider-personality §15.2/§15.4 — decision rows are for
+    // the web and desktop chat (rendered in N7d). Forwarded as the event came:
+    // it carries summaries only (K13). A late shadow row can arrive after
+    // `done`; the bridge drains the loop to exhaustion, so it still lands here.
+    bridge.on('decision', (decision) => this.append(sessionId, { type: 'decision', ...decision }));
+    // A1 (ux-feedback plan) — an early safety stop (budget or watcher). The
+    // bridge forwards the event whole; put it on the stream so the client can
+    // mark the reply partial. A normal `done` still follows.
+    bridge.on('halt', (halt) => this.append(sessionId, { type: 'halt', ...halt }));
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount, traceId) => {
       this.append(sessionId, { type: 'done', text, turnCount, ...(traceId ? { traceId } : {}) });

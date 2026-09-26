@@ -1,6 +1,16 @@
-import { DefaultToolRegistry } from '@ethosagent/core';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, Tool } from '@ethosagent/types';
-import { evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
+import {
+  createAgentLoop,
+  createProjectContextInjector,
+  evaluateToolSchemaBudget,
+  measureStaticFloor,
+  projectContextAtStartup,
+} from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { measurePersonalityStatic } from '../commands/bench';
 
@@ -93,6 +103,52 @@ describe('measurePersonalityStatic', () => {
     expect(row.toolCount).toBe(floor.toolCount);
   });
 
+  it('adds the project-context column to the total static prefix, same arithmetic as wiring', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('read_file'));
+    const personality = makePersonality('ctx', ['read_file']);
+    const without = measurePersonalityStatic(personality, 'soul', registry, 1_000);
+    const withContext = measurePersonalityStatic(personality, 'soul', registry, 1_000, 40_000);
+    expect(without.projectContextChars).toBe(0);
+    expect(withContext.projectContextChars).toBe(40_000);
+    expect(withContext.estStaticTokens).toBe(
+      measureStaticFloor({
+        soulChars: 4,
+        toolSchemaChars: withContext.toolSchemaChars,
+        toolCount: 1,
+        preludeChars: 1_000,
+        projectContextChars: 40_000,
+      }).tokens,
+    );
+    expect(withContext.estStaticTokens - without.estStaticTokens).toBe(10_000);
+  });
+
+  // The column's number is the block the loop's file-context injector sends
+  // for that directory: measured through the same class, the same resolution.
+  it('measures the AGENTS.md block a turn launched in the cwd would send', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-bench-project-context-'));
+    try {
+      writeFileSync(join(dir, 'AGENTS.md'), `# Rules\n\n${'rule. '.repeat(5_000)}`);
+      const personalities = new DefaultPersonalityRegistry();
+      const injectors = [createProjectContextInjector({ storage: new FsStorage(), personalities })];
+      const block = await projectContextAtStartup({
+        injectors,
+        personality: makePersonality('p'),
+        workingDir: dir,
+        dataDir: join(dir, '.ethos'),
+        platform: 'cli',
+        model: 'm',
+      });
+      expect(block.startsWith('## Project Context')).toBe(true);
+      expect(block.length).toBeGreaterThan(30_000);
+      const row = measurePersonalityStatic(makePersonality('p'), '', undefined, 0, block.length);
+      expect(row.projectContextChars).toBe(block.length);
+      expect(row.estStaticTokens).toBe(Math.ceil(block.length / 4));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // Lane 3(b) cross-check — the schema-budget warning threshold and the bench
   // measurement agree: for one personality, the chars/tokens the bench table
   // reports ARE the numbers `evaluateToolSchemaBudget` (the startup warning,
@@ -116,4 +172,51 @@ describe('measurePersonalityStatic', () => {
     // Over the 0.4 default on an 8k window → the warning names the personality.
     expect(verdict.message).toContain('budget-xcheck');
   });
+});
+
+// reach-and-containment Part 1 — the §1.1 success metric, against the REAL
+// registered tools and the REAL built-in `engineer` (with C8's pinned_tools):
+// the first-step payload under on-demand tool loading is at most half of the
+// full schema payload. Driven through the production composition root with an
+// offline provider and a throwaway HOME / ETHOS_STATE_DIR, so it cannot drift
+// silently when a tool's schema grows.
+describe('tool_loading_chars — engineer (plan §1.1)', () => {
+  it('pinned + tool_search is at most 50% of the full tool-schema payload', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ethos-bench-tool-loading-'));
+    const dataDir = join(home, '.ethos');
+    mkdirSync(dataDir, { recursive: true });
+    const prev = { HOME: process.env.HOME, ETHOS_STATE_DIR: process.env.ETHOS_STATE_DIR };
+    process.env.HOME = home;
+    process.env.ETHOS_STATE_DIR = dataDir;
+    try {
+      const runtime = await createAgentLoop(
+        {
+          provider: 'ollama',
+          model: 'offline-test',
+          baseUrl: 'http://127.0.0.1:9',
+          apiKey: 'sk-dummy',
+          personality: 'engineer',
+        },
+        { dataDir, workingDir: home, profile: 'cli', disableDocker: true },
+      );
+      try {
+        const engineer = runtime.personalities.get('engineer');
+        expect(engineer).toBeDefined();
+        if (!engineer) return;
+        expect(engineer.context_engine_options?.pinned_tools).toBeDefined();
+        const row = measurePersonalityStatic(engineer, '', runtime.toolRegistry);
+        expect(row.toolCount).toBeGreaterThan(10);
+        expect(row.toolLoadingChars).toBeGreaterThan(0);
+        expect(row.toolLoadingChars).toBeLessThanOrEqual(0.5 * row.toolSchemaChars);
+      } finally {
+        await runtime.dispose();
+      }
+    } finally {
+      for (const [key, value] of Object.entries(prev)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

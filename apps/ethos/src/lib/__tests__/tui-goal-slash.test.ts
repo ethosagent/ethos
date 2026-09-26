@@ -75,4 +75,49 @@ describe('TUI slash commands — goals', () => {
     const commands = makeTuiSlashCommands(undefined, pair(true));
     expect(await commands.dispatch('nope', '', ctx)).toBeNull();
   });
+
+  // F06 follow-up — a TUI `/model` switch retires the runtime whose goals pair
+  // was captured at construction; rebind must swap the pair with the loader,
+  // or `/goal` keeps driving the dead runtime's store/executor.
+  it('rebind swaps the goals pair alongside the loader', async () => {
+    const oldGoals = pair(true);
+    const newGoals = pair(true);
+    const commands = makeTuiSlashCommands(undefined, oldGoals);
+
+    commands.rebind(undefined, newGoals);
+    const out = await commands.dispatch('goal', 'Run on the new runtime', ctx);
+
+    const [goal] = newGoals.store.list();
+    expect(goal?.goalText).toBe('Run on the new runtime');
+    expect(newGoals.started).toEqual([goal?.id]);
+    expect(oldGoals.store.list()).toEqual([]);
+    expect(oldGoals.started).toEqual([]);
+    expect(out).toContain(`Goal created: ${goal?.id}`);
+    oldGoals.store.close();
+    newGoals.store.close();
+  });
+
+  it('rebind without a goals pair keeps the current one', async () => {
+    const goals = pair(true);
+    const commands = makeTuiSlashCommands(undefined, goals);
+
+    commands.rebind(undefined);
+    await commands.dispatch('goal', 'Still on the same pair', ctx);
+
+    expect(goals.store.list()).toHaveLength(1);
+    goals.store.close();
+  });
+
+  it('is what the chat.ts TUI /model switch passes to rebind', () => {
+    // The switch itself needs a TTY + live runtimes, so pin the call site at
+    // the source (same convention as tui-capabilities.test.ts): the TUI
+    // rebuildLoop rebinds the loader AND the new runtime's goals pair.
+    const { readFileSync } = require('node:fs');
+    const { join } = require('node:path');
+    const src = readFileSync(
+      join(import.meta.dirname, '..', '..', 'commands', 'chat.ts'),
+      'utf8',
+    ) as string;
+    expect(src).toContain('slashCommands.rebind(next.runtime.pluginLoader, next.runtime.goals);');
+  });
 });

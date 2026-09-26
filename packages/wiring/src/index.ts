@@ -5,13 +5,15 @@ import {
   ChainedProvider,
   DefaultLLMProviderRegistry,
   type DefaultToolRegistry,
+  markServerCompaction,
+  pressureGateTokens,
   type SummarizerFn,
   tagProviderEntry,
 } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
-import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
+import { AuthRotatingProvider, anthropicContextTokens } from '@ethosagent/llm-anthropic';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
@@ -21,6 +23,7 @@ import type {
   CliSubcommandContext,
   ExecutionBackendConfig,
   ExecutionBackendRegistry,
+  ExecutionPosture,
   GoalStore,
   LLMProvider,
   Logger,
@@ -53,6 +56,7 @@ import {
   lookupProfile,
   mergeModelProfile,
   PROVIDER_WINDOW_DEFAULTS,
+  resolveCompactionGate,
 } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
@@ -72,10 +76,23 @@ import type { WiringContext } from './types';
 // WITHOUT taking a direct `@ethosagent/tools-browser` dependency — which would
 // pull Playwright into the desktop bundle's declared graph for one lookup.
 // `packages/wiring` already depends on it to compose the browser toolset.
+// Stored logins for `browser_fill_credential` (plan reach-and-containment
+// §4.2). Re-exported for the same reason as the registry above: the CLI
+// (`ethos secrets credential`) and web-api (`CredentialsService`) validate and
+// write through the ONE implementation the tool reads back, without either app
+// importing the extension directly (ARCHITECTURE.md Law 5).
 export {
   type BrowserTakeoverRegistry,
   type BrowserTakeoverTarget,
+  CredentialValidationError,
+  type CredentialView,
   createBrowserTakeoverRegistry,
+  deleteCredential,
+  listCredentials,
+  normalizeOrigin,
+  type SetCredentialInput,
+  setCredential,
+  updateCredentialPolicy,
 } from '@ethosagent/tools-browser';
 export type { MessagingSendFn } from '@ethosagent/tools-messaging';
 
@@ -111,6 +128,10 @@ export interface WiringProviderConfig {
    *  otherwise. Named `awsProfile`, not `profile`, because `profile` already
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
+  /** Item 7 (D32) — `providers.<n>.serverCompaction`; honoured on `anthropic` only. */
+  serverCompaction?: boolean;
+  /** `providers.<n>.serverCompactionTriggerTokens`; absent → `pressureGateTokens`. */
+  serverCompactionTriggerTokens?: number;
 }
 
 export interface WiringConfig {
@@ -148,7 +169,12 @@ export interface WiringConfig {
    * saw — a configured `remoteWorkdir` or `identityFile` silently ignored.
    */
   execution?: {
-    docker?: { cpu?: number; diskMb?: number };
+    /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput` (S6 / D3). */
+    allowLocalFallback?: boolean;
+    /** `execution.containerized` — `detectContainerized`'s explicit config signal. */
+    containerized?: boolean;
+    /** `image` — the digest-pinned sandbox image (`execution.docker.image`). */
+    docker?: { cpu?: number; diskMb?: number; image?: string };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   };
   /**
@@ -246,6 +272,12 @@ export interface WiringConfig {
    * failure prevented) and WARNS on hosted ones.
    */
   toolPayloadLimitChars?: number;
+  /**
+   * reach-and-containment Part 1 — on-demand tool loading mode. Absent →
+   * `auto`. Built into the loop's per-turn resolver by
+   * `createToolLoadingResolver` (static-floor.ts).
+   */
+  toolLoading?: 'auto' | 'on' | 'off';
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
   /**
@@ -432,6 +464,13 @@ export interface WiringConfig {
     baseUrl?: string;
     maxPerHour?: number;
     maxPerDay?: number;
+    /**
+     * Recurrence-evidence threshold (plan openclaw-9.5-adoption item 3). 0 or
+     * absent: off. N > 0: a captured fact is queued until N distinct sessions
+     * have extracted it — auto-promoted when approval is `off`, ordered for a
+     * human otherwise (`build-agent-loop.ts`).
+     */
+    evidenceSessions?: number;
   };
   /**
    * Approve-before-store gate (memory-lifecycle L2). Default-off. When
@@ -453,14 +492,22 @@ export interface WiringConfig {
   nightlyPass?: { enabled?: boolean; cron?: string };
   /** Per-surface capture-notice opt-in (§3.3), mapped from display.memory_notices. */
   displayMemoryNotices?: boolean;
+  /**
+   * The operator's `decisions.*` keys (mapped from `EthosConfig.decisions`,
+   * carried by the `...config` spread in apps/ethos/src/wiring.ts). Absent →
+   * no decision layer: every decision site runs today's path and no provider
+   * handle is created (`createDecisionProviderHandle`, ./decision-provider).
+   * Present, WHICH sites run is still each personality's
+   * (`PersonalityConfig.decisions`, resolved per call by
+   * `resolvePersonalityDecisionSite`).
+   */
+  decisions?: import('@ethosagent/config').DecisionsConfig;
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
-  /** Storage-layer settings. When `encryption` is true, the primary FsStorage
-   *  is wrapped in CryptoStorage using ETHOS_STORAGE_KEY. */
+  /** Storage-layer settings. */
   storage?: {
     backend?: string;
-    encryption?: boolean;
   };
   /**
    * Remote model catalog configuration. When provided with `enabled !== false`,
@@ -716,6 +763,14 @@ export interface CreateAgentLoopOptions {
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
   /**
+   * Resolve the platform user whose message started the live turn on
+   * `sessionKey`, for stamping `origin_user_id` on background jobs (so their
+   * clarify defaults to that user). Supplied by the gateway
+   * (`Gateway.originUserIdFor`); omitted elsewhere, in which case a job
+   * records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
+  /**
    * Lane 0 (eng review D16) — force a LIVE served-window probe (bypassing the
    * 15-minute disk cache) and rewrite the cache. Set by the command paths
    * whose numbers the operator tunes against (`ethos doctor`, `ethos bench
@@ -805,6 +860,13 @@ export {
   type ResolvePersonalityModelFitOptions,
   resolvePersonalityModelFit,
 } from './personality-fit';
+// The project-context term of the static floor, for surfaces with no turn in
+// hand (`ethos bench context`, the character sheet).
+export {
+  createProjectContextInjector,
+  declaredWorkdirProjectContext,
+  projectContextAtStartup,
+} from './project-context-floor';
 // Lane 1(b/c/e) + D8 — the shared static-floor measurement and window-scaled
 // result-budget arithmetic (consumed by build-agent-loop, `ethos bench
 // context`, and — later — Lane 6's fit verdict).
@@ -1043,6 +1105,47 @@ export function isProviderAllowed(providerName: string, allowedPlugins?: string[
 }
 
 /**
+ * Item 7 (D32) — the server-compaction setting for one provider entry, or
+ * `undefined` when it compacts locally. Honoured only for `anthropic`: any
+ * other provider with the flag gets a warning and local compaction. The
+ * trigger defaults to the local gate's own threshold for the model
+ * (`pressureGateTokens` over the provider's reported window, with the resolved
+ * `compaction.pressure` and `compaction.maxContextTokens`), so the switch
+ * changes WHO compacts, not WHEN.
+ */
+function serverCompactionFor(
+  cfg: {
+    provider: string;
+    model: string;
+    serverCompaction?: boolean;
+    serverCompactionTriggerTokens?: number;
+  },
+  config: WiringConfig,
+  log: Logger,
+): { triggerTokens: number } | undefined {
+  if (cfg.serverCompaction !== true) return undefined;
+  if (cfg.provider !== 'anthropic') {
+    log.warn(
+      `providers: serverCompaction is honoured only on an anthropic entry; the "${cfg.provider}" ` +
+        'entry compacts locally.',
+    );
+    return undefined;
+  }
+  const profile = mergeModelProfile(
+    lookupProfile(cfg.provider, cfg.model),
+    config.models?.[`${cfg.provider}/${cfg.model}`],
+  );
+  const triggerTokens =
+    cfg.serverCompactionTriggerTokens ??
+    pressureGateTokens(
+      anthropicContextTokens(cfg.model),
+      resolveCompactionGate(profile, config.compaction)?.pressure,
+      config.compaction?.maxContextTokens,
+    );
+  return { triggerTokens };
+}
+
+/**
  * Registry-aware LLM creation — used internally by `createAgentLoop` after
  * plugins have loaded. Falls through to the registry for each provider name,
  * so plugin-contributed providers participate in chained failover.
@@ -1071,6 +1174,8 @@ async function createLLMFromRegistry(
       apiVersion?: string;
       region?: string;
       awsProfile?: string;
+      serverCompaction?: boolean;
+      serverCompactionTriggerTokens?: number;
     },
     opts: { chainHop?: boolean } = {},
   ): Promise<LLMProvider> => {
@@ -1138,9 +1243,16 @@ async function createLLMFromRegistry(
       lookupProfile(cfg.provider, cfg.model),
       config.models?.[`${cfg.provider}/${cfg.model}`],
     );
+    const serverCompaction = serverCompactionFor(cfg, config, log);
     const provider = await factory({
       config: {
         ...(cfg as unknown as Record<string, unknown>),
+        // Item 7 — the resolved trigger, never the raw config value alone;
+        // `anthropicFactory` sends the edit only when both are present.
+        serverCompaction: serverCompaction !== undefined,
+        ...(serverCompaction
+          ? { serverCompactionTriggerTokens: serverCompaction.triggerTokens }
+          : {}),
         ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
         ...(profile?.toolCallFormat !== undefined
           ? { toolCallFormat: profile.toolCallFormat }
@@ -1214,7 +1326,9 @@ async function createLLMFromRegistry(
           `These must be declared on the provider instance.`,
       );
     }
-    return provider;
+    // The loop reads the same fact to skip its own compaction for turns this
+    // instance serves (`servesServerCompaction`, packages/core).
+    return serverCompaction ? markServerCompaction(provider) : provider;
   };
 
   if (config.providers && config.providers.length >= 2) {
@@ -1241,6 +1355,12 @@ async function createLLMFromRegistry(
             ...(hop.entry.apiVersion !== undefined ? { apiVersion: hop.entry.apiVersion } : {}),
             ...(hop.entry.region !== undefined ? { region: hop.entry.region } : {}),
             ...(hop.entry.awsProfile !== undefined ? { awsProfile: hop.entry.awsProfile } : {}),
+            ...(hop.entry.serverCompaction !== undefined
+              ? { serverCompaction: hop.entry.serverCompaction }
+              : {}),
+            ...(hop.entry.serverCompactionTriggerTokens !== undefined
+              ? { serverCompactionTriggerTokens: hop.entry.serverCompactionTriggerTokens }
+              : {}),
           },
           { chainHop },
         ).then((instance) => tagProviderEntry(instance, hop.key)),
@@ -1259,6 +1379,19 @@ async function createLLMFromRegistry(
   const [head] = config.providers ?? [];
   const topKey =
     head && head.provider === config.provider ? deriveProviderKey(head, 0) : config.provider;
+  // Item 7 — the same rule gives the top-level spelling entry 0's
+  // server-compaction switch.
+  const topCompaction =
+    head && head.provider === config.provider
+      ? {
+          ...(head.serverCompaction !== undefined
+            ? { serverCompaction: head.serverCompaction }
+            : {}),
+          ...(head.serverCompactionTriggerTokens !== undefined
+            ? { serverCompactionTriggerTokens: head.serverCompactionTriggerTokens }
+            : {}),
+        }
+      : {};
 
   // Anthropic rotation pool is provider-specific (rotates across API keys for
   // the same model). Handled inline — rotation is an Anthropic concern, not a
@@ -1266,6 +1399,11 @@ async function createLLMFromRegistry(
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
+      const serverCompaction = serverCompactionFor(
+        { provider: config.provider, model: config.model, ...topCompaction },
+        config,
+        log,
+      );
       const pool = new AuthRotatingProvider(
         [
           { id: 'primary', apiKey: config.apiKey, priority: 100 },
@@ -1280,15 +1418,19 @@ async function createLLMFromRegistry(
         // too, and so does the per-request deadline: every pooled key builds
         // its own client, so a deadline set only on the non-rotating path
         // would silently not apply to a rotation deployment.
-        config.toolOrder !== undefined || config.requestTimeoutMs !== undefined
+        config.toolOrder !== undefined ||
+          config.requestTimeoutMs !== undefined ||
+          serverCompaction !== undefined
           ? {
               ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
               ...(config.requestTimeoutMs !== undefined
                 ? { requestTimeoutMs: config.requestTimeoutMs }
                 : {}),
+              ...(serverCompaction ? { serverCompaction } : {}),
             }
           : undefined,
       );
+      if (serverCompaction) markServerCompaction(pool);
       return tagProviderEntry(pool, topKey);
     }
   }
@@ -1301,6 +1443,7 @@ async function createLLMFromRegistry(
     ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { awsProfile: config.awsProfile } : {}),
+    ...topCompaction,
   });
   return tagProviderEntry(primary, topKey);
 }
@@ -1393,6 +1536,26 @@ export interface CreateAgentLoopResult {
    *  `ethos bench context` uses it as the schema-budget denominator so the
    *  bench table and the startup warning read the same numbers (D8). */
   contextWindow: number;
+  /**
+   * The smart approver's decision site (plan decision-provider-jev §8.2),
+   * carrying THIS build's one lazy decision-provider handle so the approver
+   * and the injection classifier share a breaker. Present whenever
+   * `decisions.provider` is configured; the site's mode is resolved per call
+   * from the turn's personality (plan decision-provider-personality §7.3), so
+   * a personality that enables no approver site gets exactly the LLM reviewer.
+   * Hosts forward it as `decision` to `createApprovalDangerPredicate`; absent,
+   * the approver is exactly the LLM reviewer.
+   */
+  approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
+  /**
+   * The execution posture a personality's turns resolve to in THIS build —
+   * the same resolution its exec tools run under (`ExecutionRouting.resolvePosture`,
+   * packages/wiring/src/compose-tools.ts). `undefined` id → the deployment
+   * default; an unknown id → `undefined`. Hosts forward it as
+   * `executionPostureFor` to `createApprovalDangerPredicate`, which flags the
+   * shell tools under a host-local posture (S6 / D1(a)).
+   */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
   /** The McpManager instance from tool composition. Pass to createWebApi so
    *  re-auth via the web UI hits the live manager and updates the tool registry. */
   mcpManager: McpManager;
@@ -1589,7 +1752,7 @@ export async function createAgentLoop(
   const opts: CreateAgentLoopOptions = rawOpts.replay
     ? { ...rawOpts, disablePostTurnLearning: true }
     : rawOpts;
-  const { wiringCtx, profile, log } = buildWiringContext(config, opts);
+  const { wiringCtx, profile, log } = buildWiringContext(opts);
   // F06 — ONE stack for the whole assembly. Every stage pushes the release of
   // each resource it opens right after opening it, so a stage that throws
   // leaves the stack holding exactly what the earlier stages built — released
@@ -1748,6 +1911,20 @@ export function createSessionStore(
   });
 }
 
+// Core surface the web-api rpc shells need (rpc/context.ts, rpc/clarify.ts) —
+// re-exported so they reach core through wiring, not directly
+// (architecture.config.ts `web-api-rpc-is-thin`).
+// Further app-reachable pieces re-exported for the same reason (Law 5): the
+// notify queue both gateway roots open, the secrets resolvers `ethos secrets`
+// and `ethos status` build, the retention-window parser, the far-end speech
+// fence the SIP dispatcher applies, the budget-halt notice the TUI renders, and
+// the usage fold web-api's Activity view shares with `ethos usage`.
+export {
+  type AgentLoop,
+  type ClarifyBridge,
+  clarifyUnresolvedMessage,
+  haltNotice,
+} from '@ethosagent/core';
 export {
   isGated,
   type MemoryApprovalMode,
@@ -1774,6 +1951,19 @@ export {
 // MemoryService can call the exact function the CLI `ethos memory restore`
 // uses, without depending on `apps/ethos`.
 export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
+export { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
+export { parseDuration } from '@ethosagent/observability-sqlite';
+// Secret redaction for app-level output (e.g. the `ethos -z` stream wire in
+// apps/ethos/src/commands/zero-stream.ts) — re-exported so apps reach the
+// safety package through wiring (ARCHITECTURE.md Law 5).
+export { redactString } from '@ethosagent/safety-redact';
+export {
+  summarizeUsageRows,
+  type UsageAggregateRow,
+  type UsageTotals,
+} from '@ethosagent/session-sqlite';
+export { EnvSecretsResolver, FileSecretsResolver } from '@ethosagent/storage-fs';
+export { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 // Backend-aware memory (memory-lifecycle vault gaps, F04). By convention, code
 // outside a loop opens memory through these, so it acts on the configured
 // backend. Nothing enforces that: `HistoryStore` / `TombstoneStore` stay
@@ -1807,22 +1997,61 @@ export {
 // Danger predicate (shared between CLI guard + web approval flow)
 // ---------------------------------------------------------------------------
 
+// The one session fork (plan openclaw-9.5-adoption D27), re-exported so app
+// modules reach it through the composition layer (Law 5); it lives in core so
+// the gateway extension, below wiring, can call it too.
+export {
+  type ForkSessionResult,
+  forkSession,
+  forkSessionKey,
+  listBranches,
+} from '@ethosagent/core';
 export {
   type CreateApprovalDangerPredicateOptions,
   createApprovalDangerPredicate,
   createLazyProvider,
+  firstRefusal,
+  notPermittedRefusal,
 } from './approval-seams';
 export {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  approvalRequiredReason,
   type CreateDangerPredicateOptions,
   canonicalizeArgs,
   createDangerPredicate,
   type DangerPredicate,
   type DangerReason,
+  hardlineReason,
+  hasHostApprovalGate,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApprovalCallback,
   type SmartVerdict,
 } from './danger-predicate';
+// The questions and digest each decision site sends — exported so a
+// calibration run (`runDecisionCalibration`, @ethosagent/eval-harness) measures
+// against exactly what the live sites ask.
+export {
+  APPROVER_CHOICES,
+  APPROVER_QUESTIONS,
+  type ApproverChoice,
+  type ApproverDigestInput,
+  approverDigest,
+  DECISION_QUESTION_IDS,
+  INJECTION_QUESTIONS,
+  ROUTER_CHOICES,
+  ROUTER_QUESTIONS,
+  type RouterChoice,
+} from './decision-questions';
+// The Settings Test button's one decision call — a fresh provider, the
+// injection question, redacted state (./decision-test). Apps reach the provider
+// extension only through here (Law 5).
+export {
+  type DecisionTestOutcome,
+  type TestDecisionProviderOptions,
+  testDecisionProvider,
+} from './decision-test';
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
@@ -1857,7 +2086,11 @@ export {
   type ProbeProviderOutcome,
   probeProvider,
 } from './probe-provider';
-export { type CreateSmartApproverOptions, createSmartApprover } from './smart-approver';
+export {
+  type CreateSmartApproverOptions,
+  createSmartApprover,
+  type SmartApproverDecisionSite,
+} from './smart-approver';
 export {
   farEndRefusalReason,
   SPOKEN_CONFIRMATION_TOOLS,
@@ -1893,6 +2126,9 @@ export {
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
 
+// `## Decisions` on the character sheet and the per-personality lines of
+// `ethos doctor` (plan decision-provider-personality §4.5, §8).
+export { resolveCharacterSheetDecisions } from './decision-diagnostics';
 export { IdentityMap, type IdentityMapEntry, type IdentityMapOptions } from './identity-map';
 export {
   ETHOS_EVENT_CATEGORIES,
@@ -1909,7 +2145,14 @@ export {
   type FunnelTrackerOptions,
   type FunnelWizardPath,
   mergeFunnelState,
+  readFunnelState,
 } from './observability/funnel';
+export {
+  type InstallScanEvent,
+  type InstallScanInput,
+  type InstallScanVerdict,
+  installScanEvent,
+} from './observability/install-scan';
 export { resolveExecutionBackendName } from './resolve-execution-backend';
 export {
   type BuildExecutionPostureInput,
@@ -1965,4 +2208,7 @@ export * from './backup-schedule';
 // publishing tools see. `createOutboundPolicyGate` is its policy half alone —
 // what an app root hands a `WatcherManager` at construction.
 export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from './compose-tools';
+// The gateway singleton lock (plan reach-and-containment §2.7) — taken by
+// `ethos gateway start`, read by `ethos gateway status`.
+export * from './gateway-lock';
 export * from './system-jobs';

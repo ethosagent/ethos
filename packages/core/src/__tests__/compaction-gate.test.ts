@@ -229,13 +229,14 @@ describe('§5 — configurable pressure/target thresholds', () => {
         reservedOutputTokens: 0,
         target: 0.5,
       },
-      messagesOfSize(28_000),
+      [...messagesOfSize(28_000), userMsg('q')],
       '',
       personality,
       meta,
     );
-    // target = floor(8192 * 0.5) = 4096
-    expect(seenTarget).toBe(4_096);
+    // target = floor(8192 * 0.5) = 4096, minus the current turn ('q', 1 token),
+    // which the engine never sees (`currentTurnStart`).
+    expect(seenTarget).toBe(4_096 - 1);
   });
 });
 
@@ -471,7 +472,9 @@ describe('Item 7 — absolute-token compaction ceiling', () => {
       meta,
     );
     expect(engine.compactCalled).toBe(true);
-    expect(result.messages.length).toBe(2);
+    // The spy keeps the first + last of the three older messages; the current
+    // turn (the fourth) is never handed to it and always survives.
+    expect(result.messages.length).toBe(3);
   });
 
   it('leaves the same session alone when no ceiling is configured', async () => {
@@ -555,13 +558,13 @@ describe('Item 7 — absolute-token compaction ceiling', () => {
         reservedOutputTokens: 0,
         maxContextTokens: 300_000,
       },
-      messagesOfSize(1_600_000),
+      [...messagesOfSize(1_600_000), userMsg('q')],
       '',
       { ...personality, context_engine: 'target_spy' },
       meta,
     );
-    // 0.7 * 300k, not 0.7 * 1M.
-    expect(seenTarget).toBe(210_000);
+    // 0.7 * 300k, not 0.7 * 1M — minus the current turn ('q', 1 token).
+    expect(seenTarget).toBe(210_000 - 1);
   });
 
   it('ignores a non-positive ceiling', async () => {

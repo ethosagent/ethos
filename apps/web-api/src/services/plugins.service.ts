@@ -14,6 +14,7 @@ import {
   isValidPluginId,
   type PluginGrant,
   type PluginGrantDraft,
+  type PluginGrants,
   PluginIntegrityError,
   type PluginLoader,
   pinPluginToPersonality,
@@ -396,9 +397,16 @@ export class PluginsService {
     const liveByKey = new Map<string, InstalledPluginManifest>();
     for (const m of live) liveByKey.set(m.id, m);
     for (const m of live) if (!liveByKey.has(m.name)) liveByKey.set(m.name, m);
-    const plugins = manifests.map((m) =>
-      toWirePlugin(m, liveByKey.get(m.id) ?? liveByKey.get(m.name)),
+    // U10 — the trust tier the operator was shown at install, from the same
+    // grant record `ethos plugin grants` prints. A malformed grants.json makes
+    // `readGrants` throw; the list still renders, with every tier unknown.
+    const grants = await readGrants(this.opts.storage, join(this.opts.dataDir, 'plugins')).catch(
+      (): PluginGrants => ({}),
     );
+    const plugins = manifests.map((m) => ({
+      ...toWirePlugin(m, liveByKey.get(m.id) ?? liveByKey.get(m.name)),
+      trustTier: grants[m.id]?.scan.tier ?? null,
+    }));
     return { plugins, mcpServers };
   }
 

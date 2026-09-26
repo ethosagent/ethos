@@ -153,7 +153,10 @@ export interface VoiceInboundGates {
   readonly rateLimit: PerCallerRateLimiter | undefined;
   /** Global daily spend ceiling. Always present; unlimited when no `dailyBudgetUsd`. */
   readonly budget: VoiceDailyBudget;
-  /** `voice.inbound.allowlist` — E.164 patterns that reach the owner's personality. */
+  /**
+   * `voice.inbound.allowlist` — E.164 patterns; a pre-warm hint, never identity
+   * (INB-001b, `decideInboundCall`).
+   */
   readonly allowlist: readonly string[] | undefined;
   /** `voice.inbound.receptionist` — the restricted personality unknown callers get. */
   readonly receptionist: string | undefined;

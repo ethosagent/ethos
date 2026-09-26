@@ -27,10 +27,13 @@ import type {
 } from '@ethosagent/types';
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
 import {
+  APPROVAL_SURFACE_ALWAYS_ASK,
   createLearningInbox,
   DisposerStack,
+  hardlineReason,
   type IdentityMap,
   type MemoryBundle,
+  notPermittedRefusal,
   type ReplayAndResolveResult,
 } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
@@ -62,6 +65,7 @@ import {
   parseWakeRouting,
 } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
+import { LeaseRepository } from './repositories/lease.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
@@ -75,8 +79,10 @@ import { type ApprovalObservability, ApprovalsService } from './services/approva
 import { BackupService } from './services/backup.service';
 import { CallsService } from './services/calls.service';
 import { ConfigService, readLegacyBrowserBargeInTuning } from './services/config.service';
+import { CredentialsService } from './services/credentials.service';
 import { CronService } from './services/cron.service';
 import { createLiveDeliveryTargetWorld } from './services/cron-delivery-targets';
+import { DecisionsService } from './services/decisions.service';
 import { DeliveriesService } from './services/deliveries.service';
 import { DigestService } from './services/digest.service';
 import { createDiscoveredChatStore } from './services/discovered-chats';
@@ -109,6 +115,7 @@ import { TasksService } from './services/tasks.service';
 import { TeamsService } from './services/teams.service';
 import type { BridgedApprovals } from './services/telegram-approval-bridge';
 import { ToolSettingsService } from './services/tool-settings.service';
+import { UsageService } from './services/usage.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
 import { WakeRoutesService } from './services/wake-routes.service';
@@ -888,7 +895,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const chatRepo = new ChatRepository(opts.sessionStore);
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir, storage, secrets });
-  const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir, storage });
+  // Always-ask tools can never be allowlisted, only leased (reach-and-containment D3-12).
+  const allowlistRepo = new AllowlistRepository({
+    dataDir: opts.dataDir,
+    storage,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+  });
+  const leaseRepo = new LeaseRepository({ dataDir: opts.dataDir, storage });
   // Gap 11 — lazy getter so skills' `requires.tools` gates see the live
   // registry (including MCP/plugin tools registered after boot). Omitted
   // when no registry is wired: the tools gate is skipped, not failed.
@@ -984,6 +997,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.readObservabilityEvents
       ? { readObservabilityEvents: opts.readObservabilityEvents }
       : {}),
+    // The operator's `decisions.*`, so each personality's decision sites are
+    // resolved server-side for the Edit → Config notes (plan
+    // decision-provider-personality §9). Same reader as `decisionsService`.
+    readDecisions: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null ? undefined : parseConfigYaml(src).decisions;
+    },
   });
   // Connected wake satellites. Constructed BEFORE `ConfigService` because the
   // Settings write path pushes to it: eng-review D5 makes a Settings save the
@@ -1019,6 +1039,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   });
   const approvalsService = new ApprovalsService({
     allowlist: allowlistRepo,
+    leases: leaseRepo,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     // `!== undefined`, not truthiness — `0` ("no timeout") must be threadable.
     ...(opts.approvalTimeoutMs !== undefined ? { timeoutMs: opts.approvalTimeoutMs } : {}),
     ...(opts.approvalObservability ? { observability: opts.approvalObservability } : {}),
@@ -1050,6 +1072,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const evolverService = new EvolverService({ evolver: evolverRepo, learning: learningService });
   const goalsService = new GoalsService({
     sessionStore: opts.sessionStore,
+    allowCheckCommands: () => configService.goalCheckCommandsAllowed(),
     ...(opts.goals ? { goals: opts.goals } : {}),
     // A team personality's goal runs on its team's pair — the same resolution
     // `loopForPersonality` makes for that personality's chat turns. Declared
@@ -1119,6 +1142,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     secrets,
     ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
   });
+  // Settings › Security › Logins — stored logins for `browser_fill_credential`.
+  const credentialsService = new CredentialsService({ secrets });
   // Keys pane — the whole vault, masked, partitioned by the static catalog.
   const keysService = new KeysService({ secrets, namedSecrets: namedSecretsService });
   // Settings › Backup. Reads `backup.*` from config.yaml and the `backup`
@@ -1171,6 +1196,24 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       },
     },
     secrets,
+  });
+  // Settings → Models › decision models (plan decision-provider-jev §7, §12).
+  // Where Settings sets `providers/typesafe/apiKey`; it reads config.yaml with
+  // the same `parseConfigYaml` reader the registry uses above, and writes
+  // `decisions.provider` through `configRepo.transform`.
+  const decisionsService = new DecisionsService({
+    readConfig: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null ? null : parseConfigYaml(src);
+    },
+    config: configRepo,
+    secrets,
+    // Each provider's `usedBy`: reloaded from disk first, so a personality
+    // edited in another process is counted without a restart.
+    listPersonalities: async () => {
+      await opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities'));
+      return opts.personalities.describeAll().map((d) => d.config);
+    },
   });
   const executionService = new ExecutionService({
     config: configRepo,
@@ -1383,13 +1426,16 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
             // opened then would run tools unchecked. Refuse it; the audio lane
             // is unaffected. Pinned by __tests__/onboarding-bind-loop.test.ts.
             const hooks = agentLoop.hooks;
-            if (!hooks) return null;
+            // Same for the redaction seam: the stand-in reads it as undefined.
+            const resultRedaction = agentLoop.resultRedaction;
+            if (!hooks || !resultRedaction) return null;
             return createRealtimeControlDeps(
               {
                 toolRegistry: realtimeControlRegistry,
                 hooks,
+                resultRedaction,
                 sessions: opts.sessionStore,
-                personalities: opts.personalities,
+                resolvePersonality: (personalityId) => agentLoop.resolvePersonality(personalityId),
                 defaults: opts.chatDefaults,
                 // Per-audio-minute pricing + the session cap, resolved from the
                 // same roster selection the mint makes. The browser is never
@@ -1821,6 +1867,12 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       createWebApprovalHook({
         approvals: approvalsService,
         isDangerous: dangerPredicate,
+        // The web profile registers no terminal/process guard hook, so this is
+        // what keeps a stored grant or lease from approving a hardline
+        // command (openclaw-advisory-fixes Item 10).
+        isHardline: (payload) => hardlineReason(payload) !== null,
+        // No modal for a call the personality's allowlist refuses anyway.
+        refusedAnyway: notPermittedRefusal(loop),
       }),
     );
     loopReleases.push('web approval hook', off);
@@ -2038,7 +2090,9 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       digest: digestService,
       documents: documentsService,
       modelRegistry: modelRegistryService,
+      decisions: decisionsService,
       namedSecrets: namedSecretsService,
+      credentials: credentialsService,
       keys: keysService,
       backup: backupService,
       execution: executionService,
@@ -2048,6 +2102,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       satellites: satelliteRegistry,
       wakeRoutes: wakeRoutesService,
       deliveries: deliveriesService,
+      usage: new UsageService(opts.sessionStore),
       outbox: outboxService,
       learning: learningService,
       calls: callsService,

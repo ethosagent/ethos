@@ -106,6 +106,17 @@ export interface LearningObservability {
     cause?: string;
     details?: Record<string, unknown>;
   }): void;
+  /**
+   * The `install.scan` row for a promotion's install-scanner decision, recorded
+   * by `learningPromoteDeps` (packages/wiring/src/learning-pipeline.ts). Absent →
+   * no row.
+   */
+  recordSkillScan?(opts: {
+    severity?: 'info' | 'warn';
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
 }
 
 /** Statuses a human can still decide on. Also the "Needs review" + "Waiting for replay" groups. */

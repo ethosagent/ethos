@@ -366,19 +366,12 @@ describe('x_search — model override', () => {
     expect(body.model).toBe('grok-custom');
   });
 
-  it('XAI_X_SEARCH_MODEL env var overrides the default when no opts.model is given', async () => {
-    const saved = process.env.XAI_X_SEARCH_MODEL;
-    process.env.XAI_X_SEARCH_MODEL = 'grok-env-override';
-    try {
-      const rec = makeRecordingFetch({ output: [], citations: [] });
-      const tool = createXSearchTool();
-      await tool.execute({ query: 'q' }, ctxWith(rec.scopedFetch));
-      const body = JSON.parse(String(rec.calls[0]?.init?.body));
-      expect(body.model).toBe('grok-env-override');
-    } finally {
-      if (saved === undefined) delete process.env.XAI_X_SEARCH_MODEL;
-      else process.env.XAI_X_SEARCH_MODEL = saved;
-    }
+  it('XAI_X_SEARCH_MODEL in opts.env overrides the default when no opts.model is given', async () => {
+    const rec = makeRecordingFetch({ output: [], citations: [] });
+    const tool = createXSearchTool({ env: { XAI_X_SEARCH_MODEL: 'grok-env-override' } });
+    await tool.execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+    const body = JSON.parse(String(rec.calls[0]?.init?.body));
+    expect(body.model).toBe('grok-env-override');
   });
 });
 

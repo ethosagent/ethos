@@ -9,8 +9,10 @@
 // the label says docker" hole.
 //
 // **Status.** The `ExecutionBackend` abstraction shipped, and four backends
-// now implement `attest()`: `extensions/execution-docker/src/index.ts:1159`
-// (derived from the container's actual run configuration),
+// now implement `attest()`: `extensions/execution-docker/src/index.ts`
+// (`DockerExecutionBackend.attest`, read from `docker inspect` of every
+// container it ran via `attestationFromInspect`; all-false where it cannot
+// tell — pinned by `extensions/execution-docker/src/__tests__/attest.test.ts`),
 // `extensions/execution-ssh/src/index.ts:882` (one true field —
 // `noDockerSocket` — because ssh is remote-host trust, not confinement),
 // `extensions/execution-local/src/index.ts:156` and
@@ -19,8 +21,8 @@
 // What has NOT shipped is a consumer on the composition path. The only
 // non-test importer of `isStrictAttestation` is
 // `packages/core/src/execution/conformance.ts` — a backend-author validation
-// suite (exported from `packages/core/src/index.ts:105`), not something the
-// wiring layer runs when it builds a loop. So the classifier-skip this was
+// suite (exported from `packages/core/src/index.ts` as `runExecutionConformance`),
+// not something the wiring layer runs when it builds a loop. So the classifier-skip this was
 // designed to key on does not exist yet, and the constitution's sandbox
 // requirement is enforced by a flag check on the RESOLVED POSTURE instead:
 // `backend === 'ssh' && constitutionForbidsLocal(constitution)` at

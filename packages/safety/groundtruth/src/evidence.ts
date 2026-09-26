@@ -92,7 +92,7 @@ const DEFAULT_MAX_SESSIONS = 200;
 
 /**
  * Per-session evidence, bounded the way `activeBySession` is bounded in
- * packages/wiring/src/approval-seams.ts:109-122.
+ * packages/wiring/src/approval-seams.ts:116-129.
  *
  * That bound is INSERTION-ORDER FIFO, not LRU: `Map` iteration yields keys in
  * insertion order, so the key evicted is the one added longest ago, and

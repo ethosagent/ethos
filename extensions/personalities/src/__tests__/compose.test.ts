@@ -10,8 +10,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Logger } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Logger, WiringContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { compose } from '../compose';
 

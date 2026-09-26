@@ -1,6 +1,7 @@
 import type { Constitution, PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
+  buildExecutionPosture,
   type ContainerizedDetectionInput,
   constitutionForbidsLocal,
   detectContainerized,
@@ -130,6 +131,7 @@ describe('resolveExecutionPosture — backend selection', () => {
       containerized: NOT_CONTAINERIZED,
       sshConfigured: false,
       dockerBuildable: false,
+      allowLocalFallback: true,
     });
     expect(posture.backend).toBe('local');
     expect(posture.containerized).toBe(false);
@@ -308,12 +310,32 @@ describe('resolveExecutionPosture — A1 docker-absent decision', () => {
 });
 
 describe('resolveExecutionPosture — F1 docker-unbuildable honest fallback', () => {
-  it('resolves an honest local posture when docker is disabled in-process (constitution permits)', () => {
+  // S6 / D3 (plan openclaw-2026.9.6-gaps): the downgrade to host execution is
+  // an operator decision, not a silent default.
+  it('refuses the docker→local downgrade without execution.allowLocalFallback, naming the key', () => {
     const posture = resolveExecutionPosture({
       personality: p({ toolset: ['terminal'] }),
       containerized: NOT_CONTAINERIZED,
       sshConfigured: false,
       dockerBuildable: false,
+    });
+    expect(posture.backend).toBe('docker');
+    expect(posture.hostFallback).toBeUndefined();
+    expect(posture.dockerAbsent).toEqual({
+      blocked: true,
+      canInstall: true,
+      canConsentLocal: false,
+      consentForbiddenReason: expect.stringContaining('execution.allowLocalFallback: true'),
+    });
+  });
+
+  it('resolves an honest local posture when docker is disabled in-process and the operator opted in', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'] }),
+      containerized: NOT_CONTAINERIZED,
+      sshConfigured: false,
+      dockerBuildable: false,
+      allowLocalFallback: true,
     });
     // Honest: backend reflects what actually runs (host), not Docker.
     expect(posture.backend).toBe('local');
@@ -577,5 +599,41 @@ describe('constitutionForbidsLocal', () => {
   it('is true when forbidLocal or requireSandbox is set', () => {
     expect(constitutionForbidsLocal({ execution: { forbidLocal: true } })).toBe(true);
     expect(constitutionForbidsLocal({ execution: { requireSandbox: true } })).toBe(true);
+  });
+});
+
+describe('buildExecutionPosture — execution.docker.image', () => {
+  const trader = p({ toolset: ['terminal'] });
+  const base = {
+    personality: trader,
+    containerized: NOT_CONTAINERIZED,
+    substitutionVars: { ethosHome: '/home/t/.ethos', cwd: '/work' },
+    sshConfigured: false,
+  };
+
+  it('marks a docker posture with no image as missing, in the backend refusal wording', async () => {
+    const posture = await buildExecutionPosture({ ...base, dockerImage: undefined });
+    expect(posture.backend).toBe('docker');
+    expect(posture.dockerImage).toBeUndefined();
+    expect(posture.dockerImageMissing?.message).toMatch(
+      /^Docker sandbox has no image configured.*execution\.docker\.image: <image>@sha256:<digest>/,
+    );
+  });
+
+  it('carries the configured image and no missing flag', async () => {
+    const image = `node@sha256:${'e'.repeat(64)}`;
+    const posture = await buildExecutionPosture({ ...base, dockerImage: image });
+    expect(posture.dockerImage).toBe(image);
+    expect(posture.dockerImageMissing).toBeUndefined();
+  });
+
+  it('never flags a non-docker posture', async () => {
+    const posture = await buildExecutionPosture({
+      ...base,
+      personality: p({ toolset: ['read_file'] }),
+      dockerImage: undefined,
+    });
+    expect(posture.backend).toBe('none');
+    expect(posture.dockerImageMissing).toBeUndefined();
   });
 });

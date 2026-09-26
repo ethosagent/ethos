@@ -33,9 +33,9 @@ import {
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
-import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
+import type { CredentialFillAuditEvent } from '@ethosagent/tools-browser';
 import { compose as composeBrowser } from '@ethosagent/tools-browser/compose';
 import { compose as composeCode } from '@ethosagent/tools-code/compose';
 import { compose as composeCron } from '@ethosagent/tools-cron/compose';
@@ -86,6 +86,7 @@ import type {
   ExecutionBackendRegistry,
   ExecutionPosture,
   ExecutionRouter,
+  HookRegistry,
   InjectionResult,
   LLMProvider,
   LLMProviderRegistry,
@@ -103,6 +104,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
@@ -126,6 +128,7 @@ import {
   constitutionForbidsLocal,
   formatSshTarget,
   hasExecTool,
+  LOCAL_FALLBACK_REFUSAL,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -314,6 +317,64 @@ export function createPendingNotifyInjector(
       };
     },
   };
+}
+
+/**
+ * N4 (ux-feedback-and-config-clarity) — a ticket bounced to `needs_revision`
+ * is work waiting on someone, so a human channel is told, not only the
+ * postmortem file. Copies the `goal_completed` sender shape
+ * (`registerGoalNotifications` in `@ethosagent/goal-runner`): parse a
+ * `platform:chatId` target, send one line with the reason.
+ *
+ * Limitation (repo rule 12): `AfterTicketRevisionPayload`
+ * (packages/types/src/hooks.ts) carries no origin channel and the kanban
+ * `Task` row stores none (`Task` in extensions/kanban-store) — unlike a goal,
+ * whose own `origin` field is what `registerGoalNotifications` reads. So "the
+ * ticket's origin channel" is not reachable from this seam. The closest
+ * honest target is the ASSIGNEE personality's operator-configured messaging
+ * allowlist (`<dataDir>/messaging.json`, the same `platform:chatId` entries
+ * `send_message` may deliver to): the notice goes to its first channel-shaped
+ * entry. No such entry (`'*'`, `cli`, `web`, or an empty list) means no
+ * notice; a send refusal ("Gateway not active" outside gateway mode, or a
+ * platform failure) is swallowed — this is a Void-hook side effect and must
+ * never gate the revision transition itself.
+ */
+export function registerTicketRevisionNotifier(opts: {
+  hooks: HookRegistry;
+  send: MessagingSendFn;
+  getAllowedTargets: (personalityId?: string) => string[];
+}): () => void {
+  const { hooks, send, getAllowedTargets } = opts;
+  return hooks.registerVoid('after_ticket_revision', async (payload) => {
+    let target: { platform: string; chatId: string } | undefined;
+    for (const entry of getAllowedTargets(payload.assignee)) {
+      const parsed = parseChannelTarget(entry);
+      if (parsed) {
+        target = parsed;
+        break;
+      }
+    }
+    if (!target) return;
+    const shortId = payload.taskId.slice(0, 8);
+    await send(
+      target.platform,
+      target.chatId,
+      `Ticket ${shortId} needs revision — ${payload.reason}`,
+    );
+  });
+}
+
+/**
+ * `'platform:chatId'` → parts; `null` for anything else (`cli`, `web`, `'*'`,
+ * bare names). The same rule as the goal-runner's `parseChannelOrigin`.
+ */
+function parseChannelTarget(target: string): { platform: string; chatId: string } | null {
+  if (target === 'web' || target === 'cli') return null;
+  const idx = target.indexOf(':');
+  if (idx < 1) return null;
+  const chatId = target.slice(idx + 1);
+  if (!chatId) return null;
+  return { platform: target.slice(0, idx), chatId };
 }
 
 /**
@@ -629,9 +690,19 @@ export interface ComposeToolsResult {
   mcpManager: McpManager;
   /** Ground-truth turn auditors (T4). Empty when `grounding.enabled: false`. */
   turnAuditors: TurnAuditor[];
+  /**
+   * `ExecutionRouting.resolveDockerBackend` of this loop's routing — how the
+   * Pi and ACP job runners (build-agent-loop.ts) reach the docker backend, so
+   * they get the configured image instead of registering their own config.
+   */
+  resolveDockerBackend: () => Promise<ExecutionBackend>;
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
+  executionPostureFor: ExecutionRouting['resolvePosture'];
+  /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
+  executionRouteFor: ExecutionRouting['exec'];
 }
 
 /**
@@ -747,7 +818,12 @@ export function resolveExecRefusal(
 ): { forbidden: boolean; message?: string } {
   if (posture.backend === 'none') return { forbidden: true, message: POSTURE_NONE_REFUSAL };
   const forbidden = (posture.backend === 'docker' || posture.backend === 'ssh') && !backendWired;
-  const message = posture.sshRefused?.message;
+  // D3 — a refused docker→local downgrade names the key that would allow it.
+  const message =
+    posture.sshRefused?.message ??
+    (posture.dockerAbsent?.consentForbiddenReason === LOCAL_FALLBACK_REFUSAL
+      ? LOCAL_FALLBACK_REFUSAL
+      : undefined);
   return message !== undefined ? { forbidden, message } : { forbidden };
 }
 
@@ -793,8 +869,13 @@ export interface ExecutionRoutingInput {
   substitutionVars: { ethosHome: string; cwd: string };
   /** Docker execution disabled in this process (desktop in-process backend). */
   disableDocker: boolean;
-  /** `execution.docker.*` — container resource caps. */
-  docker?: { cpu?: number; diskMb?: number };
+  /**
+   * `execution.allowLocalFallback` — with `disableDocker`, run exec
+   * personalities on the host instead of refusing them (S6 / D3).
+   */
+  allowLocalFallback?: boolean;
+  /** `execution.docker.*` — container resource caps and the digest-pinned sandbox image. */
+  docker?: { cpu?: number; diskMb?: number; image?: string };
   /** `execution.ssh.*` — the one remote target this deployment knows. */
   ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   /**
@@ -805,6 +886,12 @@ export interface ExecutionRoutingInput {
    * whether the machine running it happens to be a container.
    */
   containerized?: ContainerizedDetectionInput;
+  /**
+   * `execution.containerized: true` from `~/.ethos/config.yaml` — merged into
+   * the detection input as `detectContainerized`'s explicit config signal, so
+   * the operator can declare a container auto-detection cannot see.
+   */
+  containerizedConfig?: boolean;
 }
 
 /** What a turn's personality resolved to: its posture, and the backend (if any) that will run it. */
@@ -827,6 +914,28 @@ export interface ExecutionRouting {
   process: ExecutionRouter;
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
+  /**
+   * The docker backend INSTANCE from the registry (no `SessionManager` wrap),
+   * resolved with this deployment's one docker config: `execution.docker.*`
+   * (image, cpu, disk), the constitution and the substitution vars. The single
+   * owner of that config — every other docker consumer (the Pi and ACP job
+   * runners in build-agent-loop.ts) resolves through here, never through the
+   * registry directly. The registry memoises by NAME and keeps whichever ctx
+   * resolved first, so a second call site with its own ctx decides the config
+   * for every exec tool when it happens to run first: a Pi runner resolving
+   * docker without `images` left every docker-posture `terminal` call refusing
+   * with `MissingDockerImageError` under `ethos serve`. Pinned by
+   * packages/wiring/src/__tests__/execution-docker-image.test.ts.
+   */
+  resolveDockerBackend(): Promise<ExecutionBackend>;
+  /**
+   * The posture alone — the same `postureFor` `resolveTurn` uses, without
+   * building a backend. `undefined` for an id the registry does not know. Read
+   * by the approval surfaces' danger predicate (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`,
+   * packages/wiring/src/danger-predicate.ts) so the approval decision and the
+   * tool's execution agree on where a shell runs.
+   */
+  resolvePosture(personalityId: string | undefined): ExecutionPosture | undefined;
   /**
    * Release every execution backend instance — the ONE owner of them (F06 /
    * G6). That is the wrappers this routing built (a docker `SessionManager`,
@@ -870,8 +979,12 @@ export async function createExecutionRouting(
     resolveExecutionPosture({
       personality: person,
       ...(constitution ? { constitution } : {}),
-      containerized: input.containerized ?? { env: process.env },
+      containerized: {
+        ...(input.containerized ?? { env: process.env }),
+        ...(input.containerizedConfig === true ? { containerizedConfig: true } : {}),
+      },
       dockerBuildable: !input.disableDocker,
+      ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
       // `execution.ssh.host`'s presence is the switch for the whole remote
       // posture. This is the call that decides what ACTUALLY executes, so it
       // must answer truthfully: claiming "not configured" here resolves an ssh
@@ -890,28 +1003,38 @@ export async function createExecutionRouting(
   /** Set by the first `dispose()` — see the `ExecutionRouting.dispose` doc. */
   let disposal: Promise<void> | undefined;
 
+  // See `ExecutionRouting.resolveDockerBackend` — the one place the docker
+  // backend's config is assembled.
+  function resolveDockerBackend(): Promise<ExecutionBackend> {
+    const backendConfig: ExecutionBackendConfig = {
+      substitutionVars: input.substitutionVars,
+      // Absent leaves the backend on its `--cpus 2` default with no disk quota.
+      ...(input.docker?.cpu !== undefined ? { cpu: input.docker.cpu } : {}),
+      ...(input.docker?.diskMb !== undefined ? { diskMb: input.docker.diskMb } : {}),
+      // `execution.docker.image` is the runtime every docker exec runs in.
+      // Absent → the backend refuses each exec with `MissingDockerImageError`
+      // (extensions/execution-docker), which names the key to set.
+      ...(input.docker?.image ? { images: { default: input.docker.image } } : {}),
+      // F2 — pass the resolved constitution so the docker backend enforces
+      // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
+      // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
+      ...(constitution ? { constitution } : {}),
+    };
+    return input.registry.resolve('docker', {
+      config: backendConfig,
+      secrets: input.secrets,
+      logger: log,
+    });
+  }
+
   async function buildBackendFor(p: ExecutionPosture): Promise<ExecutionBackend | undefined> {
     if (p.backend === 'docker') {
       if (input.disableDocker || p.dockerAbsent) return undefined;
       const cached = backendCache.get('docker');
       if (cached) return cached;
-      const backendConfig: ExecutionBackendConfig = {
-        substitutionVars: input.substitutionVars,
-        // Absent leaves the backend on its `--cpus 2` default with no disk quota.
-        ...(input.docker?.cpu !== undefined ? { cpu: input.docker.cpu } : {}),
-        ...(input.docker?.diskMb !== undefined ? { diskMb: input.docker.diskMb } : {}),
-        // F2 — pass the resolved constitution so the docker backend enforces
-        // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
-        // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
-        ...(constitution ? { constitution } : {}),
-      };
       let resolved: ExecutionBackend;
       try {
-        resolved = await input.registry.resolve('docker', {
-          config: backendConfig,
-          secrets: input.secrets,
-          logger: log,
-        });
+        resolved = await resolveDockerBackend();
       } catch (err) {
         // Lane B: fail loud. No silent docker -> local fallback. The A1
         // docker-absent guided-install/consent flow is Lane E.
@@ -1025,6 +1148,13 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    resolveDockerBackend,
+    resolvePosture: (personalityId) => {
+      if (personalityId === undefined) return posture;
+      const person = personalities.get(personalityId);
+      if (!person) return undefined;
+      return person.id === activePerson.id ? posture : postureFor(person);
+    },
     dispose: () => {
       // Memoised: a host that calls it twice disposes nothing twice.
       disposal ??= (async () => {
@@ -1232,6 +1362,8 @@ export async function composeAllTools(
     logger: log,
     substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
     disableDocker: opts.disableDocker === true,
+    ...(config.execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
+    ...(config.execution?.containerized === true ? { containerizedConfig: true } : {}),
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });
@@ -1307,6 +1439,9 @@ export async function composeAllTools(
   for (const tool of createFileTools()) tools.register(tool);
   tools.register(
     createXSearchTool({
+      // The tool reads its model override (`XAI_X_SEARCH_MODEL`) from here,
+      // never from `process.env` itself.
+      env: process.env,
       // Personality tools.yaml is the source of truth; config.toolSettings is
       // the global fallback layer — the same two layers web_search resolves.
       resolvePersonalitySetting: (personalityId) =>
@@ -1316,6 +1451,8 @@ export async function composeAllTools(
   );
   tools.register(
     createEngineAskTool({
+      // Each engine's `modelEnvVar` override is read from here, not by the tool.
+      env: process.env,
       resolvePersonalitySetting: (personalityId) =>
         personalities.getToolsConfig(personalityId)?.engine_ask,
       ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
@@ -1540,6 +1677,14 @@ export async function composeAllTools(
       // B1 — the bridge is what makes `browser_request_takeover` registrable,
       // and registering it is what lets the bot-wall hint name it.
       clarifyBridge,
+      // D4-8 — `browser_fill_credential` audits every call here, and reports
+      // itself unavailable when this is absent: no sink, no fill.
+      ...(opts.observability
+        ? {
+            recordCredentialFill: (event: CredentialFillAuditEvent) =>
+              opts.observability?.recordCredentialFill(event),
+          }
+        : {}),
     }).tools)
       tools.register(tool);
   }
@@ -1564,16 +1709,35 @@ export async function composeAllTools(
       })
     : undefined;
 
+  // One allowlist for both tools that can send to a channel: `send_message`
+  // and `watcher_create`'s `deliver` (S5).
+  const getAllowedTargets = (personalityId?: string): string[] => {
+    if (!personalityId) return [];
+    return messagingAllowlist.get(personalityId) ?? [];
+  };
+
   for (const tool of composeMessaging(wiringCtx, {
     send: async (platform, target, body, botKey) =>
       gatewaySendRef.fn(platform, target, body, botKey),
-    getAllowedTargets: (personalityId) => {
-      if (!personalityId) return [];
-      return messagingAllowlist.get(personalityId) ?? [];
-    },
+    getAllowedTargets,
     outbox: outboxGate,
   }).tools)
     tools.register(tool);
+
+  // N4 — default `after_ticket_revision` notifier, beside the completion
+  // verifier that produces those bounces (registered in the kanban block
+  // above). It lives HERE because it borrows the messaging seam just built
+  // (`gatewaySendRef` resolves the live send at fire time; the stub outside
+  // gateway mode refuses and the notice is dropped, fail-open). Gated on the
+  // kanban block having run — nothing else fires the hook.
+  if (kanbanStore !== null) {
+    registerTicketRevisionNotifier({
+      hooks,
+      send: async (platform, target, body, botKey) =>
+        gatewaySendRef.fn(platform, target, body, botKey),
+      getAllowedTargets,
+    });
+  }
 
   // Cron tool — registered only when a CronScheduler was threaded through.
   if (opts.cronScheduler) {
@@ -1586,6 +1750,7 @@ export async function composeAllTools(
     for (const tool of composeWatchers(wiringCtx, {
       manager: opts.watcherManager,
       outbox: outboxGate,
+      getAllowedTargets,
     }).tools)
       tools.register(tool);
   }
@@ -1749,11 +1914,7 @@ export async function composeAllTools(
   // Design storage + model catalog + personality design tools
   // -------------------------------------------------------------------------
 
-  let designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
-  if (config.storage?.encryption) {
-    const passphrase = process.env.ETHOS_STORAGE_KEY ?? '';
-    designStorage = createCryptoStorage(designStorage, passphrase);
-  }
+  const designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
 
   let resolvedModelCatalog = MODEL_CATALOG;
   if (config.modelCatalogConfig && config.modelCatalogConfig.enabled !== false) {
@@ -1796,6 +1957,7 @@ export async function composeAllTools(
     storage: designStorage,
     modelCatalog: resolvedModelCatalog,
     skills: [...skillPool.values()],
+    personalityRegistry: personalities,
   }).tools) {
     tools.register(tool);
   }
@@ -1810,10 +1972,20 @@ export async function composeAllTools(
   // Guard hooks
   // -------------------------------------------------------------------------
 
-  // CLI/TUI/ACP get the synchronous block-and-explain guard.
+  // CLI/TUI/ACP get the synchronous block-and-explain guard. An
+  // approval-required command (command substitution) is refused here too,
+  // unless the host later registers an approval gate on this loop and marks it
+  // (`markHostApprovalGate` — the gateway's bot loops and systemLoop, and the
+  // CLI/TUI/ACP loops via `wireTerminalApprovalGate` in
+  // apps/ethos/src/terminal-approval.ts), in which case the gate asks a human
+  // or refuses.
   if (profile !== 'web') {
-    hooks.registerModifying('before_tool_call', createTerminalGuardHook());
-    hooks.registerModifying('before_tool_call', createProcessGuardHook());
+    const guardOpts = { approvalGated: () => hasHostApprovalGate(hooks) };
+    hooks.registerModifying(
+      'before_tool_call',
+      createTerminalGuardHook(TERMINAL_CHECKED_TOOLS, guardOpts),
+    );
+    hooks.registerModifying('before_tool_call', createProcessGuardHook(guardOpts));
   }
 
   // -------------------------------------------------------------------------
@@ -1990,6 +2162,9 @@ export async function composeAllTools(
     skillsInjector,
     mcpManager,
     turnAuditors: grounding.turnAuditors,
+    resolveDockerBackend: routing.resolveDockerBackend,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    executionPostureFor: routing.resolvePosture,
+    executionRouteFor: routing.exec,
   };
 }

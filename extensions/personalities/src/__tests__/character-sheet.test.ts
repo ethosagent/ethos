@@ -4,6 +4,7 @@
 import { type ExecutionPosture, GUARANTEE_IDS, type PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
+  type CharacterSheetDecisions,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
@@ -201,6 +202,27 @@ describe('renderCharacterSheet — ## Execution section', () => {
     expect(sheet).toMatch(/Posture:\s+containerized \(local\)/);
     expect(sheet).toMatch(/isolation boundary = the Ethos container/);
     expect(sheet).toMatch(/enforced app-layer only/);
+  });
+
+  it('flags a docker posture with no image: exec tools will fail, in the refusal wording', () => {
+    const message = 'Docker sandbox has no image configured, so exec tools cannot run.';
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: dockerPosture({ dockerImageMissing: { message } }),
+      platform: 'linux',
+    });
+    expect(sheet).toContain('- Image:      NOT CONFIGURED — exec tools will fail.');
+    expect(sheet).toContain(message);
+    expect(sheet).toContain('no execution.docker.image configured — exec tools unavailable');
+  });
+
+  it('prints the configured image on a docker posture', () => {
+    const image = `node@sha256:${'d'.repeat(64)}`;
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: dockerPosture({ dockerImage: image }),
+      platform: 'linux',
+    });
+    expect(sheet).toContain(`- Image:      ${image}`);
+    expect(sheet).not.toContain('NOT CONFIGURED');
   });
 
   it('renders the #7 macOS caveat for docker on darwin', () => {
@@ -526,6 +548,44 @@ describe('renderCharacterSheet — ## Model fit section (Lane 6)', () => {
     expect(stripped.replace(measuredLine, estimateLine)).toBe(plain);
   });
 
+  it('names the project-context contribution for a declared workdir, counted in the static prefix', () => {
+    const withContext: CharacterSheetModelFit = {
+      ...fit,
+      floor: {
+        ...fit.floor,
+        tokens: 5_113,
+        components: [
+          ...fit.floor.components,
+          { name: 'project context (AGENTS.md/CLAUDE.md)', tokens: 3_000 },
+        ],
+        projectContext: { workdir: '/srv/repo', tokens: 3_000 },
+      },
+    };
+    const sheet = renderCharacterSheet(fullConfig, soulMd, undefined, withContext);
+    expect(sheet).toContain(
+      '- System-prompt tokens: ~5113 (measured static floor — serialized tool schemas included)',
+    );
+    expect(sheet).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md in /srv/repo): ~3000 tokens, included above',
+    );
+    expect(sheet).toContain('    - project context (AGENTS.md/CLAUDE.md): 3,000 tokens');
+  });
+
+  it('says the project context depends on the working directory when no workdir is declared', () => {
+    const noWorkdir: CharacterSheetModelFit = {
+      ...fit,
+      floor: { ...fit.floor, projectContext: { tokens: 0 } },
+    };
+    const sheet = renderCharacterSheet(fullConfig, soulMd, undefined, noWorkdir);
+    expect(sheet).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md): depends on the working directory — no fs_reach workdir declared, not included above',
+    );
+    // Not measured at all → no line.
+    expect(renderCharacterSheet(fullConfig, soulMd, undefined, fit)).not.toContain(
+      'Project context',
+    );
+  });
+
   it('renders an unknown verdict with no numbers — never the 128k default', () => {
     const unknown: CharacterSheetModelFit = {
       verdict: 'unknown',
@@ -736,7 +796,7 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
       approvalMode: 'off',
       network: { allow_private_urls: true },
       injectionDefense: { postReadDowngrade: { enabled: false } },
-      observability: { storeToolBodies: 'full' },
+      observability: { storeToolArgs: 'full' },
     },
   };
 
@@ -790,7 +850,23 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(status(sheet, 'G-APP')).toBe('relaxed');
     expect(row(sheet, 'G-APP')).toContain('approvalMode off');
     expect(status(sheet, 'G-RED')).toBe('relaxed');
-    expect(row(sheet, 'G-RED')).toContain('tool bodies full');
+    expect(row(sheet, 'G-RED')).toContain('tool args full');
+  });
+
+  // Nothing stores a tool's result body: the tool_call span is closed with
+  // `result_size_bytes` only (`processTools`,
+  // packages/core/src/agent-loop/stages/tool-processing.ts). So
+  // `storeToolBodies` changes nothing written to observability.db, and the
+  // sheet must not report it as a relaxation.
+  it('reports storeToolBodies as reserved, not as a change to what is written', () => {
+    const bodiesOnly: PersonalityConfig = {
+      id: 'bodies',
+      name: 'Bodies',
+      safety: { observability: { storeToolBodies: 'full' } },
+    };
+    const sheet = renderCharacterSheet(bodiesOnly, soulMd);
+    expect(status(sheet, 'G-RED')).toBe('enforced');
+    expect(row(sheet, 'G-RED')).toContain('storeToolBodies full is reserved');
   });
 
   it('reports a narrowed injection pipeline as relaxed-but-never-off (no opt-out)', () => {
@@ -819,6 +895,21 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(row(sheet, 'G-RED')).toContain('+1 pattern');
     expect(status(sheet, 'G-APP')).toBe('enforced');
     expect(row(sheet, 'G-APP')).toContain('2 deny rules bind first');
+  });
+
+  // A bare `*` matches every host (`hostnameMatches`,
+  // packages/safety/network/src/policy.ts), so `allow: ['*']` — what every
+  // recipe-installed personality is written with (`defaultRecipeSafety`) — is
+  // the open policy, not a one-host allowlist.
+  it("does not report allow: ['*'] as a host allowlist", () => {
+    const open: PersonalityConfig = {
+      ...tight,
+      safety: { network: { allow: ['*'] } },
+    };
+    const sheet = renderCharacterSheet(open, soulMd);
+    expect(status(sheet, 'G-NET')).toBe('enforced');
+    expect(row(sheet, 'G-NET')).not.toContain('host allowlist');
+    expect(row(sheet, 'G-CAP')).not.toContain('network allowlist');
   });
 
   it('states both the allowlist and the private-network opt-in when a personality does both', () => {
@@ -1464,5 +1555,147 @@ describe('renderCharacterSheet — ## MCP export block (M-T8)', () => {
       expect(sheet).toContain('- No rate limit:');
       expect(sheet).toContain('- Loopback only, no TLS:');
     }
+  });
+});
+
+// plan decision-provider-personality §4.5 / §11 — `## Decisions` renders only
+// for a personality that declares `decisions`, and each resolution reason is
+// visible. The resolved context comes from `resolveCharacterSheetDecisions`
+// (@ethosagent/wiring, pinned in its own test); here it is hand-built.
+describe('renderCharacterSheet — ## Decisions', () => {
+  const base: PersonalityConfig = { id: 'researcher', name: 'Researcher' };
+  const declared: PersonalityConfig = {
+    ...base,
+    decisions: { provider: 'typesafe', sites: { injection: 'shadow', approver: 'on' } },
+  };
+  const site = (
+    s: Partial<CharacterSheetDecisions['sites'][number]> &
+      Pick<CharacterSheetDecisions['sites'][number], 'site'>,
+  ): CharacterSheetDecisions['sites'][number] => ({
+    requested: 'off',
+    effective: 'off',
+    missingThresholds: [],
+    ...s,
+  });
+  const section = (sheet: string): string => {
+    const start = sheet.indexOf('## Decisions');
+    const end = sheet.indexOf('\n\n', start);
+    return sheet.slice(start, end);
+  };
+
+  it('no section when the personality declares no decisions block', () => {
+    expect(renderCharacterSheet(base, '')).not.toContain('## Decisions');
+  });
+
+  it('declared values only when no resolved context is passed', () => {
+    expect(section(renderCharacterSheet(declared, ''))).toBe(
+      [
+        '## Decisions',
+        '- Decision model: typesafe',
+        '- injection: shadow',
+        '- approver: on',
+        '- router: off',
+      ].join('\n'),
+    );
+  });
+
+  it('configured: host and model, R6 downgrade, inert approver, undeclared site', () => {
+    const ctx: CharacterSheetDecisions = {
+      provider: 'typesafe',
+      configured: true,
+      host: 'api.typesafe.ai',
+      model: 'jev-latest',
+      apiKeyRef: 'providers/typesafe/apiKey',
+      apiKeyPresent: true,
+      sites: [
+        site({ site: 'injection', requested: 'shadow', effective: 'shadow' }),
+        site({
+          site: 'approver',
+          requested: 'on',
+          effective: 'shadow',
+          reason: 'threshold-missing',
+          missingThresholds: ['decisions.thresholds.approver.deny'],
+          inertApprovalMode: 'manual',
+        }),
+        site({ site: 'router', reason: 'undeclared' }),
+      ],
+    };
+    const sheet = renderCharacterSheet(
+      declared,
+      '',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(section(sheet)).toBe(
+      [
+        '## Decisions',
+        '- Decision model: typesafe → api.typesafe.ai · model jev-latest',
+        '- tool: decide (via decision model)',
+        '- injection: shadow',
+        '- approver: on → running shadow: `decisions.thresholds.approver.deny` missing — inert: approvalMode is manual; the approver runs only under smart',
+        '- router: off',
+      ].join('\n'),
+    );
+  });
+
+  it('not-configured, no-provider and no-key each say what runs', () => {
+    const render = (ctx: CharacterSheetDecisions) =>
+      section(
+        renderCharacterSheet(
+          declared,
+          '',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          ctx,
+        ),
+      );
+    const offSites = (reason: 'not-configured' | 'no-provider') => [
+      site({ site: 'injection', requested: 'shadow', reason }),
+      site({ site: 'approver', reason: 'undeclared' }),
+      site({ site: 'router', reason: 'undeclared' }),
+    ];
+    const notConfigured = render({
+      provider: 'typesafe',
+      configured: false,
+      sites: offSites('not-configured'),
+    });
+    expect(notConfigured).toContain(
+      '- Decision model: typesafe — not configured on this machine; every site runs off',
+    );
+    expect(notConfigured).toContain('- injection: shadow → off');
+
+    const noProvider = render({ configured: false, sites: offSites('no-provider') });
+    expect(noProvider).toContain('- Decision model: (none) — sites need `decisions.provider`');
+    expect(noProvider).toContain('- injection: shadow → off');
+
+    const noKey = render({
+      provider: 'typesafe',
+      configured: true,
+      host: 'api.typesafe.ai',
+      model: 'jev-latest',
+      apiKeyRef: 'providers/typesafe/apiKey',
+      apiKeyPresent: false,
+      sites: [site({ site: 'injection', requested: 'shadow', effective: 'shadow' })],
+    });
+    expect(noKey).toContain(
+      "no key at vault ref providers/typesafe/apiKey; every site runs today's path",
+    );
+    // plan decision-tool D15 — the tool line follows `configured` alone: it
+    // prints with no key (the call then answers not_available), never when
+    // the provider is missing or unconfigured.
+    expect(noKey).toContain('- tool: decide (via decision model)');
+    expect(notConfigured).not.toContain('tool: decide');
+    expect(noProvider).not.toContain('tool: decide');
   });
 });

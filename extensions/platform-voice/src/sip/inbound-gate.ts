@@ -22,6 +22,10 @@ const DAY_MS = 86_400_000;
  * Is this caller on the operator's allowlist? Patterns use the same `*`
  * wildcard grammar as `voice.bots[].match`.
  *
+ * INB-001b: `from` is PSTN caller ID, which the calling party sets. A match is
+ * a HINT (it drives `prewarm`), never an identity: `decideInboundCall` answers
+ * every caller restricted, whatever this returns.
+ *
  * An absent or empty allowlist returns FALSE — nobody is allowlisted. "Everyone
  * is trusted" is deliberately NOT expressible here: a key that fails to parse,
  * a typo'd config section and a genuinely empty list are indistinguishable at
@@ -159,7 +163,12 @@ export type InboundCallDecision =
   | { accept: true; restricted: boolean; prewarm: boolean }
   | {
       accept: false;
-      reason: 'not_allowlisted' | 'over_concurrency' | 'rate_limited' | 'over_budget';
+      reason:
+        | 'not_allowlisted'
+        | 'caller_unverified'
+        | 'over_concurrency'
+        | 'rate_limited'
+        | 'over_budget';
     };
 
 export interface InboundCallDecisionInput {
@@ -167,7 +176,7 @@ export interface InboundCallDecisionInput {
   allowlist?: readonly string[];
   /** 'allowlisted' (default) | 'none' | 'all' — who gets a pre-warmed provider socket on RING. */
   prewarm?: 'allowlisted' | 'none' | 'all';
-  /** When false, a non-allowlisted caller is REFUSED instead of being screened into the receptionist scope. */
+  /** When false, every caller is REFUSED instead of being screened into the receptionist scope (INB-001b). */
   receptionist: boolean;
   concurrency: CallConcurrencyLimiter;
   rateLimit?: PerCallerRateLimiter;
@@ -183,11 +192,22 @@ export interface InboundCallDecisionInput {
  * the moment a later check refuses, so a wall of refused calls leaves
  * `active()` at zero.
  *
- * `restricted: true` means "not allowlisted" — the receptionist scope flag the
- * dispatcher uses to run the turn without owner memory or privileged tools.
+ * `restricted: true` is the receptionist scope flag the dispatcher uses to run
+ * the turn without owner memory or privileged tools. It is ALWAYS true (INB-001b):
+ * the only identity a PSTN call carries is caller ID, which the calling party
+ * sets and which is trivially spoofed, and no verification seam (spoken PIN,
+ * pairing, STIR/SHAKEN attestation) exists on this path. So an allowlist match
+ * does not grant owner identity: every caller is answered under the
+ * unknown-caller policy — the receptionist when one is configured, otherwise
+ * refused (`caller_unverified` for an allowlist match, `not_allowlisted` for
+ * anyone else). LIMITATION: this means no inbound call reaches the bot's own
+ * personality until a verification seam exists. Pinned by the 'INB-001b' cases
+ * in `__tests__/inbound-gate.test.ts`.
+ *
  * `prewarm` opens a provider socket on RING, which costs money on a call that
  * may still be screened, so the default `'allowlisted'` policy pre-warms only
- * for callers the operator already knows (eng-review D12).
+ * for callers whose caller ID matches the allowlist (eng-review D12) — a cost
+ * hint, which is all caller ID is good for.
  */
 export function decideInboundCall(input: InboundCallDecisionInput): InboundCallDecision {
   if (input.budget?.exceeded()) return { accept: false, reason: 'over_budget' };
@@ -199,12 +219,12 @@ export function decideInboundCall(input: InboundCallDecisionInput): InboundCallD
   }
 
   const allowlisted = isAllowlistedCaller(input.from, input.allowlist);
-  if (!allowlisted && !input.receptionist) {
+  if (!input.receptionist) {
     input.concurrency.release(input.callId);
-    return { accept: false, reason: 'not_allowlisted' };
+    return { accept: false, reason: allowlisted ? 'caller_unverified' : 'not_allowlisted' };
   }
 
   const policy = input.prewarm ?? 'allowlisted';
   const prewarm = policy === 'all' ? true : policy === 'none' ? false : allowlisted;
-  return { accept: true, restricted: !allowlisted, prewarm };
+  return { accept: true, restricted: true, prewarm };
 }

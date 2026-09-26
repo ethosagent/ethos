@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
+import { PendingMemorySchema } from '@ethosagent/web-contracts';
 import {
   createMemoryBundle,
   createMemoryProviderFromConfig,
@@ -248,6 +249,40 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
       key: 'MEMORY.md',
       content: 'user prefers dark mode',
     });
+  });
+
+  it('pendingList carries recurrence evidence, most-evidenced first (memoryCapture.evidenceSessions)', async () => {
+    const evidenceStore = createPendingMemoryStore({
+      dataDir,
+      storage,
+      config: { memoryCapture: { evidenceSessions: 3 } },
+    }).store;
+    const provider = new MarkdownFileMemoryProvider({ dir: dataDir, storage });
+    const evidenceService = new MemoryService({
+      memory: provider,
+      restoreMemory: provider,
+      history,
+      pending: evidenceStore,
+    });
+    const fact = (factHash: string, sessionId: string) =>
+      evidenceStore.propose({
+        scopeId,
+        source: 'capture',
+        factHash,
+        sessionId,
+        update: { action: 'add', key: 'MEMORY.md', content: `fact ${factHash}` },
+      });
+    await fact('once', 's1');
+    await fact('twice', 's1');
+    await fact('twice', 's2');
+
+    const { pending } = await evidenceService.pendingList(PERSONALITY_ID);
+    expect(pending.map((p) => [p.factHash, p.evidenceSessions])).toEqual([
+      ['twice', ['s1', 's2']],
+      ['once', ['s1']],
+    ]);
+    // The wire shape is the contract's, field for field.
+    for (const p of pending) expect(PendingMemorySchema.parse(p)).toEqual(p);
   });
 
   it('approve writes through under the original source + approvedBy, then clears the queue', async () => {

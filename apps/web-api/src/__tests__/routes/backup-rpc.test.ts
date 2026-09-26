@@ -44,7 +44,7 @@ describe('backup RPC', () => {
     const tokens = new WebTokenRepository({ dataDir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();
@@ -61,7 +61,12 @@ describe('backup RPC', () => {
   const call = (method: string, input: unknown = {}) =>
     app.request(`/rpc/backup/${method}`, {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: input }),
     });
 
@@ -74,7 +79,11 @@ describe('backup RPC', () => {
   it('401s without a credential', async () => {
     const res = await app.request('/rpc/backup/status', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: {} }),
     });
     expect(res.status).toBe(401);
@@ -176,6 +185,7 @@ describe('backup RPC', () => {
           Authorization: `Bearer ${secret}`,
           'content-type': 'application/json',
           origin: 'http://localhost:3000',
+          host: 'localhost:3000',
         },
         body: JSON.stringify({ json: {} }),
       });

@@ -714,3 +714,66 @@ describe('personality export — a name that would split a manifest is refused',
     expect(manifest).toContain('\\u0001');
   });
 });
+
+// A known secret field's paste line must name the vault ref the runtime reads
+// (`secretRefForConfigKey`, the same one setup writes and `ethos doctor`
+// checks), not the `anthropic-api-key`-style refs nothing reads.
+describe('personality export — known secret fields name the real vault ref', () => {
+  let stateDir: string;
+  let prevStateDir: string | undefined;
+
+  beforeEach(async () => {
+    stateDir = await mkdtemp(join(tmpdir(), 'ethos-export-refs-'));
+    prevStateDir = process.env.ETHOS_STATE_DIR;
+    process.env.ETHOS_STATE_DIR = stateDir;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (prevStateDir === undefined) delete process.env.ETHOS_STATE_DIR;
+    else process.env.ETHOS_STATE_DIR = prevStateDir;
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
+  it('points each known field at the ref setup writes', async () => {
+    const dir = join(stateDir, 'personalities', 'demo');
+    await mkdir(dir, { recursive: true });
+    const fields = [
+      'anthropicApiKey',
+      'openaiApiKey',
+      'telegramToken',
+      'discordToken',
+      'slackBotToken',
+      'slackAppToken',
+      'slackSigningSecret',
+      'emailPassword',
+    ];
+    await writeFile(
+      join(dir, 'config.yaml'),
+      ['name: Demo', ...fields.map((f) => `${f}: never-exported`), ''].join('\n'),
+    );
+    await writeFile(join(dir, 'SOUL.md'), '# Demo\n');
+    await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+
+    const out = join(stateDir, 'bundle.tar.gz');
+    await runPersonalityExport(['demo', '--output', out]);
+    const manifest = parseTar(gunzipSync(await readFile(out)))
+      .find(([relPath]) => relPath === 'secrets.manifest.yaml')?.[1]
+      .toString('utf8');
+    if (!manifest) throw new Error('bundle has no secrets.manifest.yaml');
+
+    expect(argsAfter(manifest, 'fill_with: ')).toEqual([
+      'ethos secrets set providers/anthropic/apiKey <value>',
+      'ethos secrets set providers/openai/apiKey <value>',
+      'ethos secrets set telegram/token <value>',
+      'ethos secrets set discord/token <value>',
+      'ethos secrets set slack/botToken <value>',
+      'ethos secrets set slack/appToken <value>',
+      'ethos secrets set slack/signingSecret <value>',
+      'ethos secrets set email/password <value>',
+    ]);
+    expect(manifest).not.toContain('ethos keys set');
+    expect(manifest).not.toContain('never-exported');
+  });
+});

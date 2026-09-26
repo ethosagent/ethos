@@ -12,6 +12,7 @@ import type {
   Logger,
   MemoryProvider,
   ModelResolutionContext,
+  PersonalityConfig,
   PersonalityRegistry,
   RequestDumpStore,
   SessionStore,
@@ -25,21 +26,25 @@ import { budgetGuardEvents, checkTurnBudgets, updateDenialStreak } from './agent
 import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
 import { applyOverflowRetry, overflowErrorEvent } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
+import { historyLimitFor, withSmallWindow } from './agent-loop/small-window';
 import { assembleContext, type MemoryPrefetchGate } from './agent-loop/stages/context-assembly';
 import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
 } from './agent-loop/stages/per-call-enforcement';
+import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
-import { setupTurn } from './agent-loop/stages/turn-setup';
+import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+import { isToolPermitted } from './agent-loop/tool-permitted';
 import type { LoopDeps } from './agent-loop/turn-context';
+import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { emptyModelResolution } from './agent-loop/turn-model';
 import { createWatcherTap } from './agent-loop/watcher-tap';
@@ -183,13 +188,13 @@ export interface AgentLoopConfig {
     sessionId: string;
     turnId: string;
   }) => void;
-  /** v2.2 — Pre-turn credential check. Returns the first missing credential,
-   *  or null if all required credentials are present. Opt-in: when undefined,
-   *  the check is skipped. Wiring provides this when plugins declare required
-   *  credentials. */
+  /** v2.2 — Pre-turn credential check (first missing credential, or null). Runs only when
+   *  set AND the run passes `credentialPrompt`; `scope` = the turn's personality + allowed
+   *  plugins. Must not throw. Built by `buildCredentialCheck` (packages/wiring). */
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
+    scope: { personalityId: string; allowedPlugins: readonly string[] },
   ) => Promise<{
     pluginId: string;
     credentialKey: string;
@@ -210,6 +215,16 @@ export interface AgentLoopConfig {
   /** Library output sink (Law 10). Carries the once-per-loop `ungated`
    *  approval-posture notice; omitted → the framework stays silent. */
   logger?: Logger;
+  /** Part 1 on-demand tool loading; absent → unchanged (tool-loading-loop.test.ts). */
+  toolLoading?: import('./agent-loop/tool-loading').ToolLoadingResolver;
+  smallWindowResolver?: import('./agent-loop/small-window').SmallWindowResolver; // per-personality small-window mode; absent → options.smallWindow
+  /** Per-personality tool exclusion, unioned with `RunOptions.toolsetExclude` (turn-setup.ts); must depend only on the personality. */
+  personalityToolExclude?: (personality: PersonalityConfig) => string[];
+  /** plan decision-provider-jev §8.3 — downgrade-only tier router, built in wiring;
+   *  absent → no routing (`agent-loop/tier-router.ts`, pinned by tier-router.test.ts). */
+  tierRouter?: import('./agent-loop/tier-router').TierRouter;
+  /** §15.3 — the approver's private sink channel (agent-loop/approver-decision-sinks.ts). */
+  approverDecisionSinks?: import('./agent-loop/approver-decision-sinks').ApproverDecisionSinks;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -273,6 +288,10 @@ export interface RunOptions extends MemoryPrefetchGate {
    * `BackgroundExecutor.runOne`; absent for foreground turns.
    */
   jobId?: string;
+  /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
+  reviewOfJobId?: string;
+  /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
+  credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
@@ -371,6 +390,11 @@ export class AgentLoop {
   private readonly toolLoopWarn: NonNullable<AgentLoopConfig['options']>;
   private readonly streamingTimeoutMs: number;
   private readonly smallWindow: boolean;
+  private readonly toolLoading?: AgentLoopConfig['toolLoading'];
+  private readonly smallWindowResolver?: AgentLoopConfig['smallWindowResolver'];
+  private readonly personalityToolExclude?: AgentLoopConfig['personalityToolExclude'];
+  private readonly tierRouter?: AgentLoopConfig['tierRouter'];
+  private readonly approverDecisionSinks?: AgentLoopConfig['approverDecisionSinks'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
@@ -437,6 +461,11 @@ export class AgentLoop {
     this.toolLoopWarn = config.options ?? {};
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
+    this.toolLoading = config.toolLoading;
+    this.smallWindowResolver = config.smallWindowResolver;
+    this.personalityToolExclude = config.personalityToolExclude;
+    this.tierRouter = config.tierRouter;
+    this.approverDecisionSinks = config.approverDecisionSinks;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
@@ -485,6 +514,11 @@ export class AgentLoop {
     return this.tools.getAvailable();
   }
 
+  /** Whether `toolName` passes the personality's base allowlist (agent-loop/tool-permitted.ts). */
+  isToolPermitted(toolName: string, personalityId?: string): boolean {
+    return isToolPermitted(this.tools, this.resolvePersonality(personalityId), toolName);
+  }
+
   /** Returns all registered personalities for inventory display. */
   getPersonalityIds(): string[] {
     return this.personalities.list().map((p) => p.id);
@@ -492,10 +526,12 @@ export class AgentLoop {
 
   /** Returns the budget cap for the given personality (undefined = no cap). */
   getPersonalityBudgetCap(personalityId?: string): number | undefined {
-    const p =
-      (personalityId ? this.personalities.get(personalityId) : null) ??
-      this.personalities.getDefault();
-    return p.budgetCapUsd;
+    return this.resolvePersonality(personalityId).budgetCapUsd;
+  }
+
+  /** The personality a turn with this id runs as (`resolvePersonality` in turn-setup). */
+  resolvePersonality(personalityId?: string): import('@ethosagent/types').PersonalityConfig {
+    return resolvePersonality(this.personalities, personalityId);
   }
 
   /** Returns accumulated session spend in USD (0 if no spend recorded yet). */
@@ -518,6 +554,16 @@ export class AgentLoop {
     this.sessionCosts.set(sessionKey, (this.sessionCosts.get(sessionKey) ?? 0) + usd);
   }
 
+  /** Redaction kit + observability for the tool path outside `run()`: the realtime
+   *  voice host (extensions/tools-voice/src/realtime-host.ts). A getter, so the
+   *  onboarding stand-in (apps/web-api/src/lib/pending-loop.ts) reads `undefined`. */
+  get resultRedaction(): ResultRedactionDeps {
+    return {
+      redaction: this.safety.redaction,
+      ...(this.observability ? { observability: this.observability } : {}),
+    };
+  }
+
   /** Manual `/compact` — force a compaction outside a turn (delegates to
    *  `compactSession`; the wired summarizer, if any, comes from `llmHandle`). */
   async compact(
@@ -530,6 +576,7 @@ export class AgentLoop {
         session: this.session,
         personalities: this.personalities,
         historyLimit: this.historyLimit,
+        historyLimitFor: historyLimitFor(this.deps), // the personality's own (small-window.ts)
         minTailUserMessages: this.compaction?.minTailUserMessages,
         ...(summarizer ? { summarizer } : {}),
         ...(this.observability ? { observability: this.observability } : {}),
@@ -561,6 +608,10 @@ export class AgentLoop {
       maxConsecutiveIdenticalCalls: this.maxConsecutiveIdenticalCalls,
       streamingTimeoutMs: this.streamingTimeoutMs,
       smallWindow: this.smallWindow,
+      toolLoading: this.toolLoading,
+      smallWindowResolver: this.smallWindowResolver,
+      personalityToolExclude: this.personalityToolExclude,
+      tierRouter: this.tierRouter,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,
       compaction: this.compaction,
@@ -591,13 +642,24 @@ export class AgentLoop {
    *  turn-end maintenance — silent memory flush + auto-compaction — runs AFTER
    *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
+    // decision-provider-personality §15.3 — site events merge in (agent-loop/turn-decisions.ts).
+    const decisions = new TurnDecisions(this.approverDecisionSinks, this.session);
+    yield* withDecisionEvents(decisions, this.runTurn(text, opts, decisions));
+  }
+
+  private async *runTurn(
+    text: string,
+    opts: RunOptions,
+    decisions: TurnDecisions,
+  ): AsyncGenerator<AgentEvent> {
     // Stage 1: Turn setup (session, personality, tier, tools, hooks, credential gate)
-    const setupResult = yield* setupTurn(this.deps, text, opts);
+    const setupResult = yield* setupTurn(this.deps, text, opts, decisions);
     if (setupResult.kind === 'refused') return;
     const { setup } = setupResult;
+    const turnDeps = withSmallWindow(this.deps, setup.smallWindowOverlay); // this turn's small-window decision
 
     // Stage 2: Context assembly (user msg, history, memory, system prompt, compaction)
-    const assembled = yield* assembleContext(this.deps, setup, text, opts);
+    const assembled = yield* assembleContext(turnDeps, setup, text, opts);
 
     const {
       systemPrompt,
@@ -672,6 +734,7 @@ export class AgentLoop {
     const dgRemainingRef = { value: 0 };
 
     const tierEscalationRef: { value?: string } = {};
+    const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
 
     // Watcher tap. Dangerous mode neutralizes halts for this run (consumer-side).
     const watcherTap = createWatcherTap(this.safety);
@@ -710,8 +773,12 @@ export class AgentLoop {
       watcherTap,
       counters: budgetCounters,
       checkBudgets,
+      redaction: this.safety.redaction,
+      personality,
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
+      denyRules: personality.safety?.denyRules,
+      decisions,
     });
 
     // get/setContext: one store per run(), seen by its batches only (context-store-per-run.test.ts)
@@ -758,9 +825,11 @@ export class AgentLoop {
         effectiveModel,
         modelOverride,
         providerEntry,
+        serverCompaction,
         allowedPlugins,
         allowedTools,
         filterOpts,
+        toolLoading: setup.toolLoading,
         systemPrompt,
         llmMessages,
         cacheBreakpoints,
@@ -820,11 +889,20 @@ export class AgentLoop {
       if (stepResult.outcome === 'overflow') {
         const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
         overflowRetried = true;
-        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn };
+        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
         const retry = canRetry
-          ? await applyOverflowRetry(this.deps, llmMessages, systemPrompt ?? '', personality, meta)
+          ? await applyOverflowRetry(turnDeps, llmMessages, systemPrompt ?? '', personality, meta)
           : { retried: false };
         if (retry.retried) {
+          // A4 — the compact-and-retry is user-visible work, not silence.
+          // `_loop` is a reserved name (DefaultToolRegistry.register refuses
+          // `_`-prefixed tools), so renderers can key on it for notice style.
+          yield {
+            type: 'tool_progress',
+            toolName: '_loop',
+            message: 'context overflow — compacting and retrying',
+            audience: 'user',
+          };
           cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
           iteration--; // retry this iteration with the shrunk history
           continue;
@@ -886,10 +964,11 @@ export class AgentLoop {
           mcpPolicy: this.mcpPolicy,
           onToolMetric: this.onToolMetric,
           sessionCosts: this.sessionCosts,
+          turnUsage,
           storage: this.storage,
           dataDir: this.dataDir,
           platform: this.platform,
-          resultBudgetChars: this.resultBudgetChars,
+          resultBudgetChars: turnDeps.resultBudgetChars,
           teamId: this.teamId,
           sessionReadMtimes: this.sessionReadMtimes,
           llm: this.llm,
@@ -908,6 +987,7 @@ export class AgentLoop {
           allowedTools,
           allowedPlugins,
           filterOpts,
+          toolLoading: setup.toolLoading,
           llmMessages,
           abortSignal,
           turnCount,
@@ -918,6 +998,7 @@ export class AgentLoop {
           usageSink,
           scriptToolBridge,
           contextStore,
+          decisions,
           dgEnabled,
           dgRemaining: dgRemainingRef,
           dgTools,
@@ -931,6 +1012,7 @@ export class AgentLoop {
             agentId: opts.agentId,
             rootSessionKey: opts.rootSessionKey,
             jobId: opts.jobId,
+            ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
             origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,
@@ -985,7 +1067,7 @@ export class AgentLoop {
         ? { maxCompletionTokens: opts.maxCompletionTokens }
         : {}),
     };
-    yield* maybeConsolidateAtTurnEnd(this.deps, buildTurnEndCtx(setup, turnEndExtras));
+    yield* maybeConsolidateAtTurnEnd(turnDeps, buildTurnEndCtx(setup, turnEndExtras));
   }
 
   /**

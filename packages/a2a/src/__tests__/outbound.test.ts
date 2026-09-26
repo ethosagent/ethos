@@ -21,6 +21,7 @@ import {
   type Agent,
   countingRunner,
   HELLO_SCRIPT,
+  LOOPBACK_PEER_POLICY,
   makeAgent,
   newPeerStore,
   type SheetHolder,
@@ -94,7 +95,11 @@ describe('A2aOutboundClient — full round-trip (handshake → sync task)', () =
     const { app, counter } = makeServer(target, initiator, sheet, clock);
 
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const session = await client.connect({
       wellKnownUrl: WELL_KNOWN_URL,
@@ -128,7 +133,11 @@ describe('A2aOutboundClient — full round-trip (handshake → sync task)', () =
     const { app } = makeServer(target, initiator, sheet, clock);
 
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
     const session = await client.connect({
       wellKnownUrl: WELL_KNOWN_URL,
       myCard: initiator.card,
@@ -169,6 +178,7 @@ describe('A2aOutboundClient — outbound fetch timeouts (plan T0.3)', () => {
     // connect() over the REAL server (fast, separate client) — only the
     // `message/send` fetch under test hangs.
     const connectClient = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl: async (input, init) => app.request(toUrl(input), init),
       now: () => clock.t,
     });
@@ -182,6 +192,7 @@ describe('A2aOutboundClient — outbound fetch timeouts (plan T0.3)', () => {
     // mechanic here with `sendMaxAttempts: 1` so this test's budget doesn't
     // have to account for backoff delays between attempts.
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl: hangingFetch,
       now: () => clock.t,
       sendTimeoutMs: 20,
@@ -227,6 +238,7 @@ describe('A2aOutboundClient — outbound fetch timeouts (plan T0.3)', () => {
       return app.request(url, init);
     };
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl,
       now: () => clock.t,
       handshakeTimeoutMs: 20,
@@ -273,6 +285,7 @@ describe('A2aOutboundClient — retry with backoff + jitter (plan T1.3)', () => 
 
     const sleeps: number[] = [];
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl,
       now: () => clock.t,
       randomFn: () => 0.5,
@@ -321,6 +334,7 @@ describe('A2aOutboundClient — retry with backoff + jitter (plan T1.3)', () => 
 
     const sleeps: number[] = [];
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl,
       now: () => clock.t,
       randomFn: () => 0.5,
@@ -369,7 +383,11 @@ describe('A2aOutboundClient — retry with backoff + jitter (plan T1.3)', () => 
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a/')) rpcAttempts += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
     const session = await client.connect({
       wellKnownUrl: WELL_KNOWN_URL,
       myCard: initiator.card,
@@ -410,15 +428,23 @@ describe('A2aOutboundClient — egress default-deny (plan §15)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(target, initiator, sheet, clock);
 
-    // Count challenge POSTs — the first handshake step. A refused egress must
-    // never reach it.
+    // Count challenge POSTs — the first handshake step — and card GETs. A
+    // refused egress must reach neither: the anchor is known up front, so the
+    // allowlist is checked before the peer is contacted at all (plan
+    // openclaw-2026.9.6-gaps S7).
     let authPosts = 0;
+    let cardGets = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = toUrl(input);
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
+      if (url.includes('/.well-known/')) cardGets += 1;
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     let thrown: unknown;
     try {
@@ -434,7 +460,8 @@ describe('A2aOutboundClient — egress default-deny (plan §15)', () => {
     }
     expect(thrown).toBeInstanceOf(A2aOutboundError);
     if (thrown instanceof A2aOutboundError) expect(thrown.code).toBe('egress_denied');
-    // The card was fetched + verified, but NO handshake was attempted, no run ran.
+    // No card fetch, NO handshake attempted, no run ran.
+    expect(cardGets).toBe(0);
     expect(authPosts).toBe(0);
     expect(counter.runs).toBe(0);
   });
@@ -446,7 +473,11 @@ describe('A2aOutboundClient — egress default-deny (plan §15)', () => {
     const clock = { t: Date.now() };
     const { app } = makeServer(target, initiator, sheet, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const seen: string[] = [];
     const session = await client.connect({
@@ -489,7 +520,11 @@ describe('A2aOutboundClient — delegation containment (P8)', () => {
       }
       return app.request(url, init);
     };
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
     const session = await client.connect({
       wellKnownUrl: WELL_KNOWN_URL,
       myCard: initiator.card,

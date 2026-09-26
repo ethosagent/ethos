@@ -13,7 +13,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // not skip (the shared `backups/.lock`), neither of which is visible in the
 // result — so they are observed here and the behaviour underneath stays real.
 const spy = vi.hoisted(() => ({
-  createOpts: [] as Array<{ snapshot?: string; dataDir: string; outPath: string }>,
+  createOpts: [] as Array<{
+    snapshot?: string;
+    dataDir: string;
+    outPath: string;
+    memory?: unknown;
+  }>,
   lockDirs: [] as string[],
   releases: 0,
   failNextCreate: null as string | null,
@@ -126,6 +131,25 @@ describe('BackupService', () => {
     expect(spy.createOpts[0]?.dataDir).toBe(dataDir);
     expect(result.archive.name).toMatch(/^ethos-web-.*\.tar\.gz$/);
     expect(existsSync(join(backupDir, result.archive.name))).toBe(true);
+  });
+
+  // `memory` is a key `ConfigRepository.read` models, so it lands on
+  // `RawConfig.memory` and never on `passthrough` — reading it from the
+  // passthrough map made every `memory: vault` deployment look unconfigured.
+  it('passes the `memory: vault` selection from config to createBackup', async () => {
+    const vault = join(dataDir, 'vault');
+    await mkdir(vault, { recursive: true });
+    await writeFile(
+      join(dataDir, 'config.yaml'),
+      `schemaVersion: 1\npersonality: architect\nmemory: vault\nmemoryVault.path: ${vault}\nmemoryVault.agentDir: ethos\n`,
+    );
+
+    await service.create({});
+
+    expect(spy.createOpts[0]?.memory).toEqual({
+      memory: 'vault',
+      memoryVault: { path: vault, agentDir: 'ethos' },
+    });
   });
 
   it('takes the shared backup lock and releases it', async () => {

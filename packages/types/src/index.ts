@@ -13,6 +13,7 @@ export * from './constitution';
 export * from './content-store';
 export * from './context-engine';
 export * from './context-log';
+export * from './decision';
 export * from './diagnostics';
 export * from './document-extractor';
 export * from './errors';
@@ -22,6 +23,7 @@ export * from './goal';
 export * from './hooks';
 export * from './id-validation';
 export * from './injector';
+export * from './lease';
 export * from './llm';
 export * from './llm-timeouts';
 export * from './logger';
@@ -69,6 +71,7 @@ export * from './turn-auditor';
 export * from './vision-limits';
 export * from './voice';
 export * from './voice-realtime';
+export * from './wiring-context';
 export * from './worker-session';
 
 // Phase 5 — Personality export/import portable bundles

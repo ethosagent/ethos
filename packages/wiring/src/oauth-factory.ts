@@ -6,7 +6,7 @@ import type { Storage } from '@ethosagent/types';
  * Create a production OAuthService + OAuthRegistry pair.
  *
  * When `passphrase` is provided, token storage is encrypted-at-rest via
- * CryptoStorage (same pattern as compose-tools.ts). When absent, tokens
+ * CryptoStorage. When absent, tokens
  * are stored in plaintext (dev/test backward compat).
  *
  * NOTE: enabling encryption on an existing installation will invalidate

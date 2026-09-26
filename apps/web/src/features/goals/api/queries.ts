@@ -17,6 +17,15 @@ export function useGoalDetail(id: string) {
   });
 }
 
+/** Server goal settings — `allowCheckCommands` mirrors `goals.allowCheckCommands`. */
+export function useGoalSettings(enabled = true) {
+  return useQuery({
+    queryKey: goalsKeys.settings(),
+    queryFn: () => rpc.goals.settings(),
+    enabled,
+  });
+}
+
 export function useToolResult(goalId: string, toolCallId: string, enabled: boolean) {
   return useQuery({
     queryKey: [...goalsKeys.detail(goalId), 'toolResult', toolCallId],

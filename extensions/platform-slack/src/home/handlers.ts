@@ -169,12 +169,15 @@ async function gatherMemory(deps: HomeEventDeps, userId: string): Promise<string
 }
 
 /** Gather pending clarifies the given user can answer — anyone-clarify or
- *  this user is the originator. Tolerant of reader failure (returns []). */
+ *  this user is the originator — for an allowlisted viewer only. A question
+ *  can quote private channel context, so a non-allowlisted viewer gets `[]`
+ *  like the memory/session/kanban sections (`isUserAuthorized`). Pinned by
+ *  `__tests__/home.test.ts` (S11). Tolerant of reader failure (returns []). */
 async function gatherPendingClarifies(
   deps: HomeEventDeps,
   userId: string,
 ): Promise<PendingClarify[]> {
-  if (!deps.clarify) return [];
+  if (!deps.clarify || !isUserAuthorized(userId, deps.allowedUsers)) return [];
   try {
     const all = await deps.clarify.listPendingForBot();
     return all.filter(

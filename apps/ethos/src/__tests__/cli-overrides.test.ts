@@ -11,7 +11,12 @@ import type { EthosConfig } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyCliOverrides, parseCliOverrideFlags, VALID_PROVIDERS } from '../cli-overrides';
+import {
+  applyCliOverrides,
+  cliToolsetsRefusal,
+  parseCliOverrideFlags,
+  VALID_PROVIDERS,
+} from '../cli-overrides';
 
 // ---------------------------------------------------------------------------
 // Minimal config fixture — real fields, no side effects
@@ -323,5 +328,33 @@ describe('applyCliOverrides', () => {
       expect(result.provider).toBe('anthropic');
       expect(result.cliToolsets).toEqual(['web', 'terminal']);
     });
+  });
+});
+
+// The `--toolsets` refusal, shared by the before_tool_call hook that enforces
+// it (`applyCliOverrideHooks`, apps/ethos/src/wiring.ts) and the approval gate
+// that must not ask about a call it will refuse (`wireTerminalApprovalGate`).
+describe('cliToolsetsRefusal', () => {
+  const loop = {
+    getAvailableTools: () => [
+      { name: 'terminal', toolset: 'terminal' },
+      { name: 'read_file', toolset: 'file' },
+    ],
+  };
+  const payload = (toolName: string) => ({ toolName });
+
+  it('refuses a tool whose toolset is outside --toolsets', () => {
+    expect(cliToolsetsRefusal(loop, ['file'])(payload('terminal'))).toBe(
+      "Tool 'terminal' (toolset: terminal) is disabled by --toolsets CLI override",
+    );
+  });
+
+  it('lets a tool in an allowed toolset through', () => {
+    expect(cliToolsetsRefusal(loop, ['file'])(payload('read_file'))).toBeNull();
+  });
+
+  it('refuses nothing without --toolsets', () => {
+    expect(cliToolsetsRefusal(loop, undefined)(payload('terminal'))).toBeNull();
+    expect(cliToolsetsRefusal(loop, [])(payload('terminal'))).toBeNull();
   });
 });

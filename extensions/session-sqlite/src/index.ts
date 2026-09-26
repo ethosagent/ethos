@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { estimateCost } from '@ethosagent/pricing';
 import Database, { migrate } from '@ethosagent/sqlite';
 import type {
+  AgentEvent,
   CompressionEvent,
   KeyValueStore,
   MessagePage,
@@ -11,8 +12,10 @@ import type {
   SessionFilter,
   SessionStore,
   SessionUsage,
+  StoredDecision,
   StoredMessage,
 } from '@ethosagent/types';
+import { appendDecisionRow, readDecisionRows, SESSION_DECISIONS_SCHEMA } from './decisions';
 import { SqliteKeyValueStore } from './kv-store';
 import { readMessagePage } from './message-page';
 
@@ -52,9 +55,64 @@ export interface UsageAggregateRow {
   messages: number;
 }
 
+/** A window's totals over {@link UsageAggregateRow}s, plus the cache hit rate. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  estimatedCostUsd: number;
+  messages: number;
+  /** Share of billable input served from cache, 0–1. See {@link cacheHitRate}. */
+  cacheHitRate: number;
+}
+
+/**
+ * Cached share of input tokens.
+ *
+ * Denominator is every token the model read — fresh input, cache reads, and
+ * cache writes — because a cache write is input the provider still charged for.
+ * Excluding it would make the first turn of a session look like a 0% hit rate
+ * on a smaller base and flatter the number thereafter.
+ */
+export function cacheHitRate(t: {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}): number {
+  const total = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens;
+  return total === 0 ? 0 : t.cacheReadTokens / total;
+}
+
+/**
+ * Fold aggregate rows into one window's totals — the ONE fold behind both
+ * `ethos usage` (apps/ethos/src/commands/usage.ts) and the web `usage.summary`
+ * RPC (apps/web-api/src/rpc/usage.ts), so the two cannot report different
+ * numbers for the same window. Pinned by apps/web-api's `usage-rpc.test.ts`.
+ */
+export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
+  const t = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    messages: 0,
+  };
+  for (const r of rows) {
+    t.inputTokens += r.inputTokens;
+    t.outputTokens += r.outputTokens;
+    t.cacheReadTokens += r.cacheReadTokens;
+    t.cacheCreationTokens += r.cacheCreationTokens;
+    t.estimatedCostUsd += r.estimatedCostUsd;
+    t.messages += r.messages;
+  }
+  return { ...t, cacheHitRate: cacheHitRate(t) };
+}
+
 /** Outcome of {@link SQLiteSessionStore.recomputeMessageCosts}. */
 export interface RecomputeCostsResult {
-  /** Message rows carrying token counts, i.e. rows a cost can be derived for. */
+  /** Non-`tool_result` message rows carrying token counts, i.e. rows a cost can be derived for. */
   messagesScanned: number;
   /** Rows whose stored cost differed from the recomputed one and were rewritten. */
   messagesUpdated: number;
@@ -156,6 +214,9 @@ export function createKvStoreFactory(
   dbPath: string,
 ): ((tool: string, scopeId: string) => KeyValueStore) & { close(): void } {
   const db = new Database(dbPath);
+  // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+  // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+  db.pragma('busy_timeout = 5000');
   db.pragma('journal_mode = WAL');
   SqliteKeyValueStore.migrate(db);
   // `close` releases the one connection every store this factory hands out
@@ -197,6 +258,9 @@ export class SQLiteSessionStore implements SessionStore {
 
   constructor(dbPath: string, opts: SQLiteSessionStoreOptions = {}) {
     this.db = new Database(dbPath);
+    // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+    // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
@@ -221,6 +285,18 @@ export class SQLiteSessionStore implements SessionStore {
       migrations: {},
     });
 
+    // Everything below checks a column and then adds it. sessions.db is opened
+    // by gateway and serve at once on first boot (`ethos run-all`), so run the
+    // whole block under one write lock: the second process waits (busy_timeout)
+    // for the first to commit, then sees the columns and adds nothing. Without
+    // it both read "no column" and the loser died on "duplicate column name:
+    // kept_from_message_id". Pinned by __tests__/sqlite-session.test.ts
+    // ("additive migrations under a peer").
+    this.db.transaction(() => this.addColumns()).immediate();
+  }
+
+  /** Additive, check-then-ALTER migrations; run only inside `migrate`'s write lock. */
+  private addColumns(): void {
     // Additive migration: soft-reference trace_id column on messages.
     // Idempotent — only adds the column when it does not already exist.
     const cols = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
@@ -263,6 +339,22 @@ export class SQLiteSessionStore implements SessionStore {
       this.db.exec('ALTER TABLE messages ADD COLUMN is_error INTEGER');
     }
 
+    // Additive migration: the provider-counted request split
+    // (`TokenUsage.requestTokens`) on assistant rows. Context assembly derives
+    // the measured static slice (system + tools) for the next turn's compaction
+    // gate from it (Phase 1c, `stages/context-assembly.ts`); without these
+    // columns every SQLite-backed turn fell back to an estimate. Nullable
+    // INTEGERs, no DEFAULT: NULL is "not measured". No `user_version` bump — an
+    // older binary opens the file (the `migrate()` guard only refuses a NEWER
+    // version), selects `*` past columns it does not know, and inserts NULL
+    // into them. Pinned by `__tests__/request-tokens.test.ts`.
+    for (const part of ['system', 'tools', 'messages'] as const) {
+      const col = `request_${part}_tokens`;
+      if (!msgCols.some((c) => c.name === col)) {
+        this.db.exec(`ALTER TABLE messages ADD COLUMN ${col} INTEGER`);
+      }
+    }
+
     // Context-compaction Phase 2: watermark boundary. The id of the first
     // stored message kept verbatim after a compaction; drives the cross-turn
     // read-back so a compaction survives past the turn it fired on. Nullable —
@@ -279,6 +371,16 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
     );
+
+    // Additive migration: `listSessions({ parentSessionId })` backs the branch
+    // switchers (web sibling list, `/branches`), so it is an index seek, not a
+    // table scan. Idempotent; kept out of the v1 baseline for the same reason
+    // as store_meta above.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)');
+
+    // Additive migration (decision-provider-personality §15.5): settled
+    // decision rows, cascaded with their session. See ./decisions.ts.
+    this.db.exec(SESSION_DECISIONS_SCHEMA);
   }
 
   // ---------------------------------------------------------------------------
@@ -388,14 +490,18 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    // Key prefixes are literal and case-sensitive: an exact `substr`
+    // comparison, never LIKE, which folds ASCII case (`Sales` / `sales` are
+    // different bots) and reads `%`/`_` as wildcards. Pinned by
+    // `__tests__/key-prefix-filter.test.ts`.
     if (filter?.keyPrefix) {
-      conditions.push("key LIKE ? ESCAPE '\\'");
-      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+      conditions.push('substr(key, 1, length(?)) = ?');
+      values.push(filter.keyPrefix, filter.keyPrefix);
     }
     if (filter?.excludeKeyPrefixes) {
       for (const prefix of filter.excludeKeyPrefixes) {
-        conditions.push("key NOT LIKE ? ESCAPE '\\'");
-        values.push(`${prefix.replace(/[%_\\]/g, '\\$&')}%`);
+        conditions.push('substr(key, 1, length(?)) != ?');
+        values.push(prefix, prefix);
       }
     }
     if (filter?.personalityId) {
@@ -406,13 +512,13 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('working_dir = ?');
       values.push(filter.workingDir);
     }
+    if (filter?.parentSessionId) {
+      conditions.push('parent_session_id = ?');
+      values.push(filter.parentSessionId);
+    }
     if (filter?.since) {
       conditions.push('created_at >= ?');
       values.push(filter.since.toISOString());
-    }
-    if (filter?.keyPrefix) {
-      conditions.push('key LIKE ?');
-      values.push(`${filter.keyPrefix}%`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -441,8 +547,9 @@ export class SQLiteSessionStore implements SessionStore {
         `INSERT INTO messages
          (id, session_id, role, content, tool_call_id, tool_name, tool_calls,
           content_blocks, input_tokens, output_tokens, cache_read_tokens,
-          cache_creation_tokens, estimated_cost_usd, trace_id, is_error, timestamp)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          cache_creation_tokens, estimated_cost_usd, request_system_tokens,
+          request_tools_tokens, request_messages_tokens, trace_id, is_error, timestamp)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -458,6 +565,9 @@ export class SQLiteSessionStore implements SessionStore {
         data.usage?.cacheReadTokens ?? null,
         data.usage?.cacheCreationTokens ?? null,
         data.usage?.estimatedCostUsd ?? null,
+        data.usage?.requestTokens?.system ?? null,
+        data.usage?.requestTokens?.tools ?? null,
+        data.usage?.requestTokens?.messages ?? null,
         data.traceId ?? null,
         data.isError === undefined ? null : data.isError ? 1 : 0,
         timestamp,
@@ -501,6 +611,24 @@ export class SQLiteSessionStore implements SessionStore {
     options: MessagePageOptions,
   ): Promise<MessagePage | null> {
     return readMessagePage<MessageRow>(this.db, sessionId, options, rowToMessage);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Decision rows (decision-provider-personality §15.5) — see ./decisions.ts
+  // ---------------------------------------------------------------------------
+
+  async appendDecision(
+    sessionId: string,
+    event: Extract<AgentEvent, { type: 'decision' }>,
+  ): Promise<StoredDecision> {
+    return appendDecisionRow(this.db, sessionId, event);
+  }
+
+  async getDecisions(
+    sessionId: string,
+    filter?: { toolCallIds?: readonly string[]; traceIds?: readonly string[] },
+  ): Promise<StoredDecision[]> {
+    return readDecisionRows(this.db, sessionId, filter);
   }
 
   async updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void> {
@@ -763,6 +891,12 @@ export class SQLiteSessionStore implements SessionStore {
    * derived cache of the live `messages` rows. Rewriting message costs without
    * rebuilding it would leave the cache stale — the exact invariant A1's
    * consistency test pins — so both land in one transaction.
+   *
+   * `tool_result` rows are skipped: their cost is a tool-reported `cost_usd`
+   * (zero tokens, written by `processTools` in
+   * packages/core/src/agent-loop/stages/tool-processing.ts), not a function of
+   * tokens, so re-deriving it would erase real spend. They still count in the
+   * rollup sum. Pinned by `__tests__/recompute-costs.test.ts`.
    */
   async recomputeMessageCosts(): Promise<RecomputeCostsResult> {
     const rows = this.db
@@ -771,7 +905,7 @@ export class SQLiteSessionStore implements SessionStore {
                 m.cache_creation_tokens, m.estimated_cost_usd, s.model
          FROM messages m
          JOIN sessions s ON s.id = m.session_id
-         WHERE m.input_tokens IS NOT NULL`,
+         WHERE m.input_tokens IS NOT NULL AND m.role != 'tool_result'`,
       )
       .all() as Array<{
       id: string;
@@ -859,17 +993,27 @@ export class SQLiteSessionStore implements SessionStore {
       .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
       .all(lower) as SessionRow[];
     if (exact.length > 0) return exact.map(rowToSession);
-    // 2. Fragment match (case-insensitive substring)
+    // 2. Fragment match (case-insensitive substring). `instr`, not LIKE, so a
+    //    `%` or `_` in the query matches only itself.
     const fragment = this.db
-      .prepare('SELECT * FROM sessions WHERE LOWER(title) LIKE ?')
-      .all(`%${lower}%`) as SessionRow[];
+      .prepare('SELECT * FROM sessions WHERE instr(LOWER(title), ?) > 0')
+      .all(lower) as SessionRow[];
     return fragment.map(rowToSession);
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {
+    // `updated_at` alone is not "no recent traffic": `appendMessage` does not
+    // bump it, so a session holding a message at or after the cutoff is kept.
+    // Pinned by `__tests__/prune-live-session.test.ts`.
+    const iso = olderThan.toISOString();
     const result = this.db
-      .prepare('DELETE FROM sessions WHERE updated_at < ?')
-      .run(olderThan.toISOString());
+      .prepare(
+        `DELETE FROM sessions WHERE updated_at < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM messages WHERE messages.session_id = sessions.id AND timestamp >= ?
+           )`,
+      )
+      .run(iso, iso);
     // `retention.vacuumAfterPrune` — reclaim the freed pages. Only when the
     // prune actually deleted something: VACUUM rewrites the whole file behind a
     // write lock, so a no-op prune must not pay for it. `minVacuumIntervalDays`
@@ -945,6 +1089,13 @@ export class SQLiteSessionStore implements SessionStore {
     since: Date;
     until: Date;
     dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
+    /** Only sessions whose key starts with this, literally and case-sensitively:
+     *  an exact `substr` comparison, not `LIKE`, which folds ASCII case and would
+     *  mix the spend of bots whose ids differ only by case. Pinned by
+     *  'keyPrefix is case-sensitive' in `__tests__/usage-aggregate.test.ts`.
+     *  How one channel bot's spend is read: its sessions are keyed under
+     *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
+    keyPrefix?: string;
   }): Promise<UsageAggregateRow[]> {
     const keyExpr = {
       // `substr(timestamp, 1, 10)` over an ISO-8601 string is the UTC date, and
@@ -969,13 +1120,18 @@ export class SQLiteSessionStore implements SessionStore {
            JOIN sessions s ON s.id = m.session_id
           WHERE m.timestamp >= ? AND m.timestamp < ?
             AND m.input_tokens IS NOT NULL
+            ${opts.keyPrefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
           -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
           -- real column, so \`GROUP BY key\` silently resolves to it and every
           -- dimension collapses to per-session grouping.
           GROUP BY ${keyExpr}
           ORDER BY estimatedCostUsd DESC`,
       )
-      .all(opts.since.toISOString(), opts.until.toISOString()) as UsageAggregateRow[];
+      .all(
+        opts.since.toISOString(),
+        opts.until.toISOString(),
+        ...(opts.keyPrefix !== undefined ? [opts.keyPrefix, opts.keyPrefix] : []),
+      ) as UsageAggregateRow[];
   }
 
   /** Close the database connection (useful in tests). */
@@ -1025,6 +1181,9 @@ interface MessageRow {
   cache_read_tokens: number | null;
   cache_creation_tokens: number | null;
   estimated_cost_usd: number | null;
+  request_system_tokens: number | null;
+  request_tools_tokens: number | null;
+  request_messages_tokens: number | null;
   trace_id: string | null;
   is_error: number | null;
   timestamp: string;
@@ -1100,6 +1259,17 @@ function rowToMessage(r: MessageRow): StoredMessage {
             cacheReadTokens: r.cache_read_tokens ?? 0,
             cacheCreationTokens: r.cache_creation_tokens ?? 0,
             estimatedCostUsd: r.estimated_cost_usd ?? 0,
+            ...(r.request_system_tokens != null &&
+            r.request_tools_tokens != null &&
+            r.request_messages_tokens != null
+              ? {
+                  requestTokens: {
+                    system: r.request_system_tokens,
+                    tools: r.request_tools_tokens,
+                    messages: r.request_messages_tokens,
+                  },
+                }
+              : {}),
           }
         : undefined,
     traceId: r.trace_id ?? undefined,
