@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { AgentBridge, type BridgeApprovalSource } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
+import type { BackgroundJob } from '@ethosagent/types';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { App, type AppProps, type ExternalSlashCommands } from './components/App';
@@ -39,6 +40,13 @@ export interface TUIOptions {
   onNotification?: (sessionKey: string, cb: (text: string) => void) => () => void;
   /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
   onSkillProposed?: (cb: (text: string) => void) => () => void;
+  /**
+   * C5 — subscribe to background-job completions (the executor's `onComplete`
+   * shape). The TUI renders the same completion box the readline branch
+   * prints and counts completions in the status bar (`bg:N`). Returns an
+   * unsubscribe.
+   */
+  onBackgroundComplete?: (cb: (job: BackgroundJob) => void) => () => void;
   /** `/memory` reader over the configured backend's file memory (see `AppProps.readMemory`). */
   readMemory: (scope: { personalityId: string; sessionKey: string }) => Promise<string | null>;
   /** `/fork`, `/branches`, `/branch <n>` over the host's session store (see `AppProps.branches`). */
@@ -78,6 +86,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       slashCommands: opts.slashCommands,
       onNotification: opts.onNotification,
       onSkillProposed: opts.onSkillProposed,
+      onBackgroundComplete: opts.onBackgroundComplete,
       readMemory: opts.readMemory,
       ...(opts.branches ? { branches: opts.branches } : {}),
       setPluginCredential: opts.setPluginCredential,
