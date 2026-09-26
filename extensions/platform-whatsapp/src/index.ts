@@ -462,6 +462,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     const chunks = chunkText(text, this.maxMessageLength);
 
     let firstId: string | undefined;
+    let landed = 0;
     for (const chunk of chunks) {
       try {
         const opts = message.replyToId
@@ -473,12 +474,23 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
           : undefined;
 
         const sent = await sock.sendMessage(chatId, { text: chunk }, opts);
+        landed++;
         if (!firstId) firstId = sent.key.id;
       } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
+        const error = err instanceof Error ? err.message : String(err);
+        // Once any chunk landed, report it delivered: the gateway's delivery
+        // sweep redelivers a whole `ok: false` reply and would re-post what
+        // arrived on every retry. The lost tail is named in `error`. No
+        // `permanent` mapping: Baileys raises nothing that says a chat is
+        // unreachable for good. Pinned by `__tests__/send-delivery.test.ts`.
+        if (landed > 0) {
+          return {
+            ok: true,
+            messageId: firstId,
+            error: `partial: ${landed} of ${chunks.length} chunks delivered; ${error}`,
+          };
+        }
+        return { ok: false, error };
       }
     }
 
