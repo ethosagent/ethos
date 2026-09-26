@@ -42,7 +42,11 @@ import type {
   RecipePreflight,
 } from '@ethosagent/web-contracts';
 import type { CronService } from './cron.service';
-import { deriveProviderRoster, NAMED_SECRET_SEED_PROVIDERS } from './derive-provider-roster';
+import {
+  type DerivedProvider,
+  deriveProviderRoster,
+  NAMED_SECRET_SEED_PROVIDERS,
+} from './derive-provider-roster';
 import type { KeysService } from './keys.service';
 import type { McpService } from './mcp.service';
 import type { PersonalitiesService } from './personalities.service';
@@ -1018,8 +1022,12 @@ export class RecipesService {
    *      named-secrets vault's roster comes from — and its fallback name is the
    *      field's `defaultSecretName ?? 'apiKey'`, the convention
    *      `ToolSettingsService.probeCredentials` resolves with.
+   *   3. PER-FIELD PROVIDER — every `secret-binding` declares its `provider`
+   *      (`engine_ask`: one field per engine, one namespace each). A recipe
+   *      binds ONE key, so the FIRST field and its provider are the contract
+   *      (plan engine-ask-per-engine-bindings D15) — `engine_ask.chatgpt`.
    *
-   * `undefined` when the tool is absent or fits neither shape: with no way to
+   * `undefined` when the tool is absent or fits none of these: with no way to
    * write a binding there is nothing the page could do, and preflight is better
    * off saying it could not check. Several prefixes with no enum is ambiguous —
    * nothing says which namespace a bare name resolves in — so it stays unknown.
@@ -1064,9 +1072,21 @@ export class RecipesService {
       // nothing); fall through and read the tool as single-provider.
     }
 
-    if (bindings.length !== 1) return undefined;
+    const scopedProvider = bindings.every((b) => b.provider !== undefined)
+      ? bindingField.provider
+      : undefined;
+    // The tool's OWN grants: a declared provider the tool does not grant is
+    // not a namespace its binding can resolve in.
     const own = deriveProviderRoster({ getAvailable: () => [tool] }).providers;
-    const provider = own.length === 1 && own[0] ? writable.get(own[0].provider) : undefined;
+    let provider: DerivedProvider | undefined;
+    if (scopedProvider !== undefined) {
+      provider = own.some((p) => p.provider === scopedProvider)
+        ? writable.get(scopedProvider)
+        : undefined;
+    } else {
+      if (bindings.length !== 1) return undefined;
+      provider = own.length === 1 && own[0] ? writable.get(own[0].provider) : undefined;
+    }
     if (!provider) return undefined;
     return {
       providers: [

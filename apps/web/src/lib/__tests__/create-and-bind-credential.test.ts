@@ -79,4 +79,19 @@ describe('createAndBindCredential', () => {
     });
     expect(bind).toHaveBeenCalledOnce();
   });
+
+  it('writes the name to the given binding field — engine_ask binds per engine', async () => {
+    const bind = vi.fn(async (_values: Record<string, Record<string, string>>) => undefined);
+    await createAndBindCredential({
+      create: vi.fn(async () => undefined),
+      bind,
+      provider: 'perplexity',
+      name: 'pplx-brand',
+      value: 'pplx-value',
+      key: 'engine_ask',
+      fieldKey: 'perplexity',
+      scope: 'personality',
+    });
+    expect(bind).toHaveBeenCalledWith({ engine_ask: { perplexity: 'pplx-brand' } });
+  });
 });

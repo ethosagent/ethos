@@ -65,7 +65,16 @@ export type ToolSettingsControl =
       options: Array<{ value: string; label: string }>;
       default?: string;
     }
-  | { kind: 'secret'; key: string; label: string; secretKind: string; helpText?: string }
+  | {
+      kind: 'secret';
+      key: string;
+      label: string;
+      secretKind: string;
+      helpText?: string;
+      /** The one `providers/<segment>/` namespace this field binds, when the
+       *  tool grants several (`engine_ask`). Narrows the picker to that vendor. */
+      provider?: string;
+    }
   | { kind: 'info'; key: string; label: string; text: string };
 
 /** Map a tool's `settingsSchema` into the list of controls the form renders.
@@ -90,6 +99,7 @@ export function describeToolSettingsFields(schema: ToolSettingsSchemaWire): Tool
       label: field.label,
       secretKind: field.secretKind,
       ...(field.helpText !== undefined ? { helpText: field.helpText } : {}),
+      ...(field.provider !== undefined ? { provider: field.provider } : {}),
     };
   });
 }

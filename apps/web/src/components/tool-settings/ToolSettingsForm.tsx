@@ -16,9 +16,10 @@ import { SecretPicker } from './SecretPicker';
 // `value`. It is how a tool discloses a credential it does not bind itself (see
 // `ToolSettingsInfoField` in @ethosagent/types).
 //
-// The one documented coupling: a `secret-binding` field is filtered by the
-// value of a sibling `provider` enum when present, so the picker only offers
-// keys for the chosen provider. This mirrors how the tool resolves the binding
+// The one documented coupling: a `secret-binding` field is filtered by its own
+// declared `provider` when it has one (one picker per namespace, `engine_ask`),
+// else by the value of a sibling `provider` enum when present (`web_search`),
+// so the picker only offers keys for the provider the tool will resolve under
 // (`providers/<provider>/<name>`).
 
 const SECTION_LABEL_STYLE: CSSProperties = {
@@ -46,6 +47,13 @@ export function ToolSettingsForm({ schema, value, onChange, disabled }: ToolSett
     if (next === undefined || next === '') delete merged[key];
     else merged[key] = next;
     onChange(merged);
+  };
+  // A cleared picker keeps its key with an EMPTY value rather than dropping it:
+  // the service patches a binding field by field, so an omitted field keeps
+  // its stored name and only an empty one clears it (`mergeSecretBinding`,
+  // apps/web-api/src/services/tool-settings.service.ts).
+  const setSecretField = (key: string, next: string | undefined) => {
+    onChange({ ...value, [key]: next ?? '' });
   };
 
   return (
@@ -76,10 +84,10 @@ export function ToolSettingsForm({ schema, value, onChange, disabled }: ToolSett
             />
           ) : (
             <SecretPicker
-              value={value[control.key]}
-              onChange={(name) => setField(control.key, name)}
+              value={value[control.key] || undefined}
+              onChange={(name) => setSecretField(control.key, name)}
               secretKind={control.secretKind}
-              providerFilter={value.provider}
+              providerFilter={control.provider ?? value.provider}
               disabled={disabled}
             />
           )}

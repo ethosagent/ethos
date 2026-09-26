@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -21,13 +21,13 @@ An optional sibling file `tools.yaml` configures a tool per personality. It is *
 # ~/.ethos/personalities/researcher/tools.yaml
 web_search: { provider: exa, secret: exa-main, recency: 30d }
 x_search: { secret: xai-main }
-engine_ask: { secret: openai-brand }
+engine_ask: { chatgpt: openai-brand, perplexity: pplx-brand }
 youtube: { secret: yt-main }
 ```
 
-`web_search` binds a provider, a named secret, and an optional `recency` default (documented below). `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`) that covers the ChatGPT engine only. `engine_ask` called with `engine: perplexity` reads one operator-wide key at the vault ref `providers/perplexity/apiKey`, set in Settings > Keys or from the environment variable `PERPLEXITY_API_KEY`; it cannot be bound per personality. `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
+`web_search` binds a provider, a named secret, and an optional `recency` default (documented below). `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds one named secret per answer engine, keyed by engine id: `chatgpt` resolves to `providers/openai/<name>` (the same namespace the OpenAI model provider uses) and `perplexity` to `providers/perplexity/<name>`. An engine the binding does not name falls through to the next layer, and finally to its own operator-wide key — `providers/openai/apiKey` or `providers/perplexity/apiKey`, set in Settings > Keys or from `OPENAI_API_KEY` / `PERPLEXITY_API_KEY` — never to another engine's name. The older one-key form `engine_ask: { secret: <name> }` is still read, as the `chatgpt` key and nothing else; it keeps working without an edit, and choosing a ChatGPT key on the personality's Tools tab replaces it with `chatgpt:`. `selectSecretRef` in [`extensions/tools-answer-engines/src/index.ts`](../../../../extensions/tools-answer-engines/src/index.ts) is the resolver. `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
 
-`secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → the tool's default key.
+`secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → the tool's default key. In `config.yaml` each field is its own line — `toolSettings.<id>.x_search.secret: xai-main`, `toolSettings.<id>.engine_ask.perplexity: pplx-brand`.
 
 `quora_search`, `linkedin_search`, and `reddit_web_search` are listed in [`toolset.yaml`](#toolset-yaml) like any other tool, but take no key here — they read the `web_search` binding above instead of one of their own. A personality that binds `web_search` gets Quora, LinkedIn, and Reddit search under the same credential for free; binding a `quora_search:`, `linkedin_search:`, or `reddit_web_search:` key in `tools.yaml` has no effect, because nothing reads it.
 

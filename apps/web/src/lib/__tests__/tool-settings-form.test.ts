@@ -45,6 +45,39 @@ describe('describeToolSettingsFields', () => {
     expect(secret.secretKind).toBe('web-search');
   });
 
+  // plan engine-ask-per-engine-bindings D7 — a field's declared provider
+  // narrows its picker; the form reads it before any sibling enum's value.
+  it('carries a declared provider onto the secret control, and omits it otherwise', () => {
+    const controls = describeToolSettingsFields({
+      fields: [
+        {
+          kind: 'secret-binding',
+          key: 'chatgpt',
+          label: 'OpenAI key (chatgpt answer engine)',
+          secretKind: 'answer-engine',
+          provider: 'openai',
+        },
+        {
+          kind: 'secret-binding',
+          key: 'perplexity',
+          label: 'Perplexity key (perplexity answer engine)',
+          secretKind: 'answer-engine',
+          provider: 'perplexity',
+        },
+      ],
+    });
+    expect(controls.map((c) => (c.kind === 'secret' ? c.provider : 'not-secret'))).toEqual([
+      'openai',
+      'perplexity',
+    ]);
+
+    const [unscoped] = describeToolSettingsFields(webSearchSchema).filter(
+      (c) => c.kind === 'secret',
+    );
+    expect(unscoped).toBeDefined();
+    expect(unscoped && 'provider' in unscoped).toBe(false);
+  });
+
   it('returns an empty control list for a schema with no fields', () => {
     expect(describeToolSettingsFields({ fields: [] })).toEqual([]);
   });

@@ -725,6 +725,14 @@ function secretBindingField(group: ToolSettingsGroup) {
   return group.schema.fields.find((f) => f.kind === 'secret-binding');
 }
 
+/** The field key the group's credential row writes — the same first binding
+ *  field the probe reads (`bindingForKey`, apps/web-api tool-settings.service):
+ *  `secret` for a one-provider tool, `chatgpt` for `engine_ask`. */
+function secretFieldKey(group: ToolSettingsGroup): string {
+  const field = secretBindingField(group);
+  return field?.kind === 'secret-binding' ? field.key : 'secret';
+}
+
 function ToolSettingsSection({
   personalityId,
   toolset,
@@ -776,7 +784,7 @@ function ToolSettingsSection({
     // Merge against current form values so non-secret fields (provider,
     // recency, …) survive a secret-only Override. The service also field-merges
     // web_search; this keeps the client optimistic state honest too.
-    const payload = { ...(values[group.key] ?? {}), secret: secretName };
+    const payload = { ...(values[group.key] ?? {}), [secretFieldKey(group)]: secretName };
     saveMut.mutate(
       { [group.key]: payload },
       {
@@ -791,16 +799,17 @@ function ToolSettingsSection({
   };
 
   const handleReset = (group: ToolSettingsGroup) => {
-    // Clear secret only — keep provider/recency (and any other non-secret
+    // Clear the credential field only — keep provider/recency (and any other
     // fields) from the current form values.
-    const payload = { ...(values[group.key] ?? {}), secret: '' };
+    const fieldKey = secretFieldKey(group);
+    const payload = { ...(values[group.key] ?? {}), [fieldKey]: '' };
     saveMut.mutate(
       { [group.key]: payload },
       {
         onSuccess: () => {
           setValues((prev) => {
             const next = { ...prev };
-            const { secret: _cleared, ...row } = {
+            const { [fieldKey]: _cleared, ...row } = {
               ...(next[group.key] ?? {}),
               ...payload,
             };
@@ -815,9 +824,13 @@ function ToolSettingsSection({
   };
 
   const addBindField = addBind ? secretBindingField(addBind.group) : undefined;
+  // A field that declares its provider offers exactly that one namespace, so
+  // the created key lands where this field's engine will look.
   const addBindKindProviders =
     addBindField && addBindField.kind === 'secret-binding'
-      ? providersOfKind(roster, addBindField.secretKind)
+      ? addBindField.provider !== undefined
+        ? [addBindField.provider]
+        : providersOfKind(roster, addBindField.secretKind)
       : [];
   const addBindFormProvider = addBind ? values[addBind.group.key]?.provider : undefined;
   const addBindInitialProvider =
@@ -950,6 +963,7 @@ function ToolSettingsSection({
               name,
               value,
               key,
+              fieldKey: secretFieldKey(addBind.group),
               scope,
               ...(extra ? { bindingExtra: extra } : {}),
             });
@@ -960,7 +974,11 @@ function ToolSettingsSection({
             if (scope === 'personality') {
               setValues((prev) => ({
                 ...prev,
-                [key]: { ...(prev[key] ?? {}), ...(extra ?? {}), secret: name },
+                [key]: {
+                  ...(prev[key] ?? {}),
+                  ...(extra ?? {}),
+                  [secretFieldKey(addBind.group)]: name,
+                },
               }));
               setDirty(false);
             }

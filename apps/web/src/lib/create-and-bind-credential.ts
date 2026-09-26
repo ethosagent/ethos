@@ -11,6 +11,9 @@ export interface CreateAndBindCredentialOpts {
   value: string;
   /** Tool-settings storage key (e.g. `web_search`, `x_search`). */
   key: string;
+  /** The binding field the name is written to. Absent → `secret`; `engine_ask`
+   *  binds per engine (`chatgpt`, `perplexity`). */
+  fieldKey?: string;
   /** Which store the binding writes — caller chooses the `bind` impl to match. */
   scope: 'personality' | 'global';
   /** Extra fields on the binding row (e.g. `provider` for web_search). */
@@ -30,7 +33,7 @@ export async function createAndBindCredential(opts: CreateAndBindCredentialOpts)
   await opts.bind({
     [opts.key]: {
       ...(opts.bindingExtra ?? {}),
-      secret: opts.name,
+      [opts.fieldKey ?? 'secret']: opts.name,
     },
   });
 }
