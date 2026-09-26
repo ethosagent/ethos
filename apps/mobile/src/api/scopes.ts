@@ -17,6 +17,27 @@ export function missingScopes(granted: readonly string[]): string[] {
 }
 
 /**
+ * Scopes a screen uses beyond the preset (T5's Agents › Memory). Connect does
+ * NOT refuse on these: a key without one renders that screen's FORBIDDEN row
+ * (§11, `errorRow` in ./errors.ts) and the rest of the app works. The Agents
+ * tab's other reads (`teams:read`, `cron:read`, `personalities:read`) are in
+ * the preset, so they are required.
+ */
+export const OPTIONAL_SCOPES = {
+  'memory:read': 'Agent · Memory',
+  'memory:write': 'Agent · Memory · Approve / Reject',
+} as const satisfies Record<string, string>;
+
+/** The optional scopes this key lacks, with the screen each one feeds. */
+export function missingOptionalScopes(
+  granted: readonly string[],
+): Array<{ scope: string; screen: string }> {
+  return Object.entries(OPTIONAL_SCOPES)
+    .filter(([scope]) => !granted.includes(scope))
+    .map(([scope, screen]) => ({ scope, screen }));
+}
+
+/**
  * Numeric `major.minor.patch` compare; a pre-release or build suffix is ignored.
  *
  * `version` is a source build's `dev` (or any other string with no numeric

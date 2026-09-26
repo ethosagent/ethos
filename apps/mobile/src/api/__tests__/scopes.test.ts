@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_SERVER_VERSION, missingScopes, versionAtLeast } from '../scopes';
+import {
+  MIN_SERVER_VERSION,
+  missingOptionalScopes,
+  missingScopes,
+  versionAtLeast,
+} from '../scopes';
 
 describe('versionAtLeast', () => {
   it('accepts a source build with no numeric version', () => {
@@ -49,5 +54,17 @@ describe('missingScopes', () => {
 
   it('lists what is missing', () => {
     expect(missingScopes(['chat:send'])).toContain('sessions:read');
+  });
+});
+
+describe('missingOptionalScopes', () => {
+  it('names the memory scopes a preset key lacks, and the screen each feeds', () => {
+    expect(missingOptionalScopes(['memory:read']).map((m) => m.scope)).toEqual(['memory:write']);
+    expect(missingOptionalScopes(['memory:read', 'memory:write'])).toEqual([]);
+  });
+
+  it('never overlaps the required set — a required scope cannot be optional', () => {
+    const optional = missingOptionalScopes([]).map((m) => m.scope);
+    expect(optional.filter((s) => missingScopes([]).includes(s))).toEqual([]);
   });
 });
