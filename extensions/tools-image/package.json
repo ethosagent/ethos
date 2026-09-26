@@ -20,6 +20,6 @@
     "@ethosagent/core": "workspace:*"
   },
   "optionalDependencies": {
-    "openai": "^7.5.0"
+    "openai": "^7.23.0"
   }
 }
