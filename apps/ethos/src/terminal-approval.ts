@@ -27,7 +27,8 @@
 // already refuses `off` on a channel-bound personality). Two exceptions, both
 // stricter than a plain auto-approve: a hardline call is still refused, and a
 // command-substitution call, which the guards refused outright before, is
-// asked rather than waved through (`offModeCommandReason` below).
+// asked rather than waved through — the predicate's `off` capability never
+// covers one (`createDangerPredicate`, packages/wiring/src/danger-predicate.ts).
 //
 // A run nobody can answer (`coordinator: null` — `ethos chat -q`, the commands
 // above, a readline
@@ -48,7 +49,6 @@ import type {
 } from '@ethosagent/types';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
-  approvalRequiredReason,
   createApprovalDangerPredicate,
   hardlineReason,
   markHostApprovalGate,
@@ -107,21 +107,19 @@ export function wireTerminalApprovalGate(
     model: opts.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     // `off` runs flagged calls unasked here, as it did before this gate — see
-    // the file header. Hardline is still refused: the predicate returns the
-    // hardline reason before it reads the mode.
+    // the file header. Hardline is still refused (the predicate returns the
+    // hardline reason before it reads the mode), and a command substitution
+    // is still asked (the capability never covers one).
     allowAutoApproveDangerousTools: true,
     ...(opts.decision ? { decision: opts.decision } : {}),
     executionPostureFor: opts.executionPostureFor,
   });
-  const isDangerous = async (payload: BeforeToolCallPayload): Promise<string | null> =>
-    (await danger(payload)) ?? offModeCommandReason(payload, opts.personalities);
-
   const refuse = async (
     payload: BeforeToolCallPayload,
   ): Promise<Partial<BeforeToolCallResult> | null> => {
     const hardline = hardlineReason(payload);
     if (hardline) return { error: `Command blocked: ${hardline}. No approval can allow it.` };
-    const reason = await isDangerous(payload);
+    const reason = await danger(payload);
     if (reason === null) return null;
     return { error: terminalNoPromptRejection(payload.toolName, reason, opts.nonInteractive) };
   };
@@ -132,7 +130,7 @@ export function wireTerminalApprovalGate(
       ? refuse
       : createSlackApprovalHook({
           coordinator,
-          isDangerous,
+          isDangerous: danger,
           // One person at one terminal: every turn has the surface, and any
           // answer typed there is theirs (no requester binding).
           resolveApprovalTarget: () => ({}),
@@ -157,24 +155,6 @@ export function wireTerminalApprovalGate(
     unregister();
     unmark();
   };
-}
-
-/**
- * Under `approvalMode: off` the predicate auto-approves every non-hardline
- * flag, command substitution included. On these surfaces the guards refused a
- * substitution before this gate existed, so auto-approving it would make `off`
- * looser than it was; it is asked instead. Other modes are left to the
- * predicate (a `smart` reviewer's `approve` stands, as on every surface).
- */
-function offModeCommandReason(
-  payload: BeforeToolCallPayload,
-  personalities: PersonalityRegistry,
-): string | null {
-  const commandReason = approvalRequiredReason(payload);
-  if (commandReason === null || payload.personalityId === undefined) return null;
-  const mode = personalities.get(payload.personalityId)?.safety?.approvalMode;
-  if (mode !== 'off') return null;
-  return `${payload.toolName} requires explicit approval (${commandReason})`;
 }
 
 const PREVIEW_MAX_CHARS = 300;
