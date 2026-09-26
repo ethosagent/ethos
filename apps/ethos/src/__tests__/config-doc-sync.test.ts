@@ -31,9 +31,6 @@ const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'index.ts'
 const PERSONALITY_SRC = join(REPO_ROOT, 'packages', 'types', 'src', 'personality.ts');
 // New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md;
 // PersonalityConfig fields live in using/reference/personality-yaml.md.
-// Both pages are Phase 3 stubs as of 2026-05-12 — the field-level assertions
-// below are suspended (describe.skip) until Phase 3 authors them. See
-// plan/docs_rewrite.md. Once authored, remove the `.skip` calls.
 const CONFIG_REFERENCE_DOC = join(
   REPO_ROOT,
   'docs',
@@ -231,9 +228,7 @@ function safeRead(path: string): string {
 }
 
 describe('config surface doc-sync', () => {
-  // SUSPENDED until Phase 3 of the docs rewrite authors using/reference/config-yaml.md.
-  // See plan/docs_rewrite.md. Drop the `.skip` once the reference page has real content.
-  describe.skip('EthosConfig fields are documented in config-yaml.md', () => {
+  describe('EthosConfig fields are documented in config-yaml.md', () => {
     const src = readFileSync(ETHOS_CONFIG_SRC, 'utf-8');
     const fields = extractFields(src, 'EthosConfig');
     const doc = safeRead(CONFIG_REFERENCE_DOC);
@@ -253,8 +248,7 @@ describe('config surface doc-sync', () => {
     }
   });
 
-  // SUSPENDED until Phase 3 authors using/reference/personality-yaml.md.
-  describe.skip('PersonalityConfig fields are documented in personality-yaml.md', () => {
+  describe('PersonalityConfig fields are documented in personality-yaml.md', () => {
     const src = readFileSync(PERSONALITY_SRC, 'utf-8');
     const fields = extractFields(src, 'PersonalityConfig');
     const doc = safeRead(PERSONALITY_REFERENCE_DOC);

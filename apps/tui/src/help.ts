@@ -1,6 +1,10 @@
-// /help body for the TUI. Built-in commands first, then any externally
-// injected commands (plugins, via TUIOptions.slashCommands) with a [plugin]
-// tag. Pure — extracted from App.tsx so the merge is unit-testable.
+// /help body for the TUI — derived from surface-kit's SLASH_COMMANDS filtered
+// to surface 'tui' (C5: one table, no hand-maintained list), then any
+// externally injected commands (plugins, via TUIOptions.slashCommands) with a
+// [plugin] tag. Aliases fold into their canonical command. Pure — extracted
+// from App.tsx so the derivation is unit-testable (__tests__/help.test.ts).
+
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 
 export interface ExternalSlashCommand {
   name: string;
@@ -8,32 +12,22 @@ export interface ExternalSlashCommand {
   usage: string;
 }
 
+/** Live-state suffix for the two toggles whose current value the help shows. */
+function stateSuffix(name: string, state: { readonlyMode: boolean; verbose: boolean }): string {
+  if (name === 'readonly') return ` (now: ${state.readonlyMode ? 'on' : 'off'})`;
+  if (name === 'verbose') return ` (now: ${state.verbose ? 'on' : 'off'})`;
+  return '';
+}
+
 export function buildHelpText(
   state: { readonlyMode: boolean; verbose: boolean },
   external: ExternalSlashCommand[] = [],
 ): string {
-  const lines = [
-    '/new                          fresh session',
-    '/fork                         branch this session (same history, new session)',
-    "/branches                     list this session's branches",
-    '/branch <n>                   switch to branch <n>',
-    '/personality [list|<id>]      start a new session bound to <id>',
-    '/model                        open model picker',
-    '/sessions                     open session picker',
-    "/memory                       show the active personality's MEMORY.md and USER.md",
-    '/usage                        token + cost stats',
-    '/budget                       show session spend vs cap',
-    '/budget reset                 reset budget counter',
-    `/readonly                     toggle readonly mode (now: ${state.readonlyMode ? 'on' : 'off'})`,
-    `/verbose                      toggle timing (now: ${state.verbose ? 'on' : 'off'})`,
-    '/details [hidden|collapsed|expanded] [section]',
-    '/skin [list|<name>]           switch UI theme',
-    '/tools                        list all available tools',
-    '/skills                       list available skills',
-    '/goal <text>                  start an autonomous goal run',
-    '/goals                        recent goals',
-    '/exit                         quit',
-  ];
+  const lines: string[] = [];
+  for (const cmd of slashCommandsForSurface('tui')) {
+    if (cmd.aliasOf) continue;
+    lines.push(`${cmd.usage.padEnd(30)}${cmd.description}${stateSuffix(cmd.name, state)}`);
+  }
   for (const cmd of external) {
     lines.push(`/${cmd.name.padEnd(29)}${cmd.description} [plugin]`);
   }

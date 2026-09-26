@@ -1,3 +1,4 @@
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import { Box, Text } from 'ink';
 
 export interface SlashCommand {
@@ -5,21 +6,11 @@ export interface SlashCommand {
   desc: string;
 }
 
-export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: 'help', desc: 'Show all commands' },
-  { name: 'new', desc: 'Start a fresh session' },
-  { name: 'fork', desc: 'Branch this session' },
-  { name: 'branches', desc: "List this session's branches" },
-  { name: 'branch', desc: 'Switch to branch <n>' },
-  { name: 'personality', desc: 'List or switch personality' },
-  { name: 'model', desc: 'Open model picker' },
-  { name: 'sessions', desc: 'Open session picker' },
-  { name: 'memory', desc: 'Show memory content' },
-  { name: 'usage', desc: 'Token and cost stats' },
-  { name: 'details', desc: 'Toggle section visibility' },
-  { name: 'skin', desc: 'Switch UI theme' },
-  { name: 'exit', desc: 'Quit' },
-];
+// Derived from surface-kit's shared table filtered to 'tui' (C5) — the same
+// source /help renders from (../help.ts), so no third hand-maintained list.
+export const SLASH_COMMANDS: SlashCommand[] = slashCommandsForSurface('tui')
+  .filter((cmd) => !cmd.aliasOf)
+  .map((cmd) => ({ name: cmd.name, desc: cmd.description }));
 
 export function getMatches(input: string): SlashCommand[] {
   if (!input.startsWith('/')) return [];

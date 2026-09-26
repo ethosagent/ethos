@@ -107,7 +107,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'compact',
     description: 'Compress older context now (optional focus hint)',
     usage: '/compact [focus|status]',
-    surfaces: ['cli', 'gateway', 'web'],
+    surfaces: ['cli', 'gateway', 'web', 'tui'],
   },
   {
     name: 'budget',
@@ -161,7 +161,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'learn',
     description: 'Capture knowledge as memory or skill',
     usage: '/learn [remember:|skill:] <description>',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'tui'],
   },
   {
     name: 'undo',
