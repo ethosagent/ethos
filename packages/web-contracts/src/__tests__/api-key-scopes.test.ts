@@ -175,7 +175,7 @@ describe('PHONE_PRESET_SCOPES', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('is exactly the Phase-1 scope set (S1)', () => {
+  it('is exactly the Phase-1 set plus the T5 teams/cron scopes (S1)', () => {
     expect(PHONE_PRESET_SCOPES).toEqual([
       'sessions:read',
       'sessions:write',
@@ -185,6 +185,10 @@ describe('PHONE_PRESET_SCOPES', () => {
       'activity:read',
       'events:subscribe',
       'push:register',
+      'kanban:read',
+      'kanban:write',
+      'teams:read',
+      'cron:read',
     ]);
   });
 

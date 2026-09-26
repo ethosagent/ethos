@@ -157,6 +157,46 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     test: 'push:register',
     listDevices: COOKIE_ONLY,
   },
+  // Teams board (mobile-app S1, T5). Reads — including `listAgents`, which
+  // names personalities and their mesh presence, no secrets — are
+  // `kanban:read`; every write is `kanban:write`, and `rpc/kanban.ts`'s
+  // `actorFor` stamps a bearer write `human:key:<name>` from the key row (S9).
+  kanban: {
+    list: 'kanban:read',
+    getBoard: 'kanban:read',
+    getTask: 'kanban:read',
+    listAgents: 'kanban:read',
+    updateStatus: 'kanban:write',
+    bulkUpdateStatus: 'kanban:write',
+    createTask: 'kanban:write',
+    assign: 'kanban:write',
+    bulkAssign: 'kanban:write',
+    addComment: 'kanban:write',
+  },
+  // Team altitude (mobile-app S1, T5). Team memory is edited on the web, so
+  // `memoryWrite` is cookie-only.
+  teams: {
+    list: 'teams:read',
+    get: 'teams:read',
+    ledger: 'teams:read',
+    memoryList: 'teams:read',
+    memoryRead: 'teams:read',
+    memoryWrite: COOKIE_ONLY,
+  },
+  // Cron (mobile-app S1, T5): "see what a job did" without the power to fire,
+  // edit or schedule one — every mutation is cookie-only.
+  cron: {
+    list: 'cron:read',
+    get: 'cron:read',
+    history: 'cron:read',
+    deliveryTargets: 'cron:read',
+    create: COOKIE_ONLY,
+    update: COOKIE_ONLY,
+    delete: COOKIE_ONLY,
+    pause: COOKIE_ONLY,
+    resume: COOKIE_ONLY,
+    runNow: COOKIE_ONLY,
+  },
 };
 
 // SSE feeds are keyed by the first path segment after `/sse/`, not by an RPC

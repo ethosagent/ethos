@@ -1562,7 +1562,7 @@ export const McpExportScopeSchema = z
 export const ApiKeyScopeSchema = z.union([ApiKeyStaticScopeSchema, McpExportScopeSchema]);
 export type ApiKeyScope = z.infer<typeof ApiKeyScopeSchema>;
 
-// The Phase-1 phone preset (mobile-app plan S13(a)) — the ONE source for
+// The phone preset (mobile-app plan S13(a)) — the ONE source for
 // `ethos api-key create --preset phone` (apps/ethos/src/commands/api-key.ts),
 // for Settings → Mobile app's "Generate QR code", and for the app's
 // `REQUIRED_SCOPES`, which import this rather than restating it. Later
@@ -1576,6 +1576,11 @@ export const PHONE_PRESET_SCOPES: ApiKeyStaticScope[] = [
   'activity:read',
   'events:subscribe',
   'push:register',
+  // T5 (Phase 2): Teams and the Agents tab's Schedule.
+  'kanban:read',
+  'kanban:write',
+  'teams:read',
+  'cron:read',
 ];
 
 export const ApiKeyMetadataSchema = z.object({

@@ -181,6 +181,10 @@ describe('refusals', () => {
     'activity:read',
     'events:subscribe',
     'push:register',
+    'kanban:read',
+    'kanban:write',
+    'teams:read',
+    'cron:read',
   ];
 
   it('is empty when the server and scopes are fine', () => {

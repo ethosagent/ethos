@@ -39,6 +39,10 @@ describe('missingScopes', () => {
         'activity:read',
         'events:subscribe',
         'push:register',
+        'kanban:read',
+        'kanban:write',
+        'teams:read',
+        'cron:read',
       ]),
     ).toEqual([]);
   });

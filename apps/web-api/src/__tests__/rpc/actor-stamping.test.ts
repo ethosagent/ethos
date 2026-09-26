@@ -16,12 +16,9 @@ import { KanbanService } from '../../services/kanban.service';
 // cookie keeps today's values; a spoofed `clientId` under bearer is ignored.
 //
 // Router entries are invoked directly via oRPC's `.callable()` rather than
-// over HTTP. `tools.approve`/`deny` are reachable by bearer today (already
-// mapped to `tools:approve` in `dual-auth.ts`), but `kanban` is not — that
-// scope map entry lands with T5 — so a real bearer HTTP request to
-// `kanban.*` is refused by `dualAuth` before it ever reaches this handler.
-// Calling the handler directly exercises exactly the actor-derivation this
-// slice adds, at the layer it lives in, without waiting on T5.
+// over HTTP, to pin the actor derivation at the layer it lives in. The same
+// path over real bearer HTTP (`kanban:write`, mapped in T5) is pinned by
+// `middleware/dual-auth-teams.test.ts`.
 
 /** Invoke a router entry's handler directly, bypassing HTTP/dualAuth — see
  *  the file header. oRPC's `DecoratedProcedure` type isn't exported for a
