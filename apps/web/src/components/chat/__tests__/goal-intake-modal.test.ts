@@ -96,4 +96,60 @@ describe('GoalIntakeModal — verify command', () => {
       { description: 'tests pass', command: 'pnpm test' },
     ]);
   });
+
+  // Goal g_1806c60c3fb94964 was stored with `checks: []` although its row had a
+  // verify command: the submit filter keeps only rows with a description, so a
+  // command-only row was dropped, command and all, without a word.
+  it('refuses to run with a command-only check and marks the row, instead of dropping it', async () => {
+    allow = true;
+    const onRun = await render();
+    const cmd = container.querySelector<HTMLInputElement>('input[aria-label="Verify command"]');
+    const desc = container.querySelector<HTMLInputElement>('input[placeholder="Description"]');
+    if (!cmd || !desc) throw new Error('no check inputs');
+    await act(async () => setInput(cmd, 'python3 /tmp/check.py'));
+    const run = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Run goal');
+
+    await act(async () => run?.click());
+    expect(onRun).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('description');
+    expect(desc.getAttribute('aria-invalid')).toBe('true');
+
+    await act(async () => setInput(desc, 'every symbol is registered'));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => run?.click());
+    expect(onRun.mock.calls[0]?.[0].checks).toEqual([
+      { description: 'every symbol is registered', command: 'python3 /tmp/check.py' },
+    ]);
+  });
+
+  it('keeps every described check across rows, with and without a command', async () => {
+    allow = true;
+    const onRun = await render();
+    const add = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Add criterion'),
+    );
+    await act(async () => add?.click());
+    const descs = container.querySelectorAll<HTMLInputElement>('input[placeholder="Description"]');
+    const cmds = container.querySelectorAll<HTMLInputElement>('input[aria-label="Verify command"]');
+    const [d0, d1] = [descs[0], descs[1]];
+    if (!d0 || !d1 || !cmds[0]) throw new Error('expected two check rows');
+    await act(async () => setInput(d0, 'progress file complete'));
+    await act(async () => setInput(cmds[0] as HTMLInputElement, 'test -s /tmp/progress.csv'));
+    await act(async () => setInput(d1, 'dropped symbols have reasons'));
+    const run = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Run goal');
+    await act(async () => run?.click());
+    expect(onRun.mock.calls[0]?.[0].checks).toEqual([
+      { description: 'progress file complete', command: 'test -s /tmp/progress.csv' },
+      { description: 'dropped symbols have reasons' },
+    ]);
+  });
+
+  it('still skips a check row left entirely blank', async () => {
+    allow = true;
+    const onRun = await render();
+    const run = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Run goal');
+    await act(async () => run?.click());
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(onRun.mock.calls[0]?.[0].checks).toEqual([]);
+  });
 });
