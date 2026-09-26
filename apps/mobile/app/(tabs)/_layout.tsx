@@ -10,7 +10,9 @@ export { RouteError as ErrorBoundary };
 
 /**
  * NativeTabs (R11) — `UITabBarController` on iOS — tinted `--info` at every
- * altitude (D4). Phase 1 has three tabs; Agents and Teams join in Phase 2.
+ * altitude (D4). The order is §2's: Chat · Agents · Teams · Activity · More.
+ * Agents (the Library, its icon the annulus) joined in Phase 2; Teams joins
+ * from its own lane between Agents and Activity.
  * The Activity badge is "Needs you": pending approvals across the server
  * plus the open session's questions.
  */
@@ -28,6 +30,10 @@ export default function TabsLayout() {
       <NativeTabs.Trigger name="chat">
         <NativeTabs.Trigger.Label>Chat</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="bubble.left.and.bubble.right" md="chat" />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="agents">
+        <NativeTabs.Trigger.Label>Agents</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="circle.circle" md="radio_button_unchecked" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="activity">
         <NativeTabs.Trigger.Label>Activity</NativeTabs.Trigger.Label>

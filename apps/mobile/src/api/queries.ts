@@ -33,3 +33,8 @@ export function usePersonalities() {
 export function modelName(model: unknown): string | null {
   return typeof model === 'string' ? model : null;
 }
+
+export function useTeams() {
+  const rpc = useRpc();
+  return useQuery({ queryKey: ['teams'], queryFn: () => rpc.teams.list() });
+}
