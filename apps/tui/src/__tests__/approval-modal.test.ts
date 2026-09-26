@@ -24,8 +24,8 @@ import {
 } from '@ethosagent/core';
 import type { LLMProvider } from '@ethosagent/types';
 import { render } from 'ink';
-import { createElement } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, createElement } from 'react';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { App } from '../components/App';
 
@@ -103,6 +103,21 @@ afterEach(() => {
   for (const u of unmounts.splice(0)) u();
 });
 
+// Every step that changes what the App renders runs inside React's `act`, which
+// flushes the commit AND its passive effects before it returns. Without it a
+// test could see the modal's frame on stdout before the modal's `useInput`
+// effect had subscribed to Ink's input emitter: the App and InputBox already
+// hold raw mode, so Ink reads a key the moment it is written and emits it to
+// whoever is subscribed — a key written in that window never reached the modal,
+// and under load the window was wide enough to lose `n`, Esc and Enter.
+const actEnv = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+beforeAll(() => {
+  actEnv.IS_REACT_ACT_ENVIRONMENT = true;
+});
+afterAll(() => {
+  delete actEnv.IS_REACT_ACT_ENVIRONMENT;
+});
+
 function mount() {
   const personalities = new DefaultPersonalityRegistry();
   personalities.define({ id: 'researcher', name: 'R', toolset: [] });
@@ -140,25 +155,41 @@ function mount() {
   return { fake, stdout, stdin };
 }
 
-/** Mount, then let the App's effects subscribe to the bridge. In a real run a
- *  request only arrives mid-turn, long after mount. */
+/** Mount, with the App's effects (its bridge subscription) flushed. In a real
+ *  run a request only arrives mid-turn, long after mount. */
 async function mounted() {
-  const m = mount();
-  await new Promise((r) => setTimeout(r, 50));
-  return m;
+  let m: ReturnType<typeof mount> | undefined;
+  await act(async () => {
+    m = mount();
+  });
+  if (!m) throw new Error('mount did not run');
+  const { fake, stdout, stdin } = m;
+  /** Raise a request; resolves once the modal it opens is rendered and listening. */
+  const request = (approvalId: string, command: string) =>
+    act(async () => fake.request(approvalId, command));
+  /** Settle a request elsewhere; resolves once the App has re-rendered. */
+  const settleElsewhere = (approvalId: string) => act(async () => fake.settleElsewhere(approvalId));
+  return { fake, stdout, stdin, request, settleElsewhere };
 }
 
-const key = (stdin: PassThrough, data: string) => stdin.write(data);
+/** Write a key and flush what it causes. Ink reads stdin on `readable` (next
+ *  tick) and holds a lone Esc ~20ms in case it starts an escape sequence, so
+ *  the act scope stays open past both. */
+const key = (stdin: PassThrough, data: string) =>
+  act(async () => {
+    stdin.write(data);
+    await new Promise((r) => setTimeout(r, 50));
+  });
 
 describe('TUI — tool approval modal', () => {
   it('shows tool, reason and args, and "y" allows', async () => {
-    const { fake, stdout, stdin } = await mounted();
-    fake.request('a1', 'ls -la');
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'ls -la');
     await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
     expect(stdout.last).toContain('terminal');
     expect(stdout.last).toContain('terminal requires explicit approval');
     expect(stdout.last).toContain('ls -la');
-    key(stdin, 'y');
+    await key(stdin, 'y');
     await waitFor(() => fake.decisions.length === 1, 'a decision');
     expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'allow' }]);
     await waitFor(() => !stdout.last.includes('approval needed'), 'the modal closed');
@@ -169,24 +200,24 @@ describe('TUI — tool approval modal', () => {
     ['Esc', '\u001b'],
     ['Enter', '\r'],
   ])('%s denies', async (_label, data) => {
-    const { fake, stdout, stdin } = await mounted();
-    fake.request('a1', 'ls -la');
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'ls -la');
     await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
-    key(stdin, data);
+    await key(stdin, data);
     await waitFor(() => fake.decisions.length === 1, 'a decision');
     expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'deny' }]);
   });
 
   it('two requests are shown one after the other', async () => {
-    const { fake, stdout, stdin } = await mounted();
-    fake.request('a1', 'echo first');
-    fake.request('a2', 'echo second');
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'echo first');
+    await request('a2', 'echo second');
     await waitFor(() => stdout.last.includes('echo first'), 'the first request');
     expect(stdout.last).not.toContain('echo second');
     expect(stdout.last).toContain('1 more waiting');
-    key(stdin, 'n');
+    await key(stdin, 'n');
     await waitFor(() => stdout.last.includes('echo second'), 'the second request');
-    key(stdin, 'y');
+    await key(stdin, 'y');
     await waitFor(() => fake.decisions.length === 2, 'two decisions');
     expect(fake.decisions).toEqual([
       { approvalId: 'a1', decision: 'deny' },
@@ -195,10 +226,10 @@ describe('TUI — tool approval modal', () => {
   });
 
   it('a request settled elsewhere (timeout) closes the modal', async () => {
-    const { fake, stdout } = await mounted();
-    fake.request('a1', 'ls -la');
+    const { fake, stdout, request, settleElsewhere } = await mounted();
+    await request('a1', 'ls -la');
     await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
-    fake.settleElsewhere('a1');
+    await settleElsewhere('a1');
     await waitFor(() => !stdout.last.includes('approval needed'), 'the modal closed');
     expect(fake.decisions).toEqual([]);
   });
