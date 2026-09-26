@@ -61,18 +61,54 @@ function slugify(text: string): string {
 const GATEWAY_COMMANDS = new Set(slashCommandsForSurface('gateway').map((c) => `/${c.name}`));
 
 /**
+ * Gateway commands whose argument is free text taken from everything after the
+ * command token, not a single word: `/background` and `/queue` hand
+ * `text.slice('/<cmd> '.length)` to the agent as the prompt, and `/compact`
+ * joins every remaining word into its focus hint (`Gateway.handleMessage` in
+ * `@ethosagent/gateway`). The shared registry's `usage` strings do not record
+ * argument shape reliably (`/queue`'s reads `/queue`), so the set is explicit.
+ */
+const FREE_TEXT_COMMANDS = new Set(['/background', '/queue', '/compact']);
+
+/**
+ * True for the line that starts the client-appended tail of a reply: a quoted
+ * line (`>`), an `On … wrote:` attribution (which some clients wrap so that
+ * `wrote:` ends the NEXT line), or the RFC 3676 signature delimiter `-- `.
+ */
+function isReplyTailStart(line: string, next: string | undefined): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('>') || trimmed === '--') return true;
+  if (!/^On\s/.test(trimmed)) return false;
+  return /wrote:$/.test(trimmed) || /wrote:$/.test((next ?? '').trim());
+}
+
+/**
  * An email reply carries more than the sender typed: the client appends the
  * quoted thread and a signature. When the body's first line starts with a
- * gateway command, that line alone is the message, so `/personality engineer`
- * does not arrive as `/personality engineer On Tue, Bob wrote: …`. Any other
- * body — including one that starts with a path or an unknown `/word` — is
- * passed through whole. Pinned by `__tests__/email-adapter.test.ts`
- * ('EmailAdapter slash commands').
+ * gateway command, only the command is the message, so `/personality engineer`
+ * does not arrive as `/personality engineer On Tue, Bob wrote: …`. A command in
+ * `FREE_TEXT_COMMANDS` keeps every line up to the reply tail
+ * (`isReplyTailStart`), so a multi-line `/background` prompt — or one written
+ * below a bare `/background` — arrives whole; any other command keeps its first
+ * line alone. Any other body — including one that starts with a path or an
+ * unknown `/word` — is passed through whole. Pinned by
+ * `__tests__/email-adapter.test.ts` ('EmailAdapter slash commands').
+ * Limitation: a client footer with no `-- ` delimiter ("Sent from my phone")
+ * is kept as part of a free-text prompt.
  */
 function commandOrBody(text: string): string {
-  const firstLine = (text.split(/\r?\n/, 1)[0] ?? '').trim();
+  const lines = text.split(/\r?\n/);
+  const firstLine = (lines[0] ?? '').trim();
   const token = (firstLine.split(/\s+/, 1)[0] ?? '').toLowerCase().split('@', 1)[0] ?? '';
-  return GATEWAY_COMMANDS.has(token) ? firstLine : text;
+  if (!GATEWAY_COMMANDS.has(token)) return text;
+  if (!FREE_TEXT_COMMANDS.has(token)) return firstLine;
+  const kept = [firstLine];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (isReplyTailStart(line, lines[i + 1])) break;
+    kept.push(line);
+  }
+  return kept.join('\n').trimEnd();
 }
 
 // chatId encodes both sender and subject so each subject thread is a separate
