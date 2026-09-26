@@ -224,6 +224,40 @@ describe('systemLoop unattended approval gate', () => {
     expect(r.coordinatorCalls).toBe(0);
   });
 
+  // The D12 opt-in pre-authorizes flagged TOOLS, not a command whose real
+  // payload is hidden in a substitution: the predicate never auto-approves
+  // one (`createDangerPredicate`), so with nobody to ask it is refused.
+  it('approvalMode off + allowUnattendedDangerousTools still refuses command substitution', async () => {
+    const r = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'kill $(lsof -t -i:3000)' },
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(r.ran).toBe(false);
+    expect(r.toolEndErrors).toEqual([
+      unattendedApprovalRejection(
+        'terminal',
+        'terminal requires explicit approval (command substitution)',
+      ),
+    ]);
+
+    // Other flagged calls under the same settings are still auto-approved.
+    const flagged = await runUnattendedTurn({
+      toolName: 'call',
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(flagged.ran).toBe(true);
+    const plainShell = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'ls -la' },
+      safety: { approvalMode: 'off' },
+      allowUnattendedDangerousTools: true,
+    });
+    expect(plainShell.ran).toBe(true);
+  });
+
   it('marks the registry as carrying a host approval gate', () => {
     const hooks = new DefaultHookRegistry();
     expect(hasHostApprovalGate(hooks)).toBe(false);

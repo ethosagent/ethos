@@ -105,7 +105,9 @@ export interface WireUnattendedApprovalGateOptions {
   /** `EthosConfig.allowUnattendedDangerousTools` — the operator's opt-in that
    *  lets a personality's `approvalMode: 'off'` auto-approve flagged tools on
    *  this loop's TRUSTED turns. Unset → `off` is treated as `manual`, so
-   *  flagged calls refuse. Never applies to a remote-sender turn. */
+   *  flagged calls refuse. Never applies to a remote-sender turn, and never
+   *  covers a command substitution (`createDangerPredicate`,
+   *  packages/wiring/src/danger-predicate.ts), which is refused here. */
   allowUnattendedDangerousTools: boolean;
   /**
    * Whether the turn that issued this call (by `sessionId`) was sent by a

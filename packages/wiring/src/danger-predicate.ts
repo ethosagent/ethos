@@ -232,12 +232,19 @@ export interface CreateDangerPredicateOptions {
    * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, and every CLI
    * command `gateNonInteractiveLoop` gates — `-q`, `-z`, `batch`, `eval`,
    * the judge, `bench`, the MCP console, `acp`), always: `off` there keeps meaning what it meant before
-   * those loops had a gate — flagged calls run unasked — except that a
-   * command-substitution call is still asked (or refused where nobody can
-   * be asked). Every surface a remote sender or a browser can reach — the
-   * web modal (`serve.ts`, `apps/desktop/src/main/serve.ts`), the
-   * Slack/Telegram card (`wireApprovalFlow` in `gateway.ts`) and the MCP
-   * export — omits it, so `off` behaves as `manual` there.
+   * those loops had a gate — flagged calls run unasked.
+   *
+   * On every caller the flag covers flagged TOOLS only: a command-substitution
+   * call ({@link approvalRequiredReason}) still returns its reason, so it is
+   * asked where a human can answer (the CLI prompt) and refused where none
+   * can (the unattended gate). Enforced in {@link createDangerPredicate};
+   * pinned by `__tests__/danger-predicate.test.ts` and
+   * `apps/ethos/src/__tests__/unattended-approval-gate.test.ts`.
+   *
+   * Every surface a remote sender or a browser can reach — the web modal
+   * (`serve.ts`, `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
+   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
+   * `off` behaves as `manual` there.
    *
    * The capability gate stays the API contract that prevents any other
    * caller from accidentally auto-approving dangerous tools.
@@ -377,7 +384,10 @@ export function hasHostApprovalGate(hooks: HookRegistry): boolean {
  *      {@link approvalRequiredReason} (command substitution), on any posture:
  *        manual (default) → return the reason (drives the modal).
  *        off              → return null (auto-approve — hardline still
- *                           hard-blocks separately).
+ *                           hard-blocks separately), but only with
+ *                           `allowAutoApproveDangerousTools`, and never for
+ *                           an {@link approvalRequiredReason}: a command
+ *                           substitution returns its reason in `off` too.
  *        smart            → consult `smartApprove` callback. `approve`
  *                           auto-approves; `deny` surfaces the reviewer's
  *                           specific reason; `ask` surfaces the generic
@@ -432,7 +442,12 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
     }
     if (!dangerReason) return null;
 
-    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true) return null;
+    // The `off` capability pre-authorizes flagged TOOLS. It never covers
+    // command substitution: what that call runs is hidden from every check,
+    // so it is asked where a human can answer and refused where none can.
+    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true && !commandReason) {
+      return null;
+    }
     if (mode === 'smart' && opts.smartApprove) {
       const verdict = await opts.smartApprove(payload, dangerReason, personality);
       if (verdict.decision === 'approve') return null;

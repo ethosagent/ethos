@@ -533,14 +533,19 @@ describe('command substitution requires approval (not hardline)', () => {
     expect(reasons).toEqual(['terminal requires explicit approval (command substitution)']);
   });
 
-  it('off asks unless the unattended capability is set', async () => {
+  it('off asks, and the unattended capability does not auto-approve it', async () => {
     const off = createDangerPredicate({ getPersonality: () => person('off') });
     expect(await off(payload('terminal', { command: KILL }))).toMatch(/command substitution/);
     const preAuthorized = createDangerPredicate({
       getPersonality: () => person('off'),
+      alwaysAsk: ['terminal'],
       allowAutoApproveDangerousTools: true,
     });
-    expect(await preAuthorized(payload('terminal', { command: KILL }))).toBeNull();
+    expect(await preAuthorized(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    // The capability still pre-authorizes the flagged tool without a substitution.
+    expect(await preAuthorized(payload('terminal', { command: 'ls -la' }))).toBeNull();
   });
 
   it('bash -c is still hardline: off + the capability and a smart approve do not skip it', async () => {

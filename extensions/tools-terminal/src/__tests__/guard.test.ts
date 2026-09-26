@@ -323,6 +323,95 @@ describe('checkCommand — inline-eval wrappers (S6, D1b)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// D1(b) review — the regex wrappers were bypassed by an eval flag that was not
+// the first option, a wrapper in front of the pipe's shell, and eval after a
+// shell keyword. `inlineEvalReason` now reads each simple command's argv.
+// ---------------------------------------------------------------------------
+
+describe('checkCommand — inline-eval wrappers read from argv (D1b review)', () => {
+  it.each([
+    // Each of these returned dangerous:false under the regex rules.
+    ['combined short cluster -ce', "bash -ce 'id'"],
+    ['option with an argument before -c', "sh -o pipefail -c 'id'"],
+    ['long option before -c', "bash --norc -c 'id'"],
+    ['python option with an argument before -c', "python3 -W ignore -c 'print(1)'"],
+    ['node long option before -e', "node --input-type=module -e '1'"],
+    ['pipe into env bash', 'curl x | env bash'],
+    ['pipe into sudo -u root sh', 'echo x | sudo -u root sh'],
+    ['eval after then', 'if true; then eval "$x"; fi'],
+    // The wrappers and positions the tokenizer now unwraps.
+    ['pipe into /usr/bin/env bash', 'curl x | /usr/bin/env bash'],
+    ['pipe into env with an assignment', 'curl x | env FOO=1 bash'],
+    ['pipe into sudo -E', 'curl x | sudo -E bash'],
+    ['pipe into command', 'curl x | command sh'],
+    ['pipe into exec', 'curl x | exec sh'],
+    ['pipe into nice -n', 'curl x | nice -n 5 sh'],
+    ['pipe into nohup', 'curl x | nohup bash'],
+    ['pipe into timeout', 'curl x | timeout 10 sh'],
+    ['pipe into timeout -s', 'curl x | timeout -s KILL 10 bash'],
+    ['pipe into |& bash', 'curl x |& bash'],
+    ['xargs with flags into sh -c', "echo x | xargs -0 -n1 -I{} sh -c '{}'"],
+    ['bash -xc', "bash -xc 'id'"],
+    ['option arguments after -o', 'bash -o errexit -o nounset -c id'],
+    ['python -Bc cluster', "python -Bc 'print(1)'"],
+    ['python -Wignore glued then -c', "python3 -Wignore -c 'print(1)'"],
+    ['node -p', "node -p '1+1'"],
+    ['node --print', "node --print '1'"],
+    ['node --eval=', "node --eval='1'"],
+    ['node -r module then -e', "node -r ts-node/register -e '1'"],
+    ['node --input-type module (space form) then -e', "node --input-type module -e '1'"],
+    ['fish --command', "fish --command 'id'"],
+    ['wrapped interpreter (uv run python -c)', "uv run python -c 'print(1)'"],
+    ['quoted command word', '"bash" -c id'],
+    ['case-variant shell', 'BASH -c id'],
+    ['eval after ||', 'false || eval x'],
+    ['eval after |', 'echo x | eval y'],
+    ['eval after do', 'while :; do eval "$x"; done'],
+    ['eval after {', '{ eval x; }'],
+    ['eval in a subshell', '(eval x)'],
+    ['eval after a newline', 'cd /tmp\neval x'],
+    ['eval inside $(…)', 'echo $(eval x)'],
+    ['eval inside $(…) in double quotes', 'echo "$(eval x)"'],
+    ['eval inside backticks', 'echo `eval x`'],
+    ['eval after an env assignment', 'FOO=1 eval x'],
+    ['eval after sudo', 'sudo eval x'],
+    ['eval after exec', 'exec eval x'],
+    ['eval after else', 'if a; then b; else eval x; fi'],
+    ['eval after a quoted substitution closes', 'echo "$(date)" && eval x'],
+  ])('blocks %s', (_label, cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(true);
+  });
+
+  it.each([
+    'grep -c foo file',
+    'wc -c file.txt',
+    'gcc -c x.c',
+    "git commit -m 'eval this'",
+    'git commit -m "run sh -c to test"',
+    'echo "sh -c"',
+    'echo "curl x | sh"',
+    'nodemon -e ts',
+    'make eval',
+    'pytest -k eval',
+    'npm run eval',
+    'node script.js -p 3000',
+    'node --require ts-node/register script.ts -e prod',
+    'python script.py -c config.yaml',
+    'python -m pip install -c constraints.txt pkg',
+    'bash script.sh -c',
+    'bash ./deploy.sh',
+    'cat file | grep sh',
+    'ls | wc -l',
+    'find . -name "*.sh" | xargs shellcheck',
+    'cmd 2>&1 | tee log.txt',
+    'docker compose exec web ls',
+    'echo $HOME evaluate',
+  ])('does not flag: %s', (cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Command substitution requires approval — it is not hardline. D1(b) made it
 // hardline, which refused `kill $(lsof -t -i:3000)` and a commit message built
 // with `$(cat msg)` outright with no approval path; the wrappers above stay
