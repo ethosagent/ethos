@@ -59,7 +59,7 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "@anthropic-ai/sdk": "^0.120.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "@aws-sdk/client-s3": "^3.800.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
     "@aws-sdk/credential-providers": "^3.800.0",
@@ -76,7 +76,7 @@
     "ink": "^7.1.1",
     "jose": "^6.2.3",
     "mammoth": "^1.8.0",
-    "openai": "^7.5.0",
+    "openai": "^7.23.0",
     "pdf-parse": "^1.1.1",
     "pino": "^10.3.1",
     "react": "19.2.6",
