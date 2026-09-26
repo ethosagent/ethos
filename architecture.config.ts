@@ -308,10 +308,12 @@ export default defineArchitecture({
       remedy: { summary: 'log, rethrow, or comment why the failure is safe to ignore' },
     },
     {
+      // Retired 2026-09-26: Biome and TypeScript govern their own suppression comments. archcheck
+      // rule ids are immutable (.archcheck/ids.json), so a rule is retired with severity 'off'.
       id: 'no-inline-suppression',
       kind: 'banned-syntax',
       statement: 'exceptions live in the manifest with an owner and an expiry, not inline',
-      severity: 'warn',
+      severity: 'off',
       confidence: 'deterministic',
       params: { appliesTo: [...ALL_SOURCE, ...NOT_TESTS], selector: 'suppression-comment' },
       remedy: { summary: 'fix the code, or record an exception in architecture.config.ts' },
@@ -518,20 +520,6 @@ export default defineArchitecture({
         'check with no ToolContext; generation takes its key from opts or the constructor. Same ' +
         'shape as EX-004. Removal condition: isAvailable() answers from an injected key or ' +
         'secrets resolver, and this rule reports nothing for the file with this entry removed.',
-    },
-    {
-      rule: 'no-computed-dynamic-import',
-      path: 'apps/ethos/src/commands/doctor.ts',
-      owner: '@MiteshSharma',
-      expires: '2027-03-26',
-      reason:
-        'EX-015 (dynamic-import literal specifier, created 2026-09-26): checkSdk(modulePath) ' +
-        'probes whether each optional SDK in the CORE_SDKS / CHANNEL_SDKS tables resolves; the ' +
-        'specifiers ARE a static table in the same file. Literal imports per row do not typecheck: ' +
-        "import('nodemailer') fails tsc with TS7016 because apps/ethos has no @types/nodemailer. " +
-        'Removal condition: each row carries a literal `() => import(...)` loader (types permitting) ' +
-        'so checkSdk has no computed import(), and this rule reports nothing for the file with this ' +
-        'entry removed.',
     },
     {
       rule: 'no-computed-dynamic-import',
