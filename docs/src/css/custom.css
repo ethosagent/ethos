@@ -3,6 +3,12 @@
    blue #4A9EFF (matches DESIGN.md email-digest rule — single brand color
    when not on personality-tagged content). Per-personality accents only
    appear on the landing page (orbit stage, roster, CTA).
+
+   Content pages follow the "Option C — refined classic" mockup
+   (ethos-docs-c-classic.html, user-approved 2026-09-26): larger, airier
+   doc typography (16.5px/1.78, Bricolage display headings), a grouped
+   sidebar with dot labels, warm dark code blocks in both color modes,
+   and the .ethos-figure contract for diagram pages.
    ─────────────────────────────────────────────────────────────────── */
 
 @import url("https://fonts.bunny.net/css?family=geist:400,500,600|geist-mono:400,500");
@@ -53,6 +59,20 @@
   --ethos-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --ethos-ease-spring: cubic-bezier(0.34, 1.4, 0.44, 1);
 
+  /* Option C docs tokens (mockup ethos-docs-c-classic.html) */
+  --ethos-link: var(--ethos-accent-researcher-text);
+  --ethos-hover-soft: rgba(0, 0, 0, 0.04);
+  --ethos-shadow-soft: 0 10px 34px rgba(26, 26, 26, 0.05);
+  --ethos-shadow-hover: 0 8px 26px rgba(26, 26, 26, 0.07);
+  --ethos-kind-border: rgba(29, 111, 216, 0.35);
+  /* Warm dark code surface — deliberately dark in BOTH color modes (the
+     mockup's code blocks read as terminal output on the paper-warm page). */
+  --ethos-code-bg: #141311;
+  --ethos-code-header-bg: #1b1a17;
+  --ethos-code-border: #2a2925;
+  --ethos-code-fg: #b9b6ab;
+  --ethos-code-fg-muted: #8b887c;
+
   /* Map Docusaurus surface tokens to DESIGN.md */
   --ifm-background-color: var(--ethos-bg-base);
   --ifm-background-surface-color: var(--ethos-bg-elevated);
@@ -63,20 +83,17 @@
   --ifm-color-emphasis-600: var(--ethos-text-secondary);
   --ifm-toc-border-color: var(--ethos-border-subtle);
 
-  /* Type sizing per DESIGN.md scale */
+  /* Chrome type sizing (doc content overrides live under .markdown) */
   --ifm-font-size-base: 14px;
   --ifm-line-height-base: 1.5;
-  --ifm-h1-font-size: 2rem;
-  --ifm-h2-font-size: 1.5rem;
-  --ifm-h3-font-size: 1.25rem;
-  --ifm-h4-font-size: 1rem;
   --ifm-code-font-size: 90%;
 
   /* Border radius per DESIGN.md (sm:4 md:8 lg:14 full:9999) */
   --ifm-button-border-radius: 4px;
   --ifm-card-border-radius: 8px;
   --ifm-alert-border-radius: 8px;
-  --ifm-code-border-radius: 4px;
+  --ifm-code-border-radius: 6px;
+  --ifm-pre-padding: 18px;
 
   /* Motion per DESIGN.md (80/180/240, single easing) */
   --ifm-transition-fast: 80ms;
@@ -84,6 +101,7 @@
   --ifm-transition-timing-default: cubic-bezier(0.16, 1, 0.3, 1);
 
   --ifm-navbar-height: 3.5rem;
+  --doc-sidebar-width: 288px;
   --docusaurus-highlighted-code-line-bg: rgba(74, 158, 255, 0.1);
 }
 
@@ -106,6 +124,16 @@
   --ethos-tint-engineer: rgba(74, 222, 128, 0.13);
   --ethos-tint-reviewer: rgba(245, 158, 11, 0.14);
   --ethos-error: #f87171;
+
+  /* Option C docs tokens — dark variants */
+  --ethos-hover-soft: rgba(255, 255, 255, 0.06);
+  --ethos-shadow-soft: 0 10px 34px rgba(0, 0, 0, 0.45);
+  --ethos-shadow-hover: 0 8px 26px rgba(0, 0, 0, 0.5);
+  --ethos-kind-border: rgba(74, 158, 255, 0.4);
+  /* Lift the warm code surface one step so it stays legible on #0f0f0f */
+  --ethos-code-bg: #1b1a17;
+  --ethos-code-header-bg: #232119;
+  --ethos-code-border: #33312b;
 
   --ifm-color-primary: #4a9eff;
   --ifm-background-color: var(--ethos-bg-base);
@@ -144,39 +172,216 @@ body {
   font-weight: 500;
 }
 
-/* Sidebar — section labels in tertiary, items dense */
-.menu {
-  font-size: 13px;
-  padding: 12px;
+/* Navbar search — Algolia button restyled to the mockup's pill
+   (panel bg, strong border, 10px radius; keys as quiet mono chips). */
+.DocSearch-Button {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 10px;
+  height: 36px;
+  padding: 0 13px;
+  color: var(--ethos-text-tertiary);
+  transition: color var(--ifm-transition-fast) var(--ifm-transition-timing-default);
 }
-.menu__list-item-collapsible,
-.menu__link {
+.DocSearch-Button:hover,
+.DocSearch-Button:focus {
+  background: var(--ethos-bg-elevated);
+  border-color: var(--ethos-border-strong);
+  color: var(--ethos-text-primary);
+  box-shadow: none;
+}
+.DocSearch-Button .DocSearch-Search-Icon {
+  width: 13px;
+  height: 13px;
+  color: currentColor;
+}
+.DocSearch-Button-Placeholder {
+  font-family: var(--ifm-font-family-base);
+  font-size: 13.5px;
+  padding: 0 26px 0 9px;
+}
+.DocSearch-Button-Keys {
+  min-width: 0;
+}
+.DocSearch-Button-Key {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  color: var(--ethos-text-tertiary);
+  background: none;
+  border: 1px solid var(--ethos-border-strong);
   border-radius: 4px;
-  padding: 6px 10px;
-  transition: background var(--ifm-transition-fast) var(--ifm-transition-timing-default);
+  box-shadow: none;
+  padding: 0 4px;
+  top: 0;
+  width: auto;
+  height: 18px;
 }
-.menu__link:hover {
-  background: var(--ethos-bg-overlay);
+
+/* ── Sidebar (Option C) ─────────────────────────────────────────────
+   Rows 13.5px/1.55, 7px padding, 8px radius; hover = soft tint; active =
+   overlay tint + inset 2px ink bar + 500 weight. Top-level groups (the
+   `sidebar-group` classNames set in sidebars.ts) render as uppercase dot
+   labels with thin dividers between them. */
+.menu {
+  font-size: 13.5px;
+  padding: 18px 12px 60px;
+  scrollbar-width: thin;
 }
-.menu__link--active {
+.menu__link,
+.menu__caret {
+  border-radius: 8px;
+  transition:
+    background var(--ifm-transition-fast) var(--ifm-transition-timing-default),
+    color var(--ifm-transition-fast) var(--ifm-transition-timing-default);
+}
+.menu__link {
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 7px 10px;
+  color: var(--ethos-text-secondary);
+}
+.menu__list-item-collapsible {
+  border-radius: 8px;
+}
+.menu__link:hover,
+.menu__caret:hover,
+.menu__list-item-collapsible:hover {
+  background: var(--ethos-hover-soft);
+  color: var(--ethos-text-primary);
+}
+.menu__list-item-collapsible--active,
+.menu__list-item-collapsible .menu__link--active {
+  background: none;
+}
+.menu__link--active:not(.menu__link--sublist) {
   font-weight: 500;
   color: var(--ethos-text-primary);
   background: var(--ethos-bg-overlay);
-  border-left: 2px solid var(--ifm-color-primary);
-  padding-left: 8px;
-  border-radius: 0 4px 4px 0;
+  box-shadow: inset 2px 0 0 var(--ethos-text-primary);
+}
+.menu__link--active:not(.menu__link--sublist):hover {
+  background: var(--ethos-bg-overlay);
+}
+/* Nested rows indent under their collapsible parent */
+.menu__list .menu__list {
+  margin-top: 2px;
+  padding-left: 12px;
 }
 
-/* Headings — Geist 600, tighter tracking */
-h1,
-h2,
-h3,
-h4 {
+/* Top-level group labels — 11px/600 uppercase, letter-spaced, small dot */
+.sidebar-group > .menu__list-item-collapsible {
+  border-radius: 0;
+}
+.sidebar-group > .menu__list-item-collapsible:hover {
+  background: none;
+}
+.sidebar-group > .menu__list-item-collapsible .menu__link {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  padding: 14px 10px 8px;
+  cursor: default;
+}
+.sidebar-group > .menu__list-item-collapsible .menu__link:hover {
+  background: none;
+  color: var(--ethos-text-tertiary);
+}
+.sidebar-group > .menu__list-item-collapsible .menu__link::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  margin-right: 8px;
+  flex: none;
+}
+.sidebar-group--start > .menu__list-item-collapsible .menu__link::before {
+  background: var(--ethos-accent-researcher);
+}
+.sidebar-group--using > .menu__list-item-collapsible .menu__link::before {
+  background: var(--ethos-accent-engineer);
+}
+.sidebar-group--building > .menu__list-item-collapsible .menu__link::before {
+  background: var(--ethos-accent-reviewer);
+}
+.sidebar-group--platform > .menu__list-item-collapsible .menu__link::before {
+  background: var(--ethos-text-tertiary);
+}
+/* Group children sit flush — the label carries the hierarchy */
+.sidebar-group > .menu__list {
+  padding-left: 0;
+}
+/* Thin dividers between top-level groups */
+.theme-doc-sidebar-menu > .sidebar-group + .sidebar-group {
+  margin-top: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ethos-border-subtle);
+}
+
+/* ── Doc content typography (Option C) ──────────────────────────────
+   16.5px/1.78 base, 720px measure, Bricolage display for h1/h2, Geist
+   for h3 down. Scoped to the markdown container so chrome keeps its own
+   scale and every content page inherits it without edits. */
+.theme-doc-markdown,
+.pagination-nav,
+.theme-doc-breadcrumbs,
+.theme-doc-footer {
+  max-width: 720px;
+}
+.theme-doc-markdown {
+  font-size: 16.5px;
+  line-height: 1.78;
+}
+.markdown {
+  --ifm-h1-font-size: 38px;
+  --ifm-h2-font-size: 26px;
+  --ifm-h3-font-size: 19px;
+  --ifm-h4-font-size: 16px;
+}
+.markdown h1,
+.markdown h1:first-child {
+  --ifm-h1-font-size: 38px;
+  font-family: var(--ethos-font-display);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  margin-bottom: 18px;
+}
+.markdown h2 {
+  font-family: var(--ethos-font-display);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+  margin: 56px 0 16px;
+}
+.markdown h3 {
   font-family: var(--ifm-heading-font-family);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  margin: 36px 0 12px;
+}
+.markdown h4 {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 600;
   letter-spacing: -0.005em;
 }
-h1 {
-  letter-spacing: -0.01em;
+.markdown p {
+  margin: 0 0 21px;
+}
+.markdown ul,
+.markdown ol {
+  margin: 0 0 21px;
+  padding-left: 24px;
+}
+.markdown li {
+  margin-bottom: 10px;
+}
+.markdown li > p {
+  margin-bottom: 10px;
 }
 
 /* Code — Geist Mono, tabular nums for any inline numerics */
@@ -187,29 +392,70 @@ pre,
   font-variant-numeric: tabular-nums;
 }
 
-/* Inline code — subtle bg, no border */
+/* Inline code — panel chip per mockup (panel bg, 1px line border, 6px radius) */
 .markdown :not(pre) > code {
-  background: var(--ethos-bg-overlay);
+  background: var(--ethos-bg-elevated);
   border: 1px solid var(--ethos-border-subtle);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.85em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.87em;
   color: var(--ethos-text-primary);
 }
 
-/* Code blocks — match DESIGN.md surface tokens */
-.theme-code-block,
-.prism-code {
-  background: var(--ethos-bg-elevated);
-  border: 1px solid var(--ethos-border-subtle);
-  border-radius: 8px;
-  font-size: 13px;
+/* Code blocks — warm dark surface in both modes (mockup .code). The token
+   colors come from the ethosPrismTheme in docusaurus.config.ts, which reads
+   --ethos-code-bg / --ethos-code-fg so the dark-mode variant applies. */
+.theme-code-block {
+  background: var(--ethos-code-bg);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 12px;
+  box-shadow: none;
+  margin-bottom: 32px;
+}
+.theme-code-block .prism-code {
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+/* Docusaurus's code title element carries a hashed CSS-module class; the
+   stable "codeBlockTitle" fragment is the documented targeting seam. */
+.theme-code-block [class*="codeBlockTitle"] {
+  background: var(--ethos-code-header-bg);
+  border-bottom: 1px solid var(--ethos-code-border);
+  color: var(--ethos-code-fg-muted);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11.5px;
+  font-weight: 400;
+  padding: 9px 16px;
+}
+.theme-code-block button {
+  color: var(--ethos-code-fg-muted);
 }
 
-/* Admonitions — semantic colors per DESIGN.md, not personality colors */
+/* Blockquotes — the mockup callout: 3px amber left border, panel bg,
+   rounded right corners. */
+.markdown blockquote {
+  border: 1px solid var(--ethos-border-strong);
+  border-left: 3px solid var(--ethos-accent-reviewer);
+  border-radius: 0 12px 12px 0;
+  background: var(--ethos-bg-elevated);
+  padding: 16px 18px;
+  margin: 24px 0 28px;
+  color: var(--ethos-text-secondary);
+  font-size: 14.5px;
+}
+.markdown blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Admonitions — same callout shape; semantic left-border colors per
+   DESIGN.md, never personality colors. */
 .alert {
-  border-radius: 8px;
+  border: 1px solid var(--ethos-border-strong);
   border-left-width: 3px;
+  border-radius: 0 12px 12px 0;
+  background: var(--ethos-bg-elevated);
+  box-shadow: none;
+  color: var(--ethos-text-primary);
 }
 .alert--info {
   --ifm-alert-border-color: #4a9eff;
@@ -222,6 +468,33 @@ pre,
 }
 .alert--danger {
   --ifm-alert-border-color: #f87171;
+}
+
+/* ── Figure contract (Option C) ─────────────────────────────────────
+   Diagram pages wrap themed SVGs in:
+     <figure class="ethos-figure">
+       <div class="ethos-figure-pad">…svg…</div>
+       <figcaption>…</figcaption>
+     </figure>
+   The class names are a contract with docs/content — keep them exact. */
+.ethos-figure {
+  margin: 28px 0 36px;
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--ethos-bg-elevated);
+  box-shadow: var(--ethos-shadow-soft);
+}
+.ethos-figure-pad {
+  padding: 26px;
+  overflow-x: auto;
+}
+.ethos-figure figcaption {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ethos-text-tertiary);
+  padding: 12px 18px;
+  border-top: 1px solid var(--ethos-border-subtle);
 }
 
 /* Buttons in markdown content / hero — sm radius, accent fill */
@@ -241,14 +514,13 @@ pre,
   background: var(--ifm-color-primary);
 }
 
-/* Links — accent color, dotted underline (matches DESIGN.md agent-text style) */
+/* Links — text-safe researcher blue (mockup --link), underline on hover */
 .markdown a:not(.button) {
-  color: var(--ifm-color-primary);
+  color: var(--ethos-accent-researcher-text);
   text-decoration: none;
-  border-bottom: 1px dotted currentColor;
 }
 .markdown a:not(.button):hover {
-  border-bottom-style: solid;
+  text-decoration: underline;
 }
 .markdown a:visited:not(.button) {
   color: #a78bfa; /* visited links visibly different per DESIGN.md a11y */
@@ -261,6 +533,7 @@ pre,
   border-collapse: collapse;
   border: 1px solid var(--ethos-border-subtle);
   border-radius: 8px;
+  font-size: 14.5px;
 }
 .markdown table thead {
   background: var(--ethos-bg-overlay);
@@ -271,6 +544,103 @@ pre,
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ethos-text-tertiary);
+}
+
+/* ── Breadcrumbs + page-kind badge (Option C) ───────────────────────── */
+.theme-doc-breadcrumbs {
+  margin-bottom: 20px;
+}
+.breadcrumbs__item {
+  font-size: 13px;
+}
+.breadcrumbs__link {
+  font-size: 13px;
+  color: var(--ethos-text-tertiary);
+  background: none;
+  padding: 0;
+}
+.breadcrumbs__link:any-link:hover {
+  background: none;
+  color: var(--ethos-text-primary);
+}
+.breadcrumbs__item--active .breadcrumbs__link {
+  background: none;
+  color: var(--ethos-text-secondary);
+  padding: 0;
+}
+/* The DocBreadcrumbs swizzle wraps breadcrumbs + badge in one row */
+.ethos-breadcrumbs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  max-width: 720px;
+}
+.ethos-breadcrumbs-row .theme-doc-breadcrumbs {
+  margin-bottom: 0;
+}
+.ethos-kind-badge {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ethos-accent-researcher-text);
+  border: 1px solid var(--ethos-kind-border);
+  border-radius: 9999px;
+  padding: 2px 10px;
+  line-height: 1.6;
+}
+
+/* ── Right TOC (Option C) — 13px, hairline rail, active = ink + 2px bar ── */
+.theme-doc-toc-desktop {
+  padding-top: 8px;
+}
+.theme-doc-toc-desktop .table-of-contents::before {
+  content: "On this page";
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  margin-bottom: 14px;
+}
+.table-of-contents {
+  font-size: 13px;
+  padding-left: 0;
+}
+.table-of-contents.table-of-contents__left-border {
+  border-left: none;
+}
+.table-of-contents ul {
+  padding-left: 0;
+  margin: 0;
+}
+.table-of-contents li {
+  margin: 0;
+}
+.table-of-contents__link {
+  display: block;
+  line-height: 1.6;
+  color: var(--ethos-text-secondary);
+  padding: 5px 0 5px 14px;
+  border-left: 1.5px solid var(--ethos-border-subtle);
+}
+.table-of-contents ul ul .table-of-contents__link {
+  padding-left: 28px;
+}
+.table-of-contents__link:hover {
+  color: var(--ethos-text-primary);
+}
+.table-of-contents__link--active {
+  color: var(--ethos-text-primary);
+  border-left: 2px solid var(--ethos-text-primary);
+  padding-left: 13px;
+  font-weight: 500;
+}
+.table-of-contents ul ul .table-of-contents__link--active {
+  padding-left: 27px;
 }
 
 /* Reduced motion — DESIGN.md mandates instant */
@@ -288,14 +658,48 @@ pre,
   word-break: break-word;
 }
 
-/* Pagination + footer — utilitarian */
+/* Prev/next — bordered cards with uppercase kicker (mockup .pn) */
+.pagination-nav {
+  margin-top: 64px;
+  gap: 18px;
+}
 .pagination-nav__link {
-  border-radius: 8px;
-  border: 1px solid var(--ethos-border-subtle);
-  transition: border-color var(--ifm-transition-fast) var(--ifm-transition-timing-default);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 14px;
+  padding: 16px 20px;
+  background: var(--ethos-bg-elevated);
+  transition: box-shadow var(--ifm-transition-fast) var(--ifm-transition-timing-default);
 }
 .pagination-nav__link:hover {
-  border-color: var(--ifm-color-primary);
+  border-color: var(--ethos-border-strong);
+  box-shadow: var(--ethos-shadow-hover);
+}
+.pagination-nav__sublabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  margin-bottom: 6px;
+}
+.pagination-nav__label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ethos-text-primary);
+}
+.pagination-nav__link--next {
+  text-align: right;
+}
+/* Move the arrows onto the kicker, per mockup */
+.pagination-nav__link--prev .pagination-nav__label::before,
+.pagination-nav__link--next .pagination-nav__label::after {
+  content: none;
+}
+.pagination-nav__link--prev .pagination-nav__sublabel::before {
+  content: "← ";
+}
+.pagination-nav__link--next .pagination-nav__sublabel::after {
+  content: " →";
 }
 
 .footer {

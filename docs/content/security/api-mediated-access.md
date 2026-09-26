@@ -35,17 +35,26 @@ When an agent holds a database connection string, four things go wrong simultane
 
 The agent does not connect to the database. It calls an internal API service that sits between the agent and the data store.
 
-```
-┌───────────┐         ┌──────────────────────┐         ┌──────────┐
-│           │  HTTPS   │   Internal API       │         │          │
-│   Agent   │────────→│   Service            │────────→│ Database │
-│           │         │                      │         │          │
-└───────────┘         │  • Holds DB creds    │         └──────────┘
-                      │  • Validates caller  │
-                      │  • Row-level ACL     │
-                      │  • Audit log         │
-                      └──────────────────────┘
-```
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 640 180" role="img" aria-label="Flow diagram of API-mediated access. The agent calls an internal API service over HTTPS, and only the internal API service talks to the database. The service holds the DB credentials, validates the caller, enforces row-level ACLs, and writes the audit log." font-family="Geist Mono,monospace">
+<defs><marker id="apimed-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
+<rect x="20" y="62" width="130" height="52" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<rect x="240" y="20" width="210" height="140" rx="10" fill="#9CC5F2" fill-opacity="0.08" stroke="#9CC5F2"/>
+<rect x="520" y="62" width="100" height="52" rx="10" fill="#EAC98F" fill-opacity="0.08" stroke="#EAC98F"/>
+<line x1="150" y1="88" x2="236" y2="88" stroke="#70706B" marker-end="url(#apimed-arrow)"/>
+<line x1="450" y1="88" x2="516" y2="88" stroke="#70706B" marker-end="url(#apimed-arrow)"/>
+<g font-size="13" fill="var(--ethos-text-primary)">
+<text x="85" y="93" text-anchor="middle">Agent</text>
+<text x="345" y="46" text-anchor="middle">Internal API Service</text>
+<text x="570" y="93" text-anchor="middle">Database</text>
+</g>
+<g font-size="11" fill="var(--ethos-text-secondary)">
+<text x="193" y="78" text-anchor="middle">HTTPS</text>
+<text x="258" y="76">• Holds DB creds</text>
+<text x="258" y="96">• Validates caller</text>
+<text x="258" y="116">• Row-level ACL</text>
+<text x="258" y="136">• Audit log</text>
+</g>
+</svg></div><figcaption>The agent reaches the database only through an internal API service that holds the credentials, validates the caller, enforces row-level ACLs, and writes the audit log.</figcaption></figure>
 
 The API service is the only component that holds database credentials. It performs four functions.
 

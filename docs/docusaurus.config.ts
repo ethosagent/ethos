@@ -1,8 +1,34 @@
 import type * as Preset from '@docusaurus/preset-classic';
 import type { Config } from '@docusaurus/types';
-import { themes as prismThemes } from 'prism-react-renderer';
+import type { PrismTheme } from 'prism-react-renderer';
 import jsonLdPlugin from './plugins/json-ld';
 import rawMarkdownPlugin from './plugins/raw-markdown';
+
+// Option C code palette (mockup ethos-docs-c-classic.html): code blocks are a
+// warm dark surface in BOTH color modes, so one theme serves light and dark.
+// Background/foreground read the --ethos-code-* tokens from custom.css, which
+// carry the dark-mode variant; token hues are the mockup's blue/green/greys.
+const ethosPrismTheme: PrismTheme = {
+  plain: { color: 'var(--ethos-code-fg)', backgroundColor: 'var(--ethos-code-bg)' },
+  styles: [
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#8b887c' } },
+    { types: ['punctuation', 'operator'], style: { color: '#8b887c' } },
+    {
+      types: ['keyword', 'atrule', 'boolean', 'important', 'property', 'tag', 'constant'],
+      style: { color: '#4a9eff' },
+    },
+    {
+      types: ['string', 'char', 'attr-value', 'inserted', 'selector', 'url'],
+      style: { color: '#4ade80' },
+    },
+    { types: ['number', 'builtin', 'variable', 'regex', 'symbol'], style: { color: '#b9b6ab' } },
+    {
+      types: ['function', 'attr-name', 'class-name', 'namespace'],
+      style: { color: '#e8e8e6' },
+    },
+    { types: ['deleted'], style: { color: '#f87171' } },
+  ],
+};
 
 const config: Config = {
   title: 'Ethos',
@@ -162,8 +188,8 @@ const config: Config = {
       copyright: `© ${new Date().getFullYear()} Ethos · MIT License`,
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: ethosPrismTheme,
+      darkTheme: ethosPrismTheme,
       additionalLanguages: ['bash', 'yaml', 'typescript'],
     },
     algolia: {

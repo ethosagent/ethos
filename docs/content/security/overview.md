@@ -53,34 +53,36 @@ The framing matters: **we cannot promise "secure."** What we *can* promise is th
 
 When a single [turn](../getting-started/glossary.md#turn) executes, the safety layers fire in a fixed order. Spelling this out prevents subtle policy conflicts:
 
-```
-   ┌─── Channel adapter receives message ─────────┐
-   │  ① Channel allowlist + DM pairing check      │
-   │  ② Mention-gate check (groups only)          │
-   │  ③ Context visibility filter (quoted text)   │
-   │     allowed → enqueue; denied → drop+log     │
-   └──────────────────────────────────────────────┘
-                    │
-                    ▼
-   ┌─── Agent loop turn ──────────────────────────┐
-   │  ④ Provenance markers + token sanitization   │
-   │  ⑤ Watcher sees every AgentEvent             │
-   │                                              │
-   │  Tool call requested by LLM:                 │
-   │  ⑥ Personality toolset filter                │
-   │  ⑦ Hardline blocklist (non-overridable)      │
-   │  ⑧ Risk classifier per-call (mode-aware)     │
-   │  ⑨ Filesystem boundary check (per-arg)       │
-   │  ⑩ Network reach check (URL args, SSRF)      │
-   │  ⑪ Watcher policy check                      │
-   │  ⑫ Approval modal (if any of ⑦–⑪ flagged)   │
-   │                                              │
-   │  Tool executes; result returns:              │
-   │  ⑬ Credential redaction on output            │
-   │  ⑭ Untrusted-content wrapping                │
-   │  ⑮ Audit event written to observability.db   │
-   └──────────────────────────────────────────────┘
-```
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 560 520" role="img" aria-label="Two-stage pipeline of the runtime safety-layer order. Stage one, channel adapter receives message: 1 channel allowlist plus DM pairing check, 2 mention-gate check (groups only), 3 context visibility filter (quoted text); allowed messages enqueue, denied messages are dropped and logged. Stage two, agent loop turn: 4 provenance markers plus token sanitization, 5 watcher sees every AgentEvent. When a tool call is requested by the LLM: 6 personality toolset filter, 7 hardline blocklist (non-overridable), 8 risk classifier per-call (mode-aware), 9 filesystem boundary check (per-arg), 10 network reach check (URL args, SSRF), 11 watcher policy check, 12 approval modal if any of 7 through 11 flagged. When the tool executes and the result returns: 13 credential redaction on output, 14 untrusted-content wrapping, 15 audit event written to observability.db." font-family="Geist Mono,monospace">
+<defs><marker id="sec-order-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
+<rect x="40" y="10" width="480" height="124" rx="10" fill="#9CC5F2" fill-opacity="0.08" stroke="#9CC5F2"/>
+<line x1="280" y1="134" x2="280" y2="158" stroke="#70706B" marker-end="url(#sec-order-arrow)"/>
+<rect x="40" y="162" width="480" height="344" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<g font-size="13" fill="var(--ethos-text-primary)">
+<text x="60" y="34">Channel adapter receives message</text>
+<text x="64" y="58">① Channel allowlist + DM pairing check</text>
+<text x="64" y="78">② Mention-gate check (groups only)</text>
+<text x="64" y="98">③ Context visibility filter (quoted text)</text>
+<text x="60" y="186">Agent loop turn</text>
+<text x="64" y="210">④ Provenance markers + token sanitization</text>
+<text x="64" y="230">⑤ Watcher sees every AgentEvent</text>
+<text x="64" y="280">⑥ Personality toolset filter</text>
+<text x="64" y="300">⑦ Hardline blocklist (non-overridable)</text>
+<text x="64" y="320">⑧ Risk classifier per-call (mode-aware)</text>
+<text x="64" y="340">⑨ Filesystem boundary check (per-arg)</text>
+<text x="64" y="360">⑩ Network reach check (URL args, SSRF)</text>
+<text x="64" y="380">⑪ Watcher policy check</text>
+<text x="64" y="400">⑫ Approval modal (if any of ⑦–⑪ flagged)</text>
+<text x="64" y="450">⑬ Credential redaction on output</text>
+<text x="64" y="470">⑭ Untrusted-content wrapping</text>
+<text x="64" y="490">⑮ Audit event written to observability.db</text>
+</g>
+<g font-size="11" fill="var(--ethos-text-secondary)">
+<text x="78" y="118">allowed → enqueue · denied → drop+log</text>
+<text x="64" y="258">Tool call requested by LLM:</text>
+<text x="64" y="428">Tool executes; result returns:</text>
+</g>
+</svg></div><figcaption>The fixed order safety layers fire in during one turn: channel-layer checks ①–③ decide whether the message reaches the agent, then the agent-loop checks ④–⑮ wrap the LLM call, each tool call, and each tool result.</figcaption></figure>
 
 Every numbered step is documented in [Security controls](./controls.md). Every audit category written to `observability.db` is documented there too.
 

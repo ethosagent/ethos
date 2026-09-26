@@ -59,30 +59,33 @@ Multi-tenancy is a future direction for Ethos, not active work. The framework to
 
 The deployment pattern is straightforward. Every personality runs in its own pod, using the same Docker image with a different environment variable.
 
-```
-┌─────────────────────────────────────────────────┐
-│  Kubernetes cluster                             │
-│                                                 │
-│  ┌─────────────┐  ┌─────────────┐              │
-│  │ Pod: eng     │  │ Pod: research│              │
-│  │              │  │              │              │
-│  │ ETHOS_       │  │ ETHOS_       │              │
-│  │ PERSONALITY  │  │ PERSONALITY  │              │
-│  │ = engineer   │  │ = researcher │              │
-│  │              │  │              │              │
-│  │ Volume:      │  │ Volume:      │              │
-│  │ /ethos-data  │  │ /ethos-data  │              │
-│  │ (PVC, own)   │  │ (PVC, own)   │              │
-│  └──────┬───────┘  └──────┬───────┘              │
-│         │                  │                     │
-│         └───────┬──────────┘                     │
-│                 │                                │
-│         ┌───────▼───────┐                        │
-│         │ NetworkPolicy │                        │
-│         │ + IAM roles   │                        │
-│         └───────────────┘                        │
-└─────────────────────────────────────────────────┘
-```
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 560 330" role="img" aria-label="Diagram of one Kubernetes pod per personality. Inside a Kubernetes cluster, two pods sit side by side: pod eng with ETHOS_PERSONALITY set to engineer and its own /ethos-data volume (its own PVC), and pod research with ETHOS_PERSONALITY set to researcher and its own /ethos-data volume (its own PVC). Both pods connect down to a shared box labeled NetworkPolicy plus IAM roles." font-family="Geist Mono,monospace">
+<defs><marker id="k8s-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
+<rect x="10" y="10" width="540" height="308" rx="10" fill="#9CC5F2" fill-opacity="0.07" stroke="#9CC5F2"/>
+<rect x="50" y="56" width="210" height="124" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<rect x="300" y="56" width="210" height="124" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<path d="M155 180 V210 H280" fill="none" stroke="#70706B"/>
+<path d="M405 180 V210 H280" fill="none" stroke="#70706B"/>
+<line x1="280" y1="210" x2="280" y2="234" stroke="#70706B" marker-end="url(#k8s-arrow)"/>
+<rect x="190" y="238" width="180" height="56" rx="10" fill="#EAC98F" fill-opacity="0.08" stroke="#EAC98F"/>
+<g font-size="13" fill="var(--ethos-text-primary)">
+<text x="30" y="36">Kubernetes cluster</text>
+<text x="66" y="80">Pod: eng</text>
+<text x="316" y="80">Pod: research</text>
+<text x="280" y="262" text-anchor="middle">NetworkPolicy</text>
+<text x="280" y="281" text-anchor="middle">+ IAM roles</text>
+</g>
+<g font-size="11" fill="var(--ethos-text-secondary)">
+<text x="66" y="104">ETHOS_PERSONALITY</text>
+<text x="66" y="120">= engineer</text>
+<text x="66" y="144">Volume: /ethos-data</text>
+<text x="66" y="160">(PVC, own)</text>
+<text x="316" y="104">ETHOS_PERSONALITY</text>
+<text x="316" y="120">= researcher</text>
+<text x="316" y="144">Volume: /ethos-data</text>
+<text x="316" y="160">(PVC, own)</text>
+</g>
+</svg></div><figcaption>One Kubernetes pod per personality: each pod pins its own ETHOS_PERSONALITY and its own volume, with NetworkPolicy and IAM roles enforcing per-pod boundaries.</figcaption></figure>
 
 Each pod gets:
 

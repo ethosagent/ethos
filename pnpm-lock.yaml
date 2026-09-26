@@ -507,6 +507,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -801,6 +804,9 @@ importers:
       '@docusaurus/module-type-aliases':
         specifier: 3.10.1
         version: 3.10.1(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@docusaurus/plugin-content-docs':
+        specifier: 3.10.1
+        version: 3.10.1(@docusaurus/faster@3.10.1(@docusaurus/types@3.10.1(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(@swc/helpers@0.5.15)(esbuild@0.27.7)(postcss@8.5.15))(@mdx-js/react@3.1.1(@types/react@19.2.16)(react@19.2.6))(@rspack/core@1.7.11(@swc/helpers@0.5.15))(@swc/core@1.15.40(@swc/helpers@0.5.15))(esbuild@0.27.7)(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
       '@docusaurus/tsconfig':
         specifier: 3.10.1
         version: 3.10.1

@@ -39,36 +39,41 @@ Ethos is not one process running everything — it's a few small processes that 
 
 `ethos run-all` is the supervisor that brings both up with one command. It spawns them as child processes, watches them, and restarts the one that crashed (with exponential backoff). PM2 (or systemd, or launchd) wraps `ethos run-all` so it survives reboots.
 
-```
-+--------------------------------------------------------+
-|  Your mini PC / VPS / home server                      |
-|                                                        |
-|  PM2 → ethos run-all (supervisor)                      |
-|         ├── ethos gateway start    [child 1]           |
-|         │     ├── Telegram bot                         |
-|         │     ├── Slack bot                            |
-|         │     ├── Discord bot                          |
-|         │     └── Email                                |
-|         │                                              |
-|         └── ethos serve            [child 2]           |
-|               ├── web dashboard   :3000                |
-|               └── ACP server      :3001                |
-|                                                        |
-|  Shared state:  ~/.ethos/                              |
-|  Child logs:    ~/.ethos/logs/{gateway,serve}.log      |
-+--------------------------------------------------------+
-                        ▲
-                        │ same ~/.ethos/ via SSH (or
-                        │ different one on your laptop)
-                        │
-+--------------------------------------------------------+
-|  Your laptop (operator)                                |
-|                                                        |
-|  ethos chat                                            |
-|  - REPL whenever you want to drive the agent           |
-|  - bots keep running whether your laptop is on or not  |
-+--------------------------------------------------------+
-```
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 620 512" role="img" aria-label="Diagram of the production deployment shape. On your mini PC, VPS, or home server, PM2 runs ethos run-all as the supervisor, which spawns two children: ethos gateway start (child 1) running the Telegram bot, Slack bot, Discord bot, and Email, and ethos serve (child 2) running the web dashboard on port 3000 and the ACP server on port 3001. Both share state in ~/.ethos/ and write child logs to ~/.ethos/logs/gateway.log and serve.log. Below, your laptop (the operator) runs ethos chat — a REPL whenever you want to drive the agent, while the bots keep running whether your laptop is on or not — connected to the same ~/.ethos/ via SSH, or a different one on your laptop." font-family="Geist Mono,monospace">
+<defs><marker id="prod-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
+<rect x="10" y="10" width="600" height="298" rx="10" fill="#9CC5F2" fill-opacity="0.07" stroke="#9CC5F2"/>
+<rect x="150" y="50" width="320" height="38" rx="10" fill="#EAC98F" fill-opacity="0.08" stroke="#EAC98F"/>
+<path d="M310 88 V104 H170 V118" fill="none" stroke="#70706B" marker-end="url(#prod-arrow)"/>
+<path d="M310 88 V104 H460 V118" fill="none" stroke="#70706B" marker-end="url(#prod-arrow)"/>
+<rect x="40" y="122" width="260" height="124" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<rect x="330" y="122" width="260" height="96" rx="10" fill="#D8A5E8" fill-opacity="0.08" stroke="#D8A5E8"/>
+<rect x="110" y="404" width="400" height="96" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
+<line x1="240" y1="404" x2="240" y2="312" stroke="#70706B" marker-end="url(#prod-arrow)"/>
+<g font-size="13" fill="var(--ethos-text-primary)">
+<text x="30" y="36">Your mini PC / VPS / home server</text>
+<text x="310" y="74" text-anchor="middle">PM2 → ethos run-all (supervisor)</text>
+<text x="56" y="146">ethos gateway start</text>
+<text x="346" y="146">ethos serve</text>
+<text x="126" y="428">Your laptop (operator)</text>
+<text x="126" y="452">ethos chat</text>
+</g>
+<g font-size="11" fill="var(--ethos-text-secondary)">
+<text x="284" y="146" text-anchor="end">[child 1]</text>
+<text x="574" y="146" text-anchor="end">[child 2]</text>
+<text x="56" y="170">Telegram bot</text>
+<text x="56" y="188">Slack bot</text>
+<text x="56" y="206">Discord bot</text>
+<text x="56" y="224">Email</text>
+<text x="346" y="170">web dashboard  :3000</text>
+<text x="346" y="188">ACP server     :3001</text>
+<text x="40" y="270">Shared state:  ~/.ethos/</text>
+<text x="40" y="288">Child logs:    ~/.ethos/logs/{gateway,serve}.log</text>
+<text x="252" y="352">same ~/.ethos/ via SSH</text>
+<text x="252" y="368">(or a different one on your laptop)</text>
+<text x="126" y="472">REPL whenever you want to drive the agent</text>
+<text x="126" y="488">bots keep running whether your laptop is on or not</text>
+</g>
+</svg></div><figcaption>PM2 supervises ethos run-all, which spawns the gateway and serve children on the always-on box; your laptop drives the same agent over SSH with ethos chat.</figcaption></figure>
 
 ## Steps
 
