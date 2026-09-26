@@ -703,6 +703,25 @@ Notes:
 - Organization names are case-sensitive here. Write the organization exactly as it appears in the `github.com/<org>/<repo>` path.
 - The list is read at the composition root and passed into the scanner. Defined in [`packages/safety/scanner/src/trust-tiers.ts`](https://github.com/ethosagent/ethos/blob/main/packages/safety/scanner/src/trust-tiers.ts).
 
+## goals.allowCheckCommands {#goals-allow-check-commands}
+
+Type: boolean · Default: `false`
+
+Allows a goal created from the web UI or API to carry a check with a verify command. When the goal is judged, the command runs through `sh -c` and the check passes if it exits `0` (`defaultExecCommand`, [`extensions/goal-runner/src/judge.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/goal-runner/src/judge.ts)).
+
+```yaml
+goals.allowCheckCommands: true
+```
+
+With the key off, a create request whose checks carry a non-empty command is refused whole with `FORBIDDEN`. The command is never dropped silently (`GoalsService.create`, [`apps/web-api/src/services/goals.service.ts`](https://github.com/ethosagent/ethos/blob/main/apps/web-api/src/services/goals.service.ts)). The goal form shows a **Verify command** field on each check only while the key is `true`.
+
+Notes:
+
+- **The command runs on the host, outside the sandbox, as the user running Ethos.** It is not confined by the personality's toolset, `fs_reach` or the execution backend. Anyone who can create a goal through the web UI or API can then run arbitrary shell commands on this machine. Enable this key only when every such person is already trusted with shell access.
+- Commands time out after 30 seconds.
+- The key is read on every create, so a change takes effect without a restart. Any value other than the literal `true` reads as `false`.
+- The goal detail page shows each check's command, so you can see what a goal will run.
+
 ## learningReplay.* {#learning-replay}
 
 Type: object · Default: every field at its default below · Required: no
