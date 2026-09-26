@@ -1,8 +1,16 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ALL_ENGINES, secretGrantOf } from '../engines/roster';
-import type { AnswerEngine, EngineAnswer } from '../engines/types';
-import { ANSWER_TEXT_FLOOR, renderJson } from '../format';
-import { createEngineAskTool, engineAskTool, perplexityEngine } from '../index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ALL_ENGINES, secretGrantsOf } from '../engines/roster';
+import type { AnswerEngine, EngineAnswer, EngineId } from '../engines/types';
+import { ANSWER_TEXT_FLOOR, renderJson, renderText } from '../format';
+import {
+  createEngineAskTool,
+  engineAskTool,
+  perplexityEngine,
+  resetMicrosoftTokenCacheForTests,
+} from '../index';
+import { GEMINI_RECORDED } from './fixtures/gemini.recorded';
+import { GROK_RECORDED } from './fixtures/grok.recorded';
+import { MICROSOFT_RECORDED } from './fixtures/microsoft.recorded';
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirrors extensions/tools-x-search/src/__tests__/x-search.test.ts's
@@ -129,6 +137,49 @@ function perplexityBody(text: string, n = 2) {
   };
 }
 
+/**
+ * A fetch that answers every engine: the Entra token host with a token, and
+ * every other URL with that engine's fixture (chosen by host).
+ */
+const FOUNDRY_ENDPOINT = 'https://contoso-ai.services.ai.azure.com/api/projects/brand-watch';
+
+function makeRosterFetch() {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const u = typeof url === 'string' ? url : url.toString();
+    calls.push({ url: u, init });
+    const host = new URL(u).hostname;
+    const body =
+      host === 'login.microsoftonline.com'
+        ? { access_token: 'tok', expires_in: 3599 }
+        : host === 'api.openai.com'
+          ? answerBody('Axis Atlas leads.')
+          : host === 'api.perplexity.ai'
+            ? perplexityBody('Axis Atlas leads[web:1].')
+            : host === 'api.x.ai'
+              ? GROK_RECORDED
+              : host === 'generativelanguage.googleapis.com'
+                ? GEMINI_RECORDED
+                : MICROSOFT_RECORDED;
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  return { scopedFetch: { fetch }, calls };
+}
+
+/** Every ref resolves; Microsoft's endpoint ref resolves to a valid Foundry URL. */
+const rosterSecrets = {
+  get: async (ref: string) =>
+    ref === 'providers/microsoft-foundry/projectEndpoint' ? FOUNDRY_ENDPOINT : 'test-api-key',
+};
+
+/** The engine's own request — for Microsoft the Foundry call, not the mint. */
+const engineCallOf = (calls: Array<{ url: string; init?: RequestInit }>) =>
+  calls.find((c) => !c.url.startsWith('https://login.microsoftonline.com/'));
+
+beforeEach(() => {
+  resetMicrosoftTokenCacheForTests();
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -171,13 +222,13 @@ describe('engine_ask — input validation', () => {
   it('rejects an engine outside the roster, before any network call', async () => {
     const rec = makeRecordingFetch({});
     const result = await engineAskTool.execute(
-      { query: 'q', engine: 'gemini' },
+      { query: 'q', engine: 'copilot' },
       ctxWith(rec.scopedFetch),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('input_invalid');
-      expect(result.error).toContain('chatgpt');
+      expect(result.error).toContain('chatgpt, perplexity, grok, gemini, microsoft');
     }
     expect(rec.calls).toHaveLength(0);
   });
@@ -424,6 +475,91 @@ describe('engine_ask — named-secret binding', () => {
       expect(secrets.refs).toEqual(['providers/openai/openai-key', 'providers/perplexity/apiKey']);
       expect(secrets.refs).not.toContain('providers/perplexity/openai-key');
     }
+  });
+
+  // plan engine-ask-per-engine-bindings §11: the alias names ChatGPT's key
+  // only — every other engine reads its OWN default ref, never
+  // `providers/<x>/openai-key`, and Microsoft reads its four regardless.
+  it('legacy { secret } leaves grok, gemini and microsoft on their own default refs', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ secret: 'openai-key' }),
+    });
+    const expected: Record<string, string[]> = {
+      grok: ['providers/xai/apiKey'],
+      gemini: ['providers/gemini/apiKey'],
+      microsoft: [
+        'providers/microsoft-foundry/projectEndpoint',
+        'providers/microsoft-foundry/tenantId',
+        'providers/microsoft-foundry/clientId',
+        'providers/microsoft-foundry/clientSecret',
+      ],
+    };
+    for (const [engine, refs] of Object.entries(expected)) {
+      const seen: string[] = [];
+      const secrets = {
+        get: async (ref: string) => {
+          seen.push(ref);
+          return rosterSecrets.get(ref);
+        },
+      };
+      const rec = makeRosterFetch();
+      const result = await tool.execute(
+        { query: 'q', engine },
+        withPersonality(rec.scopedFetch, secrets, 'scout'),
+      );
+      expect(result.ok, engine).toBe(true);
+      expect(seen, engine).toEqual(refs);
+      expect(
+        seen.some((r) => r.endsWith('/openai-key')),
+        engine,
+      ).toBe(false);
+    }
+  });
+
+  it('a personality binding names grok and gemini keys in their own namespaces', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ grok: 'xai-brand', gemini: 'gemini-brand' }),
+    });
+    const secrets = makeRecordingSecrets();
+    for (const engine of ['grok', 'gemini']) {
+      const rec = makeRosterFetch();
+      await tool.execute(
+        { query: 'q', engine },
+        withPersonality(rec.scopedFetch, secrets, 'scout'),
+      );
+    }
+    expect(secrets.refs).toEqual(['providers/xai/xai-brand', 'providers/gemini/gemini-brand']);
+  });
+
+  // Microsoft is not bindable (plan engine-ask-per-engine-bindings D9): its
+  // grant is four exact refs, so a bound name could only name a ref the tool
+  // may not read. Every rung — including a `microsoft` key — is ignored.
+  it('microsoft ignores every binding, on every rung', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ secret: 'a', microsoft: 'b' }),
+      toolSettings: {
+        scout: { engine_ask: { microsoft: 'c' } },
+        _default: { engine_ask: { microsoft: 'd', secret: 'e' } },
+      },
+    });
+    const seen: string[] = [];
+    const secrets = {
+      get: async (ref: string) => {
+        seen.push(ref);
+        return rosterSecrets.get(ref);
+      },
+    };
+    const rec = makeRosterFetch();
+    await tool.execute(
+      { query: 'q', engine: 'microsoft' },
+      withPersonality(rec.scopedFetch, secrets, 'scout'),
+    );
+    expect(seen).toEqual([
+      'providers/microsoft-foundry/projectEndpoint',
+      'providers/microsoft-foundry/tenantId',
+      'providers/microsoft-foundry/clientId',
+      'providers/microsoft-foundry/clientSecret',
+    ]);
   });
 
   it('one personality binding names one key per engine', async () => {
@@ -935,27 +1071,39 @@ describe('engine_ask — tool contract', () => {
     expect(engineAskTool.outputIsUntrusted).toBe(true);
   });
 
-  it('declares capabilities.network.allowedHosts = [api.openai.com, api.perplexity.ai]', () => {
+  it("declares every host the roster reaches, Microsoft's two included", () => {
     expect(engineAskTool.capabilities.network?.allowedHosts).toEqual([
       'api.openai.com',
       'api.perplexity.ai',
+      'api.x.ai',
+      'generativelanguage.googleapis.com',
+      'login.microsoftonline.com',
+      '*.services.ai.azure.com',
     ]);
   });
 
-  it('declares a prefix grant per bindable engine', () => {
+  it("declares a prefix grant per bindable engine and Microsoft's four exact refs", () => {
     // Exact equality on purpose: a personality's per-engine name must fall
     // inside a static allowlist, so each bindable engine grants its whole
-    // namespace — and nothing else is granted (plan engine-ask-per-engine-bindings D4).
+    // namespace; the non-bindable Microsoft engine grants only the four refs
+    // it reads — and nothing else is granted (plan engine-ask-per-engine-bindings
+    // D4, §11; plan engine-ask-grok-gemini-microsoft D19).
     expect(engineAskTool.capabilities.secrets).toEqual([
       'providers/openai/*',
       'providers/perplexity/*',
+      'providers/xai/*',
+      'providers/gemini/*',
+      'providers/microsoft-foundry/projectEndpoint',
+      'providers/microsoft-foundry/tenantId',
+      'providers/microsoft-foundry/clientId',
+      'providers/microsoft-foundry/clientSecret',
     ]);
   });
 
   it('schema: query required, engine enum from the roster, format and context-size enums', () => {
     const props = engineAskTool.schema.properties as Record<string, { enum?: string[] }>;
     expect(engineAskTool.schema.required).toEqual(['query']);
-    expect(props.engine?.enum).toEqual(['chatgpt', 'perplexity']);
+    expect(props.engine?.enum).toEqual(['chatgpt', 'perplexity', 'grok', 'gemini', 'microsoft']);
     expect(props.search_context_size?.enum).toEqual(['low', 'medium', 'high']);
     expect(props.format?.enum).toEqual(['text', 'json']);
   });
@@ -979,12 +1127,135 @@ describe('engine_ask — tool contract', () => {
     expect(schema.fields.map((f) => (f.kind === 'secret-binding' ? f.label : ''))).toEqual([
       'OpenAI key (chatgpt answer engine)',
       'Perplexity key (perplexity answer engine)',
+      'xAI key (grok answer engine)',
+      'Google key (gemini answer engine)',
     ]);
+    // Microsoft is not bindable: no picker.
+    expect(schema.fields.map((f) => (f.kind === 'secret-binding' ? f.key : ''))).not.toContain(
+      'microsoft',
+    );
   });
 
   it('a non-bindable engine contributes no field and an exact-ref grant', () => {
     const operatorOnly: AnswerEngine = { ...perplexityEngine, bindable: false };
-    expect(secretGrantOf(operatorOnly)).toBe('providers/perplexity/apiKey');
-    expect(secretGrantOf(perplexityEngine)).toBe('providers/perplexity/*');
+    expect(secretGrantsOf(operatorOnly)).toEqual(['providers/perplexity/apiKey']);
+    expect(secretGrantsOf(perplexityEngine)).toEqual(['providers/perplexity/*']);
+  });
+
+  // plan engine-ask-grok-gemini-microsoft D3: the description is assembled
+  // from the roster, so an engine that drops an argument cannot forget to say
+  // so.
+  it('every engine that drops an argument carries an argNote, and every argNote is in the description', () => {
+    for (const e of ALL_ENGINES) {
+      const dropsOne = Object.values(e.supports).some((v) => !v);
+      if (dropsOne) expect(e.argNote, e.id).toBeTruthy();
+      if (e.argNote) expect(engineAskTool.description).toContain(e.argNote);
+    }
+    for (const e of ALL_ENGINES) expect(engineAskTool.description).toContain(e.id);
+  });
+
+  // D2: an argument an engine does not support is accepted and NEVER sent —
+  // xAI fails the call outright when it is. The same call, through the real
+  // tool, to every engine in the roster.
+  it('sends no argument an engine does not support, and every argument one does', async () => {
+    const tool = createEngineAskTool();
+    const bodies = async (engine: EngineId, args: Record<string, unknown>) => {
+      const rec = makeRosterFetch();
+      const result = await tool.execute(
+        { query: 'q', engine, ...args },
+        ctxWith(rec.scopedFetch, rosterSecrets),
+      );
+      expect(result.ok, engine).toBe(true);
+      return String(engineCallOf(rec.calls)?.init?.body);
+    };
+    for (const e of ALL_ENGINES) {
+      const withAll = await bodies(e.id, {
+        country: 'ZQ',
+        search_context_size: 'high',
+        require_search: true,
+      });
+      expect(withAll.includes('"ZQ"'), `${e.id} country`).toBe(e.supports.country);
+      expect(withAll.includes('search_context_size'), `${e.id} search_context_size`).toBe(
+        e.supports.searchContextSize,
+      );
+      const required = await bodies(e.id, { require_search: true });
+      const notRequired = await bodies(e.id, { require_search: false });
+      expect(required !== notRequired, `${e.id} require_search`).toBe(e.supports.requireSearch);
+    }
+  });
+});
+
+// plan engine-ask-grok-gemini-microsoft §1: the result "should look exactly
+// the same" whichever engine answered. `format.ts` never learned which engine
+// produced a record; this pins that it still does not need to.
+describe('engine_ask — one shape for all five engines', () => {
+  it('renderText and renderJson produce the same structure and footer for every engine', async () => {
+    const tool = createEngineAskTool();
+    const expectedModel: Record<string, string> = {
+      chatgpt: 'gpt-5.5-2026-08-01',
+      perplexity: 'openai/gpt-5.6-luna',
+      grok: 'grok-4.6',
+      gemini: 'gemini-3.8-flash',
+      microsoft: 'gpt-5.5',
+    };
+    const recordKeys = new Set<string>();
+    for (const e of ALL_ENGINES) {
+      const rec = makeRosterFetch();
+      const text = await tool.execute(
+        { query: 'cards?', engine: e.id },
+        ctxWith(rec.scopedFetch, rosterSecrets),
+      );
+      expect(text.ok, e.id).toBe(true);
+      if (!text.ok) continue;
+      const blocks = text.value.split('\n\n');
+      // answer … "Sources:" block … footer — in that order, for every engine.
+      const sourcesAt = blocks.findIndex((b) => b.startsWith('Sources:\n1. '));
+      expect(sourcesAt, e.id).toBeGreaterThan(0);
+      expect(sourcesAt, e.id).toBe(blocks.length - 2);
+      expect(blocks.at(-1), e.id).toMatch(
+        new RegExp(
+          `^${e.id} · ${expectedModel[e.id]?.replace(/[./]/g, '\\$&')} · searched · \\d{4}-\\d{2}-\\d{2}T[^ ]+Z$`,
+        ),
+      );
+      // The structured record renders to exactly this text — no engine branch.
+      const record = text.structured as unknown as EngineAnswer;
+      expect(renderText(record)).toBe(text.value);
+
+      const rec2 = makeRosterFetch();
+      const json = await tool.execute(
+        { query: 'cards?', engine: e.id, format: 'json' },
+        ctxWith(rec2.scopedFetch, rosterSecrets),
+      );
+      expect(json.ok, e.id).toBe(true);
+      if (!json.ok) continue;
+      const parsed = JSON.parse(json.value);
+      expect(parsed, e.id).toEqual(json.structured);
+      expect(parsed.engine).toBe(e.id);
+      for (const c of parsed.citations) {
+        expect(
+          Object.keys(c)
+            .sort()
+            .filter((k) => k !== 'title'),
+        ).toEqual(['domain', 'position', 'url']);
+      }
+      for (const k of Object.keys(parsed)) recordKeys.add(k);
+      expect(renderJson(parsed, 28_000).value).toBe(json.value);
+    }
+    // Every key any engine emits is a key of EngineAnswer.
+    const allowed: Array<keyof EngineAnswer> = [
+      'engine',
+      'model',
+      'query',
+      'askedAt',
+      'country',
+      'searched',
+      'searchCalls',
+      'answerText',
+      'citations',
+      'sources',
+      'usage',
+      'truncated',
+    ];
+    for (const k of recordKeys) expect(allowed as string[]).toContain(k);
   });
 });

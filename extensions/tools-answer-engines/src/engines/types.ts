@@ -30,12 +30,17 @@ export interface Citation {
 
 export interface EngineAnswer {
   /** Union grows with the roster. */
-  engine: 'chatgpt' | 'perplexity';
+  engine: 'chatgpt' | 'perplexity' | 'grok' | 'gemini' | 'microsoft';
   /** As the API reported it, not as requested. */
   model: string;
   query: string;
   /** ISO-8601, taken before the request was sent. */
   askedAt: string;
+  /**
+   * The country the engine was asked from — set only when the engine SENT it
+   * (`supports.country`). An engine that does not take a location leaves it
+   * absent rather than claim a location it never applied.
+   */
   country?: string;
   /** Did the engine actually run a search. Reported, never assumed. */
   searched: boolean;
@@ -65,8 +70,11 @@ export interface AnswerEngine {
    * names the engine that actually failed.
    */
   readonly label: string;
-  /** For capabilities.network.allowedHosts. */
-  readonly host: string;
+  /**
+   * Every host this engine reaches, for capabilities.network.allowedHosts.
+   * Microsoft reaches two (the Entra token host and its Foundry project).
+   */
+  readonly hosts: readonly string[];
   /** 'providers/openai/' — a personality binding resolves `${secretPrefix}${name}`. */
   readonly secretPrefix: string;
   readonly defaultSecretRef: SecretRef;
@@ -74,12 +82,40 @@ export interface AnswerEngine {
    * Whether a personality may bind its own key for this engine. `true` → the
    * engine's `capabilities.secrets` grant is the prefix `${secretPrefix}*` and
    * the tool's `settingsSchema` carries one picker for it (keyed by `id`);
-   * `false` → the grant is the exact `defaultSecretRef` and there is no picker.
-   * Both follow from this one flag (`secretGrantOf` in `./roster`,
+   * `false` → the grant is the exact `operatorSecretRefs` (or
+   * `defaultSecretRef`), there is no picker, and every binding is ignored.
+   * All three follow from this one flag (`secretGrantsOf` in `./roster`,
+   * `selectSecretRef` and
    * `settingsSchema` in `../index`), so the grant and the settings field cannot
    * disagree (plan engine-ask-per-engine-bindings D8).
    */
   readonly bindable: boolean;
+  /**
+   * A NON-bindable engine's exact refs, when it reads more than
+   * `defaultSecretRef` (Microsoft reads four). Absent → `[defaultSecretRef]`.
+   * Ignored for a bindable engine, whose grant is its whole namespace.
+   */
+  readonly operatorSecretRefs?: readonly SecretRef[];
+  /**
+   * Which optional arguments this engine actually SENDS. An argument an
+   * engine does not support is accepted by the tool and never sent — xAI
+   * rejects a request carrying `search_context_size` or `user_location`, so a
+   * pass-through would be a 400, not a no-op. Each adapter reads only the
+   * request fields its `supports` declares; the roster-wide test in
+   * `__tests__/engine-ask.test.ts` ('sends no argument an engine does not
+   * support') pins that the two agree.
+   */
+  readonly supports: {
+    readonly country: boolean;
+    readonly searchContextSize: boolean;
+    readonly requireSearch: boolean;
+  };
+  /**
+   * One sentence for the tool description. Required in practice when
+   * `supports` has any `false` (pinned in `__tests__/engine-ask.test.ts`);
+   * also carries a vendor's terms on what a caller may do with the answer.
+   */
+  readonly argNote?: string;
   /** Where an operator obtains this engine's key — the picker's Get-a-key link. */
   readonly getKeyUrl: string;
   /**

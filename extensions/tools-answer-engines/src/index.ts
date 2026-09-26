@@ -5,7 +5,7 @@ import type {
   ToolResult,
   ToolSettingsSecretBindingField,
 } from '@ethosagent/types';
-import { ALL_ENGINES, findEngine, providerSegmentOf, secretGrantOf } from './engines/roster';
+import { ALL_ENGINES, findEngine, providerSegmentOf, secretGrantsOf } from './engines/roster';
 import {
   type AnswerEngine,
   EngineHttpError,
@@ -16,8 +16,15 @@ import {
 import { renderJson, renderText } from './format';
 
 export { chatgptEngine, DEFAULT_MODEL } from './engines/chatgpt';
+export { GEMINI_DEFAULT_MODEL, geminiEngine } from './engines/gemini';
+export { GROK_DEFAULT_MODEL, grokEngine } from './engines/grok';
+export {
+  MICROSOFT_DEFAULT_DEPLOYMENT,
+  microsoftEngine,
+  resetMicrosoftTokenCacheForTests,
+} from './engines/microsoft';
 export { PERPLEXITY_DEFAULT_PRESET, perplexityEngine } from './engines/perplexity';
-export { ALL_ENGINES, secretGrantOf } from './engines/roster';
+export { ALL_ENGINES, secretGrantsOf } from './engines/roster';
 export type {
   AnswerEngine,
   Citation,
@@ -31,8 +38,9 @@ export { renderJson, renderText } from './format';
 // ---------------------------------------------------------------------------
 // engine_ask — put a question to a public AI answer engine and return the
 // verbatim answer, the sources it cited, the model that answered, and when.
-// One tool over a roster of AnswerEngine adapters (D1); ChatGPT is the only
-// entry in v1. See plan/phases/tools-answer-engines.md.
+// One tool over a roster of AnswerEngine adapters (D1): chatgpt, perplexity,
+// grok, gemini, microsoft. See plan/phases/tools-answer-engines.md and
+// plan/phases/engine-ask-grok-gemini-microsoft.md.
 //
 // Copied from x_search (extensions/tools-x-search/): same 4-step secret
 // resolution, same capability declarations, same error mapping.
@@ -48,6 +56,17 @@ const MAX_NUM_CITATIONS = 50;
 /** Headroom under maxResultChars so the JSON document is never registry-trimmed. */
 const MAX_RESULT_CHARS = 30_000;
 const JSON_LIMIT = 28_000;
+
+/**
+ * A static lead plus every engine's `argNote`, assembled from the roster so an
+ * engine that drops an argument cannot forget to say so (plan
+ * engine-ask-grok-gemini-microsoft D3). A caller must never take a 4xx for an
+ * argument the tool advertises.
+ */
+const DESCRIPTION = [
+  `Ask a public AI answer engine (${ALL_ENGINES.map((e) => e.id).join(', ')}) a question and get its answer with the sources it cited. Use for 'what does the AI-answer layer say about X' questions, not for general web search. Each engine needs its own vendor credential. An argument an engine does not support is accepted and not sent.`,
+  ...ALL_ENGINES.map((e) => e.argNote).filter((n): n is string => Boolean(n)),
+].join(' ');
 
 export interface EngineAskArgs {
   query: string;
@@ -101,6 +120,10 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
   // A rung whose name is blank or fails isValidSecretName falls through to the
   // next one — see resolveToolSecretRef (packages/core/src/tool-secret-ref.ts).
   function selectSecretRef(ctx: ToolContext, engine: AnswerEngine): string {
+    // A non-bindable engine (microsoft) ignores every binding: its grant is
+    // exact refs only (`secretGrantsOf`), so a bound name could only resolve
+    // to a ref the tool may not read.
+    if (!engine.bindable) return engine.defaultSecretRef;
     const pid = ctx.personalityId;
     const raw: Array<EngineAskSetting | undefined> = [
       pid ? resolvePersonalitySetting?.(pid) : undefined,
@@ -124,18 +147,20 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
 
   return {
     name: 'engine_ask',
-    description:
-      "Ask a public AI answer engine (ChatGPT or Perplexity) a question and get its answer with the sources it cited. Use for 'what does the AI-answer layer say about X' questions, not for general web search. Requires an OpenAI key for chatgpt, a Perplexity key for perplexity. `require_search` is honoured by chatgpt only; perplexity's API has no per-request switch and the result reports whether it searched.",
+    description: DESCRIPTION,
     toolset: 'web',
     maxResultChars: MAX_RESULT_CHARS,
     capabilities: {
-      network: { allowedHosts: ALL_ENGINES.map((e) => e.host) },
-      // The grant is per engine and derived from `bindable` (`secretGrantOf`):
+      // Microsoft reaches two hosts, one of them a `*.` wildcard matched by
+      // `ScopedFetchImpl.isHostAllowed` (packages/core/src/scoped/scoped-fetch.ts).
+      network: { allowedHosts: ALL_ENGINES.flatMap((e) => e.hosts) },
+      // The grant is per engine and derived from `bindable` (`secretGrantsOf`):
       // a prefix for a bindable engine, because a personality's name is any
-      // `providers/<vendor>/<name>` and must fall inside a static allowlist.
-      // Each prefix is labelled per namespace by the settings field that names
-      // its `provider` (`deriveProviderRoster`, apps/web-api).
-      secrets: ALL_ENGINES.map(secretGrantOf),
+      // `providers/<vendor>/<name>` and must fall inside a static allowlist;
+      // the exact refs a non-bindable engine reads (Microsoft's four). Each
+      // prefix is labelled per namespace by the settings field that names its
+      // `provider` (`deriveProviderRoster`, apps/web-api).
+      secrets: ALL_ENGINES.flatMap(secretGrantsOf),
     },
     outputIsUntrusted: true,
     // Per-personality config contract, derived from the roster: one secret

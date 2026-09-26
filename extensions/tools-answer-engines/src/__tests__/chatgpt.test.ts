@@ -117,9 +117,14 @@ const twoSearchFixture = {
 describe('chatgpt engine — identity', () => {
   it('declares id, host, secret prefix and default ref', () => {
     expect(chatgptEngine.id).toBe('chatgpt');
-    expect(chatgptEngine.host).toBe('api.openai.com');
+    expect(chatgptEngine.hosts).toEqual(['api.openai.com']);
     expect(chatgptEngine.secretPrefix).toBe('providers/openai/');
     expect(chatgptEngine.defaultSecretRef).toBe('providers/openai/apiKey');
+    expect(chatgptEngine.supports).toEqual({
+      country: true,
+      searchContextSize: true,
+      requireSearch: true,
+    });
   });
 });
 

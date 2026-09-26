@@ -203,13 +203,17 @@ function parseResponse(body: AgentApiBody, req: EngineRequest, askedAt: string):
 export const perplexityEngine: AnswerEngine = {
   id: 'perplexity',
   label: 'Perplexity',
-  host: PERPLEXITY_API_HOST,
+  hosts: [PERPLEXITY_API_HOST],
   secretPrefix: SECRET_PREFIX,
   defaultSecretRef: DEFAULT_SECRET_REF,
   // Bindable: the grant is `providers/perplexity/*`, labelled per namespace by
   // the binding field's `provider` (plan engine-ask-per-engine-bindings D4/D6).
   bindable: true,
   getKeyUrl: 'https://console.perplexity.ai/project/keys',
+  // No per-request "must search" switch on the Agent API (sibling plan D9).
+  supports: { country: true, searchContextSize: true, requireSearch: false },
+  argNote:
+    'perplexity ignores `require_search` — its API has no per-request switch; the result still reports whether it searched.',
   defaultModel: PERPLEXITY_DEFAULT_PRESET,
   modelEnvVar: 'PERPLEXITY_ANSWER_ENGINE_PRESET',
   noKeyMessage:
