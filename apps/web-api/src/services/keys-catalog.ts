@@ -187,12 +187,12 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     getKeyUrl: 'https://platform.openai.com/api-keys',
   },
   {
-    // One key, one consumer — the `engine_ask` Perplexity engine. No `probe`:
+    // The operator-wide key for the `engine_ask` Perplexity engine. No `probe`:
     // that field is a closed union of the live probes and this adds none. No
     // `reflectsNamedSecret`: nothing mints this ref into the named-secrets
-    // vault — the tool declares the EXACT ref `providers/perplexity/apiKey`,
-    // not a `providers/perplexity/*` prefix, so it never becomes a manageable
-    // named-secret namespace.
+    // vault. `engine_ask` grants `providers/perplexity/*` so a personality can
+    // bind its own name under it (plan engine-ask-per-engine-bindings D4); this
+    // row stays the `apiKey` default those bindings fall back to.
     id: 'tools.perplexity',
     category: 'tools',
     label: 'Perplexity (answer engine)',

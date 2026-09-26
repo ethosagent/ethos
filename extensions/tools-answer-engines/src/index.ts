@@ -1,6 +1,11 @@
 import { resolveToolSecretRef } from '@ethosagent/core';
-import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
-import { ALL_ENGINES, findEngine } from './engines/roster';
+import type {
+  Tool,
+  ToolContext,
+  ToolResult,
+  ToolSettingsSecretBindingField,
+} from '@ethosagent/types';
+import { ALL_ENGINES, findEngine, providerSegmentOf, secretGrantOf } from './engines/roster';
 import {
   type AnswerEngine,
   EngineHttpError,
@@ -12,7 +17,7 @@ import { renderJson, renderText } from './format';
 
 export { chatgptEngine, DEFAULT_MODEL } from './engines/chatgpt';
 export { PERPLEXITY_DEFAULT_PRESET, perplexityEngine } from './engines/perplexity';
-export { ALL_ENGINES } from './engines/roster';
+export { ALL_ENGINES, secretGrantOf } from './engines/roster';
 export type {
   AnswerEngine,
   Citation,
@@ -37,9 +42,6 @@ const SEARCH_CONTEXT_SIZES = ['low', 'medium', 'high'] as const;
 const FORMATS = ['text', 'json'] as const;
 const COUNTRY_RE = /^[A-Z]{2}$/;
 
-// The one engine whose key the `engine_ask` settings binding names.
-const BINDING_OWNER_ENGINE: EngineId = 'chatgpt';
-
 const DEFAULT_NUM_CITATIONS = 20;
 const MAX_NUM_CITATIONS = 50;
 
@@ -58,13 +60,14 @@ export interface EngineAskArgs {
 }
 
 /**
- * A resolved per-personality engine_ask binding. `secret` is a NAME only
- * (e.g. `openai-brand`) — never a value — that resolves to
- * `providers/openai/<name>` in the vault. Absent → `providers/openai/apiKey`.
+ * A resolved per-personality engine_ask binding: one secret NAME per engine,
+ * keyed by engine id (`chatgpt: openai-brand` → `providers/openai/openai-brand`,
+ * `perplexity: pplx-brand` → `providers/perplexity/pplx-brand`) — never a
+ * value. `secret` is the permanent legacy alias for `chatgpt` and nothing else
+ * (`selectSecretRef` below). An engine with no name here falls to the next
+ * rung, and finally to its own `defaultSecretRef`.
  */
-export interface EngineAskSetting {
-  secret?: string;
-}
+export type EngineAskSetting = { secret?: string } & Partial<Record<EngineId, string>>;
 
 export interface CreateEngineAskToolOptions {
   /**
@@ -98,23 +101,22 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
   // A rung whose name is blank or fails isValidSecretName falls through to the
   // next one — see resolveToolSecretRef (packages/core/src/tool-secret-ref.ts).
   function selectSecretRef(ctx: ToolContext, engine: AnswerEngine): string {
-    // The `engine_ask` binding names ONE secret, and the `settingsSchema`
-    // field says whose it is — "OpenAI API key (answer engine)".
-    // `resolveToolSecretRef` (packages/core/src/tool-secret-ref.ts) tests a
-    // name's SHAPE and never reads the vault, so without this branch a
-    // personality bound `{ secret: 'openai-key' }` would resolve
-    // `providers/perplexity/openai-key` on a Perplexity call and die
-    // `not_available` — and two live personalities are bound exactly that way.
-    // Every other engine reads its own operator-wide key. This branch is what
-    // a future per-engine binding replaces.
-    if (engine.id !== BINDING_OWNER_ENGINE) return engine.defaultSecretRef;
     const pid = ctx.personalityId;
+    const raw: Array<EngineAskSetting | undefined> = [
+      pid ? resolvePersonalitySetting?.(pid) : undefined,
+      pid ? toolSettings?.[pid]?.engine_ask : undefined,
+      toolSettings?._default?.engine_ask,
+    ];
     return resolveToolSecretRef({
-      rungs: [
-        pid ? resolvePersonalitySetting?.(pid) : undefined,
-        pid ? toolSettings?.[pid]?.engine_ask : undefined,
-        toolSettings?._default?.engine_ask,
-      ],
+      // One rung list PER ENGINE (plan engine-ask-per-engine-bindings D5).
+      // Within a rung the engine id wins over the legacy `secret` alias, which
+      // names the ChatGPT key and nothing else. A rung that binds nothing for
+      // THIS engine falls through to the next rung — never sideways to another
+      // engine's name, which is what `providers/perplexity/openai-key` was:
+      // `resolveToolSecretRef` tests a name's SHAPE, not which vendor it is for.
+      rungs: raw.map((r) => ({
+        secret: r?.[engine.id] ?? (engine.id === 'chatgpt' ? r?.secret : undefined),
+      })),
       prefix: engine.secretPrefix,
       defaultRef: engine.defaultSecretRef,
     });
@@ -128,28 +130,31 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
     maxResultChars: MAX_RESULT_CHARS,
     capabilities: {
       network: { allowedHosts: ALL_ENGINES.map((e) => e.host) },
-      // The grant is per engine — a prefix for OpenAI, because a personality
-      // binding is any `providers/openai/<name>` and must fall inside a static
-      // allowlist, and an exact ref for Perplexity, because that is one
-      // operator-wide key and a prefix there would publish a mislabelled
-      // namespace through `deriveProviderRoster`.
-      secrets: ALL_ENGINES.map((e) => e.secretGrant),
+      // The grant is per engine and derived from `bindable` (`secretGrantOf`):
+      // a prefix for a bindable engine, because a personality's name is any
+      // `providers/<vendor>/<name>` and must fall inside a static allowlist.
+      // Each prefix is labelled per namespace by the settings field that names
+      // its `provider` (`deriveProviderRoster`, apps/web-api).
+      secrets: ALL_ENGINES.map(secretGrantOf),
     },
     outputIsUntrusted: true,
-    // Per-personality config contract. The settings UI renders a secret picker
-    // over `answer-engine` named secrets; only the secret NAME is ever stored.
-    // No `engine` enum until the roster has two entries (§6).
+    // Per-personality config contract, derived from the roster: one secret
+    // picker per BINDABLE engine, keyed by engine id, each scoped by
+    // `provider` to that engine's namespace; only the secret NAME is ever
+    // stored. No `engine` enum: which engine to ask is a per-CALL argument,
+    // and an enum would imply a default engine stored per personality.
     settingsSchema: {
-      fields: [
-        {
+      fields: ALL_ENGINES.filter((e) => e.bindable).map(
+        (e): ToolSettingsSecretBindingField => ({
           kind: 'secret-binding',
-          key: 'secret',
-          label: 'OpenAI API key (answer engine)',
+          key: e.id,
+          label: `${e.label} key (${e.id} answer engine)`,
           secretKind: 'answer-engine',
-          providerLabel: 'OpenAI (ChatGPT answer engine)',
-          getKeyUrl: 'https://platform.openai.com/api-keys',
-        },
-      ],
+          provider: providerSegmentOf(e),
+          providerLabel: e.providerLabel ?? `${e.label} (answer engine)`,
+          getKeyUrl: e.getKeyUrl,
+        }),
+      ),
     },
     // Always registered, same reasoning as web_search
     // (extensions/tools-web/src/index.ts) and x_search: a key can arrive from

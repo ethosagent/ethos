@@ -1,6 +1,7 @@
 import type { ToolContext } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { perplexityEngine } from '../engines/perplexity';
+import { secretGrantOf } from '../engines/roster';
 import { EngineHttpError, EngineNoKeyError, type EngineRequest } from '../engines/types';
 
 function makeRecordingFetch(responseBody: unknown, status = 200) {
@@ -122,7 +123,10 @@ describe('perplexity engine — identity', () => {
     expect(perplexityEngine.host).toBe('api.perplexity.ai');
     expect(perplexityEngine.secretPrefix).toBe('providers/perplexity/');
     expect(perplexityEngine.defaultSecretRef).toBe('providers/perplexity/apiKey');
-    expect(perplexityEngine.secretGrant).toBe('providers/perplexity/apiKey');
+    // Bindable since plan engine-ask-per-engine-bindings D4: the grant is the
+    // namespace, derived from `bindable` by `secretGrantOf`.
+    expect(perplexityEngine.bindable).toBe(true);
+    expect(secretGrantOf(perplexityEngine)).toBe('providers/perplexity/*');
     expect(perplexityEngine.defaultModel).toBe('low');
     expect(perplexityEngine.modelEnvVar).toBe('PERPLEXITY_ANSWER_ENGINE_PRESET');
   });

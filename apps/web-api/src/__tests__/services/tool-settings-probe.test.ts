@@ -282,3 +282,119 @@ describe('ToolSettingsService.probeCredentials', () => {
     expect(ws?.rung).toBe('personality');
   });
 });
+
+// plan engine-ask-per-engine-bindings D14 — the probe keeps one row per
+// settings group, and for `engine_ask` that row is the ChatGPT credential: it
+// reads the group's first binding field key (`chatgpt`) with the legacy
+// `secret` fallback, under the prefix matching that field's `provider`.
+describe('ToolSettingsService.probeCredentials — engine_ask', () => {
+  function engineAskStub(grants: string[]): Tool {
+    return {
+      name: 'engine_ask',
+      description: 'stub',
+      schema: {},
+      capabilities: { secrets: grants },
+      settingsSchema: {
+        fields: [
+          {
+            kind: 'secret-binding',
+            key: 'chatgpt',
+            label: 'OpenAI key (chatgpt answer engine)',
+            secretKind: 'answer-engine',
+            provider: 'openai',
+          },
+          {
+            kind: 'secret-binding',
+            key: 'perplexity',
+            label: 'Perplexity key (perplexity answer engine)',
+            secretKind: 'answer-engine',
+            provider: 'perplexity',
+          },
+        ],
+      },
+      async execute() {
+        return { ok: true, value: '' };
+      },
+    };
+  }
+
+  async function setup(grants: string[], toolsYaml?: string) {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    await storage.mkdir(DATA);
+    await storage.mkdir('/data/personalities/mine');
+    await storage.write('/data/personalities/mine/config.yaml', 'name: Mine\n');
+    await storage.write('/data/personalities/mine/SOUL.md', '# Mine\n');
+    await storage.write('/data/personalities/mine/toolset.yaml', '- engine_ask\n');
+    if (toolsYaml) await storage.write('/data/personalities/mine/tools.yaml', toolsYaml);
+    await storage.mkdir('/builtins/scout');
+    await storage.write('/builtins/scout/config.yaml', 'name: Scout\n');
+    await storage.write('/builtins/scout/SOUL.md', '# Scout\n');
+    await storage.write('/builtins/scout/toolset.yaml', '- engine_ask\n');
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    await registry.loadFromDirectory('/builtins');
+    await registry.loadFromDirectory('/data/personalities');
+    const library = new SkillsLibrary({ dataDir: DATA, storage });
+    const personalities = new PersonalitiesService({ personalities: registry, library });
+    const config = new ConfigRepository({ dataDir: DATA, storage, secrets });
+    const toolRegistry = new DefaultToolRegistry();
+    toolRegistry.register(engineAskStub(grants));
+    return {
+      storage,
+      secrets,
+      service: new ToolSettingsService({ config, personalities, secrets, toolRegistry }),
+    };
+  }
+
+  const GRANTS = ['providers/openai/*', 'providers/perplexity/*'];
+
+  it('a legacy { secret } binding probes providers/openai/<name> at the personality rung', async () => {
+    const { service, secrets } = await setup(GRANTS, 'engine_ask: { secret: openai-key }\n');
+    await secrets.set('providers/openai/openai-key', SENTINEL);
+    const { credentials } = await service.probeCredentials('mine');
+    expect(credentials).toHaveLength(1);
+    expect(credentials[0]).toMatchObject({
+      key: 'engine_ask',
+      ref: 'providers/openai/openai-key',
+      rung: 'personality',
+      present: true,
+    });
+  });
+
+  it('a { chatgpt } binding probes providers/openai/<name>, and wins over secret in its rung', async () => {
+    const { service } = await setup(
+      GRANTS,
+      'engine_ask: { chatgpt: openai-brand, perplexity: pplx-brand, secret: legacy }\n',
+    );
+    const { credentials } = await service.probeCredentials('mine');
+    expect(credentials[0]).toMatchObject({
+      ref: 'providers/openai/openai-brand',
+      rung: 'personality',
+    });
+  });
+
+  it('reads the legacy and per-engine forms at the global rungs too', async () => {
+    const { service } = await setup(GRANTS);
+    await service.setForPersonality('scout', { engine_ask: { secret: 'openai-scout' } });
+    await service.setDefault({ engine_ask: { chatgpt: 'openai-default' } });
+    const scout = await service.probeCredentials('scout');
+    expect(scout.credentials[0]).toMatchObject({
+      ref: 'providers/openai/openai-scout',
+      rung: 'global-personality',
+    });
+    const mine = await service.probeCredentials('mine');
+    expect(mine.credentials[0]).toMatchObject({
+      ref: 'providers/openai/openai-default',
+      rung: 'global-default',
+    });
+  });
+
+  it("takes the prefix from the field's provider, not from grant order", async () => {
+    const forward = await setup(GRANTS);
+    const reversed = await setup([...GRANTS].reverse());
+    const a = await forward.service.probeCredentials('mine');
+    const b = await reversed.service.probeCredentials('mine');
+    expect(a.credentials[0]?.ref).toBe('providers/openai/apiKey');
+    expect(b.credentials[0]?.ref).toBe('providers/openai/apiKey');
+  });
+});

@@ -206,9 +206,10 @@ export const perplexityEngine: AnswerEngine = {
   host: PERPLEXITY_API_HOST,
   secretPrefix: SECRET_PREFIX,
   defaultSecretRef: DEFAULT_SECRET_REF,
-  // An EXACT ref, not a `providers/perplexity/*` prefix — see the plan's §8
-  // roster reasoning (a prefix grant would publish a mislabelled namespace).
-  secretGrant: 'providers/perplexity/apiKey',
+  // Bindable: the grant is `providers/perplexity/*`, labelled per namespace by
+  // the binding field's `provider` (plan engine-ask-per-engine-bindings D4/D6).
+  bindable: true,
+  getKeyUrl: 'https://console.perplexity.ai/project/keys',
   defaultModel: PERPLEXITY_DEFAULT_PRESET,
   modelEnvVar: 'PERPLEXITY_ANSWER_ENGINE_PRESET',
   noKeyMessage:

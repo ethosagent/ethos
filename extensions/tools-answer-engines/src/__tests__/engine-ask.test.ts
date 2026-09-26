@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { EngineAnswer } from '../engines/types';
+import { ALL_ENGINES, secretGrantOf } from '../engines/roster';
+import type { AnswerEngine, EngineAnswer } from '../engines/types';
 import { ANSWER_TEXT_FLOOR, renderJson } from '../format';
-import { createEngineAskTool, engineAskTool } from '../index';
+import { createEngineAskTool, engineAskTool, perplexityEngine } from '../index';
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirrors extensions/tools-x-search/src/__tests__/x-search.test.ts's
@@ -399,9 +400,13 @@ describe('engine_ask — named-secret binding', () => {
     expect(secrets.refs).toEqual(['providers/perplexity/apiKey', 'providers/openai/apiKey']);
   });
 
-  it('the engine_ask binding names the OpenAI key only: geo-analyst / brand-guide bound { secret: "openai-key" } still resolve providers/perplexity/apiKey on a Perplexity call, on all three rungs', async () => {
-    // All three rungs are gated by the one `engine.id !== 'chatgpt'` branch, so
-    // covering only the first would let the other two rot.
+  // The two live personalities, pinned by name (plan
+  // engine-ask-per-engine-bindings D2): `geo-analyst/tools.yaml` and
+  // `brand-guide/tools.yaml` carry exactly `engine_ask: { secret: openai-key }`.
+  // All three rungs carry the alias, so all three are covered — a test on one
+  // would let the other two rot. The alias is ChatGPT's, not everyone's: a
+  // Perplexity call from the same binding still reads the operator-wide key.
+  it('legacy { secret: "openai-key" } resolves providers/openai/openai-key on chatgpt and providers/perplexity/apiKey on perplexity, on all three rungs', async () => {
     const tools = [
       createEngineAskTool({ resolvePersonalitySetting: () => ({ secret: 'openai-key' }) }),
       createEngineAskTool({ toolSettings: { scout: { engine_ask: { secret: 'openai-key' } } } }),
@@ -419,6 +424,100 @@ describe('engine_ask — named-secret binding', () => {
       expect(secrets.refs).toEqual(['providers/openai/openai-key', 'providers/perplexity/apiKey']);
       expect(secrets.refs).not.toContain('providers/perplexity/openai-key');
     }
+  });
+
+  it('one personality binding names one key per engine', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ chatgpt: 'a', perplexity: 'b' }),
+    });
+    const secrets = makeRecordingSecrets();
+    const recCg = makeRecordingFetch(answerBody('A'));
+    await tool.execute({ query: 'q' }, withPersonality(recCg.scopedFetch, secrets, 'scout'));
+    const recPx = makeRecordingFetch(perplexityBody('A[web:1]'));
+    await tool.execute(
+      { query: 'q', engine: 'perplexity' },
+      withPersonality(recPx.scopedFetch, secrets, 'scout'),
+    );
+    expect(secrets.refs).toEqual(['providers/openai/a', 'providers/perplexity/b']);
+  });
+
+  it('chatgpt beats the secret alias within a rung', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ secret: 'legacy', chatgpt: 'current' }),
+    });
+    const secrets = makeRecordingSecrets();
+    const rec = makeRecordingFetch(answerBody('A'));
+    await tool.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
+    expect(secrets.refs).toEqual(['providers/openai/current']);
+  });
+
+  it('a rung binding only another engine falls through to the NEXT rung, never sideways', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: (pid) =>
+        pid === 'scout' ? { perplexity: 'pplx-brand' } : undefined,
+      toolSettings: {
+        scout: { engine_ask: { chatgpt: 'from-slot' } },
+        _default: { engine_ask: { perplexity: 'pplx-default' } },
+      },
+    });
+    const secrets = makeRecordingSecrets();
+    const recCg = makeRecordingFetch(answerBody('A'));
+    await tool.execute({ query: 'q' }, withPersonality(recCg.scopedFetch, secrets, 'scout'));
+    const recPx = makeRecordingFetch(perplexityBody('A[web:1]'));
+    await tool.execute(
+      { query: 'q', engine: 'perplexity' },
+      withPersonality(recPx.scopedFetch, secrets, 'other'),
+    );
+    // chatgpt: the personality rung names only perplexity → toolSettings[pid].
+    // perplexity for `other`: no personality rung match → _default.
+    expect(secrets.refs).toEqual([
+      'providers/openai/from-slot',
+      'providers/perplexity/pplx-default',
+    ]);
+  });
+
+  it('a missing engine field leaves that engine on its default ref', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ chatgpt: 'openai-brand' }),
+    });
+    const secrets = makeRecordingSecrets();
+    const rec = makeRecordingFetch(perplexityBody('A[web:1]'));
+    await tool.execute(
+      { query: 'q', engine: 'perplexity' },
+      withPersonality(rec.scopedFetch, secrets, 'scout'),
+    );
+    expect(secrets.refs).toEqual(['providers/perplexity/apiKey']);
+  });
+
+  it('an invalid per-engine name falls through for THAT engine only and never escapes the prefix', async () => {
+    const tool = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ chatgpt: 'openai-brand', perplexity: 'has space' }),
+      toolSettings: {
+        scout: { engine_ask: { perplexity: '../openai/apiKey' } },
+        _default: { engine_ask: { perplexity: 'pplx-default' } },
+      },
+    });
+    const secrets = makeRecordingSecrets();
+    const recCg = makeRecordingFetch(answerBody('A'));
+    await tool.execute({ query: 'q' }, withPersonality(recCg.scopedFetch, secrets, 'scout'));
+    const recPx = makeRecordingFetch(perplexityBody('A[web:1]'));
+    await tool.execute(
+      { query: 'q', engine: 'perplexity' },
+      withPersonality(recPx.scopedFetch, secrets, 'scout'),
+    );
+    expect(secrets.refs).toEqual([
+      'providers/openai/openai-brand',
+      'providers/perplexity/pplx-default',
+    ]);
+
+    const allInvalid = createEngineAskTool({
+      resolvePersonalitySetting: () => ({ perplexity: '../openai/apiKey' }),
+    });
+    await allInvalid.execute(
+      { query: 'q', engine: 'perplexity' },
+      withPersonality(recPx.scopedFetch, secrets, 'scout'),
+    );
+    expect(secrets.refs.at(-1)).toBe('providers/perplexity/apiKey');
   });
 });
 
@@ -843,11 +942,13 @@ describe('engine_ask — tool contract', () => {
     ]);
   });
 
-  it('declares a prefix grant for OpenAI and an EXACT ref for Perplexity', () => {
-    // Exact equality on purpose: this is the guard that stops a "tidy-up" turning the Perplexity exact ref back into a providers/perplexity/* prefix.
+  it('declares a prefix grant per bindable engine', () => {
+    // Exact equality on purpose: a personality's per-engine name must fall
+    // inside a static allowlist, so each bindable engine grants its whole
+    // namespace — and nothing else is granted (plan engine-ask-per-engine-bindings D4).
     expect(engineAskTool.capabilities.secrets).toEqual([
       'providers/openai/*',
-      'providers/perplexity/apiKey',
+      'providers/perplexity/*',
     ]);
   });
 
@@ -859,16 +960,31 @@ describe('engine_ask — tool contract', () => {
     expect(props.format?.enum).toEqual(['text', 'json']);
   });
 
-  it('declares exactly one secret-binding field with secretKind "answer-engine"', () => {
+  it('derives one secret-binding field per bindable engine, in roster order', () => {
     const schema = engineAskTool.settingsSchema;
     if (!schema) throw new Error('expected engine_ask to declare a settingsSchema');
-    expect(schema.fields).toHaveLength(1);
-    const field = schema.fields[0];
-    if (field?.kind !== 'secret-binding') throw new Error('expected a secret-binding field');
-    // Keyed `secret` like x_search's binding — the tool-settings wire shape
-    // (`values.engine_ask.secret`) and tools.yaml both read that key.
-    expect(field.key).toBe('secret');
-    expect(field.label).toBe('OpenAI API key (answer engine)');
-    expect(field.secretKind).toBe('answer-engine');
+    const bindable = ALL_ENGINES.filter((e) => e.bindable);
+    expect(schema.fields).toHaveLength(bindable.length);
+    schema.fields.forEach((field, i) => {
+      const engine = bindable[i];
+      if (!engine) throw new Error('more fields than bindable engines');
+      if (field.kind !== 'secret-binding') throw new Error('expected a secret-binding field');
+      // Keyed by engine id — the wire shape is `values.engine_ask.<engineId>`,
+      // and tools.yaml reads the same field names.
+      expect(field.key).toBe(engine.id);
+      expect(field.secretKind).toBe('answer-engine');
+      expect(`providers/${field.provider}/`).toBe(engine.secretPrefix);
+      expect(field.getKeyUrl).toBe(engine.getKeyUrl);
+    });
+    expect(schema.fields.map((f) => (f.kind === 'secret-binding' ? f.label : ''))).toEqual([
+      'OpenAI key (chatgpt answer engine)',
+      'Perplexity key (perplexity answer engine)',
+    ]);
+  });
+
+  it('a non-bindable engine contributes no field and an exact-ref grant', () => {
+    const operatorOnly: AnswerEngine = { ...perplexityEngine, bindable: false };
+    expect(secretGrantOf(operatorOnly)).toBe('providers/perplexity/apiKey');
+    expect(secretGrantOf(perplexityEngine)).toBe('providers/perplexity/*');
   });
 });

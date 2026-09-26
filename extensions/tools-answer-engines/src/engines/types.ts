@@ -71,15 +71,22 @@ export interface AnswerEngine {
   readonly secretPrefix: string;
   readonly defaultSecretRef: SecretRef;
   /**
-   * The single `capabilities.secrets` entry this engine contributes —
-   * `'providers/openai/*'` for ChatGPT versus the exact ref
-   * `'providers/perplexity/apiKey'` for Perplexity. This is a per-engine field
-   * rather than derived from `secretPrefix` because `deriveProviderRoster` in
-   * apps/web-api turns a `providers/<x>/*` grant into a manageable namespace
-   * and unions every declared `secretKind` onto it, so a prefix grant for a
-   * second vendor would publish a mislabelled namespace.
+   * Whether a personality may bind its own key for this engine. `true` → the
+   * engine's `capabilities.secrets` grant is the prefix `${secretPrefix}*` and
+   * the tool's `settingsSchema` carries one picker for it (keyed by `id`);
+   * `false` → the grant is the exact `defaultSecretRef` and there is no picker.
+   * Both follow from this one flag (`secretGrantOf` in `./roster`,
+   * `settingsSchema` in `../index`), so the grant and the settings field cannot
+   * disagree (plan engine-ask-per-engine-bindings D8).
    */
-  readonly secretGrant: string;
+  readonly bindable: boolean;
+  /** Where an operator obtains this engine's key — the picker's Get-a-key link. */
+  readonly getKeyUrl: string;
+  /**
+   * The Named Secrets label for this engine's `providers/<segment>/`
+   * namespace. Absent → `${label} (answer engine)`.
+   */
+  readonly providerLabel?: string;
   /** The model (chatgpt) or preset (perplexity) used when nothing overrides it. */
   readonly defaultModel: string;
   /** The env var that overrides it. */

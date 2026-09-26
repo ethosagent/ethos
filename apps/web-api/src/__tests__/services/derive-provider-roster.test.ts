@@ -77,11 +77,17 @@ function inTreeRegistry() {
     tool('fetch_url', ['providers/exa/apiKey']),
     tool(
       'engine_ask',
-      ['providers/openai/*', 'providers/perplexity/apiKey'],
+      ['providers/openai/*', 'providers/perplexity/*'],
       [
         binding('answer-engine', {
+          provider: 'openai',
           providerLabel: 'OpenAI (ChatGPT answer engine)',
           getKeyUrl: 'https://platform.openai.com/api-keys',
+        }),
+        binding('answer-engine', {
+          provider: 'perplexity',
+          providerLabel: 'Perplexity (answer engine)',
+          getKeyUrl: 'https://console.perplexity.ai/project/keys',
         }),
       ],
     ),
@@ -192,13 +198,22 @@ describe('deriveProviderRoster', () => {
     },
   );
 
-  // The engine_ask case of the rule above, pinned on its own because it is the
-  // one shipped tool that declares a prefix and an exact ref side by side: the
-  // Perplexity key is one operator-wide credential, so it publishes no
-  // namespace — and no diagnostic either, because that is deliberate.
-  it("publishes no perplexity namespace — engine_ask's perplexity grant is an exact ref", () => {
+  // The engine_ask case, inverted by plan engine-ask-per-engine-bindings D4:
+  // Perplexity is bindable per personality, so engine_ask grants the prefix
+  // and the namespace is published — under its OWN label and key URL, because
+  // each binding field names its `provider` (D6). Before the scoped filter this
+  // row would have read "OpenAI (ChatGPT answer engine)".
+  it('publishes a perplexity namespace with its own label, and openai keeps its own', () => {
     const { providers, diagnostics } = deriveProviderRoster(inTreeRegistry());
-    expect(providers.map((p) => p.provider)).not.toContain('perplexity');
+    const row = (id: string) => providers.find((p) => p.provider === id);
+    expect(row('perplexity')).toEqual({
+      provider: 'perplexity',
+      kinds: ['answer-engine'],
+      label: 'Perplexity (answer engine)',
+      getKeyUrl: 'https://console.perplexity.ai/project/keys',
+    });
+    expect(row('openai')?.label).toBe('OpenAI (ChatGPT answer engine)');
+    expect(row('openai')?.getKeyUrl).toBe('https://platform.openai.com/api-keys');
     expect(diagnostics.filter((d) => d.declared.includes('perplexity'))).toEqual([]);
   });
 
@@ -231,7 +246,7 @@ describe('deriveProviderRoster', () => {
             binding('answer-engine', {
               provider: 'perplexity',
               providerLabel: 'Perplexity (answer engine)',
-              getKeyUrl: 'https://www.perplexity.ai/account/api/keys',
+              getKeyUrl: 'https://console.perplexity.ai/project/keys',
             }),
           ],
         ),
@@ -248,7 +263,7 @@ describe('deriveProviderRoster', () => {
         provider: 'perplexity',
         kinds: ['answer-engine'],
         label: 'Perplexity (answer engine)',
-        getKeyUrl: 'https://www.perplexity.ai/account/api/keys',
+        getKeyUrl: 'https://console.perplexity.ai/project/keys',
       },
     ]);
   });
@@ -298,7 +313,7 @@ describe('deriveProviderRoster', () => {
     expect(providers[0]?.label).toBe('First');
   });
 
-  it('derives exactly the seven providers the shipped tools declare', () => {
+  it('derives exactly the eight providers the shipped tools declare', () => {
     const { providers, diagnostics } = deriveProviderRoster(inTreeRegistry());
     expect(providers.map((p) => p.provider)).toEqual([
       'brave',
@@ -306,6 +321,7 @@ describe('deriveProviderRoster', () => {
       'google',
       'google-search-console',
       'openai',
+      'perplexity',
       'tavily',
       'xai',
     ]);

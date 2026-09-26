@@ -198,8 +198,12 @@ export const PROBED_PROVIDERS: readonly string[] = [
 
 /** Derived providers deliberately left without a probe. `x` short-circuited at
  *  the same `{ ok: true, tested: false }` before the roster was derived: every
- *  X search call is billable, so there is no free request to make. */
-export const PROBE_EXEMPT_PROVIDERS: readonly string[] = ['x'];
+ *  X search call is billable, so there is no free request to make.
+ *  `perplexity` became a derived namespace when `engine_ask` widened its grant
+ *  to `providers/perplexity/*` (plan engine-ask-per-engine-bindings D4); no
+ *  Perplexity probe exists (its Keys-catalog row, `tools.perplexity` in
+ *  `keys-catalog.ts`, declares none either), so it reports `tested: false`. */
+export const PROBE_EXEMPT_PROVIDERS: readonly string[] = ['x', 'perplexity'];
 
 async function probeProvider(
   provider: string,
