@@ -24,10 +24,11 @@ import {
 } from '@ethosagent/core';
 import type { LLMProvider } from '@ethosagent/types';
 import { render } from 'ink';
-import { act, createElement } from 'react';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { App } from '../components/App';
+import { act, enableReactActEnvironment, pressKeys } from './helpers/ink-act';
 
 class CapturingStdout extends EventEmitter {
   columns = 240;
@@ -103,20 +104,10 @@ afterEach(() => {
   for (const u of unmounts.splice(0)) u();
 });
 
-// Every step that changes what the App renders runs inside React's `act`, which
-// flushes the commit AND its passive effects before it returns. Without it a
-// test could see the modal's frame on stdout before the modal's `useInput`
-// effect had subscribed to Ink's input emitter: the App and InputBox already
-// hold raw mode, so Ink reads a key the moment it is written and emits it to
-// whoever is subscribed — a key written in that window never reached the modal,
-// and under load the window was wide enough to lose `n`, Esc and Enter.
-const actEnv = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
-beforeAll(() => {
-  actEnv.IS_REACT_ACT_ENVIRONMENT = true;
-});
-afterAll(() => {
-  delete actEnv.IS_REACT_ACT_ENVIRONMENT;
-});
+// Every step that changes what the App renders runs inside React's `act`
+// (helpers/ink-act.ts says why): a key written after the modal's frame but
+// before its `useInput` subscribed never reached the modal.
+enableReactActEnvironment();
 
 function mount() {
   const personalities = new DefaultPersonalityRegistry();
@@ -172,15 +163,6 @@ async function mounted() {
   return { fake, stdout, stdin, request, settleElsewhere };
 }
 
-/** Write a key and flush what it causes. Ink reads stdin on `readable` (next
- *  tick) and holds a lone Esc ~20ms in case it starts an escape sequence, so
- *  the act scope stays open past both. */
-const key = (stdin: PassThrough, data: string) =>
-  act(async () => {
-    stdin.write(data);
-    await new Promise((r) => setTimeout(r, 50));
-  });
-
 describe('TUI — tool approval modal', () => {
   it('shows tool, reason and args, and "y" allows', async () => {
     const { fake, stdout, stdin, request } = await mounted();
@@ -189,7 +171,7 @@ describe('TUI — tool approval modal', () => {
     expect(stdout.last).toContain('terminal');
     expect(stdout.last).toContain('terminal requires explicit approval');
     expect(stdout.last).toContain('ls -la');
-    await key(stdin, 'y');
+    await pressKeys(stdin, 'y');
     await waitFor(() => fake.decisions.length === 1, 'a decision');
     expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'allow' }]);
     await waitFor(() => !stdout.last.includes('approval needed'), 'the modal closed');
@@ -203,7 +185,7 @@ describe('TUI — tool approval modal', () => {
     const { fake, stdout, stdin, request } = await mounted();
     await request('a1', 'ls -la');
     await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
-    await key(stdin, data);
+    await pressKeys(stdin, data);
     await waitFor(() => fake.decisions.length === 1, 'a decision');
     expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'deny' }]);
   });
@@ -215,9 +197,9 @@ describe('TUI — tool approval modal', () => {
     await waitFor(() => stdout.last.includes('echo first'), 'the first request');
     expect(stdout.last).not.toContain('echo second');
     expect(stdout.last).toContain('1 more waiting');
-    await key(stdin, 'n');
+    await pressKeys(stdin, 'n');
     await waitFor(() => stdout.last.includes('echo second'), 'the second request');
-    await key(stdin, 'y');
+    await pressKeys(stdin, 'y');
     await waitFor(() => fake.decisions.length === 2, 'two decisions');
     expect(fake.decisions).toEqual([
       { approvalId: 'a1', decision: 'deny' },
