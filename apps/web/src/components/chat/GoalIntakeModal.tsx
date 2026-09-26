@@ -406,8 +406,8 @@ export function GoalIntakeModal({
                           lineHeight: 1.4,
                         }}
                       >
-                        Optional verify command. Runs on this machine when the goal is judged; the
-                        check passes if it exits 0.
+                        Optional verify command. Runs in this personality's shell when the goal is
+                        judged; the check passes if it exits 0.
                       </div>
                     </div>
                   )}

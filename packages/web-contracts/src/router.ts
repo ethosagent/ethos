@@ -4578,7 +4578,8 @@ const GoalCreateInput = z.object({
   title: z.string().optional(),
   acceptanceCriteria: z
     .object({
-      // `command` runs via `sh -c` on the host when the goal is judged; the
+      // `command` runs as the goal personality's `terminal` would when the
+      // goal is judged (`createAcceptanceCheckExecutor`, packages/wiring); the
       // server refuses it unless `goals.allowCheckCommands: true`
       // (`GoalsService.create`, apps/web-api/src/services/goals.service.ts).
       checks: z

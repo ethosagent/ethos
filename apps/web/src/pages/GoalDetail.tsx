@@ -478,7 +478,7 @@ export function GoalDetail() {
           </div>
         )}
 
-        {/* ---- Acceptance checks (with any host verify command) ---- */}
+        {/* ---- Acceptance checks (with any verify command) ---- */}
         <GoalChecks acceptanceCriteria={goal.acceptanceCriteria} />
 
         {/* ---- Journey section ---- */}

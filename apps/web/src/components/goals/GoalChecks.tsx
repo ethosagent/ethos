@@ -23,8 +23,8 @@ export function parseGoalChecks(acceptanceCriteria: unknown): GoalCheckView[] {
 
 /**
  * The goal's acceptance checks, as captured at intake. A check with a
- * `command` shows it verbatim in mono — that command runs on the host when
- * the goal is judged, so the operator must be able to read exactly what it is.
+ * `command` shows it verbatim in mono — that command runs in the personality's
+ * shell when the goal is judged, so the operator must be able to read exactly what it is.
  */
 export function GoalChecks({ acceptanceCriteria }: { acceptanceCriteria: unknown }): ReactNode {
   const checks = parseGoalChecks(acceptanceCriteria);
@@ -48,7 +48,7 @@ export function GoalChecks({ acceptanceCriteria }: { acceptanceCriteria: unknown
           <div style={{ color: 'var(--text-secondary)' }}>{c.description}</div>
           {c.command ? (
             <div
-              title="Runs on this machine when the goal is judged; passes if it exits 0"
+              title="Runs in the personality's shell when the goal is judged; passes if it exits 0"
               style={{
                 fontFamily: "'Geist Mono', monospace",
                 fontSize: 12,
