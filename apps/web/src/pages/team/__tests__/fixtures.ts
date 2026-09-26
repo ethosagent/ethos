@@ -75,6 +75,8 @@ export const TEAM: TeamDetail = {
   ],
   channels: [{ platform: 'slack', botKey: 'slack:marketing' }],
   startedAt: new Date(NOW.getTime() - 6 * 3_600_000).toISOString(),
+  attentionCount: 0,
+  attention: [],
   manifestYaml: 'name: marketing\ndispatch_mode: coordinator\ncoordinator: cmo\n',
   manifestPath: '~/.ethos/teams/marketing.yaml',
   trustPolicy: { mode: 'flat' },

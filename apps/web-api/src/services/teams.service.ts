@@ -198,6 +198,7 @@ export class TeamsService {
     // tier derives from. It re-reads manifest + runtime; cheap, and it keeps
     // `KanbanTeamSummary` with one owner.
     const { board } = await this.kanban.getBoard(team);
+    const attention = await this.kanban.attention(team);
     const hasBoard = board.team.boardModifiedAt !== null;
     const statsByMember = new Map<string, KanbanMemberStats>(
       board.memberStats.map((s) => [s.memberId, s]),
@@ -234,6 +235,8 @@ export class TeamsService {
           botKey: c.botKey,
         })),
         startedAt: runtime?.startedAt ?? null,
+        attentionCount: attention.count,
+        attention: attention.tasks,
       },
       manifest,
       manifestYaml,

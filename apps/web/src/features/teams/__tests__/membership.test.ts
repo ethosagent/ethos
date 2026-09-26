@@ -24,6 +24,8 @@ function team(name: string, members: string[], coordinator: string | null = memb
     })),
     channels: [],
     startedAt: null,
+    attentionCount: 0,
+    attention: [],
   } satisfies TeamSummary;
 }
 

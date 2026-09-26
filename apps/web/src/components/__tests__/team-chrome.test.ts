@@ -98,6 +98,8 @@ function team(name: string, members: string[], coordinator: string | null): Team
     })),
     channels: [{ platform: 'slack', botKey: 'slack:marketing' }],
     startedAt: null,
+    attentionCount: 0,
+    attention: [],
   };
 }
 

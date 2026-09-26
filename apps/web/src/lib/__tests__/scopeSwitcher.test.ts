@@ -17,6 +17,8 @@ function team(over: Partial<TeamSummary> & { name: string }): TeamSummary {
     members: [],
     channels: [],
     startedAt: null,
+    attentionCount: 0,
+    attention: [],
     ...over,
   };
 }

@@ -140,6 +140,8 @@ export function teamDetail(over: Partial<TeamDetail> = {}): TeamDetail {
     ],
     channels: [{ platform: 'slack', botKey: '#marketing' }],
     startedAt: new Date(NOW - (6 * 3600 + 12 * 60) * 1000).toISOString(),
+    attentionCount: 0,
+    attention: [],
     manifestYaml: '',
     manifestPath: '~/.ethos/teams/marketing.yaml',
     trustPolicy: { mode: 'flat' },

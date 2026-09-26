@@ -1257,6 +1257,17 @@ export const KanbanTaskSchema = z.object({
 });
 export type KanbanTask = z.infer<typeof KanbanTaskSchema>;
 
+/** A task as a tile: enough to render and deep-link, not the body. */
+export const KanbanTaskSummarySchema = KanbanTaskSchema.pick({
+  id: true,
+  title: true,
+  status: true,
+  assignee: true,
+  priority: true,
+  updatedAt: true,
+});
+export type KanbanTaskSummary = z.infer<typeof KanbanTaskSummarySchema>;
+
 export const KanbanCommentSchema = z.object({
   id: z.string(),
   taskId: z.string(),
@@ -1396,6 +1407,10 @@ export const TeamSummarySchema = KanbanTeamSummarySchema.extend({
   channels: z.array(TeamChannelSchema),
   /** ISO-8601 supervisor start time from the runtime file; null when stopped. */
   startedAt: z.string().nullable(),
+  /** Tasks in `blocked` or `needs_revision` (mobile-app S11); 0 with no board. */
+  attentionCount: z.number().int().nonnegative(),
+  /** The newest three of those, by `updatedAt`, newest first; `[]` with no board. */
+  attention: z.array(KanbanTaskSummarySchema),
 });
 export type TeamSummary = z.infer<typeof TeamSummarySchema>;
 

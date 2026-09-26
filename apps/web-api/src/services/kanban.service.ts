@@ -26,6 +26,7 @@ import type {
   KanbanRun,
   KanbanTask,
   KanbanTaskStatus,
+  KanbanTaskSummary,
   KanbanTeamSummary,
 } from '@ethosagent/web-contracts';
 
@@ -360,6 +361,43 @@ export class KanbanService {
         data: JSON.parse(r.data_json) as Record<string, unknown>,
         createdAt: new Date(r.created_at).toISOString(),
       }));
+    } finally {
+      store.close();
+    }
+  }
+
+  /**
+   * The tasks that need a human (mobile-app S11): every `blocked` plus every
+   * `needs_revision` row, counted, and the newest `top` of them by `updatedAt`
+   * (newest first). Two status-filtered queries over the
+   * `tasks_status_assignee` index (`KanbanStore.listTasks({ status })`) — not
+   * the board snapshot, whose `limit: 1000` could drop an attention row on a
+   * long board and undercount. No board → `{ count: 0, tasks: [] }`.
+   */
+  async attention(team: string, top = 3): Promise<{ count: number; tasks: KanbanTaskSummary[] }> {
+    if (team !== GLOBAL_BOARD_NAME) assertSafeTeamName(team);
+    const boardPath = resolveBoard(this.rootDir, team);
+    if (!existsSync(boardPath)) return { count: 0, tasks: [] };
+    const store = new KanbanStore(boardPath);
+    try {
+      const rows = [
+        ...store.listTasks({ status: 'blocked' }),
+        ...store.listTasks({ status: 'needs_revision' }),
+      ].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt);
+      return {
+        count: rows.length,
+        tasks: rows.slice(0, top).map((t) => {
+          const w = toWireTask(t);
+          return {
+            id: w.id,
+            title: w.title,
+            status: w.status,
+            assignee: w.assignee,
+            priority: w.priority,
+            updatedAt: w.updatedAt,
+          };
+        }),
+      };
     } finally {
       store.close();
     }

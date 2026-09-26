@@ -51,6 +51,8 @@ const MARKETING: TeamSummary = {
   ],
   channels: [],
   startedAt: null,
+  attentionCount: 0,
+  attention: [],
 };
 
 function Probe() {
