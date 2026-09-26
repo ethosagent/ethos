@@ -819,17 +819,12 @@ describe('engine_ask — model override', () => {
     expect(JSON.parse(String(rec.calls[0]?.init?.body)).model).toBe('gpt-custom');
   });
 
-  it('OPENAI_ANSWER_ENGINE_MODEL overrides the default when no opts.model is given', async () => {
-    const saved = process.env.OPENAI_ANSWER_ENGINE_MODEL;
-    process.env.OPENAI_ANSWER_ENGINE_MODEL = 'gpt-env-override';
-    try {
-      const rec = makeRecordingFetch(answerBody('A'));
-      await createEngineAskTool().execute({ query: 'q' }, ctxWith(rec.scopedFetch));
-      expect(JSON.parse(String(rec.calls[0]?.init?.body)).model).toBe('gpt-env-override');
-    } finally {
-      if (saved === undefined) delete process.env.OPENAI_ANSWER_ENGINE_MODEL;
-      else process.env.OPENAI_ANSWER_ENGINE_MODEL = saved;
-    }
+  it('OPENAI_ANSWER_ENGINE_MODEL in opts.env overrides the default when no opts.model is given', async () => {
+    const rec = makeRecordingFetch(answerBody('A'));
+    await createEngineAskTool({
+      env: { OPENAI_ANSWER_ENGINE_MODEL: 'gpt-env-override' },
+    }).execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+    expect(JSON.parse(String(rec.calls[0]?.init?.body)).model).toBe('gpt-env-override');
   });
 });
 

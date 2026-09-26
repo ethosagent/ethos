@@ -1891,6 +1891,10 @@ export function createSessionStore(
   });
 }
 
+// Core surface the web-api rpc shells need (rpc/context.ts, rpc/clarify.ts) —
+// re-exported so they reach core through wiring, not directly
+// (architecture.config.ts `web-api-rpc-is-thin`).
+export { type AgentLoop, type ClarifyBridge, clarifyUnresolvedMessage } from '@ethosagent/core';
 export {
   isGated,
   type MemoryApprovalMode,
@@ -1917,6 +1921,10 @@ export {
 // MemoryService can call the exact function the CLI `ethos memory restore`
 // uses, without depending on `apps/ethos`.
 export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
+// Secret redaction for app-level output (e.g. the `ethos -z` stream wire in
+// apps/ethos/src/commands/zero-stream.ts) — re-exported so apps reach the
+// safety package through wiring (ARCHITECTURE.md Law 5).
+export { redactString } from '@ethosagent/safety-redact';
 // Backend-aware memory (memory-lifecycle vault gaps, F04). By convention, code
 // outside a loop opens memory through these, so it acts on the configured
 // backend. Nothing enforces that: `HistoryStore` / `TombstoneStore` stay

@@ -1339,6 +1339,9 @@ export async function composeAllTools(
   for (const tool of createFileTools()) tools.register(tool);
   tools.register(
     createXSearchTool({
+      // The tool reads its model override (`XAI_X_SEARCH_MODEL`) from here,
+      // never from `process.env` itself.
+      env: process.env,
       // Personality tools.yaml is the source of truth; config.toolSettings is
       // the global fallback layer — the same two layers web_search resolves.
       resolvePersonalitySetting: (personalityId) =>
@@ -1348,6 +1351,8 @@ export async function composeAllTools(
   );
   tools.register(
     createEngineAskTool({
+      // Each engine's `modelEnvVar` override is read from here, not by the tool.
+      env: process.env,
       resolvePersonalitySetting: (personalityId) =>
         personalities.getToolsConfig(personalityId)?.engine_ask,
       ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),

@@ -73,6 +73,55 @@ export interface ClarifyRequest {
   answerableBy: ClarifyAnswerableBy;
 }
 
+/**
+ * What a caller hands `ClarifyBridge.request()` (packages/core/src/clarify/clarify-bridge.ts).
+ * A contract so a caller that only needs to ASK (e.g. `@ethosagent/worker-router`'s
+ * escalator) can type its dependency without importing core.
+ */
+export interface ClarifyRequestInput {
+  question: string;
+  options?: string[];
+  default?: string;
+  timeoutMs: number;
+  answerableBy: ClarifyAnswerableBy;
+  sessionId: string;
+  /**
+   * D22 — the background job issuing this clarify, when it's a background
+   * turn (`ToolContext.jobId`). Absent for foreground clarifies, which keep
+   * today's per-session lane. Keys the busy/queue lane as `jobId ?? sessionId`
+   * (G1) and is looked up via `setOriginResolver` for the origin-lane fallback
+   * (G2/G3/D7).
+   */
+  jobId?: string;
+  surfaceType: ClarifySurfaceType;
+  surfaceContext?: Record<string, unknown>;
+  /**
+   * D3 — what this clarify asks for. Omitted for an ordinary question; the
+   * persisted row then carries no `kind` either, which is what keeps rows
+   * written before this field existed readable.
+   */
+  kind?: ClarifyKind;
+  /** D3 — kind-specific detail (`browser_takeover`: the page and session). */
+  meta?: ClarifyMeta;
+  /** When the turn aborts, the pending clarify resolves as cancelled. */
+  abortSignal?: AbortSignal;
+  /**
+   * Handed the request id at the moment it is minted — before this call is
+   * observable to any surface, and long before it resolves.
+   *
+   * `request()` otherwise only reveals the id once it has RESOLVED, which is
+   * too late for a caller that has to BIND something to this specific request
+   * while it waits: `browser_request_takeover` stamps the id onto its browser
+   * session lock so the takeover socket can refuse a client presenting some
+   * other clarify's id (an authenticated viewer could otherwise drive one
+   * takeover while resolving an unrelated request).
+   *
+   * Optional and one-shot. An ordinary clarify passes nothing and behaves
+   * exactly as it did before this existed.
+   */
+  onRequestId?: (requestId: string) => void;
+}
+
 /** The user's (or timeout's) answer, correlated back to a request by id. */
 export interface ClarifyResponse {
   requestId: string;

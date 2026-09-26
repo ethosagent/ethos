@@ -23,7 +23,7 @@ You did not have to pick three. A super-agent that does everything was the easie
 | `engineer` | Writes, edits, runs, tests code | Terminal + read/write/patch + execute + lint + todos | Your deployment model (declares `model.default: claude-sonnet-4-6`, not read) | Its own (`personality:engineer`) |
 | `reviewer` | Critiques code and designs | Read + search_files + session_search (no write) | Your deployment model | Its own (`personality:reviewer`) |
 
-Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. All three declare vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)), and with no registry configured turn setup does not read it at all, so every built-in runs on your configured model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Pin any personality's model with `modelRouting.<id>` in `~/.ethos/config.yaml`.
+Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. All three declare vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/types/src/model-registry.ts`)), and with no registry configured turn setup does not read it at all, so every built-in runs on your configured model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Pin any personality's model with `modelRouting.<id>` in `~/.ethos/config.yaml`.
 
 Switch with `/personality <id>` in chat. The change takes effect on the next turn; the conversation thread does not fork.
 

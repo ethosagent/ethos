@@ -6,6 +6,7 @@ import type { ChannelFilterConfig, ChannelPlatformConfig } from '@ethosagent/saf
 import { detectSecrets } from '@ethosagent/safety-redact';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type {
+  Logger,
   LogLevel,
   ModelProfile,
   ModelRegistry,
@@ -3368,13 +3369,22 @@ export function ethosScriptsDir(): string {
  */
 let preVersionedConfigWarned = false;
 
-export async function readRawConfig(storage: Storage): Promise<EthosConfig | null> {
+/**
+ * `opts.logger` receives the one-per-process pre-versioned-config warning
+ * (Law 10 — library code is silent). The CLI passes one from its first config
+ * read (`initSecrets` in apps/ethos/src/wiring.ts); a read without a logger
+ * does not warn and does not use up the once-per-process warning.
+ */
+export async function readRawConfig(
+  storage: Storage,
+  opts: { logger?: Logger } = {},
+): Promise<EthosConfig | null> {
   const src = await storage.read(join(ethosDir(), 'config.yaml'));
   if (!src) return null;
   const parsed = parseConfigYaml(src);
-  if (parsed.schemaVersion === undefined && !preVersionedConfigWarned) {
+  if (parsed.schemaVersion === undefined && !preVersionedConfigWarned && opts.logger) {
     preVersionedConfigWarned = true;
-    console.warn(
+    opts.logger.warn(
       `\n[ethos] ~/.ethos/config.yaml is missing 'schemaVersion'. ` +
         `Treating as schemaVersion: ${CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}. ` +
         `Re-running 'ethos setup' (or adding 'schemaVersion: ${CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}' to the top of the file) ` +

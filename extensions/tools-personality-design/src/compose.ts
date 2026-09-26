@@ -1,5 +1,11 @@
-import type { PersonalityRegistry, Skill, Storage, Tool, ToolRegistry } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type {
+  PersonalityRegistry,
+  Skill,
+  Storage,
+  Tool,
+  ToolRegistry,
+  WiringContext,
+} from '@ethosagent/types';
 import { createPersonalityDesignTools, type ModelCatalogEntry } from './index';
 
 export interface PersonalityDesignToolsCompose {

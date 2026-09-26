@@ -1,0 +1,547 @@
+{
+  "$generated": {
+    "by": "archcheck",
+    "doNotEdit": true,
+    "regenerate": "npx archcheck emit",
+    "rules": [
+      "core-adapters-wrap-core",
+      "extensions-implement-contracts",
+      "kernel-reads-contracts",
+      "l1-contracts-pure",
+      "l10-silent-libraries",
+      "l2-core-no-concrete",
+      "l5-apps-through-wiring",
+      "no-computed-dynamic-import",
+      "no-empty-catch",
+      "no-inline-suppression",
+      "observability-sqlite-stays-extractable",
+      "p24-no-fsstorage-in-libraries",
+      "support-packages",
+      "surface-throws-ethos-error",
+      "tools-read-env-through-ctx",
+      "vendored-shim",
+      "web-api-rpc-is-thin"
+    ],
+    "source": "architecture.config.ts"
+  },
+  "rules": [
+    {
+      "files": [
+        "packages/plugin-sdk/src/**",
+        "packages/agent-bridge/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "extensions",
+        "observability-sqlite",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "plugin-sdk and agent-bridge wrap core for plugin authors and UI surfaces, and reach nothing concrete — take the implementation through a contract; let wiring compose it",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "core-adapters-wrap-core"
+    },
+    {
+      "files": [
+        "extensions/*/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "an extension implements contracts and never reaches wiring or apps — depend on the contract in @ethosagent/types; let wiring compose",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "extensions-implement-contracts"
+    },
+    {
+      "files": [
+        "packages/safety/*/src/**",
+        "packages/storage-fs/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "support",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "the security kernel depends only on contracts and vendored shims — take the dependency through a contract in @ethosagent/types",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/*/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "kernel-reads-contracts"
+    },
+    {
+      "files": [
+        "packages/types/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "security-kernel",
+        "support",
+        "tests",
+        "vendored",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "@ethosagent/types has zero imports and zero deps (§II L1) — move the shared type into @ethosagent/types, or stop sharing it",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/*/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/safety/*/src/**",
+        "packages/sqlite/src/**",
+        "packages/storage-fs/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "l1-contracts-pure"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "packages/**",
+        "extensions/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "member-access",
+      "message": "library code does not write to the console (Law 10) — use the injected Logger; only apps/ethos/src may print",
+      "ruleId": "l10-silent-libraries",
+      "target": "console"
+    },
+    {
+      "files": [
+        "packages/core/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "support",
+        "tests",
+        "vendored",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "core never imports concrete implementations (§II L2) — receive the implementation through AgentLoopConfig injection",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/*/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/sqlite/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "l2-core-no-concrete"
+    },
+    {
+      "files": [
+        "apps/*/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "core",
+        "extensions",
+        "observability-sqlite",
+        "security-kernel",
+        "tests"
+      ],
+      "message": "apps depend on contracts and wiring only; concrete implementations come via wiring (Law 5) — reach the implementation through @ethosagent/wiring",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/core/src/**",
+        "packages/safety/*/src/**",
+        "packages/storage-fs/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "l5-apps-through-wiring"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "packages/**",
+        "extensions/**",
+        "apps/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "computed-dynamic-import",
+      "message": "dynamic imports name a literal specifier so the graph stays readable — import a literal specifier, or register the module in a table",
+      "ruleId": "no-computed-dynamic-import"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "packages/**",
+        "extensions/**",
+        "apps/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "empty-catch",
+      "message": "a catch block handles, rethrows or explains the error it swallows — log, rethrow, or comment why the failure is safe to ignore",
+      "ruleId": "no-empty-catch"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "packages/**",
+        "extensions/**",
+        "apps/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "suppression-comment",
+      "message": "exceptions live in the manifest with an owner and an expiry, not inline — fix the code, or record an exception in architecture.config.ts",
+      "ruleId": "no-inline-suppression"
+    },
+    {
+      "files": [
+        "extensions/observability-sqlite/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core",
+        "core-adapters",
+        "extensions",
+        "support",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "observability-sqlite depends only on types, safety-redact and the sqlite shim, so it stays extractable — take the dependency as an injected contract from @ethosagent/types",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "packages/*/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "observability-sqlite-stays-extractable"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "extensions/**",
+        "apps/web-api/src/repositories/**",
+        "apps/web-api/src/services/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "new-expression",
+      "message": "library code receives an injected Storage and never constructs FsStorage (P2.4) — thread the Storage from the composition root (wiring / app entry)",
+      "ruleId": "p24-no-fsstorage-in-libraries",
+      "target": "FsStorage"
+    },
+    {
+      "files": [
+        "packages/*/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "library packages depend only on contracts, the kernel and vendored shims — take the dependency through a contract, or move the code into wiring",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "support-packages"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "apps/ethos/src/commands/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "new-expression",
+      "message": "CLI surface code throws EthosError, not raw Error (Phase 30.9) — throw new EthosError({ code, cause, action })",
+      "ruleId": "surface-throws-ethos-error",
+      "target": "Error"
+    },
+    {
+      "autofix": false,
+      "files": [
+        "extensions/tools-*/src/**",
+        "!extensions/tools-process/src/spawn.ts",
+        "!extensions/tools-process/src/operations.ts",
+        "!extensions/tools-process/src/registry.ts",
+        "!extensions/tools-process/src/watcher.ts",
+        "!extensions/tools-browser/src/sessions.ts",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx"
+      ],
+      "forbid": "member-access",
+      "message": "tool code reads configuration through ctx.*, not process.env — use ctx.secrets / ctx.process; boot checks belong in isAvailable()",
+      "ruleId": "tools-read-env-through-ctx",
+      "target": "process.env"
+    },
+    {
+      "files": [
+        "packages/sqlite/src/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "apps",
+        "core",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "security-kernel",
+        "support",
+        "tests",
+        "web-api-rpc",
+        "wiring"
+      ],
+      "message": "the sqlite shim is a thin platform wrapper with no Ethos semantics — keep Ethos semantics out of the shim; put them in its caller",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/*/src/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "apps/web-api/src/rpc/**",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/*/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/safety/*/src/**",
+        "packages/storage-fs/src/**",
+        "packages/wiring/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "vendored-shim"
+    },
+    {
+      "files": [
+        "apps/web-api/src/rpc/**"
+      ],
+      "forbid": "import-path-matching",
+      "forbiddenLayers": [
+        "app-entry",
+        "core",
+        "core-adapters",
+        "extensions",
+        "observability-sqlite",
+        "security-kernel",
+        "tests",
+        "vendored"
+      ],
+      "message": "web-api rpc handlers validate input, call one service method and return its result — move data access into a repository or service under apps/web-api/src",
+      "patterns": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "apps/acp-server/src/index.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/serve.ts",
+        "apps/ethos/src/index.ts",
+        "apps/ethos/src/lib/acp-mcp-wiring.ts",
+        "apps/ethos/src/wiring.ts",
+        "apps/mcp-server/src/index.ts",
+        "apps/tui/src/index.ts",
+        "apps/tui/src/setup/index.ts",
+        "apps/web-api/src/index.ts",
+        "extensions/*/src/**",
+        "extensions/observability-sqlite/src/**",
+        "packages/agent-bridge/src/**",
+        "packages/core/src/**",
+        "packages/plugin-sdk/src/**",
+        "packages/safety/*/src/**",
+        "packages/sqlite/src/**",
+        "packages/storage-fs/src/**",
+        "vitest.config.ts"
+      ],
+      "ruleId": "web-api-rpc-is-thin"
+    }
+  ]
+}

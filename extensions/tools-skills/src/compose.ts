@@ -1,5 +1,4 @@
-import type { Skill, Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Skill, Tool, WiringContext } from '@ethosagent/types';
 import { createSkillsTools, type PendingSkillsPort, type SkillEntry } from './index';
 
 export interface SkillsToolsCompose {

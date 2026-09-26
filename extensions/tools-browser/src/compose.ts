@@ -1,6 +1,5 @@
 import { join } from 'node:path';
-import type { Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Tool, WiringContext } from '@ethosagent/types';
 import type { BrowserToolsOptions } from './index';
 import { createBrowserTools } from './index';
 import { startIdleSweeper } from './sessions';

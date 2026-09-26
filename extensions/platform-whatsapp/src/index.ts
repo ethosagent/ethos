@@ -6,6 +6,7 @@ import type {
   AttachmentCache,
   DeliveryResult,
   InboundMessage,
+  Logger,
   OutboundMessage,
   PlatformAdapter,
   SendVoiceNoteOptions,
@@ -57,6 +58,11 @@ export interface WhatsAppAdapterConfig {
    * `gateway.maxInboundMediaBytes`.
    */
   maxInboundMediaBytes?: number;
+  /**
+   * Where pairing and QR failures are reported (Law 10 — library code is
+   * silent). The gateway passes its adapter logger; absent, they are dropped.
+   */
+  logger?: Logger;
 }
 
 export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
@@ -101,6 +107,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
   private readonly pendingReactions = new Map<string, string>();
   private readonly defaultChannelMode: ChannelMode;
   private readonly channelOverrides?: ChannelOverrideStore<ChannelMode>;
+  private readonly logger?: Logger;
 
   constructor(config: WhatsAppAdapterConfig) {
     this.config = config;
@@ -109,6 +116,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
       config.id ??
       `wa-${config.sessionDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
     this.id = `whatsapp:${this.botKey}`;
+    this.logger = config.logger?.child({ component: 'whatsapp' });
     this.defaultChannelMode = config.defaultMode ?? DEFAULT_CHANNEL_MODE;
 
     // Same shape as Discord's: the shared store takes the PER-BOT directory
@@ -188,7 +196,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
           })
           .catch((err: unknown) => {
             const detail = err instanceof Error ? err.message : String(err);
-            console.error(`[whatsapp] requestPairingCode failed: ${detail}`);
+            this.logger?.error(`[whatsapp] requestPairingCode failed: ${detail}`);
           });
       }, 3000);
     }
@@ -202,7 +210,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
           })
           .catch((err: unknown) => {
             const detail = err instanceof Error ? err.message : String(err);
-            console.error(`[whatsapp] QR render failed: ${detail}`);
+            this.logger?.error(`[whatsapp] QR render failed: ${detail}`);
           });
         if (this.config.onQr) this.config.onQr(update.qr);
       }
@@ -215,7 +223,7 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
           if (!registered && this.reconnectAttempts > 4) {
             // Pairing keeps failing across retries — almost certainly rate-limited.
             // Stop the spiral instead of requesting yet another code.
-            console.error(
+            this.logger?.error(
               '[whatsapp] pairing failed repeatedly — WhatsApp is likely rate-limiting this number from too many attempts. Stop the gateway, wait several minutes, then restart to try once more.',
             );
             this.config.onPairingCode?.(null);

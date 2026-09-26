@@ -1,6 +1,5 @@
-import type { Tool } from '@ethosagent/types';
+import type { Tool, WiringContext } from '@ethosagent/types';
 import type { WatcherManager } from '@ethosagent/watchers';
-import type { WiringContext } from '@ethosagent/wiring/types';
 import { createWatcherTools, type WatcherOutboxGate } from './index';
 
 export interface WatcherToolsCompose {

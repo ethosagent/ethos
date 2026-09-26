@@ -1,11 +1,11 @@
 import { redactArgs } from '@ethosagent/core';
-import { redactString } from '@ethosagent/safety-redact';
 import {
   credentialInstruction,
   type EventTranslator,
   shouldSurfaceProgress,
 } from '@ethosagent/surface-kit';
 import { type AgentEvent, answerSuffix } from '@ethosagent/types';
+import { redactString } from '@ethosagent/wiring';
 
 /**
  * The `ethos -z --format stream-json|json` wire (plan hermes-0.21.4-fixes §7).

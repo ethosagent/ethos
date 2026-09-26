@@ -219,14 +219,16 @@ describe('4.1 — HTML mode send()', () => {
     );
   });
 
-  it('falls back to plain text on parse error and logs console.warn', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('falls back to plain text on parse error and logs a warning', async () => {
+    const warnSpy = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: warnSpy, error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
 
     mockApi.sendMessage
       .mockRejectedValueOnce(new Error("can't parse entities"))
       .mockResolvedValueOnce({ message_id: 99 });
 
-    const adapter = mk({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache, logger });
     await adapter.start();
 
     const result = await adapter.send('100', { text: 'bad **markup' });
@@ -237,8 +239,6 @@ describe('4.1 — HTML mode send()', () => {
     expect(warnMsg).toContain('[telegram] HTML parse fallback');
     expect(warnMsg).toContain('chunk=1/1');
     expect(warnMsg).toMatch(/hash=[0-9a-f]{8}/);
-
-    warnSpy.mockRestore();
   });
 
   it('returns error on non-parse send failure', async () => {

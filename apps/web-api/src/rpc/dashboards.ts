@@ -3,7 +3,7 @@ import {
   refreshAllPanels,
   refreshPanelById,
   runPluginQuery,
-} from '@ethosagent/dashboard';
+} from '../services/dashboards.service';
 import { os } from './context';
 
 export const dashboardsRouter = {

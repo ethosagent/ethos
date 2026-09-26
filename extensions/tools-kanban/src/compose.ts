@@ -1,6 +1,5 @@
 import type { KanbanStore } from '@ethosagent/kanban-store';
-import type { HookRegistry, LLMProvider, Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { HookRegistry, LLMProvider, Tool, WiringContext } from '@ethosagent/types';
 import { type AutonomyTierOf, createKanbanTools, type PersonalityLookup } from './index';
 
 export interface KanbanToolsCompose {

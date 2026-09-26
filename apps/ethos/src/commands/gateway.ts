@@ -3796,7 +3796,7 @@ export async function buildAdapters(
 ): Promise<PlatformAdapter[]> {
   config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
-  // Adapter startup diagnostics. Both Telegram and Slack take an optional
+  // Adapter diagnostics. Telegram, Slack and WhatsApp take an optional
   // `logger` and go silent without one — Slack's "authenticated as @…" line
   // and Telegram's observe-mode privacy-mode warning are only reachable
   // because this is passed. Each adapter `child()`s it with its own tag.
@@ -4103,6 +4103,8 @@ export async function buildAdapters(
             ...(config.gateway?.maxInboundMediaBytes !== undefined
               ? { maxInboundMediaBytes: config.gateway.maxInboundMediaBytes }
               : {}),
+            // Pairing-code and QR failures, including the rate-limit stop.
+            logger: adapterLogger,
           }),
         );
       }

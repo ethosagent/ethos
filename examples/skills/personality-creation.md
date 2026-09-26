@@ -44,7 +44,7 @@ For a packaged personality (npm or local plugin), use `api.registerPersonality({
 | `name` | yes | Display name (e.g. `Engineer`). Defaults to title-cased id. |
 | `description` | yes | One-line summary used in `/personality` listings. |
 | `provider` | no | Shown on the character sheet. Model selection does not read it: a registry alias carries its own provider entry (`toResolved` in `packages/core/src/model-resolution.ts`). |
-| `model` or `model.trivial` / `model.default` / `model.deep` / `model.dreaming` | no | A role (`trivial`, `default`, `deep`, `dreaming`) or a `modelRegistry` alias — one string, or one per role. A vendor id does not parse (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)). With no registry configured the declaration is not read and turns run on the deployment model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)); `modelRouting.<id>` in `~/.ethos/config.yaml` overrides it either way. |
+| `model` or `model.trivial` / `model.default` / `model.deep` / `model.dreaming` | no | A role (`trivial`, `default`, `deep`, `dreaming`) or a `modelRegistry` alias — one string, or one per role. A vendor id does not parse (`parseModelDeclaration` (`packages/types/src/model-registry.ts`)). With no registry configured the declaration is not read and turns run on the deployment model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)); `modelRouting.<id>` in `~/.ethos/config.yaml` overrides it either way. |
 | `platform` | no | Restrict to a platform (`cli`, `telegram`). |
 | `capabilities` | no | Comma-separated mesh roles, e.g. `code, review`. Advisory; not the same as `toolset`. |
 

@@ -1,5 +1,5 @@
-import type { ClarifyBridge } from '@ethosagent/core';
 import type {
+  ClarifyRequestInput,
   ClarifyResponse,
   ClarifySurfaceType,
   InteractionAnswer,
@@ -45,7 +45,8 @@ export const DEFAULT_PARK_TIMEOUT_MS = 24 * 3_600_000;
 export const RUN_SCOPE_ANSWER = 'Allow for this run';
 
 export interface ClarifyEscalatorDeps {
-  bridge: Pick<ClarifyBridge, 'request'>;
+  /** `ClarifyBridge.request` (packages/core/src/clarify/clarify-bridge.ts), typed by contract. */
+  bridge: { request(input: ClarifyRequestInput): Promise<ClarifyResponse> };
   /** Resolves the asking job — its `childSessionKey` is the clarify's session. */
   jobs: Pick<JobStore, 'get'>;
   /**

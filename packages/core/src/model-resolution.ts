@@ -3,7 +3,8 @@
 // Three concerns live here, all of them PURE — no I/O, no clock, no randomness,
 // deterministic given their inputs:
 //
-//   `parseModelDeclaration`  the ONE grammar for a legal model declaration (D25)
+//   `parseModelDeclaration`  the ONE grammar for a legal model declaration (D25),
+//                            defined in `packages/types/src/model-registry.ts`
 //   `resolveModel`           the six-rung resolution order (D7), identical solo
 //                            and in a team
 //   `describeDeviation`      the ONE message builder for `ModelDeviation` (D17)
@@ -26,16 +27,18 @@ import {
   type ModelResolutionSource,
   type ModelRoleName,
   type PersonalityConfig,
+  parseModelDeclaration,
   type ResolvedModel,
 } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
-// D25 — one declaration parser, five callers
+// Registry lookups
 // ---------------------------------------------------------------------------
-
-function isRoleName(value: string): value is ModelRoleName {
-  return (MODEL_ROLE_NAMES as readonly string[]).includes(value);
-}
+//
+// `parseModelDeclaration` — the ONE declaration grammar (D25) — lives in
+// `packages/types/src/model-registry.ts` so `@ethosagent/config` can read a
+// declaration without importing core. Imported above; re-exported unchanged
+// by `packages/core/src/index.ts`.
 
 /** `Object.hasOwn` guard so a key like `__proto__` cannot answer for an entry. */
 function lookupEntry(registry: ModelRegistry, alias: string): ModelRegistryEntry | undefined {
@@ -46,79 +49,6 @@ function lookupString(map: Record<string, string> | undefined, key: string): str
   if (!map || !Object.hasOwn(map, key)) return undefined;
   const value = map[key];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-/**
- * Near-miss candidates for a declaration nothing matched.
- *
- * Case-insensitive, bidirectional substring plus a three-character common
- * prefix — deliberately cheap. Edit distance would be better copy and a new
- * dependency in the kernel layer; a refusal that lists every configured alias
- * is already actionable, and this only orders that list usefully.
- */
-function nearMisses(value: string, candidates: readonly string[]): string[] {
-  const needle = value.trim().toLowerCase();
-  if (needle.length === 0) return [];
-  const hits: string[] = [];
-  for (const candidate of candidates) {
-    const hay = candidate.toLowerCase();
-    const sharedPrefix =
-      hay.length >= 3 && needle.length >= 3 && hay.slice(0, 3) === needle.slice(0, 3);
-    if (hay.includes(needle) || needle.includes(hay) || sharedPrefix) hits.push(candidate);
-  }
-  return hits;
-}
-
-/**
- * The two legal values of a model declaration: a role, or a registry alias (D1).
- *
- * **Namespace order, and why it is unobservable.** Roles and aliases share one
- * namespace and the four role names are RESERVED — a registry may not define an
- * alias called `trivial`, `default`, `deep` or `dreaming`, refused by
- * `validateModelRegistry` in `packages/config/src/model-registry.ts` (T1.3, not
- * yet written at the time this landed). So a role and an alias cannot both match
- * one value, and checking roles first is a statement of that reservation rather
- * than a precedence rule with teeth.
- *
- * The precedence that DOES have teeth is a different pair: an alias literally
- * named like a vendor id must beat the D11c shim's exact-`modelId` match. That
- * shim (`mapLegacyModelDeclaration`, below) calls this parser FIRST and only
- * guesses when this returns `invalid`, which is what makes the alias win.
- * Pinned by `an alias literally named like a vendor id wins over the
- * exact-modelId match` in `packages/core/src/__tests__/model-resolution.test.ts`.
- */
-export function parseModelDeclaration(
-  value: unknown,
-  ctx: { aliases: readonly string[] },
-): ModelDeclaration | ModelDeclarationError {
-  if (typeof value !== 'string') {
-    return {
-      kind: 'invalid',
-      reason: `A model declaration must be a role or a configured model name, not ${typeof value}.`,
-      suggestions: allCandidates(ctx.aliases),
-    };
-  }
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return {
-      kind: 'invalid',
-      reason: 'A model declaration must not be empty.',
-      suggestions: allCandidates(ctx.aliases),
-    };
-  }
-  if (isRoleName(trimmed)) return { kind: 'role', role: trimmed };
-  if (ctx.aliases.includes(trimmed)) return { kind: 'alias', alias: trimmed };
-
-  const near = nearMisses(trimmed, allCandidates(ctx.aliases));
-  return {
-    kind: 'invalid',
-    reason: `"${trimmed}" is neither a role nor a model configured on this machine.`,
-    suggestions: near.length > 0 ? near : allCandidates(ctx.aliases),
-  };
-}
-
-function allCandidates(aliases: readonly string[]): string[] {
-  return [...MODEL_ROLE_NAMES, ...aliases];
 }
 
 // ---------------------------------------------------------------------------

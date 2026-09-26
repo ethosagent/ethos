@@ -1,6 +1,5 @@
 import type { ClarifyBridge } from '@ethosagent/core';
-import type { Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Tool, WiringContext } from '@ethosagent/types';
 import { createInteractiveTools } from './index';
 
 export interface InteractiveToolsCompose {

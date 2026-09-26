@@ -1,11 +1,12 @@
-import type {
-  ModelDeviation,
-  ModelRegistry,
-  ModelResolutionContext,
-  ModelResolutionFailure,
-  ModelRoleName,
-  PersonalityConfig,
-  ResolvedModel,
+import {
+  type ModelDeviation,
+  type ModelRegistry,
+  type ModelResolutionContext,
+  type ModelResolutionFailure,
+  type ModelRoleName,
+  type PersonalityConfig,
+  parseModelDeclaration,
+  type ResolvedModel,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -13,7 +14,6 @@ import {
   describeDeviation,
   ModelFallbacksExhaustedError,
   mapLegacyModelDeclaration,
-  parseModelDeclaration,
   resolveModel,
 } from '../model-resolution';
 
