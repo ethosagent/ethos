@@ -25,7 +25,7 @@ Built-ins shipped in `data/`:
 | `team-architect` | deployment model | System personality: composes personalities into teams. |
 | `debug` | deployment model | System personality (`SYSTEM_PERSONALITY_IDS`). |
 
-Every built-in declares vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)), and with no registry configured turn setup does not read it at all (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Retired personalities (`coach`, `coordinator`, `operator`, `task-tracker`) sit under `data/archived/`; that directory has no `config.yaml` or `SOUL.md` of its own, so the loader skips it.
+Every built-in declares vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/types/src/model-registry.ts`)), and with no registry configured turn setup does not read it at all (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Retired personalities (`coach`, `coordinator`, `operator`, `task-tracker`) sit under `data/archived/`; that directory has no `config.yaml` or `SOUL.md` of its own, so the loader skips it.
 
 ## How it works
 

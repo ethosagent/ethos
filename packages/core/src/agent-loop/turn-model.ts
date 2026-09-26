@@ -16,19 +16,16 @@
 // character sheet (`packages/wiring/src/tier-diagnostics.ts`), so the sheet
 // cannot claim a model the turn would not send.
 
-import type {
-  ModelDeviation,
-  ModelResolutionContext,
-  ModelResolutionFailure,
-  ModelResolutionSource,
-  ModelRoleName,
-  PersonalityConfig,
-} from '@ethosagent/types';
 import {
-  mapLegacyModelDeclaration,
+  type ModelDeviation,
+  type ModelResolutionContext,
+  type ModelResolutionFailure,
+  type ModelResolutionSource,
+  type ModelRoleName,
+  type PersonalityConfig,
   parseModelDeclaration,
-  resolveModel,
-} from '../model-resolution';
+} from '@ethosagent/types';
+import { mapLegacyModelDeclaration, resolveModel } from '../model-resolution';
 
 /** What a turn resolved to, flattened to what `run_start` and the LLM call need. */
 export interface TurnModel {

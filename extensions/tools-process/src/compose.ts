@@ -4,8 +4,8 @@ import type {
   HookRegistry,
   PersonalityConfig,
   Tool,
+  WiringContext,
 } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
 import { createProcessTools } from './index';
 
 export interface ProcessToolsComposeOpts {

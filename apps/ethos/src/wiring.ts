@@ -5,6 +5,7 @@ import { type EthosConfig, ethosDir, readKeys, readRawConfig } from '@ethosagent
 import type { AgentLoop, DefaultToolRegistry } from '@ethosagent/core';
 import type { CronJob } from '@ethosagent/cron';
 import type { BusySource, IdleWatcherCapabilities } from '@ethosagent/idle-watcher';
+import { ConsoleLogger } from '@ethosagent/logger';
 import {
   BlobStore,
   OBSERVABILITY_KILL_SWITCH_FILE,
@@ -73,7 +74,7 @@ async function initSecrets(): Promise<SecretsResolver> {
   });
   const env = new EnvSecretsResolver();
 
-  const rawConfig = await readRawConfig(getStorage());
+  const rawConfig = await readRawConfig(getStorage(), { logger: new ConsoleLogger() });
   if (rawConfig?.aws?.secrets?.enabled) {
     const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
     const awsResolver = new AwsSecretsManagerResolver({

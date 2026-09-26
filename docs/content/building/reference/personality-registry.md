@@ -137,7 +137,7 @@ export interface UpdatePersonalityPatch {
 }
 ```
 
-Neither shape has a memory scope field: a personality's memory scope is always `personality:<id>`. A `model` names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)), as one string or as a per-role map written back as `model.<role>` keys; with no registry configured, `resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`) does not read it at all. `voice.*` and `display.avatar_url` treat `''` as clear and `undefined` as leave-alone.
+Neither shape has a memory scope field: a personality's memory scope is always `personality:<id>`. A `model` names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/types/src/model-registry.ts`)), as one string or as a per-role map written back as `model.<role>` keys; with no registry configured, `resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`) does not read it at all. `voice.*` and `display.avatar_url` treat `''` as clear and `undefined` as leave-alone.
 
 ## mtime caching {#mtime-caching}
 

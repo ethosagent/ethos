@@ -1,5 +1,4 @@
-import type { LLMProvider, Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { LLMProvider, Tool, WiringContext } from '@ethosagent/types';
 import { createVisionTools } from './index';
 
 export interface VisionToolsCompose {

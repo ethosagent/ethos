@@ -1,7 +1,6 @@
-import type { AgentLoop, ClarifyBridge } from '@ethosagent/core';
-import type { DashboardsService } from '@ethosagent/dashboard';
 import type { ToolRegistry } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
+import type { AgentLoop, ClarifyBridge } from '@ethosagent/wiring';
 import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
 import type { DebugService } from '../features/debug/service';
@@ -13,6 +12,7 @@ import type { CallsService } from '../services/calls.service';
 import type { ConfigService } from '../services/config.service';
 import type { CredentialsService } from '../services/credentials.service';
 import type { CronService } from '../services/cron.service';
+import type { DashboardsService } from '../services/dashboards.service';
 import type { DecisionsService } from '../services/decisions.service';
 import type { DeliveriesService } from '../services/deliveries.service';
 import type { DigestService } from '../services/digest.service';

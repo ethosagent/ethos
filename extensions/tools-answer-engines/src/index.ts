@@ -72,6 +72,12 @@ export interface CreateEngineAskToolOptions {
    * it means; it overrides the engine's `modelEnvVar` and its `defaultModel`.
    */
   models?: Partial<Record<EngineId, string>>;
+  /**
+   * Where each engine's `modelEnvVar` override is read from. The composition
+   * root (`packages/wiring/src/compose-tools.ts`) passes the process environment; tool
+   * code never reads it itself. Absent → no env override.
+   */
+  env?: Readonly<Record<string, string | undefined>>;
   /** Personality-owned binding (source of truth), resolved by personalityId. */
   resolvePersonalitySetting?: (personalityId: string) => EngineAskSetting | undefined;
   /** Global FALLBACK map keyed by personalityId or `_default`. */
@@ -80,10 +86,10 @@ export interface CreateEngineAskToolOptions {
 
 export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool {
   // Resolved once per engine at factory time — factory option, then the
-  // engine's own env var, then the engine's default.
+  // engine's own env var (from `opts.env`), then the engine's default.
   const models: Record<string, string> = {};
   for (const e of ALL_ENGINES) {
-    models[e.id] = opts.models?.[e.id] ?? process.env[e.modelEnvVar] ?? e.defaultModel;
+    models[e.id] = opts.models?.[e.id] ?? opts.env?.[e.modelEnvVar] ?? e.defaultModel;
   }
   const { resolvePersonalitySetting, toolSettings } = opts;
 

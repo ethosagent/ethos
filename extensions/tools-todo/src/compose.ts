@@ -1,5 +1,4 @@
-import type { Tool } from '@ethosagent/types';
-import type { WiringContext } from '@ethosagent/wiring/types';
+import type { Tool, WiringContext } from '@ethosagent/types';
 import { createTodoTools, InMemoryTodoStore } from './index';
 
 export interface TodoToolsCompose {

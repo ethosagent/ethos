@@ -26,9 +26,9 @@ export class OpenAIDalleProvider implements ImageGenProvider {
   async generate(opts: GenerateOpts): Promise<GenerateResult> {
     const key = opts.apiKey ?? this.apiKey;
     if (!key) throw new Error('OPENAI_API_KEY not provided');
-    // biome-ignore lint/suspicious/noExplicitAny: openai is an optional dep — no static types at this call site
-    const mod = await import('openai' as any);
-    const OpenAI = mod.default ?? mod;
+    // `openai` is an optional dependency: a literal dynamic import keeps it
+    // off the load path until an image is actually generated.
+    const { default: OpenAI } = await import('openai');
     const client = new OpenAI({ apiKey: key });
 
     const response = await client.images.generate({
@@ -40,7 +40,7 @@ export class OpenAIDalleProvider implements ImageGenProvider {
       n: 1,
     });
 
-    const datum = response.data[0];
+    const datum = response.data?.[0];
     const b64 = datum?.b64_json;
     if (!b64) throw new Error('DALL-E returned no image data');
 

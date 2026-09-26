@@ -1,3 +1,7 @@
+export type { ClarifyRequestInput } from '@ethosagent/types';
+// The declaration grammar itself lives in the contracts layer so
+// `@ethosagent/config` can share it without importing core.
+export { parseModelDeclaration } from '@ethosagent/types';
 export type {
   AgentEvent,
   AgentLoopConfig,
@@ -101,7 +105,6 @@ export {
   type ClarifyOriginLane,
   type ClarifyOriginResolver,
   type ClarifyPresenter,
-  type ClarifyRequestInput,
   type ClarifyResolvedListener,
   ClarifyTimedOutNoDefaultError,
 } from './clarify/clarify-bridge';
@@ -184,7 +187,6 @@ export {
   describeDeviation,
   ModelFallbacksExhaustedError,
   mapLegacyModelDeclaration,
-  parseModelDeclaration,
   resolveModel,
 } from './model-resolution';
 export { DefaultNotificationRouter } from './notification-router';

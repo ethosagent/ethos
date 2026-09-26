@@ -541,9 +541,10 @@ export interface TelegramAdapterConfig {
    */
   maxInboundMediaBytes?: number;
   /**
-   * Logger for startup diagnostics — currently the observe-mode privacy-mode
-   * warning. Absent means those diagnostics are not reported and the checks
-   * behind them are skipped. Matches `SlackAdapterConfig.logger`.
+   * Logger for adapter diagnostics — the observe-mode privacy-mode warning,
+   * a stopped polling loop and the HTML-parse fallback. Absent means those
+   * diagnostics are not reported and the checks behind them are skipped.
+   * Matches `SlackAdapterConfig.logger`.
    */
   logger?: Logger;
 }
@@ -1150,7 +1151,7 @@ export class TelegramAdapter
       // handler so a bad Telegram token degrades to a logged warning instead.
       this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        console.error(`[telegram] bot polling stopped: ${detail}`);
+        this.logger?.error(`[telegram] bot polling stopped: ${detail}`);
       });
     }
   }
@@ -1312,7 +1313,7 @@ export class TelegramAdapter
           }
         } else if (errMsg.includes('parse')) {
           // HTML/Markdown parse errors — retry as plain text (observable fallback)
-          console.warn(
+          this.logger?.warn(
             `[telegram] HTML parse fallback chunk=${i + 1}/${totalChunks} hash=${chunkHash(raw)}`,
           );
           const sent = await this.bot.api
