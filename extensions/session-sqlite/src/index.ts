@@ -482,14 +482,18 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    // Key prefixes are literal and case-sensitive: an exact `substr`
+    // comparison, never LIKE, which folds ASCII case (`Sales` / `sales` are
+    // different bots) and reads `%`/`_` as wildcards. Pinned by
+    // `__tests__/key-prefix-filter.test.ts`.
     if (filter?.keyPrefix) {
-      conditions.push("key LIKE ? ESCAPE '\\'");
-      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+      conditions.push('substr(key, 1, length(?)) = ?');
+      values.push(filter.keyPrefix, filter.keyPrefix);
     }
     if (filter?.excludeKeyPrefixes) {
       for (const prefix of filter.excludeKeyPrefixes) {
-        conditions.push("key NOT LIKE ? ESCAPE '\\'");
-        values.push(`${prefix.replace(/[%_\\]/g, '\\$&')}%`);
+        conditions.push('substr(key, 1, length(?)) != ?');
+        values.push(prefix, prefix);
       }
     }
     if (filter?.personalityId) {
@@ -507,10 +511,6 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.since) {
       conditions.push('created_at >= ?');
       values.push(filter.since.toISOString());
-    }
-    if (filter?.keyPrefix) {
-      conditions.push('key LIKE ?');
-      values.push(`${filter.keyPrefix}%`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

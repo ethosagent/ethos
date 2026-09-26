@@ -49,14 +49,14 @@ export class SqliteKeyValueStore implements KeyValueStore {
   }
 
   async list(prefix: string): Promise<string[]> {
-    const escaped = prefix.replace(/[%_\\]/g, '\\$&');
+    // Literal, case-sensitive prefix — not LIKE, which folds ASCII case.
     const rows = this.db
       .prepare(
         `SELECT DISTINCT key FROM tool_kv
-         WHERE tool = ? AND scope_id = ? AND key LIKE ? ESCAPE '\\'
+         WHERE tool = ? AND scope_id = ? AND substr(key, 1, length(?)) = ?
            AND (expires_at IS NULL OR expires_at > ?)`,
       )
-      .all(this.tool, this.scopeId, `${escaped}%`, Date.now()) as { key: string }[];
+      .all(this.tool, this.scopeId, prefix, prefix, Date.now()) as { key: string }[];
     return rows.map((r) => r.key);
   }
 }

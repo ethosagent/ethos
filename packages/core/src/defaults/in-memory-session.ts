@@ -71,6 +71,9 @@ export class InMemorySessionStore implements SessionStore {
   async listSessions(filter?: SessionFilter): Promise<Session[]> {
     let results = [...this.sessions.values()];
     if (filter?.platform) results = results.filter((s) => s.platform === filter.platform);
+    // Literal, case-sensitive — the SQLite store's `substr` comparison.
+    const keyPrefix = filter?.keyPrefix;
+    if (keyPrefix) results = results.filter((s) => s.key.startsWith(keyPrefix));
     if (filter?.personalityId)
       results = results.filter((s) => s.personalityId === filter.personalityId);
     if (filter?.workingDir) results = results.filter((s) => s.workingDir === filter.workingDir);
