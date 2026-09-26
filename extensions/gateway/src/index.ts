@@ -1614,6 +1614,15 @@ export class Gateway {
   /** Per-lane `/mute` expiry (epoch ms), persisted beside the lane's session
    *  key in its lane file (`LaneSessionEntry.mutedUntil`). */
   private readonly laneMutes = new Map<string, number>();
+  /**
+   * `deliver: 'parent'` reviews waiting out a hold (U11), by job id. Not
+   * persisted: a parked job's delivery claim is never taken, so after a restart
+   * `sweepUndeliveredJobs` re-owes it. See {@link admitWakeReview}.
+   */
+  private readonly parkedReviews = new Map<
+    string,
+    { bot: GatewayBotConfig; job: BackgroundJob; laneKey: string }
+  >();
   /** Binding re-check for {@link deliverPublication}. Absent → it refuses. */
   private readonly publicationSpeaksFor: PublicationSpeaksFor | undefined;
   /** Accumulated host-pause duration discounted from the stale-obligation
@@ -4365,6 +4374,12 @@ export class Gateway {
    * ledger holds a `pending` obligation (stamped `inboundRef`) that its sweep
    * will retry. `false` = nobody does — no adapter here, or no ledger and an
    * unconfirmed send — so the caller must leave the row for a later attempt.
+   *
+   * U11 — the plain notice is unprompted, so inside quiet hours or a lane
+   * `/mute` it is held ({@link holdNotice}) and `true` is returned: the durable
+   * held-notice store now owns it and {@link releaseHeldNotices} sends it once
+   * the hold ends, so the row can close. Pinned by the U11 fallback case in
+   * `__tests__/parent-review.test.ts`.
    */
   private async sendReviewFallback(
     target: SpoolTurnTarget,
@@ -4373,6 +4388,20 @@ export class Gateway {
   ): Promise<boolean> {
     const adapter = this.adapterForBot(target.botKey, target.platform);
     if (!adapter) return false;
+    const sessionKey = this.sessionKeys.get(target.laneKey) ?? target.laneKey;
+    if (
+      await this.holdNotice({
+        botKey: target.botKey,
+        platform: target.platform,
+        chatId: target.chatId,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+        laneKey: target.laneKey,
+        sessionKey,
+        text,
+      })
+    ) {
+      return true;
+    }
     if (!this.outboundDedup.shouldSend(target.laneKey, text)) return true;
     const confirmed = await this.sendTracked(
       {
@@ -4380,7 +4409,7 @@ export class Gateway {
         botKey: target.botKey,
         platform: target.platform,
         chatId: target.chatId,
-        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        sessionKey,
         ...(inboundRef ? { inboundRef } : {}),
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
@@ -5680,6 +5709,16 @@ export class Gateway {
    * empty answer, a tool-started crash, staleness or the attempt cap hand the
    * user the plain wake notice instead (`deliverReviewFallback`). Never lost,
    * never both. A spool write that throws fails open to the plain notice.
+   *
+   * U11 — a review is as unprompted as the plain notice, and it costs a paid
+   * turn. Inside quiet hours or a lane `/mute` ({@link noticeHoldReason}, the
+   * same decision and the same `heldNotices` enablement {@link holdNotice}
+   * uses) nothing is admitted: the job is parked in `parkedReviews` with its
+   * delivery claim NOT taken, and {@link releaseParkedReviews} admits it once
+   * the hold ends. A restart meanwhile loses only the in-memory park; the
+   * unclaimed job is re-owed by `sweepUndeliveredJobs`, which comes back here.
+   * Returns false while parked (nothing delivered yet). Pinned by the U11 cases
+   * in `__tests__/parent-review.test.ts`.
    */
   private async admitWakeReview(
     bot: GatewayBotConfig,
@@ -5691,6 +5730,16 @@ export class Gateway {
     const platform = job.originPlatform;
     const chatId = job.originChatId;
     if (!spool || !platform || !chatId) return false;
+    const hold = this.heldNotices ? this.noticeHoldReason(bot.botKey, laneKey) : null;
+    if (hold) {
+      this.parkedReviews.set(job.id, { bot, job, laneKey });
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.review_held',
+        cause: hold,
+        details: { jobId: job.id, botKey: bot.botKey, platform, chatId },
+      });
+      return false;
+    }
     const threadId = job.originThreadId ? job.originThreadId : undefined;
     const fallbackText = this.buildWakeNotice(job);
     const message: InboundMessage = {
@@ -6369,7 +6418,8 @@ export class Gateway {
    * lane's `/mute` has not expired, or `now` is inside the bot's quiet hours
    * (`GatewayConfig.quietHours`, evaluated in its explicit time zone). Null
    * when it may go. The ONE decision for every held path: `notifyTracked`,
-   * `deliverCompletion` and the release in `releaseHeldNotices`.
+   * `deliverCompletion`, `admitWakeReview`, and the releases in
+   * `releaseHeldNotices` and `releaseParkedReviews`.
    */
   private noticeHoldReason(
     botKey: string,
@@ -6448,6 +6498,34 @@ export class Gateway {
         { text: notice.text, ...(notice.threadId ? { threadId: notice.threadId } : {}) },
       );
       await store.markReleased(notice.id).catch(() => {});
+      released++;
+    }
+    return released;
+  }
+
+  /**
+   * U11 — admit every parked `deliver: 'parent'` review whose hold has ended
+   * ({@link admitWakeReview}). A review whose bot has no adapter here stays
+   * parked. Run beside {@link releaseHeldNotices} at the top of every delivery
+   * sweep, so it follows the sweep's boot pass and 60s timer.
+   */
+  private async releaseParkedReviews(): Promise<number> {
+    let released = 0;
+    for (const [jobId, parked] of [...this.parkedReviews]) {
+      const { bot, job, laneKey } = parked;
+      if (this.noticeHoldReason(bot.botKey, laneKey)) continue;
+      const adapter = job.originPlatform
+        ? this.adapterForBot(bot.botKey, job.originPlatform)
+        : undefined;
+      if (!adapter) continue;
+      this.parkedReviews.delete(jobId);
+      await this.admitWakeReview(bot, job, adapter, laneKey).catch((err: unknown) => {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.review_turn_failed',
+          cause: err instanceof Error ? err.message : String(err),
+          details: { jobId, platform: job.originPlatform },
+        });
+      });
       released++;
     }
     return released;
@@ -6665,6 +6743,7 @@ export class Gateway {
     // U11 — held notices whose window has ended go out first, filing their
     // obligations before this sweep reads the ledger.
     await this.releaseHeldNotices().catch(() => 0);
+    await this.releaseParkedReviews().catch(() => 0);
     const ledger = this.deliveryLedger;
     if (!ledger) return { redelivered: 0, failed: 0 };
 
