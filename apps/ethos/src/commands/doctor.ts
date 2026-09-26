@@ -1228,6 +1228,12 @@ export async function checkDockerSandbox(
   containerized?: ContainerizedDetectionInput,
 ): Promise<DockerSandboxReport> {
   const image = config?.execution?.docker?.image;
+  // The same explicit `execution.containerized` signal the compose path and
+  // the character sheet forward, so doctor agrees with where exec runs.
+  const detect: ContainerizedDetectionInput | undefined =
+    config?.execution?.containerized === true
+      ? { ...containerized, containerizedConfig: true }
+      : containerized;
   const ids: string[] = [];
   let missingMessage: string | undefined;
   for (const p of personalities) {
@@ -1236,7 +1242,7 @@ export async function checkDockerSandbox(
       posture = await buildExecutionPosture({
         personality: p,
         substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
-        ...(containerized ? { containerized } : {}),
+        ...(detect ? { containerized: detect } : {}),
         sshConfigured: config?.execution?.ssh?.host !== undefined,
         dockerImage: image,
       });

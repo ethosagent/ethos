@@ -60,6 +60,16 @@ describe('ethos doctor — docker sandbox image', () => {
     expect(dockerSandboxLines(report)).toEqual([]);
   });
 
+  it('honours execution.containerized: true — exec runs local, nothing to flag', async () => {
+    const report = await checkDockerSandbox(
+      cfg('execution.containerized: true'),
+      PEOPLE,
+      NOT_CONTAINERIZED,
+    );
+    expect(report.dockerPersonalities).toEqual([]);
+    expect(report.missingMessage).toBeUndefined();
+  });
+
   it('treats an unpinned image as missing (the config owner dropped it)', async () => {
     const report = await checkDockerSandbox(
       cfg('execution.docker.image: node:24-bookworm'),
