@@ -50,6 +50,7 @@ import {
 import { decisionLine } from '../lib/decision-line';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
+import { createLineArbiter, type LineArbiter } from '../lib/line-arbiter';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
@@ -190,6 +191,10 @@ interface ChatState {
   draining: boolean;
   /** FW-15/16 — set by handleSlashCommand when a skill/quick command wants to run a turn. */
   pendingTurn?: string;
+  /** The one owner of the next typed line for every one-line prompt below
+   *  (consent, clarify, approval, masked credential): one prompt at a time,
+   *  the rest FIFO (`createLineArbiter`, lib/line-arbiter.ts). */
+  lines: LineArbiter;
   /** FW-16 — true while awaiting yes/no consent for quick commands. */
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
@@ -484,6 +489,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   const reprompt = (): void => {
     if (!rlClosed) rl.prompt();
   };
+  // Every one-line prompt claims the input here, so two open at once are asked
+  // one after the other instead of both answered by one typed line.
+  const lines = createLineArbiter(rl);
 
   // Wire skill-evolution notifications into the interactive readline session.
   setOnSkillProposed?.((skillId, _personalityId) => {
@@ -536,6 +544,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     draining: false,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    lines,
     awaitingConsent: false,
     awaitingClarify: false,
     awaitingApproval: false,
@@ -546,7 +555,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       state.awaitingSecret = true;
       try {
         return await collectPluginCredential(req, {
-          readSecret: (question) => readMaskedLine(rl, rlOutput, process.stdout, question),
+          readSecret: (question) => readMaskedLine(rl, rlOutput, process.stdout, question, lines),
           write: (line) => out(`${c.dim}${line}${c.reset}\n`),
           // D15 — the one writer; never SecretsResolver.set from here.
           setCredential: (pluginId, key, value) => pluginLoader.setCredential(pluginId, key, value),
@@ -562,17 +571,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // back. Ctrl-C aborts the turn, which the bridge resolves as a cancel.
   loop.clarifyBridge?.registerPresenter('cli', (req) => {
     state.awaitingClarify = true;
-    out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
-    rl.setPrompt(`${c.cyan}?${c.reset}> `);
-    reprompt();
+    const show = (): void => {
+      out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
+      rl.setPrompt(`${c.cyan}?${c.reset}> `);
+      reprompt();
+    };
 
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      rl.off('line', onLine);
+      claim.release();
       unsubscribe();
       state.awaitingClarify = false;
+      // A prompt that owns the line (or is about to) draws its own question.
+      if (lines.busy()) return;
       rl.setPrompt(promptString(state));
       if (!state.abort) reprompt();
     };
@@ -605,7 +618,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       loop.clarifyBridge?.onResolved((row) => {
         if (row.requestId === req.requestId) finish();
       }) ?? (() => {});
-    rl.once('line', onLine);
+    const claim = lines.claim({ show, onLine });
   });
 
   // Tool approval — the gate suspends a flagged call and this prompt takes the
@@ -615,6 +628,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     attachCliApprovalPrompt({
       source: createTerminalApprovalSource(approvalCoordinator, 'cli'),
       rl,
+      lines,
       // stdout piped (`ethos chat | tee log`) while stdin is a keyboard: the
       // question and its preview go to stderr so the user sees what they are
       // answering; readline still reads the answer.
@@ -626,6 +640,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       },
       onClose: () => {
         state.awaitingApproval = false;
+        // A prompt that owns the line (or is about to) draws its own question.
+        if (lines.busy()) return;
         rl.setPrompt(promptString(state));
         if (!state.abort) reprompt();
       },
@@ -1883,11 +1899,14 @@ async function handleSlashCommand(
         }
         if (!ctx.isQuickConsentGiven()) {
           state.awaitingConsent = true;
-          process.stdout.write(
-            `Quick commands let you run shell commands as \`${process.env.USER ?? 'user'}\`. Continue? [y/N] `,
-          );
           const answer = await new Promise<string>((resolve) => {
-            rl.once('line', (line) => resolve(line.trim()));
+            state.lines.claim({
+              show: () =>
+                process.stdout.write(
+                  `Quick commands let you run shell commands as \`${process.env.USER ?? 'user'}\`. Continue? [y/N] `,
+                ),
+              onLine: (line) => resolve(line.trim()),
+            });
           });
           state.awaitingConsent = false;
           if (answer.toLowerCase() !== 'y') {
