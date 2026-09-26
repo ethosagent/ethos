@@ -86,7 +86,12 @@ function providerChainConflict(): EthosError {
  */
 export interface ToolSettingsSlot {
   web_search?: { provider?: string; secret?: string; recency?: string };
-  [key: string]: { provider?: string; secret?: string; recency?: string } | undefined;
+  /** Every other key is a field map of secret NAMES — `{ secret }` for a
+   *  one-provider tool, `{ chatgpt, perplexity }` for `engine_ask` (plan
+   *  engine-ask-per-engine-bindings D1). */
+  [key: string]:
+    | { provider?: string; secret?: string; recency?: string; [field: string]: string | undefined }
+    | undefined;
 }
 
 /** A single entry in the provider chain (providers.N.* lines in config.yaml).
@@ -290,23 +295,37 @@ export class ConfigRepository {
         }
         continue;
       }
-      // `toolSettings.<personality|_default>.<key>.secret: <name>` — every
-      // binding key but `web_search`, which the branch above handles. One
+      // `toolSettings.<personality|_default>.<key>.<field>: <name>` — every
+      // binding key but `web_search`, which the branch above handles. The
+      // `<field>` is `secret` for a one-provider tool and an engine id for
+      // `engine_ask` (plan engine-ask-per-engine-bindings D10) — the same
+      // grammar packages/config reads, widened in place rather than joined by
+      // a second regex. One
       // generic branch rather than one per tool: the literals this replaced
       // omitted `youtube`, so a YouTube binding written to a built-in's slot
       // fell through to `passthrough` and never reached the settings surface
       // that wrote it. The roster that replaced them had the same failure one
       // layer out — a key no in-tree tool declares was dropped on read, so a
       // read-modify-write deleted it from the file.
-      const other = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.secret:\s*(.+)$/);
+      const other = line.match(
+        /^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+):\s*(.+)$/,
+      );
       const otherTool = other?.[2];
-      if (other && otherTool && !RESERVED_TOOL_KEYS.has(otherTool)) {
+      const otherField = other?.[3];
+      if (
+        other &&
+        otherTool &&
+        otherField &&
+        otherTool !== 'web_search' &&
+        !RESERVED_TOOL_KEYS.has(otherTool) &&
+        !RESERVED_TOOL_KEYS.has(otherField)
+      ) {
         const pid = other[1]?.trim();
-        const value = other[3] !== undefined ? parseConfigScalar(other[3]) : '';
+        const value = other[4] !== undefined ? parseConfigScalar(other[4]) : '';
         if (pid && value) {
           const slot = config.toolSettings[pid] ?? {};
           config.toolSettings[pid] = slot;
-          slot[otherTool] = { secret: value };
+          slot[otherTool] = { ...slot[otherTool], [otherField]: value };
         }
         continue;
       }
@@ -667,14 +686,18 @@ export class ConfigRepository {
       if (ws?.recency) {
         lines.push(`toolSettings.${yamlScalar(pid)}.web_search.recency: ${yamlScalar(ws.recency)}`);
       }
-      // Every other key the slot carries, sorted so the file is byte-stable
-      // across writes. Shape-tested before it reaches a line: unlike the value,
-      // which `yamlScalar` quotes, the key is interpolated raw.
+      // Every other key the slot carries, one line per field, keys and fields
+      // sorted so the file is byte-stable across writes. Both are shape-tested
+      // before they reach a line: unlike the value, which `yamlScalar` quotes,
+      // they are interpolated raw.
       for (const tool of Object.keys(settings).sort()) {
         if (tool === 'web_search' || RESERVED_TOOL_KEYS.has(tool)) continue;
-        const secret = settings[tool]?.secret;
-        if (secret && isValidSecretName(tool)) {
-          lines.push(`toolSettings.${yamlScalar(pid)}.${tool}.secret: ${yamlScalar(secret)}`);
+        if (!isValidSecretName(tool)) continue;
+        const binding = settings[tool] ?? {};
+        for (const field of Object.keys(binding).sort()) {
+          const value = binding[field];
+          if (!value || !isValidSecretName(field) || RESERVED_TOOL_KEYS.has(field)) continue;
+          lines.push(`toolSettings.${yamlScalar(pid)}.${tool}.${field}: ${yamlScalar(value)}`);
         }
       }
     }

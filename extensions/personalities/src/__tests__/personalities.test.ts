@@ -252,6 +252,64 @@ describe('FilePersonalityRegistry', () => {
       expect(registry.getToolsConfig('evilengine')).toBeUndefined();
     });
 
+    // plan engine-ask-per-engine-bindings — one secret NAME per engine.
+    it('parses a per-engine engine_ask binding in inline and block form', () => {
+      expect(
+        parseToolsYaml('engine_ask: { chatgpt: openai-brand, perplexity: pplx-brand }\n'),
+      ).toEqual({ engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-brand' } });
+      expect(
+        parseToolsYaml('engine_ask:\n  chatgpt: openai-brand\n  perplexity: pplx-brand\n'),
+      ).toEqual({ engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-brand' } });
+    });
+
+    it('round-trips a multi-field engine_ask beside web_search and x_search', () => {
+      const config = {
+        web_search: { provider: 'exa' as const, secret: 'exa-main', recency: '30d' },
+        x_search: { secret: 'xai-main' },
+        engine_ask: { perplexity: 'pplx-brand', chatgpt: 'openai-brand' },
+      };
+      const rendered = renderToolsYaml(config);
+      // Fields are sorted, so the file layout does not depend on object order.
+      expect(rendered).toContain('engine_ask: { chatgpt: openai-brand, perplexity: pplx-brand }');
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    // The no-migration guarantee (D2): the two live personalities carry exactly
+    // this line, and nothing in a read-modify-write may rewrite it.
+    it('parses a legacy engine_ask { secret } and renders it back byte-identically', () => {
+      const legacy = 'engine_ask: { secret: openai-key }\n';
+      expect(parseToolsYaml(legacy)).toEqual({ engine_ask: { secret: 'openai-key' } });
+      expect(renderToolsYaml(parseToolsYaml(legacy))).toBe(legacy);
+    });
+
+    // D13: one out-of-shape name drops the WHOLE binding, not just its field.
+    it('drops the whole engine_ask binding when one of several fields is unsafe', () => {
+      expect(
+        parseToolsYaml('engine_ask: { chatgpt: openai-brand, perplexity: ../openai/apiKey }\n'),
+      ).toEqual({});
+      expect(
+        parseToolsYaml('engine_ask:\n  chatgpt: openai-brand\n  perplexity: has space\n'),
+      ).toEqual({});
+    });
+
+    it('skips a __proto__ field on parse and on render', () => {
+      const parsed = parseToolsYaml('engine_ask: { __proto__: evil, chatgpt: openai-brand }\n');
+      expect(parsed).toEqual({ engine_ask: { chatgpt: 'openai-brand' } });
+      const binding = parsed.engine_ask ?? {};
+      expect(Object.hasOwn(binding, '__proto__')).toBe(false);
+      expect(Object.getPrototypeOf(binding)).toBe(Object.prototype);
+      expect(parseToolsYaml('engine_ask:\n  __proto__: evil\n  chatgpt: openai-brand\n')).toEqual({
+        engine_ask: { chatgpt: 'openai-brand' },
+      });
+
+      const hostile: Record<string, string> = Object.create(null);
+      Object.defineProperty(hostile, '__proto__', { value: 'evil', enumerable: true });
+      hostile.chatgpt = 'openai-brand';
+      expect(renderToolsYaml({ engine_ask: hostile })).toBe(
+        'engine_ask: { chatgpt: openai-brand }\n',
+      );
+    });
+
     it('drops an x_search binding whose secret name is unsafe', async () => {
       const dir = join(testDir, 'evilx');
       await mkdir(dir);

@@ -637,11 +637,16 @@ export interface XSearchToolSetting {
   secret?: string;
 }
 
-/** A personality's binding for the `engine_ask` tool — one provider (OpenAI),
- *  so only the secret NAME. Resolves to `providers/openai/<name>`; absent →
- *  the default `providers/openai/apiKey`. */
+/** A personality's binding for the `engine_ask` tool — one secret NAME per
+ *  answer engine, keyed by engine id (`chatgpt` → `providers/openai/<name>`,
+ *  `perplexity` → `providers/perplexity/<name>`); an engine with no name falls
+ *  to the next rung and finally to its own default ref. `secret` is the
+ *  permanent legacy alias for `chatgpt` and nothing else — the mapping lives in
+ *  `selectSecretRef` in `@ethosagent/tools-answer-engines` (plan
+ *  engine-ask-per-engine-bindings D2). */
 export interface EngineAskToolSetting {
   secret?: string;
+  [engineId: string]: string | undefined;
 }
 
 /** A personality's binding for `youtube_search` / `youtube_comments` — one
@@ -678,7 +683,10 @@ export interface PersonalityToolSettings {
   engine_ask?: EngineAskToolSetting;
   youtube?: YouTubeToolSetting;
   search_console?: SearchConsoleToolSetting;
-  [key: string]: WebSearchToolSetting | { secret?: string } | undefined;
+  [key: string]:
+    | WebSearchToolSetting
+    | { secret?: string; [field: string]: string | undefined }
+    | undefined;
 }
 
 /** Object keys reserved by the JS object model — never let one become a
@@ -4195,16 +4203,23 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (ws?.provider) lines.push(`toolSettings.${id}.web_search.provider: ${ws.provider}`);
       if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
       if (ws?.recency) lines.push(`toolSettings.${id}.web_search.recency: ${ws.recency}`);
-      // Every other binding key carries a secret NAME and nothing else, so one
-      // loop over the open key space replaces one hand-written line per key.
-      // Sorted, so the file is byte-stable across writes. The key itself is
-      // shape-tested before it reaches a line: `<key>` comes from a parsed
-      // config or a caller's object, and neither is trusted to be yaml-safe.
+      // Every other binding key is a field map of secret NAMES — `{ secret }`
+      // for a one-provider tool, `{ chatgpt, perplexity }` for `engine_ask` —
+      // so one loop over the open key space replaces one hand-written line per
+      // key, and one line is written per field. Keys and fields are sorted, so
+      // the file is byte-stable across writes. Both are shape-tested before
+      // they reach a line: they come from a parsed config or a caller's
+      // object, and neither is trusted to be yaml-safe.
       for (const key of Object.keys(settings).sort()) {
         if (key === 'web_search' || RESERVED_TOOL_SETTINGS_KEYS.has(key)) continue;
-        const secret = settings[key]?.secret;
-        if (secret && SECRET_NAME_RE.test(key)) {
-          lines.push(`toolSettings.${id}.${key}.secret: ${secret}`);
+        if (!SECRET_NAME_RE.test(key)) continue;
+        const fields = Object.entries(settings[key] ?? {}).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        );
+        for (const [field, value] of fields) {
+          if (typeof value !== 'string' || !value) continue;
+          if (!SECRET_NAME_RE.test(field) || RESERVED_TOOL_SETTINGS_KEYS.has(field)) continue;
+          lines.push(`toolSettings.${id}.${key}.${field}: ${value}`);
         }
       }
     }
@@ -6188,9 +6203,10 @@ export function parseConfigYaml(src: string): EthosConfig {
       }
       continue;
     }
-    // toolSettings.<personality|_default>.<key>.secret: <name> — every binding
+    // toolSettings.<personality|_default>.<key>.<field>: <name> — every binding
     // key but `web_search`, which the branch above handles and must therefore
-    // stay ahead of this one. `web_search` keeps its own branch rather than
+    // stay ahead of this one (its `provider` / `recency` would otherwise be read
+    // as secret names). `web_search` keeps its own branch rather than
     // merging into this one: it has three fields, a provider enum and a recency
     // normalizer, and averaging the two would lose all three.
     //
@@ -6198,13 +6214,31 @@ export function parseConfigYaml(src: string): EthosConfig {
     // regexes this replaced were a hand list, and `search_console` was added to
     // the type without being added to them — so it round-tripped through a
     // personality's tools.yaml and died at both config.yaml rungs.
-    const tsSecret = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.secret:\s*(.+)$/);
+    //
+    // The `<field>` segment is what makes this the SAME branch for the legacy
+    // `.secret` line and a per-engine `engine_ask.<engineId>` line (plan
+    // engine-ask-per-engine-bindings D10): a second regex beside this one
+    // would be the hand-list failure above again. The field is guarded like
+    // the key — it becomes a computed own-key on the binding object.
+    const tsSecret = line.match(
+      /^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+):\s*(.+)$/,
+    );
     const tsKey = tsSecret?.[2];
-    if (tsSecret && tsKey && !RESERVED_TOOL_SETTINGS_KEYS.has(tsKey)) {
+    const tsField = tsSecret?.[3];
+    if (
+      tsSecret &&
+      tsKey &&
+      tsField &&
+      tsKey !== 'web_search' &&
+      !RESERVED_TOOL_SETTINGS_KEYS.has(tsKey) &&
+      !RESERVED_TOOL_SETTINGS_KEYS.has(tsField)
+    ) {
       const id = tsSecret[1].trim();
       const slot = toolSettings[id] ?? {};
       toolSettings[id] = slot;
-      slot[tsKey] = { secret: parseConfigScalar(tsSecret[3]) };
+      const binding: { [field: string]: string | undefined } = { ...slot[tsKey] };
+      binding[tsField] = parseConfigScalar(tsSecret[4]);
+      slot[tsKey] = binding;
       continue;
     }
     // activeContext.type / activeContext.name

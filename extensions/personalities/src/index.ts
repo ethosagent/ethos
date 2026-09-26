@@ -307,8 +307,15 @@ export interface PersonalityToolsConfig {
   web_search?: { provider?: 'exa' | 'tavily' | 'brave'; secret?: string; recency?: string };
   /** One provider (xAI) — the name resolves to `providers/xai/<name>`. */
   x_search?: { secret?: string };
-  /** One provider (OpenAI) — the name resolves to `providers/openai/<name>`. */
-  engine_ask?: { secret?: string };
+  /**
+   * One secret NAME per answer engine, keyed by engine id — `chatgpt` resolves
+   * to `providers/openai/<name>`, `perplexity` to `providers/perplexity/<name>`.
+   * `secret` is the permanent legacy alias for `chatgpt` and nothing else
+   * (`selectSecretRef` in `@ethosagent/tools-answer-engines` maps it; plan
+   * engine-ask-per-engine-bindings D2). Stored as a field map, the same
+   * `key → { field → name }` shape every other secret-only key has.
+   */
+  engine_ask?: { secret?: string; [engineId: string]: string | undefined };
   /**
    * One provider (Google) — the name resolves to `providers/google/<name>`.
    * Shared by both `youtube_search` and `youtube_comments`: same API, same
@@ -334,7 +341,9 @@ export interface PersonalityToolsConfig {
    * refusal lives: `ToolSettingsService.setDefault` / `setForPersonality`
    * (apps/web-api) throws on a key no registered tool claims.
    */
-  [key: string]: { provider?: string; secret?: string; recency?: string } | undefined;
+  [key: string]:
+    | { provider?: string; secret?: string; recency?: string; [field: string]: string | undefined }
+    | undefined;
 }
 
 const RECENCY_SHAPE = /^\d{1,4}[dwmy]$/;
@@ -398,7 +407,8 @@ function parseInlineToolMap(s: string): Record<string, string> {
       .slice(idx + 1)
       .trim()
       .replace(/^["']|["']$/g, '');
-    if (k) out[k] = v;
+    // A reserved field name would write the object's PROTOTYPE, not a field.
+    if (k && !RESERVED_YAML_KEYS.has(k)) out[k] = v;
   }
   return out;
 }
@@ -444,7 +454,9 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
         const indent = bl.match(/^(\s*)/)?.[1]?.length ?? 0;
         if (indent === 0) break;
         const bm = bl.match(/^\s+(\w+):\s*(.+)$/);
-        if (bm) entry[bm[1]] = bm[2].trim().replace(/^["']|["']$/g, '');
+        if (bm && !RESERVED_YAML_KEYS.has(bm[1])) {
+          entry[bm[1]] = bm[2].trim().replace(/^["']|["']$/g, '');
+        }
         j++;
       }
       i = j - 1;
@@ -459,8 +471,14 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
     if (entry.secret && !isValidSecretName(entry.secret)) continue;
     if (tool !== 'web_search') {
       // Every other key — the four typed secret-only roster keys and any key
-      // this build does not know — carries a secret NAME and nothing else.
-      if (entry.secret) out[tool] = { secret: entry.secret };
+      // this build does not know — is a FIELD MAP of secret NAMES: `{ secret }`
+      // for a one-provider tool, `{ chatgpt, perplexity }` for `engine_ask`
+      // (plan engine-ask-per-engine-bindings D1). A field name outside the
+      // secret-name shape is skipped; a field VALUE outside it drops the whole
+      // binding, the same rule as `secret` above (D13).
+      const fields = secretFieldMap(entry);
+      if (fields === null) continue;
+      if (Object.keys(fields).length > 0) out[tool] = fields;
       continue;
     }
     const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
@@ -492,6 +510,26 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
   return out;
 }
 
+/** `web_search`'s two non-secret fields. Beside any other key they are not
+ *  part of the shape — a stray `provider:` next to a `secret:` is not a
+ *  second credential — so the field map skips them. */
+const NON_SECRET_FIELDS = new Set(['provider', 'recency']);
+
+/** The shape-safe secret-name fields of one non-`web_search` binding, or `null`
+ *  when any non-empty value is not a valid secret name (the whole binding is
+ *  then dropped). Field names must pass `isValidSecretName` and be neither
+ *  reserved nor one of `NON_SECRET_FIELDS`; an empty value is an absent field. */
+function secretFieldMap(entry: Record<string, string>): Record<string, string> | null {
+  const fields: Record<string, string> = {};
+  for (const [field, value] of Object.entries(entry)) {
+    if (!value || !isValidSecretName(field) || RESERVED_YAML_KEYS.has(field)) continue;
+    if (NON_SECRET_FIELDS.has(field)) continue;
+    if (!isValidSecretName(value)) return null;
+    fields[field] = value;
+  }
+  return fields;
+}
+
 /**
  * Render a `PersonalityToolsConfig` back to the inline flow-map form
  * `parseToolsYaml` reads. Only fields that are set are emitted; a config with
@@ -515,13 +553,21 @@ export function renderToolsYaml(config: PersonalityToolsConfig): string {
     .filter((k) => k !== 'web_search' && !SECRET_ONLY_YAML_KEYS.includes(k))
     .sort();
   for (const key of [...SECRET_ONLY_YAML_KEYS, ...preserved]) {
-    const secret = config[key]?.secret;
-    // The key is emitted only when it matches the shared secret-name shape, so
-    // a key from a hand-edited file cannot inject anything into the rendered
-    // yaml. Every key `parseToolsYaml` stores already satisfies it.
-    if (secret && isValidSecretName(key) && !RESERVED_YAML_KEYS.has(key)) {
-      lines.push(`${key}: { secret: ${secret} }`);
-    }
+    // The key and every field name are emitted only when they match the shared
+    // secret-name shape, so a name from a hand-edited file cannot inject
+    // anything into the rendered yaml. Every name `parseToolsYaml` stores
+    // already satisfies it. Fields are sorted, so a one-field `{ secret }`
+    // binding renders byte-identically to what it always did.
+    if (!isValidSecretName(key) || RESERVED_YAML_KEYS.has(key)) continue;
+    const binding = config[key] ?? {};
+    const parts = Object.keys(binding)
+      .filter((f) => isValidSecretName(f) && !RESERVED_YAML_KEYS.has(f))
+      .sort()
+      .flatMap((f) => {
+        const value = binding[f];
+        return value ? [`${f}: ${value}`] : [];
+      });
+    if (parts.length > 0) lines.push(`${key}: { ${parts.join(', ')} }`);
   }
   return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }

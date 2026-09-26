@@ -225,17 +225,17 @@ export class ToolSettingsService {
         ? [
             {
               label: 'global-personality',
-              binding: bindingForKey(globalPersonalitySlot, group.key),
+              binding: bindingForKey(globalPersonalitySlot, group),
             },
-            { label: 'global-default', binding: bindingForKey(globalDefaultSlot, group.key) },
+            { label: 'global-default', binding: bindingForKey(globalDefaultSlot, group) },
           ]
         : [
-            { label: 'personality', binding: bindingForKey(personalitySlot, group.key) },
+            { label: 'personality', binding: bindingForKey(personalitySlot, group) },
             {
               label: 'global-personality',
-              binding: bindingForKey(globalPersonalitySlot, group.key),
+              binding: bindingForKey(globalPersonalitySlot, group),
             },
-            { label: 'global-default', binding: bindingForKey(globalDefaultSlot, group.key) },
+            { label: 'global-default', binding: bindingForKey(globalDefaultSlot, group) },
           ];
 
       const prefix = secretPrefixForGroup(
@@ -299,13 +299,30 @@ function assertSafeSlotKey(pid: string): void {
 }
 
 /**
+ * A legacy field that is an ALIAS for another field of the same key's binding.
+ * Writing the canonical field retires the alias, because from then on the two
+ * would name the same credential (plan engine-ask-per-engine-bindings D3); a
+ * save that does not touch the canonical field leaves the alias verbatim. The
+ * only entry: `engine_ask`'s `secret`, which `selectSecretRef`
+ * (extensions/tools-answer-engines/src/index.ts) reads as `chatgpt` and as
+ * nothing else.
+ */
+const LEGACY_FIELD_ALIASES: Readonly<Record<string, { field: string; alias: string }>> = {
+  engine_ask: { field: 'chatgpt', alias: 'secret' },
+};
+
+/**
  * Patch a stored slot with an incoming payload. A key the payload OMITS keeps
- * whatever is stored; a key it carries replaces that binding, clearing it when
- * the value is empty or fails narrowing.
+ * whatever is stored; a FIELD it omits keeps whatever is stored; a field it
+ * carries replaces that field, clearing it when the value is empty or fails
+ * narrowing.
  *
- * `web_search` is field-level: a payload that carries `{ web_search: { secret } }`
- * (Reset / Override) must not wipe `provider` or `recency`. Secret-only keys
- * stay whole-binding replace — they have only one field.
+ * Field-level for every key (plan engine-ask-per-engine-bindings D12): a
+ * payload that carries `{ web_search: { secret } }` (Reset / Override) must not
+ * wipe `provider` or `recency`, and one carrying `{ engine_ask: { perplexity } }`
+ * must not wipe a stored `chatgpt`. `web_search` keeps its own narrowing — a
+ * provider enum and a recency normalizer are not secret names — and every
+ * other key narrows each field as a secret name.
  *
  * Both stores need this: `ConfigRepository.update` replaces a `toolSettings`
  * slot wholesale, and `writeToolsConfig` re-renders the whole tools.yaml. With
@@ -326,10 +343,32 @@ function mergeSlot(
   const keys = new Set([...Object.keys(existing ?? {}), ...Object.keys(values)]);
   for (const key of keys) {
     if (key === 'web_search' || RESERVED_KEYS.has(key)) continue;
-    const binding = toSecretBinding(values[key] ?? existing?.[key]);
-    if (binding.secret) next[key] = binding;
+    const incoming = Object.hasOwn(values, key) ? values[key] : undefined;
+    const binding = mergeSecretBinding(key, existing?.[key], incoming);
+    if (Object.keys(binding).length > 0) next[key] = binding;
   }
   return next;
+}
+
+/** Field-level PATCH for a secret-name binding: omitted field → keep; empty or
+ *  invalid → clear that field only. Writing a key's canonical field retires
+ *  its legacy alias (`LEGACY_FIELD_ALIASES`). */
+function mergeSecretBinding(
+  key: string,
+  existing: Record<string, string | undefined> | undefined,
+  incoming: Record<string, string> | undefined,
+): Record<string, string> {
+  const merged = toSecretBindingMap(existing);
+  if (!incoming) return merged;
+  for (const [field, raw] of Object.entries(incoming)) {
+    if (!isSafeFieldName(field)) continue;
+    const value = raw?.trim();
+    if (value && isValidSecretName(value)) merged[field] = value;
+    else delete merged[field];
+  }
+  const alias = LEGACY_FIELD_ALIASES[key];
+  if (alias && Object.hasOwn(incoming, alias.field)) delete merged[alias.alias];
+  return merged;
 }
 
 /**
@@ -380,20 +419,39 @@ function fromSlot(slot: ToolSettingsSlot | undefined): ToolSettingsValues {
   // is one the UI can display. `youtube` was modelled in storage and rendered to
   // tools.yaml but missing here, so it could never be shown or re-saved; the
   // fixed roster that fixed that had the same failure for a key outside it.
+  // Every FIELD too, not just `.secret`: `engine_ask` carries one name per
+  // engine, and a field the write side stores but this side drops is the same
+  // bug one level down.
   for (const key of Object.keys(slot ?? {})) {
-    if (key === 'web_search') continue;
-    const secret = slot?.[key]?.secret;
-    if (secret) out[key] = { secret };
+    if (key === 'web_search' || RESERVED_KEYS.has(key)) continue;
+    const fields: Record<string, string> = {};
+    for (const [field, value] of Object.entries(slot?.[key] ?? {})) {
+      if (value && isSafeFieldName(field)) fields[field] = value;
+    }
+    if (Object.keys(fields).length > 0) out[key] = fields;
   }
   return out;
 }
 
-/** Narrow a binding whose only field is a secret NAME, validated with the same
- *  rule the vault enforces. Shared by `x_search`, `engine_ask`, `youtube` and
- *  every future roster key shaped like them. */
-function toSecretBinding(source: { secret?: string } | undefined): { secret?: string } {
-  const secret = source?.secret?.trim();
-  return secret && isValidSecretName(secret) ? { secret } : {};
+/** A field name that may become a computed own-key on a stored binding: the
+ *  secret-name shape, and never an object-model name. */
+function isSafeFieldName(field: string): boolean {
+  return isValidSecretName(field) && !RESERVED_KEYS.has(field);
+}
+
+/** Narrow a stored binding to its secret-NAME fields, each validated with the
+ *  same rule the vault enforces. Shared by `x_search`, `engine_ask`, `youtube`
+ *  and every future roster key shaped like them — `{ secret }` for a
+ *  one-provider tool, one field per engine for `engine_ask`. */
+function toSecretBindingMap(
+  source: Record<string, string | undefined> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [field, raw] of Object.entries(source ?? {})) {
+    const value = raw?.trim();
+    if (value && isSafeFieldName(field) && isValidSecretName(value)) out[field] = value;
+  }
+  return out;
 }
 
 /** Narrow the generic wire values into the typed web_search binding. Unknown
@@ -479,23 +537,39 @@ function groupSecretBearingTools(tools: Tool[]): SecretBearingGroup[] {
   return groups;
 }
 
+/**
+ * One rung of the group's ladder. Reads the group's FIRST secret-binding
+ * field's key (`secret` for a one-provider tool, `chatgpt` for `engine_ask`),
+ * falling back within the rung to that field's legacy alias — the same
+ * `r[engine.id] ?? r.secret` mapping `selectSecretRef` applies
+ * (extensions/tools-answer-engines/src/index.ts), so the probe reports the ref
+ * the tool resolves (plan engine-ask-per-engine-bindings D14).
+ */
 function bindingForKey(
   slot: ToolSettingsSlot | PersonalityToolsConfig | undefined,
-  key: string,
+  group: SecretBearingGroup,
 ): ToolSecretRung | undefined {
   if (!slot) return undefined;
+  const key = group.key;
   if (key === 'web_search') {
     const ws = slot.web_search;
     if (!ws) return undefined;
     return { secret: ws.secret, provider: ws.provider };
   }
-  const secret = slot[key]?.secret;
+  const binding = slot[key];
+  const alias = LEGACY_FIELD_ALIASES[key];
+  const fieldKey = group.binding.key;
+  const secret =
+    binding?.[fieldKey] ?? (alias?.field === fieldKey ? binding?.[alias.alias] : undefined);
   return secret !== undefined ? { secret } : undefined;
 }
 
 /**
- * Vault namespace prefix for a group. Ordinary tools take the first manageable
- * `providers/<segment>/*` grant. `web_search` picks the bound provider's
+ * Vault namespace prefix for a group. A group whose binding field declares its
+ * `provider` takes the grant for THAT namespace — with several prefix grants
+ * (`engine_ask`), declaration order must not decide which vendor the probe
+ * checks, and a declared provider the tool does not grant yields no row. Other
+ * tools take the first manageable `providers/<segment>/*` grant. `web_search` picks the bound provider's
  * namespace when one is set — the tool resolves `providers/<provider>/<name>`
  * rather than one static prefix.
  */
@@ -519,6 +593,8 @@ function secretPrefixForGroup(
     return prefixes[0];
   }
 
+  const provider = group.binding.provider;
+  if (provider !== undefined) return prefixes.find((p) => p === `providers/${provider}/`);
   return prefixes[0];
 }
 

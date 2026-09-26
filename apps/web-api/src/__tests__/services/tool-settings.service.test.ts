@@ -582,4 +582,102 @@ describe('ToolSettingsService', () => {
       x_search: { secret: 'xai-new' },
     });
   });
+
+  // plan engine-ask-per-engine-bindings — one secret NAME per engine (D1),
+  // field-level merge (D12), the `secret` alias retired only on a write of
+  // `chatgpt` (D3).
+  describe('per-engine engine_ask bindings', () => {
+    it('round-trips { chatgpt, perplexity } through both stores', async () => {
+      const values: ToolSettingsValues = {
+        engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-brand' },
+      };
+      await service.setForPersonality('scout', values);
+      const raw = (await storage.read('/data/config.yaml')) ?? '';
+      expect(raw).toContain('toolSettings.scout.engine_ask.chatgpt: openai-brand');
+      expect(raw).toContain('toolSettings.scout.engine_ask.perplexity: pplx-brand');
+      expect((await service.getForPersonality('scout')).values).toEqual(values);
+
+      await service.setForPersonality('mine', values);
+      expect(await storage.read('/data/personalities/mine/tools.yaml')).toBe(
+        'engine_ask: { chatgpt: openai-brand, perplexity: pplx-brand }\n',
+      );
+      expect((await service.getForPersonality('mine')).values).toEqual(values);
+    });
+
+    it('patches field by field: an omitted engine keeps its name, an empty one clears only itself', async () => {
+      for (const pid of ['mine', 'scout']) {
+        await service.setForPersonality(pid, {
+          engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-old' },
+        });
+        await service.setForPersonality(pid, { engine_ask: { perplexity: 'pplx-new' } });
+        expect((await service.getForPersonality(pid)).values).toEqual({
+          engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-new' },
+        });
+        await service.setForPersonality(pid, { engine_ask: { perplexity: '' } });
+        expect((await service.getForPersonality(pid)).values).toEqual({
+          engine_ask: { chatgpt: 'openai-brand' },
+        });
+      }
+    });
+
+    it('drops the legacy secret alias when chatgpt is written, and only then', async () => {
+      await storage.write(
+        '/data/personalities/mine/tools.yaml',
+        'engine_ask: { secret: openai-key }\n',
+      );
+      // Re-load so the registry sees the hand-written legacy file.
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory('/builtins');
+      await registry.loadFromDirectory('/data/personalities');
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const fresh = new PersonalitiesService({ personalities: registry, library });
+      const svc = new ToolSettingsService({
+        config,
+        personalities: fresh,
+        secrets: new InMemorySecretsResolver(),
+        toolRegistry,
+      });
+
+      // A save that touches another key re-renders `secret:` verbatim.
+      await svc.setForPersonality('mine', { x_search: { secret: 'xai-main' } });
+      expect(await storage.read('/data/personalities/mine/tools.yaml')).toBe(
+        'x_search: { secret: xai-main }\nengine_ask: { secret: openai-key }\n',
+      );
+      // So does one that binds another ENGINE on the same key.
+      await svc.setForPersonality('mine', { engine_ask: { perplexity: 'pplx-brand' } });
+      expect((await svc.getForPersonality('mine')).values.engine_ask).toEqual({
+        perplexity: 'pplx-brand',
+        secret: 'openai-key',
+      });
+      // Writing chatgpt retires the alias — the two would name one credential.
+      await svc.setForPersonality('mine', { engine_ask: { chatgpt: 'openai-brand' } });
+      expect((await svc.getForPersonality('mine')).values.engine_ask).toEqual({
+        chatgpt: 'openai-brand',
+        perplexity: 'pplx-brand',
+      });
+    });
+
+    it('drops an unsafe per-engine name instead of persisting it', async () => {
+      await service.setForPersonality('mine', {
+        engine_ask: { chatgpt: 'openai-brand', perplexity: '../openai/apiKey' },
+      });
+      expect((await service.getForPersonality('mine')).values).toEqual({
+        engine_ask: { chatgpt: 'openai-brand' },
+      });
+      await service.setForPersonality('scout', { engine_ask: { perplexity: 'has space' } });
+      expect((await service.getForPersonality('scout')).values).toEqual({});
+    });
+
+    it('gates only the top-level key: a field is never tested against the claim set', async () => {
+      // `perplexity` is not a registered tool's settings key, and does not
+      // need to be — it is a FIELD of the claimed `engine_ask` key (D11).
+      await service.setDefault({ engine_ask: { perplexity: 'pplx-default' } });
+      expect((await service.getDefault()).values).toEqual({
+        engine_ask: { perplexity: 'pplx-default' },
+      });
+      await expect(service.setDefault({ perplexity: { secret: 'x' } })).rejects.toSatisfy(
+        (err: unknown) => isEthosError(err) && err.code === 'INVALID_INPUT',
+      );
+    });
+  });
 });

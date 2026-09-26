@@ -206,6 +206,129 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(Object.hasOwn(parsed?.toolSettings?.scout ?? {}, '__proto__')).toBe(false);
   });
 
+  // plan engine-ask-per-engine-bindings D10 — one flat line per engine, the
+  // same widened branch the legacy `.secret` line goes through.
+  describe('per-engine engine_ask lines', () => {
+    const base = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+    } as const;
+
+    it('renders and parses toolSettings.<id>.engine_ask.<engineId> back to the same object', async () => {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      const original: EthosConfig = {
+        ...base,
+        toolSettings: {
+          scout: { engine_ask: { perplexity: 'pplx-brand', chatgpt: 'openai-brand' } },
+        },
+      };
+      await writeConfig(storage, original, new InMemorySecretsResolver());
+      const raw = (await storage.read(join(ethosDir(), 'config.yaml'))) ?? '';
+      const lines = raw.split('\n').filter((l) => l.startsWith('toolSettings.'));
+      // Field order is sorted, so it is stable across writes whatever order
+      // the object carried.
+      expect(lines).toEqual([
+        'toolSettings.scout.engine_ask.chatgpt: openai-brand',
+        'toolSettings.scout.engine_ask.perplexity: pplx-brand',
+      ]);
+      const roundTripped = await readRawConfig(storage);
+      expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
+
+      await writeConfig(storage, roundTripped ?? original, new InMemorySecretsResolver());
+      expect(await storage.read(join(ethosDir(), 'config.yaml'))).toBe(raw);
+    });
+
+    it('keeps the web_search branch ahead of the widened one beside a multi-field engine_ask', async () => {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      const original: EthosConfig = {
+        ...base,
+        toolSettings: {
+          scout: {
+            web_search: { provider: 'brave', secret: 'brave-main', recency: '6m' },
+            engine_ask: { chatgpt: 'openai-brand', perplexity: 'pplx-brand' },
+          },
+        },
+      };
+      await writeConfig(storage, original, new InMemorySecretsResolver());
+      const roundTripped = await readRawConfig(storage);
+      // `web_search.provider` / `.recency` stay typed web_search fields rather
+      // than being read as secret names by the generic branch.
+      expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
+    });
+
+    it('preserves every per-engine line across an unrelated save', async () => {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      await storage.write(
+        join(ethosDir(), 'config.yaml'),
+        [
+          'provider: anthropic',
+          'model: claude-opus-4-7',
+          'personality: researcher',
+          'toolSettings._default.engine_ask.perplexity: pplx-default',
+          'toolSettings.scout.engine_ask.chatgpt: openai-brand',
+          'toolSettings.scout.engine_ask.perplexity: pplx-brand',
+          'toolSettings.scout.engine_ask.secret: openai-legacy',
+          '',
+        ].join('\n'),
+      );
+      const parsed = await readRawConfig(storage);
+      if (!parsed) throw new Error('config did not parse');
+      await writeConfig(
+        storage,
+        { ...parsed, model: 'claude-sonnet-4-6' },
+        new InMemorySecretsResolver(),
+      );
+      const raw = (await storage.read(join(ethosDir(), 'config.yaml'))) ?? '';
+      expect(raw).toContain('model: claude-sonnet-4-6');
+      expect(raw).toContain('toolSettings._default.engine_ask.perplexity: pplx-default');
+      expect(raw).toContain('toolSettings.scout.engine_ask.chatgpt: openai-brand');
+      expect(raw).toContain('toolSettings.scout.engine_ask.perplexity: pplx-brand');
+      expect(raw).toContain('toolSettings.scout.engine_ask.secret: openai-legacy');
+    });
+
+    it('refuses a reserved FIELD name as well as a reserved key', async () => {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      await storage.write(
+        join(ethosDir(), 'config.yaml'),
+        [
+          'provider: anthropic',
+          'model: claude-opus-4-7',
+          'personality: researcher',
+          'toolSettings.scout.engine_ask.__proto__: evil',
+          'toolSettings.scout.engine_ask.chatgpt: openai-ok',
+          '',
+        ].join('\n'),
+      );
+      const parsed = await readRawConfig(storage);
+      expect(parsed?.toolSettings).toEqual({ scout: { engine_ask: { chatgpt: 'openai-ok' } } });
+      const binding = parsed?.toolSettings?.scout?.engine_ask ?? {};
+      expect(Object.hasOwn(binding, '__proto__')).toBe(false);
+      expect(Object.getPrototypeOf(binding)).toBe(Object.prototype);
+    });
+
+    it('never renders a field name outside the secret-name shape', async () => {
+      const storage = new InMemoryStorage();
+      await storage.mkdir(ethosDir());
+      await writeConfig(
+        storage,
+        {
+          ...base,
+          toolSettings: { scout: { engine_ask: { chatgpt: 'ok', 'bad field': 'x' } } },
+        },
+        new InMemorySecretsResolver(),
+      );
+      const raw = (await storage.read(join(ethosDir(), 'config.yaml'))) ?? '';
+      expect(raw).toContain('toolSettings.scout.engine_ask.chatgpt: ok');
+      expect(raw).not.toContain('bad field');
+    });
+  });
+
   it('drops an out-of-shape web_search recency, keeping the rest of the binding', async () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
