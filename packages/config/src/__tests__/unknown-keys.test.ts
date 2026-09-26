@@ -63,6 +63,20 @@ describe('unknown config keys (U4)', () => {
     expect(warnings[0]).toContain("did you mean 'telegram.bots.0.webhookUrl'");
   });
 
+  it('a dotted key under a family the parser models is never line-warned (§9)', () => {
+    // `plugins.` / `storage.` / `nightlyPass.` / `weeklyDigest.` all have
+    // parser branches, so their prefixes belong in KNOWN_KEY_PREFIXES — a
+    // deeper key the branch regex does not claim must not read as a typo of
+    // some unrelated key.
+    const warnings = warningsOf(
+      'plugins.marketplace.url: https://plugins.example',
+      'nightlyPass.window.start: 02:00',
+      'weeklyDigest.sections.top: 5',
+      'storage.s3.bucket: ethos-state',
+    ).filter((w) => w.includes('unknown key'));
+    expect(warnings).toEqual([]);
+  });
+
   it('a key far from every read key is still named, without a guess', () => {
     // A dotted key under NO known family gets the line-numbered form (B2).
     const warnings = warningsOf('zzqx.frobnicate: 1').filter((w) => w.includes('unknown key'));

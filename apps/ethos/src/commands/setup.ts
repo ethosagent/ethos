@@ -208,6 +208,12 @@ function configuredChannels(config: EthosConfig): string[] {
  * pair at minimum (`SlackAppConfig`); a partial trio is not written.
  * Discord has no list form in the schema — `discordToken` is not deprecated
  * and stays a scalar. Exported for the B4 setup tests.
+ *
+ * Multi-bot guard: the wizard asks for ONE bot per platform, so its answer
+ * can only ever describe a single-bot list. An existing list with more than
+ * one entry, or any entry carrying an explicit `id:` (a stable botKey someone
+ * chose on purpose), was hand-built for the gateway — a re-run must preserve
+ * that platform's list untouched rather than flatten it to the one answer.
  */
 export async function channelListConfig(
   answers: {
@@ -220,15 +226,19 @@ export async function channelListConfig(
   secrets: import('@ethosagent/types').SecretsResolver,
   bind: BotBinding,
 ): Promise<Pick<EthosConfig, 'telegram' | 'slack'>> {
-  const telegram = answers.telegramToken
-    ? {
-        bots: [
-          { token: await storeSecret(secrets, 'telegram/token', answers.telegramToken), bind },
-        ],
-      }
-    : existing?.telegram;
+  const handBuilt = (list: readonly { id?: string }[] | undefined): boolean =>
+    (list?.length ?? 0) > 1 || (list ?? []).some((entry) => entry.id !== undefined);
+
+  const telegram =
+    answers.telegramToken && !handBuilt(existing?.telegram?.bots)
+      ? {
+          bots: [
+            { token: await storeSecret(secrets, 'telegram/token', answers.telegramToken), bind },
+          ],
+        }
+      : existing?.telegram;
   const slack =
-    answers.slackBotToken && answers.slackSigningSecret
+    answers.slackBotToken && answers.slackSigningSecret && !handBuilt(existing?.slack?.apps)
       ? {
           apps: [
             {

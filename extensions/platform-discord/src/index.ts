@@ -202,7 +202,14 @@ export class DiscordAdapter
   /** CHS-005 — optional sink for adapter-local security decisions. */
   private readonly observability: DiscordAdapterConfig['observability'];
   private readonly approvalPolicy: 'role_gate' | 'allow_any';
-  private readonly postThinkingPlaceholder: boolean;
+  /**
+   * UD4 — true when `sendTyping` posts the "Thinking…" placeholder. Read
+   * structurally by the gateway (`placeholderCoversLane` in
+   * `extensions/gateway/src/index.ts`) to skip the H1 `_working on it…_`
+   * notice on lanes the placeholder already covers — a plain optional
+   * property, not a PlatformAdapter contract field.
+   */
+  readonly postsThinkingPlaceholder: boolean;
   /** Inbound-attachment ceiling override, bytes. Absent = the 25 MB default. */
   private readonly maxInboundMediaBytes: number | undefined;
   private readonly missedMessageBackfill: DiscordAdapterConfig['missedMessageBackfill'];
@@ -243,7 +250,7 @@ export class DiscordAdapter
     this.approvalRoleIds = config.approvalRoleIds ?? [];
     this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
     this.observability = config.observability;
-    this.postThinkingPlaceholder = config.postThinkingPlaceholder ?? true;
+    this.postsThinkingPlaceholder = config.postThinkingPlaceholder ?? true;
     this.maxInboundMediaBytes = config.maxInboundMediaBytes;
     this.missedMessageBackfill = config.missedMessageBackfill;
 
@@ -445,7 +452,7 @@ export class DiscordAdapter
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         await (channel as any).sendTyping();
       }
-      if (this.postThinkingPlaceholder && channel && 'send' in channel) {
+      if (this.postsThinkingPlaceholder && channel && 'send' in channel) {
         const existing = this.thinkingMessages.get(chatId);
         if (existing && Date.now() - existing.lastTypingAt <= THINKING_PLACEHOLDER_STALE_MS) {
           // Same turn — the gateway's periodic typing refresh. Keep the one

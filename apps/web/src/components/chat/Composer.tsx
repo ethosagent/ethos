@@ -23,8 +23,11 @@ export interface ComposerProps {
    *  nothing when null/0 (before the first turn). */
   contextTokens?: number | null;
   /** Text pushed in from a suggestion pill. `seq` makes picking the same
-   *  suggestion twice a fresh event; the draft is replaced, not appended. */
-  suggestion?: { text: string; seq: number };
+   *  suggestion twice a fresh event; the draft is replaced, not appended.
+   *  `onlyIfEmpty` restores instead of replacing: a failed send's Discard
+   *  hands its text back, but must never clobber what the user has typed
+   *  since (pinned by `__tests__/composer-suggestion.test.ts`). */
+  suggestion?: { text: string; seq: number; onlyIfEmpty?: boolean };
   /** Toggle talk-mode: starts a call, or ends the one in progress. Absent =
    *  this surface has no live-call affordance. */
   onTalkMode?: () => void;
@@ -100,7 +103,11 @@ export function Composer({
   // Keyed on `seq` so the same suggestion picked twice still lands.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `seq` is the event, `text` is the payload
   useEffect(() => {
-    if (suggestion) setText(suggestion.text);
+    if (!suggestion) return;
+    // An `onlyIfEmpty` restore yields to a draft the user has typed since.
+    setText((current) =>
+      suggestion.onlyIfEmpty && current.trim() !== '' ? current : suggestion.text,
+    );
   }, [suggestion?.seq]);
 
   useEffect(() => {

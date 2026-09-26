@@ -34,7 +34,11 @@ function ResolvedBlock({ resolved }: { resolved: ConfigGetData['resolved'] }) {
       ? `env ${resolved.apiKey.envVar ?? ''}${resolved.apiKey.overrides === 'vault' ? ', overrides vault' : ''}`
       : resolved.apiKey.source === 'vault'
         ? `vault ${resolved.apiKey.ref ?? ''}`
-        : 'inline in config.yaml';
+        : resolved.apiKey.source === 'inline'
+          ? 'inline in config.yaml'
+          : // A source this build does not know (a newer backend, e.g.
+            // `missing`) renders verbatim rather than masquerading as inline.
+            resolved.apiKey.source;
   const rows: Array<{ label: string; value: string; note?: string }> = [
     { label: 'state dir', value: resolved.stateDir },
     {
@@ -76,7 +80,9 @@ export function GeneralPane() {
     <>
       <SectionHeading id="basics">basics</SectionHeading>
 
-      {config ? <ResolvedBlock resolved={config.resolved} /> : null}
+      {/* Feature-detected: an older backend's `config.get` has no `resolved`
+          and the pane must render without the block, not crash. */}
+      {config?.resolved ? <ResolvedBlock resolved={config.resolved} /> : null}
 
       <SettingRow
         label="Personality"

@@ -45,9 +45,22 @@ const CHILD_SEGMENTS = [':sub:', ':moa:', ':job:', ':mesh:'];
 const BACKGROUND_JOB_UNTRUSTED_TAG = /<untrusted\b[^>]*\btool="background_job_summary"/;
 
 /**
- * A synthetic background-job wake is a `[background job … finished]` envelope
- * wrapping the child's summary in an `<untrusted tool="background_job_summary">`
- * block (see `Gateway.buildWakeNotice`). The wake body is untrusted child output.
+ * Anchored match for the wake-notice envelope `Gateway.buildWakeNotice`
+ * (extensions/gateway/src/index.ts) emits today, in all three shapes:
+ * `background job <id> ["<label>" ]finished`, `… failed — ethos process logs <id>`,
+ * and `… was interrupted by a restart or config change`. The done/failed
+ * shapes ALSO carry the `<untrusted tool="background_job_summary">` block and
+ * are caught by the tag match below; the ABORTED shape carries no untrusted
+ * block (its one-liner is our own constant), so this prefix is the only
+ * marker that recognizes it.
+ */
+const WAKE_NOTICE_PREFIX = /^background job \S+ /;
+
+/**
+ * A synthetic background-job wake is a `background job … finished|failed|was
+ * interrupted` envelope (see `Gateway.buildWakeNotice`), wrapping the child's
+ * summary in an `<untrusted tool="background_job_summary">` block for the
+ * done/failed shapes. The wake body is untrusted child output.
  *
  * This is DEFENCE-IN-DEPTH, not the primary guarantee. Today no path re-ingests
  * a wake as a parent turn: the gateway sends the notice outbound via
@@ -61,7 +74,11 @@ const BACKGROUND_JOB_UNTRUSTED_TAG = /<untrusted\b[^>]*\btool="background_job_su
  */
 function isWakeTurn(initialPrompt: string): boolean {
   return (
-    initialPrompt.startsWith('[background job ') || BACKGROUND_JOB_UNTRUSTED_TAG.test(initialPrompt)
+    WAKE_NOTICE_PREFIX.test(initialPrompt) ||
+    // The pre-H6 bracketed envelope — kept so a wake spooled by an older
+    // process and replayed through this one is still recognized in flight.
+    initialPrompt.startsWith('[background job ') ||
+    BACKGROUND_JOB_UNTRUSTED_TAG.test(initialPrompt)
   );
 }
 

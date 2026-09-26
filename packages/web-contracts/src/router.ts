@@ -1529,7 +1529,14 @@ const ConfigResolvedSchema = z.object({
   }),
   apiKey: z.object({
     provider: z.string(),
-    source: z.enum(['env', 'vault', 'inline']),
+    /**
+     * `missing` = env unset AND the resolver was handed a vault listing that
+     * lacks the ref (see `EffectiveConfig.apiKey.source` in
+     * `@ethosagent/config`). web-api resolves without a vault listing today,
+     * so it never sends `missing` — the variant is here so the schema mirrors
+     * the resolver's enum, additively.
+     */
+    source: z.enum(['env', 'vault', 'inline', 'missing']),
     /** The vault ref consulted (absent for `inline`). */
     ref: z.string().optional(),
     /** The environment variable that supplied the key (source `env`). */

@@ -288,6 +288,28 @@ describe('buildAdapters — multi-bot adapter loop (Phase 2)', () => {
     ]);
   });
 
+  it('threads discord.post_thinking_placeholder: false into the Discord adapter (UD4)', async () => {
+    const adapters = await buildAdapters(
+      { ...baseConfig, discordToken: 'discord-tok', discordPostThinkingPlaceholder: false },
+      makeLoader(),
+    );
+    const discord = adapters.find((a) => (a as CapturedAdapter).displayName === 'discord');
+    expect((discord as CapturedAdapter | undefined)?.capturedConfig.postThinkingPlaceholder).toBe(
+      false,
+    );
+  });
+
+  it('omits postThinkingPlaceholder when unset, leaving the adapter default (ON) in charge', async () => {
+    const adapters = await buildAdapters(
+      { ...baseConfig, discordToken: 'discord-tok' },
+      makeLoader(),
+    );
+    const discord = adapters.find((a) => (a as CapturedAdapter).displayName === 'discord');
+    expect((discord as CapturedAdapter | undefined)?.capturedConfig).not.toHaveProperty(
+      'postThinkingPlaceholder',
+    );
+  });
+
   it('skips a platform whose adapter module fails to load (graceful degradation)', async () => {
     const failingLoader: AdapterModuleLoader = async (modulePath) => {
       if (modulePath === '@ethosagent/platform-telegram') return null; // SDK missing

@@ -23,6 +23,13 @@ export interface SlashCommandDef {
   /** One-line description shown in help / autocomplete. */
   description: string;
   usage: string;
+  /**
+   * Per-surface usage override for a command whose accepted arguments differ
+   * by surface (e.g. the TUI's `/verbose` is a plain toggle while the CLI
+   * takes a level). Help renderers fall back to `usage` when a surface has no
+   * entry — this never changes which surfaces advertise the command.
+   */
+  usageBySurface?: Partial<Record<SlashSurface, string>>;
   /** Surfaces that advertise this command in their command list. */
   surfaces: SlashSurface[];
   /** When set, this command is an alias that behaves like the named command. */
@@ -119,6 +126,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'verbose',
     description: 'Cycle or set output verbosity',
     usage: '/verbose [quiet|default|verbose|debug|status]',
+    // The TUI handler is a boolean toggle (App.tsx case 'verbose') — its help
+    // must not advertise level arguments it ignores.
+    usageBySurface: { tui: '/verbose' },
     surfaces: ['cli', 'tui'],
   },
   {

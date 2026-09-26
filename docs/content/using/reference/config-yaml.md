@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -18,13 +18,24 @@ A key the parser never reads, such as a misspelling, is kept in the file but has
 ## Minimal example {#minimal-example}
 
 ```yaml
+schemaVersion: 1
 provider: anthropic
-model: claude-opus-4-7
-apiKey: sk-ant-...
+model: claude-sonnet-5
+apiKey: ${secrets:providers/anthropic/apiKey}
 personality: researcher
 ```
 
-This is what `ethos setup` writes for a default Anthropic install. Everything below is optional.
+This is what `ethos setup` writes for a default Anthropic install. The key value itself lives in the secrets vault (`~/.ethos/secrets/providers/anthropic/apiKey`); config.yaml carries only the reference. Everything below is optional.
+
+## schemaVersion {#schema-version}
+
+Type: integer · Default: `1` · Required: no
+
+Config file schema version. `writeConfig` emits it as the first line of every write; the current version is `1` (`CURRENT_ETHOS_CONFIG_SCHEMA_VERSION`). A file without the line is treated as `schemaVersion: 1`, with a one-time startup warning suggesting `ethos setup` or adding the line by hand.
+
+```yaml
+schemaVersion: 1
+```
 
 ## provider {#provider}
 
@@ -38,22 +49,22 @@ provider: anthropic
 
 ## model {#model}
 
-Type: string · Default: `claude-opus-4-7` · Required (effectively)
+Type: string · Default: `claude-sonnet-5` · Required (effectively)
 
-Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`.
+Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser falls back to `claude-sonnet-5` when the line is absent; `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`), which for Anthropic is also `claude-sonnet-5`.
 
 ```yaml
-model: claude-opus-4-7
+model: claude-sonnet-5
 ```
 
 ## apiKey {#api-key}
 
-Type: string · Default: empty · Required
+Type: secret reference · Default: empty · Required
 
-Primary provider API key. For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
+Primary provider API key, as a `${secrets:<ref>}` reference. `ethos setup` stores the value in the vault under `providers/<provider>/apiKey` and writes the reference here; rotate it with `ethos secrets set providers/<provider>/apiKey <value>`. Every write refuses a recognizable plaintext key in this field (`validateNoPlaintextSecrets` in `packages/config/src/index.ts`). For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
 
 ```yaml
-apiKey: sk-ant-...
+apiKey: ${secrets:providers/anthropic/apiKey}
 ```
 
 ## personality {#personality}
@@ -380,6 +391,20 @@ discord.approvalRoleIds: 1234567890123456789,9876543210987654321
 Notes:
 
 - A role check comes first. The approval coordinator then accepts only the bound decider: the requester in a DM, the platform owner in a group.
+- Read once at gateway startup. Restart the gateway after editing.
+
+## discord.post_thinking_placeholder {#discord-post-thinking-placeholder}
+
+Type: boolean · Default: `true`
+
+The "Thinking…" placeholder message the Discord adapter posts while a turn runs, so a channel is not silent between the user's message and the reply. `false` disables it — no placeholder is posted, and the reply arrives as the first message. Parsed into `EthosConfig.discordPostThinkingPlaceholder` ([`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)); a value that is neither `true` nor `false` is dropped and reads as unset.
+
+```yaml
+discord.post_thinking_placeholder: false
+```
+
+Notes:
+
 - Read once at gateway startup. Restart the gateway after editing.
 
 ## slackBotToken {#slack-bot-token}
@@ -1155,6 +1180,16 @@ Notes:
 - A value saved through Settings is clamped to the range. A value that will not parse as a number falls back to the default rather than failing the load — these keys are read on every talk-mode turn, so a typo must not take the lane down.
 - The five keys are independent. Set the one that is wrong; the rest keep their defaults.
 
+## display.slow_turn_notice_ms {#display-slow-turn-notice}
+
+Type: integer (ms) · Default: `8000` · Required: no
+
+How long a non-streaming gateway lane stays silent before it gets its one per-turn "working on it" ack. `0` disables the whole notice family for non-streaming lanes, not just the first timer. Streaming lanes are unaffected — their tool progress edits the draft message in place — and email lanes never get the notice, whatever the value. A negative or non-numeric value is ignored and the default applies.
+
+```yaml
+display.slow_turn_notice_ms: 12000
+```
+
 ## voice.wake.\<field\> {#voice-wake}
 
 Type: dotted group · Default: the per-field defaults below
@@ -1324,6 +1359,10 @@ Notes:
 Type: managed · Required: no
 
 Managed by `ethos set personality <id>` / `ethos set team <name>`. The runtime writes two dotted keys: `activeContext.type` (`personality` | `team`) and `activeContext.name` (id or team name). Hand-editing is not supported — values are interpreted only when both keys are present and `type` is recognised.
+
+Notes:
+
+- `activeContext.type: personality` is deprecated for one release: on load it is migrated to `personality: <name>` and the file is rewritten automatically, with a warning saying no action is needed (`migrateActiveContextPersonality` in `packages/config/src/index.ts`). The team form is unchanged — `activeContext` now only names a team.
 
 ## File location and permissions {#file-location}
 

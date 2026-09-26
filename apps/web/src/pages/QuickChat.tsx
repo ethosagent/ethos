@@ -100,13 +100,27 @@ export function QuickChat() {
 
   // W3 — a reply that finishes while this window is hidden becomes an OS
   // notification. `phase` is non-null for the whole turn and null once it
-  // finalises, so the transition IS "done arrived".
+  // finalises, so the transition IS "done arrived". But the transition alone
+  // is not "replied": an errored turn and a Stopped one end the same way, and
+  // "<agent> replied" over either is a lie — so those stay silent
+  // (pinned by `__tests__/quickchat.test.ts`).
   const phase = state.phase;
   const prevPhaseRef = useRef(phase);
+  // The id of the turn whose end the transition announces — `currentTurn` is
+  // already null by the time phase goes null, so it is remembered here for
+  // the `stoppedTurnIds` check.
+  const currentTurnId = state.currentTurn?.id ?? null;
+  const lastTurnIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentTurnId) lastTurnIdRef.current = currentTurnId;
+  }, [currentTurnId]);
   useEffect(() => {
     const prev = prevPhaseRef.current;
     prevPhaseRef.current = phase;
     if (prev === null || phase !== null) return;
+    if (state.error) return;
+    const endedTurnId = lastTurnIdRef.current;
+    if (endedTurnId && state.stoppedTurnIds.includes(endedTurnId)) return;
     if (!document.hidden) return;
     const lastReply = [...state.messages].reverse().find((m) => m.role === 'assistant');
     const body = lastReply ? extractText(lastReply).slice(0, NOTIFY_BODY_CHARS) : 'Reply ready.';
@@ -115,7 +129,7 @@ export function QuickChat() {
       title: `${personalityId} replied`,
       body,
     });
-  }, [phase, state.messages, currentSessionId, personalityId]);
+  }, [phase, state.messages, state.error, state.stoppedTurnIds, currentSessionId, personalityId]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -183,6 +197,7 @@ export function QuickChat() {
         stalled={false}
         thinking={state.thinking}
         reconnecting={state.connection === 'reconnecting'}
+        connectionLost={state.connection === 'closed'}
       />
       {state.error ? <ChatErrorBanner error={state.error} onDismiss={clearError} /> : null}
 

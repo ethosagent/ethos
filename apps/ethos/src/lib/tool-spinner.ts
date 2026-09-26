@@ -110,3 +110,47 @@ export function shouldRestartThinkingSpinner(opts: {
 }): boolean {
   return !opts.textStarted && opts.activeToolCount === 0;
 }
+
+/** What the REPL's per-turn repaint interval may do on one tick. */
+export type RepaintTick = 'spinner' | 'block' | 'none';
+
+/**
+ * The one decision the C1 repaint interval makes each tick, extracted so the
+ * two gates it must honour are pinned (chat-tool-spinner.test.ts):
+ *
+ * - `tty: false` → 'none', always. A pipe gets static feed lines only —
+ *   in-place erases/redraws are cursor-escape junk in a log file.
+ * - `promptOpen: true` → 'none', always. While the clarify presenter or the
+ *   approval prompt owns the input line, a repaint would erase the very line
+ *   the user is typing their answer on.
+ *
+ * Otherwise the original precedence: the thinking spinner while it runs, the
+ * live tool block while tools run.
+ */
+export function repaintTickAction(opts: {
+  tty: boolean;
+  promptOpen: boolean;
+  quiet: boolean;
+  spinnerCleared: boolean;
+  drawnBlockLines: number;
+  activeToolCount: number;
+}): RepaintTick {
+  if (!opts.tty || opts.promptOpen) return 'none';
+  if (!opts.spinnerCleared && !opts.quiet) return 'spinner';
+  if (opts.drawnBlockLines > 0 || opts.activeToolCount > 0) return 'block';
+  return 'none';
+}
+
+/**
+ * Events whose one-line notice prints while the thinking spinner's line may
+ * still be open, so the REPL must clear it first — otherwise the notice glues
+ * onto the spinner text. `text_delta` / `tool_start` / `error` / `decision`
+ * already have inline clears in runTurn; these are the ones that did not:
+ * `halt` and the loop/watcher `_loop` / `_watcher` `tool_progress` notices.
+ */
+export function noticeClearsSpinner(event: { type: string; toolName?: string }): boolean {
+  if (event.type === 'halt') return true;
+  return (
+    event.type === 'tool_progress' && (event.toolName === '_loop' || event.toolName === '_watcher')
+  );
+}

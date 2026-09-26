@@ -66,11 +66,20 @@ import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-co
 import { formatResumeHint } from '../lib/resume-hint';
 import { runBranchCommand } from '../lib/session-branches';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
-import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
+import {
+  buildBaseRegistry,
+  type SlashCommand,
+  type SlashCommandRegistry,
+} from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
 import { formatCostUsd, renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
-import { shouldRestartThinkingSpinner, ToolLiveBlock } from '../lib/tool-spinner';
+import {
+  noticeClearsSpinner,
+  repaintTickAction,
+  shouldRestartThinkingSpinner,
+  ToolLiveBlock,
+} from '../lib/tool-spinner';
 import {
   CLI_SLASH_SENDER,
   formatSkillProposedNotice,
@@ -422,6 +431,14 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // The writer for the TUI's masked credential modal follows `/model`
     // switches, since the replaced runtime's dispose unloads its plugins.
     let activePluginLoader = pluginLoader;
+    // C5 — background completions reach the TUI through one fanout that
+    // follows `/model` switches, the same way the readline branch
+    // re-subscribes its handler on the new runtime's executor.
+    const tuiBgCallbacks = new Set<(job: BackgroundJob) => void>();
+    const tuiBgFanout = (job: BackgroundJob): void => {
+      for (const cb of tuiBgCallbacks) cb(job);
+    };
+    let unsubscribeTuiBg = backgroundExecutor?.onComplete(tuiBgFanout);
     const rebuild = createLoopRebuilder({ drain, dispose }, async (modelId: string) => {
       const next = await resolveActiveLoop({ ...config, model: modelId });
       gateLoop(next, true, '');
@@ -433,15 +450,26 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       verbose: config.verbose ?? false,
       skin: config.skin,
       inventory,
+      // B2 — the same once-per-process config parse warnings the readline
+      // branch prints; the shared latch keeps a `/model` rebuild from
+      // repeating them.
+      startupNotices: configWarningLinesOnce(config),
       // F06 — each switch hands back the retirement of the runtime it
       // replaced (drain its background jobs + goal runs, then dispose); the
       // TUI runs it once no foreground turn is left on the old loop.
       rebuildLoop: async (modelId: string) => {
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
-        slashCommands.rebind(next.runtime.pluginLoader);
+        // Goals rebind with the loader: the pair captured at construction
+        // belongs to the retired runtime, and `/goal` after a switch must
+        // drive the live store/executor (the readline branch's
+        // `slashCtx.goals = next.runtime.goals` does the same).
+        slashCommands.rebind(next.runtime.pluginLoader, next.runtime.goals);
         activePluginLoader = next.runtime.pluginLoader;
         onNotification.rebind(next.runtime.notificationRouter);
+        // C5 — completions must keep flowing from the new runtime's executor.
+        unsubscribeTuiBg?.();
+        unsubscribeTuiBg = next.runtime.backgroundExecutor?.onComplete(tuiBgFanout);
         // The replaced loop may still propose while it drains; its slot lets
         // go of the TUI's callback only once that runtime is retired.
         const releaseSkillSlot = onSkillProposed?.rebind(
@@ -475,6 +503,14 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         }
       },
       ...(onSkillProposed ? { onSkillProposed } : {}),
+      // C5 — the TUI renders the readline branch's completion box and counts
+      // completions in its status bar (`bg:N`).
+      onBackgroundComplete: (cb) => {
+        tuiBgCallbacks.add(cb);
+        return () => {
+          tuiBgCallbacks.delete(cb);
+        };
+      },
       // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
       setPluginCredential: (pluginId, key, value) =>
         activePluginLoader.setCredential(pluginId, key, value),
@@ -482,6 +518,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       approvals: createTerminalApprovalSource(approvalCoordinator, 'tui'),
     });
     approvalCoordinator.forceSettleAll('chat closed');
+    unsubscribeTuiBg?.();
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
     await releaseCommandRuntime(liveRuntime, { label: 'chat agent loop' });
@@ -632,6 +669,10 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   const registerClarifyPresenter = (target: AgentLoop): void => {
     target.clarifyBridge?.registerPresenter('cli', (req) => {
       state.awaitingClarify = true;
+      // Wipe the running turn's spinner / thinking preview / live block before
+      // the question takes the line, and keep them wiped: the repaint interval
+      // is gated off while `awaitingClarify` is set (`repaintTickAction`).
+      state.clearSpinner?.();
       const show = (): void => {
         out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
         rl.setPrompt(`${c.cyan}?${c.reset}> `);
@@ -1066,6 +1107,19 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   state.abort = new AbortController();
   state.iterationsThisTurn = 0;
 
+  // Piped stdout (`ethos chat | tee log`) gets static feed lines only: no
+  // thinking spinner, no live tool block, no in-place cursor escapes. Pinned
+  // by __tests__/chat-non-tty-render.test.ts.
+  const tty = process.stdout.isTTY === true;
+  // While a one-line prompt (clarify, approval, plugin credential, quick
+  // consent) owns the input line, no in-place repaint may touch the screen —
+  // it would erase the line the user is typing their answer on.
+  const promptOpen = (): boolean =>
+    state.awaitingClarify ||
+    state.awaitingApproval ||
+    state.awaitingSecret ||
+    state.awaitingConsent;
+
   const reducedMotion = process.env.ETHOS_NO_SPINNER_ANIMATION === '1';
   const spinner = new SpinnerState({ reducedMotion });
   spinner.start(Date.now());
@@ -1073,8 +1127,9 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   const thinkingLine = (): string =>
     `${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`;
 
-  let spinnerCleared = false;
-  if (state.verbosity !== 'quiet') out(thinkingLine());
+  // Non-TTY: the spinner line is never drawn, so it starts (and stays) cleared.
+  let spinnerCleared = !tty;
+  if (tty && state.verbosity !== 'quiet') out(thinkingLine());
 
   const turnStart = Date.now();
   let firstTextDeltaAt: number | null = null;
@@ -1092,6 +1147,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     drawnBlockLines = 0;
   };
   const drawBlock = (): void => {
+    if (!tty) return;
     if (firstTextDeltaAt !== null) return;
     const blockLines = toolBlock.linesFor(state.verbosity, Date.now());
     if (blockLines.length === 0) return;
@@ -1117,9 +1173,19 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       const now = Date.now();
       spinner.tick(now);
       toolBlock.tick();
-      if (!spinnerCleared && state.verbosity !== 'quiet') {
+      // The tick's one decision lives in `repaintTickAction` (tool-spinner.ts)
+      // so its two hard gates — non-TTY and an open prompt — stay pinned.
+      const action = repaintTickAction({
+        tty,
+        promptOpen: promptOpen(),
+        quiet: state.verbosity === 'quiet',
+        spinnerCleared,
+        drawnBlockLines,
+        activeToolCount: toolBlock.count(),
+      });
+      if (action === 'spinner') {
         out(`\r${thinkingLine()}`);
-      } else if (drawnBlockLines > 0 || toolBlock.count() > 0) {
+      } else if (action === 'block') {
         eraseBlock();
         drawBlock();
       }
@@ -1244,6 +1310,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       }
       if (event.type === 'run_start') turnTraceId = event.traceId;
       if (event.type === 'error') clearSpinner();
+      // The halt and `_loop`/`_watcher` notices print a line of their own, so
+      // the open spinner line is wiped first — same treatment text_delta,
+      // tool_start, decision and error get above (`noticeClearsSpinner`).
+      if (noticeClearsSpinner(event)) clearSpinner();
 
       renderEventForVerbosity(event, state, {
         hasText,
@@ -1263,6 +1333,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       // only, and only while the thinking phase owns the screen: no text yet
       // and no live tool block).
       if (
+        tty &&
         event.type === 'thinking_delta' &&
         firstTextDeltaAt === null &&
         toolBlock.count() === 0 &&
@@ -1280,9 +1351,11 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       // C1 — after a tool ends with no text yet and nothing else running,
       // bring the thinking spinner back so the screen never goes silent.
       if (
+        tty &&
         event.type === 'tool_end' &&
         !internalToolEvent &&
         spinnerCleared &&
+        !promptOpen() &&
         shouldRestartThinkingSpinner({ textStarted: hasText, activeToolCount: toolBlock.count() })
       ) {
         spinnerCleared = false;
@@ -1679,6 +1752,21 @@ export function buildChatHelpText(
   return text;
 }
 
+/**
+ * Build the /commands body — the full registry the autocomplete reads:
+ * built-ins plus every `[skill]` / `[command]` / `[quick]` registration (the
+ * surface-kit table advertises `/commands` as "List available commands").
+ * Non-built-ins keep their prefix tag so their origin is visible. Exported
+ * for the pin test (__tests__/chat-slash-feedback.test.ts).
+ */
+export function buildCommandsListText(commands: SlashCommand[]): string {
+  let text = '';
+  for (const cmd of commands) {
+    text += `  ${cmd.usage.padEnd(21)} ${cmd.description}${cmd.prefix ? ` ${cmd.prefix}` : ''}\n`;
+  }
+  return text;
+}
+
 /** C3 — the outcome `/model <id>` prints: switched, or refused via the A3 map. */
 export type ModelSwitchOutcome = { ok: true } | { ok: false; title: string; action: string };
 
@@ -1719,6 +1807,12 @@ async function handleSlashCommand(
   switch (name) {
     case 'help':
       out(`\n${c.dim}${buildChatHelpText(ctx.pluginLoader?.getAllSlashCommands())}${c.reset}\n`);
+      break;
+
+    case 'commands':
+      // The table entry /help advertises ("List available commands") — the
+      // live registry, so skills, file-drop commands and quick commands show.
+      out(`\n${c.dim}${buildCommandsListText(registry.getAll())}${c.reset}\n`);
       break;
 
     case 'new':

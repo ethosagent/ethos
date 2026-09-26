@@ -5,10 +5,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildCommandsListText,
   CLI_NOTIFICATION_PREFIX,
   STEER_DISCARDED_NOTICE,
   STEER_SINK_FULL_NOTICE,
 } from '../commands/chat';
+import { buildBaseRegistry } from '../lib/slash-commands';
 import { applyVerbosityCommand } from '../lib/verbosity';
 
 describe('/verbose (C6)', () => {
@@ -57,5 +59,35 @@ describe('steer-loss wording (C6)', () => {
 describe('notification convention (C6)', () => {
   it('notifications print through the same dim `·` prefix as other notices', () => {
     expect(CLI_NOTIFICATION_PREFIX).toBe('· ');
+  });
+});
+
+describe('/commands — the advertised command actually lists commands', () => {
+  it('renders every registry entry, with prefix tags on non-built-ins', () => {
+    const registry = buildBaseRegistry();
+    registry.register({
+      name: 'deploy',
+      description: 'Ship it',
+      usage: '/deploy',
+      prefix: '[skill]',
+    });
+    const text = buildCommandsListText(registry.getAll());
+    // /help itself advertises /commands — the handler must produce output,
+    // never fall through to "Unknown command".
+    expect(text).toContain('/commands');
+    expect(text).toContain('/help');
+    expect(text).toContain('/deploy');
+    expect(text).toContain('Ship it [skill]');
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it('handleSlashCommand carries a real case — never the Unknown-command fall-through', () => {
+    // Same source-scan pattern as setup-non-tty.test.ts's Ink guard: the
+    // handler is not exported, but the case must exist for the advertised
+    // command to answer.
+    const { readFileSync } = require('node:fs');
+    const { join } = require('node:path');
+    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'chat.ts'), 'utf8');
+    expect(src).toContain("case 'commands':");
   });
 });

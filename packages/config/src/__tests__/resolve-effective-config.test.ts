@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   configParseNotices,
   type EthosConfig,
@@ -51,6 +51,32 @@ describe('resolveEffectiveConfig — personality', () => {
   it('falls back to the parser default when neither key is set', () => {
     const resolved = resolveEffectiveConfig({ ...BASE, personality: '' }, {});
     expect(resolved.personality).toEqual({ id: 'researcher', source: 'default' });
+  });
+
+  // B3 honesty — parseConfigYaml bakes DEFAULT_PERSONALITY_ID into the field,
+  // so key ABSENCE is recorded in a parse-time side-table; a file that never
+  // set `personality:` must report `(default)`, not `(personality:)`.
+  it('a parsed config whose file never set personality: reports source default', () => {
+    const cfg = parseConfigYaml(
+      ['provider: anthropic', 'model: claude-sonnet-5', 'apiKey: sk'].join('\n'),
+    );
+    expect(cfg.personality).toBe('researcher'); // the parser still bakes the id in
+    expect(resolveEffectiveConfig(cfg, {}).personality).toEqual({
+      id: 'researcher',
+      source: 'default',
+    });
+  });
+
+  it('a parsed config whose file set personality: reports the key as the source', () => {
+    const cfg = parseConfigYaml(
+      ['provider: anthropic', 'model: claude-sonnet-5', 'apiKey: sk', 'personality: coder'].join(
+        '\n',
+      ),
+    );
+    expect(resolveEffectiveConfig(cfg, {}).personality).toEqual({
+      id: 'coder',
+      source: 'personality',
+    });
   });
 });
 
@@ -101,8 +127,33 @@ describe('resolveEffectiveConfig — api key source', () => {
     expect(resolved.apiKey.overrides).toBeUndefined();
   });
 
-  it('reports vault when no env var supplies the ref', () => {
+  it('reports vault (unverified) when no env var supplies the ref and no listing was given', () => {
     const resolved = resolveEffectiveConfig(BASE, {});
+    expect(resolved.apiKey).toEqual({
+      provider: 'anthropic',
+      source: 'vault',
+      ref: 'providers/anthropic/apiKey',
+    });
+  });
+
+  // B3 honesty — `vault` is only claimed when it could be true. With a vault
+  // listing in hand, an env miss on a ref the vault does not hold is
+  // `missing`, never an unverified `vault` claim.
+  it('reports missing when env is unset and the provided vault listing lacks the ref', () => {
+    const resolved = resolveEffectiveConfig(BASE, {}, { vaultRefs: [] });
+    expect(resolved.apiKey).toEqual({
+      provider: 'anthropic',
+      source: 'missing',
+      ref: 'providers/anthropic/apiKey',
+    });
+  });
+
+  it('keeps the vault verdict when the provided listing holds the ref', () => {
+    const resolved = resolveEffectiveConfig(
+      BASE,
+      {},
+      { vaultRefs: ['providers/anthropic/apiKey'] },
+    );
     expect(resolved.apiKey).toEqual({
       provider: 'anthropic',
       source: 'vault',
@@ -194,6 +245,44 @@ describe('UD1 Option A — activeContext personality migration on load', () => {
     const src = await storage.read(join(ethosDir(), 'config.yaml'));
     expect(src).toContain('personality: engineer');
     expect(src).not.toContain('activeContext.');
+  });
+
+  it('rewrites the file with writeAtomic (storage contract for config.yaml)', async () => {
+    // The failure case below completes the pin: with writeAtomic mocked to
+    // throw, a direct storage.write would still rewrite the file and that
+    // test would fail — so together they prove the rewrite goes through
+    // writeAtomic alone.
+    const storage = await seed(FILE);
+    const atomic = vi.spyOn(storage, 'writeAtomic');
+    await readRawConfig(storage);
+    expect(atomic).toHaveBeenCalledWith(
+      join(ethosDir(), 'config.yaml'),
+      expect.stringContaining('personality: engineer'),
+      { mode: 0o600 },
+    );
+  });
+
+  it('a rewrite that throws warns honestly: not rewritten, retried on the next load', async () => {
+    const storage = await seed(FILE);
+    vi.spyOn(storage, 'writeAtomic').mockRejectedValue(new Error('EROFS: read-only'));
+    const cfg = await readRawConfig(storage);
+    if (!cfg) throw new Error('config did not parse');
+
+    // The in-memory migration still holds for this process.
+    expect(cfg.personality).toBe('engineer');
+    expect(cfg.activeContext).toBeUndefined();
+
+    // The notice states the failure — never "rewritten automatically".
+    const warning = configParseNotices(cfg).warnings.find((w) =>
+      w.includes('activeContext.type: personality is deprecated'),
+    );
+    expect(warning).toContain('could not be rewritten (EROFS: read-only)');
+    expect(warning).toContain('retried on the next load');
+    expect(warning).not.toContain('no action needed');
+
+    // The file is untouched, so the next load repeats the attempt.
+    const src = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(src).toContain('activeContext.type: personality');
   });
 
   it('leaves a team activeContext alone', async () => {

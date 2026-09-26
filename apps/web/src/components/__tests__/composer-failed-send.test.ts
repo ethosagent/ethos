@@ -18,6 +18,14 @@ import type { UserMessage } from '../../lib/chat-reducer';
 import { Composer } from '../chat/Composer';
 import { UserBubble } from '../chat/MessageBubble';
 
+// jsdom has no ResizeObserver; antd's autosizing textarea observes the
+// composer's box. Same stub as `composer-suggestion.test.ts`.
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 vi.mock('../../rpc', () => ({
   rpc: {
     meta: { capabilities: vi.fn().mockResolvedValue({ capabilities: {} }) },

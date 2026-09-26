@@ -50,6 +50,11 @@ export function CategoryRail({
   useEffect(() => {
     if (activeIsAdvanced) setAdvancedOpen(true);
   }, [activeIsAdvanced]);
+  // The invariant, enforced not just asserted: while the active category IS
+  // advanced the group stays visible whatever the toggle says — a "hide"
+  // clicked here takes effect once you leave the advanced group. Pinned by
+  // `__tests__/category-rail-advanced-active.test.ts`.
+  const advancedVisible = advancedOpen || activeIsAdvanced;
   const advancedDirty = advanced.some((c) => dirtyCategories.includes(c.slug));
 
   const row = (category: SettingsCategory) => (
@@ -97,13 +102,13 @@ export function CategoryRail({
               <button
                 type="button"
                 className="settings-rail-advanced-toggle"
-                aria-expanded={advancedOpen}
+                aria-expanded={advancedVisible}
                 aria-controls="settings-rail-advanced"
                 onClick={() => setAdvancedOpen((v) => !v)}
               >
-                {advancedOpen ? '▾' : '▸'} Advanced ({advanced.length}) —{' '}
-                {advancedOpen ? 'hide' : 'show'} operator settings
-                {!advancedOpen && advancedDirty ? (
+                {advancedVisible ? '▾' : '▸'} Advanced ({advanced.length}) —{' '}
+                {advancedVisible ? 'hide' : 'show'} operator settings
+                {!advancedVisible && advancedDirty ? (
                   <span
                     className="settings-rail-dot"
                     role="img"
@@ -115,7 +120,7 @@ export function CategoryRail({
               <div
                 id="settings-rail-advanced"
                 className={`settings-rail-group settings-rail-advanced${
-                  advancedOpen ? '' : ' is-collapsed'
+                  advancedVisible ? '' : ' is-collapsed'
                 }`}
               >
                 {advanced.map(row)}

@@ -21,6 +21,11 @@ export interface TUIOptions {
   verbose?: boolean;
   /** Named skin to apply at boot (one of the built-in skin names). */
   skin?: string;
+  /**
+   * B2 — host startup warnings (config parse notices) rendered once on mount
+   * as dim system lines, the same lines the readline branch prints.
+   */
+  startupNotices?: string[];
   /** Called when the user switches model via /model picker. Returns the new
    *  loop and the release of the runtime it replaces (`RebuiltLoop`). */
   rebuildLoop?: (modelId: string) => Promise<RebuiltLoop>;
@@ -79,6 +84,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       initialSessionKey: sessionKey,
       initialVerbose: opts.verbose ?? false,
       initialSkin: opts.skin,
+      startupNotices: opts.startupNotices,
       rebuildLoop: opts.rebuildLoop,
       inventory: opts.inventory,
       version: opts.version,

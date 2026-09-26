@@ -103,6 +103,67 @@ describe('useUnsavedGuard — in-app navigation', () => {
   });
 });
 
+// Two sibling guards on one page (Memory renders two MemoryEditor tabs, both
+// mounted once visited). The old per-hook wrap/restore broke here: sibling
+// cleanups run first-to-last, so A restored the original and B restored A's
+// DEAD wrapper — an unmounted, dirty A then prompted on every navigation until
+// reload. The fix ref-counts one shared patch per navigator.
+describe('useUnsavedGuard — two sibling guards', () => {
+  function GuardOnly({ dirty }: { dirty: boolean | (() => boolean) }) {
+    useUnsavedGuard(dirty);
+    return null;
+  }
+
+  function renderSiblings(guards: Array<boolean | (() => boolean)>): void {
+    act(() => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: ['/start'] },
+          createElement(Probe, { key: 'probe', dirty: false }),
+          ...guards.map((dirty, i) => createElement(GuardOnly, { key: `g${i}`, dirty })),
+        ),
+      );
+    });
+  }
+
+  it('unmounting both siblings restores the true original — no stale prompt', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    // A dirty at unmount is the poisoned case: its dead wrapper used to stay
+    // installed via B's cleanup.
+    renderSiblings([true, false]);
+    renderSiblings([]);
+    go('/next');
+    expect(currentPath).toBe('/next');
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps guarding for the survivor when only one sibling unmounts', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderSiblings([true, false]);
+    // The clean sibling leaves; the dirty one stays and must still guard.
+    renderSiblings([true]);
+    go('/next');
+    expect(currentPath).toBe('/start');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('both mounted and dirty: one confirm per dirty guard, any decline blocks', () => {
+    const confirm = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    renderSiblings([true, true]);
+    go('/next');
+    expect(currentPath).toBe('/start');
+    expect(confirm).toHaveBeenCalledTimes(2);
+
+    confirm.mockReturnValue(true);
+    go('/next');
+    expect(currentPath).toBe('/next');
+  });
+});
+
 describe('useUnsavedGuard — beforeunload', () => {
   it('prevents unload while dirty', () => {
     mount(true);

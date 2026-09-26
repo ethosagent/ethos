@@ -12,7 +12,7 @@ import { FileSecretsResolver } from '@ethosagent/storage-fs';
 import { backupDirectory } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
-import { getStorage } from '../wiring';
+import { getSecretsResolver, getStorage } from '../wiring';
 
 // `ethos status` — single-pane health summary.
 //
@@ -293,14 +293,27 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
 
 /**
  * Resolve the effective config with the file vault's ref listing, so
- * `apiKey.overrides: 'vault'` can be computed (an env hit that shadows a
- * stored secret). The vault is listed directly — the merged resolver's
- * `list()` unions env-sourced refs in, which would claim the vault holds
- * every key the environment does. Fail-soft: an unreadable vault reports the
- * env source without the overrides claim.
+ * `apiKey.overrides: 'vault'` and `source: 'missing'` can be computed (an env
+ * hit that shadows a stored secret; a ref nothing on this machine serves).
+ * The vault is listed directly — the merged resolver's `list()` unions
+ * env-sourced refs in, which would claim the vault holds every key the
+ * environment does. Fail-soft: an unreadable vault passes NO listing, so the
+ * resolver reports env/vault without the overrides or missing claims.
+ *
+ * `getSecretsResolver()` runs first for its side effect: it is the same seam
+ * wiring uses (apps/ethos/src/wiring.ts `initSecrets`), and it loads
+ * `~/.ethos/.env` (or `ETHOS_ENV_FILE`) into `process.env` — without it a key
+ * that lives only in .env would misreport its source as vault/missing here
+ * while the runtime actually reads it from env.
  */
 export async function resolveEffective(config: EthosConfig): Promise<EffectiveConfig> {
-  let vaultRefs: string[] = [];
+  try {
+    await getSecretsResolver();
+  } catch {
+    // Fail-soft: status must always print; the resolution below still runs
+    // against whatever process.env already holds.
+  }
+  let vaultRefs: string[] | undefined;
   try {
     const vault = new FileSecretsResolver({
       dir: join(ethosDir(), 'secrets'),
@@ -308,9 +321,11 @@ export async function resolveEffective(config: EthosConfig): Promise<EffectiveCo
     });
     vaultRefs = await vault.list();
   } catch {
-    // No vault listing — resolveEffectiveConfig reports env without 'overrides'.
+    // No vault listing — never claim 'missing' on a vault this command
+    // could not read.
+    vaultRefs = undefined;
   }
-  return resolveEffectiveConfig(config, process.env, { vaultRefs });
+  return resolveEffectiveConfig(config, process.env, vaultRefs === undefined ? {} : { vaultRefs });
 }
 
 /**
@@ -341,6 +356,8 @@ export function formatResolvedLines(
     keyNote = 'source: inline apiKey in config.yaml';
   } else if (r.apiKey.source === 'env') {
     keyNote = `source: env ${r.apiKey.envVar ?? ''}${r.apiKey.overrides === 'vault' ? ', overrides vault' : ''}`;
+  } else if (r.apiKey.source === 'missing') {
+    keyNote = `source: none found — ethos secrets set ${r.apiKey.ref ?? '<ref>'}`;
   } else {
     keyNote = `source: vault ${r.apiKey.ref ?? ''}`;
   }

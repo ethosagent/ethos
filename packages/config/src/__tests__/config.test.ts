@@ -461,6 +461,11 @@ describe('parseConfigYaml — display.slow_turn_notice_ms (UD3)', () => {
     expect(cfg.displaySlowTurnNoticeMs).toBeUndefined();
   });
 
+  it('clamps a negative value to 0 (disabled), never back to the 8000 default', async () => {
+    const cfg = await loadYaml([...base, 'display.slow_turn_notice_ms: -500'].join('\n'));
+    expect(cfg.displaySlowTurnNoticeMs).toBe(0);
+  });
+
   it('round-trips through writeConfig and back, including 0', async () => {
     for (const value of [8000, 0]) {
       const storage = new InMemoryStorage();

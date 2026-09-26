@@ -40,4 +40,11 @@ describe('revealDecision — secrets get plaintext gate', () => {
   it('a non-TTY without --reveal refuses', () => {
     expect(revealDecision({ reveal: false, isTTY: false })).toBe('refuse');
   });
+
+  it('--json counts as explicit intent: no refusal on a pipe, no prompt on a TTY', () => {
+    // Scripted `ethos secrets get <ref> --json` must yield the value in JSON.
+    expect(revealDecision({ reveal: false, isTTY: false, json: true })).toBe('yes');
+    // And a TTY `--json` must not inject a y/N prompt into the JSON stream.
+    expect(revealDecision({ reveal: false, isTTY: true, json: true })).toBe('yes');
+  });
 });

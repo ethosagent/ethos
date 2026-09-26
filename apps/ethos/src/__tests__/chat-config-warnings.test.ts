@@ -1,6 +1,8 @@
 // B2 (plan ux-feedback-and-config-clarity §4) — the default `ethos` command
 // prints each config parse warning once per process, before the welcome line.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseConfigYaml } from '@ethosagent/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { configWarningLinesOnce, resetConfigWarningsForTest } from '../lib/config-warnings';
@@ -30,5 +32,19 @@ describe('chat config warnings (B2)', () => {
   it('a clean config yields no lines (and still latches)', () => {
     const clean = parseConfigYaml(src.split('\n').slice(0, 4).join('\n'));
     expect(configWarningLinesOnce(clean)).toEqual([]);
+  });
+
+  it('the TUI branch hands the same lines to runTUI as startupNotices', () => {
+    // runChat is not exported piecemeal (it needs a TTY + live runtime), so
+    // pin the wiring at the source, the same way tui-capabilities.test.ts pins
+    // CLI_SLASH_SENDER: the one runTUI call chat.ts makes passes the shared
+    // once-per-process lines — identical wording and latch to the readline
+    // branch's print loop.
+    const chatSrc = readFileSync(join(import.meta.dirname, '..', 'commands', 'chat.ts'), 'utf8');
+    const tuiCall = chatSrc.slice(chatSrc.indexOf('await runTUI(loop, {'));
+    expect(tuiCall.indexOf('startupNotices: configWarningLinesOnce(config),')).toBeGreaterThan(-1);
+    expect(tuiCall.indexOf('startupNotices: configWarningLinesOnce(config),')).toBeLessThan(
+      tuiCall.indexOf('});'),
+    );
   });
 });

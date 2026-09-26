@@ -59,6 +59,7 @@ import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
+import { retryTurnText } from '../lib/chat-retry';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import { accentVars, personalityTheme } from '../lib/theme';
@@ -314,14 +315,21 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
 
   // Suggestion pills (empty state + `recommend_actions` cards) fill the
   // composer draft. `seq` makes a repeat pick a distinct event.
-  const [suggestion, setSuggestion] = useState<{ text: string; seq: number } | undefined>();
-  const handleSuggestPrompt = useCallback((text: string) => {
-    setSuggestion((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+  const [suggestion, setSuggestion] = useState<
+    { text: string; seq: number; onlyIfEmpty?: boolean } | undefined
+  >();
+  const handleSuggestPrompt = useCallback((text: string, opts?: { onlyIfEmpty?: boolean }) => {
+    setSuggestion((prev) => ({
+      text,
+      seq: (prev?.seq ?? 0) + 1,
+      ...(opts?.onlyIfEmpty ? { onlyIfEmpty: true as const } : {}),
+    }));
   }, []);
 
   // W1 — the failed-bubble verbs. Stable identities: UserBubble rows are
   // memoized against them. Discard puts the text back in the composer through
-  // the same suggestion path a pill uses.
+  // the same suggestion path a pill uses — but only into an EMPTY composer:
+  // anything typed since the failed send outranks the recovered draft.
   const handleRetryMessage = useCallback(
     (messageId: string) => {
       void retryMessage(messageId);
@@ -331,18 +339,21 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   const handleDiscardMessage = useCallback(
     (messageId: string) => {
       const draft = discardMessage(messageId);
-      if (draft) handleSuggestPrompt(draft);
+      if (draft) handleSuggestPrompt(draft, { onlyIfEmpty: true });
     },
     [discardMessage, handleSuggestPrompt],
   );
 
   // A3 — the banner's Retry for a retryable turn error: ask the same question
-  // again. The last user message is the turn the error ended.
+  // again. `retryTurnText` yields the last user message's text, or null when
+  // that send carried attachments — the bubble holds render-only metadata, not
+  // the bytes, so a text-only resend would silently degrade the question.
+  // Null hides Retry on the banner instead (`lib/chat-retry.ts`).
+  const retryTurnDraft = useMemo(() => retryTurnText(state.messages), [state.messages]);
   const handleRetryTurn = useCallback(() => {
-    const lastUser = [...state.messages].reverse().find((m) => m.role === 'user');
-    if (!lastUser) return;
-    void sendMessage(lastUser.content);
-  }, [state.messages, sendMessage]);
+    if (retryTurnDraft === null) return;
+    void sendMessage(retryTurnDraft);
+  }, [retryTurnDraft, sendMessage]);
 
   // `?draft=` — a prompt handed over from another surface (today: the recipe
   // post-install panel's "Open chat with …"). It fills the composer through the
@@ -1089,6 +1100,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         stalled={isStalled}
         thinking={state.thinking}
         reconnecting={state.connection === 'reconnecting'}
+        connectionLost={state.connection === 'closed'}
       />
       <div>
         {state.pendingCredential ? (
@@ -1100,7 +1112,11 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
           />
         ) : null}
         {state.error ? (
-          <ChatErrorBanner error={state.error} onDismiss={clearError} onRetry={handleRetryTurn} />
+          <ChatErrorBanner
+            error={state.error}
+            onDismiss={clearError}
+            {...(retryTurnDraft !== null ? { onRetry: handleRetryTurn } : {})}
+          />
         ) : null}
         <Composer
           personalityId={personalityId}

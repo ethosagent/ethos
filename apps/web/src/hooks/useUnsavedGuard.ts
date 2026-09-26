@@ -26,6 +26,61 @@ import { UNSAFE_NavigationContext } from 'react-router-dom';
 
 const DEFAULT_MESSAGE = 'You have unsaved changes — leave this page and lose them?';
 
+interface GuardEntry {
+  isDirty: () => boolean;
+  message: () => string;
+}
+
+interface NavigatorPatch {
+  guards: Set<GuardEntry>;
+  restore: () => void;
+}
+
+// ONE patch per navigator, shared by every mounted guard (Memory renders two
+// MemoryEditor tabs, both alive at once). The per-hook wrap/restore pattern
+// broke with siblings: cleanups run first-to-last, so the first unmount
+// restored the true original and the second restored the first's DEAD wrapper
+// — an unmounted component's guard stayed patched into the router, and if it
+// was dirty at unmount every later in-app navigation prompted until reload.
+// Here guards ref-count into one Set; the originals are restored only when
+// the last guard leaves. Pinned by the sibling cases in
+// `__tests__/useUnsavedGuard.test.ts`.
+const navigatorPatches = new WeakMap<object, NavigatorPatch>();
+
+function acquireNavigatorPatch(navigator: {
+  push: (...args: never[]) => void;
+  replace: (...args: never[]) => void;
+}): NavigatorPatch {
+  const existing = navigatorPatches.get(navigator);
+  if (existing) return existing;
+
+  const push = navigator.push;
+  const replace = navigator.replace;
+  const guards = new Set<GuardEntry>();
+  const gate =
+    <A extends never[]>(original: (...args: A) => void) =>
+    (...args: A) => {
+      // Each dirty guard gets its own confirm (their messages can differ);
+      // any decline blocks the navigation.
+      for (const guard of [...guards]) {
+        if (guard.isDirty() && !window.confirm(guard.message())) return;
+      }
+      original(...args);
+    };
+  navigator.push = gate(push);
+  navigator.replace = gate(replace);
+
+  const patch: NavigatorPatch = {
+    guards,
+    restore: () => {
+      navigator.push = push;
+      navigator.replace = replace;
+    },
+  };
+  navigatorPatches.set(navigator, patch);
+  return patch;
+}
+
 export function useUnsavedGuard(dirty: boolean | (() => boolean), message = DEFAULT_MESSAGE) {
   // Null outside a <Router> (component tests mount modals bare); the in-app
   // half then has nothing to guard and only `beforeunload` arms.
@@ -50,19 +105,18 @@ export function useUnsavedGuard(dirty: boolean | (() => boolean), message = DEFA
 
   useEffect(() => {
     if (!navigator) return;
-    const push = navigator.push;
-    const replace = navigator.replace;
-    const guard =
-      <A extends unknown[]>(original: (...args: A) => void) =>
-      (...args: A) => {
-        if (isDirtyRef.current() && !window.confirm(messageRef.current)) return;
-        original(...args);
-      };
-    navigator.push = guard(push);
-    navigator.replace = guard(replace);
+    const entry: GuardEntry = {
+      isDirty: () => isDirtyRef.current(),
+      message: () => messageRef.current,
+    };
+    const patch = acquireNavigatorPatch(navigator);
+    patch.guards.add(entry);
     return () => {
-      navigator.push = push;
-      navigator.replace = replace;
+      patch.guards.delete(entry);
+      if (patch.guards.size === 0 && navigatorPatches.get(navigator) === patch) {
+        patch.restore();
+        navigatorPatches.delete(navigator);
+      }
     };
   }, [navigator]);
 }

@@ -160,4 +160,48 @@ describe('B4 — setup writes the bot list forms', () => {
     expect(channels.telegram).toEqual(existing.telegram);
     expect(channels.slack).toBeUndefined();
   });
+
+  it('a re-run never flattens a hand-built multi-bot list to the one wizard answer', async () => {
+    const secrets = new MapSecrets();
+    const existing = {
+      telegram: {
+        bots: [
+          {
+            token: '${secrets:telegram/bot-a/token}',
+            bind: { type: 'personality' as const, name: 'coach' },
+          },
+          {
+            token: '${secrets:telegram/bot-b/token}',
+            bind: { type: 'personality' as const, name: 'coder' },
+          },
+        ],
+      },
+      slack: {
+        apps: [
+          {
+            id: 'ops-bot',
+            botToken: '${secrets:slack/botToken}',
+            signingSecret: '${secrets:slack/signingSecret}',
+            bind: { type: 'personality' as const, name: 'coach' },
+          },
+        ],
+      },
+    };
+    const channels = await channelListConfig(
+      {
+        telegramToken: '999:NEW',
+        slackBotToken: 'xoxb-new',
+        slackSigningSecret: 'sig-new',
+      },
+      existing,
+      secrets,
+      { type: 'personality', name: 'researcher' },
+    );
+    // Two telegram bots → preserved; one slack app with an explicit id → preserved.
+    expect(channels.telegram).toEqual(existing.telegram);
+    expect(channels.slack).toEqual(existing.slack);
+    // Nothing was externalized for the ignored answers either.
+    expect(secrets.store.has('telegram/token')).toBe(false);
+    expect(secrets.store.has('slack/botToken')).toBe(false);
+  });
 });

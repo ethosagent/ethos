@@ -608,6 +608,9 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   const switchSession = useCallback(
     (sessionId: string) => {
       resetPaging(null, null);
+      // The failed-send registry is keyed by bubbles the reset just wiped —
+      // entries for a previous session would only accumulate.
+      failedSendsRef.current.clear();
       dispatch({ kind: 'action', action: { type: 'reset' } });
       setCurrentSessionId(sessionId);
     },
@@ -616,6 +619,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
 
   const resetSession = useCallback(() => {
     resetPaging(null, null);
+    failedSendsRef.current.clear();
     dispatch({ kind: 'action', action: { type: 'reset' } });
     setCurrentSessionId(null);
     historyLoadedFor.current = null;

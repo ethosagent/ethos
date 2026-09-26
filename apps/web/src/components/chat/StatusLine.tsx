@@ -36,6 +36,9 @@ export interface StatusLineProps {
   thinking?: string | null;
   /** W2 — the SSE stream dropped mid-turn; appends `reconnecting…`. */
   reconnecting?: boolean;
+  /** W2 — the browser gave up on the stream (`closed`); appends
+   *  `connection lost` — only a reload (fresh subscribe) reopens it. */
+  connectionLost?: boolean;
 }
 
 /** How much of the thinking preview the collapsed line shows. */
@@ -63,6 +66,7 @@ export function StatusLine({
   stalled,
   thinking,
   reconnecting,
+  connectionLost,
 }: StatusLineProps) {
   // A running tool is the only pulsing state; `received` and `thinking` are
   // steady.
@@ -92,7 +96,11 @@ export function StatusLine({
       <span className="status-line-label" aria-hidden="true">
         {text}
       </span>
-      {reconnecting ? (
+      {connectionLost ? (
+        <span className="status-line-stall" aria-hidden="true">
+          connection lost
+        </span>
+      ) : reconnecting ? (
         <span className="status-line-stall" aria-hidden="true">
           reconnecting…
         </span>

@@ -2,8 +2,14 @@
 // Silent-lane liveness — H1 + H2 (plan/phases/ux-feedback-and-config-clarity.md §4)
 //
 // H1: a lane whose reply does not stream gets NOTHING between the inbound and
-// the final send. After `slowTurnNoticeMs` of silence with no text_delta, the
-// lane gets ONE untracked "_working on it · <tool|thinking>…_" ack.
+// the final send. After `slowTurnNoticeMs` with nothing DELIVERED, the lane
+// gets ONE untracked "_working on it · <tool|thinking>…_" ack. Emitted text
+// does NOT stand the timer down: on a non-streaming lane a text_delta reaches
+// no one until the final lands, so a preamble ("Let me check…") followed by a
+// five-minute tool is exactly the silence H1 exists to fill (the plan's
+// success criterion is DELIVERED feedback). Only the once-per-turn latch and
+// turn end (`dispose`) stop the notice. Streaming lanes are unaffected — H1
+// never arms there (`start()` requires `sendNotice`).
 //
 // H2: a tool call that runs `toolNoticeMs` (10 s) with no user-audience
 // progress of its own gets a "working on it (<tool>)…" line. On a streaming
@@ -58,8 +64,6 @@ export class TurnFeedback {
 
   /** §9 — the one shared once-per-turn latch for non-streaming notices. */
   private noticeSent = false;
-  /** First text_delta arrived — the reply is being composed; H1 stands down. */
-  private textSeen = false;
   private disposed = false;
   private turnTimer: ReturnType<typeof setTimeout> | undefined;
   /** Running non-internal tool calls, insertion-ordered: callId → toolName. */
@@ -87,12 +91,10 @@ export class TurnFeedback {
   onEvent(event: AgentEvent): void {
     if (this.disposed) return;
     switch (event.type) {
-      case 'text_delta':
-        // The model is composing the answer — cancel H1 rather than talk over
-        // the reply that is about to land ("cancelled by early text").
-        this.textSeen = true;
-        this.clearTurnTimer();
-        break;
+      // Deliberately no `text_delta` case: emitted text is not delivered text
+      // on a non-streaming lane (see the header) — composing the reply does
+      // not stand H1 down. Pinned by `__tests__/slow-turn-notice.test.ts`
+      // ('fires despite early emitted text').
       case 'tool_start': {
         // Internal calls (an inner script call, `_`-prefixed loop pseudo-tools)
         // are not user-visible activity and never earn a notice.
@@ -163,7 +165,7 @@ export class TurnFeedback {
   /** The non-streaming send, behind the shared latch. */
   private maybeSendTurnNotice(label: string): void {
     if (!this.sendNotice || this.slowTurnNoticeMs <= 0) return;
-    if (this.disposed || this.noticeSent || this.textSeen) return;
+    if (this.disposed || this.noticeSent) return;
     this.noticeSent = true;
     this.clearTurnTimer();
     this.sendNotice(`_working on it · ${label}…_`);

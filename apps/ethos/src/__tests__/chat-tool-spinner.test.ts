@@ -5,6 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_TOOL_SPINNER_LINES,
+  noticeClearsSpinner,
+  repaintTickAction,
   shouldRestartThinkingSpinner,
   ToolLiveBlock,
 } from '../lib/tool-spinner';
@@ -56,6 +58,71 @@ describe('ToolLiveBlock (C1)', () => {
     const still = new ToolLiveBlock({ reducedMotion: true });
     still.tick();
     expect(still.frame()).toBe('·');
+  });
+});
+
+describe('repaintTickAction — the interval’s two hard gates', () => {
+  const busy = {
+    quiet: false,
+    spinnerCleared: false,
+    drawnBlockLines: 2,
+    activeToolCount: 2,
+  };
+
+  it('an open prompt silences every repaint — the user is typing on that line', () => {
+    // Whatever else is true (spinner running, block drawn, tools active),
+    // promptOpen wins: zero repaint output while a clarify/approval prompt
+    // owns the input line.
+    for (const spinnerCleared of [true, false]) {
+      for (const drawnBlockLines of [0, 3]) {
+        for (const activeToolCount of [0, 2]) {
+          expect(
+            repaintTickAction({
+              tty: true,
+              promptOpen: true,
+              quiet: false,
+              spinnerCleared,
+              drawnBlockLines,
+              activeToolCount,
+            }),
+          ).toBe('none');
+        }
+      }
+    }
+  });
+
+  it('non-TTY never repaints in place', () => {
+    expect(repaintTickAction({ tty: false, promptOpen: false, ...busy })).toBe('none');
+  });
+
+  it('keeps the original precedence when unGated: spinner while it runs, then block', () => {
+    expect(repaintTickAction({ tty: true, promptOpen: false, ...busy })).toBe('spinner');
+    expect(repaintTickAction({ tty: true, promptOpen: false, ...busy, spinnerCleared: true })).toBe(
+      'block',
+    );
+    expect(
+      repaintTickAction({
+        tty: true,
+        promptOpen: false,
+        quiet: false,
+        spinnerCleared: true,
+        drawnBlockLines: 0,
+        activeToolCount: 0,
+      }),
+    ).toBe('none');
+    // Quiet skips the spinner but still maintains a drawn block.
+    expect(repaintTickAction({ tty: true, promptOpen: false, ...busy, quiet: true })).toBe('block');
+  });
+});
+
+describe('noticeClearsSpinner — halt and loop/watcher notices wipe the line first', () => {
+  it('halt and _loop/_watcher tool_progress clear; ordinary events do not', () => {
+    expect(noticeClearsSpinner({ type: 'halt' })).toBe(true);
+    expect(noticeClearsSpinner({ type: 'tool_progress', toolName: '_loop' })).toBe(true);
+    expect(noticeClearsSpinner({ type: 'tool_progress', toolName: '_watcher' })).toBe(true);
+    expect(noticeClearsSpinner({ type: 'tool_progress', toolName: 'bash' })).toBe(false);
+    expect(noticeClearsSpinner({ type: 'usage' })).toBe(false);
+    expect(noticeClearsSpinner({ type: 'thinking_delta' })).toBe(false);
   });
 });
 

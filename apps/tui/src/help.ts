@@ -26,7 +26,10 @@ export function buildHelpText(
   const lines: string[] = [];
   for (const cmd of slashCommandsForSurface('tui')) {
     if (cmd.aliasOf) continue;
-    lines.push(`${cmd.usage.padEnd(30)}${cmd.description}${stateSuffix(cmd.name, state)}`);
+    // A command whose TUI arguments differ from the shared usage carries a
+    // per-surface override (e.g. /verbose is a plain toggle here).
+    const usage = cmd.usageBySurface?.tui ?? cmd.usage;
+    lines.push(`${usage.padEnd(30)}${cmd.description}${stateSuffix(cmd.name, state)}`);
   }
   for (const cmd of external) {
     lines.push(`/${cmd.name.padEnd(29)}${cmd.description} [plugin]`);

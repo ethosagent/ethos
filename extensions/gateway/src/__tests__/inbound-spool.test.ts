@@ -350,6 +350,46 @@ describe('inbound spool — replay ordering', () => {
   });
 });
 
+describe('inbound spool — replay is ack-silent', () => {
+  it('replaying 3 spooled rows sends no H3 queued/absorbed acks; the replies still land', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    for (const t of ['one', 'two', 'three']) seed(spool, msg(t));
+    // A live turn on ANOTHER lane holds the single global slot, so the
+    // replayed lane's rows queue behind each other — the exact shape that
+    // greeted a reconnect with "⏳ queued (Nth)…" per recovered row before
+    // the replay gate.
+    const gates: Array<() => void> = [];
+    let open = false;
+    let n = 0;
+    const s = scriptedLoop(async function* () {
+      if (!open) await new Promise<void>((r) => gates.push(r));
+      // Unique reply per turn — identical texts on one session would be
+      // swallowed by the outbound dedup cache, not by the replay gate.
+      yield { type: 'done', text: `reply ${++n}`, turnCount: 1 };
+    });
+    const gw = gateway(s.loop, out.adapter, spool, { maxConcurrentSessions: 1 });
+    const live = gw.handleMessage(msg('live', { chatId: 'chat-2' }), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+
+    const result = await gw.replayInboundSpool();
+    expect(result.replayed).toBe(3);
+    expect(out.sends.filter((x) => x.text.startsWith('⏳ queued'))).toEqual([]);
+    expect(out.sends.filter((x) => x.text === ABSORBED_STEER_ACK)).toEqual([]);
+
+    open = true;
+    for (const release of gates.splice(0)) release();
+    await live;
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    // Still silent once everything drained — the four replies are the only
+    // outbound traffic (live acks are pinned unchanged in lane-sessions /
+    // turn-tail; this gate is replay-only).
+    expect(out.sends.filter((x) => x.text.startsWith('⏳ queued'))).toEqual([]);
+    expect(out.sends.filter((x) => x.text === ABSORBED_STEER_ACK)).toEqual([]);
+    expect(out.sends.filter((x) => x.text.startsWith('reply '))).toHaveLength(4);
+  });
+});
+
 describe('inbound spool — platform redelivery after restart', () => {
   it('the same messageId after the dedup TTL expired runs no second turn', async () => {
     let now = 1_000_000;

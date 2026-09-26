@@ -7,6 +7,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../wiring', () => ({
   getStorage: () => ({}),
+  // B8 — the dotenv-load side effect `resolveEffective` depends on: the real
+  // `initSecrets` (apps/ethos/src/wiring.ts) loads ~/.ethos/.env into
+  // process.env before anything resolves against it. Simulated here so the
+  // seam call is observable.
+  getSecretsResolver: async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-from-dotenv';
+    return {};
+  },
 }));
 // status.ts statically imports only `backupDirectory` from the wiring package;
 // keep the heavy dependency tree out of this rendering test.
@@ -14,8 +22,8 @@ vi.mock('@ethosagent/wiring', () => ({
   backupDirectory: () => '/tmp/backups',
 }));
 
-import { type EthosConfig, resolveEffectiveConfig } from '@ethosagent/config';
-import { formatResolvedLines } from '../commands/status';
+import { type EthosConfig, parseConfigYaml, resolveEffectiveConfig } from '@ethosagent/config';
+import { formatResolvedLines, resolveEffective } from '../commands/status';
 
 const BASE: EthosConfig = {
   provider: 'anthropic',
@@ -61,6 +69,17 @@ describe('formatResolvedLines — the Resolved block', () => {
     expect(render({ ...BASE, personality: '' }, {})).toContain('(default)');
   });
 
+  it('a parsed config whose file never set personality: renders (default), not (personality:)', () => {
+    // parseConfigYaml bakes the default id into the field; the source label
+    // must still be honest about who chose it.
+    const cfg = parseConfigYaml(
+      ['provider: anthropic', 'model: claude-sonnet-5', 'apiKey: sk'].join('\n'),
+    );
+    const out = render(cfg, {});
+    expect(out).toContain('(default)');
+    expect(out).not.toContain('(personality:)');
+  });
+
   it('labels the model rung: (model:) and (engineer → modelRouting.engineer)', () => {
     expect(render(BASE, {})).toContain('(model:)');
     const routed = render({ ...BASE, modelRouting: { engineer: 'claude-opus-4-7' } }, {});
@@ -82,6 +101,28 @@ describe('formatResolvedLines — the Resolved block', () => {
   it('names the vault ref when the vault serves the key', () => {
     const out = render(BASE, {}, ['providers/anthropic/apiKey']);
     expect(out).toContain('source: vault providers/anthropic/apiKey');
+  });
+
+  it('says none found (with the set command) when env is unset and the vault lacks the ref', () => {
+    const out = render(BASE, {}, []);
+    expect(out).toContain('source: none found — ethos secrets set providers/anthropic/apiKey');
+    expect(out).not.toContain('source: vault');
+  });
+
+  it('resolveEffective loads ~/.ethos/.env through the wiring seam before resolving (B8)', async () => {
+    // The mocked getSecretsResolver above stands in for initSecrets'
+    // loadDotEnv side effect: a key that lives only in .env must report
+    // `source: env`, as the runtime actually resolves it.
+    const saved = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const resolved = await resolveEffective(BASE);
+      expect(resolved.apiKey.source).toBe('env');
+      expect(resolved.apiKey.envVar).toBe('ANTHROPIC_API_KEY');
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
   });
 
   it('suffixes the config line with the warning count', () => {

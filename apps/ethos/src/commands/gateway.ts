@@ -4188,6 +4188,12 @@ export async function buildAdapters(
           ...(config.discord?.missedMessageBackfill
             ? { missedMessageBackfill: config.discord.missedMessageBackfill }
             : {}),
+          // UD4 — `discord.post_thinking_placeholder: false` turns the
+          // "Thinking…" placeholder off. Included only when the operator set
+          // it, so the adapter's own default (ON) stays the single owner.
+          ...(config.discordPostThinkingPlaceholder !== undefined
+            ? { postThinkingPlaceholder: config.discordPostThinkingPlaceholder }
+            : {}),
         }),
       );
     }

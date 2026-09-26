@@ -2473,6 +2473,14 @@ export interface EthosConfig {
       limit?: number;
     };
   };
+  /**
+   * Discord "Thinking…" placeholder message posted while a turn runs.
+   * Config key: `discord.post_thinking_placeholder`. Absent = undefined
+   * (consumer default: on); `false` disables it. A flat top-level field —
+   * the gateway half that reads it lands separately; this carries exactly
+   * what the file says.
+   */
+  discordPostThinkingPlaceholder?: boolean;
   /** Per-team runtime knobs. Keyed by team manifest name (same identifier rules). */
   teams?: Record<string, TeamRuntimeConfig>;
   whatsapp?: WhatsAppConfig[];
@@ -3588,14 +3596,10 @@ async function migrateActiveContextPersonality(
   const ctx = parsed.activeContext;
   if (ctx?.type !== 'personality') return;
   parsed.personality = ctx.name;
+  // The migration sets an explicit personality, so the parser's "key absent"
+  // record no longer describes this config (see `personalityDefaultedByConfig`).
+  personalityDefaultedByConfig.delete(parsed);
   parsed.activeContext = undefined;
-  const warnings = parseWarningsByConfig.get(parsed) ?? [];
-  warnings.push(
-    `activeContext.type: personality is deprecated — migrated to 'personality: ${ctx.name}' ` +
-      `(activeContext now only names a team). The file was rewritten automatically; ` +
-      `no action needed.`,
-  );
-  parseWarningsByConfig.set(parsed, warnings);
   const exLines = src.split('\n');
   const hasPersonalityLine = exLines.some((l) => configLineKey(l) === 'personality');
   const out: string[] = [];
@@ -3615,12 +3619,28 @@ async function migrateActiveContextPersonality(
     }
     out.push(line);
   }
+  // Atomic on purpose: config.yaml is exactly the "partial write corrupts
+  // state" case the Storage contract reserves `writeAtomic` for.
+  let rewriteError: string | null = null;
   try {
-    await storage.write(configPath, out.join('\n'), { mode: 0o600 });
-  } catch {
+    await storage.writeAtomic(configPath, out.join('\n'), { mode: 0o600 });
+  } catch (err) {
     // Read-only mount, permissions — the in-memory migration above still
-    // holds for this process, and the deprecation notice names the state.
+    // holds for this process, and the next load repeats the attempt.
+    rewriteError = err instanceof Error ? err.message : String(err);
   }
+  // The notice is honest about which of the two states the file is in: it is
+  // pushed AFTER the write attempt, never before.
+  const warnings = parseWarningsByConfig.get(parsed) ?? [];
+  warnings.push(
+    `activeContext.type: personality is deprecated — migrated to 'personality: ${ctx.name}' ` +
+      `(activeContext now only names a team). ` +
+      (rewriteError === null
+        ? `The file was rewritten automatically; no action needed.`
+        : `The file could not be rewritten (${rewriteError}); this run uses the migrated ` +
+          `value in memory, and the rewrite will be retried on the next load.`),
+  );
+  parseWarningsByConfig.set(parsed, warnings);
 }
 
 export async function readConfig(
@@ -4872,6 +4892,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
       lines.push(`discord.missedMessageBackfill.windowSeconds: ${bf.windowSeconds}`);
     if (bf.limit !== undefined) lines.push(`discord.missedMessageBackfill.limit: ${bf.limit}`);
   }
+  if (config.discordPostThinkingPlaceholder !== undefined) {
+    lines.push(`discord.post_thinking_placeholder: ${config.discordPostThinkingPlaceholder}`);
+  }
   if (config.kanbanPoll) {
     if (config.kanbanPoll.enabled !== undefined)
       lines.push(`kanbanPoll.enabled: ${config.kanbanPoll.enabled}`);
@@ -5241,14 +5264,17 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'modelRegistry.',
   'modelRouting.',
   'models.',
+  'nightlyPass.',
   'notifications.',
   'pauseClockCorrection.',
   'pauseLifecycle.',
   'personalities.',
+  'plugins.',
   'providers.',
   'quick_commands.',
   'retention.',
   'security.',
+  'storage.',
   'slack.apps.',
   'teamSupervisor.',
   'teams.',
@@ -5259,6 +5285,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'voice.',
   'web.',
   'webhooks.',
+  'weeklyDigest.',
   'whatsapp.',
 ];
 
@@ -6887,7 +6914,9 @@ export function parseConfigYaml(src: string): EthosConfig {
     displaySlowTurnNoticeMs: (() => {
       if (displayKv.slow_turn_notice_ms === undefined) return undefined;
       const n = Number(displayKv.slow_turn_notice_ms);
-      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+      // A negative value reads as "never" — clamp to 0 (disabled) rather than
+      // dropping it to undefined, which would resurrect the 8000ms default.
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : undefined;
     })(),
     displayMemoryNotices:
       displayKv.memory_notices === 'true'
@@ -6999,6 +7028,14 @@ export function parseConfigYaml(src: string): EthosConfig {
             ...(discordBackfill ? { missedMessageBackfill: discordBackfill } : {}),
           }
         : undefined,
+    // Only the two literals are accepted; anything else is dropped so a typo
+    // cannot silently disable (or force) the placeholder.
+    discordPostThinkingPlaceholder:
+      discordKv.post_thinking_placeholder === 'true'
+        ? true
+        : discordKv.post_thinking_placeholder === 'false'
+          ? false
+          : undefined,
     kanbanPoll:
       kv['kanbanPoll.enabled'] !== undefined ||
       kv['kanbanPoll.intervalMs'] !== undefined ||
@@ -7017,6 +7054,10 @@ export function parseConfigYaml(src: string): EthosConfig {
     pauseClockCorrection,
     pauseLifecycle: pauseLifecycleHttp ? { http: pauseLifecycleHttp } : undefined,
   };
+  // UD1/B3 — the `personality:` field above baked in DEFAULT_PERSONALITY_ID;
+  // record when the file never set the key so `resolveEffectiveConfig` can
+  // report `source: 'default'` instead of claiming `(personality:)`.
+  if (kv.personality === undefined) personalityDefaultedByConfig.add(config);
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them
   // and continues with whatever entries did parse.
@@ -7064,6 +7105,16 @@ const parseErrorsByConfig = new WeakMap<EthosConfig, string[]>();
 // entry there, and a boot warning that boots nothing is worse than the thing
 // it warns about.
 const parseWarningsByConfig = new WeakMap<EthosConfig, string[]>();
+
+// UD1/B3 — whether the FILE set `personality:` at all. `parseConfigYaml` bakes
+// `DEFAULT_PERSONALITY_ID` into the field (so every reader sees a usable id),
+// which would make `resolveEffectiveConfig`'s `source: 'default'` unreachable
+// for parsed configs; this side-table records key ABSENCE at parse time so the
+// resolver can still tell "the file chose it" from "the parser defaulted it".
+// Same identity-keyed pattern (and the same caveat about copies) as
+// `parseWarningsByConfig`. Cleared by `migrateActiveContextPersonality`, which
+// sets an explicit personality.
+const personalityDefaultedByConfig = new WeakSet<EthosConfig>();
 
 /**
  * Parse-time notices for a config returned by {@link readRawConfig} — the read
@@ -7142,7 +7193,14 @@ export interface EffectiveConfig {
   };
   apiKey: {
     provider: string;
-    source: 'env' | 'vault' | 'inline';
+    /**
+     * `missing` = no env var supplies `ref` AND the caller's `opts.vaultRefs`
+     * listing was provided and does not hold it — nothing on this machine
+     * serves the key. Without a vault listing an env miss still reads
+     * `vault`, an unverified claim by design (never a false alarm when the
+     * caller could not look).
+     */
+    source: 'env' | 'vault' | 'inline' | 'missing';
     /** The vault ref consulted (absent for `inline`). */
     ref?: string;
     /** The environment variable that supplies `ref` (source `env`). */
@@ -7170,9 +7228,10 @@ export interface EffectiveConfig {
  *   dispatches it before the personality fallback, so this reports the
  *   `personality:` key exactly as the non-team path would use it.
  * - Vault contents are I/O this pure function does not perform: pass the
- *   vault's ref listing as `opts.vaultRefs` to get `overrides: 'vault'`;
- *   without it an env hit is reported as `source: 'env'` with no overrides
- *   claim.
+ *   vault's ref listing as `opts.vaultRefs` to get `overrides: 'vault'` and
+ *   the `source: 'missing'` verdict (env unset AND the listing lacks the
+ *   ref); without it an env hit is reported as `source: 'env'` with no
+ *   overrides claim, and an env miss as `source: 'vault'` unverified.
  */
 export function resolveEffectiveConfig(
   config: EthosConfig,
@@ -7193,10 +7252,12 @@ export function resolveEffectiveConfig(
       source: 'activeContext',
       ...(shadowed !== undefined ? { shadowed } : {}),
     };
-  } else if (config.personality) {
+  } else if (config.personality && !personalityDefaultedByConfig.has(config)) {
     personality = { id: config.personality, source: 'personality' };
   } else {
-    personality = { id: DEFAULT_PERSONALITY_ID, source: 'default' };
+    // Either no personality at all (a constructed config) or a parsed config
+    // whose file never set the key (`personalityDefaultedByConfig`).
+    personality = { id: config.personality || DEFAULT_PERSONALITY_ID, source: 'default' };
   }
 
   const routed =
@@ -7217,10 +7278,14 @@ export function resolveEffectiveConfig(
     if (explicit?.[1]) ref = explicit[1];
     const envVar = REF_TO_ENV.get(ref);
     const envSet = envVar !== undefined && (env[envVar] ?? '') !== '';
+    const vaultRefsProvided = opts.vaultRefs !== undefined;
     const vaultHasRef = [...(opts.vaultRefs ?? [])].includes(ref);
     apiKey = {
       provider,
-      source: envSet ? 'env' : 'vault',
+      // `missing` only when the caller LOOKED (`opts.vaultRefs` provided) and
+      // the vault does not hold the ref; without a listing an env miss stays
+      // the unverified `vault` claim — never overclaim, never false-alarm.
+      source: envSet ? 'env' : vaultRefsProvided && !vaultHasRef ? 'missing' : 'vault',
       ref,
       ...(envSet && envVar !== undefined ? { envVar } : {}),
       ...(envSet && vaultHasRef ? { overrides: 'vault' as const } : {}),

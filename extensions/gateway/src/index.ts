@@ -2926,19 +2926,28 @@ export class Gateway {
       opts.onQueued?.();
     };
     try {
-      await this.dispatchInbound(message, adapter, spoolId, handOff);
+      await this.dispatchInbound(message, adapter, spoolId, handOff, {
+        replay: opts.replaySpoolId !== undefined,
+      });
     } finally {
       if (spoolId && !handedOff) this.closeSpool(spoolId);
       opts.onQueued?.();
     }
   }
 
-  /** `handleMessage`'s body past dedup and the spool write. */
+  /**
+   * `handleMessage`'s body past dedup and the spool write. `ctx.replay` marks
+   * a spool-replay re-entry: the H3 queued/absorbed acks stay silent there —
+   * replay was ack-silent before H3, and a reconnect that greets the user
+   * with "⏳ queued (2nd)…" per recovered row is noise, not feedback. Pinned
+   * by `__tests__/inbound-spool.test.ts` ('replay sends no H3 acks').
+   */
   private async dispatchInbound(
     message: InboundMessage,
     adapter: PlatformAdapter,
     spoolId: string | undefined,
     handOff: () => void,
+    ctx: { replay: boolean },
   ): Promise<void> {
     // Pre-resolution botKey — see the GWA-008 note in `acceptInbound`.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
@@ -3871,8 +3880,11 @@ export class Gateway {
       if (this.activeSinks.has(laneKey)) {
         void this.enqueueTurn(laneKey, lane, bot, message, adapter, queueText, threadId, spoolId);
         handOff();
+        // One wording for one concept: the same H3 ack the plain busy-lane
+        // enqueue sends (`queuedTurnAck` — the running turn counts, so the
+        // first queued message is "2nd").
         await adapter
-          .send(message.chatId, { text: `✅ queued (position ${lane.length})`, threadId })
+          .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
           .catch(() => {});
         return;
       }
@@ -4030,7 +4042,11 @@ export class Gateway {
           if (!this.linkAbsorbed(spoolId, absorbing)) absorbing.absorbed.push(spoolId);
           handOff();
         }
-        await adapter.send(message.chatId, { text: ABSORBED_STEER_ACK, threadId }).catch(() => {});
+        if (!ctx.replay) {
+          await adapter
+            .send(message.chatId, { text: ABSORBED_STEER_ACK, threadId })
+            .catch(() => {});
+        }
         return;
       }
       // H3 — the steer sink is full. This message used to be dropped with no
@@ -4049,9 +4065,11 @@ export class Gateway {
         spoolId,
       );
       handOff();
-      await adapter
-        .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
-        .catch(() => {});
+      if (!ctx.replay) {
+        await adapter
+          .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
+          .catch(() => {});
+      }
       await overflowTurn;
       return;
     }
@@ -4095,7 +4113,7 @@ export class Gateway {
       spoolId,
     );
     handOff();
-    if (laneBusy) {
+    if (laneBusy && !ctx.replay) {
       await adapter
         .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
         .catch(() => {});
@@ -5237,6 +5255,19 @@ export class Gateway {
       // second email is worse than silence). On a streaming lane H2 edits the
       // draft's progress line; on a non-streaming lane the one untracked ack
       // goes out like a slash ack — no dedup, no ledger.
+      //
+      // UD4 — an adapter that posts its own "Thinking…" placeholder from the
+      // `sendTyping` this turn already sent (Discord with
+      // `postsThinkingPlaceholder`) has visible liveness on the lane; arming
+      // H1's `_working on it…_` on top of it double-notices. Omitting
+      // `sendNotice` skips the notice while keeping the H2 per-tool timers
+      // and the shared latch bookkeeping intact. A plain structural property
+      // read, deliberately NOT a PlatformAdapter contract field. Pinned by
+      // `__tests__/slow-turn-notice.test.ts` ('placeholder').
+      const placeholderCoversLane =
+        typeof adapter.sendTyping === 'function' &&
+        (adapter as PlatformAdapter & { postsThinkingPlaceholder?: boolean })
+          .postsThinkingPlaceholder === true;
       feedback =
         review || message.platform === 'email'
           ? undefined
@@ -5248,14 +5279,16 @@ export class Gateway {
                       if (!signal.aborted) void streamer.pushProgress(line);
                     },
                   }
-                : {
-                    sendNotice: (notice: string) => {
-                      if (!signal.aborted)
-                        void adapter
-                          .send(message.chatId, { text: notice, threadId })
-                          .catch(() => {});
-                    },
-                  }),
+                : placeholderCoversLane
+                  ? {}
+                  : {
+                      sendNotice: (notice: string) => {
+                        if (!signal.aborted)
+                          void adapter
+                            .send(message.chatId, { text: notice, threadId })
+                            .catch(() => {});
+                      },
+                    }),
             });
       feedback?.start();
 

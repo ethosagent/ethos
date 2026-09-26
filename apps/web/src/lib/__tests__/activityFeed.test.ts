@@ -255,6 +255,57 @@ describe('convertSseEvent', () => {
   });
 });
 
+// Tool-progress audience boundary (CLAUDE.md, Phase 30.2) — only
+// `audience: 'user'` progress surfaces, the same gate the trail applies; and
+// the reserved `_loop` pseudo-tool (compaction retry, provider fallback) is a
+// notice, not a tool row.
+describe('convertSseEvent — tool_progress gating', () => {
+  it('drops internal-audience progress', () => {
+    expect(
+      convertSseEvent(
+        { type: 'tool_progress', toolName: 'bash', message: 'inner call', audience: 'internal' },
+        CTX,
+      ),
+    ).toBeNull();
+  });
+
+  it('drops dashboard-audience progress — user only, like the trail', () => {
+    expect(
+      convertSseEvent(
+        { type: 'tool_progress', toolName: 'bash', message: 'telemetry', audience: 'dashboard' },
+        CTX,
+      ),
+    ).toBeNull();
+  });
+
+  it('renders _loop as a notice row: message only, no `_loop:` prefix', () => {
+    const row = live({
+      type: 'tool_progress',
+      toolName: '_loop',
+      message: 'context compacted — retrying the call',
+      audience: 'user',
+    });
+    expect(row.kind).toBe('notice');
+    expect(row.summary).toBe('context compacted — retrying the call');
+    expect(row.summary).not.toContain('_loop');
+    expect(row.details).toEqual([
+      { key: 'message', kind: 'text', value: 'context compacted — retrying the call' },
+    ]);
+  });
+
+  it('keeps an ordinary user-audience progress line as a tool row', () => {
+    const row = live({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'half way',
+      percent: 50,
+      audience: 'user',
+    });
+    expect(row.kind).toBe('tool_start');
+    expect(row.summary).toBe('bash: half way');
+  });
+});
+
 describe('convertHistoryItem', () => {
   it('reads the tool call id out of the span attrs for a dedupe key', () => {
     const row = convertHistoryItem(

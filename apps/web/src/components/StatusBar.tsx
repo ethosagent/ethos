@@ -85,6 +85,24 @@ function useSseConnectionState(): SseConnectionState | null {
 }
 
 /**
+ * W2 — the one mapping from (config query, SSE health) to the DESIGN.md
+ * three-state dot ("Connection status indicator"): connected `#4ADE80`,
+ * connecting amber pulsing, offline `#F87171`. Exported pure so the `closed`
+ * branch is pinned without a DOM (`__tests__/connection-closed-state.test.ts`).
+ */
+export function backendStatusView(opts: {
+  isLoading: boolean;
+  hasError: boolean;
+  sse: SseConnectionState | null;
+}): { state: 'connected' | 'connecting' | 'offline'; label: string } {
+  if (opts.isLoading) return { state: 'connecting', label: 'connecting…' };
+  if (opts.hasError) return { state: 'offline', label: 'offline' };
+  if (opts.sse === 'closed') return { state: 'offline', label: 'disconnected — reload' };
+  if (opts.sse === 'reconnecting') return { state: 'connecting', label: 'reconnecting…' };
+  return { state: 'connected', label: 'Backend connected' };
+}
+
+/**
  * §4.4 — the run pill. Machine-wide, on the status bar, and hidden when no run
  * exists. Persistent state, never a toast: a notice that vanishes while you are
  * in another tab is the same as no notice at all.
@@ -123,24 +141,14 @@ export function StatusBar({ drawerOpen, onToggleDrawer, runs }: StatusBarProps) 
 
   // W2 — a dropped SSE stream renders as DESIGN.md's amber "connecting" state:
   // the backend answered the config query, but live events are not arriving.
+  // `closed` (the browser gave up; only a fresh subscribe reopens it) is the
+  // red "offline" state — it never resolves on its own.
   const sseConnection = useSseConnectionState();
-  const reconnecting = sseConnection === 'reconnecting';
-
-  const statusState: 'connected' | 'connecting' | 'offline' = isLoading
-    ? 'connecting'
-    : error
-      ? 'offline'
-      : reconnecting
-        ? 'connecting'
-        : 'connected';
-
-  const statusLabel = isLoading
-    ? 'connecting…'
-    : error
-      ? 'offline'
-      : reconnecting
-        ? 'reconnecting…'
-        : 'Backend connected';
+  const { state: statusState, label: statusLabel } = backendStatusView({
+    isLoading,
+    hasError: Boolean(error),
+    sse: sseConnection,
+  });
 
   const providerModel = data ? `${data.provider} · ${data.model}` : '—';
 

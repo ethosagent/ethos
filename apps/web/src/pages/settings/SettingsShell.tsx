@@ -104,7 +104,10 @@ export function SettingsShell() {
   // through `modelRegistry.*` and are read from `modelRegistry.list`.
   useEffect(() => {
     if (configQuery.data) {
-      setSaveWarnings(configQuery.data.resolved.warnings);
+      // Version skew: an older backend's `config.get` predates `resolved`, and
+      // the contract type being required does not make the wire honest —
+      // feature-detect rather than crash the whole Settings surface.
+      setSaveWarnings(configQuery.data.resolved?.warnings ?? []);
       const hydrated: FormShape = {
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,

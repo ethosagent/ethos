@@ -36,15 +36,20 @@ export async function secretSource(
 }
 
 /**
- * B8 — whether `secrets get` may print the plaintext. `--reveal` always may;
- * a TTY without it asks first; a non-TTY without it refuses (a script that
- * wants the value states so explicitly). Exported for the test.
+ * B8 — whether `secrets get` may print the plaintext. `--reveal` always may,
+ * and so does `--json`: asking for machine-readable output IS the explicit
+ * statement that a consumer wants the value (a y/N prompt inside a JSON
+ * stream would corrupt it, and refusing would break every script that pipes
+ * `--json`). A TTY without either asks first; a plain non-TTY without either
+ * refuses (a script that wants the value states so explicitly). Exported for
+ * the test.
  */
 export function revealDecision(opts: {
   reveal: boolean;
   isTTY: boolean;
+  json?: boolean;
 }): 'yes' | 'confirm' | 'refuse' {
-  if (opts.reveal) return 'yes';
+  if (opts.reveal || opts.json) return 'yes';
   return opts.isTTY ? 'confirm' : 'refuse';
 }
 
@@ -134,8 +139,9 @@ export async function runSecrets(args: string[]): Promise<void> {
         console.log(`${c.red}Secret not found: ${ref}${c.reset}`);
         process.exit(1);
       }
-      // B8 — plaintext only with --reveal or an explicit TTY confirmation.
-      const decision = revealDecision({ reveal, isTTY: Boolean(process.stdin.isTTY) });
+      // B8 — plaintext only with --reveal, --json, or an explicit TTY
+      // confirmation.
+      const decision = revealDecision({ reveal, isTTY: Boolean(process.stdin.isTTY), json });
       if (decision === 'refuse') {
         console.error(
           `Refusing to print ${ref} without confirmation. Re-run with: ethos secrets get ${ref} --reveal`,

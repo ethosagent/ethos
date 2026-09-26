@@ -217,6 +217,13 @@ function subscribeShared<T>(
         // shouldn't tear down a working subscription. A subscriber asking to
         // `'close'` only detaches itself; the shared socket survives for the
         // others.
+        //
+        // The replay cursor still advances past the frame when the server
+        // stamped one (`id:` line): the frame WAS delivered, just not
+        // understood by this build (a newer server's event type), and resuming
+        // from before it would replay every event after it as duplicates on
+        // reconnect. A frame with no `id:` synthesises nothing here.
+        if (raw.lastEventId) created.lastSeq = seq;
         for (const sub of [...created.subscribers]) {
           if (sub.onError?.(err) === 'close') created.subscribers.delete(sub);
         }

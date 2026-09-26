@@ -178,4 +178,13 @@ describe('DiscordAdapter thinking placeholder', () => {
     await adapter.sendTyping('chan-1');
     expect(sent).toHaveLength(0);
   });
+
+  it('declares postsThinkingPlaceholder structurally for the gateway (UD4)', () => {
+    // The gateway reads this plain readonly to skip its own H1
+    // `_working on it…_` notice on lanes the placeholder already covers.
+    expect(makeAdapter().adapter.postsThinkingPlaceholder).toBe(true);
+    expect(makeAdapter({ postThinkingPlaceholder: false }).adapter.postsThinkingPlaceholder).toBe(
+      false,
+    );
+  });
 });

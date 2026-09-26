@@ -64,3 +64,19 @@ describe('styles.css — tokens only (W5)', () => {
     expect(unexpected).toEqual([]);
   });
 });
+
+// The other stylesheets the web app ships are token-only TODAY — no legacy
+// allowlist, so the assertion is simply "and they stay that way". A new
+// stylesheet belongs in this table.
+const TOKEN_ONLY_STYLESHEETS = [
+  'pages/settings/settings-ux.css',
+  'components/ui/state-blocks.css',
+] as const;
+
+describe.each(TOKEN_ONLY_STYLESHEETS)('%s — tokens only, no allowlist', (relPath) => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', relPath), 'utf8');
+
+  it('has no raw hex outside token definitions and var() fallbacks', () => {
+    expect(offendingHexes(source)).toEqual([]);
+  });
+});

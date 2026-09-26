@@ -443,4 +443,18 @@ describe('gateway — second-message acks (H3)', () => {
     // One ack per message, no floods: 32 absorbed + 2 queued.
     expect(outbound.filter((m) => m.text?.startsWith('⏳ queued')).length).toBe(2);
   });
+
+  it('/queue during a running turn acks with the same H3 wording as the plain enqueue', async () => {
+    const { adapter, outbound } = fullRecordingAdapter();
+    const s = keyedLoop(true); // the turn never ends — the sink stays active
+    const gw = gateway(s.loop, adapter, new InMemoryStorage());
+
+    void gw.handleMessage(msg('kick off'), adapter).catch(() => {});
+    await waitUntil(() => s.turns.length === 1);
+
+    await gw.handleMessage(msg('/queue follow-up question'), adapter);
+    // One wording for one concept — the sink-up /queue path used to say
+    // "✅ queued (position N)" while every other queued ack was H3's.
+    expect(outbound.at(-1)?.text).toBe("⏳ queued (2nd) — I'll answer after the current reply.");
+  });
 });

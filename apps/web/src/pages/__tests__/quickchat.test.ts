@@ -47,6 +47,14 @@ vi.mock('../../hooks/useActivePersonality', () => ({
   useActivePersonality: () => ({ id: 'researcher', model: 'claude-sonnet-5', isLoading: false }),
 }));
 
+// jsdom implements neither smooth nor instant programmatic scrolling; the
+// transcript's auto-scroll only needs to not throw.
+Object.defineProperty(Element.prototype, 'scrollTo', {
+  configurable: true,
+  writable: true,
+  value: () => undefined,
+});
+
 const { QuickChat, extractText } = await import('../QuickChat');
 
 const SESSION_ID = 'sess-q1';
@@ -175,6 +183,54 @@ describe('QuickChat — background notification (W3)', () => {
       emit?.({ type: 'done', text: 'an answer', turnCount: 1 });
     });
     expect(notifyDone).not.toHaveBeenCalled();
+  });
+
+  it('does not claim "replied" when the turn ERRORED while hidden', async () => {
+    await sendAndStream();
+    hidden = true;
+    await act(async () => {
+      emit?.({ type: 'error', error: 'boom', code: 'llm_error' });
+    });
+    expect(notifyDone).not.toHaveBeenCalled();
+  });
+
+  it('does not claim "replied" when the turn was STOPPED while hidden', async () => {
+    chatAbort.mockResolvedValue({ ok: true });
+    await sendAndStream();
+    hidden = true;
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop"]');
+    await act(async () => {
+      stop?.click();
+    });
+    expect(notifyDone).not.toHaveBeenCalled();
+  });
+
+  it('still notifies for a later successful turn after an earlier error', async () => {
+    await sendAndStream();
+    await act(async () => {
+      emit?.({ type: 'error', error: 'boom', code: 'llm_error' });
+    });
+    // Next question dismisses the error implicitly (submit clears it).
+    const textarea = container.querySelector('textarea');
+    if (!textarea) throw new Error('no composer');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(textarea, 'again');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => {
+      emit?.({ type: 'text_delta', text: 'second answer' });
+    });
+    hidden = true;
+    await act(async () => {
+      emit?.({ type: 'done', text: 'second answer', turnCount: 1 });
+    });
+    expect(notifyDone).toHaveBeenCalledTimes(1);
   });
 });
 

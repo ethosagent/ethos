@@ -67,6 +67,16 @@ function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
 }
 
+/**
+ * Two decimals, four below one cent — the CLI's cost-display rule. Duplicated
+ * from `formatCostUsd` in apps/ethos/src/lib/status-bar.ts because apps/tui
+ * cannot import apps/ethos; CHANGE BOTH TOGETHER. Exported for the pin test
+ * (__tests__/format-cost.test.ts).
+ */
+export function formatCostUsd(costUsd: number): string {
+  return costUsd > 0 && costUsd < 0.01 ? costUsd.toFixed(4) : costUsd.toFixed(2);
+}
+
 function formatVerboseSummary(t: TurnTiming): string {
   const total = t.turnEnd - t.turnStart;
   const toolsTotal = t.toolDurations.reduce((a, b) => a + b, 0);
@@ -120,6 +130,13 @@ export interface AppProps {
   initialPersonality: string;
   initialSessionKey: string;
   initialVerbose?: boolean;
+  /**
+   * B2 — host startup warnings (config parse notices), rendered once on mount
+   * as dim system lines in the transcript plus a 'warning' timeline entry —
+   * the same visual class as other notices. The host passes the same lines
+   * the readline branch prints, so the wording is identical across branches.
+   */
+  startupNotices?: string[];
   /**
    * `/memory` — the personality's file memory (MEMORY.md / USER.md) as the
    * agent reads it, or null when empty. Injected by the host so it follows the
@@ -218,6 +235,7 @@ export function App({
   initialPersonality,
   initialSessionKey,
   initialVerbose = false,
+  startupNotices,
   initialSkin,
   rebuildLoop,
   inventory,
@@ -470,6 +488,20 @@ export function App({
     }
   }, [version]);
 
+  // B2 — host startup warnings (config parse notices) render once on mount as
+  // dim system lines plus a 'warning' timeline entry, the same visual class as
+  // the other notices above and below. The host owns the once-per-process
+  // latch, so a remount inside one process shows whatever it was handed.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId/pushTimeline close over stable refs; mount-only by design
+  useEffect(() => {
+    if (!startupNotices || startupNotices.length === 0) return;
+    setMessages((prev) => [
+      ...prev,
+      ...startupNotices.map((text) => ({ id: nextId(), role: 'system' as const, text })),
+    ]);
+    for (const text of startupNotices) pushTimeline('warning', text);
+  }, []);
+
   // Session-scoped notifications (e.g. plugin monitors via notify_session).
   // Re-subscribes when the session key changes (/new, /sessions) so routing
   // follows the active session, mirroring the readline path's re-register.
@@ -492,6 +524,24 @@ export function App({
       setMessages((prev) => [...prev, { id: nextId(), role: 'system', text }]);
     });
   }, [onSkillProposed]);
+
+  // C5 — background completions: the same box the readline branch prints,
+  // as a dim system row, plus the status bar's unseen counter (`bg:N`).
+  // Only done/failed render (backgroundCompletionLines returns null otherwise).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId/pushTimeline close over stable refs
+  useEffect(() => {
+    if (!onBackgroundComplete) return;
+    return onBackgroundComplete((job) => {
+      const lines = backgroundCompletionLines(job);
+      if (!lines) return;
+      setMessages((prev) => [...prev, { id: nextId(), role: 'system', text: lines.join('\n') }]);
+      setBgCompletedUnseen((n) => n + 1);
+      pushTimeline(
+        job.status === 'done' ? 'success' : 'error',
+        `background ${job.id.slice(0, 8)} ${job.status}`,
+      );
+    });
+  }, [onBackgroundComplete]);
 
   // Append a fresh HUD snapshot whenever the personality, model, or session
   // changes — these are the rare events that warrant re-showing the chrome.
@@ -740,7 +790,7 @@ export function App({
         updateDelegation(delegationId, {
           status: ok ? 'done' : 'failed',
           durationMs,
-          ...(ok ? {} : { error: result?.slice(0, 200) }),
+          ...(ok ? {} : { error: failureText?.slice(0, 200) }),
         });
         delegationByToolCallRef.current.delete(toolCallId);
       }
@@ -755,16 +805,18 @@ export function App({
       turnUsageRef.current = { inputTokens, outputTokens, estimatedCostUsd };
     };
 
+    // A3 — errors render from the one chat-error map: title + next step, plus
+    // the turn's trace id when `run_start` carried one.
     const onError = (error: string, code: string) => {
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: 'assistant', text: `[${code}] ${error}` },
-      ]);
+      const described = describeChatError(code, error, turnTraceIdRef.current ?? undefined);
+      const lines = [`✗ ${described.title}`, `  → ${described.action}`];
+      if (described.trace) lines.push(`  trace ${described.trace}`);
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', text: lines.join('\n') }]);
       streamedTextRef.current = '';
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
-      pushTimeline('error', `[${code}] ${error}`);
+      pushTimeline('error', `${described.title} [${code}]`);
     };
 
     // S4/U1 — held until `done` so the notice lands after the reply it cut short.
@@ -787,7 +839,14 @@ export function App({
 
     // Phase 5: update status bar when effective model differs from the
     // initial config (e.g. per-personality routing, team overrides).
-    const onRunStart = (_provider: string, resolvedModel: string) => {
+    // A3 — also latch the turn's trace id for the error render.
+    const onRunStart = (
+      _provider: string,
+      resolvedModel: string,
+      _source: unknown,
+      traceId: string | undefined,
+    ) => {
+      turnTraceIdRef.current = traceId ?? null;
       setCurrentModel(resolvedModel);
     };
 
@@ -877,6 +936,9 @@ export function App({
     if (!value.trim()) return;
     setStatusMsg('');
     setInterrupted(false);
+    // C5 — the user acted at the prompt with any completion notices on
+    // screen, so the status bar's `bg:N` unseen counter resets here.
+    setBgCompletedUnseen(0);
     setHistoryIndex(null);
     setHistoryDraft('');
     setHistory((prev) => {
@@ -915,6 +977,7 @@ export function App({
   const beginTurn = () => {
     setCompletedTools([]);
     setRunning(true);
+    turnTraceIdRef.current = null;
     turnStartRef.current = Date.now();
     firstTextDeltaAtRef.current = null;
     streamedTextRef.current = '';
@@ -1088,7 +1151,7 @@ export function App({
             role: 'assistant',
             text:
               `Tokens: ${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out\n` +
-              `Cost: $${usage.costUsd.toFixed(5)}`,
+              `Cost: $${formatCostUsd(usage.costUsd)}`,
           },
         ]);
         break;
@@ -1107,8 +1170,8 @@ export function App({
             role: 'assistant',
             text:
               cap != null
-                ? `Session spend: $${usage.costUsd.toFixed(5)} / $${cap.toFixed(2)} cap`
-                : `Session spend: $${usage.costUsd.toFixed(5)} (no cap set for this personality)`,
+                ? `Session spend: $${formatCostUsd(usage.costUsd)} / $${cap.toFixed(2)} cap`
+                : `Session spend: $${formatCostUsd(usage.costUsd)} (no cap set for this personality)`,
           },
         ]);
         break;
@@ -1603,7 +1666,7 @@ export function App({
           currentTool={currentTool}
           elapsedSecs={agentStatus === 'thinking' ? turnElapsed : undefined}
           readonlyMode={readonlyMode}
-          backgroundCount={delegations.filter((d) => d.status === 'pending').length}
+          backgroundCount={bgCompletedUnseen}
           updateStatus={updateStatus}
           budgetState={
             budgetCapUsd != null
