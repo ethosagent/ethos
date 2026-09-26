@@ -297,6 +297,47 @@ describe('GoalRunner phase b — convergence/retry loop', () => {
     expect(attempts).toHaveLength(1);
     expect(store.get(goal.id)?.status).toBe('completed');
   });
+
+  // An EMPTY spec (the web form's shape when its criteria were lost) is not
+  // "no criteria": it is judged as the implicit goal criterion.
+  const emptySpec: AcceptanceSpec = { checks: [], rubric: [], threshold: 0.8 };
+
+  it('never completes an empty-spec goal without a check judge', async () => {
+    const goal = makeGoalWithSpec(store, emptySpec, 2);
+    const runner = new GoalRunner({
+      store,
+      runAttempt: scriptedRunAttempt([[{ type: 'done', text: 'all done!', turnCount: 1 }]]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'exhausted');
+
+    expect(store.getAttempts(goal.id)).toHaveLength(2);
+    expect(store.getAttempts(goal.id)[0]?.verdict?.score).toBe(0);
+  });
+
+  it('completes an empty-spec goal only once the check judge passes the goal', async () => {
+    const goal = makeGoalWithSpec(store, emptySpec, 3);
+    const judgeCheck = vi
+      .fn()
+      .mockResolvedValueOnce({ pass: false, evidence: '30 of 3,169' })
+      .mockResolvedValueOnce({ pass: true, evidence: '3,169 of 3,169' });
+    const runner = new GoalRunner({
+      store,
+      judgeCheck,
+      runAttempt: scriptedRunAttempt([
+        [{ type: 'done', text: 'partial', turnCount: 1 }],
+        [{ type: 'done', text: 'finished', turnCount: 1 }],
+      ]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(store.getAttempts(goal.id)).toHaveLength(2);
+    expect(judgeCheck).toHaveBeenCalledTimes(2);
+    expect(judgeCheck.mock.calls[0]?.[0]).toMatchObject({ goalText: 'Do the thing' });
+  });
 });
 
 describe('GoalRunner phase c — multi-attempt event completeness', () => {

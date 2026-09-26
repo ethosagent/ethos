@@ -44,6 +44,16 @@ export interface JudgeOptions {
   judgeCheck?: CheckJudge;
 }
 
+/**
+ * The criterion a spec with no checks and no rubric is judged against. Without
+ * it `judge()` scored an empty spec 1 with every (zero) check passed, so any
+ * attempt output converged. Pinned by __tests__/judge.test.ts ('empty spec').
+ */
+export const IMPLICIT_GOAL_CHECK: AcceptanceCheck = {
+  id: 'goal',
+  description: 'The goal as stated is fully achieved',
+};
+
 const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_MAX_BUFFER = 1024 * 1024;
 const EVIDENCE_SNIPPET_CHARS = 200;
@@ -145,10 +155,32 @@ async function runJudgedCheck(
  * `method: 'substring'`.
  * Rubric items still get placeholder scores — the eval-harness integration
  * (plan phase 2) replaces the rubric scoring.
+ *
+ * A spec with no checks and no rubric is NOT vacuously met: it is judged as one
+ * implicit check, `IMPLICIT_GOAL_CHECK` ("the goal as stated is fully
+ * achieved"), through `judgeCheck`. With no judge wired that check fails — the
+ * substring fallback would let an output that merely quotes the sentence pass.
  */
 export async function judge(input: JudgeInput, opts?: JudgeOptions): Promise<Verdict> {
   const execCommand = opts?.execCommand ?? defaultExecCommand;
   const results: CriterionResult[] = [];
+
+  if (input.spec.checks.length === 0 && input.spec.rubric.length === 0) {
+    const check = IMPLICIT_GOAL_CHECK;
+    const result = opts?.judgeCheck
+      ? await runJudgedCheck(check, input.goalText ?? '', input.output, opts.judgeCheck)
+      : {
+          id: check.id,
+          pass: false,
+          evidence:
+            'no acceptance criteria and no check judge wired: the goal cannot be verified, so it is not met',
+          gap: check.description,
+          // No judge, no progress signal — the same standing as the substring
+          // fallback, so `isPlateau` never reads a flat 0 as a plateau.
+          method: 'substring' as const,
+        };
+    return { score: result.pass ? 1 : 0, perCriterion: [result] };
+  }
 
   for (const check of input.spec.checks) {
     const command = check.command;
