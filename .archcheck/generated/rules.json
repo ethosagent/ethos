@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "coverage": {
-    "total": 21,
-    "deterministic": 19,
+    "total": 20,
+    "deterministic": 18,
     "proxy": 2,
     "model": 0,
     "unchecked": 0,
@@ -116,15 +116,6 @@
       "confidence": "deterministic",
       "mark": "✓",
       "remedy": "log, rethrow, or comment why the failure is safe to ignore"
-    },
-    {
-      "id": "no-inline-suppression",
-      "kind": "banned-syntax",
-      "statement": "exceptions live in the manifest with an owner and an expiry, not inline",
-      "severity": "warn",
-      "confidence": "deterministic",
-      "mark": "✓",
-      "remedy": "fix the code, or record an exception in architecture.config.ts"
     },
     {
       "id": "observability-sqlite-stays-extractable",

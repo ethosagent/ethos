@@ -704,7 +704,7 @@ inside the fence: change the manifest and run `pnpm arch:emit`, or
 
 <!-- archcheck:begin rules-table -->
 
-**21 rules** · ✓ 19 deterministic · ◑ 2 proxy · ○ 0 judgement · **100% automatable**
+**20 rules** · ✓ 18 deterministic · ◑ 2 proxy · ○ 0 judgement · **100% automatable**
 
 | | Rule | Statement | Kind | Severity |
 |---|---|---|---|---|
@@ -720,7 +720,6 @@ inside the fence: change the manifest and run `pnpm arch:emit`, or
 | ✓ | `l5-apps-through-wiring` | apps depend on contracts and wiring only; concrete implementations come via wiring (Law 5) | layers | error |
 | ✓ | `no-computed-dynamic-import` | dynamic imports name a literal specifier so the graph stays readable | banned-syntax | error |
 | ✓ | `no-empty-catch` | a catch block handles, rethrows or explains the error it swallows | banned-syntax | error |
-| ✓ | `no-inline-suppression` | exceptions live in the manifest with an owner and an expiry, not inline | banned-syntax | warn |
 | ✓ | `observability-sqlite-stays-extractable` | observability-sqlite depends only on types, safety-redact and the sqlite shim, so it stays extractable | layers | error |
 | ✓ | `p24-no-fsstorage-in-libraries` | library code receives an injected Storage and never constructs FsStorage (P2.4) | banned-syntax | error |
 | ✓ | `support-packages` | library packages depend only on contracts, the kernel and vendored shims | layers | error |

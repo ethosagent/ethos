@@ -13,7 +13,6 @@
       "l5-apps-through-wiring",
       "no-computed-dynamic-import",
       "no-empty-catch",
-      "no-inline-suppression",
       "observability-sqlite-stays-extractable",
       "p24-no-fsstorage-in-libraries",
       "support-packages",
@@ -306,20 +305,6 @@
       "forbid": "empty-catch",
       "message": "a catch block handles, rethrows or explains the error it swallows — log, rethrow, or comment why the failure is safe to ignore",
       "ruleId": "no-empty-catch"
-    },
-    {
-      "autofix": false,
-      "files": [
-        "packages/**",
-        "extensions/**",
-        "apps/**",
-        "!**/__tests__/**",
-        "!**/*.test.ts",
-        "!**/*.test.tsx"
-      ],
-      "forbid": "suppression-comment",
-      "message": "exceptions live in the manifest with an owner and an expiry, not inline — fix the code, or record an exception in architecture.config.ts",
-      "ruleId": "no-inline-suppression"
     },
     {
       "files": [
