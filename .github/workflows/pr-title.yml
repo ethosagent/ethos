@@ -16,6 +16,10 @@ permissions:
 jobs:
   pr-title:
     name: conventional commits
+    # Dependabot titles its PRs "Bump x from a to b" and rewrites the title on
+    # every rebase; the subject casing is not configurable, and the type/scope
+    # prefix is already fixed by .github/dependabot.yml's commit-message.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 2
 
