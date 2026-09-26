@@ -349,6 +349,21 @@ interface ThreadState {
 // EmailAdapter
 // ---------------------------------------------------------------------------
 
+/**
+ * SMTP reply codes that are a hard bounce for this recipient: 550 mailbox
+ * unavailable / user unknown, 551 user not local, 553 mailbox name not
+ * allowed. Other 5xx are left retryable on purpose — 535 is this deployment's
+ * own credentials (an operator fixes it and every owed reply should then go),
+ * and 552/554 are as often size or content policy as a dead address.
+ */
+const PERMANENT_SMTP_CODES = new Set([550, 551, 553]);
+
+/** Is `err` (nodemailer's SMTP error, read by shape: `responseCode`) a hard bounce? */
+function isPermanentSmtpError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('responseCode' in err)) return false;
+  return typeof err.responseCode === 'number' && PERMANENT_SMTP_CODES.has(err.responseCode);
+}
+
 export class EmailAdapter implements PlatformAdapter {
   readonly id = 'email';
   readonly displayName = 'Email';
@@ -430,7 +445,13 @@ export class EmailAdapter implements PlatformAdapter {
       });
       return { ok: true, messageId: info.messageId };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // A hard bounce is marked `permanent` so the gateway's delivery sweep
+      // abandons it instead of re-sending to a dead mailbox. Pinned by
+      // `__tests__/send-delivery.test.ts`.
+      const error = err instanceof Error ? err.message : String(err);
+      return isPermanentSmtpError(err)
+        ? { ok: false, error, permanent: true }
+        : { ok: false, error };
     }
   }
 
