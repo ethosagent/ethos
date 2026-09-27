@@ -21,6 +21,24 @@ import {
 // mappings pointing at renamed/removed methods.
 
 const router = apiRouter as unknown as Record<string, Record<string, unknown>>;
+
+// Every callable method in a namespace, nested routers flattened to the
+// `<router>.<method>` keys `resolveScope` looks up (it splits on the FIRST
+// dot, so `/rpc/voice/laneMode/get` resolves `voice` + `laneMode.get`). A
+// node carrying oRPC's `'~orpc'` definition is a procedure (a leaf); any other
+// object is a nested router. A flat namespace yields exactly its own keys, so
+// this is the same check it always was for them.
+function routerMethods(node: Record<string, unknown>, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [key, child] of Object.entries(node)) {
+    if (child !== null && typeof child === 'object' && !('~orpc' in child)) {
+      out.push(...routerMethods(child as Record<string, unknown>, `${prefix}${key}.`));
+    } else {
+      out.push(`${prefix}${key}`);
+    }
+  }
+  return out;
+}
 // SCOPE_MAP gates fixed surfaces, so its values are drawn from the static
 // enum half of the scope vocabulary. The open-ended `mcp:<id>` family is not
 // a SCOPE_MAP concern and has no enumerable list.
@@ -31,14 +49,13 @@ describe('SCOPE_MAP drift — router methods ⊆ SCOPE_MAP per mapped namespace'
     const mapped = SCOPE_MAP[ns] ?? {};
 
     it(`${ns}: every router method has a scope entry`, () => {
-      const routerMethods = Object.keys(router[ns] ?? {});
-      const missing = routerMethods.filter((m) => !(m in mapped));
+      const missing = routerMethods(router[ns] ?? {}).filter((m) => !(m in mapped));
       expect(missing).toEqual([]);
     });
 
     it(`${ns}: no stale scope entries for removed methods`, () => {
-      const routerMethods = new Set(Object.keys(router[ns] ?? {}));
-      const stale = Object.keys(mapped).filter((m) => !routerMethods.has(m));
+      const methods = new Set(routerMethods(router[ns] ?? {}));
+      const stale = Object.keys(mapped).filter((m) => !methods.has(m));
       expect(stale).toEqual([]);
     });
 

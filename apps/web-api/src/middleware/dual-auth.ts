@@ -197,6 +197,31 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     resume: COOKIE_ONLY,
     runNow: COOKIE_ONLY,
   },
+  // Voice (mobile-app S8/Phase 3). `voice:talk` is what the phone's call
+  // screen needs: one-shot turns, the realtime mint, the provider rosters
+  // (labels, never credentials) and reading its lane's mode. Configuring the
+  // deployment — a lane's mode, satellites, wake routes — and the phone-call
+  // log (other people's numbers and transcripts) stay on the web: cookie-only.
+  // Nested routers are keyed `<router>.<method>`: `resolveScope` splits on the
+  // FIRST dot, so `/rpc/voice/laneMode/get` → `voice` + `laneMode.get`.
+  voice: {
+    transcribe: 'voice:talk',
+    synthesize: 'voice:talk',
+    runTurn: 'voice:talk',
+    realtimeToken: 'voice:talk',
+    ttsEntries: 'voice:talk',
+    sttEntries: 'voice:talk',
+    realtimeEntries: 'voice:talk',
+    'laneMode.get': 'voice:talk',
+    'laneMode.set': COOKIE_ONLY,
+    'satellites.list': COOKIE_ONLY,
+    'satellites.setWakeEnabled': COOKIE_ONLY,
+    'wakeRoutes.get': COOKIE_ONLY,
+    'wakeRoutes.set': COOKIE_ONLY,
+    'calls.list': COOKIE_ONLY,
+    'calls.active': COOKIE_ONLY,
+    'calls.get': COOKIE_ONLY,
+  },
 };
 
 // SSE feeds are keyed by the first path segment after `/sse/`, not by an RPC
