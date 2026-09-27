@@ -3,6 +3,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { useRpc } from '../../src/api/queries';
 import { RouteError } from '../../src/components/ui/RouteError';
 import { NEEDS_YOU_KEY, needsYouCount } from '../../src/features/activity/needs-you';
+import { useCallMode } from '../../src/state/call-mode';
 import { useChatStore } from '../../src/state/chat-store';
 import { color } from '../../src/theme/tokens';
 
@@ -24,9 +25,11 @@ export default function TabsLayout() {
   });
   const questions = useChatStore((s) => s.chat.pendingClarifies.length);
   const count = needsYouCount(approvals.data ?? [], questions);
+  // The Call Stage is a mode: no tab bar while it is focused (§2, T7).
+  const stageFocused = useCallMode((s) => s.stageFocused);
 
   return (
-    <NativeTabs tintColor={color.chrome}>
+    <NativeTabs tintColor={color.chrome} hidden={stageFocused}>
       <NativeTabs.Trigger name="chat">
         <NativeTabs.Trigger.Label>Chat</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="bubble.left.and.bubble.right" md="chat" />

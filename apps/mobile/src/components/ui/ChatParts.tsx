@@ -12,6 +12,7 @@ import {
 import type { ClarifyRequestEvent, DecisionEvent } from '@ethosagent/web-contracts';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { color, radius, type } from '../../theme/tokens';
 import { RunAnchor } from '../chat/RunCard';
 import { Button } from './Button';
@@ -288,6 +289,9 @@ export function Composer(props: {
   placeholder?: string;
   onSend: (text: string) => void;
   onStop: () => void;
+  /** Opens the Call Stage (D9 — a call, not dictation). The mic renders only
+   *  when this is passed; the caller decides (`callAvailable`). */
+  onCall?: () => void;
 }) {
   const [text, setText] = useState('');
   const empty = !text.trim();
@@ -305,6 +309,17 @@ export function Composer(props: {
         selectionColor={props.accent}
         style={[type.body, styles.flex]}
       />
+      {props.onCall ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Call ${props.name}`}
+          onPress={props.onCall}
+          hitSlop={6}
+          style={styles.mic}
+        >
+          <MicGlyph />
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={stop ? 'Stop' : 'Send'}
@@ -319,6 +334,20 @@ export function Composer(props: {
         <Text style={{ color: color.bgBase, fontWeight: '600' }}>{stop ? '■' : '↑'}</Text>
       </Pressable>
     </View>
+  );
+}
+
+/** 16 px stroke mic (DESIGN.md § "CallStrip": the idle entry point). */
+function MicGlyph() {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+      <Path
+        d="M8 1.5a2 2 0 0 0-2 2v4a2 2 0 0 0 4 0v-4a2 2 0 0 0-2-2Z M3.5 7.5a4.5 4.5 0 0 0 9 0 M8 12v2.5"
+        stroke={color.textSecondary}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+      />
+    </Svg>
   );
 }
 
@@ -394,4 +423,5 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  mic: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
 });

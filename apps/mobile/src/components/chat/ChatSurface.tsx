@@ -1,5 +1,6 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { useQuery } from '@tanstack/react-query';
+import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, type ScrollViewProps, StyleSheet, Text, View } from 'react-native';
@@ -16,8 +17,10 @@ import {
   openSession,
   sendMessage,
 } from '../../features/chat/session';
+import { callAvailable } from '../../features/voice/gating';
 import { clock } from '../../lib/row';
 import { tabBarBottomInset } from '../../lib/tab-bar-inset';
+import { useCallMode } from '../../state/call-mode';
 import { useChatStore } from '../../state/chat-store';
 import { useConnection } from '../../state/connection';
 import { color, TAB_BAR_PILL_HEIGHT, type } from '../../theme/tokens';
@@ -33,6 +36,7 @@ import {
 import { Mark } from '../ui/Mark';
 import { Row } from '../ui/Row';
 import { Skeleton } from '../ui/Skeleton';
+import { CallStrip } from '../voice/CallStrip';
 
 const STALL_MS = 20_000;
 
@@ -78,6 +82,22 @@ export function ChatSurface(props: {
   const personality = personalities.data?.items.find((p) => p.id === personalityId);
   const name = personality?.name ?? personalityId ?? 'Ethos';
   const accent = personalityId ? personalityAccent(personalityId) : color.chrome;
+  // The composer's mic (§3, T7): only when the key holds `voice:talk`, the
+  // personality can talk, and the build carries the native audio (not Expo Go).
+  const whoami = useQuery({ queryKey: ['whoami'], queryFn: () => rpc.meta.whoami() });
+  const canCall = callAvailable({
+    scopes: whoami.data?.authMethod === 'bearer' ? whoami.data.key.scopes : null,
+    toolset: personality?.toolset,
+    executionEnvironment: Constants.executionEnvironment,
+  });
+  const openCall = (params: { personalityId: string | null; sessionId: string | null }) =>
+    router.push({
+      pathname: '/chat/call',
+      params: {
+        ...(params.personalityId ? { personalityId: params.personalityId } : {}),
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      },
+    });
 
   const messages = useChatStore((s) => s.chat.messages);
   const trail = useChatStore((s) => s.chat.trail);
@@ -190,11 +210,21 @@ export function ChatSurface(props: {
         ) : null}
       </View>
       <KeyboardStickyView offset={{ closed: -restInset, opened: 0 }}>
+        <CallStrip
+          accent={accent}
+          onOpen={() => {
+            const owner = useCallMode.getState().owner;
+            openCall(owner ?? { personalityId, sessionId: isNew ? null : sessionId });
+          }}
+        />
         <Status accent={accent} deciding={deciding} online={online} />
         <Composer
           name={name}
           accent={accent}
           streaming={streaming}
+          {...(canCall
+            ? { onCall: () => openCall({ personalityId, sessionId: isNew ? null : sessionId }) }
+            : {})}
           {...(props.placeholder ? { placeholder: props.placeholder } : {})}
           onSend={(text) => void send(text)}
           onStop={() => void abortTurn(rpc)}

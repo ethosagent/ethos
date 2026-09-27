@@ -1,9 +1,10 @@
 import { remoteHost } from '@ethosagent/sdk';
 import type { PushCategories } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
+import Constants from 'expo-constants';
 import { Stack } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { errorRow } from '../../../src/api/errors';
 import { useRpc } from '../../../src/api/queries';
@@ -14,6 +15,7 @@ import { Row } from '../../../src/components/ui/Row';
 import type { RowData } from '../../../src/lib/row';
 import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
 import { registerForPush, unregisterCurrentPush } from '../../../src/push/registration';
+import { callStore } from '../../../src/state/call-store';
 import { useConnection } from '../../../src/state/connection';
 import { usePushPrefs } from '../../../src/state/push-prefs';
 import { color, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
@@ -27,6 +29,10 @@ const CATEGORY_LABELS: Array<{ key: keyof PushCategories; label: string }> = [
 ];
 
 export { RouteError as ErrorBoundary };
+
+/** Developer rows (the call trace) show on a dev build and on the free-
+ *  provisioning `sideload` build the device runbook uses (README). */
+const DEVELOPER_ROWS = __DEV__ || Constants.expoConfig?.extra?.variant === 'sideload';
 
 /**
  * settings (§8): the server and key as the server reports them (`/healthz`,
@@ -136,6 +142,7 @@ export default function SettingsScreen() {
       {pushRow ? <Row wrap row={pushRow} /> : null}
       <Text style={[type.small, styles.header]}>Diagnostics</Text>
       {health.data ? <Row wrap row={health.data.row} /> : null}
+      {DEVELOPER_ROWS ? <CallTraceRow /> : null}
       <Text style={[type.small, styles.header]}>This phone</Text>
       <View style={styles.pad}>
         <Button
@@ -149,6 +156,37 @@ export default function SettingsScreen() {
         </Text>
       </View>
     </ScrollView>
+  );
+}
+
+/** Share the current (or last) call's trace as JSONL, for
+ *  `scripts/voice-trace-report.mjs` (T7's measurement procedure). */
+function CallTraceRow() {
+  const trace = callStore.getState().traceJsonl();
+  const [row, setRow] = useState<RowData | null>(null);
+  return (
+    <>
+      <Text style={[type.small, styles.header]}>Developer</Text>
+      <View style={styles.pad}>
+        <Button
+          label="Share call trace"
+          disabled={!trace}
+          onPress={() => {
+            if (!trace) return;
+            Share.share({ message: trace, title: 'ethos-call-trace.jsonl' }).catch((err: unknown) =>
+              setRow({
+                glyph: '✗',
+                word: 'share',
+                subject: 'call trace',
+                result: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }}
+        />
+        {trace ? null : <Text style={type.small}>No call on this launch yet.</Text>}
+      </View>
+      {row ? <Row wrap row={row} /> : null}
+    </>
   );
 }
 
