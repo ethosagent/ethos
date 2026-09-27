@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createForegroundPolicy, FOREGROUND_REHYDRATE_MS } from '../foreground';
 
-function harness(opts: { rehydrate?: () => Promise<void> } = {}) {
+function harness(opts: { rehydrate?: () => Promise<void>; catchUp?: () => Promise<void> } = {}) {
   const log: string[] = [];
+  const reported: unknown[] = [];
   let now = 1_000_000;
   const policy = createForegroundPolicy({
     now: () => now,
@@ -15,14 +16,18 @@ function harness(opts: { rehydrate?: () => Promise<void> } = {}) {
         await Promise.resolve();
         log.push('dispatch:history-newest-merged');
       }),
-    catchUp: async () => {
-      log.push('tools.listPending');
-      log.push('clarify.listPending');
-      log.push('tasks.list');
-    },
+    catchUp:
+      opts.catchUp ??
+      (async () => {
+        log.push('tools.listPending');
+        log.push('clarify.listPending');
+        log.push('tasks.list');
+      }),
+    reportError: (err) => reported.push(err),
   });
   return {
     log,
+    reported,
     policy,
     advance: (ms: number) => {
       now += ms;
@@ -124,16 +129,38 @@ describe('createForegroundPolicy', () => {
     ]);
   });
 
-  it('a failed rehydrate still reopens the streams', async () => {
-    const { log, policy, advance } = harness({
+  it('a failed rehydrate still reopens the streams, and reports instead of rejecting', async () => {
+    const { log, reported, policy, advance } = harness({
       rehydrate: async () => {
-        throw new Error('offline');
+        throw new TypeError('Could not connect to the server');
       },
     });
     await policy.onAppState('background');
     advance(90_000);
-    await expect(policy.onAppState('active')).rejects.toThrow('offline');
+    await expect(policy.onAppState('active')).resolves.toBeUndefined();
     expect(log).toContain('subscribe:fresh');
     expect(log).not.toContain('tools.listPending');
+    expect(reported).toEqual([new TypeError('Could not connect to the server')]);
+  });
+
+  it('a failed rehydrate after a gap resolves too (onGap is fired and forgotten)', async () => {
+    const { reported, policy } = harness({
+      rehydrate: async () => {
+        throw new TypeError('Could not connect to the server');
+      },
+    });
+    await expect(policy.onGap()).resolves.toBeUndefined();
+    expect(reported).toHaveLength(1);
+  });
+
+  it('a catch-up that breaks its no-reject contract is reported, not rejected', async () => {
+    const { log, reported, policy } = harness({
+      catchUp: async () => {
+        throw new TypeError('Could not connect to the server');
+      },
+    });
+    await expect(policy.onGap()).resolves.toBeUndefined();
+    expect(log).toContain('subscribe:fresh');
+    expect(reported).toHaveLength(1);
   });
 });

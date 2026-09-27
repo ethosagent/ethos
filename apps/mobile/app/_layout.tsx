@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { queryClient } from '../src/api/queries';
-import { loadConnection } from '../src/auth/keychain';
 import { probeHealth } from '../src/auth/probes';
 import { RouteError } from '../src/components/ui/RouteError';
 import { foreground } from '../src/features/chat/session';
@@ -20,16 +19,19 @@ import { color } from '../src/theme/tokens';
 
 export { RouteError as ErrorBoundary };
 
-void preventAutoHideAsync();
+// Every promise started here is fired and forgotten, so each one ends in a
+// catch: an unhandled rejection is a full-screen error under Expo Go.
+preventAutoHideAsync().catch(() => undefined);
 
 export default function RootLayout() {
   const { loaded, key, onboarding } = useConnection();
 
   useEffect(() => {
-    void loadConnection().then(({ url, key }) => {
-      useConnection.getState().restore(url, key);
-      void hideAsync();
-    });
+    void useConnection
+      .getState()
+      .hydrate()
+      .then(() => hideAsync())
+      .catch(() => undefined);
     // D13: every stream closes on background; foreground reconnects or
     // rehydrates, and probes /healthz once for the offline state.
     const sub = AppState.addEventListener('change', (state) => {
@@ -45,7 +47,7 @@ export default function RootLayout() {
     const offNotification = registerNotificationResponseHandler();
     // The one launched-from-killed case the listener above never sees itself
     // (`handlers.ts` dedupes against the listener by notification id).
-    void routeColdStartNotification();
+    routeColdStartNotification().catch(() => undefined);
     return () => {
       sub.remove();
       offNotification();

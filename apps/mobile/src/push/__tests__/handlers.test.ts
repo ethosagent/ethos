@@ -135,6 +135,59 @@ describe('registerNotificationResponseHandler', () => {
     );
   });
 
+  // A lock-screen action while the server is unreachable (a phone reaching a
+  // server bound to 127.0.0.1). The listener fires and forgets the decide, so
+  // a rejection that escaped it would be unhandled — a full-screen error in
+  // Expo Go. Either failure is swallowed; only a landed decision gets a row.
+  describe('unreachable server or refused schedule', () => {
+    let leaked: unknown[] = [];
+    const collect = (reason: unknown) => leaked.push(reason);
+    const settle = () => new Promise((r) => setImmediate(r));
+    beforeEach(() => {
+      vi.useRealTimers();
+      leaked = [];
+      process.on('unhandledRejection', collect);
+    });
+    afterEach(() => {
+      process.off('unhandledRejection', collect);
+    });
+
+    it('a refused tools.approve schedules nothing and leaks nothing', async () => {
+      approve.mockRejectedValueOnce(new TypeError('Could not connect to the server'));
+      capturedListener()(
+        response({
+          actionIdentifier: 'allow-once',
+          body: 'Wants to run bash · Open to review',
+          data: { category: 'approvals', approvalId: 'a9' },
+          threadIdentifier: 's9',
+        }),
+      );
+      await settle();
+      await settle();
+      expect(approve).toHaveBeenCalled();
+      expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+      expect(leaked).toEqual([]);
+    });
+
+    it('a resolved row the OS refuses to schedule leaks nothing', async () => {
+      vi.mocked(Notifications.scheduleNotificationAsync).mockRejectedValueOnce(
+        new Error('Notifications are not permitted'),
+      );
+      capturedListener()(
+        response({
+          actionIdentifier: 'deny',
+          body: 'Wants to run git · Open to review',
+          data: { category: 'approvals', approvalId: 'a10' },
+          threadIdentifier: 's10',
+        }),
+      );
+      await settle();
+      await settle();
+      expect(deny).toHaveBeenCalled();
+      expect(leaked).toEqual([]);
+    });
+  });
+
   it('Deny calls tools.deny and schedules the resolved row', async () => {
     capturedListener()(
       response({

@@ -14,6 +14,7 @@ import {
 import { Button } from '../../src/components/ui/Button';
 import { RouteError } from '../../src/components/ui/RouteError';
 import { Row } from '../../src/components/ui/Row';
+import type { RowData } from '../../src/lib/row';
 import { useConnection } from '../../src/state/connection';
 import { color, radius, type } from '../../src/theme/tokens';
 
@@ -33,6 +34,7 @@ export default function ConnectScreen() {
   const [key, setKey] = useState('');
   const [health, setHealth] = useState<HealthProbe | null>(null);
   const [who, setWho] = useState<WhoamiProbe | null>(null);
+  const [failure, setFailure] = useState<RowData | null>(null);
   const run = useRef(0);
 
   const probe = useCallback(async (u: string, k: string) => {
@@ -40,6 +42,7 @@ export default function ConnectScreen() {
     const origin = normalizeRemoteUrl(u);
     setHealth(null);
     setWho(null);
+    setFailure(null);
     if (!origin) return null;
     const h = await probeHealth(origin);
     if (id !== run.current) return null;
@@ -114,6 +117,7 @@ export default function ConnectScreen() {
         {blocked.map((r) => (
           <Row key={r.word} wrap row={r} />
         ))}
+        {failure ? <Row wrap row={failure} /> : null}
       </View>
       <Button
         label="Connect"
@@ -122,8 +126,9 @@ export default function ConnectScreen() {
         onPress={() =>
           void probe(url, key).then(async (ok) => {
             if (!ok) return;
-            await connect(ok, key);
-            router.push('/agents');
+            const failed = await connect(ok, key);
+            if (failed) setFailure(failed);
+            else router.push('/agents');
           })
         }
       />

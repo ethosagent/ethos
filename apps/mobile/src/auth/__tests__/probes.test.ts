@@ -52,6 +52,33 @@ describe('probeHealth', () => {
     expect(res.ok).toBe(false);
     expect(res.row.result).toBe('connection refused · nothing is listening — check web.host');
   });
+
+  // The device symptom: a server bound to 127.0.0.1, reached from a phone.
+  // expo/fetch rejects with iOS's NSURLError text and the probe must resolve
+  // to the ✗ row — never let the rejection escape (a full-screen error in
+  // Expo Go).
+  it('resolves an expo/fetch "Could not connect" rejection to the ✗ row, leaking nothing', async () => {
+    const leaked: unknown[] = [];
+    const collect = (reason: unknown) => leaked.push(reason);
+    process.on('unhandledRejection', collect);
+    try {
+      const refused = (async () => {
+        throw new TypeError('fetch failed: Could not connect to the server.');
+      }) as unknown as typeof fetch;
+      const res = await probeHealth('http://192.168.1.20:3000', refused);
+      await new Promise((r) => setImmediate(r));
+      expect(res.ok).toBe(false);
+      expect(res.row).toEqual({
+        glyph: '✗',
+        word: 'probe',
+        subject: '192.168.1.20:3000',
+        result: 'connection refused · nothing is listening — check web.host',
+      });
+      expect(leaked).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', collect);
+    }
+  });
 });
 
 describe('unreachable', () => {

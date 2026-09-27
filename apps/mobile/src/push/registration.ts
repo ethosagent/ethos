@@ -54,14 +54,21 @@ export async function registerForPush(
   if (Constants.expoConfig?.extra?.variant === 'sideload') {
     return { registered: false, reason: 'push needs the paid Apple program (sideload build)' };
   }
-  await createAndroidChannel();
-  await registerPushCategories();
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== 'granted') return { registered: false, reason: 'permission-denied' };
-  const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
-  const { data: expoPushToken } = await Notifications.getExpoPushTokenAsync(
-    projectId ? { projectId } : undefined,
-  );
+  // Never rejects: every caller renders the result as a row. The token call
+  // goes to Expo's servers, so it fails offline like any other fetch.
+  let expoPushToken: string;
+  try {
+    await createAndroidChannel();
+    await registerPushCategories();
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') return { registered: false, reason: 'permission-denied' };
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+    ({ data: expoPushToken } = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    ));
+  } catch (err) {
+    return { registered: false, reason: err instanceof Error ? err.message : String(err) };
+  }
   cachedToken = expoPushToken;
   try {
     await rpc.push.register({

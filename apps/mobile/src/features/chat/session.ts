@@ -2,6 +2,7 @@ import { isTerminalRun } from '@ethosagent/chat-state';
 import type { EthosClient } from '@ethosagent/sdk';
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import { opener, streams } from '../../api/client';
+import { errorRow } from '../../api/errors';
 import { createForegroundPolicy } from '../../api/foreground';
 import { queryClient } from '../../api/queries';
 import { clock } from '../../lib/row';
@@ -39,12 +40,22 @@ export async function loadNewest(api: Rpc, first: boolean): Promise<void> {
   if (first) useChatStore.setState({ olderCursor: page.nextCursor });
 }
 
-/** Scroll-up: the next-older page, prepended. */
+/** Scroll-up: the next-older page, prepended. Fired and forgotten by the
+ *  list (`ChatSurface`'s `onOlder`), so it never rejects: a failed page is a
+ *  resolved row, and the cursor comes back so the next scroll-up retries. */
 export async function loadOlder(api: Rpc): Promise<void> {
   const { sessionId, olderCursor } = store();
   if (!sessionId || !olderCursor) return;
   useChatStore.setState({ olderCursor: null });
-  const page = await api.sessions.messages({ id: sessionId, before: olderCursor });
+  let page: Awaited<ReturnType<Rpc['sessions']['messages']>>;
+  try {
+    page = await api.sessions.messages({ id: sessionId, before: olderCursor });
+  } catch (err) {
+    if (store().sessionId !== sessionId) return;
+    useChatStore.setState({ olderCursor });
+    store().notice(errorRow(err, 'sessions.messages'));
+    return;
+  }
   if (store().sessionId !== sessionId) return;
   store().dispatch({ type: 'history-older-loaded', messages: page.messages, cards: page.cards });
   useChatStore.setState({ olderCursor: page.nextCursor });
@@ -82,7 +93,7 @@ export async function catchUp(api: Rpc): Promise<void> {
 
 /** D13, wired to the live connection. `app/_layout.tsx` feeds it AppState. */
 export const foreground = createForegroundPolicy({
-  now: Date.now,
+  now: () => Date.now(),
   suspend: () => streams.suspend(),
   resume: (fresh) => streams.resume(fresh),
   rehydrate: async () => {
@@ -93,6 +104,7 @@ export const foreground = createForegroundPolicy({
     const api = rpc();
     if (api) await catchUp(api);
   },
+  reportError: (err) => store().notice(errorRow(err, 'sessions.messages')),
 });
 
 function subscribe(sessionId: string): void {
@@ -130,12 +142,19 @@ export async function openSession(api: Rpc, sessionId: string): Promise<void> {
 
 /** The first `chat.send` of a new session answered with its id: follow it
  *  without a reset, so the optimistic bubble stays. The stream opens without
- *  a cursor, so the server replays the turn from its start. */
+ *  a cursor, so the server replays the turn from its start. Never rejects —
+ *  the composer's send is fired and forgotten; a failed `sessions.get` (the
+ *  server gone between the send and this read) is a resolved row, and the
+ *  stream already open keeps retrying. */
 export async function adoptSession(api: Rpc, sessionId: string): Promise<void> {
   useChatStore.setState({ sessionId });
   subscribe(sessionId);
-  const session = await api.sessions.get({ id: sessionId, withMessages: false });
-  if (store().sessionId === sessionId) useChatStore.setState({ rootKey: session.session.key });
+  try {
+    const session = await api.sessions.get({ id: sessionId, withMessages: false });
+    if (store().sessionId === sessionId) useChatStore.setState({ rootKey: session.session.key });
+  } catch (err) {
+    if (store().sessionId === sessionId) store().notice(errorRow(err, 'sessions.get'));
+  }
 }
 
 /**

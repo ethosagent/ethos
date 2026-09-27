@@ -91,7 +91,13 @@ export function EventStream<T = SseEvent>(opts: EventStreamOptions<T>): EventStr
     opts.signal.addEventListener('abort', () => ac.abort(), { once: true });
   }
 
-  void consume(url.toString(), opts, ac.signal, state);
+  // Nothing awaits the loop, so nothing may escape it: a refused connection, a
+  // body read that the stall watchdog or close() aborted, and a throwing
+  // callback all end inside `consume`. This catch is the backstop — under
+  // Expo Go an unhandled rejection is a full-screen error, not a log line.
+  consume(url.toString(), opts, ac.signal, state).catch(() => {
+    state.closed = true;
+  });
 
   return {
     close() {
@@ -124,6 +130,14 @@ async function consume<T>(
 ): Promise<void> {
   const fetchFn = opts.fetch ?? globalThis.fetch;
   const schema = opts.schema ?? (SseEventSchema as unknown as EventSchema<T>);
+  // A throwing `onError` must not end the retry loop (or reject it).
+  const report = (err: unknown): void => {
+    try {
+      opts.onError?.(err);
+    } catch {
+      // The caller's handler failed; the stream keeps its own course.
+    }
+  };
 
   while (!outerSignal.aborted) {
     // A per-attempt controller: aborting it (stall watchdog, or the outer
@@ -191,7 +205,11 @@ async function consume<T>(
           } else if (line === '') {
             if (currentEvent === 'gap') {
               // No `id:` line on this frame — never advances `lastSeq`.
-              opts.onGap?.();
+              try {
+                opts.onGap?.();
+              } catch (err) {
+                report(err);
+              }
             } else if (currentData) {
               const seq = currentId ? Number(currentId) : state.lastSeq + 1;
               try {
@@ -200,7 +218,7 @@ async function consume<T>(
                 state.lastSeq = seq;
                 opts.onEvent(event, seq);
               } catch (err) {
-                opts.onError?.(err);
+                report(err);
               }
             }
             currentId = '';
@@ -212,7 +230,7 @@ async function consume<T>(
     } catch (err) {
       failed = true;
       if (outerSignal.aborted) break;
-      opts.onError?.(err);
+      report(err);
     } finally {
       if (watchdog) clearTimeout(watchdog);
       outerSignal.removeEventListener('abort', onOuterAbort);

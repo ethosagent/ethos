@@ -24,6 +24,11 @@ export interface ForegroundDeps {
   /** `tools.listPending` → `clarify.listPending` → `tasks.list`. Best-effort:
    *  it must not reject (a failed read leaves the last state on screen). */
   catchUp(): Promise<void>;
+  /** A failed rehydrate or catch-up, as a resolved row. `onAppState` and
+   *  `onGap` are fired and forgotten (AppState listener, stream callback), so
+   *  they never reject: a rejection there is unhandled, and under Expo Go an
+   *  unreachable server would be a full-screen error instead of a row. */
+  reportError(err: unknown): void;
 }
 
 export type AppStateName = 'active' | 'background' | 'inactive' | 'unknown' | 'extension';
@@ -35,11 +40,18 @@ export function createForegroundPolicy(deps: ForegroundDeps) {
     deps.suspend();
     try {
       await deps.rehydrate();
-    } finally {
+    } catch (err) {
       // Offline now is not offline forever: the streams retry on their own.
       deps.resume(true);
+      deps.reportError(err);
+      return;
     }
-    await deps.catchUp();
+    deps.resume(true);
+    try {
+      await deps.catchUp();
+    } catch (err) {
+      deps.reportError(err);
+    }
   };
 
   return {

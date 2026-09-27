@@ -50,10 +50,13 @@ async function handleApprovalAction(
     // a failed decide leaves the live banner as the truth.
     return;
   }
+  // Fired and forgotten by `handleResponse`, so this must not reject either:
+  // the decision landed, and a resolved row that cannot be scheduled is only
+  // a missing confirmation.
   await scheduleResolvedNotification(approvalId, sessionId, {
     kind: allow ? 'allowed-once' : 'denied',
     toolName,
-  });
+  }).catch(() => undefined);
 }
 
 type NotificationResponse = Parameters<

@@ -1,5 +1,5 @@
 import { ActivityEventSchema } from '@ethosagent/web-contracts';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventStream, STALL_MS } from '../stream';
 
 describe('EventStream', () => {
@@ -355,5 +355,122 @@ describe('EventStreamOptions — schema (activity envelope)', () => {
     });
     expect(seq).toBe(1);
     sub.close();
+  });
+});
+
+// An unreachable server (a phone reaching a server bound to 127.0.0.1): iOS
+// rejects the fetch with "Could not connect to the server". Nothing awaits the
+// stream's loop, so any rejection that escapes it is unhandled — under Expo Go
+// a full-screen error. Each case collects `unhandledRejection` for its life.
+describe('EventStream — unreachable server never leaks a rejection', () => {
+  let leaked: unknown[] = [];
+  const collect = (reason: unknown) => leaked.push(reason);
+  beforeEach(() => {
+    leaked = [];
+    process.on('unhandledRejection', collect);
+  });
+  afterEach(() => {
+    process.off('unhandledRejection', collect);
+  });
+
+  const refused = () =>
+    vi.fn(async () => {
+      throw new TypeError('Could not connect to the server');
+    });
+
+  it('reports a refused connection to onError and keeps retrying', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = refused();
+      const onError = vi.fn();
+      const sub = EventStream({
+        baseUrl: 'http://192.168.1.20:3000',
+        path: '/sse/activity',
+        fetch: fetchMock as unknown as typeof fetch,
+        onEvent: vi.fn(),
+        onError,
+      });
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onError).toHaveBeenCalledWith(expect.any(TypeError));
+      expect(sub.closed).toBe(false);
+      sub.close();
+    } finally {
+      vi.useRealTimers();
+    }
+    await flush();
+    expect(leaked).toEqual([]);
+  });
+
+  it('a throwing onError neither rejects the loop nor stops the retries', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = refused();
+      const sub = EventStream({
+        baseUrl: 'http://192.168.1.20:3000',
+        path: '/sse/activity',
+        fetch: fetchMock as unknown as typeof fetch,
+        onEvent: vi.fn(),
+        onError: () => {
+          throw new Error('handler bug');
+        },
+      });
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      sub.close();
+    } finally {
+      vi.useRealTimers();
+    }
+    await flush();
+    expect(leaked).toEqual([]);
+  });
+
+  it('close() mid-read ends the loop without leaking the aborted body read', async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) =>
+      stalledResponse(init.signal as AbortSignal),
+    );
+    const onError = vi.fn();
+    const sub = EventStream({
+      baseUrl: 'http://192.168.1.20:3000',
+      sessionId: 'sess-1',
+      fetch: fetchMock as unknown as typeof fetch,
+      onEvent: vi.fn(),
+      onError,
+    });
+    await flush();
+    sub.close();
+    await flush();
+    await flush();
+    expect(sub.closed).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(leaked).toEqual([]);
+  });
+
+  it('a throwing onGap is reported, not treated as a dropped connection', async () => {
+    const frames = [
+      'event: gap\ndata: {}\n\n',
+      'id: 3\ndata: {"type":"text_delta","text":"x"}\n\n',
+    ];
+    const fetchMock = vi.fn(async () => sseResponse(frames));
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const sub = EventStream({
+      baseUrl: 'http://192.168.1.20:3000',
+      sessionId: 'sess-1',
+      fetch: fetchMock as unknown as typeof fetch,
+      onEvent,
+      onError,
+      onGap: () => {
+        throw new Error('rehydrate failed');
+      },
+    });
+    await flush();
+    await flush();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'rehydrate failed' }));
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    sub.close();
+    await flush();
+    expect(leaked).toEqual([]);
   });
 });
