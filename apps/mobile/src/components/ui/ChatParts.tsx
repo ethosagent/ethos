@@ -26,6 +26,8 @@ export function PersonalityBar(props: {
   name: string;
   model: string | null;
   accent: string;
+  /** Team chat's variant: `marketing · coordinator` after the model. */
+  context?: string;
   onOpenSessions: () => void;
   onNew: () => void;
 }) {
@@ -47,7 +49,9 @@ export function PersonalityBar(props: {
       >
         <Mark personalityId={props.personalityId} size={30} />
         <Text style={type.h4}>{props.name}</Text>
-        {props.model ? <Text style={type.mono}>{props.model}</Text> : null}
+        <Text style={[type.mono, styles.flex]} numberOfLines={1}>
+          {[props.model, props.context].filter(Boolean).join(' · ')}
+        </Text>
         <Text style={styles.chevron}>›</Text>
       </Pressable>
       <Pressable
@@ -276,6 +280,8 @@ export function Composer(props: {
   name: string;
   accent: string;
   streaming: boolean;
+  /** Overrides `Message <name>…` at rest (team chat: `Ask <team>…`). */
+  placeholder?: string;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -288,7 +294,9 @@ export function Composer(props: {
         value={text}
         onChangeText={setText}
         multiline
-        placeholder={props.streaming ? 'Steer or interrupt…' : `Message ${props.name}…`}
+        placeholder={
+          props.streaming ? 'Steer or interrupt…' : (props.placeholder ?? `Message ${props.name}…`)
+        }
         placeholderTextColor={color.textTertiary}
         selectionColor={props.accent}
         style={[type.body, styles.flex]}

@@ -53,6 +53,9 @@ export function ChatSurface(props: {
   onStarted: (sessionId: string) => void;
   /** The Chat tab hides the native header and pads for the status bar. */
   topInset: number;
+  /** Team chat (§6): the bar's `<team> · coordinator` and `Ask <team>…`. */
+  barContext?: string;
+  placeholder?: string;
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -133,6 +136,7 @@ export function ChatSurface(props: {
         name={name}
         model={modelName(personality?.model)}
         accent={accent}
+        {...(props.barContext ? { context: props.barContext } : {})}
         onOpenSessions={() => router.navigate('/chat/sessions')}
         onNew={() => router.push('/chat/new-session')}
       />
@@ -191,6 +195,7 @@ export function ChatSurface(props: {
           name={name}
           accent={accent}
           streaming={streaming}
+          {...(props.placeholder ? { placeholder: props.placeholder } : {})}
           onSend={(text) => void send(text)}
           onStop={() => void abortTurn(rpc)}
         />

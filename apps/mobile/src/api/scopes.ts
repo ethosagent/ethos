@@ -21,7 +21,10 @@ export function missingScopes(granted: readonly string[]): string[] {
  * NOT refuse on these: a key without one renders that screen's FORBIDDEN row
  * (§11, `errorRow` in ./errors.ts) and the rest of the app works. The Agents
  * tab's other reads (`teams:read`, `cron:read`, `personalities:read`) are in
- * the preset, so they are required.
+ * the preset, so they are required; so is everything the Teams tab calls
+ * (`teams:read`, `kanban:read`, `kanban:write`) and the run card's
+ * `tasks.get`/`tasks.cancel` (`sessions:read`, `chat:send`). Each screen still
+ * renders a FORBIDDEN row (`errorRow`) if a call is refused.
  */
 export const OPTIONAL_SCOPES = {
   'memory:read': 'Agent · Memory',

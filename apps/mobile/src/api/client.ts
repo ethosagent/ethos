@@ -69,3 +69,21 @@ export function activityOpener(
       onError: () => undefined,
     });
 }
+
+/** An `OpenStream` for a feed whose frames only signal "something changed" —
+ *  `/sse/kanban/:team`, whose frames are `task_events` rows the screen never
+ *  reads (it refetches, like the web's `useKanbanBoardSync`). Any frame counts;
+ *  none is parsed against a schema, so a newer event kind cannot be dropped. */
+export function signalOpener(baseUrl: string, apiKey: string, onFrame: () => void): OpenStream {
+  return (path, sinceSeq) =>
+    EventStream<unknown>({
+      baseUrl,
+      apiKey,
+      path,
+      sinceSeq,
+      retry: 'backoff',
+      schema: { parse: (data: unknown) => data },
+      onEvent: onFrame,
+      onError: () => undefined,
+    });
+}

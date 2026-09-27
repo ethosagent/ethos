@@ -13,12 +13,9 @@ import { RouteError } from '../../../src/components/ui/RouteError';
 import { Row } from '../../../src/components/ui/Row';
 import type { RowData } from '../../../src/lib/row';
 import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
-import {
-  DEFAULT_PUSH_CATEGORIES,
-  registerForPush,
-  unregisterCurrentPush,
-} from '../../../src/push/registration';
+import { registerForPush, unregisterCurrentPush } from '../../../src/push/registration';
 import { useConnection } from '../../../src/state/connection';
+import { usePushPrefs } from '../../../src/state/push-prefs';
 import { color, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 const CATEGORY_LABELS: Array<{ key: keyof PushCategories; label: string }> = [
@@ -49,7 +46,8 @@ export default function SettingsScreen() {
   const health = useQuery({ queryKey: ['healthz', url], queryFn: () => probeHealth(url ?? '') });
   const whoami = useQuery({ queryKey: ['whoami'], queryFn: () => rpc.meta.whoami() });
   const [scopeRows, setScopeRows] = useState<RowData[] | null>(null);
-  const [categories, setCategories] = useState<PushCategories>(DEFAULT_PUSH_CATEGORIES);
+  const categories = usePushPrefs((s) => s.categories);
+  const setCategories = usePushPrefs((s) => s.set);
   const [pushRow, setPushRow] = useState<RowData | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const key = whoami.data?.authMethod === 'bearer' ? whoami.data.key : null;
