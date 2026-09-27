@@ -1,0 +1,24 @@
+{
+  "name": "@ethosagent/voice-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure voice-call client logic shared by the Ethos web and mobile surfaces: call reducer, transports, playout scheduling, endpointing, barge-in, and the call-trace measurement harness. No DOM, no React, no node builtins.",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@ethosagent/voice-session": "workspace:*"
+  }
+}

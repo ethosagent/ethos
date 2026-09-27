@@ -2843,6 +2843,16 @@ importers:
         specifier: ^19.0.0
         version: 19.2.16
 
+  packages/voice-client:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@ethosagent/voice-session':
+        specifier: workspace:*
+        version: link:../../extensions/voice-session
+
   packages/voice-realtime-protocol:
     dependencies:
       '@ethosagent/types':
