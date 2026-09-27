@@ -191,6 +191,13 @@ describe('refusals', () => {
     expect(refusals(ALL, '0.8.1', 'h')).toEqual([]);
   });
 
+  // `ALL` is a pre-Phase-3 phone key: the preset has since gained voice:talk,
+  // which is optional (`PHONE_OPTIONAL_PRESET_SCOPES`), so it is not refused.
+  it('does not refuse a key minted before voice:talk joined the preset', () => {
+    expect(ALL).not.toContain('voice:talk');
+    expect(refusals([...ALL, 'voice:talk'], '0.8.1', 'h')).toEqual([]);
+  });
+
   it('refuses a key missing scopes', () => {
     const rows = refusals(['chat:send'], '0.8.1', 'h');
     expect(rows).toHaveLength(1);

@@ -3,6 +3,7 @@ import {
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
   ApiKeyStaticScopeSchema,
+  PHONE_OPTIONAL_PRESET_SCOPES,
   PHONE_PRESET_SCOPES,
 } from '../index';
 
@@ -175,7 +176,7 @@ describe('PHONE_PRESET_SCOPES', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('is exactly the Phase-1 set plus the T5 teams/cron scopes (S1)', () => {
+  it('is exactly the Phase-1 set plus the T5 teams/cron scopes (S1) and Phase-3 voice:talk', () => {
     expect(PHONE_PRESET_SCOPES).toEqual([
       'sessions:read',
       'sessions:write',
@@ -189,7 +190,15 @@ describe('PHONE_PRESET_SCOPES', () => {
       'kanban:write',
       'teams:read',
       'cron:read',
+      'voice:talk',
     ]);
+  });
+
+  it('marks voice:talk optional, and every optional scope is in the preset', () => {
+    expect(PHONE_OPTIONAL_PRESET_SCOPES).toEqual(['voice:talk']);
+    for (const scope of PHONE_OPTIONAL_PRESET_SCOPES) {
+      expect(PHONE_PRESET_SCOPES).toContain(scope);
+    }
   });
 
   it('round-trips a preset-scoped key through ApiKeyMetadataSchema', () => {

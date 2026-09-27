@@ -44,6 +44,11 @@ describe('isPhoneKey', () => {
     expect(isPhoneKey(key({ scopes: [...PHONE_PRESET_SCOPES, 'kanban:read'] }))).toBe(true);
   });
 
+  it('a key minted before voice:talk joined the preset → true (optional preset scope)', () => {
+    const before = PHONE_PRESET_SCOPES.filter((scope) => scope !== 'voice:talk');
+    expect(isPhoneKey(key({ scopes: before }))).toBe(true);
+  });
+
   it('a key missing one preset scope → false', () => {
     expect(isPhoneKey(key({ scopes: PHONE_PRESET_SCOPES.slice(1) }))).toBe(false);
   });

@@ -55,12 +55,21 @@ describe('missingScopes', () => {
   it('lists what is missing', () => {
     expect(missingScopes(['chat:send'])).toContain('sessions:read');
   });
+
+  it('does not require voice:talk — a phone key minted before Phase 3 still connects', () => {
+    expect(missingScopes([])).not.toContain('voice:talk');
+  });
 });
 
 describe('missingOptionalScopes', () => {
-  it('names the memory scopes a preset key lacks, and the screen each feeds', () => {
-    expect(missingOptionalScopes(['memory:read']).map((m) => m.scope)).toEqual(['memory:write']);
-    expect(missingOptionalScopes(['memory:read', 'memory:write'])).toEqual([]);
+  it('names the optional scopes a key lacks, and the screen each feeds', () => {
+    expect(missingOptionalScopes(['memory:read', 'voice:talk']).map((m) => m.scope)).toEqual([
+      'memory:write',
+    ]);
+    expect(missingOptionalScopes(['memory:read', 'memory:write', 'voice:talk'])).toEqual([]);
+    expect(missingOptionalScopes(['memory:read', 'memory:write'])).toEqual([
+      { scope: 'voice:talk', screen: 'Chat · Call' },
+    ]);
   });
 
   it('never overlaps the required set — a required scope cannot be optional', () => {

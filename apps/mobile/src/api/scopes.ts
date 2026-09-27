@@ -1,11 +1,15 @@
-import { PHONE_PRESET_SCOPES } from '@ethosagent/web-contracts';
+import { PHONE_OPTIONAL_PRESET_SCOPES, PHONE_PRESET_SCOPES } from '@ethosagent/web-contracts';
 
 // What the app needs from its key, and from its server (§1). Connect REFUSES on
 // either rather than enabling a phone that fails FORBIDDEN on the first message:
 // scopes are immutable once minted, so a wrong key costs a re-mint.
 
-/** One owner for the set: the web's phone preset and `--preset phone` (S13). */
-export const REQUIRED_SCOPES: readonly string[] = PHONE_PRESET_SCOPES;
+/** One owner for the set: the web's phone preset and `--preset phone` (S13),
+ *  minus the preset scopes a key minted before they joined it does not hold
+ *  (`PHONE_OPTIONAL_PRESET_SCOPES`) — those are in `OPTIONAL_SCOPES` below. */
+export const REQUIRED_SCOPES: readonly string[] = PHONE_PRESET_SCOPES.filter(
+  (scope) => !(PHONE_OPTIONAL_PRESET_SCOPES as readonly string[]).includes(scope),
+);
 
 /** The first release that ships `meta.whoami` and `/healthz` `version` (S12). */
 export const MIN_SERVER_VERSION = '0.8.1';
@@ -29,6 +33,9 @@ export function missingScopes(granted: readonly string[]): string[] {
 export const OPTIONAL_SCOPES = {
   'memory:read': 'Agent · Memory',
   'memory:write': 'Agent · Memory · Approve / Reject',
+  // In the preset since Phase 3, but optional so a phone key minted before it
+  // keeps connecting (`PHONE_OPTIONAL_PRESET_SCOPES`); only the call is refused.
+  'voice:talk': 'Chat · Call',
 } as const satisfies Record<string, string>;
 
 /** The optional scopes this key lacks, with the screen each one feeds. */

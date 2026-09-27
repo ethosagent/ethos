@@ -1581,7 +1581,20 @@ export const PHONE_PRESET_SCOPES: ApiKeyStaticScope[] = [
   'kanban:write',
   'teams:read',
   'cron:read',
+  // Phase 3: the call screen (the voice socket upgrade and `voice.*`'s
+  // call-screen methods — `SCOPE_MAP.voice` in apps/web-api/src/middleware/dual-auth.ts).
+  'voice:talk',
 ];
+
+// Preset scopes a key minted BEFORE they joined the preset does not hold, so
+// nothing may refuse a key for lacking one: the app's `REQUIRED_SCOPES`
+// (apps/mobile/src/api/scopes.ts) and the web's `isPhoneKey`
+// (apps/web/src/pages/settings/lib/mobile-connect.ts) both subtract this list.
+// Scopes are immutable once minted, so requiring a new one would refuse every
+// phone already connected. A screen that needs one renders a FORBIDDEN row.
+export const PHONE_OPTIONAL_PRESET_SCOPES = [
+  'voice:talk',
+] as const satisfies readonly ApiKeyStaticScope[];
 
 export const ApiKeyMetadataSchema = z.object({
   id: z.string(),

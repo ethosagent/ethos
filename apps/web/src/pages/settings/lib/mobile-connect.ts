@@ -6,18 +6,21 @@
 // `key: null`. Nothing here ever touches `localStorage`/`sessionStorage`.
 
 import type { ApiKeyMetadata, ApiKeyScope } from '@ethosagent/web-contracts';
-import { PHONE_PRESET_SCOPES } from '@ethosagent/web-contracts';
+import { PHONE_OPTIONAL_PRESET_SCOPES, PHONE_PRESET_SCOPES } from '@ethosagent/web-contracts';
 
 /** D3: `ethos://connect?url=<url>&key=<secret>` — scan-only, never rendered as an anchor. */
 export function buildConnectString(url: string, key: string): string {
   return `ethos://connect?url=${encodeURIComponent(url)}&key=${encodeURIComponent(key)}`;
 }
 
-/** Not revoked, and its scopes cover every Phase-1 phone scope (D2) — extra scopes are fine. */
+/** Not revoked, and its scopes cover every required phone scope (D2) — extra scopes are fine.
+ *  A preset scope in `PHONE_OPTIONAL_PRESET_SCOPES` is not required, so a phone
+ *  key minted before it joined the preset stays in "Connected phones". */
 export function isPhoneKey(key: Pick<ApiKeyMetadata, 'scopes' | 'revokedAt'>): boolean {
   if (key.revokedAt !== null) return false;
   const scopes = new Set(key.scopes as ApiKeyScope[]);
-  return PHONE_PRESET_SCOPES.every((scope) => scopes.has(scope));
+  const optional = new Set<ApiKeyScope>(PHONE_OPTIONAL_PRESET_SCOPES);
+  return PHONE_PRESET_SCOPES.every((scope) => optional.has(scope) || scopes.has(scope));
 }
 
 /** 10 minutes with no connect — the QR and secret are dropped (T-WEB §4). */
