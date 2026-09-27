@@ -13,6 +13,7 @@ import type { ClarifyRequestEvent, DecisionEvent } from '@ethosagent/web-contrac
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { color, radius, type } from '../../theme/tokens';
+import { RunAnchor } from '../chat/RunCard';
 import { Button } from './Button';
 import { Mark } from './Mark';
 import { Row } from './Row';
@@ -197,7 +198,8 @@ function glyphOf(g: string): '✓' | '✗' | '⚠' | '·' {
 }
 
 /** One message: the user's bubble, or the assistant's content unboxed. Plain
- *  text in this pass; non-text blocks resolve to a row naming what they are. */
+ *  text in this pass; a delegated run renders its card (D10); other non-text
+ *  blocks resolve to a row naming what they are. */
 export function MessageItem({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
@@ -209,7 +211,9 @@ export function MessageItem({ message }: { message: ChatMessage }) {
   return (
     <View style={styles.assistant}>
       {message.blocks.map((b, i) =>
-        b.kind === 'text' ? (
+        b.kind === 'run' ? (
+          <RunAnchor key={b.jobId} jobId={b.jobId} />
+        ) : b.kind === 'text' ? (
           // biome-ignore lint/suspicious/noArrayIndexKey: blocks are append-only
           <Text key={i} style={type.body} selectable>
             {b.content}
