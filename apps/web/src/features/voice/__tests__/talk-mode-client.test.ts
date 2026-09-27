@@ -8,6 +8,7 @@ import {
   TIER_DEGRADED_CODE,
 } from '../talk-mode-client';
 import type { VoiceCallEvent } from '../voice-call-client';
+import { TIER_DEGRADED_CODE as REDUCER_TIER_DEGRADED_CODE } from '../voice-call-reducer';
 
 const full: TalkModeEnvironment = {
   hasWebSocket: true,
@@ -305,3 +306,11 @@ function fakeDriver() {
     stop: () => Promise.resolve(),
   };
 }
+
+describe('tier-degrade code', () => {
+  it('is the same string the reducer routes on', () => {
+    // The reducer keeps its own literal so it imports no transport; this is the
+    // pin that stops the two from drifting apart silently.
+    expect(TIER_DEGRADED_CODE).toBe(REDUCER_TIER_DEGRADED_CODE);
+  });
+});

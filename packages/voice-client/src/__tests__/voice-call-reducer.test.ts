@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { TIER_DEGRADED_CODE as TRANSPORT_TIER_DEGRADED_CODE } from '../talk-mode-client';
 import { parseVoiceCallControlEvent, type VoiceCallEvent } from '../voice-call-client';
 import {
   callStripVisible,
@@ -808,13 +807,5 @@ describe('isTerminalClientEvent', () => {
     expect(state.status).toBe('ended');
     expect(state.degraded).toEqual({ provider: 'openai', message: 'Voice unavailable' });
     expect(callStripVisible(state)).toBe(true);
-  });
-});
-
-describe('tier-degrade code', () => {
-  it('is the same string the transport emits', () => {
-    // The reducer keeps its own literal so it imports no transport; this is the
-    // pin that stops the two from drifting apart silently.
-    expect(TIER_DEGRADED_CODE).toBe(TRANSPORT_TIER_DEGRADED_CODE);
   });
 });

@@ -3,7 +3,8 @@ import { z } from 'zod';
 // Isolated, typed boundary for a live browser voice call (talk-mode).
 //
 // This is the ONLY seam talk-mode's UI + state logic bind to. The implementation
-// that actually runs in the app is `createTalkModeClient` (`talk-mode-client.ts`),
+// that actually runs in the web app is `createTalkModeClient`
+// (`apps/web/src/features/voice/talk-mode-client.ts`),
 // which picks the realtime tier (one duplex WebSocket to a hosted provider) or
 // the pipeline tier (binary PCM to web-api, batch RPC as fallback). Neither
 // needs a native dependency, so the whole feature typechecks, unit-tests against
@@ -63,20 +64,30 @@ export type VoiceCallEvent =
   | { type: 'disconnected' };
 
 /**
- * A live browser voice call. One instance owns one conversation: it acquires and
+ * A live voice call. One instance owns one conversation: it acquires and
  * publishes the local mic, plays the agent's audio, and emits transcript/control
- * events. `micStream()` exposes the local track so a level meter can attach an
- * analyser without a second `getUserMedia` grab.
+ * events. `micStream()` exposes the local mic handle so a level meter can attach
+ * an analyser without a second grab.
+ *
+ * `Mic` is that handle's type. The browser's is a `MediaStream` (apps/web keeps
+ * that alias); a surface with no such object (the phone) leaves it `unknown` and
+ * reads the level through `micLevel()` instead.
  */
-export interface VoiceCallClient {
+export interface VoiceCallClient<Mic = unknown> {
   /** Join the room, acquire the mic, start publishing. Rejects on failure. */
   connect(): Promise<void>;
   /** Leave the room and release the mic. Idempotent. */
   disconnect(): Promise<void>;
   /** Mute/unmute the outbound mic track. */
   setMuted(muted: boolean): void;
-  /** The local mic MediaStream once connected, for a level meter. Null otherwise. */
-  micStream(): MediaStream | null;
+  /** The local mic handle once connected, for a level meter. Null otherwise. */
+  micStream(): Mic | null;
+  /**
+   * Smoothed level of the user's mic right now, 0..1, for a surface that has no
+   * `micStream()` to attach an analyser to. Optional: absent when the capture
+   * does not meter itself.
+   */
+  micLevel?(): number;
   /**
    * Smoothed level of the agent's own speech right now, 0..1 — what drives the
    * Call Stage's speaking state.
@@ -161,7 +172,7 @@ const UNWIRED_MESSAGE =
  * injects `createTalkModeClient` — so reaching this rejection means a caller of
  * `useVoiceCall` omitted `createClient`.
  */
-export function createUnwiredVoiceCallClient(): VoiceCallClient {
+export function createUnwiredVoiceCallClient<Mic = unknown>(): VoiceCallClient<Mic> {
   return {
     connect: () => Promise.reject(new Error(UNWIRED_MESSAGE)),
     disconnect: () => Promise.resolve(),

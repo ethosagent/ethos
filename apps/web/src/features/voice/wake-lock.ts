@@ -1,3 +1,5 @@
+import type { WakeLock } from '@ethosagent/voice-client';
+
 // Screen wake lock for the duration of a call.
 //
 // A hands-free conversation has no touch input, so a phone locks the screen
@@ -24,11 +26,8 @@ export interface WakeLockDocumentLike {
   removeEventListener(type: 'visibilitychange', listener: () => void): void;
 }
 
-export interface WakeLock {
-  acquire(): Promise<void>;
-  release(): Promise<void>;
-  readonly held: boolean;
-}
+// The interface is shared with the phone; this file is the browser implementation.
+export type { WakeLock };
 
 export function createWakeLock(
   navigatorLike?: WakeLockNavigatorLike,

@@ -17,6 +17,7 @@
     "@ethosagent/design-tokens": "workspace:*",
     "@ethosagent/sdk": "workspace:*",
     "@ethosagent/types": "workspace:*",
+    "@ethosagent/voice-client": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@expo/metro-runtime": "~57.0.16",
     "@expo/react-native-action-sheet": "^4.1.1",

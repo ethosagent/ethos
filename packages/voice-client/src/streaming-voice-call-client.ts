@@ -20,11 +20,14 @@ import type { PlayoutSink } from './webaudio-playout';
 // speech would be a second opinion the server's `VoiceSession` never asked
 // for, the same reason the realtime tier's capture is continuous already.
 
-/** Browser-audio seam: mic in, an earcon on connect. Playout is separate. */
-export interface VoiceCaptureIo {
+/** Audio seam: mic in, an earcon on connect. Playout is separate. `Mic` as in
+ *  `VoiceCallClient`. */
+export interface VoiceCaptureIo<Mic = unknown> {
   start(): Promise<void>;
   stop(): Promise<void>;
-  micStream(): MediaStream | null;
+  micStream(): Mic | null;
+  /** Smoothed mic level 0..1, when the capture meters itself. */
+  micLevel?(): number;
   setMicEnabled(enabled: boolean): void;
   /** No-op in continuous mode — kept on the interface because
    *  `createBrowserVoiceCapture` implements one shape for both tiers. */
@@ -36,9 +39,9 @@ export interface VoiceCaptureIo {
   readonly sampleRate: number;
 }
 
-export interface StreamingVoiceCallDeps {
+export interface StreamingVoiceCallDeps<Mic = unknown> {
   transport: VoiceTransport;
-  capture: VoiceCaptureIo;
+  capture: VoiceCaptureIo<Mic>;
   playout: PlayoutSink;
   /** Chat session this call belongs to — carried to the server for telemetry,
    *  never for driving the turn (the server runs it on its own voice lane). */
@@ -53,7 +56,9 @@ export interface StreamingVoiceCallDeps {
 
 const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
-export function createStreamingVoiceCallClient(deps: StreamingVoiceCallDeps): VoiceCallClient {
+export function createStreamingVoiceCallClient<Mic = unknown>(
+  deps: StreamingVoiceCallDeps<Mic>,
+): VoiceCallClient<Mic> {
   const listeners = new Set<(event: VoiceCallEvent) => void>();
   const emit = (event: VoiceCallEvent): void => {
     for (const listener of [...listeners]) listener(event);
@@ -217,9 +222,11 @@ export function createStreamingVoiceCallClient(deps: StreamingVoiceCallDeps): Vo
       deps.capture.setMicEnabled(!muted);
     },
 
-    micStream(): MediaStream | null {
+    micStream(): Mic | null {
       return deps.capture.micStream();
     },
+
+    ...(deps.capture.micLevel ? { micLevel: (): number => deps.capture.micLevel?.() ?? 0 } : {}),
 
     outputLevel(): number {
       return deps.playout.outputLevel();

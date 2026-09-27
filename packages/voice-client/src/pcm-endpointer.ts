@@ -1,4 +1,4 @@
-import { DEFAULT_VOICE_TUNING, type VoiceTuning } from './batch-voice-call-client';
+import { DEFAULT_VOICE_TUNING, type VoiceTuning } from './voice-tuning';
 
 // Endpointing over the captured PCM stream itself.
 //

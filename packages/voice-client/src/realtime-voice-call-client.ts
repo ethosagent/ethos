@@ -71,7 +71,7 @@ export interface RealtimeSessionTicket {
   outputSampleRate: number;
 }
 
-export interface RealtimeVoiceCallDeps {
+export interface RealtimeVoiceCallDeps<Mic = unknown> {
   session: RealtimeSessionTicket;
   /**
    * The app's voice socket, held open as this call's control channel. Absent →
@@ -85,7 +85,7 @@ export interface RealtimeVoiceCallDeps {
   /** Personality speaking; picks the toolset the control lane will service. */
   personalityId?: string;
   /** Mic capture, in `continuous` mode — the provider does the endpointing. */
-  capture: VoiceCaptureIo;
+  capture: VoiceCaptureIo<Mic>;
   playout: PlayoutSink;
   /** Provider socket seam. Injected so the whole client tests with a fake. */
   socketFactory: RealtimeSocketFactory;
@@ -171,7 +171,9 @@ function codecFor(ticket: RealtimeSessionTicket): {
   };
 }
 
-export function createRealtimeVoiceCallClient(deps: RealtimeVoiceCallDeps): VoiceCallClient {
+export function createRealtimeVoiceCallClient<Mic = unknown>(
+  deps: RealtimeVoiceCallDeps<Mic>,
+): VoiceCallClient<Mic> {
   const listeners = new Set<(event: VoiceCallEvent) => void>();
   const emit = (event: VoiceCallEvent): void => {
     for (const listener of [...listeners]) listener(event);
@@ -788,9 +790,11 @@ export function createRealtimeVoiceCallClient(deps: RealtimeVoiceCallDeps): Voic
       deps.capture.setMicEnabled(!muted);
     },
 
-    micStream(): MediaStream | null {
+    micStream(): Mic | null {
       return deps.capture.micStream();
     },
+
+    ...(deps.capture.micLevel ? { micLevel: (): number => deps.capture.micLevel?.() ?? 0 } : {}),
 
     outputLevel(): number {
       return deps.playout.outputLevel();

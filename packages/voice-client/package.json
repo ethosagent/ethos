@@ -16,6 +16,12 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/chat-state": "workspace:*",
+    "@ethosagent/design-tokens": "workspace:*",
+    "@ethosagent/types": "workspace:*",
+    "@ethosagent/voice-realtime-protocol": "workspace:*",
+    "@ethosagent/voice-text": "workspace:*",
+    "@ethosagent/web-contracts": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

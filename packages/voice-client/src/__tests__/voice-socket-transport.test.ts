@@ -189,4 +189,33 @@ describe('voice socket transport', () => {
     sockets[0]?.deliver({ t: 'ready', laneId: 'lane-1', protocolVersion: 1 });
     expect(listener).not.toHaveBeenCalled();
   });
+
+  it('passes handshake headers to the default socket factory, React Native style', () => {
+    const calls: unknown[][] = [];
+    class HeaderedSocket extends FakeSocket {
+      constructor(...args: unknown[]) {
+        super(String(args[0]));
+        calls.push(args);
+      }
+    }
+    vi.stubGlobal('WebSocket', HeaderedSocket);
+    try {
+      void createVoiceSocketTransport({
+        url: 'wss://host/voice/ws',
+        headers: { Authorization: 'Bearer t' },
+        reconnectDelaysMs: [],
+      })
+        .connect()
+        .catch(() => {});
+      createVoiceSocketTransport({ url: 'wss://host/voice/ws', reconnectDelaysMs: [] })
+        .connect()
+        .catch(() => {});
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(calls).toEqual([
+      ['wss://host/voice/ws', undefined, { headers: { Authorization: 'Bearer t' } }],
+      ['wss://host/voice/ws'],
+    ]);
+  });
 });

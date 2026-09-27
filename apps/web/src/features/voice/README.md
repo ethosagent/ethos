@@ -7,6 +7,14 @@ and the two call tiers behind them. Shipped by
 
 ## What ships here (verifiable, no native deps)
 
+The pure modules below — `voice-call-client`, `voice-call-reducer`,
+`call-motion`, `webaudio-playout`, `pcm-endpointer`, `clarify-voice`,
+`push-to-talk`, `voice-start-error`, `voice-socket-transport`, and the
+streaming and realtime call clients — live in `packages/voice-client`
+(`@ethosagent/voice-client`) so the phone runs the same code. The files of the
+same name here are thin re-exports; their tests are in
+`packages/voice-client/src/__tests__/`.
+
 - **`voice-call-client.ts`** — the `VoiceCallClient` boundary: `connect` /
   `disconnect`, mute, mic stream for the level meter, and an event stream that
   mirrors `VoiceSessionEvent` (`extensions/voice-session/src/types.ts`).

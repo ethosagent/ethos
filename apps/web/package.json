@@ -17,6 +17,7 @@
     "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/ui-components": "workspace:*",
+    "@ethosagent/voice-client": "workspace:*",
     "@ethosagent/voice-realtime-protocol": "workspace:*",
     "@ethosagent/voice-text": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",

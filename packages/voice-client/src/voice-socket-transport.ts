@@ -42,6 +42,15 @@ export interface VoiceTransport {
 export interface VoiceSocketTransportOptions {
   url: string;
   createSocket?: (url: string) => VoiceSocketLike;
+  /**
+   * Handshake headers for the DEFAULT socket factory — how a native caller
+   * passes `Authorization`. React Native's `WebSocket` takes them as a third
+   * constructor argument (`new WebSocket(url, protocols, { headers })`); a
+   * browser `WebSocket` has no such argument, so a browser caller leaves this
+   * unset and authenticates with its cookie. Ignored when `createSocket` is
+   * supplied.
+   */
+  headers?: Record<string, string>;
   /** Backoff schedule; the last entry repeats. Set `[]` to disable reconnect. */
   reconnectDelaysMs?: number[];
   schedule?: (fn: () => void, ms: number) => unknown;
@@ -66,8 +75,7 @@ export function createVoiceSocketTransport(opts: VoiceSocketTransportOptions): V
   const backoff = opts.reconnectDelaysMs ?? VOICE_RECONNECT_BACKOFF_MS;
   const schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
   const cancel = opts.cancelSchedule ?? ((handle) => clearTimeout(handle as never));
-  const createSocket =
-    opts.createSocket ?? ((url: string) => new WebSocket(url) as unknown as VoiceSocketLike);
+  const createSocket = opts.createSocket ?? defaultSocketFactory(opts.headers);
 
   const frameListeners = new Set<(frame: VoiceServerFrame, payload: Uint8Array) => void>();
   const statusListeners = new Set<(status: VoiceTransportStatus) => void>();
@@ -193,6 +201,19 @@ export function createVoiceSocketTransport(opts: VoiceSocketTransportOptions): V
       setStatus('closed');
     },
   };
+}
+
+/** `WebSocket` as React Native declares it: a third, options argument. */
+type HeaderedWebSocketCtor = new (
+  url: string,
+  protocols: string | string[] | undefined,
+  options: { headers: Record<string, string> },
+) => VoiceSocketLike;
+
+function defaultSocketFactory(headers?: Record<string, string>): (url: string) => VoiceSocketLike {
+  if (!headers) return (url) => new WebSocket(url) as unknown as VoiceSocketLike;
+  const Ctor = WebSocket as unknown as HeaderedWebSocketCtor;
+  return (url) => new Ctor(url, undefined, { headers });
 }
 
 function toBytes(data: unknown): Uint8Array | null {

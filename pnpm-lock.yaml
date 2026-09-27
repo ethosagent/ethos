@@ -510,6 +510,9 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@ethosagent/voice-client':
+        specifier: workspace:*
+        version: link:../../packages/voice-client
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
@@ -686,6 +689,9 @@ importers:
       '@ethosagent/ui-components':
         specifier: workspace:*
         version: link:../../packages/ui-components
+      '@ethosagent/voice-client':
+        specifier: workspace:*
+        version: link:../../packages/voice-client
       '@ethosagent/voice-realtime-protocol':
         specifier: workspace:*
         version: link:../../packages/voice-realtime-protocol
@@ -2845,6 +2851,24 @@ importers:
 
   packages/voice-client:
     dependencies:
+      '@ethosagent/chat-state':
+        specifier: workspace:*
+        version: link:../chat-state
+      '@ethosagent/design-tokens':
+        specifier: workspace:*
+        version: link:../design-tokens
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+      '@ethosagent/voice-realtime-protocol':
+        specifier: workspace:*
+        version: link:../voice-realtime-protocol
+      '@ethosagent/voice-text':
+        specifier: workspace:*
+        version: link:../voice-text
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../web-contracts
       zod:
         specifier: ^4.3.6
         version: 4.4.3
