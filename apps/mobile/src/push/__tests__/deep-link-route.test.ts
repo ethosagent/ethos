@@ -30,13 +30,17 @@ describe('deepLinkToRoute', () => {
     expect(deepLinkToRoute({ category: 'approvals', deepLink: 'not-a-valid-link' })).toBe('/chat');
   });
 
-  it('team-attention has no task screen yet, so it falls back to Activity', () => {
+  it('team-attention opens the task it names', () => {
     expect(
       deepLinkToRoute({
         category: 'teamAttention',
         deepLink: 'ethos://t/marketing/task/MKT-38',
       }),
-    ).toBe('/activity');
+    ).toBe('/teams/marketing/task/MKT-38');
+  });
+
+  it('team-attention without a task link opens Teams', () => {
+    expect(deepLinkToRoute({ category: 'teamAttention' })).toBe('/teams');
   });
 
   it('a cron failure opens Activity', () => {

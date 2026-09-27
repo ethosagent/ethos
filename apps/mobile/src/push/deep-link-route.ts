@@ -1,4 +1,5 @@
 import { parseDeepLink } from '../auth/deep-link';
+import { taskPath } from '../features/teams/routes';
 
 export interface PushTapInput {
   /** `content.data.category` — one of the server's five `PushCategory`
@@ -32,10 +33,16 @@ export function deepLinkToRoute(input: PushTapInput): string | null {
       ? `/chat/new?personalityId=${encodeURIComponent(link.personalityId)}`
       : '/chat';
   }
-  // No team/task screen yet (Phase 2) — same fallback `app/+native-intent.ts`
-  // uses for a `task` OS link; cron-failure and run-finished pushes have no
-  // chat context either, so all three land on Activity.
-  if (category === 'teamAttention' || category === 'cronFailures' || category === 'runFinished') {
+  // A team-attention push names its task (`ethos://t/<team>/task/<id>`) and
+  // lands there, as a `task` OS link does (`app/+native-intent.ts`); one
+  // without a parseable link opens Teams.
+  if (category === 'teamAttention') {
+    const deepLink = typeof input.deepLink === 'string' ? input.deepLink : null;
+    const link = deepLink ? parseDeepLink(deepLink) : null;
+    return link?.kind === 'task' ? taskPath(link.team, link.taskId) : '/teams';
+  }
+  // Cron-failure and run-finished pushes have no chat context: Activity.
+  if (category === 'cronFailures' || category === 'runFinished') {
     return '/activity';
   }
   return null;
