@@ -252,6 +252,12 @@ export function createPhoneCallClient(deps: PhoneCallDeps): PhoneCallClient {
       eng.on((event) => {
         if (event.type === 'held') t.interruption('began');
         if (event.type === 'resumed') t.interruption('ended');
+        if (event.type === 'error') {
+          t.engineError(
+            event.code,
+            event.code === 'undecodable_audio' ? `${event.mime}: ${event.detail}` : event.message,
+          );
+        }
         for (const listener of [...engineListeners]) listener(event);
       }),
     ];

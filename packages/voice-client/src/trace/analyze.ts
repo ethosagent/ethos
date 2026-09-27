@@ -60,6 +60,7 @@ const EventSchema = z.discriminatedUnion('ev', [
     status: z.enum(['connecting', 'open', 'reconnecting', 'closed']),
   }),
   timed({ ev: z.literal('interruption'), phase: z.enum(['began', 'ended']) }),
+  timed({ ev: z.literal('engine_error'), code: z.string(), message: z.string() }),
   z.object({ ev: z.literal('calib'), roundTripMs: z.number() }),
 ]);
 

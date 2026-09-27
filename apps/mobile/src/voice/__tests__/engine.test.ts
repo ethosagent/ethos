@@ -1,6 +1,6 @@
 import { classifyVoiceStartError, MIC_DENIED_CODE } from '@ethosagent/voice-client';
 import { describe, expect, it } from 'vitest';
-import { createVoiceEngine, type EngineEvent } from '../engine';
+import { createVoiceEngine, type EngineEvent, sniffAudioMime } from '../engine';
 import { FakeAppState, FakeBackend, flush } from './fakes';
 
 function setup(sampleRate = 16_000) {
@@ -166,5 +166,68 @@ describe('createVoiceEngine — interruptions', () => {
     backend.interrupt({ type: 'began', shouldResume: false });
     await flush();
     expect(events).toEqual([]);
+  });
+});
+
+const OGG_HEAD = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 0, 2, 0, 0, 0, 0, 0, 0, 1, 2, 3]);
+
+describe('createVoiceEngine — playout', () => {
+  it('creates PCM buffers at the output rate, resampled, for the same duration', () => {
+    const { backend, engine } = setup();
+    const end = engine.playout.playPcm16(new Int16Array(2_400).fill(16_384), 24_000);
+    const [buffer] = backend.playoutContext.buffers;
+    expect(buffer?.sampleRate).toBe(48_000);
+    expect(buffer?.frames).toBe(4_800);
+    expect(buffer?.samples).toHaveLength(4_800);
+    expect(buffer?.samples?.[4_799]).toBeCloseTo(0.5, 5);
+    expect(end).toBeCloseTo(0.05 + 0.1, 9);
+  });
+
+  it('passes PCM already at the output rate through untouched', () => {
+    const { backend, engine } = setup();
+    engine.playout.playPcm16(new Int16Array(480), 48_000);
+    expect(backend.playoutContext.buffers[0]).toMatchObject({ sampleRate: 48_000, frames: 480 });
+  });
+
+  it('an undecodable clip surfaces an engine error, once per type, and still rejects', async () => {
+    const { backend, engine, events } = setup();
+    backend.playoutContext.decodeError = new Error('Failed to decode any frames');
+    await expect(engine.playout.playEncoded(OGG_HEAD)).rejects.toThrow('Failed to decode');
+    await expect(engine.playout.playEncoded(OGG_HEAD)).rejects.toThrow('Failed to decode');
+    expect(events).toEqual([
+      {
+        type: 'error',
+        code: 'undecodable_audio',
+        mime: 'audio/ogg',
+        message: "Can't play audio/ogg on this phone.",
+        detail: 'Failed to decode any frames',
+      },
+    ]);
+  });
+
+  it('a decodable clip reports nothing', async () => {
+    const { engine, events } = setup();
+    await engine.playout.playEncoded(OGG_HEAD);
+    expect(events).toEqual([]);
+  });
+});
+
+describe('sniffAudioMime', () => {
+  const bytes = (text: string, pad = 12): Uint8Array =>
+    Uint8Array.from({ length: Math.max(pad, text.length) }, (_, i) => text.charCodeAt(i) || 0);
+  it.each([
+    ['OggS', 'audio/ogg'],
+    ['ID3', 'audio/mpeg'],
+    ['fLaC', 'audio/flac'],
+    ['RIFF\0\0\0\0WAVE', 'audio/wav'],
+    ['\0\0\0\0ftypM4A ', 'audio/mp4'],
+    ['hello world!', 'unrecognised audio'],
+  ])('%s → %s', (head, mime) => {
+    expect(sniffAudioMime(bytes(head))).toBe(mime);
+  });
+
+  it('reads MPEG and ADTS frame sync', () => {
+    expect(sniffAudioMime(Uint8Array.from([0xff, 0xfb, 0x90]))).toBe('audio/mpeg');
+    expect(sniffAudioMime(Uint8Array.from([0xff, 0xf1, 0x50]))).toBe('audio/aac');
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseTrace } from '../trace/analyze';
 import { createCallTrace } from '../trace/call-trace';
 
 describe('createCallTrace', () => {
@@ -32,6 +33,18 @@ describe('createCallTrace', () => {
     const trace = createCallTrace({ tier: 'pipeline', clock: { now: () => 2000 } });
     trace.sched(2.5, 1, 'u');
     expect(trace.events()[1]).toMatchObject({ ctxNow: 2, startAt: 2.5 });
+  });
+
+  it('records engine errors in a form parseTrace reads back', () => {
+    const trace = createCallTrace({ tier: 'pipeline', clock: { now: () => 7 } });
+    trace.engineError('undecodable_audio', 'audio/ogg: no decoder');
+    expect(trace.events()[1]).toEqual({
+      ev: 'engine_error',
+      t: 7,
+      code: 'undecodable_audio',
+      message: 'audio/ogg: no decoder',
+    });
+    expect(parseTrace(trace.toJsonl()).malformed).toBe(0);
   });
 
   it('stops storing past maxEvents and counts the rest', () => {

@@ -90,7 +90,15 @@ const config: ExpoConfig = {
     // `mode` sets the `aps-environment` entitlement (development vs. production APNs).
     ['expo-notifications', { mode: variant === 'production' ? 'production' : 'development' }],
     // The call engine (T7): background audio keeps a call alive on a locked
-    // screen; FFmpeg is off because the call only ever handles PCM.
+    // screen. The lane's TTS arrives as PCM or as whole Ogg Opus / MP3 / WAV
+    // clips, and none of those needs FFmpeg: `decodeAudioData` sends every
+    // format but MP4/M4A/AAC to miniaudio (`needsFFmpeg`, common/cpp/audioapi/
+    // core/utils/AudioDecoding.h), which decodes WAV/MP3/FLAC itself and Ogg
+    // Opus/Vorbis through the libopus/libvorbis backends
+    // (libs/miniaudio/MiniAudioDecoding.cpp). Those backends are the "static
+    // external libs", so `disableStaticExternalLibs` is pinned false: turning
+    // it on would silence the pipeline tier's default opus. FFmpeg would add
+    // only AAC/M4A/MP4 and URL streaming, which no voice provider emits.
     // RECORD_AUDIO is not in the plugin's Android defaults, so the list is
     // spelled out; the foreground service carries the mic in the background.
     [
@@ -107,6 +115,7 @@ const config: ExpoConfig = {
         ],
         androidFSTypes: ['mediaPlayback', 'microphone'],
         disableFFmpeg: true,
+        disableStaticExternalLibs: false,
       },
     ],
   ],

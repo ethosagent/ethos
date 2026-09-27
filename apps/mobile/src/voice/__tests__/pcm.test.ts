@@ -7,6 +7,8 @@ import {
   frameSamples,
   levelFromRms,
   PIPELINE_SAMPLE_RATE,
+  resampleClip,
+  resampledLength,
 } from '../pcm';
 
 const ramp = (n: number): Float32Array => Float32Array.from({ length: n }, (_, i) => i / n);
@@ -98,5 +100,36 @@ describe('levelFromRms', () => {
     expect(levelFromRms(0)).toBe(0);
     expect(levelFromRms(0.1)).toBeCloseTo(0.4);
     expect(levelFromRms(0.9)).toBe(1);
+  });
+});
+
+describe('resampleClip', () => {
+  it('is the identity at equal rates', () => {
+    const input = ramp(10);
+    expect(resampleClip(input, 24_000, 24_000)).toBe(input);
+  });
+
+  it('upsamples 24 → 48 kHz linearly, keeping the duration', () => {
+    const out = resampleClip(Float32Array.from([0, 1, 0, -1]), 24_000, 48_000);
+    expect(out).toHaveLength(resampledLength(4, 24_000, 48_000));
+    expect([...out]).toEqual([0, 0.5, 1, 0.5, 0, -0.5, -1, -1]);
+  });
+
+  it('upsamples to a non-integer ratio without running off the end', () => {
+    const out = resampleClip(ramp(2_400), 24_000, 44_100);
+    expect(out).toHaveLength(4_410);
+    expect(out[0]).toBe(0);
+    expect(out[out.length - 1]).toBeCloseTo(2_399 / 2_400, 6);
+    for (let i = 1; i < out.length; i++) expect(out[i]).toBeGreaterThanOrEqual(out[i - 1] ?? 0);
+  });
+
+  it('downsamples by averaging each span', () => {
+    const out = resampleClip(Float32Array.from([1, 3, 5, 7, 9, 11]), 48_000, 16_000);
+    expect([...out]).toEqual([3, 9]);
+  });
+
+  it('never yields an empty clip', () => {
+    expect(resampledLength(1, 48_000, 8_000)).toBe(1);
+    expect(resampleClip(Float32Array.from([0.25]), 48_000, 8_000)).toHaveLength(1);
   });
 });

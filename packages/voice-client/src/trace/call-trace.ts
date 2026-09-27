@@ -39,6 +39,7 @@ export type CallTraceEvent =
   | { ev: 'stop'; t: number; reason: string }
   | { ev: 'link'; t: number; status: TraceLinkStatus }
   | { ev: 'interruption'; t: number; phase: 'began' | 'ended' }
+  | { ev: 'engine_error'; t: number; code: string; message: string }
   | { ev: 'calib'; roundTripMs: number };
 
 export interface CallTraceClock {
@@ -69,6 +70,9 @@ export interface CallTrace {
   stop(reason: string): void;
   link(status: TraceLinkStatus): void;
   interruption(phase: 'began' | 'ended'): void;
+  /** The audio engine reported a failure (a clip it could not decode, a
+   *  session it could not resume). `code` is the engine's, `message` free-form. */
+  engineError(code: string, message: string): void;
   calib(roundTripMs: number): void;
   events(): readonly CallTraceEvent[];
   /** Events not stored because `maxEvents` was reached. */
@@ -114,6 +118,7 @@ export function createCallTrace(options: CallTraceOptions): CallTrace {
     stop: (reason) => push({ ev: 'stop', t: clock.now(), reason }),
     link: (status) => push({ ev: 'link', t: clock.now(), status }),
     interruption: (phase) => push({ ev: 'interruption', t: clock.now(), phase }),
+    engineError: (code, message) => push({ ev: 'engine_error', t: clock.now(), code, message }),
     calib: (roundTripMs) => push({ ev: 'calib', roundTripMs }),
     events: () => log,
     dropped: () => droppedCount,

@@ -9,18 +9,32 @@ import type {
 import type { VoiceClientFrame, VoiceServerFrame } from '@ethosagent/web-contracts';
 import type { AppActiveSource, AudioBackend, InterruptionNotice, RecorderChunk } from '../engine';
 
+/** A buffer the fake context created, with what was written into it. */
+export interface FakeBuffer extends PlayoutBuffer {
+  readonly frames: number;
+  readonly sampleRate: number;
+  samples: Float32Array | null;
+}
+
 /** An `AudioContext` stand-in with a hand-cranked clock (seconds). */
 export class FakeContext implements PlayoutContext {
   currentTime = 0;
   readonly destination = { id: 'destination' };
   readonly starts: Array<{ at: number; duration: number }> = [];
+  readonly buffers: FakeBuffer[] = [];
   stops = 0;
+  /** Set to make every `decodeAudioData` reject with this error. */
+  decodeError: Error | null = null;
 
   createBuffer(_channels: number, frames: number, sampleRate: number): PlayoutBuffer {
-    return { duration: frames / sampleRate };
+    const buffer: FakeBuffer = { duration: frames / sampleRate, frames, sampleRate, samples: null };
+    this.buffers.push(buffer);
+    return buffer;
   }
 
-  fillMono(): void {}
+  fillMono(buffer: PlayoutBuffer, samples: Float32Array): void {
+    (buffer as FakeBuffer).samples = samples;
+  }
 
   createAnalyser(): PlayoutAnalyser {
     return { frequencyBinCount: 0, getByteFrequencyData: () => {}, connect: () => {} };
@@ -42,6 +56,7 @@ export class FakeContext implements PlayoutContext {
   }
 
   decodeAudioData(): Promise<PlayoutBuffer> {
+    if (this.decodeError) return Promise.reject(this.decodeError);
     return Promise.resolve({ duration: 0.5 });
   }
 }
@@ -49,6 +64,8 @@ export class FakeContext implements PlayoutContext {
 /** The native audio surface, driven by the test. */
 export class FakeBackend implements AudioBackend {
   readonly playoutContext = new FakeContext();
+  /** The output context's rate — a phone's speaker runs at 48 kHz. */
+  outputSampleRate = 48_000;
   micAllowed = true;
   sessionActive = false;
   /** Make the next `setSessionActive(true)` reject (the phone call still holds it). */

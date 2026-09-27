@@ -24,6 +24,8 @@ import {
   frameSamples,
   levelFromRms,
   type Resampler,
+  resampleClip,
+  resampledLength,
 } from './pcm';
 
 // The phone's audio engine for a call: mic capture, playout, the audio session
@@ -66,6 +68,9 @@ export interface AudioBackend {
   stopRecorder(): Promise<void>;
   /** The output side, shaped for `AbsolutePlayout`. */
   readonly playoutContext: PlayoutContext;
+  /** The output context's rate. Buffers at any other rate are resampled to it
+   *  before they reach the context (see `resampleClip`). */
+  readonly outputSampleRate: number;
   /** A short acknowledgement tone. Best-effort. */
   playEarcon(): void;
   onInterruption(listener: (notice: InterruptionNotice) => void): () => void;
@@ -87,7 +92,18 @@ export type EngineEvent =
   /** The output or input route changed (headset in or out, Bluetooth). */
   | { type: 'route'; reason: string }
   /** Resuming failed; the call stays held until the app is active again. */
-  | { type: 'error'; message: string };
+  | { type: 'error'; code: 'resume_failed'; message: string }
+  /** An encoded clip could not be decoded, so its audio was lost. Emitted once
+   *  per MIME type per engine (an engine lives for one call). */
+  | {
+      type: 'error';
+      code: 'undecodable_audio';
+      mime: string;
+      /** For the user: which audio this phone cannot play. */
+      message: string;
+      /** The decoder's own reason, for the trace. */
+      detail: string;
+    };
 
 /** A capture the shared clients drive. The phone has no `MediaStream`, so
  *  `micStream()` is always null and the meter reads `micLevel()`. */
@@ -124,7 +140,6 @@ export function createVoiceEngine(opts: VoiceEngineOptions): VoiceEngine {
   const { backend, sampleRate } = opts;
   const size = frameSamples(sampleRate);
   const framer = createFramer(size);
-  const playout = new AbsolutePlayout(backend.playoutContext);
 
   const captureListeners = new Set<(event: EndpointerEvent) => void>();
   const frameListeners = new Set<(frame: Int16Array, rms: number) => void>();
@@ -132,6 +147,21 @@ export function createVoiceEngine(opts: VoiceEngineOptions): VoiceEngine {
   const emitEvent = (event: EngineEvent): void => {
     for (const listener of [...eventListeners]) listener(event);
   };
+
+  const reportedMimes = new Set<string>();
+  const playout = new AbsolutePlayout(
+    adaptPlayoutContext(backend.playoutContext, backend.outputSampleRate, (mime, err) => {
+      if (reportedMimes.has(mime)) return;
+      reportedMimes.add(mime);
+      emitEvent({
+        type: 'error',
+        code: 'undecodable_audio',
+        mime,
+        message: `Can't play ${mime} on this phone.`,
+        detail: err instanceof Error && err.message ? err.message : String(err),
+      });
+    }),
+  );
 
   let resampler: Resampler | null = null;
   let micEnabled = true;
@@ -209,6 +239,7 @@ export function createVoiceEngine(opts: VoiceEngineOptions): VoiceEngine {
         held = true;
         emitEvent({
           type: 'error',
+          code: 'resume_failed',
           message: err instanceof Error ? err.message : 'Could not resume the call audio.',
         });
       }
@@ -301,6 +332,80 @@ export function createVoiceEngine(opts: VoiceEngineOptions): VoiceEngine {
   };
 }
 
+/**
+ * The context `AbsolutePlayout` schedules on, over the backend's. Two jobs:
+ *
+ * - PCM buffers are created at the OUTPUT rate and their samples resampled on
+ *   the way in, because the native source node ignores `buffer.sampleRate`
+ *   (see `resampleClip`). Decoded clips need nothing: `decodeAudioData`
+ *   decodes at the context's rate already.
+ * - A clip the decoder refuses is reported before the rejection travels on —
+ *   the shared streaming client swallows it (`streaming-voice-call-client.ts`,
+ *   "an undecodable clip loses its audio"), so this is the only place a lost
+ *   reply can still be noticed.
+ */
+function adaptPlayoutContext(
+  ctx: PlayoutContext,
+  outputRate: number,
+  onUndecodable: (mime: string, err: unknown) => void,
+): PlayoutContext {
+  const sourceRates = new WeakMap<PlayoutBuffer, number>();
+  return {
+    get currentTime(): number {
+      return ctx.currentTime;
+    },
+    get destination(): unknown {
+      return ctx.destination;
+    },
+    createBuffer(channels, frames, sampleRate) {
+      if (sampleRate === outputRate) return ctx.createBuffer(channels, frames, sampleRate);
+      const buffer = ctx.createBuffer(
+        channels,
+        resampledLength(frames, sampleRate, outputRate),
+        outputRate,
+      );
+      sourceRates.set(buffer, sampleRate);
+      return buffer;
+    },
+    createBufferSource: () => ctx.createBufferSource(),
+    createAnalyser: () => ctx.createAnalyser(),
+    async decodeAudioData(data) {
+      // Sniffed first: the decoder may detach `data`.
+      const mime = sniffAudioMime(new Uint8Array(data, 0, Math.min(12, data.byteLength)));
+      try {
+        return await ctx.decodeAudioData(data);
+      } catch (err) {
+        onUndecodable(mime, err);
+        throw err;
+      }
+    },
+    fillMono(buffer, samples) {
+      const fromRate = sourceRates.get(buffer);
+      ctx.fillMono(
+        buffer,
+        fromRate === undefined ? samples : resampleClip(samples, fromRate, outputRate),
+      );
+    },
+  };
+}
+
+/** The container a clip's leading bytes announce, for the undecodable notice.
+ *  The same signatures react-native-audio-api's `detectAudioFormat` reads
+ *  (common/cpp/audioapi/core/utils/AudioDecoding.cpp). */
+export function sniffAudioMime(head: Uint8Array): string {
+  const ascii = (at: number, text: string): boolean =>
+    [...text].every((ch, i) => head[at + i] === ch.charCodeAt(0));
+  const b0 = head[0] ?? 0;
+  const b1 = head[1] ?? 0;
+  if (ascii(0, 'RIFF') && ascii(8, 'WAVE')) return 'audio/wav';
+  if (ascii(0, 'OggS')) return 'audio/ogg';
+  if (ascii(0, 'fLaC')) return 'audio/flac';
+  if (b0 === 0xff && (b1 & 0xf6) === 0xf0) return 'audio/aac';
+  if (ascii(0, 'ID3') || (b0 === 0xff && (b1 & 0xe0) === 0xe0)) return 'audio/mpeg';
+  if (ascii(4, 'ftyp')) return 'audio/mp4';
+  return 'unrecognised audio';
+}
+
 /** Load the library and build a production engine. Lazy by construction. */
 export async function loadVoiceEngine(sampleRate: number): Promise<VoiceEngine> {
   const [backend, { AppState }] = await Promise.all([loadAudioBackend(), import('react-native')]);
@@ -322,8 +427,10 @@ export async function loadVoiceEngine(sampleRate: number): Promise<VoiceEngine> 
 export async function loadAudioBackend(): Promise<AudioBackend> {
   const lib: typeof AudioApi = await import('react-native-audio-api');
   const { AudioContext, AudioManager, AudioRecorder } = lib;
-  // Device rate: playout buffers declared at the TTS rate are converted on the
-  // way to the speakers by the graph, and the capture side converts itself.
+  // Device rate. The graph does NOT convert a buffer declared at another rate
+  // (see `resampleClip`), so playout resamples PCM to `ctx.sampleRate` itself;
+  // `decodeAudioData` decodes straight to it, and the capture side converts
+  // itself.
   const ctx = new AudioContext();
   const recorder = new AudioRecorder();
 
@@ -368,6 +475,7 @@ export async function loadAudioBackend(): Promise<AudioBackend> {
     },
 
     playoutContext: playoutContextFrom(ctx),
+    outputSampleRate: ctx.sampleRate,
 
     playEarcon() {
       // The web's "got it" blip (apps/web/src/features/voice/earcon.ts), kept

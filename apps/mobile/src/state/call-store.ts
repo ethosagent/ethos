@@ -100,6 +100,8 @@ export function createCallStore(deps: CallStoreDeps): StoreApi<CallStore> {
   /** The in-flight turn's marks. */
   let marks: { committedAt: number; sentenceAt: number | null; audioAt: number | null } | null =
     null;
+  /** This call already told the user a clip could not be played. */
+  let playbackNoticed = false;
 
   return createStore<CallStore>((set, get) => {
     const dispatch = (action: VoiceCallAction): void =>
@@ -160,6 +162,7 @@ export function createCallStore(deps: CallStoreDeps): StoreApi<CallStore> {
         if (status !== 'idle' && status !== 'ended') return;
         dispatch({ type: 'start' });
         marks = null;
+        playbackNoticed = false;
         set({ latency: NO_LATENCY, realtime: null, held: false, muted: false, pushToTalk: false });
 
         let next: PhoneCallClient;
@@ -190,6 +193,12 @@ export function createCallStore(deps: CallStoreDeps): StoreApi<CallStore> {
           next.onEngine((event) => {
             if (event.type === 'held') set({ held: true });
             if (event.type === 'resumed') set({ held: false });
+            // Lost reply audio is never silent, and said once: the rest of the
+            // call would only repeat it. The trace keeps every occurrence.
+            if (event.type === 'error' && event.code === 'undecodable_audio' && !playbackNoticed) {
+              playbackNoticed = true;
+              set((s) => ({ call: { ...s.call, notice: event.message } }));
+            }
           }),
           next.onPlayoutStart(markFirstAudio),
         ];

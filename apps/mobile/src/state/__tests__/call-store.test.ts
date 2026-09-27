@@ -64,6 +64,54 @@ describe('call-store', () => {
     expect(transport.frames('hello')).toHaveLength(1);
   });
 
+  it('an undecodable reply clip shows one notice per call and lands in the trace', async () => {
+    const { store, transport, backend } = await started();
+    backend.playoutContext.decodeError = new Error('Failed to decode any frames');
+    const ogg = Uint8Array.from([0x4f, 0x67, 0x67, 0x53, 0, 2, 0, 0, 0, 0, 0, 0]);
+    for (const segmentId of ['s1', 's2']) {
+      transport.deliver(
+        {
+          t: 'audio',
+          utteranceId: 'u1',
+          segmentId,
+          seq: 0,
+          codec: 'encoded',
+          mimeType: 'audio/ogg;codecs=opus',
+        },
+        ogg,
+      );
+      transport.deliver({ t: 'segment_end', utteranceId: 'u1', segmentId });
+      await flush(20);
+    }
+    expect(store.getState().call.notice).toBe("Can't play audio/ogg on this phone.");
+    expect(store.getState().call.status).toBe('listening');
+    store.getState().dismissNotice();
+    transport.deliver(
+      {
+        t: 'audio',
+        utteranceId: 'u2',
+        segmentId: 's3',
+        seq: 0,
+        codec: 'encoded',
+        mimeType: 'audio/mpeg',
+      },
+      Uint8Array.from([0xff, 0xfb, 0x90, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    );
+    transport.deliver({ t: 'segment_end', utteranceId: 'u2', segmentId: 's3' });
+    await flush(20);
+    expect(store.getState().call.notice).toBeNull();
+    const errors = store
+      .getState()
+      .traceJsonl()
+      ?.split('\n')
+      .filter((line) => line.includes('engine_error'))
+      .map((line) => JSON.parse(line));
+    expect(errors?.map((e) => e.message)).toEqual([
+      'audio/ogg: Failed to decode any frames',
+      'audio/mpeg: Failed to decode any frames',
+    ]);
+  });
+
   it('a refused realtime token shows the notice and the call goes on', async () => {
     const { store } = await started({
       mintRealtimeToken: async () => ({

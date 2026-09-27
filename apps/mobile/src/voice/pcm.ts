@@ -155,3 +155,51 @@ export function createFramer(size: number): Framer {
 export function levelFromRms(rms: number): number {
   return Math.min(1, rms * 4);
 }
+
+/** How many samples a whole clip of `frames` at `fromRate` becomes at `toRate`.
+ *  Never zero, so a buffer can always be created for a non-empty clip. */
+export function resampledLength(frames: number, fromRate: number, toRate: number): number {
+  return Math.max(1, Math.round((frames * toRate) / fromRate));
+}
+
+/**
+ * Convert one complete clip in one go, to exactly `resampledLength` samples.
+ *
+ * Playout needs this because react-native-audio-api 0.13.6 does NOT resample a
+ * buffer to its context's rate: `AudioBufferSourceNode` reads one buffer frame
+ * per output frame, times `playbackRate`, whatever `buffer.sampleRate` says
+ * (common/cpp/audioapi/core/sources/AudioBufferSourceNode.cpp
+ * `runBufferProcessor`, core/utils/buffer/SingleBufferProcessor.cpp). A 24 kHz
+ * TTS clip in a 48 kHz context would play at double speed and end halfway
+ * through its scheduled slot. The browser resamples; the phone must do it here.
+ *
+ * Upsampling interpolates linearly; downsampling (a Bluetooth HFP route can put
+ * the context at 16 kHz) averages each output sample's span, as the capture
+ * converter does. Unlike `createResampler` it holds nothing back: a clip is
+ * scheduled as a whole, so its tail is emitted, not carried.
+ */
+export function resampleClip(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+  if (fromRate === toRate || input.length === 0) return input;
+  const n = input.length;
+  const length = resampledLength(n, fromRate, toRate);
+  const out = new Float32Array(length);
+  const ratio = fromRate / toRate;
+  if (fromRate < toRate) {
+    for (let k = 0; k < length; k++) {
+      const pos = k * ratio;
+      const i = Math.min(Math.floor(pos), n - 1);
+      const a = input[i] ?? 0;
+      const b = input[Math.min(i + 1, n - 1)] ?? a;
+      out[k] = a + (b - a) * (pos - i);
+    }
+    return out;
+  }
+  for (let k = 0; k < length; k++) {
+    const start = Math.min(Math.ceil(k * ratio), n - 1);
+    const end = Math.min(Math.max(start + 1, Math.ceil((k + 1) * ratio)), n);
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += input[i] ?? 0;
+    out[k] = sum / (end - start);
+  }
+  return out;
+}
