@@ -90,6 +90,102 @@ Plain `http` is allowed only to local-network hosts on iOS (ATS
 `NSAllowsLocalNetworking`); Android allows cleartext everywhere. Prefer https
 through a real certificate (Tailscale HTTPS, Let's Encrypt behind a proxy).
 
+## Voice on a real iPhone (free provisioning)
+
+A call needs the native audio library (`react-native-audio-api`), so it never
+runs in Expo Go (the composer shows no mic there) and has not been exercised in
+the simulator. This is the `sideload` variant: signed by a free Personal Team,
+no push, no TestFlight, installed straight from a Mac over a cable.
+
+1. **Install Xcode** — free, from the Mac App Store. Open it once and let it
+   install its components.
+2. **Sign into Xcode with an Apple ID** — Xcode → Settings → Accounts → `+` →
+   Apple ID. That creates a free **Personal Team**. Its team id is the 10
+   characters shown beside it (or in Keychain Access under the
+   "Apple Development" certificate's Organizational Unit).
+3. **Enable Developer Mode on the iPhone** — plug it in and trust the Mac, then
+   Settings → Privacy & Security → Developer Mode → on, and restart when asked.
+4. **Server.** `web.host` must be reachable from the phone (a LAN or tailnet
+   address, not `127.0.0.1`), and the phone's key must hold `voice:talk`.
+   Keys minted before Phase 3 lack it — the app still connects, but shows no
+   mic. Mint a fresh one and reconnect:
+
+   ```sh
+   ethos api-key create --preset phone --qr
+   ```
+
+   The personality you call also needs `voice_session` in its `toolset.yaml`.
+5. **Prebuild the sideload variant** (the variable names are the ones
+   `app.config.ts` reads; the bundle id must be one no one else has claimed):
+
+   ```sh
+   cd apps/mobile
+   APP_VARIANT=sideload ETHOS_APPLE_TEAM_ID=<team> ETHOS_SIDELOAD_BUNDLE_ID=com.<you>.ethos \
+     npx expo prebuild -p ios --clean
+   ```
+
+6. **Build and install** (same three variables in the environment):
+
+   ```sh
+   APP_VARIANT=sideload ETHOS_APPLE_TEAM_ID=<team> ETHOS_SIDELOAD_BUNDLE_ID=com.<you>.ethos \
+     npx expo run:ios --device --configuration Release
+   ```
+
+7. **Trust the developer profile** on the phone — Settings → General → VPN &
+   Device Management → your Apple ID → Trust. The first launch fails until you do.
+8. **It expires after 7 days** (a Personal Team's provisioning profile). Re-run
+   step 6.
+
+### Acceptance checks
+
+Record each as PASS/FAIL with the date, device and iOS version.
+
+- **Start a call from the composer mic.** The Call Stage opens with no tab bar,
+  the mono `provider · model` line fills, and after the first reply it carries `NNNms`.
+- **Lock the screen mid-reply.** The audio continues to the end of the reply,
+  and the next turn is heard with the screen still locked.
+- **Take a real incoming phone call.** The stage reads `held · phone call`,
+  then the call resumes by itself after you hang up. **If it does not resume,
+  record it** — that is the trigger for the CallKit escalation
+  (`react-native-callkeep`, plan T7).
+- **Talk over the agent (barge-in).** Playout stops and the agent's line in
+  `This call` is marked `[interrupted]`.
+- **The speaker-echo test.** On speakerphone, with nobody speaking, does the
+  agent interrupt itself? **If yes, record it** — that is the trigger for moving
+  the engine to the pinned RNAA 1.0 nightly with voice processing (echo
+  cancellation; only `src/voice/engine.ts` changes).
+- **A mid-call clarify fills the slot.** Ask for something that makes the agent
+  ask a question: it appears in the reserved slot at the base of `This call`
+  without moving anything, and answering collapses it to `✓ answered · clarify`.
+
+### Measurement
+
+1. On the iPhone: Settings → Developer → **Network Link Conditioner** → Add a
+   profile named **Ethos LTE lossy**: 75 ms delay and 3 % packet loss, each
+   way (in and out). The bar assumes 100 ms of jitter too; if the form has no
+   jitter field, **record that** — it is a known deviation from the bar, not
+   something to drop silently.
+2. With the profile on, run **50 turns on the realtime tier** and **50 on the
+   pipeline tier** (a personality with `voice.tier: pipeline`), **20 barge-in trials**, and **3 min of agent speech** lossy — then
+   **3 min on plain Wi-Fi** with the conditioner off.
+3. After each run: More → Settings → Developer → **Share call trace**, and save
+   the JSONL to the Mac (AirDrop). It is the last call's trace, so share before
+   starting the next call.
+4. Grade it:
+
+   ```sh
+   node apps/mobile/scripts/voice-trace-report.mjs <file> --tier=realtime   # or --tier=pipeline
+   ```
+
+   Exit 0 is PASS, 1 is FAIL. Record PASS/FAIL per tier with the printed numbers.
+
+### What needs the paid Apple program (skipped)
+
+Push notifications (the `aps-environment` entitlement), TestFlight, and the
+Notification Service Extension all need a paid Apple Developer Program
+membership. The sideload build strips the push entitlements, so approvals and
+questions reach it over the open stream only.
+
 ## Not in this build yet
 
 - **Push.** Registration, category actions and dispatch are wired (T4) — but
