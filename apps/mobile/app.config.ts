@@ -1,16 +1,47 @@
 import type { ExpoConfig } from 'expo/config';
+import { type ConfigPlugin, withEntitlementsPlist } from 'expo/config-plugins';
 
 // One Expo project, three installable variants side by side (T-DIST, R15):
 // eas.json sets APP_VARIANT per build profile; a plain `expo start` is dev.
+//
+// A fourth, `sideload`, is the free-provisioning device build (T7): a personal
+// Apple team signs it, so the bundle id must be one that team owns
+// (`ETHOS_SIDELOAD_BUNDLE_ID`) and it carries no entitlement a personal team
+// cannot hold — no push (`aps-environment`), no time-sensitive notifications.
+// Installed with `npx expo run:ios --device --configuration Release`.
 const variant: string = process.env.APP_VARIANT ?? 'development';
-const bundleId = (
-  {
-    development: 'com.ethos.mobile.dev',
-    preview: 'com.ethos.mobile.preview',
-    production: 'com.ethos.mobile',
-  } as Record<string, string>
-)[variant];
-if (!bundleId) throw new Error(`Unknown APP_VARIANT "${variant}"`);
+const sideload = variant === 'sideload';
+const bundleId = sideload
+  ? process.env.ETHOS_SIDELOAD_BUNDLE_ID
+  : (
+      {
+        development: 'com.ethos.mobile.dev',
+        preview: 'com.ethos.mobile.preview',
+        production: 'com.ethos.mobile',
+      } as Record<string, string>
+    )[variant];
+if (!bundleId) {
+  throw new Error(
+    sideload
+      ? 'APP_VARIANT=sideload needs ETHOS_SIDELOAD_BUNDLE_ID (a bundle id your personal team owns)'
+      : `Unknown APP_VARIANT "${variant}"`,
+  );
+}
+const appleTeamId = sideload ? process.env.ETHOS_APPLE_TEAM_ID : undefined;
+if (sideload && !appleTeamId) {
+  throw new Error('APP_VARIANT=sideload needs ETHOS_APPLE_TEAM_ID (your personal team id)');
+}
+
+/** Personal teams cannot sign push or time-sensitive notifications. Removed at
+ *  the entitlements mod rather than by dropping `expo-notifications` from the
+ *  plugin list, because prebuild applies that plugin on its own when the
+ *  package is installed. */
+const withoutPushEntitlements: ConfigPlugin = (config) =>
+  withEntitlementsPlist(config, (mod) => {
+    delete mod.modResults['aps-environment'];
+    delete mod.modResults['com.apple.developer.usernotifications.time-sensitive'];
+    return mod;
+  });
 
 const config: ExpoConfig = {
   name: variant === 'production' ? 'Ethos' : `Ethos (${variant})`,
@@ -27,8 +58,10 @@ const config: ExpoConfig = {
   // `expo start` offering a `w` that can only ever fail to resolve
   // `react-native-web`.
   platforms: ['ios', 'android'],
+  extra: { variant },
   ios: {
     bundleIdentifier: bundleId,
+    ...(appleTeamId ? { appleTeamId } : {}),
     supportsTablet: false,
     config: { usesNonExemptEncryption: false },
     infoPlist: {
@@ -38,7 +71,8 @@ const config: ExpoConfig = {
     },
     // Approval pushes are time-sensitive (R10); Allow once needs Face ID or
     // the passcode, which needs this entitlement to break through Focus.
-    entitlements: { 'com.apple.developer.usernotifications.time-sensitive': true },
+    // Not on `sideload`: a personal team cannot hold it.
+    entitlements: sideload ? {} : { 'com.apple.developer.usernotifications.time-sensitive': true },
   },
   android: {
     package: bundleId,
@@ -55,7 +89,30 @@ const config: ExpoConfig = {
     ['expo-build-properties', { android: { usesCleartextTraffic: true } }],
     // `mode` sets the `aps-environment` entitlement (development vs. production APNs).
     ['expo-notifications', { mode: variant === 'production' ? 'production' : 'development' }],
+    // The call engine (T7): background audio keeps a call alive on a locked
+    // screen; FFmpeg is off because the call only ever handles PCM.
+    // RECORD_AUDIO is not in the plugin's Android defaults, so the list is
+    // spelled out; the foreground service carries the mic in the background.
+    [
+      'react-native-audio-api',
+      {
+        iosBackgroundMode: true,
+        iosMicrophonePermission: 'Ethos listens while you are on a call.',
+        androidPermissions: [
+          'android.permission.RECORD_AUDIO',
+          'android.permission.MODIFY_AUDIO_SETTINGS',
+          'android.permission.FOREGROUND_SERVICE',
+          'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+          'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+        ],
+        androidFSTypes: ['mediaPlayback', 'microphone'],
+        disableFFmpeg: true,
+      },
+    ],
   ],
 };
 
-export default config;
+// Applied to the config object itself, BEFORE Expo applies `plugins`: a mod
+// registered earlier runs later, so this strips what `expo-notifications` has
+// already written. (Verified with `expo config --type introspect`.)
+export default sideload ? withoutPushEntitlements(config) : config;

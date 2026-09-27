@@ -16,5 +16,10 @@ module.exports = {
   // Reanimated 4's worklets resolve to their JS (non-native) build under Jest.
   resolver: 'react-native-worklets/jest/resolver',
   // `@ethosagent/types` exports only ./dist; read its source, as tsconfig `paths` does.
-  moduleNameMapper: { '^@ethosagent/types$': '<rootDir>/../../packages/types/src' },
+  moduleNameMapper: {
+    '^@ethosagent/types$': '<rootDir>/../../packages/types/src',
+    // The call engine's native audio has no JS build under Jest; the library
+    // ships its own mock (`src/voice/engine.ts` is the only importer).
+    '^react-native-audio-api$': 'react-native-audio-api/mock',
+  },
 };

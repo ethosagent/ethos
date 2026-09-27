@@ -49,6 +49,11 @@ export async function registerForPush(
   rpc: EthosClient['rpc'],
   categories: PushCategories = DEFAULT_PUSH_CATEGORIES,
 ): Promise<RegisterResult> {
+  // The free-provisioning build (`APP_VARIANT=sideload`) has no
+  // `aps-environment` entitlement, so APNs would refuse the token anyway.
+  if (Constants.expoConfig?.extra?.variant === 'sideload') {
+    return { registered: false, reason: 'push needs the paid Apple program (sideload build)' };
+  }
   await createAndroidChannel();
   await registerPushCategories();
   const { status } = await Notifications.requestPermissionsAsync();
