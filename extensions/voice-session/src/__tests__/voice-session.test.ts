@@ -373,6 +373,89 @@ describe('VoiceSession', () => {
   });
 });
 
+describe('VoiceSession — a failed or halted turn is never silent', () => {
+  function sessionWith(runner: AgentTurnRunner) {
+    const clock = makeClock();
+    const session = new VoiceSession({
+      runner,
+      stt: streamingStt('question'),
+      tts: streamingTts(),
+      vad: new FakeVad(),
+      now: clock.now,
+    });
+    return { session, clock, events: collect(session) };
+  }
+
+  it("surfaces the agent's error event with its own code, then still ends the turn", async () => {
+    const { session, clock, events } = sessionWith(
+      scriptedRunner([
+        {
+          type: 'error',
+          error: 'The prompt does not fit. The message was NOT sent.',
+          code: 'context_window_too_small',
+        },
+      ]),
+    );
+
+    speakUtterance(session, clock);
+    await session.idle();
+
+    const types = events.map((e) => e.type);
+    expect(types.filter((t) => t === 'reply_sentence' || t === 'reply_audio')).toEqual([]);
+    expect(events.find((e) => e.type === 'error')).toEqual({
+      type: 'error',
+      error: 'The prompt does not fit. The message was NOT sent.',
+      code: 'context_window_too_small',
+    });
+    // The error is reported BEFORE the turn ends, and the turn still ends.
+    expect(types.indexOf('error')).toBeLessThan(types.indexOf('reply_complete'));
+    expect(events.find((e) => e.type === 'reply_complete')).toEqual({
+      type: 'reply_complete',
+      text: '',
+    });
+    expect(session.getState()).toBe('listening');
+  });
+
+  it('surfaces a halt, then speaks the reply that follows it as usual', async () => {
+    const { session, clock, events } = sessionWith(
+      scriptedRunner([
+        { type: 'halt', kind: 'budget', rule: 'tool_calls', message: 'Tool-call cap reached.' },
+        { type: 'text_delta', text: 'I stopped there.' },
+        { type: 'done', text: 'I stopped there.', turnCount: 1 },
+      ]),
+    );
+
+    speakUtterance(session, clock);
+    await session.idle();
+
+    expect(events.find((e) => e.type === 'halt')).toEqual({
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool_calls',
+      message: 'Tool-call cap reached.',
+    });
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.find((e) => e.type === 'reply_complete')).toMatchObject({
+      text: 'I stopped there.',
+    });
+  });
+
+  it('a turn that answers with no text and no error emits no error', async () => {
+    const { session, clock, events } = sessionWith(
+      scriptedRunner([{ type: 'done', text: '', turnCount: 1 }]),
+    );
+
+    speakUtterance(session, clock);
+    await session.idle();
+
+    expect(events.some((e) => e.type === 'error' || e.type === 'halt')).toBe(false);
+    expect(events.find((e) => e.type === 'reply_complete')).toEqual({
+      type: 'reply_complete',
+      text: '',
+    });
+  });
+});
+
 describe('VoiceSession — stop()', () => {
   // Bug: closing a browser tab (or tearing down a SIP/LiveKit call) had no way
   // to tell VoiceSession to stop. `pushAudio` fires `handleUtterance`/

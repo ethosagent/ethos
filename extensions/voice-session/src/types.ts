@@ -81,8 +81,14 @@ export type VoiceSessionEvent =
   | { type: 'interrupted'; text: string }
   // The reply finished playing uninterrupted. `text` is the played reply.
   | { type: 'reply_complete'; text: string }
-  // A recoverable error (synthesis failure, runner error) surfaced.
-  | { type: 'error'; error: string; code?: string };
+  // A recoverable error surfaced: synthesis/STT failure, a runner throw, or
+  // the agent turn's own `error` event (its `code` passed through verbatim,
+  // e.g. `context_window_too_small`). The turn still ends with
+  // `reply_complete`.
+  | { type: 'error'; error: string; code?: string }
+  // The agent turn stopped early on a safety rule (the AgentEvent `halt`). A
+  // normal reply (possibly empty) and `reply_complete` still follow.
+  | { type: 'halt'; kind: 'budget' | 'watcher'; rule: string; message: string };
 
 export interface VoiceSessionConfig {
   /** Trailing silence (ms) after speech that commits an utterance. Default 400. */

@@ -1,3 +1,4 @@
+import { CHAT_ERROR_MAP, describeChatError } from '@ethosagent/surface-kit';
 import type { VoiceSession, VoiceSessionEvent } from '@ethosagent/voice-session';
 import {
   pcm16FromBytes,
@@ -226,11 +227,25 @@ export class VoiceLane {
           interrupted: event.type === 'interrupted',
         });
         return;
-      case 'error':
+      case 'error': {
+        const code = event.code ?? 'voice_error';
         this.opts.send({
           t: 'error',
-          code: event.code ?? 'voice_error',
-          message: event.error,
+          code,
+          message: voiceErrorMessage(code, event.error),
+          ...(this.currentUtteranceId ? { utteranceId: this.currentUtteranceId } : {}),
+        });
+        return;
+      }
+      case 'halt':
+        // An early safety stop. The protocol has no notice frame, so it rides
+        // the `error` frame — which the shared reducer treats as recoverable
+        // (`voiceCallReducer`'s fall-through `error` branch keeps the status),
+        // and the `turn_end` that follows still returns the call to listening.
+        this.opts.send({
+          t: 'error',
+          code: `halt_${event.kind}`,
+          message: `stopped early · ${event.kind} · ${event.rule}: ${event.message}`,
           ...(this.currentUtteranceId ? { utteranceId: this.currentUtteranceId } : {}),
         });
         return;
@@ -246,4 +261,18 @@ export class VoiceLane {
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/**
+ * The frame message for a session error. An agent turn-error code the shared
+ * chat-error map knows (`CHAT_ERROR_MAP`, @ethosagent/surface-kit — the same
+ * map `ChatErrorBanner` renders the chat SSE path's error from) gets that
+ * map's wording, so a voice call and the chat banner describe one refusal the
+ * same way. Everything else — the session's own `stt`/`synthesis`/`runner`
+ * codes — keeps its raw message, as before.
+ */
+function voiceErrorMessage(code: string, raw: string): string {
+  if (!(code in CHAT_ERROR_MAP) && !code.startsWith('watcher_')) return raw;
+  const described = describeChatError(code, raw);
+  return `${described.title} — ${described.action}`;
 }

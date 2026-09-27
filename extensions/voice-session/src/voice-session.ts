@@ -355,8 +355,28 @@ export class VoiceSession {
             if (event.type === 'done') {
               const owed = answerSuffix(streamed, event.text);
               if (owed) speakText(owed);
+            } else {
+              // The turn FAILED (e.g. `context_window_too_small` from the
+              // context-fit preflight, packages/core/src/agent-loop/stages/stream-step.ts):
+              // say so, with the loop's own code, before `settle` lets
+              // `reply_complete` end the turn. Swallowing it here was the
+              // silent voice turn — the listener heard nothing and saw no
+              // reason. Nothing is spoken for it; the turn still ends.
+              this.emit({ type: 'error', error: event.error, code: event.code });
             }
             settle(true);
+            continue;
+          }
+          if (event.type === 'halt') {
+            // An early safety stop (budget / watcher). A normal `done` follows
+            // with whatever reply there is, so the turn carries on — this only
+            // makes the stop visible instead of a reply that silently ends short.
+            this.emit({
+              type: 'halt',
+              kind: event.kind,
+              rule: event.rule,
+              message: event.message,
+            });
             continue;
           }
           if (event.type === 'text_delta') {

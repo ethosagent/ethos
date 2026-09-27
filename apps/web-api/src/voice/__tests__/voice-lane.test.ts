@@ -1,5 +1,15 @@
-import type { PcmChunk } from '@ethosagent/types';
-import type { VoiceSession, VoiceSessionEvent } from '@ethosagent/voice-session';
+import type {
+  AgentEvent,
+  PcmChunk,
+  StreamingSttProvider,
+  StreamingTtsProvider,
+} from '@ethosagent/types';
+import { STT_CONTRACT_VERSION } from '@ethosagent/types';
+import {
+  VoiceSession as RealVoiceSession,
+  type VoiceSession,
+  type VoiceSessionEvent,
+} from '@ethosagent/voice-session';
 import { pcm16ToBytes, type VoiceServerFrame } from '@ethosagent/web-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { VoiceLane, type VoiceLaneSessionOpener } from '../voice-lane';
@@ -408,6 +418,42 @@ describe('VoiceLane — event translation', () => {
     });
   });
 
+  it("renders an agent turn-error code the chat-error map knows in the chat banner's wording", async () => {
+    const { session, frames } = await openedLane();
+    session.emit({ type: 'utterance_committed', text: 'hello' });
+    session.emit({
+      type: 'error',
+      error: 'The prompt does not fit. The message was NOT sent.',
+      code: 'context_window_too_small',
+    });
+
+    expect(frames().at(-1)).toEqual({
+      t: 'error',
+      code: 'context_window_too_small',
+      message:
+        'prompt does not fit the model context window — run /new, or configure a model with a larger context window',
+      utteranceId: 'u1',
+    });
+  });
+
+  it('forwards a halt as an error frame naming the stop', async () => {
+    const { session, frames } = await openedLane();
+    session.emit({ type: 'utterance_committed', text: 'go' });
+    session.emit({
+      type: 'halt',
+      kind: 'budget',
+      rule: 'tool_calls',
+      message: 'Tool-call cap reached.',
+    });
+
+    expect(frames().at(-1)).toEqual({
+      t: 'error',
+      code: 'halt_budget',
+      message: 'stopped early · budget · tool_calls: Tool-call cap reached.',
+      utteranceId: 'u1',
+    });
+  });
+
   it('marks raw PCM as directly schedulable', async () => {
     const { session, frames } = await openedLane();
     session.emit({ type: 'utterance_committed', text: 'hi' });
@@ -418,6 +464,112 @@ describe('VoiceLane — event translation', () => {
       codec: 'pcm_s16le',
       mimeType: 'audio/pcm',
     });
+  });
+});
+
+// End to end through a REAL `VoiceSession`: the live-smoke bug was a turn
+// whose agent loop yielded `error` (context_window_too_small) reaching the
+// socket as `transcript` then `turn_end {text: ''}` with nothing in between.
+describe('VoiceLane — an agent turn that fails or halts reaches the socket', () => {
+  const stt: StreamingSttProvider = {
+    name: 'fake-stt',
+    caps: { kind: 'stt', formats: ['pcm'], streaming: true, contractVersion: STT_CONTRACT_VERSION },
+    transcribeBuffer: async () => 'hello',
+    async *transcribeStream() {
+      yield { text: 'hello', isFinal: true };
+    },
+  };
+  const tts: StreamingTtsProvider = {
+    name: 'fake-tts',
+    caps: { kind: 'tts', formats: ['pcm'], streaming: true, contractVersion: 1 },
+    synthesize: async () => ({ audio: new Uint8Array([1]), format: 'pcm' }),
+    async *synthesizeStream(text) {
+      for await (const t of text) yield { audio: new Uint8Array([t.length & 0xff]), format: 'pcm' };
+    },
+  };
+
+  /** Speak one utterance into a lane backed by a real session whose agent turn yields `events`. */
+  async function runTurn(events: AgentEvent[]): Promise<VoiceServerFrame[]> {
+    let t = 0;
+    const session = new RealVoiceSession({
+      runner: {
+        async *run() {
+          for (const event of events) yield event;
+        },
+      },
+      stt,
+      tts,
+      vad: { process: (chunk: PcmChunk) => ({ speech: chunk.data.some((v) => v !== 0) }) },
+      now: () => t,
+    });
+    // `onLaneKey` fires synchronously just before the lane subscribes.
+    let keyed = false;
+    const { lane, frames } = makeLane(
+      () => Promise.resolve({ session, laneKey: 'voice:test:browser:lane' }),
+      () => {
+        keyed = true;
+      },
+    );
+    lane.handle({ t: 'hello', sampleRate: 16_000 }, new Uint8Array());
+    await vi.waitFor(() => expect(keyed).toBe(true));
+    const feed = (value: number, count: number) => {
+      for (let i = 0; i < count; i++) {
+        t += 20;
+        lane.handle({ t: 'audio', seq: i }, pcm(value, 320));
+      }
+    };
+    feed(12_000, 5);
+    feed(0, 30);
+    await vi.waitFor(() => expect(frames().some((f) => f.t === 'turn_end')).toBe(true));
+    lane.close();
+    return frames();
+  }
+
+  it('sends the error frame with the loop code, then turn_end, and speaks nothing', async () => {
+    const frames = await runTurn([
+      {
+        type: 'error',
+        error: 'The prompt does not fit. The message was NOT sent.',
+        code: 'context_window_too_small',
+      },
+    ]);
+
+    const tail = frames.filter((f) => f.t !== 'ready');
+    expect(tail.map((f) => f.t)).toEqual(['transcript', 'error', 'turn_end']);
+    expect(tail[1]).toMatchObject({
+      t: 'error',
+      code: 'context_window_too_small',
+      utteranceId: 'u1',
+    });
+    expect(tail[2]).toEqual({ t: 'turn_end', utteranceId: 'u1', text: '', interrupted: false });
+  });
+
+  it('a normal turn is unchanged: no error frame', async () => {
+    const frames = await runTurn([
+      { type: 'text_delta', text: 'Clear skies.' },
+      { type: 'done', text: 'Clear skies.', turnCount: 1 },
+    ]);
+
+    expect(frames.some((f) => f.t === 'error')).toBe(false);
+    expect(frames.at(-1)).toEqual({
+      t: 'turn_end',
+      utteranceId: 'u1',
+      text: 'Clear skies.',
+      interrupted: false,
+    });
+  });
+
+  it('a halt sends its error frame, then the reply that follows, then turn_end', async () => {
+    const frames = await runTurn([
+      { type: 'halt', kind: 'watcher', rule: 'loop', message: 'Repeated the same call.' },
+      { type: 'text_delta', text: 'I stopped.' },
+      { type: 'done', text: 'I stopped.', turnCount: 1 },
+    ]);
+
+    const types = frames.map((f) => f.t);
+    expect(frames.find((f) => f.t === 'error')).toMatchObject({ code: 'halt_watcher' });
+    expect(types.indexOf('error')).toBeLessThan(types.indexOf('turn_end'));
+    expect(frames.at(-1)).toMatchObject({ t: 'turn_end', text: 'I stopped.' });
   });
 });
 

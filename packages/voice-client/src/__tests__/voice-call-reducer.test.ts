@@ -316,6 +316,26 @@ describe('voiceCallReducer — errors', () => {
     expect(withError.status).toBe('listening');
     expect(withError.error).toBe('synthesis failed');
   });
+
+  // The server's `error` frame for a failed agent turn (VoiceLane, apps/web-api)
+  // arrives before an empty `turn_end`: the reason must survive the turn ending,
+  // and the call must go back to listening rather than end.
+  it('keeps an agent turn error visible across the empty turn_end that follows it', () => {
+    const event: VoiceCallEvent = {
+      type: 'error',
+      error: 'prompt does not fit the model context window — run /new',
+      code: 'context_window_too_small',
+    };
+    expect(isTerminalClientEvent(event)).toBe(false);
+    const state = driveThroughClient([
+      { type: 'utterance_committed', text: 'hello' },
+      event,
+      { type: 'reply_complete', text: '' },
+    ]);
+    expect(state.status).toBe('listening');
+    expect(state.error).toBe('prompt does not fit the model context window — run /new');
+    expect(state.degraded).toBeNull();
+  });
 });
 
 describe('voiceTranscriptToMessages', () => {
