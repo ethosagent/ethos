@@ -49,8 +49,13 @@ export interface VoiceSocketOptions {
    */
   /** Null refuses the control channel for this lane — the audio lane still opens. */
   realtime?: (laneId: string) => RealtimeControlLaneDeps | null;
-  /** Credential check for the upgrade request. Rejected → 401, no socket. */
-  authenticate(req: IncomingMessage): Promise<boolean>;
+  /**
+   * Credential check for the upgrade request. A request carrying an
+   * `Authorization` header must come back `via: 'bearer'` and one without it
+   * `via: 'cookie'` — anything else is refused 401 (see `handleUpgrade`).
+   * Rejected → the returned status, no socket.
+   */
+  authenticate(req: IncomingMessage): Promise<VoiceUpgradeAuth>;
   /** Extra Origins allowed beyond loopback. Same rule as the HTTP surface. */
   allowedOrigins?: string[];
   path?: string;
@@ -58,6 +63,11 @@ export interface VoiceSocketOptions {
 }
 
 export type { UpgradableServer } from './upgrade-router';
+
+/** The upgrade's credential verdict: which credential passed, or the refusal. */
+export type VoiceUpgradeAuth =
+  | { ok: true; via: 'cookie' | 'bearer' }
+  | { ok: false; status: 401 | 403 };
 
 export interface VoiceSocket {
   /** Serve this lane's path on a listening server's upgrade router. */
@@ -186,14 +196,38 @@ export function createVoiceSocket(opts: VoiceSocketOptions): VoiceSocket {
   // Path matching is the router's job now; this handler only sees requests for
   // `path` and owns the Origin + credential policy.
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (!originAllowed(req.headers.origin, req.headers.host, opts.allowedOrigins)) {
+    // An `Authorization` header takes the bearer path EXCLUSIVELY (the API
+    // key, `verifyBearer` in ../middleware/dual-auth.ts via `authenticate`)
+    // and skips the loopback-Origin rule (`originAllowed` below). That rule
+    // exists because a browser page can open a WebSocket carrying the ambient
+    // `SameSite=Strict` cookie from another origin (another localhost port, a
+    // DNS-rebound name). A browser cannot set `Authorization` on a WebSocket
+    // at all, so a request that carries one did not come from such a page,
+    // and the key's own `allowedOrigins` is the Origin policy that applies.
+    // React Native's native WebSocket always sends an Origin derived from the
+    // URL (`http://192.168.1.20:3000`), which the loopback rule would refuse.
+    // No header → today's path exactly: the Origin check, then the cookie.
+    // Pinned by ./__tests__/voice-socket-bearer.test.ts.
+    const bearer = req.headers.authorization !== undefined;
+    if (!bearer && !originAllowed(req.headers.origin, req.headers.host, opts.allowedOrigins)) {
       refuseUpgrade(socket, 403, 'Forbidden');
       return;
     }
     opts
       .authenticate(req)
-      .then((ok) => {
-        if (!ok) {
+      .then((result) => {
+        if (!result.ok) {
+          refuseUpgrade(
+            socket,
+            result.status,
+            result.status === 403 ? 'Forbidden' : 'Unauthorized',
+          );
+          return;
+        }
+        // The credential that passed must be the one this branch checked:
+        // skipping the Origin rule is sound only for a bearer, so a cookie
+        // verdict on a request that carries `Authorization` is refused.
+        if (result.via !== (bearer ? 'bearer' : 'cookie')) {
           refuseUpgrade(socket, 401, 'Unauthorized');
           return;
         }

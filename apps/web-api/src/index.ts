@@ -127,6 +127,7 @@ import type { SatelliteObservability } from './voice/satellite-lane';
 import { SatelliteRegistry } from './voice/satellite-registry';
 import { createSatelliteSocket, type SatelliteSocket } from './voice/satellite-socket';
 import { createVoiceSocket, readCookie, type VoiceSocket } from './voice/voice-socket';
+import { voiceUpgradeAuthenticator } from './voice/voice-upgrade-auth';
 import { isPrivilegedPersonality } from './voice/wake-privilege';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
@@ -1456,10 +1457,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
           },
         }
       : {}),
-    authenticate: async (req) => {
-      const cookie = readCookie(req.headers.cookie, AUTH_COOKIE);
-      return cookie ? tokens.matches(cookie) : false;
-    },
+    // Bearer (`voice:talk`, the phone) or cookie (the browser) — see
+    // `voiceUpgradeAuthenticator`. The satellite and takeover sockets below
+    // stay cookie-only.
+    authenticate: voiceUpgradeAuthenticator({
+      tokens,
+      ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
+    }),
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
   });
   // The wake-satellite lane (`GET /satellite/ws`). Same process, same cookie,

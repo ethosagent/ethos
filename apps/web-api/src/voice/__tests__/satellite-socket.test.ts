@@ -193,7 +193,10 @@ describe('satellite socket', () => {
     const authenticate = (req: { headers: { cookie?: string } }) =>
       Promise.resolve(readCookie(req.headers.cookie, 'ethos_auth') === 'good-token');
     satellite = createSatelliteSocket({ registry, deps, authenticate, limits: laneLimits });
-    voice = createVoiceSocket({ authenticate });
+    voice = createVoiceSocket({
+      authenticate: async (req) =>
+        (await authenticate(req)) ? { ok: true, via: 'cookie' } : { ok: false, status: 401 },
+    });
     // Deliberately attached in the order that used to break: the voice lane's
     // handler was the only `upgrade` listener and 404'd everything else.
     voice.attach(server);

@@ -17,7 +17,13 @@ import WebSocket from 'ws';
 import { createRealtimeControlDeps } from '../realtime-control-deps';
 import { RealtimeControlLane } from '../realtime-control-lane';
 import type { VoiceLaneSessionOpener } from '../voice-lane';
-import { createVoiceSocket, originAllowed, readCookie, type VoiceSocket } from '../voice-socket';
+import {
+  createVoiceSocket,
+  originAllowed,
+  readCookie,
+  type VoiceSocket,
+  type VoiceUpgradeAuth,
+} from '../voice-socket';
 
 // The socket half: upgrade policy (path, Origin, credentials) and the round
 // trip over a REAL `ws` connection. The frame TRANSLATION itself is tested
@@ -27,6 +33,12 @@ import { createVoiceSocket, originAllowed, readCookie, type VoiceSocket } from '
 // decodes.
 
 const COOKIE = 'ethos_auth=good-token';
+const COOKIE_OK = { ok: true, via: 'cookie' } as const;
+
+/** The cookie half of the real authenticator, for a fixed token. */
+function cookieAuth(header: string | undefined): VoiceUpgradeAuth {
+  return readCookie(header, 'ethos_auth') === 'good-token' ? COOKIE_OK : { ok: false, status: 401 };
+}
 
 /** A `VoiceSession` stand-in this file drives from outside. */
 class FakeVoiceSession {
@@ -95,8 +107,7 @@ describe('voice socket', () => {
     server = createServer((_req, res) => res.end('ok'));
     socketLane = createVoiceSocket({
       session: () => opener,
-      authenticate: (req) =>
-        Promise.resolve(readCookie(req.headers.cookie, 'ethos_auth') === 'good-token'),
+      authenticate: (req) => Promise.resolve(cookieAuth(req.headers.cookie)),
     });
     socketLane.attach(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -206,7 +217,7 @@ describe('voice socket', () => {
 
   it('refuses audio with a clear error when no session opener is wired', async () => {
     const bareServer = createServer((_req, res) => res.end('ok'));
-    const noOpener = createVoiceSocket({ authenticate: () => Promise.resolve(true) });
+    const noOpener = createVoiceSocket({ authenticate: () => Promise.resolve(COOKIE_OK) });
     noOpener.attach(bareServer);
     await new Promise<void>((resolve) => bareServer.listen(0, '127.0.0.1', resolve));
     const { port } = bareServer.address() as AddressInfo;
@@ -290,7 +301,7 @@ describe('voice socket — D8 takeover on one lane key', () => {
     server = createServer((_req, res) => res.end('ok'));
     socketLane = createVoiceSocket({
       session: () => opener,
-      authenticate: () => Promise.resolve(true),
+      authenticate: () => Promise.resolve(COOKIE_OK),
     });
     socketLane.attach(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -431,8 +442,7 @@ describe('voice socket — the realtime control channel', () => {
     );
     server = createServer((_req, res) => res.end('ok'));
     socketLane = createVoiceSocket({
-      authenticate: (req) =>
-        Promise.resolve(readCookie(req.headers.cookie, 'ethos_auth') === 'good-token'),
+      authenticate: (req) => Promise.resolve(cookieAuth(req.headers.cookie)),
       realtime: (laneId) => {
         depsFor.push(laneId);
         return createRealtimeControlDeps(
