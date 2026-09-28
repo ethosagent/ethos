@@ -12,6 +12,7 @@ import { basename, dirname, join, normalize, relative, resolve, sep } from 'node
 import {
   type DefinitionWriteFloor,
   foldForDeny,
+  isUnmappablePathAlias,
   type PrivatePathDeny,
   type ScopedFs,
   type ScopedFsEntry,
@@ -266,9 +267,13 @@ export class ScopedFsImpl implements ScopedFs {
 
 /**
  * True when `canonical` equals, or lies under, one of the canonical DENY
- * `paths`, compared case- and normalization-folded (`foldForDeny`). Deny-only.
+ * `paths`, compared case- and normalization-folded (`foldForDeny`), or names
+ * a file no deny can judge (`isUnmappablePathAlias`; verification round G3).
+ * Deny-only. Mirror of `matchesDenyPrefix` in `ScopedStorage`
+ * (packages/storage-fs/src/scoped-storage.ts).
  */
 function matchesAny(canonical: string, paths: readonly string[]): boolean {
+  if (isUnmappablePathAlias(canonical)) return true;
   const c = foldForDeny(canonical);
   return paths.some((raw) => {
     const p = foldForDeny(raw);

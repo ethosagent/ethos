@@ -10,6 +10,7 @@ import {
   type CronScheduler,
   formatRunProgress,
   isValidSchedule,
+  jobIdForName,
   nextRunForSchedule,
 } from '@ethosagent/cron';
 import { shortPatternCheck } from '@ethosagent/safety-injection';
@@ -197,13 +198,13 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
               precheck_timeout_seconds,
             });
           case 'pause':
-            return handlePause(scheduler, caller, { id });
+            return handlePause(scheduler, caller, shared, { id });
           case 'resume':
-            return handleResume(scheduler, caller, { id });
+            return handleResume(scheduler, caller, shared, { id });
           case 'run':
             return handleRun(scheduler, caller, shared, { id });
           case 'remove':
-            return handleRemove(scheduler, caller, { id });
+            return handleRemove(scheduler, caller, shared, { id });
           default:
             return { ok: false, error: `Unknown action: ${action}`, code: 'input_invalid' };
         }
@@ -228,10 +229,13 @@ const PERSONALITY_REQUIRED: ToolResult = {
 /**
  * The single ownership gate for `get`, `read_run`, `update`, `pause`,
  * `resume`, `run` and `remove`: load the job and refuse unless it belongs to
- * the calling personality. A job owned by another personality returns the SAME
+ * the calling personality — and, on a shared turn, unless it is stamped
+ * shared (`readableFrom`; verification round G5). A job owned by another
+ * personality, or a private job asked for from a room, returns the SAME
  * not-found result as an id that does not exist, so the tool is not an
- * existence oracle across personalities. Pinned by
- * `extensions/tools-cron/src/__tests__/ownership.test.ts`.
+ * existence oracle across personalities or rooms. Pinned by
+ * `extensions/tools-cron/src/__tests__/ownership.test.ts` and
+ * `__tests__/room-audience.test.ts`.
  *
  * Operator management (`ethos cron`, web-api cron routes) calls the scheduler
  * directly and is not scoped by this.
@@ -240,25 +244,31 @@ async function loadOwnedJob(
   scheduler: CronScheduler,
   id: string,
   caller: string,
+  shared: boolean,
 ): Promise<{ ok: true; job: CronJob } | { ok: false; result: ToolResult }> {
   const job = await scheduler.getJob(id);
-  if (!job || job.personalityId !== caller) {
+  if (!job || job.personalityId !== caller || !readableFrom(shared, job)) {
     return { ok: false, result: jobNotFound(id) };
   }
   return { ok: true, job };
 }
+
+/** The one answer a shared turn gets for a taken job name (see `handleCreate`). */
+const SHARED_NAME_TAKEN = 'That job name is not available here — choose a different name';
 
 function jobNotFound(id: string): ToolResult {
   return { ok: false, error: `Job not found: ${id}`, code: 'input_invalid' };
 }
 
 /**
- * Whether a shared turn may READ this job — its prompt, its runs' output (plan
- * personality-memory-boundary G1, verification round B13). Only a job stamped
- * `'shared'`: an unstamped or private job's runs may have read private memory,
- * so their output is not for the room. A private turn reads every job it owns.
- * A refused job answers exactly as a missing one (`jobNotFound`), like the
- * ownership gate. Pinned by `__tests__/room-audience.test.ts`.
+ * Whether a shared turn may see or act on this job — its prompt, its runs'
+ * output, and pausing, resuming, editing, running or removing it (plan
+ * personality-memory-boundary G1, verification rounds B13, G5). Only a job
+ * stamped `'shared'`: an unstamped or private job's runs may have read private
+ * memory, so their output is not for the room, and the room may not steer the
+ * owner's own schedule. A private turn reads every job it owns. A refused job
+ * answers exactly as a missing one (`jobNotFound`), in `loadOwnedJob`. Pinned
+ * by `__tests__/room-audience.test.ts`.
  */
 function readableFrom(shared: boolean, job: CronJob): boolean {
   return !shared || job.roomAudience === 'shared';
@@ -399,6 +409,14 @@ async function handleCreate(
     }
   }
 
+  // On a shared turn a name whose id is taken — by a private job of this
+  // personality, another personality's job, or a shared one alike — gets one
+  // answer that names no job, so the room cannot probe for private schedules
+  // (verification round G5). A private turn keeps the scheduler's own error.
+  if (ctx.roomAudience === 'shared' && (await scheduler.getJob(jobIdForName(name)))) {
+    return { ok: false, error: SHARED_NAME_TAKEN, code: 'input_invalid' };
+  }
+
   try {
     // scheduler.createJob enforces the scripts-dir path guards and the
     // must-already-exist rule for script/precheck files (plan §5.1c).
@@ -471,10 +489,9 @@ async function handleGet(
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const job = owned.job;
-  if (!readableFrom(shared, job)) return jobNotFound(args.id);
 
   let runs: CronRunInfo[] = [];
   try {
@@ -499,9 +516,8 @@ async function handleReadRun(
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
   if (!args.at) return { ok: false, error: 'at is required', code: 'input_invalid' };
 
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
-  if (!readableFrom(shared, owned.job)) return jobNotFound(args.id);
 
   let runs: CronRunInfo[] = [];
   try {
@@ -566,7 +582,7 @@ async function handleUpdate(
     };
   }
 
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const refusal = systemJobRefusal(owned.job, 'update');
   if (refusal) return refusal;
@@ -593,9 +609,6 @@ async function handleUpdate(
     if (script) patch.script = script;
     const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
     if (precheck) patch.precheck = precheck;
-    // D20 (verification round B14): a shared turn's edit makes the job the
-    // room's — it fires shared from now on, whatever it was stamped.
-    if (shared) patch.roomAudience = 'shared';
 
     const updated = await scheduler.updateJob(args.id, patch);
     return {
@@ -614,10 +627,11 @@ async function handleUpdate(
 async function handlePause(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const refusal = systemJobRefusal(owned.job, 'pause');
   if (refusal) return refusal;
@@ -632,10 +646,11 @@ async function handlePause(
 async function handleResume(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const refusal = systemJobRefusal(owned.job, 'resume');
   if (refusal) return refusal;
@@ -654,17 +669,13 @@ async function handleRun(
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  // A shared turn reaches only a job stamped shared, which the runner runs
+  // shared (`cronRunAudience`), so its output may return to the room.
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const refusal = systemJobRefusal(owned.job, 'run');
   if (refusal) return refusal;
   try {
-    // D20 (verification round B14): a run from a shared turn returns its
-    // output to the room, so it must run shared — restamp the job BEFORE the
-    // run, since the runner reads the stamp (`cronRunAudience`).
-    if (shared && owned.job.roomAudience !== 'shared') {
-      await scheduler.updateJob(args.id, { roomAudience: 'shared' });
-    }
     const result = await scheduler.runJobNow(args.id);
     return {
       ok: true,
@@ -678,10 +689,11 @@ async function handleRun(
 async function handleRemove(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
   if (!owned.ok) return owned.result;
   const refusal = systemJobRefusal(owned.job, 'delete');
   if (refusal) return refusal;

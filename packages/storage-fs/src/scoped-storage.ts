@@ -10,6 +10,7 @@ import {
   BoundaryError,
   type DefinitionWriteFloor,
   foldForDeny,
+  isUnmappablePathAlias,
   type PrivatePathDeny,
   type Storage,
   type StorageDirEntry,
@@ -385,10 +386,14 @@ function normalizePrefix(prefix: string): string {
 
 /**
  * True when `path` equals, or lies under, one of the DENY `prefixes`, compared
- * case- and normalization-folded (`foldForDeny`). Deny-only: allow prefixes
- * go through the exact {@link matchAllowedPrefix}.
+ * case- and normalization-folded (`foldForDeny`), or names a file no deny can
+ * judge (`isUnmappablePathAlias`, macOS `/.vol` and `/.resolve`; verification
+ * round G3) — whatever `prefixes` holds. Deny-only: allow prefixes go through
+ * the exact {@link matchAllowedPrefix}. Mirror of `matchesAny` in
+ * `ScopedFsImpl` (packages/core/src/scoped/scoped-fs.ts).
  */
 function matchesDenyPrefix(path: string, prefixes: readonly string[]): boolean {
+  if (isUnmappablePathAlias(path)) return true;
   if (prefixes.length === 0) return false;
   const folded = foldForDeny(path);
   return matchAllowedPrefix(folded, prefixes.map(foldForDeny)) !== null;

@@ -13,7 +13,7 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FsStorage, InMemoryAttachmentCache } from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage, InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   ContextInjector,
@@ -897,9 +897,16 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
       join(home, 'cron', 'output', 'daily'),
       join(home, 'compaction', 'lean'),
       join(home, 'personalities', 'other', 'files'),
+      join(own, 'skills', 'mine'),
+      join(home, 'personalities', 'other', 'skills', 'theirs'),
     ]) {
       await mkdir(d, { recursive: true });
     }
+    await writeFile(join(own, 'skills', 'mine', 'SKILL.md'), 'own skill');
+    await writeFile(
+      join(home, 'personalities', 'other', 'skills', 'theirs', 'SKILL.md'),
+      'their skill',
+    );
     for (const p of refusedReads(home)) await writeFile(p, `private:${p}`);
     await writeFile(join(own, 'files', 'logo.txt'), 'asset');
     await writeFile(join(own, 'ui', 'report.html'), '<p>template</p>');
@@ -1005,6 +1012,14 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
     );
   });
 
+  // verification round G3 — `/.nofollow/<abs>` is `<abs>` on macOS.
+  it('refuses the state dir under its macOS /.nofollow name', () => {
+    const deny = sharedTurnDenyFor('shared', { stateDirs: [home] }, 'lean');
+    expect(deny?.(`/.nofollow${home}/config.yaml`, 'access', 'read')).toBe(true);
+    expect(deny?.(`/.NOFOLLOW${home}/cron/output/daily/x.md`, 'access', 'read')).toBe(true);
+    expect(deny?.(`/.nofollow${own}/files/a.png`, 'access', 'read')).toBe(false);
+  });
+
   it('still reads its own files/, ui/ and SOUL.md and the skills, and writes files/', async () => {
     const out = await runOps(
       [
@@ -1012,6 +1027,8 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
         { path: join(own, 'ui', 'report.html') },
         { path: join(own, 'SOUL.md') },
         { path: join(home, 'skills', 'digest', 'SKILL.md') },
+        { path: join(own, 'skills', 'mine', 'SKILL.md') },
+        { path: join(home, 'personalities', 'other', 'skills', 'theirs', 'SKILL.md') },
         { path: join(own, 'files', 'new.txt'), write: 'made in the room' },
         { path: join(own, 'SOUL.md'), write: 'rewritten' },
         { path: join(home, 'skills', 'digest', 'SKILL.md'), write: 'poisoned' },
@@ -1022,6 +1039,11 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
     expect(out[join(own, 'ui', 'report.html')]).toBe('<p>template</p>');
     expect(out[join(own, 'SOUL.md')]).toBe('I am lean.');
     expect(out[join(home, 'skills', 'digest', 'SKILL.md')]).toBe('skill body');
+    // verification round G9 — its own skills are readable; another's are not.
+    expect(out[join(own, 'skills', 'mine', 'SKILL.md')]).toBe('own skill');
+    expect(out[join(home, 'personalities', 'other', 'skills', 'theirs', 'SKILL.md')]).toMatch(
+      /^refused: .*shared-audience memory/,
+    );
     expect(out[`write:${join(own, 'files', 'new.txt')}`]).toBe('written');
     expect(out[`write:${join(own, 'SOUL.md')}`]).toMatch(/^refused:/);
     expect(out[`write:${join(home, 'skills', 'digest', 'SKILL.md')}`]).toMatch(/^refused:/);
@@ -1057,5 +1079,76 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
     await drain(loop.run('two'));
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('"lean" can read the whole filesystem');
+  });
+});
+
+// Verification round G1 — the gateway caches a message's attachments under
+// `<state>/cache/attachments/<session>/<message>/`, which a shared turn's
+// state-dir deny refuses. `resolveCapabilities` exempts exactly THIS turn's
+// attachment directories, for reading (`exemptAttachmentReads`).
+describe('G1 — a shared turn reads its own attachments, and no one else’s', () => {
+  let home: string;
+  let cache: FsAttachmentCache;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-g1-att-')));
+    cache = new FsAttachmentCache(new FsStorage(), join(home, 'cache', 'attachments'));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function resolvedFs(roomAudience: 'shared' | 'private', url: string) {
+    return resolveCapabilities(
+      'read_file',
+      { fs_reach: { read: 'from-personality' }, attachments: { kinds: ['file'] } },
+      { sessionId: 's', personalityId: 'lean', roomAudience },
+      {
+        storage: new FsStorage(),
+        // The whole state dir is in reach, so only the deny can refuse.
+        personalityFsReach: () => ({ read: [`${home}/`], write: [] }),
+        privateMemoryRoots: { stateDirs: [home] },
+        attachmentCache: cache,
+        inboundAttachments: [{ ref: 'a1', type: 'file', url, mimeType: 'application/pdf' }],
+      },
+    ).scopedFs;
+  }
+
+  it('reads this turn’s attachment but not another session’s, and writes neither', async () => {
+    const enc = new TextEncoder();
+    const mine = await cache.write(enc.encode('room doc'), {
+      sessionKey: 'telegram:bot:-100',
+      messageId: 'm1',
+      filename: 'doc.pdf',
+      mime: 'application/pdf',
+    });
+    const theirs = await cache.write(enc.encode('private doc'), {
+      sessionKey: 'telegram:bot:42',
+      messageId: 'm9',
+      filename: 'doc.pdf',
+      mime: 'application/pdf',
+    });
+    const fs = await resolvedFs('shared', mine);
+    expect(await fs?.read(cache.resolveLocalPath(mine))).toBe('room doc');
+    await expect(fs?.read(cache.resolveLocalPath(theirs))).rejects.toThrow(
+      /^PATH_NOT_REACHABLE: .*shared conversation/,
+    );
+    await expect(fs?.write(cache.resolveLocalPath(mine), 'x')).rejects.toThrow(
+      /PATH_NOT_REACHABLE/,
+    );
+    await expect(fs?.read(join(home, 'config.yaml'))).rejects.toThrow(/shared conversation/);
+  });
+
+  it('a private turn reads either (no deny to exempt from)', async () => {
+    const enc = new TextEncoder();
+    const theirs = await cache.write(enc.encode('private doc'), {
+      sessionKey: 'telegram:bot:42',
+      messageId: 'm9',
+      filename: 'doc.pdf',
+      mime: 'application/pdf',
+    });
+    const fs = await resolvedFs('private', theirs);
+    expect(await fs?.read(cache.resolveLocalPath(theirs))).toBe('private doc');
   });
 });

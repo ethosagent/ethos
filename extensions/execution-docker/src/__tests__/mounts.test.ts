@@ -67,9 +67,9 @@ describe('mountsFor — the personality definition is read-only', () => {
     expect(m.get(CWD)).toBe('rw');
   });
 
-  it("declared write: ['${ETHOS_HOME}/'] keeps ETHOS_HOME rw but still gains a ro ownDir child", () => {
+  it("declared write: ['${ETHOS_HOME}/'] mounts ETHOS_HOME ro with a ro ownDir child", () => {
     const m = modes({ write: ['${ETHOS_HOME}/'] });
-    expect(m.get(ETHOS_HOME)).toBe('rw');
+    expect(m.get(ETHOS_HOME)).toBe('ro');
     expect(m.get(OWN)).toBe('ro');
     expect(m.get(`${OWN}/files`)).toBe('rw');
   });
@@ -97,7 +97,7 @@ describe('mountsFor — every personality definition and learning/ are read-only
 
   it("write: ['${ETHOS_HOME}/'] mounts personalities/ and learning/ ro, own files/ stays rw", () => {
     const m = modes({ write: ['${ETHOS_HOME}/'] });
-    expect(m.get(ETHOS_HOME)).toBe('rw');
+    expect(m.get(ETHOS_HOME)).toBe('ro');
     expect(m.get(PERSONALITIES)).toBe('ro');
     expect(m.get(LEARNING)).toBe('ro');
     expect(m.get(OWN)).toBe('ro');
@@ -172,10 +172,10 @@ describe('mountsFor — case variants', () => {
     expect(fromHome.get(`${OWN}/files`)).toBe('rw');
   });
 
-  it('case-sensitive host keeps the rw parent (the nested ro guards hold there)', () => {
+  it('case-sensitive host: a rw state dir ancestor becomes ro too (verification round G4)', () => {
     const m = modes(undefined, false, '/home/tester');
-    expect(m.get('/home/tester')).toBe('rw');
-    expect(m.get(PERSONALITIES)).toBe('ro');
+    expect(m.get('/home/tester')).toBe('ro');
+    expect(m.get(`${OWN}/files`)).toBe('rw');
   });
 
   it('case-insensitive host: a rw mount beside the state dir is untouched', () => {
@@ -224,7 +224,7 @@ describe('mountsFor — every state dir, not only ethosHome', () => {
   it('guards an existing ETHOS_STATE_DIR under a rw cwd, and skips guards that do not exist', () => {
     const { root, state } = otherStateDir();
     const m = modes(undefined, false, root);
-    expect(m.get(root)).toBe('rw');
+    expect(m.get(root)).toBe('ro');
     expect(m.get(join(state, 'personalities'))).toBe('ro');
     expect(m.get(join(state, 'learning'))).toBe('ro');
     // Not on the host: not bound (Docker would create it as root).
@@ -242,4 +242,67 @@ describe('mountsFor — every state dir, not only ethosHome', () => {
     const m = modes({ write: [join(state, 'personalities', 'carol', 'toolset.yaml')] });
     expect(m.get(join(state, 'personalities', 'carol', 'toolset.yaml'))).toBe('ro');
   });
+});
+
+// Verification round G4 — the ro guards name only the definition entries, so a
+// rw mount that IS a state dir or contains one is downgraded on EVERY host:
+// otherwise `config.yaml`, `constitution.yaml`, `evolve-config.json`,
+// `scripts/`, `cron/jobs.json` and the rest stay writable from a shell.
+describe('mountsFor — a rw mount holding a state dir is read-only on every host', () => {
+  for (const foldsCase of [false, true]) {
+    it(`cwd at or above ETHOS_HOME is ro, own files/ stays rw (foldsCase=${foldsCase})`, () => {
+      for (const cwd of [ETHOS_HOME, '/home/tester']) {
+        const m = modes(undefined, foldsCase, cwd);
+        expect([cwd, m.get(cwd)]).toEqual([cwd, 'ro']);
+        expect(m.get(`${OWN}/files`)).toBe('rw');
+      }
+    });
+  }
+
+  it('a declared rw case variant of the state dir is ro on a case-sensitive host too', () => {
+    const m = modes({ write: ['/home/tester/.ETHOS/'] }, false);
+    expect(m.get('/home/tester/.ETHOS')).toBe('ro');
+  });
+
+  it('a rw mount below the state dir or beside it keeps its mode', () => {
+    const m = modes({ write: ['/data/out', '${ETHOS_HOME}/personalities/${self}/files/'] });
+    expect(m.get('/data/out')).toBe('rw');
+    expect(m.get(`${OWN}/files`)).toBe('rw');
+  });
+
+  it('warns once per downgraded mount, not on every mountsFor', () => {
+    const warn = vi.fn();
+    const warnLogger: Logger = { ...logger, warn, child: () => warnLogger };
+    const be = new DockerExecutionBackend(
+      {
+        config: {
+          images: { default: 'x@sha256:abc' },
+          substitutionVars: { ethosHome: ETHOS_HOME, cwd: '/home/tester' },
+        },
+        secrets,
+        logger: warnLogger,
+      },
+      async () => false,
+      undefined,
+      undefined,
+      undefined,
+      () => false,
+    );
+    const p = { id: 'bob', name: 'bob' } as unknown as PersonalityConfig;
+    be.mountsFor(p);
+    be.mountsFor(p);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Verification round G3 — macOS names a file by device + inode under `/.vol`
+// and `/.resolve`, and `/.nofollow/<abs>` is `<abs>`: none of them is judged
+// by the floors above, so a mount spelled that way is refused outright.
+describe('mountsFor — macOS path aliases are refused', () => {
+  for (const alias of ['/.vol/16777220/2/work', '/.RESOLVE/1/2', '/.nofollow/work/project']) {
+    it(`refuses ${alias}`, () => {
+      expect(() => modes({ write: [alias] })).toThrow(/forbidden host path/);
+      expect(() => modes({ read: [alias] })).toThrow(/forbidden host path/);
+    });
+  }
 });

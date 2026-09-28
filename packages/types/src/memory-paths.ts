@@ -219,8 +219,8 @@ export function privateMemoryPathDeny(roots: PrivateMemoryRoots): PrivatePathDen
  *
  * - `personalities/<self>/files/**` and `personalities/<self>/ui/**` — read
  *   and write (the asset drop and the Canvas templates `render_ui` reads);
- * - `personalities/<self>/SOUL.md` — read only (its write is refused by the
- *   definition floor anyway);
+ * - `personalities/<self>/SOUL.md` and `personalities/<self>/skills/**` —
+ *   read only (their write is refused by the definition floor anyway);
  * - `skills/**` — read only;
  * - everything else, the state dir itself included — refused.
  *
@@ -267,5 +267,8 @@ function sharedTurnMayReach(
   if (rel[0] !== 'personalities' || ownId.length === 0 || rel[1] !== ownId) return false;
   const entry = rel[2];
   if (entry === 'files' || entry === 'ui') return true;
+  // Its own skills are SOUL-adjacent, like `<state>/skills/` (verification
+  // round G9); their write is refused by the definition floor anyway.
+  if (entry === 'skills') return kind === 'read';
   return entry === 'soul.md' && rel.length === 3 && kind === 'read';
 }

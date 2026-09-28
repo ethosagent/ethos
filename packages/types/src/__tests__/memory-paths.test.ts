@@ -194,11 +194,22 @@ describe('sharedTurnPathDeny', () => {
       `${H}/personalities`,
       `${H}/personalities/lean`,
       `${H}/personalities/lean/config.yaml`,
-      `${H}/personalities/lean/skills/s/SKILL.md`,
       `${H}/personalities/other/files/a.png`,
       `${H}/personalities/other/SOUL.md`,
+      `${H}/personalities/other/skills/s/SKILL.md`,
     ]) {
       expect(deny(p, 'access', 'read'), p).toBe(true);
+      expect(deny(p, 'access', 'write'), p).toBe(true);
+    }
+  });
+
+  // verification round G9 — its own skills are SOUL-adjacent: readable, never writable.
+  it('lets its own skills be read, not written', () => {
+    for (const p of [
+      `${H}/personalities/lean/skills/s/SKILL.md`,
+      `${H}/personalities/LEAN/Skills/s`,
+    ]) {
+      expect(deny(p, 'access', 'read'), p).toBe(false);
       expect(deny(p, 'access', 'write'), p).toBe(true);
     }
   });

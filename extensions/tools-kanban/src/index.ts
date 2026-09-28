@@ -113,6 +113,38 @@ function hiddenFrom(store: KanbanStore, ctx: ToolContext, taskId: string): boole
   return task !== null && task.roomAudience !== 'shared';
 }
 
+/**
+ * On a shared turn, the refusal for a `parents` list naming a task the turn
+ * may not see — or one that does not exist: both get the same text, checked
+ * before the store is asked, so `kanban_create` is not an existence oracle for
+ * private tasks (verification round G6). Null when every parent is visible and
+ * present, or on a private turn (the store's own error then applies).
+ */
+function hiddenParentRefusal(
+  store: KanbanStore,
+  ctx: ToolContext,
+  parents: readonly string[] | undefined,
+): ToolResult | null {
+  if (ctx.roomAudience !== 'shared') return null;
+  for (const parentId of parents ?? []) {
+    if (store.getTask(parentId) === null || hiddenFrom(store, ctx, parentId)) {
+      return errorResult(`not found: parent task does not exist (${parentId})`, 'input_invalid');
+    }
+  }
+  return null;
+}
+
+/**
+ * The refusal for an `idempotency_key` that already names a task the turn may
+ * not see (verification round G6): the store returns that task instead of
+ * creating one, and handing its id to a shared turn would reveal it. The text
+ * names no task.
+ */
+const IDEMPOTENCY_KEY_TAKEN = errorResult(
+  'idempotency_key is already in use — choose a different key',
+  'input_invalid',
+);
+
 const STATUS_VALUES: TaskStatus[] = [
   'todo',
   'ready',
@@ -348,6 +380,8 @@ function createKanbanCreate(store: KanbanStore): Tool {
         const acErr = tooLong('acceptance_criteria', args.acceptance_criteria, MAX_BODY_CHARS);
         if (acErr) return acErr;
       }
+      const parentRefusal = hiddenParentRefusal(store, ctx, args.parents);
+      if (parentRefusal) return parentRefusal;
       try {
         const task = store.createTask({
           title: args.title,
@@ -364,6 +398,7 @@ function createKanbanCreate(store: KanbanStore): Tool {
           ...audienceStamp(ctx),
           actor: actorOf(ctx),
         });
+        if (hiddenFrom(store, ctx, task.id)) return IDEMPOTENCY_KEY_TAKEN;
         return jsonResult({ task_id: task.id, status: task.status });
       } catch (err) {
         return storeError(err);
@@ -440,6 +475,7 @@ function createKanbanCreateGoal(store: KanbanStore): Tool {
           ...audienceStamp(ctx),
           actor: actorOf(ctx),
         });
+        if (hiddenFrom(store, ctx, task.id)) return IDEMPOTENCY_KEY_TAKEN;
         return jsonResult({ task_id: task.id, status: task.status });
       } catch (err) {
         return storeError(err);

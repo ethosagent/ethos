@@ -207,13 +207,6 @@ export async function startServer(port: number): Promise<number> {
 
 async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   const dataDir = getDataDir();
-  // Verification round F2 — the same state dir the gateway child is given
-  // (`ETHOS_STATE_DIR: getDataDir()`, ./gateway-control.ts). Wiring floors
-  // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
-  // the checks that read only the environment — the terminal/process argv
-  // floors and the `write_file` pre-check — see a custom data folder through
-  // this variable.
-  process.env.ETHOS_STATE_DIR = dataDir;
 
   const provider = (store.get('provider') as string) ?? 'anthropic';
   const model = (store.get('model') as string) ?? 'claude-sonnet-4-20250514';
@@ -282,6 +275,19 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   } catch {
     // keep the refusal
   }
+
+  // Verification round F2 — the same state dir the gateway child is given
+  // (`ETHOS_STATE_DIR: getDataDir()`, ./gateway-control.ts). Wiring floors
+  // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
+  // the checks that read only the environment — the terminal/process argv
+  // floors and the `write_file` pre-check — see a custom data folder through
+  // this variable. Set only HERE, after the three reads of the shared
+  // `~/.ethos/config.yaml` above (`readSharedVoiceAndCallCaptureConfig`,
+  // `readConfig` for learning replay, `readSharedExecutionFlags`): each
+  // resolves its path through `ethosDir()`, which follows this variable, so
+  // setting it first made them read `<dataDir>/config.yaml` instead
+  // (verification round G2). Nothing between startup and here builds a floor.
+  process.env.ETHOS_STATE_DIR = dataDir;
 
   const { callCapture: sharedCallCapture, ...sharedVoiceConfig } = sharedVoiceAndCallCaptureConfig;
   const callCapturePersonalityId = store.get('callCapturePersonalityId') as string | undefined;

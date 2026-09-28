@@ -1,8 +1,10 @@
+import { resolve } from 'node:path';
 import type { NetworkPolicy } from '@ethosagent/safety-network';
 import {
   type DefinitionWriteFloor,
   type KeyValueStore,
   type PrivateMemoryRoots,
+  type PrivatePathDeny,
   personalityDefinitionWriteFloor,
   type SecretRef,
   type Storage,
@@ -243,6 +245,11 @@ export function resolveCapabilities(
     }
 
     if (attachmentDirs.size > 0) {
+      // A shared turn's deny refuses everything under the state dir, and the
+      // gateway caches attachments at `<state>/cache/attachments/` — so the
+      // rebuilt `scopedFs` exempts exactly THIS turn's attachment directories
+      // from it, for reading (verification round G1).
+      const attachmentDeny = exemptAttachmentReads(sharedDeny, attachmentDirs);
       if (result.scopedFs && backends.storage) {
         // Reconstruct with merged read paths
         const readDecl = capabilities.fs_reach?.read;
@@ -258,7 +265,7 @@ export function resolveCapabilities(
           new Set(writePaths),
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
-          sharedDeny,
+          attachmentDeny,
           definitionFloor,
         );
       } else if (!result.scopedFs && backends.storage) {
@@ -269,7 +276,7 @@ export function resolveCapabilities(
           new Set(),
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
-          sharedDeny,
+          attachmentDeny,
           definitionFloor,
         );
       }
@@ -277,4 +284,31 @@ export function resolveCapabilities(
   }
 
   return result;
+}
+
+/**
+ * `deny` with READ access to the turn's own attachment directories let
+ * through (verification round G1). Each directory is the gateway's
+ * per-message cache folder (`FsAttachmentCache`, `<root>/<session>/<message>/`),
+ * so it holds only this message's files. Compared exactly — resolved, and by
+ * realpath too, because both boundaries also ask `deny` about the real target
+ * — never case-folded, since this widens what is reachable. Writes, subtree
+ * checks and every other path still go to `deny`; a symlink inside the folder
+ * is judged on where it lands. Undefined `deny` (a private call) stays
+ * undefined. Pinned by the G1 cases in
+ * `packages/core/src/__tests__/shared-audience.test.ts`.
+ */
+function exemptAttachmentReads(
+  deny: PrivatePathDeny | undefined,
+  dirs: ReadonlySet<string>,
+): PrivatePathDeny | undefined {
+  if (!deny) return undefined;
+  const roots = withRealPaths([...dirs].map((d) => resolve(d)));
+  return (absPath, op, kind) => {
+    if (op === 'access' && kind === 'read') {
+      const path = resolve(absPath);
+      if (roots.some((root) => path === root || path.startsWith(`${root}/`))) return false;
+    }
+    return deny(absPath, op, kind);
+  };
 }

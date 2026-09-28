@@ -65,16 +65,16 @@ register_anchors:
 
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
-    - { path: packages/core/src/capability-resolver.ts, line: 112, contains: "export function resolveCapabilities" }
+    - { path: packages/core/src/capability-resolver.ts, line: 114, contains: "export function resolveCapabilities" }
     - { path: packages/core/src/scoped/scoped-process.ts, line: 8, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
     - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 158, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 203, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 238, contains: "private check(rawPath" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 159, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 204, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 239, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
@@ -171,7 +171,7 @@ register_anchors:
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 329, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 150, contains: "export function isPrivateMemoryPath" }
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 292, contains: "this.hitsDenyWhen(next, kind)" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 293, contains: "this.hitsDenyWhen(next, kind)" }
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and

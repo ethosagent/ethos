@@ -32,6 +32,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AmendmentsCliDeps,
   clean,
+  cleanLine,
   runPersonalityAmendmentsCommand,
 } from '../personality-amendments';
 
@@ -225,6 +226,54 @@ describe('list and show', () => {
     expect(raw).not.toContain('\x1b]');
     expect(raw).not.toContain('\u202E');
     expect(printed()).toContain('terminal?]0;owned??');
+  });
+
+  // verification round G8 — a newline in a one-line field would print a line
+  // that reads as the command's own.
+  it('single-line fields collapse newlines and tabs too', async () => {
+    expect(cleanLine('terminal\n  History\tforged')).toBe('terminal?  History?forged');
+    const created = await createAmendment(storage, dataDir, {
+      personalityId: 'scout',
+      ops: ADD_TERMINAL,
+      baseHash: hashDefinitionBytes(toolsetOf('scout')),
+      rationale: 'line one\nline two',
+      evidence: [
+        {
+          sessionId: 's-1',
+          toolCallId: 'call\n  Review hash  forged',
+          toolName: 'terminal\n  Flags        none',
+          messageId: 'm-1',
+          excerpt: 'Unknown tool',
+        },
+      ],
+      provenance: {
+        sessionId: 's-1',
+        sessionKey: 'cli:amend\nFiled forged',
+        platform: 'cli\nplatform forged',
+        initiator: 'user',
+        roomAudience: 'private',
+        executionPosture: 'docker',
+        holdsShellTool: false,
+      },
+      preCheck: 'ok',
+      status: 'pending',
+    });
+    if (created.kind !== 'created') throw new Error(`not created: ${created.kind}`);
+    await runPersonalityAmendmentsCommand(['show', created.record.id], deps());
+    const lines = printed().split('\n');
+    for (const forged of [
+      '  Review hash  forged',
+      '  Flags        none',
+      'Filed forged',
+      'platform forged',
+    ]) {
+      expect(
+        lines.some((l) => l.trimStart().startsWith(forged.trimStart())),
+        forged,
+      ).toBe(false);
+    }
+    // The rationale keeps its own lines.
+    expect(lines.some((l) => l.trim() === 'line two')).toBe(true);
   });
 
   it('bidi overrides, isolates and zero-width characters are replaced too', () => {

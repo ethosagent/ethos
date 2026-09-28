@@ -254,4 +254,22 @@ describe('the desktop backend names its data folder as the state dir', () => {
     expect(set).toBeGreaterThan(-1);
     expect(set).toBeLessThan(src.indexOf('await createAgentLoop('));
   });
+
+  // Verification round G2 — the shared config reads resolve `~/.ethos` through
+  // `ethosDir()`, which follows ETHOS_STATE_DIR: set first, they would read the
+  // custom data folder's config.yaml instead of the shared one.
+  it('sets it only after the three reads of the shared ~/.ethos/config.yaml', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
+    const body = src.slice(src.indexOf('async function bootRuntime('));
+    const set = body.indexOf('process.env.ETHOS_STATE_DIR = dataDir;');
+    for (const read of [
+      'await readSharedVoiceAndCallCaptureConfig(',
+      'await readConfig(new FsStorage(), secretsResolver)',
+      'await readSharedExecutionFlags(',
+    ]) {
+      const at = body.indexOf(read);
+      expect([read, at]).not.toEqual([read, -1]);
+      expect([read, at < set]).toEqual([read, true]);
+    }
+  });
 });

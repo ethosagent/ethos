@@ -194,6 +194,54 @@ describe('kanban tasks hidden from a shared turn', () => {
     }
   }
 
+  // verification round G6 — kanban_create names other tasks too.
+  it('kanban_create refuses a hidden parent exactly as a missing one, and creates nothing', async () => {
+    const hiddenId = await privateRunningTask('private');
+    const count = () => store.listTasks().length;
+    const before = count();
+    const hidden = await tools.kanban_create?.execute(
+      { title: 'child', parents: [hiddenId] },
+      ctx('shared'),
+    );
+    const missing = await tools.kanban_create?.execute(
+      { title: 'child', parents: [MISSING] },
+      ctx('shared'),
+    );
+    expect(hidden?.ok).toBe(false);
+    expect(JSON.parse(JSON.stringify(hidden).replaceAll(hiddenId, MISSING))).toEqual(missing);
+    expect(count()).toBe(before);
+    // A shared parent is fine.
+    const room = await run(tools.kanban_create, { title: 'room' }, ctx('shared'));
+    await run(tools.kanban_create, { title: 'child', parents: [room.task_id] }, ctx('shared'));
+  });
+
+  it('an idempotency_key naming a hidden task is refused without its id', async () => {
+    const priv = await run(
+      tools.kanban_create,
+      { title: 'secret plan', idempotency_key: 'k1' },
+      ctx('private'),
+    );
+    for (const name of ['kanban_create', 'kanban_create_goal']) {
+      const res = await tools[name]?.execute({ title: 'x', idempotency_key: 'k1' }, ctx('shared'));
+      expect(res?.ok).toBe(false);
+      expect(JSON.stringify(res)).not.toContain(String(priv.task_id));
+    }
+    // A private turn still gets the existing task back, and a shared key is reused.
+    expect(
+      (await run(tools.kanban_create, { title: 'x', idempotency_key: 'k1' }, ctx('private')))
+        .task_id,
+    ).toBe(priv.task_id);
+    const room = await run(
+      tools.kanban_create,
+      { title: 'r', idempotency_key: 'k2' },
+      ctx('shared'),
+    );
+    expect(
+      (await run(tools.kanban_create, { title: 'r', idempotency_key: 'k2' }, ctx('shared')))
+        .task_id,
+    ).toBe(room.task_id);
+  });
+
   it('kanban_list on a shared turn leaves out private and unstamped tasks', async () => {
     await privateRunningTask('private');
     await privateRunningTask();

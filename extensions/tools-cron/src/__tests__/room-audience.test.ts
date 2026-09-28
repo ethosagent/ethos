@@ -7,10 +7,11 @@ import type { Tool, ToolContext, ToolResult, TurnAudience } from '@ethosagent/ty
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCronTool } from '../index';
 
-// plan personality-memory-boundary G1 (verification round B13/B14) — a shared
-// turn reads only jobs stamped shared (`readableFrom`), and a shared turn that
-// edits or runs a job restamps it shared (`CronJobUpdate.roomAudience`), so a
-// room can neither read a private job's output nor retarget a private job.
+// plan personality-memory-boundary G1 (verification rounds B13, G5) — a shared
+// turn sees and acts on only jobs stamped shared (`readableFrom`, applied in
+// `loadOwnedJob`): a private or unstamped job answers every action exactly as
+// a missing one, so a room can neither read a private job's output nor pause,
+// edit, run or remove it — nor learn that it exists.
 
 let testDir: string;
 
@@ -123,11 +124,54 @@ describe('cron tool — room audience', () => {
     ).toContain('private output of Private');
   });
 
-  it('update from a shared turn restamps the job shared', async () => {
-    const { scheduler, tool } = harness();
-    const { job } = await seed(scheduler, 'Private', 'private');
+  // verification round G5
+  for (const stamp of ['private', undefined] as const) {
+    it(`update/pause/resume/run/remove answer a ${stamp ?? 'unstamped'} job as missing on a shared turn`, async () => {
+      const { scheduler, tool, ran } = harness();
+      const { job } = await seed(scheduler, 'Private', stamp);
+      const before = JSON.stringify(await scheduler.getJob(job.id));
+      const runsBefore = ran.length;
+      for (const args of [
+        { action: 'update', prompt: 'from the room' },
+        { action: 'pause' },
+        { action: 'resume' },
+        { action: 'run' },
+        { action: 'remove' },
+      ]) {
+        const hidden = await tool.execute({ ...args, id: job.id }, ctx('shared'));
+        const missing = await tool.execute({ ...args, id: 'no-such-job' }, ctx('shared'));
+        expect(JSON.parse(JSON.stringify(hidden).replaceAll(job.id, 'no-such-job'))).toEqual(
+          missing,
+        );
+      }
+      expect(JSON.stringify(await scheduler.getJob(job.id))).toBe(before);
+      expect(ran.length).toBe(runsBefore);
+    });
+  }
+
+  it('a shared turn still pauses, edits and runs a job stamped shared', async () => {
+    const { scheduler, tool, ran } = harness();
+    const { job } = await seed(scheduler, 'Room', 'shared');
     okValue(await tool.execute({ action: 'update', id: job.id, prompt: 'new' }, ctx('shared')));
-    expect((await scheduler.getJob(job.id))?.roomAudience).toBe('shared');
+    okValue(await tool.execute({ action: 'pause', id: job.id }, ctx('shared')));
+    okValue(await tool.execute({ action: 'resume', id: job.id }, ctx('shared')));
+    okValue(await tool.execute({ action: 'run', id: job.id }, ctx('shared')));
+    expect(ran.at(-1)?.roomAudience).toBe('shared');
+    expect((await scheduler.getJob(job.id))?.prompt).toBe('new');
+  });
+
+  it('create from a shared turn answers every taken name alike, naming no job', async () => {
+    const { scheduler, tool } = harness();
+    await seed(scheduler, 'Private', 'private');
+    await seed(scheduler, 'Room', 'shared');
+    const create = (name: string) =>
+      tool.execute({ action: 'create', name, schedule: 'every 1h', prompt: 'p' }, ctx('shared'));
+    const priv = await create('Private');
+    const room = await create('Room');
+    expect(priv).toEqual(room);
+    expect(errorOf(priv)).not.toContain('Private');
+    expect(errorOf(priv)).not.toContain('private');
+    okValue(await create('Fresh'));
   });
 
   it('update from a private turn leaves the stamp alone', async () => {
@@ -188,13 +232,5 @@ describe('cron tool — room audience', () => {
         ctx('private'),
       ),
     );
-  });
-
-  it('run from a shared turn restamps the job BEFORE it runs', async () => {
-    const { scheduler, tool, ran } = harness();
-    const { job } = await seed(scheduler, 'Private', 'private');
-    okValue(await tool.execute({ action: 'run', id: job.id }, ctx('shared')));
-    expect(ran.at(-1)?.roomAudience).toBe('shared');
-    expect((await scheduler.getJob(job.id))?.roomAudience).toBe('shared');
   });
 });

@@ -77,6 +77,18 @@ export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
 export const STATE_DIR_DEFINITION_ENTRIES: readonly string[] = ['skills/', 'commands/'];
 
 /**
+ * The state-dir directory holding team manifests: `<stateDir>/teams/<name>.yaml`
+ * (or `.yml`) names a team's members and the personalities its work is
+ * dispatched to, and the gateway and web API read it as operator config.
+ * Write-floored by {@link isPersonalityDefinitionPath} (verification round
+ * G7); the team's own directory beside it (`teams/<name>/` — its memory and
+ * board) is not. Its legitimate writers — `scaffold_team`
+ * (extensions/tools-personality-design) and `ethos team` — hold compose-time
+ * Storage.
+ */
+export const TEAM_MANIFEST_DIR = 'teams';
+
+/**
  * A boundary's write-floor predicate. `'access'` asks about the path itself;
  * `'subtree'` asks whether removing or renaming the path would move a
  * definition entry without naming it (a directory that CONTAINS one).
@@ -116,12 +128,19 @@ const STATE_ENTRY_NAMES: readonly string[] = STATE_DIR_DEFINITION_ENTRIES.map((e
   foldForDeny(e.slice(0, -1)),
 );
 
+/** True for a team manifest's file name (`<name>.yaml` / `.yml`), folded. */
+function isTeamManifestName(name: string): boolean {
+  return name.endsWith('.yaml') || name.endsWith('.yml');
+}
+
 /**
  * True when `absPath` is `<stateDir>/personalities/<any id>/<entry>` for an
  * entry in {@link PERSONALITY_DEFINITION_ENTRIES}, or `<stateDir>/<entry>` for
  * one in {@link STATE_DIR_DEFINITION_ENTRIES}, or lies below one (a file
- * under `skills/`). A predicate over the layout, not a list of existing
- * personalities, so a personality directory created mid-turn is covered too.
+ * under `skills/`), or is a team manifest `<stateDir>/teams/<name>.yaml`
+ * ({@link TEAM_MANIFEST_DIR}). A predicate over the layout, not a list of
+ * existing personalities, so a personality directory created mid-turn is
+ * covered too.
  */
 export function isPersonalityDefinitionPath(
   absPath: string,
@@ -131,6 +150,10 @@ export function isPersonalityDefinitionPath(
     const rel = segmentsBelow(absPath, stateDir);
     if (rel === null) continue;
     if (rel[0] !== undefined && STATE_ENTRY_NAMES.includes(rel[0])) return true;
+    const manifest = rel[1];
+    if (rel[0] === TEAM_MANIFEST_DIR && manifest !== undefined && isTeamManifestName(manifest)) {
+      return true;
+    }
     if (rel[0] !== 'personalities') continue;
     const entry = rel[2];
     if (entry !== undefined && ENTRY_NAMES.includes(entry)) return true;
@@ -141,7 +164,8 @@ export function isPersonalityDefinitionPath(
 /**
  * True when removing or renaming `absPath` would move a definition entry: it
  * is one itself, or it is a directory that can contain one — a state dir or
- * an ancestor of it, `personalities/`, or a `personalities/<id>/` directory.
+ * an ancestor of it, `personalities/`, a `personalities/<id>/` directory, or
+ * `teams/`.
  */
 export function containsPersonalityDefinitionPath(
   absPath: string,
@@ -152,6 +176,7 @@ export function containsPersonalityDefinitionPath(
     if (segmentsBelow(stateDir, absPath) !== null) return true;
     const rel = segmentsBelow(absPath, stateDir);
     if (rel !== null && rel[0] === 'personalities' && rel.length <= 2) return true;
+    if (rel !== null && rel[0] === TEAM_MANIFEST_DIR && rel.length === 1) return true;
   }
   return false;
 }

@@ -117,8 +117,23 @@ describe('isPersonalityDefinitionPath — snapshots, commands and global entries
   });
 
   it('leaves other state-dir entries to the always-deny floor, not this one', () => {
-    for (const rel of ['cron/jobs.json', 'teams/t.yaml', 'skillsets/x', 'learning/audit.jsonl']) {
+    for (const rel of [
+      'cron/jobs.json',
+      'teams/t/memory/notes.md',
+      'teams/t/board.db',
+      'skillsets/x',
+      'learning/audit.jsonl',
+    ]) {
       expect(isPersonalityDefinitionPath(`${HOME}/${rel}`, DIRS)).toBe(false);
     }
+  });
+
+  // verification round G7 — a team manifest is operator config.
+  it('floors team manifests teams/<name>.yaml, in any case, and a remove of teams/', () => {
+    for (const rel of ['teams/t.yaml', 'teams/New.YML', 'TEAMS/t.yaml']) {
+      expect(isPersonalityDefinitionPath(`${HOME}/${rel}`, DIRS)).toBe(true);
+    }
+    expect(containsPersonalityDefinitionPath(`${HOME}/teams`, DIRS)).toBe(true);
+    expect(containsPersonalityDefinitionPath(`${HOME}/teams/t`, DIRS)).toBe(false);
   });
 });

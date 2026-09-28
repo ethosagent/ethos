@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BoundaryError } from '@ethosagent/types';
+import { BoundaryError, sharedTurnPathDeny } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultAlwaysDeny } from '../default-deny';
 import { InMemoryStorage } from '../in-memory-storage';
@@ -223,5 +223,79 @@ describe('state dirs — symlinked (verification round A2)', () => {
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+// Verification round G3 — macOS path aliases. `/.nofollow/<abs>` IS `<abs>`,
+// so every deny folds it away; `/.vol/<dev>/<ino>/…` and `/.resolve/…` name a
+// file by inode and are refused outright, whatever the scope holds.
+describe('macOS path aliases (verification round G3)', () => {
+  const state = '/srv/ethos-g3';
+  const scope = (denyWhen?: ReturnType<typeof sharedTurnPathDeny>) =>
+    new ScopedStorage(new InMemoryStorage(), {
+      read: ['/'],
+      write: ['/'],
+      alwaysDeny: defaultAlwaysDeny([state]),
+      stateDirs: [state],
+      ...(denyWhen ? { denyWhen } : {}),
+    });
+
+  it('/.nofollow does not bypass the always-deny floor, the definition floor or the policy files', async () => {
+    const scoped = scope();
+    for (const nf of ['/.nofollow', '/.NOFOLLOW']) {
+      await expect(scoped.read(`${nf}${state}/sessions.db`)).rejects.toBeInstanceOf(BoundaryError);
+      await expect(
+        scoped.write(`${nf}${state}/personalities/bob/toolset.yaml`, 'x'),
+      ).rejects.toBeInstanceOf(BoundaryError);
+      await expect(
+        scoped.write(`${nf}${state}/evolve-config.json`, '{"autoApprove":true}'),
+      ).rejects.toBeInstanceOf(BoundaryError);
+      await expect(scoped.write(`${nf}${state}/teams/core.yaml`, 'x')).rejects.toBeInstanceOf(
+        BoundaryError,
+      );
+    }
+  });
+
+  it('/.nofollow does not bypass the shared-turn deny', async () => {
+    const scoped = scope(sharedTurnPathDeny({ stateDirs: [state] }, 'bob'));
+    await expect(scoped.read(`/.nofollow${state}/cron/output/j/run.md`)).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+  });
+
+  it('refuses /.vol and /.resolve for every operation, even with no deny configured', async () => {
+    const bare = new ScopedStorage(new InMemoryStorage(), { read: ['/'], write: ['/'] });
+    for (const alias of ['/.vol/16777220/2/x', '/.Resolve/1/2', '/.nofollow/.vol/1/2']) {
+      await expect(bare.read(alias)).rejects.toBeInstanceOf(BoundaryError);
+      await expect(bare.exists(alias)).rejects.toBeInstanceOf(BoundaryError);
+      await expect(bare.write(alias, 'x')).rejects.toBeInstanceOf(BoundaryError);
+      await expect(bare.list(alias)).rejects.toBeInstanceOf(BoundaryError);
+    }
+  });
+});
+
+// Verification round G7 — `teams/<name>.yaml` is a team manifest: it names the
+// team's members and the personalities it dispatches to. Write-floored like a
+// definition; the team's own directory (memory, board) is not.
+describe('team manifests (verification round G7)', () => {
+  const state = '/srv/ethos-g7';
+
+  it('refuses a write to teams/<name>.yaml in any case, and removing teams/', async () => {
+    const inner = new InMemoryStorage();
+    await inner.mkdir(join(state, 'teams', 'core'));
+    const scoped = new ScopedStorage(inner, {
+      read: [`${state}/`],
+      write: [`${state}/`],
+      stateDirs: [state],
+    });
+    for (const name of ['core.yaml', 'new.yaml', 'CORE.YAML', 'core.yml']) {
+      await expect(scoped.write(join(state, 'teams', name), 'x')).rejects.toBeInstanceOf(
+        BoundaryError,
+      );
+    }
+    await expect(scoped.remove(join(state, 'teams'), { recursive: true })).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await scoped.write(join(state, 'teams', 'core', 'notes.md'), 'ok');
   });
 });

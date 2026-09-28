@@ -384,3 +384,52 @@ describe('ScopedFsImpl — case variants and a symlinked state dir', () => {
     expect(await readFile(join(other, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
   });
 });
+
+// Verification round G3 — macOS path aliases, with a reach covering `/` so the
+// allowlist admits everything and only the denies can refuse. `/.nofollow/<abs>`
+// IS `<abs>` (folded away by `foldForDeny`); `/.vol` and `/.resolve` name a file
+// by inode and are refused outright, even by a ScopedFs with no deny at all.
+describe('ScopedFsImpl — macOS path aliases (verification round G3)', () => {
+  const state = '/srv/ethos-g3-scopedfs';
+  const everything = () => new Set(['/']);
+
+  it('/.nofollow does not bypass the always-deny floor, the definition floor, the policy files or the shared deny', async () => {
+    const priv = new ScopedFsImpl(
+      new FsStorage(),
+      everything(),
+      everything(),
+      defaultAlwaysDeny([state]),
+      [],
+      undefined,
+      personalityDefinitionFloor([state]),
+    );
+    await expect(priv.read(`/.nofollow${state}/sessions.db`)).rejects.toThrow(/always-deny/);
+    await expect(priv.write(`/.nofollow${state}/evolve-config.json`, '{}')).rejects.toThrow(
+      /always-deny/,
+    );
+    await expect(
+      priv.write(`/.NoFollow${state}/personalities/bob/toolset.yaml`, 'x'),
+    ).rejects.toThrow(/operator-owned/);
+    const shared = new ScopedFsImpl(
+      new FsStorage(),
+      everything(),
+      everything(),
+      [],
+      [],
+      sharedTurnDenyFor('shared', { stateDirs: [state] }, 'bob'),
+    );
+    await expect(shared.read(`/.nofollow${state}/cron/output/j/run.md`)).rejects.toThrow(
+      /shared conversation/,
+    );
+  });
+
+  it('refuses /.vol and /.resolve for every operation, with no deny configured', async () => {
+    const bare = new ScopedFsImpl(new FsStorage(), everything(), everything());
+    for (const alias of ['/.vol/16777220/2/x', '/.RESOLVE/1/2', '/.nofollow/.vol/1/2']) {
+      await expect(bare.read(alias)).rejects.toThrow(/PATH_NOT_REACHABLE/);
+      await expect(bare.exists(alias)).rejects.toThrow(/PATH_NOT_REACHABLE/);
+      await expect(bare.write(alias, 'x')).rejects.toThrow(/PATH_NOT_REACHABLE/);
+      await expect(bare.listEntries(alias)).rejects.toThrow(/PATH_NOT_REACHABLE/);
+    }
+  });
+});

@@ -148,13 +148,6 @@ export interface CronJobUpdate {
   script?: ScriptRef | null;
   /** An object sets the precheck gate; `null` clears it. */
   precheck?: ScriptRef | null;
-  /**
-   * Narrow the job to `'shared'` (plan personality-memory-boundary D20,
-   * verification round B14): a `cron` tool call from a shared turn that edits
-   * or runs a job restamps it, so the room's prompt never fires private. Only
-   * `'shared'` — nothing widens a job.
-   */
-  roomAudience?: 'shared';
 }
 
 export interface CronRunResult {
@@ -594,7 +587,7 @@ export class CronScheduler {
     }
 
     // An id becomes a directory name under `<cronDir>/output/`, so an explicit
-    // one is held to the same charset `slugify` produces and `listRuns` guards.
+    // one is held to the same charset `jobIdForName` produces and `listRuns` guards.
     if (params.id !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(params.id)) {
       throw new Error(`Invalid job id: "${params.id}"`);
     }
@@ -647,7 +640,7 @@ export class CronScheduler {
 
     const job: CronJob = {
       ...params,
-      id: params.id ?? slugify(params.name),
+      id: params.id ?? jobIdForName(params.name),
       source: params.source ?? 'user',
       systemTask: params.systemTask,
       status: 'active',
@@ -727,8 +720,7 @@ export class CronScheduler {
       !patch.schedule &&
       patch.prompt === undefined &&
       patch.script === undefined &&
-      patch.precheck === undefined &&
-      patch.roomAudience === undefined
+      patch.precheck === undefined
     ) {
       throw new Error('At least one of name, schedule, prompt, script, or precheck is required');
     }
@@ -802,7 +794,6 @@ export class CronScheduler {
         if (patch.precheck === null) delete existing.precheck;
         else existing.precheck = patch.precheck;
       }
-      if (patch.roomAudience === 'shared') existing.roomAudience = 'shared';
 
       jobs[idx] = existing;
       updatedJob = existing;
@@ -851,7 +842,7 @@ export class CronScheduler {
     systemTask: string;
     personalityId?: string;
   }): Promise<CronJob> {
-    const id = slugify(params.name);
+    const id = jobIdForName(params.name);
     const existing = await this.getJob(id);
     if (existing) return existing;
     return this.createJob({
@@ -1669,7 +1660,12 @@ function stampAudience(job: CronJob, jobs: readonly CronJob[]): TurnAudience {
   return 'private';
 }
 
-function slugify(name: string): string {
+/**
+ * The id `createJob` gives a job created by `name` alone. Exported so the
+ * `cron` tool can refuse a name collision on a shared turn without naming the
+ * job it collides with (`extensions/tools-cron`, verification round G5).
+ */
+export function jobIdForName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')

@@ -26,6 +26,7 @@ import {
   type ExecutionBackendConfig,
   foldForDeny,
   isPersonalityDefinitionPath,
+  isUnmappablePathAlias,
   type Logger,
   type MountSpec,
   type PersonalityConfig,
@@ -229,6 +230,15 @@ export function resolveNetworkMode(p?: PersonalityConfig): 'none' | 'bridge' {
 
 /** Output byte ceiling per exec (review #6). Past this the exec is killed. */
 const MAX_EXEC_OUTPUT_BYTES = 1_000_000;
+
+/**
+ * True when `p` starts with macOS's `/.nofollow` (in any case). The deny fold
+ * reads `/.nofollow/<abs>` as `<abs>`, but a bind of it would still bind a
+ * path spelled around every floor here (verification round G3).
+ */
+function isMacNoFollowPath(p: string): boolean {
+  return foldForDeny(p.split('/')[1] ?? '') === '.nofollow';
+}
 
 /**
  * True when `p` resolves to or under one of the forbidden mount roots.
@@ -1192,6 +1202,8 @@ export class DockerExecutionBackend implements ExecutionBackend {
   private uninspectedContainer = false;
   /** Whether host paths are case-insensitive (see `defaultHostFoldsCase`). */
   private readonly hostFoldsCase: () => boolean;
+  /** Mounts `mountsFor` already warned it downgraded to ro (verification round G4). */
+  private readonly warnedReadOnlyMounts = new Set<string>();
 
   constructor(
     ctx: { config: ExecutionBackendConfig; secrets: SecretsResolver; logger: Logger },
@@ -1359,6 +1371,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * entries (`keys.json`, `sessions.db`, …) already do under a reach that
    * covers the state dir; the Storage-side read deny does not reach a shell.
    * Other personalities' `files/` folders are read-only in that case too.
+   *
+   * A rw mount that IS a state dir or contains one is itself downgraded to
+   * `ro` on every host (verification round G4) — the guards above name only
+   * the definition entries, and the rest of the state dir (operator config and
+   * policy, `scripts/`, `plugins/`, `cron/`, `teams/`) must not be writable
+   * from a container shell either; the caller's own `files/` keeps its rw
+   * mount. A path spelled through macOS's `/.vol`, `/.resolve` or
+   * `/.nofollow` is refused outright (verification round G3).
    */
   mountsFor(p: PersonalityConfig): MountSpec[] {
     const ethosHome = this.config.substitutionVars?.ethosHome ?? join(homedir(), '.ethos');
@@ -1374,7 +1394,15 @@ export class DockerExecutionBackend implements ExecutionBackend {
       // forbidden target (docker.sock, /proc, …) is caught, not just literal
       // forbidden paths. Both the lexical path and its real target are checked.
       const realPath = realPathOrLexical(hostPath);
-      if (isForbiddenMount(hostPath) || isForbiddenMount(realPath)) {
+      // verification round G3 — a macOS `/.vol`, `/.resolve` or `/.nofollow`
+      // spelling binds a host file no floor below can judge by its path.
+      if (
+        isForbiddenMount(hostPath) ||
+        isForbiddenMount(realPath) ||
+        isUnmappablePathAlias(hostPath) ||
+        isMacNoFollowPath(hostPath) ||
+        isUnmappablePathAlias(realPath)
+      ) {
         throw new ForbiddenMountError(hostPath);
       }
       // F2 — enforce the constitution's allow-roots / denied-prefixes against the
@@ -1467,20 +1495,34 @@ export class DockerExecutionBackend implements ExecutionBackend {
       byPath.set(ownDir, { hostPath: ownDir, containerPath: ownDir, mode: 'ro' });
       guards.push(ownDir);
     }
+    // verification round G4 — on EVERY host, a rw mount that is a state dir
+    // or contains one is downgraded to ro. The ro guards above cover only the
+    // definition, `learning/`, `skills/` and `commands/`; under a rw state
+    // dir everything else there — `config.yaml`, `constitution.yaml`,
+    // `evolve-config.json`, `allowlist.json`, `mcp.json`, `scripts/`,
+    // `plugins/`, `keys.json`, `cron/jobs.json`, `teams/` — would stay
+    // writable from a shell in the container, which Storage's floors never see.
+    //
     // verification round A6 — a ro guard nested in a rw mount holds only for
     // the exact spelling of the path between them: on a case-insensitive host
     // (macOS/Windows Docker Desktop shares) `<rw>/.ETHOS/personalities/…`
     // walks the rw parent to the same host file and never meets the ro mount.
     // There, a rw mount that strictly contains a guard (or is a case variant
-    // of one) is downgraded to ro. The caller's own `files/` is added after,
-    // so it stays rw. Pinned by the case-insensitive cases in mounts.test.ts.
-    if (this.hostFoldsCase()) {
-      for (const [path, mount] of byPath) {
-        if (mount.mode !== 'rw') continue;
-        if (guards.some((g) => g !== path && withinFolded(g, path))) {
-          byPath.set(path, { ...mount, mode: 'ro' });
+    // of one) is downgraded to ro as well.
+    //
+    // The caller's own `files/` is added after, so it stays rw. Each
+    // downgraded path is logged once per backend. Pinned by the "state dir"
+    // and case-insensitive cases in mounts.test.ts.
+    const foldsCase = this.hostFoldsCase();
+    for (const [path, mount] of byPath) {
+      if (mount.mode !== 'rw') continue;
+      const holdsStateDir = homes.some((h) => withinFolded(h, path));
+      if (holdsStateDir || (foldsCase && guards.some((g) => g !== path && withinFolded(g, path)))) {
+        byPath.set(path, { ...mount, mode: 'ro' });
+        if (!this.warnedReadOnlyMounts.has(path)) {
+          this.warnedReadOnlyMounts.add(path);
           this.logger.warn(
-            `docker: rw mount ${path} contains the Ethos state dir on a case-insensitive host; mounted read-only so a case-variant path cannot bypass the read-only personality and learning mounts`,
+            `docker: rw mount ${path} contains the Ethos state dir; mounted read-only so a shell in the container cannot rewrite operator config, policy or another personality's files`,
           );
         }
       }
