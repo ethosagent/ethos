@@ -365,3 +365,90 @@ describe('cron read_run progress', () => {
     expect(read.value).not.toContain('## Progress');
   });
 });
+
+// ---------------------------------------------------------------------------
+// UBP-024 — the job's origin names the bot it was created through, so its
+// output is delivered by that bot rather than the platform's first adapter.
+// ---------------------------------------------------------------------------
+
+describe('cron tool origin capture', () => {
+  async function createFrom(sessionKey: string, platform = 'telegram'): Promise<CronJob | null> {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const result = await tool.execute(
+      { action: 'create', name: 'Pipeline', schedule: '0 8 * * *', prompt: 'summarise' },
+      makeCtx({ sessionKey, platform }),
+    );
+    expect(result.ok).toBe(true);
+    return scheduler.getJob('pipeline');
+  }
+
+  it('keeps the botKey from the lane key', async () => {
+    const job = await createFrom('telegram:sales:chat123');
+    expect(job?.origin).toEqual({ platform: 'telegram', chatId: 'chat123', botKey: 'sales' });
+  });
+
+  it('decodes the lane key segments buildLaneKey encoded', async () => {
+    const job = await createFrom('email:bot%3A1:alice%40example.com', 'email');
+    expect(job?.origin).toEqual({
+      platform: 'email',
+      chatId: 'alice@example.com',
+      botKey: 'bot:1',
+    });
+  });
+
+  it('keeps the botKey after /new appended a session suffix', async () => {
+    const job = await createFrom('telegram:sales:chat123:1790000000000');
+    expect(job?.origin).toEqual({ platform: 'telegram', chatId: 'chat123', botKey: 'sales' });
+  });
+
+  // UBP-024 (thread half): the lane key cannot tell a thread from a `/new`
+  // suffix, so the thread comes from the gateway's live turn
+  // (`Gateway.originThreadIdFor`) through `resolveOriginThreadId`.
+  it('records the thread the gateway reports for the live turn', async () => {
+    const scheduler = makeScheduler();
+    const seen: string[] = [];
+    const [tool] = createCronTool(scheduler, {
+      resolveOriginThreadId: (sessionKey) => {
+        seen.push(sessionKey);
+        return 'topic-42';
+      },
+    });
+    if (!tool) throw new Error('expected tool');
+    const result = await tool.execute(
+      { action: 'create', name: 'Pipeline', schedule: '0 8 * * *', prompt: 'summarise' },
+      makeCtx({ sessionKey: 'telegram:sales:chat123:topic-42', platform: 'telegram' }),
+    );
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(['telegram:sales:chat123:topic-42']);
+    expect((await scheduler.getJob('pipeline'))?.origin).toEqual({
+      platform: 'telegram',
+      chatId: 'chat123',
+      botKey: 'sales',
+      threadId: 'topic-42',
+    });
+  });
+
+  it('records no thread for a root-chat turn, and none for a web origin', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler, { resolveOriginThreadId: () => undefined });
+    if (!tool) throw new Error('expected tool');
+    await tool.execute(
+      { action: 'create', name: 'Root', schedule: '0 8 * * *', prompt: 'summarise' },
+      makeCtx({ sessionKey: 'telegram:sales:chat123', platform: 'telegram' }),
+    );
+    expect((await scheduler.getJob('root'))?.origin).toEqual({
+      platform: 'telegram',
+      chatId: 'chat123',
+      botKey: 'sales',
+    });
+    const [webTool] = createCronTool(scheduler, { resolveOriginThreadId: () => 'never' });
+    if (!webTool) throw new Error('expected tool');
+    await webTool.execute(
+      { action: 'create', name: 'Web', schedule: '0 8 * * *', prompt: 'summarise' },
+      makeCtx({ sessionKey: 'web:abc', platform: 'web' }),
+    );
+    expect((await scheduler.getJob('web'))?.origin).toEqual({ platform: 'web', chatId: 'web:abc' });
+  });
+});

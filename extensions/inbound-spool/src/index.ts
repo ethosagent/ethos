@@ -56,6 +56,11 @@ import Database, { migrate } from '@ethosagent/sqlite';
 // whose primary had just become `interrupted`, it discarded the row the user
 // had just been told to `retry`.
 //
+// A steer the running turn never READ (it arrived after the loop's last drain)
+// must not share that fate: `done` would close a message whose text never
+// reached the model. The gateway unlinks it (`unlinkAbsorbed`, UBP-001) and
+// runs it as its own turn, so it gets its own terminal.
+//
 // Two kinds of row share the table: `inbound` (a platform message) and
 // `wake_review` (a background job's result the parent session reviews before
 // the user sees it, plan openclaw-9.5-adoption item 6 / D29). The gateway owns
@@ -190,6 +195,14 @@ export interface InboundSpool {
   /** Rows absorbed into `id` that are still owed with it (`received` or
    *  `interrupted`), in arrival order (`received_at, rowid`). */
   listAbsorbed(id: string): SpoolRow[];
+  /**
+   * UBP-001 — undo `markAbsorbed` for a `received` row: clear `absorbed_into`
+   * so the row no longer shares its primary's terminal and is owed on its own.
+   * The gateway calls it for a steer the running turn never read, before
+   * running that steer as its own turn (`Gateway.requeueUnreadSteers`).
+   * `false` when the row is not `received` or not linked.
+   */
+  unlinkAbsorbed(id: string): boolean;
   /**
    * A turn failed. `processing` → `dead` when `attempts >= maxAttempts`;
    * otherwise → `interrupted` when the turn had started a tool (never re-run
@@ -554,6 +567,16 @@ export class SQLiteInboundSpool implements InboundSpool {
     return rows.map(toRow);
   }
 
+  unlinkAbsorbed(id: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE inbound_spool SET absorbed_into = NULL, updated_at = ?
+         WHERE id = ? AND status = 'received' AND absorbed_into IS NOT NULL`,
+      )
+      .run(this.now(), id);
+    return result.changes === 1;
+  }
+
   markFailed(id: string, error: string, maxAttempts: number): SpoolFailOutcome {
     const decide = this.db.transaction((): SpoolFailOutcome => {
       const row = this.db
@@ -753,8 +776,10 @@ export class SQLiteInboundSpool implements InboundSpool {
   releaseOnShutdown(id: string): void {
     // A turn interrupted by SIGTERM is owed, not failed: the attempt counted at
     // `markProcessing` is refunded. A `kill -9` cannot run this, so a message
-    // that crashes the process still burns an attempt per boot — which is what
-    // dead-letters a poison message.
+    // that crashes the process still burns an attempt per boot — and the
+    // replay dead-letters it once those reach the cap (UBP-022,
+    // `Gateway.replaySpoolRow`; pinned by the gateway's
+    // `__tests__/inbound-spool.test.ts`, 'a message that kills the process').
     this.db
       .prepare(
         `UPDATE inbound_spool

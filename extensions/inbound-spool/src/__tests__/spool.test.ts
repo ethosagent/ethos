@@ -479,6 +479,21 @@ describe('SQLiteInboundSpool — absorbed steer rows', () => {
     expect(c.get(y.steer)?.status).toBe('dead');
   });
 
+  // UBP-001: a steer the running turn never read is unlinked and owed on its
+  // own, so the primary's `done` does not close it.
+  it('unlinkAbsorbed frees a received steer from its primary’s fate', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    expect(spool.unlinkAbsorbed(steer)).toBe(true);
+    expect(spool.get(steer)?.absorbedInto).toBeUndefined();
+    spool.markDone(primary);
+    expect(spool.get(steer)?.status).toBe('received');
+    expect(spool.listAbsorbed(primary)).toEqual([]);
+    // Not linked any more, and a primary row was never linked: nothing to undo.
+    expect(spool.unlinkAbsorbed(steer)).toBe(false);
+    expect(spool.unlinkAbsorbed(primary)).toBe(false);
+  });
+
   it('a failure that returns the primary to received leaves the steer linked and owed', () => {
     const spool = new SQLiteInboundSpool(':memory:');
     const { primary, steer } = primaryAndSteer(spool);

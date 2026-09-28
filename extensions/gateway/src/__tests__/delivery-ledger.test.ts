@@ -312,7 +312,9 @@ describe('Gateway — redelivery vs. the outbound dedup cache', () => {
     const store = ledger();
     const failing = stubAdapter({ ok: false });
     const gw1 = gatewayWith(loopYielding(plainTurn), store, { outboundDedupTtlMs: 600_000 });
-    await gw1.handleMessage(msg(), failing);
+    // No message id and no spool: the reply key is the content-only fallback
+    // (`replyDedupScope`), which is what a redelivery with no `inboundRef` re-arms.
+    await gw1.handleMessage(msg({ messageId: undefined }), failing);
     expect(await store.listPending(['bot-a'])).toHaveLength(1);
 
     // A fresh process with a COLD cache redelivers, then record()s.
@@ -326,7 +328,7 @@ describe('Gateway — redelivery vs. the outbound dedup cache', () => {
 
     // A genuine duplicate of the same content on the same session is now
     // suppressed before it reaches the adapter — proof record() ran.
-    await gw2.handleMessage(msg(), adapter);
+    await gw2.handleMessage(msg({ messageId: undefined }), adapter);
     expect(adapter.sent).toHaveLength(1);
   });
 });

@@ -17,8 +17,21 @@ import { isEthosError } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type ChannelSpeakers, createCronDeliver } from '../lib/cron-deliver';
 
-function gatewayStub(result: { ok: boolean; error?: string } = { ok: true }) {
-  return { sendTo: vi.fn(async () => result) };
+/** A gateway with `adapterIds` running. `notifyTracked` confirms when `ok`. */
+function gatewayStub(
+  result: { ok: boolean; error?: string } = { ok: true },
+  adapterIds: string[] = ['telegram:support'],
+) {
+  return {
+    sendTo: vi.fn(async (_p: string, _t: string, _b: string) => result),
+    notifyTracked: vi.fn(
+      async (
+        _target: { platform: string; chatId: string; botKey?: string; threadId?: string },
+        _text: string,
+      ): Promise<boolean | 'held'> => result.ok,
+    ),
+    listAdapters: () => adapterIds.map((id) => ({ id })),
+  };
 }
 
 /** Nothing on any platform speaks for any personality. */
@@ -40,9 +53,10 @@ describe('createCronDeliver', () => {
     expect(err.code).toBe('CRON_TARGET_NOT_ALLOWED');
     expect(err.message).toContain('scout');
     expect(gateway.sendTo).not.toHaveBeenCalled();
+    expect(gateway.notifyTracked).not.toHaveBeenCalled();
   });
 
-  it('throws NETWORK_ERROR when the send fails, so the scheduler can record it', async () => {
+  it('throws NETWORK_ERROR when the send is not confirmed, so the scheduler can record it', async () => {
     const gateway = gatewayStub({ ok: false, error: 'chat not found' });
     const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
 
@@ -54,19 +68,113 @@ describe('createCronDeliver', () => {
     expect(isEthosError(err)).toBe(true);
     if (!isEthosError(err)) return;
     expect(err.code).toBe('NETWORK_ERROR');
-    expect(err.message).toContain('chat not found');
+    expect(err.message).toContain('did not confirm delivery');
   });
 
-  it('delivers a bound job', async () => {
+  // UBP-029 — the ledger-backed path, so a refused send stays pending and the
+  // gateway's delivery sweep retries it.
+  it('delivers a bound job through the tracked, bot-addressed send', async () => {
     const gateway = gatewayStub();
     const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
 
     await deliver(
-      { personalityId: 'scout', origin: { platform: 'telegram', chatId: 'C9' } },
+      {
+        personalityId: 'scout',
+        origin: { platform: 'telegram', chatId: 'C9', botKey: 'support' },
+      },
       'the digest',
     );
 
-    expect(gateway.sendTo).toHaveBeenCalledWith('telegram', 'C9', 'the digest');
+    expect(gateway.notifyTracked).toHaveBeenCalledWith(
+      { platform: 'telegram', chatId: 'C9', botKey: 'support' },
+      'the digest',
+    );
+    expect(gateway.sendTo).not.toHaveBeenCalled();
+  });
+
+  it('a notice held for quiet hours is owed, not failed', async () => {
+    const gateway = gatewayStub();
+    gateway.notifyTracked.mockResolvedValueOnce('held');
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+    await expect(
+      deliver(
+        { personalityId: 'scout', origin: { platform: 'telegram', chatId: 'C9', botKey: 'b' } },
+        'x',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  // UBP-024 — two bots on one platform.
+  it('sends as the job’s own bot when two bots share the platform', async () => {
+    const gateway = gatewayStub({ ok: true }, ['telegram:support', 'telegram:sales']);
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+
+    await deliver(
+      { personalityId: 'sales', origin: { platform: 'telegram', chatId: 'U1', botKey: 'sales' } },
+      'pipeline',
+    );
+
+    expect(gateway.notifyTracked).toHaveBeenCalledWith(
+      { platform: 'telegram', chatId: 'U1', botKey: 'sales' },
+      'pipeline',
+    );
+  });
+
+  // UBP-024 (thread half) — a job created in a Slack thread or Telegram topic
+  // delivers back into it, not the chat root.
+  it('delivers into the thread the job was created in', async () => {
+    const gateway = gatewayStub({ ok: true }, ['telegram:sales']);
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+
+    await deliver(
+      {
+        personalityId: 'sales',
+        origin: { platform: 'telegram', chatId: 'G1', botKey: 'sales', threadId: 'topic-42' },
+      },
+      'pipeline',
+    );
+
+    expect(gateway.notifyTracked).toHaveBeenCalledWith(
+      { platform: 'telegram', chatId: 'G1', botKey: 'sales', threadId: 'topic-42' },
+      'pipeline',
+    );
+  });
+
+  it('a legacy job with no botKey delivers via the platform’s only bot', async () => {
+    const gateway = gatewayStub({ ok: true }, ['telegram:support', 'discord:ops']);
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+
+    await deliver({ personalityId: 'scout', origin: { platform: 'telegram', chatId: 'C9' } }, 'x');
+
+    expect(gateway.notifyTracked).toHaveBeenCalledWith(
+      { platform: 'telegram', chatId: 'C9', botKey: 'support' },
+      'x',
+    );
+  });
+
+  it('a legacy job with no botKey is refused when the platform has several bots', async () => {
+    const gateway = gatewayStub({ ok: true }, ['telegram:support', 'telegram:sales']);
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+
+    const err = await deliver(
+      { personalityId: 'sales', origin: { platform: 'telegram', chatId: 'U1' } },
+      'pipeline',
+    ).catch((e: unknown) => e);
+
+    expect(isEthosError(err)).toBe(true);
+    if (!isEthosError(err)) return;
+    expect(err.code).toBe('CRON_TARGET_NOT_ALLOWED');
+    expect(gateway.notifyTracked).not.toHaveBeenCalled();
+    expect(gateway.sendTo).not.toHaveBeenCalled();
+  });
+
+  it('a single-bot deployment whose adapter id carries no botKey uses the default bot', async () => {
+    const gateway = gatewayStub({ ok: true }, ['telegram']);
+    const deliver = createCronDeliver({ gateway, speaksFor: ALL_BOTS });
+
+    await deliver({ personalityId: 'scout', origin: { platform: 'telegram', chatId: 'C9' } }, 'x');
+
+    expect(gateway.notifyTracked).toHaveBeenCalledWith({ platform: 'telegram', chatId: 'C9' }, 'x');
   });
 
   it('does not gate a web origin on a channel binding — web has no bot', async () => {
@@ -85,6 +193,7 @@ describe('createCronDeliver', () => {
     await deliver({ personalityId: 'scout' }, 'out');
 
     expect(gateway.sendTo).not.toHaveBeenCalled();
+    expect(gateway.notifyTracked).not.toHaveBeenCalled();
   });
 });
 
@@ -140,7 +249,7 @@ describe('createCronDeliver under CronScheduler', () => {
 
     await cron.runJobNow(job.id);
 
-    expect(gateway.sendTo).not.toHaveBeenCalled();
+    expect(gateway.notifyTracked).not.toHaveBeenCalled();
     expect((await cron.getJob(job.id))?.lastError).toContain(
       'no telegram bot is bound to personality "scout"',
     );
@@ -159,7 +268,7 @@ describe('createCronDeliver under CronScheduler', () => {
 
     await cron.runJobNow(job.id);
 
-    expect((await cron.getJob(job.id))?.lastError).toContain('chat not found');
+    expect((await cron.getJob(job.id))?.lastError).toContain('did not confirm delivery');
   });
 });
 

@@ -1,5 +1,5 @@
 import type { DeliveryResult, OutboundMessage } from '@ethosagent/types';
-import type { MessageDedupCache } from './dedup';
+import type { DedupScope, MessageDedupCache } from './dedup';
 import { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ export interface StreamAdapter {
     chatId: string,
     messageId: string,
     text: string,
-    opts?: { final?: boolean },
+    opts?: { final?: boolean; threadId?: string },
   ): Promise<DeliveryResult>;
 }
 
@@ -97,6 +97,13 @@ export interface DraftStreamerOptions {
   threadId: string | undefined;
   sessionKey: string;
   dedup: MessageDedupCache;
+  /**
+   * The inbound message this reply answers (UBP-014): the draft's dedup
+   * records are scoped to it, the same key the non-streamed reply path checks
+   * (`Gateway.runTurn`), so an identical answer to a DIFFERENT message is not
+   * suppressed. Absent → the content-only key.
+   */
+  inboundId?: string;
   /**
    * Durable delivery-obligation ledger binding (item 9). Threaded in here
    * rather than reported back through `finalize()`'s return value because the
@@ -132,6 +139,7 @@ export class DraftStreamer {
   private readonly threadId: string | undefined;
   private readonly sessionKey: string;
   private readonly dedup: MessageDedupCache;
+  private readonly dedupScope: DedupScope | undefined;
   private readonly delivery: DeliveryBinding | undefined;
   private readonly minEditIntervalMs: number;
   private readonly now: () => number;
@@ -153,6 +161,7 @@ export class DraftStreamer {
     this.threadId = opts.threadId;
     this.sessionKey = opts.sessionKey;
     this.dedup = opts.dedup;
+    this.dedupScope = opts.inboundId ? { inboundId: opts.inboundId } : undefined;
     this.delivery = opts.delivery;
     this.minEditIntervalMs = opts.minEditIntervalMs ?? 2500;
     this.now = opts.now ?? Date.now;
@@ -227,8 +236,11 @@ export class DraftStreamer {
           // `final: true` tells the adapter no further text is coming, so a
           // terminal-only presentation is safe to apply. Intermediate flushes in
           // `doFlush` deliberately pass nothing.
+          // `threadId` too (UBP-017): an adapter that addresses a thread as its
+          // own channel (Discord) must edit the message where it was sent.
           const res = await this.adapter.editMessage(this.chatId, this.messageId, finalText, {
             final: true,
+            ...(this.threadId ? { threadId: this.threadId } : {}),
           });
           if (res.ok) {
             this.lastRenderedBody = finalText;
@@ -252,7 +264,7 @@ export class DraftStreamer {
     // Register the final content so a later duplicate send() is suppressed —
     // but only when the user actually saw it. Stamping the cache on a failed
     // final edit would drop a legitimate fallback send of the same content.
-    if (finalRendered) this.dedup.record(this.sessionKey, finalText);
+    if (finalRendered) this.dedup.record(this.sessionKey, finalText, this.dedupScope);
   }
 
   private enqueue(fn: () => Promise<void>): Promise<void> {
@@ -293,12 +305,17 @@ export class DraftStreamer {
           this.lastRenderedBody = body;
           this.lastEditAt = this.now();
           // First-chunk message registered when sent (no placeholder exemption).
-          this.dedup.record(this.sessionKey, body);
+          this.dedup.record(this.sessionKey, body, this.dedupScope);
         }
         return;
       }
       if (!this.adapter.editMessage) return;
-      const res = await this.adapter.editMessage(this.chatId, this.messageId, body);
+      const res = await this.adapter.editMessage(
+        this.chatId,
+        this.messageId,
+        body,
+        this.threadId ? { threadId: this.threadId } : undefined,
+      );
       if (res.ok) {
         this.lastRenderedBody = body;
         this.lastEditAt = this.now();

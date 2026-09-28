@@ -13,12 +13,40 @@ export interface DedupDropInfo {
 }
 
 /**
+ * Narrows a dedup key to one inbound message (UBP-014). `inboundId` is the
+ * inbound message the send answers — its spool row id when spooled, else the
+ * platform message id. Absent → the content-only key.
+ */
+export interface DedupScope {
+  inboundId?: string;
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/** The cache key. The scope hash is joined with `.`, never `:`, so
+ *  `clearSession`'s last-colon split still finds the session id. */
+function dedupKey(sessionId: string, contentHash: string, scope?: DedupScope): string {
+  const base = `${sessionId}:${contentHash}`;
+  return scope?.inboundId ? `${base}.${sha256(scope.inboundId)}` : base;
+}
+
+/**
  * Single dedup path for outbound channel messages. Adapter-specific dedup
  * gets pulled into here so a new adapter doesn't need to invent its own
  * idempotency layer. See plan/phases/30-robustness.md § 30.4.
  *
- * Key shape: `${sessionId}:${sha256(content)}`. Same content within `ttlMs`
- * for the same session is a duplicate. Empty content is never deduped.
+ * Key shape: `${sessionId}:${sha256(content)}`, or
+ * `${sessionId}:${sha256(content)}.${sha256(inboundId)}` when the caller scopes
+ * the check to one inbound message (`DedupScope.inboundId`). Same content
+ * within `ttlMs` for the same session — and, when scoped, the same inbound
+ * message — is a duplicate. Empty content is never deduped.
+ *
+ * Reply paths scope to the inbound message they answer (UBP-014, ARCHITECTURE.md
+ * §V S3 as amended 2026-09-28): two different messages whose correct replies are
+ * byte-identical ("Done.", "OK") both send, while a double send of ONE reply is
+ * still a silent drop. Notices and agent-initiated sends stay content-only.
  *
  * Single-process assumption: dedup state lives entirely in this in-memory
  * `Map`, so it only suppresses duplicates within ONE gateway process. A
@@ -51,15 +79,33 @@ export class MessageDedupCache {
 
   /**
    * Returns `true` if the message is new (and records it). Returns `false`
-   * if the same content was sent on the same session within `ttlMs`.
+   * if the same content was sent on the same session (and `scope`) within
+   * `ttlMs`.
+   *
+   * Records at the CHECK, so it is for sends whose failure is owned elsewhere
+   * — the ledger-backed reply and notice paths, where a refused send stays a
+   * `pending` obligation the sweep redelivers. A send with no ledger behind it
+   * uses {@link wouldSend} and records with {@link record} only after the
+   * platform confirmed it (UBP-003), so a failed send never arms the key.
    */
-  shouldSend(sessionId: string, content: string): boolean {
+  shouldSend(sessionId: string, content: string, scope?: DedupScope): boolean {
+    if (!this.wouldSend(sessionId, content, scope)) return false;
+    this.record(sessionId, content, scope);
+    return true;
+  }
+
+  /**
+   * The check half of {@link shouldSend}, without recording (UBP-003).
+   * `false` → a genuine duplicate within the TTL (and `onDrop` fires); `true`
+   * → send it, then call {@link record} once the send is confirmed.
+   */
+  wouldSend(sessionId: string, content: string, scope?: DedupScope): boolean {
     if (this.disabled) return true;
     if (!content) return true;
 
     const now = Date.now();
-    const hash = createHash('sha256').update(content).digest('hex');
-    const key = `${sessionId}:${hash}`;
+    const hash = sha256(content);
+    const key = dedupKey(sessionId, hash, scope);
 
     // Lazy eviction: only check the key we touched. The size cap handles
     // the global bound; a periodic O(N) sweep would dominate hot paths.
@@ -75,8 +121,6 @@ export class MessageDedupCache {
       }
       this.entries.delete(key); // expired — drop so re-insert refreshes order
     }
-
-    this.setEntry(key);
     return true;
   }
 
@@ -110,11 +154,10 @@ export class MessageDedupCache {
    * No-op on the disabled (legacy) path and for empty content, mirroring
    * `shouldSend`. Never fires `onDrop` — recording is not a dropped send.
    */
-  record(sessionId: string, content: string): void {
+  record(sessionId: string, content: string, scope?: DedupScope): void {
     if (this.disabled) return;
     if (!content) return;
-    const hash = createHash('sha256').update(content).digest('hex');
-    this.setEntry(`${sessionId}:${hash}`);
+    this.setEntry(dedupKey(sessionId, sha256(content), scope));
   }
 
   /** Forget every key associated with `sessionId` (called by `/new`). */

@@ -298,9 +298,16 @@ describe('Gateway — dedup drop observability (P5.4)', () => {
     const adapter = stubAdapter();
 
     // Same lane, two turns → identical 'reply' response the second time is
-    // suppressed by the outbound dedup cache, emitting one drop event.
-    await drain(g, [gw.handleMessage(makeMessage({ chatId: 'A', text: 'one' }), adapter)]);
-    await drain(g, [gw.handleMessage(makeMessage({ chatId: 'A', text: 'two' }), adapter)]);
+    // suppressed by the outbound dedup cache, emitting one drop event. The
+    // messages carry no id, so the reply key is content-only (the fallback of
+    // `replyDedupScope`); with ids, two different messages would each get
+    // their reply (UBP-014, `dedup-reply-scope.test.ts`).
+    await drain(g, [
+      gw.handleMessage(makeMessage({ chatId: 'A', text: 'one', messageId: undefined }), adapter),
+    ]);
+    await drain(g, [
+      gw.handleMessage(makeMessage({ chatId: 'A', text: 'two', messageId: undefined }), adapter),
+    ]);
 
     const dropEvents = blocks.filter((b) => b.code === 'gateway.dedup_drop');
     expect(dropEvents).toHaveLength(1);

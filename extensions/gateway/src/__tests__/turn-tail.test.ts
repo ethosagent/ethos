@@ -862,8 +862,10 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
     const gw = gatewayOn(loop as unknown as AgentLoop);
     const out = recordingAdapter();
 
-    await gw.handleMessage(msg('one'), out.adapter);
-    const second = gw.handleMessage(msg('two'), out.adapter);
+    // No message ids: the reply key is the content-only fallback
+    // (`replyDedupScope`), so the second identical final is suppressed.
+    await gw.handleMessage(msg('one', { messageId: undefined }), out.adapter);
+    const second = gw.handleMessage(msg('two', { messageId: undefined }), out.adapter);
     await waitUntil(() => calls === 2 && gates.length === 1);
 
     await gw.shutdown({ notify: 'RESEND', drainTimeoutMs: 50 });
