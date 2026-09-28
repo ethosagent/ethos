@@ -80,4 +80,11 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
       expect(DOWNGRADE_REJECTION_MESSAGE).toContain(name);
     }
   });
+
+  // V4-2: in a standalone deployment a worker run that ends without closing its
+  // ticket is reclaimed to `ready` and dispatched again, so a tainted worker
+  // must be told how it CAN report being blocked.
+  it('points a tainted worker at kanban_update_status to report a blocked ticket', () => {
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/kanban_update_status with status "blocked"/);
+  });
 });

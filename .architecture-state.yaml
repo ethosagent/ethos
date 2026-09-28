@@ -107,9 +107,9 @@ register_anchors:
     - { path: packages/wiring/src/skill-passthrough.ts, line: 16, contains: "export function deriveSkillPassthrough" }
 
   G-RED:
-    - { path: packages/safety/redact/src/index.ts, line: 255, contains: "export function detectSecrets" }
-    - { path: packages/safety/redact/src/index.ts, line: 267, contains: "export function redactString" }
-    - { path: packages/safety/redact/src/index.ts, line: 284, contains: "export function redactJson" }
+    - { path: packages/safety/redact/src/index.ts, line: 259, contains: "export function detectSecrets" }
+    - { path: packages/safety/redact/src/index.ts, line: 271, contains: "export function redactString" }
+    - { path: packages/safety/redact/src/index.ts, line: 288, contains: "export function redactJson" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 206, contains: "redactJson(trace.attrs)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 344, contains: "redactJson(span.attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 397, contains: "redactJson(attrs, extraRedactPatterns)" }

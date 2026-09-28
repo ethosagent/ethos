@@ -431,3 +431,34 @@ describe('redactString — V3-9 URL credentials', () => {
     expect(redactString(text)).toBe(text);
   });
 });
+
+// V4-1. The V3-9 guard exempted any password whose FIRST character was `$`,
+// `%`, `<`, `*` or `{`. A real password can start with `$`, and one whose
+// first character is URL-reserved must be percent-encoded, so it starts `%`.
+// Only whole template shapes are exempt now.
+describe('redactString — V4-1 URL template shapes, not first characters', () => {
+  it.each([
+    ['postgres://app:', `${'$'}ecretP4ss`, '@db'],
+    ['postgres://app:', '%40ctualSecret', '@db'],
+    ['mysql://u:', '*secretish9', '@h'],
+    ['postgres://app:', '*S3cret!!', '@db/app'],
+    ['postgres://app:', '{S3cretPass}', '@db/app'],
+    ['postgres://app:', `${'$'}{half`, '@db'],
+    ['postgres://app:', '<notclosed', '@db'],
+  ])('redacts %s%s…', (prefix, value, suffix) => {
+    const text = `${prefix}${value}${suffix}`;
+    expect(redactString(text)).toBe(`${prefix}[REDACTED:url-credential]${suffix}`);
+    expect(detectSecrets(text).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    `postgres://${'$'}{DB_USER}:${'$'}{DB_PASS}@h`,
+    `postgres://u:${'$'}DB_PASS@h`,
+    'postgres://u:{{pass}}@h',
+    'postgres://u:<password>@h',
+    'postgres://u:%(pw)s@h',
+    'postgres://u:***@h',
+  ])('leaves the template %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
+  });
+});

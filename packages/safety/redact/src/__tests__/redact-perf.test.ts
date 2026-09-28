@@ -90,6 +90,15 @@ const ADVERSARIAL: Array<[string, (n: number) => string]> = [
   ['repeated empty-user URLs', (n) => fill('r://:', '', '', n)],
   ['repeated templated URLs', (n) => fill(`p://${'$'}{U}:${'$'}{P}`, '', '', n)],
   ['x-run password with no @', (n) => fill('x', 'https://u:', '', n)],
+  // V4-1 additions: each template-shape alternative, unterminated.
+  ['dollar-brace run with no close', (n) => fill('a', `https://u:${'$'}{`, '', n)],
+  ['$VAR run with no @', (n) => fill('A', `https://u:${'$'}`, '', n)],
+  ['{{ run with no }}', (n) => fill('a', 'https://u:{{', '', n)],
+  ['%( run with no )s', (n) => fill('a', 'https://u:%(', '', n)],
+  ['%NAME run with no %', (n) => fill('a', 'https://u:%', '', n)],
+  ['< run with no >', (n) => fill('a', 'https://u:<', '', n)],
+  ['* run with no @', (n) => fill('*', 'https://u:', '', n)],
+  ['repeated template passwords', (n) => fill(`a://u:${'$'}{P}`, '', '', n)],
 ];
 
 function timeMs(fn: () => void): number {

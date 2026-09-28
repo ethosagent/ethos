@@ -112,15 +112,19 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   // commits at the first `:` and fails at the first `/` — linear, and
   // `https://host:8080/…` and `ssh://git@host/…` do not match.
   // V3-9: the user part may be empty (`redis://:pass@host`), and a templated
-  // or placeholder password is left alone — one starting `$` (`${DB_PASS}`,
-  // `$VAR`), `%` (`%(pw)s`, `%PW%`), `<`, `{` (`{{ pw }}`) or `*`, or one that
-  // is all `*` or all `x` — so a patch to a config file still matches its text.
-  // Pinned by the 'V3-9' cases in __tests__/redact-roster-s13.test.ts.
+  // or placeholder password is left alone, so a patch to a config file still
+  // matches its text. V4-1: exempt only when the WHOLE password (up to the `@`)
+  // is one template shape — `${…}`, `$VAR_NAME` (upper-case, the env-var
+  // convention), `{{…}}`, `%(name)s`, `%NAME%`, `<…>`, or all `*` / all `x`.
+  // A first character alone proves nothing: `$ecretP4ss` is a real password,
+  // and a password starting with a URL-reserved symbol is percent-encoded
+  // (`%40…`). Pinned by the 'V3-9' and 'V4-1' cases in
+  // __tests__/redact-roster-s13.test.ts.
   {
     label: 'URL credentials',
     tag: '$<pre>[REDACTED:url-credential]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<pre>\b[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s/@:]{0,256}:)(?!\[REDACTED:)(?![$%<*{])(?![xX]{1,256}@)[^\s/@]{1,256}(?=@)/g,
+    regex: /(?<pre>\b[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s/@:]{0,256}:)(?!\[REDACTED:)(?!(?:\$\{[^\s}@]{1,64}\}|\$[A-Z_][A-Z0-9_]{0,63}|\{\{[^\s}@]{1,64}\}\}|%\([A-Za-z_][A-Za-z0-9_]{0,63}\)s|%[A-Za-z_][A-Za-z0-9_]{0,63}%|<[^\s<>@]{1,64}>|\*{1,256}|[xX]{1,256})@)[^\s/@]{1,256}(?=@)/g,
   },
   {
     label: 'Slack token',
