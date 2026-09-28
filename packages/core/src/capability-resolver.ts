@@ -1,5 +1,3 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { NetworkPolicy } from '@ethosagent/safety-network';
 import {
   type DefinitionWriteFloor,
@@ -12,10 +10,10 @@ import {
   type ToolContext,
   type TurnAudience,
 } from '@ethosagent/types';
-import { privateMemoryDenyFor } from './agent-loop/audience';
+import { defaultEthosStateDirs, privateMemoryDenyFor } from './agent-loop/audience';
 import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
 import { type SafeFetchFn, ScopedFetchImpl } from './scoped/scoped-fetch';
-import { ScopedFsImpl } from './scoped/scoped-fs';
+import { ScopedFsImpl, withRealPaths } from './scoped/scoped-fs';
 import { ScopedProcessImpl } from './scoped/scoped-process';
 import { ScopedSecretsImpl } from './scoped/scoped-secrets';
 
@@ -52,8 +50,9 @@ export interface CapabilityBackends {
    * dir, handed to EVERY `ScopedFsImpl` built here. Wiring passes
    * `personalityDefinitionFloor()` from `@ethosagent/storage-fs` — the same
    * predicate `ScopedStorage` applies on its own, so the two boundaries agree.
-   * Absent → the floor over the default `~/.ethos` state dir, failing closed on
-   * the common layout like `privateMemoryRoots`.
+   * Absent → the floor over `defaultEthosStateDirs()` (`~/.ethos` and
+   * `ETHOS_STATE_DIR`) with their realpaths, failing closed on the common
+   * layout like `privateMemoryRoots`.
    */
   definitionWriteFloor?: DefinitionWriteFloor;
   /**
@@ -82,8 +81,9 @@ export interface CapabilityBackends {
    * Where private memory lives (plan personality-memory-boundary G1-5). On a
    * call whose `CapabilityScopeIds.roomAudience` is `'shared'`, every
    * `ScopedFsImpl` built here refuses those files (`privateMemoryDenyFor`,
-   * ./agent-loop/audience.ts). Absent → the default `~/.ethos` state dir, so
-   * a host that forgets to wire it fails closed on the common layout.
+   * ./agent-loop/audience.ts), which always adds `~/.ethos`, `ETHOS_STATE_DIR`
+   * and the realpaths of every root. Absent → that default set, so a host that
+   * forgets to wire it fails closed on the common layout.
    */
   privateMemoryRoots?: PrivateMemoryRoots;
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
@@ -135,7 +135,8 @@ export function resolveCapabilities(
   const sharedDeny = privateMemoryDenyFor(scopeIds.roomAudience, backends.privateMemoryRoots);
   // G2-pre B — no call's `scopedFs` writes any personality's definition.
   const definitionFloor =
-    backends.definitionWriteFloor ?? personalityDefinitionWriteFloor([join(homedir(), '.ethos')]);
+    backends.definitionWriteFloor ??
+    personalityDefinitionWriteFloor(withRealPaths(defaultEthosStateDirs()));
 
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;

@@ -23,5 +23,7 @@ export {
 export {
   ethosStateDirs,
   personalityDefinitionFloor,
+  realPathOfLongestExistingAncestor,
   sensitiveDenyPaths,
+  withRealPaths,
 } from './sensitive-paths';

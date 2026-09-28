@@ -75,3 +75,27 @@ describe('personalityDefinitionWriteFloor', () => {
     expect(floor(`${ALT}/personalities/a`, 'subtree')).toBe(true);
   });
 });
+
+// Verification round A1 — case variants fail closed (on a case-insensitive
+// file system `Toolset.yaml` IS `toolset.yaml`).
+describe('isPersonalityDefinitionPath — case variants', () => {
+  it.each([
+    `${HOME}/personalities/a/Toolset.yaml`,
+    `${HOME}/personalities/a/TOOLSET.yaml`,
+    `${HOME}/personalities/a/soul.md`,
+    `${HOME}/personalities/a/Config.YAML`,
+    `${HOME}/personalities/a/Skills/x/SKILL.md`,
+    `${HOME}/PERSONALITIES/a/toolset.yaml`,
+    '/home/u/.ETHOS/personalities/a/toolset.yaml',
+    '/SRV/Ethos-State/personalities/a/mcp.yaml',
+  ])('%s is a definition entry', (path) => {
+    expect(isPersonalityDefinitionPath(path, DIRS)).toBe(true);
+  });
+
+  it('a case-variant ancestor is refused for remove/rename; files/ stays open', () => {
+    expect(containsPersonalityDefinitionPath('/home/u/.ETHOS/Personalities/a', DIRS)).toBe(true);
+    expect(isPersonalityDefinitionPath(`${HOME}/personalities/a/FILES/toolset.yaml`, DIRS)).toBe(
+      false,
+    );
+  });
+});

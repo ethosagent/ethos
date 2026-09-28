@@ -72,9 +72,9 @@ register_anchors:
 
   G-FS:
     - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 140, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 182, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 181, contains: "private check(rawPath" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 154, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 199, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 225, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
@@ -163,14 +163,14 @@ register_anchors:
   # and G-FS and a kernel path is cited by exactly one row, so the register
   # names them in prose without a line anchor.
   G-MEM:
-    - { path: packages/core/src/agent-loop/audience.ts, line: 82, contains: "export function resolveTurnAudience" }
-    - { path: packages/core/src/agent-loop/audience.ts, line: 166, contains: "export function privateMemoryDenyFor" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 83, contains: "export function resolveTurnAudience" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 186, contains: "export function privateMemoryDenyFor" }
     - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 131, contains: "resolveTurnAudience(opts.roomAudience" }
     - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 229, contains: "privateMemoryDenyFor(roomAudience" }
     - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 456, contains: "withSharedAudienceExclusions(" }
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 329, contains: "memoryFlushForbidden(ctx.roomAudience" }
-    - { path: packages/types/src/memory-paths.ts, line: 120, contains: "export function isPrivateMemoryPath" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 232, contains: "this.hitsDenyWhen(next)" }
+    - { path: packages/types/src/memory-paths.ts, line: 140, contains: "export function isPrivateMemoryPath" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 279, contains: "this.hitsDenyWhen(next)" }
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and

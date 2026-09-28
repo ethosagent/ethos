@@ -8,13 +8,14 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import {
   BoundaryError,
+  foldForDeny,
   type PrivatePathDeny,
   type Storage,
   type StorageDirEntry,
   type StorageRemoveOptions,
   type StorageWriteOptions,
 } from '@ethosagent/types';
-import { personalityDefinitionFloor } from './sensitive-paths';
+import { personalityDefinitionFloor, realPathOfLongestExistingAncestor } from './sensitive-paths';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -84,6 +85,12 @@ const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
  *      Layer 3 walks the path segment by segment BELOW the matched prefix
  *      and follows any link it finds, re-judging layers 1, 1b and 2 against
  *      where the link actually lands (G11).
+ *   4. real target (`checkRealTarget`) — layers 1, 1b and 1c once more,
+ *      against the realpath of the path's longest existing ancestor
+ *      (`realPathOfLongestExistingAncestor`, ./sensitive-paths.ts), so a link
+ *      ABOVE the matched prefix (a cwd or state dir that is a symlink) cannot
+ *      carry a write onto a denied file under its real name; a path that
+ *      cannot be resolved is refused (verification round A2).
  *
  * This closes **misdirection**, not **TOCTOU**: an attacker who can swap a
  * path between this walk and the subsequent open still wins, and closing
@@ -114,7 +121,12 @@ const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
  *
  * Prefixes are matched literally — there is no glob expansion. Pass paths
  * that end in `/` for directory scopes; ScopedStorage normalizes them so
- * `/a/b` does not also match `/a/bc/`.
+ * `/a/b` does not also match `/a/bc/`. DENY prefixes (`alwaysDeny`,
+ * `writeDeny`) are matched case- and normalization-folded (`foldForDeny`,
+ * @ethosagent/types) because on a case-insensitive file system `~/.SSH` and
+ * `Toolset.yaml` name the denied files; ALLOW prefixes are matched exactly,
+ * so folding never widens what is reachable. Mirror of `ScopedFsImpl`'s
+ * `hitsDenyFloor` / `matchesAny` — the two MUST change together.
  */
 export class ScopedStorage implements Storage {
   private readonly readPrefixes: string[];
@@ -154,7 +166,7 @@ export class ScopedStorage implements Storage {
   private hitsWriteDeny(path: string, kind: 'read' | 'write'): boolean {
     return (
       kind === 'write' &&
-      (isPathAllowed(path, this.writeDenyPrefixes) || this.definitionFloor(path, 'access'))
+      (matchesDenyPrefix(path, this.writeDenyPrefixes) || this.definitionFloor(path, 'access'))
     );
   }
 
@@ -166,15 +178,47 @@ export class ScopedStorage implements Storage {
    */
   private checkSubtree(rawPath: string): void {
     const path = resolve(rawPath);
-    const withSlash = path.endsWith('/') ? path : `${path}/`;
-    if (
-      this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash)) ||
-      this.definitionFloor(path, 'subtree')
-    ) {
-      throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+    // Judged on the lexical path and on where it really is (layer 4); a
+    // path that cannot be resolved was already refused by `check`.
+    const real = realPathOfLongestExistingAncestor(path);
+    for (const form of real === null || real === path ? [path] : [path, real]) {
+      const folded = foldForDeny(form.endsWith('/') ? form : `${form}/`);
+      if (
+        this.writeDenyPrefixes.some((entry) => foldForDeny(resolve(entry)).startsWith(folded)) ||
+        this.definitionFloor(form, 'subtree')
+      ) {
+        throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+      }
+      if (this.denyWhen?.(form, 'subtree')) {
+        throw new BoundaryError('write', path, [], SHARED_AUDIENCE_DENY_REASON);
+      }
     }
-    if (this.denyWhen?.(path, 'subtree')) {
-      throw new BoundaryError('write', path, [], SHARED_AUDIENCE_DENY_REASON);
+  }
+
+  /**
+   * Layer 4 — the deny layers again, on where `path` really lands (the
+   * realpath of its longest existing ancestor). Run last, once the symlink
+   * walk found nothing more to follow: that walk only follows links BELOW
+   * the matched prefix, and a prefix itself reached through a link (a
+   * symlinked state dir or cwd) would otherwise let
+   * `~/dot/ethos/personalities/a/toolset.yaml` pass as an ordinary path. The
+   * resolved target is never named in the error. Mirror of layer 4 in
+   * `ScopedFsImpl.checkReach` (packages/core/src/scoped/scoped-fs.ts).
+   */
+  private checkRealTarget(path: string, kind: 'read' | 'write', allowed: readonly string[]): void {
+    const real = realPathOfLongestExistingAncestor(path);
+    if (real === null) {
+      throw new BoundaryError(kind, path, allowed, 'cannot be resolved to a real path');
+    }
+    if (real === path) return;
+    if (matchesDenyPrefix(real, this.denyPrefixes)) {
+      throw new BoundaryError(kind, path, this.denyPrefixes, 'always-deny floor');
+    }
+    if (this.hitsWriteDeny(real, kind)) {
+      throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+    }
+    if (this.hitsDenyWhen(real)) {
+      throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
     }
   }
 
@@ -182,7 +226,7 @@ export class ScopedStorage implements Storage {
     // Normalize the path before checking against prefixes so that `..`
     // segments cannot bypass the prefix-based allowlist.
     const path = resolve(rawPath);
-    if (isPathAllowed(path, this.denyPrefixes)) {
+    if (matchesDenyPrefix(path, this.denyPrefixes)) {
       throw new BoundaryError(kind, path, this.denyPrefixes, 'always-deny floor');
     }
     if (this.hitsWriteDeny(path, kind)) {
@@ -212,9 +256,12 @@ export class ScopedStorage implements Storage {
     let current = path;
     for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
       const next = followFirstSymlink(prefix, current);
-      if (next === null) return;
+      if (next === null) {
+        this.checkRealTarget(path, kind, allowed);
+        return;
+      }
       const nextPrefix = matchAllowedPrefix(next, allowed);
-      if (nextPrefix === null || isPathAllowed(next, this.denyPrefixes)) {
+      if (nextPrefix === null || matchesDenyPrefix(next, this.denyPrefixes)) {
         throw new BoundaryError(
           kind,
           path,
@@ -319,12 +366,19 @@ export class ScopedStorage implements Storage {
 function normalizePrefix(prefix: string): string {
   // A prefix matches any path where prefix is followed by '/' or end-of-string,
   // OR where the path equals the prefix exactly. We keep the prefix as-given
-  // (with or without trailing slash) and handle the boundary in isPathAllowed.
+  // (with or without trailing slash) and handle the boundary in matchAllowedPrefix.
   return prefix;
 }
 
-function isPathAllowed(path: string, prefixes: readonly string[]): boolean {
-  return matchAllowedPrefix(path, prefixes) !== null;
+/**
+ * True when `path` equals, or lies under, one of the DENY `prefixes`, compared
+ * case- and normalization-folded (`foldForDeny`). Deny-only: allow prefixes
+ * go through the exact {@link matchAllowedPrefix}.
+ */
+function matchesDenyPrefix(path: string, prefixes: readonly string[]): boolean {
+  if (prefixes.length === 0) return false;
+  const folded = foldForDeny(path);
+  return matchAllowedPrefix(folded, prefixes.map(foldForDeny)) !== null;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   type ExecSession,
   type ExecutionBackend,
   type ExecutionBackendConfig,
+  foldForDeny,
   isPersonalityDefinitionPath,
   type Logger,
   type MountSpec,
@@ -253,6 +254,17 @@ function realPathOrLexical(hostPath: string): string {
   } catch {
     return hostPath;
   }
+}
+
+/**
+ * Whether bind-mount sources on this host resolve case-insensitively: macOS
+ * and Windows by default (APFS/NTFS, as Docker Desktop shares them). Decided
+ * by platform, not probed — a probe of one directory says nothing about the
+ * next. LIMITATION: a Linux host with case-folding directories (ext4
+ * `casefold`) is treated as case-sensitive.
+ */
+function defaultHostFoldsCase(): boolean {
+  return process.platform === 'darwin' || process.platform === 'win32';
 }
 
 /** True when `path` equals `prefix` or is nested under it (path-segment safe). */
@@ -1167,6 +1179,8 @@ export class DockerExecutionBackend implements ExecutionBackend {
   private pendingInspections = 0;
   /** Set once a container ran that no inspection could read. */
   private uninspectedContainer = false;
+  /** Whether host paths are case-insensitive (see `defaultHostFoldsCase`). */
+  private readonly hostFoldsCase: () => boolean;
 
   constructor(
     ctx: { config: ExecutionBackendConfig; secrets: SecretsResolver; logger: Logger },
@@ -1174,8 +1188,10 @@ export class DockerExecutionBackend implements ExecutionBackend {
     checkStorageDriver?: () => Promise<StorageDriverInfo | null>,
     probeQuota?: (image: string, diskMb: number) => Promise<boolean>,
     inspectContainer?: (name: string) => Promise<unknown>,
+    hostFoldsCase?: () => boolean,
   ) {
     this.config = ctx.config;
+    this.hostFoldsCase = hostFoldsCase ?? defaultHostFoldsCase;
     this.checkAvailable = checkAvailable ?? defaultDockerInfoCheck;
     this.logger = ctx.logger;
     this.checkStorageDriver = checkStorageDriver ?? defaultStorageDriverCheck;
@@ -1364,42 +1380,77 @@ export class DockerExecutionBackend implements ExecutionBackend {
 
     const within = (child: string, parent: string): boolean =>
       child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+    // Deny-side containment, case- and normalization-folded (`foldForDeny`,
+    // @ethosagent/types): on a case-insensitive host `~/.ETHOS/learning` IS
+    // `~/.ethos/learning`. Used only to decide what becomes read-only, never
+    // to grant a rw mount (verification round A1/A6).
+    const withinFolded = (child: string, parent: string): boolean =>
+      within(foldForDeny(child), foldForDeny(parent));
     const writeDeny = personalityWriteDeny(ethosHome, p.id).map((d) => resolvePath(d));
     const home = resolvePath(ethosHome);
-    const personalitiesDir = join(home, 'personalities');
-    const learningDir = join(home, 'learning');
+    // The state dir by its lexical name AND its realpath: Docker binds the
+    // real directory, so a rw mount reaching `~/dot/ethos` must be judged
+    // against the real state dir too when `~/.ethos` is a symlink to it.
+    const homes = [...new Set([home, realPathOrLexical(home)])];
     const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
     // G2-pre B — a rw mount AT another personality's directory, at or below
     // ANY personality's definition entry, or at or below `learning`.
     const floored = (path: string): boolean =>
-      writeDeny.some((deny) => within(path, deny)) ||
-      isPersonalityDefinitionPath(path, [home]) ||
-      (path !== ownDir && dirname(path) === personalitiesDir) ||
-      within(path, learningDir);
+      writeDeny.some((deny) => withinFolded(path, deny)) ||
+      isPersonalityDefinitionPath(path, homes) ||
+      homes.some(
+        (h) =>
+          // `path !== ownDir` is exact on purpose: a case variant of the
+          // caller's own directory is floored, never exempted.
+          (path !== ownDir &&
+            foldForDeny(dirname(path)) === foldForDeny(join(h, 'personalities'))) ||
+          withinFolded(path, join(h, 'learning')),
+      );
     for (const [path, mount] of byPath) {
       if (mount.mode === 'rw' && floored(path)) {
         byPath.set(path, { ...mount, mode: 'ro' });
       }
     }
     const coveredRw = (dir: string): boolean =>
-      [...byPath.values()].some((m) => m.mode === 'rw' && within(dir, m.hostPath));
-    // Judged BEFORE `personalities/` turns ro: a declared rw
+      [...byPath.values()].some((m) => m.mode === 'rw' && withinFolded(dir, m.hostPath));
+    // Judged BEFORE `personalities/` turns ro, and EXACTLY (not folded): the
+    // caller's rw `files/` below is a grant, so it follows only a rw mount
+    // that really covers `ownDir` on every host. A declared rw
     // `${ETHOS_HOME}/personalities/` still earns the caller its rw `files/`.
-    const coversOwnDir = coveredRw(ownDir);
-    if (coveredRw(personalitiesDir)) {
-      byPath.set(personalitiesDir, {
-        hostPath: personalitiesDir,
-        containerPath: personalitiesDir,
-        mode: 'ro',
-      });
-    }
-    if (coveredRw(learningDir)) {
-      byPath.set(learningDir, { hostPath: learningDir, containerPath: learningDir, mode: 'ro' });
+    const coversOwnDir = [...byPath.values()].some(
+      (m) => m.mode === 'rw' && within(ownDir, m.hostPath),
+    );
+    const guards: string[] = [];
+    for (const h of homes) {
+      for (const guard of [join(h, 'personalities'), join(h, 'learning')]) {
+        if (!coveredRw(guard)) continue;
+        byPath.set(guard, { hostPath: guard, containerPath: guard, mode: 'ro' });
+        guards.push(guard);
+      }
     }
     if (coversOwnDir) {
       byPath.set(ownDir, { hostPath: ownDir, containerPath: ownDir, mode: 'ro' });
-      add(join(ownDir, 'files'), 'rw');
+      guards.push(ownDir);
     }
+    // verification round A6 — a ro guard nested in a rw mount holds only for
+    // the exact spelling of the path between them: on a case-insensitive host
+    // (macOS/Windows Docker Desktop shares) `<rw>/.ETHOS/personalities/…`
+    // walks the rw parent to the same host file and never meets the ro mount.
+    // There, a rw mount that strictly contains a guard (or is a case variant
+    // of one) is downgraded to ro. The caller's own `files/` is added after,
+    // so it stays rw. Pinned by the case-insensitive cases in mounts.test.ts.
+    if (this.hostFoldsCase()) {
+      for (const [path, mount] of byPath) {
+        if (mount.mode !== 'rw') continue;
+        if (guards.some((g) => g !== path && withinFolded(g, path))) {
+          byPath.set(path, { ...mount, mode: 'ro' });
+          this.logger.warn(
+            `docker: rw mount ${path} contains the Ethos state dir on a case-insensitive host; mounted read-only so a case-variant path cannot bypass the read-only personality and learning mounts`,
+          );
+        }
+      }
+    }
+    if (coversOwnDir) add(join(ownDir, 'files'), 'rw');
     return [...byPath.values()];
   }
 

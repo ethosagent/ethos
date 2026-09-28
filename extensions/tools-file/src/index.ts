@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { PERSONALITY_DEFINITION_ENTRIES } from '@ethosagent/core';
-import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
-import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import { personalityDefinitionFloor, sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import {
+  foldForDeny,
+  type ScopedFs,
+  type Tool,
+  type ToolContext,
+  type ToolResult,
+} from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,22 +71,21 @@ function writeEvidence(
   };
 }
 
+/** Case-folded like every deny (`foldForDeny`, @ethosagent/types): `~/.SSH` is `~/.ssh` on macOS. */
 export function isWriteBlocked(abs: string): boolean {
-  const normalized = resolve(abs);
-  if (BLOCKED_WRITE_PATHS.some((p) => resolve(p) === normalized)) return true;
+  const normalized = foldForDeny(resolve(abs));
+  if (BLOCKED_WRITE_PATHS.some((p) => foldForDeny(resolve(p)) === normalized)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => {
-    const np = resolve(prefix);
+    const np = foldForDeny(resolve(prefix));
     return normalized === np || normalized.startsWith(`${np}/`);
   });
 }
 
 /**
- * True when `abs` is one of a personality's own DEFINITION entries —
- * `${ethosHome}/personalities/<id>/<entry>` for any
- * `PERSONALITY_DEFINITION_ENTRIES` entry (`@ethosagent/core`), or anything
- * below a directory entry (`skills/`). `ethosHome` is `~/.ethos` and, when
- * set, `ETHOS_STATE_DIR` (the same override `ethosDir()` in
- * `@ethosagent/config` honours), read per call.
+ * True when `abs` is ANY personality's definition entry under any Ethos state
+ * dir — the same predicate the boundaries apply (`personalityDefinitionFloor`,
+ * packages/storage-fs/src/sensitive-paths.ts, over `ethosStateDirs()`: case-
+ * folded, `ETHOS_STATE_DIR` and realpaths included), not a copy of it.
  *
  * Defence in depth plus a better message, NOT the enforcer: the write is
  * refused at the boundary by `ScopedFsImpl.checkReach`
@@ -89,20 +93,8 @@ export function isWriteBlocked(abs: string): boolean {
  * calling personality and the injected `definitionWriteFloor` for every
  * personality directory (plan personality-memory-boundary G2-pre B).
  */
-export function isPersonalityDefinitionPath(abs: string): boolean {
-  const normalized = resolve(abs);
-  const homes = [join(homedir(), '.ethos')];
-  const override = process.env.ETHOS_STATE_DIR;
-  if (override) homes.push(resolve(override));
-  for (const home of homes) {
-    const root = `${join(home, 'personalities')}/`;
-    if (!normalized.startsWith(root)) continue;
-    // [<id>, <entry>, ...rest]
-    const entry = normalized.slice(root.length).split('/')[1];
-    if (entry === undefined) continue;
-    if (PERSONALITY_DEFINITION_ENTRIES.some((e) => e.replace(/\/$/, '') === entry)) return true;
-  }
-  return false;
+function isDefinitionWrite(abs: string): boolean {
+  return personalityDefinitionFloor()(resolve(abs), 'access');
 }
 
 function definitionWriteRefused(abs: string): ToolResult {
@@ -400,7 +392,7 @@ export const writeFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
-    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
+    if (isDefinitionWrite(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return {
         ok: false,
@@ -499,7 +491,7 @@ export const patchFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
-    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
+    if (isDefinitionWrite(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }

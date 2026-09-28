@@ -7,6 +7,16 @@
 // dependency-free like ./memory-paths.ts: string operations only, no
 // `node:path`. Callers pass ABSOLUTE, already-resolved paths (both boundaries
 // `resolve()` before asking); a `..` segment is not interpreted here.
+//
+// Every comparison is case- and normalization-folded (`foldForDeny`,
+// ./deny-fold.ts): on a case-insensitive file system `Toolset.yaml` IS
+// `toolset.yaml` and `~/.ETHOS` IS `~/.ethos`, and this module only answers
+// deny questions, so folding can only refuse more. State dirs are matched
+// lexically; a caller passes every form it knows (`ethosStateDirs` in
+// packages/storage-fs/src/sensitive-paths.ts adds each dir's realpath), and
+// both boundaries also judge the realpath of the target.
+
+import { foldForDeny } from './deny-fold';
 
 /**
  * The entries directly under a personality's directory that DEFINE it:
@@ -55,9 +65,14 @@ export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
  */
 export type DefinitionWriteFloor = (absPath: string, op: 'access' | 'subtree') => boolean;
 
-/** Segments of an absolute path with empty segments (doubled or trailing `/`) dropped. */
+/**
+ * Segments of an absolute path with empty segments (doubled or trailing `/`)
+ * dropped, each folded by `foldForDeny`.
+ */
 function segmentsOf(absPath: string): string[] {
-  return absPath.split('/').filter((s) => s.length > 0 && s !== '.');
+  return foldForDeny(absPath)
+    .split('/')
+    .filter((s) => s.length > 0 && s !== '.');
 }
 
 /**
@@ -72,9 +87,9 @@ function segmentsBelow(absPath: string, root: string): string[] | null {
   return path.slice(base.length);
 }
 
-/** Entry names without the directory marker: `skills/` → `skills`. */
+/** Entry names without the directory marker (`skills/` → `skills`), folded. */
 const ENTRY_NAMES: readonly string[] = PERSONALITY_DEFINITION_ENTRIES.map((e) =>
-  e.endsWith('/') ? e.slice(0, -1) : e,
+  foldForDeny(e.endsWith('/') ? e.slice(0, -1) : e),
 );
 
 /**

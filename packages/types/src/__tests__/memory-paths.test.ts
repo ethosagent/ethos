@@ -145,3 +145,33 @@ describe('privateMemoryPathDeny', () => {
     expect(deny(own, 'subtree')).toBe(true);
   });
 });
+
+// Verification round A1 — case variants fail closed (on a case-insensitive
+// file system they ARE the private files).
+describe('isPrivateMemoryPath — case variants', () => {
+  it.each([
+    `${own}/memory.md`,
+    `${own}/Memory.MD`,
+    `${own}/user.md`,
+    `${own}/MEMORY-history.jsonl`,
+    `${own}/History-Blobs/a.md`,
+    `${HOME}/Users/u1/USER.md`,
+    `${HOME}/TEAMS/core/Memory/decisions.md`,
+    `${HOME}/Memory.db-wal`,
+    '/home/u/.ETHOS/personalities/lean/MEMORY.md',
+    `${own.replace('personalities', 'PERSONALITIES')}/MEMORY.md`,
+    '/notes/VAULT/journal.md',
+  ])('%s is private', (path) => {
+    expect(isPrivateMemoryPath(path, roots)).toBe(true);
+  });
+
+  it('a case-variant directory holding memory is refused for remove/rename', () => {
+    expect(containsPrivateMemoryPath('/home/u/.ETHOS/Personalities/lean', roots)).toBe(true);
+    expect(containsPrivateMemoryPath('/HOME/U', roots)).toBe(true);
+  });
+
+  it('non-memory files stay reachable in any case', () => {
+    expect(isPrivateMemoryPath(`${own}/FILES/logo.png`, roots)).toBe(false);
+    expect(isPrivateMemoryPath(`${own}/Soul.md`, roots)).toBe(false);
+  });
+});

@@ -7,14 +7,15 @@
 // Sync (`lstatSync`, not `fs/promises`) because `checkReach` is synchronous
 // and called from both sync and async paths; making it async would ripple
 // through the whole `ScopedFs` contract for no security gain.
-import { lstatSync, readlinkSync } from 'node:fs';
-import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
-import type {
-  DefinitionWriteFloor,
-  PrivatePathDeny,
-  ScopedFs,
-  ScopedFsEntry,
-  Storage,
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, normalize, relative, resolve, sep } from 'node:path';
+import {
+  type DefinitionWriteFloor,
+  foldForDeny,
+  type PrivatePathDeny,
+  type ScopedFs,
+  type ScopedFsEntry,
+  type Storage,
 } from '@ethosagent/types';
 
 /** Bound on symlink hops followed while validating a single path. */
@@ -61,12 +62,25 @@ const SHARED_DENY_WHY = 'private memory is not reachable from a shared conversat
  *     resolved at registration time. Paths outside the allow set are
  *     rejected with `PATH_NOT_REACHABLE`.
  *
+ *
+ * Deny comparisons (layers 1 and 1b's path list) are case- and
+ * normalization-folded (`foldForDeny`, @ethosagent/types) — on a
+ * case-insensitive file system `Toolset.yaml` IS `toolset.yaml`. The allow
+ * match stays exact, so folding never widens reach. Mirror of
+ * `matchesDenyPrefix` in `packages/storage-fs/src/scoped-storage.ts`.
+ *
  *  3. **Symbolic containment** — layers 1 and 2 are lexical, and
  *     `normalize(resolve())` is a string operation while a symlink is a
  *     filesystem fact. A link planted inside an allowed prefix pointing
  *     outside it passes both. Layer 3 walks the path segment by segment
  *     below the matched prefix and follows any link it finds, re-judging
  *     layers 1 and 2 against where the link actually lands.
+ *
+ *  4. **Real target** (`checkRealTarget`) — layers 1, 1b and 1c again,
+ *     against the realpath of the path's longest existing ancestor
+ *     ({@link realPathOfLongestExistingAncestor}), so a link ABOVE the matched
+ *     prefix (a symlinked state dir or cwd) cannot carry a write onto a denied
+ *     file under its real name. Unresolvable → refused (verification round A2).
  *
  * This closes **misdirection**, not **TOCTOU**: an attacker who can swap a
  * path between this walk and the subsequent open still wins, and closing
@@ -175,7 +189,10 @@ export class ScopedFsImpl implements ScopedFs {
     let current = canonical;
     for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
       const next = followFirstSymlink(prefix, current);
-      if (next === null) return;
+      if (next === null) {
+        this.checkRealTarget(canonical, path, kind);
+        return;
+      }
       const nextPrefix = matchAllowedPrefix(next, allowed);
       if (nextPrefix === null || this.hitsDenyFloor(next)) {
         throw new Error(
@@ -201,6 +218,30 @@ export class ScopedFsImpl implements ScopedFs {
     );
   }
 
+  /**
+   * Layer 4 — the deny layers on where the path really lands, run once the
+   * symlink walk has nothing more to follow. Mirror of
+   * `ScopedStorage.checkRealTarget` (packages/storage-fs/src/scoped-storage.ts).
+   */
+  private checkRealTarget(canonical: string, path: string, kind: string): void {
+    const real = realPathOfLongestExistingAncestor(canonical);
+    if (real === null) {
+      throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" cannot be resolved to a real path`);
+    }
+    if (real === canonical) return;
+    if (this.hitsDenyFloor(real)) {
+      throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" hits the always-deny floor`);
+    }
+    if (this.hitsWriteDeny(real, kind)) {
+      throw new Error(
+        `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
+      );
+    }
+    if (this.hitsDenyWhen(real)) {
+      throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" refused — ${SHARED_DENY_WHY}`);
+    }
+  }
+
   private hitsDenyWhen(canonical: string): boolean {
     return this.denyWhen?.(canonical, 'access') ?? false;
   }
@@ -214,15 +255,78 @@ export class ScopedFsImpl implements ScopedFs {
   }
 
   private hitsDenyFloor(canonical: string): boolean {
-    return this.denyPaths.some(
-      (deny) => canonical === deny || canonical.startsWith(deny.endsWith('/') ? deny : `${deny}/`),
-    );
+    return matchesAny(canonical, this.denyPaths);
   }
 }
 
-/** True when `canonical` equals, or lies under, one of the canonical `paths`. */
+/**
+ * True when `canonical` equals, or lies under, one of the canonical DENY
+ * `paths`, compared case- and normalization-folded (`foldForDeny`). Deny-only.
+ */
 function matchesAny(canonical: string, paths: readonly string[]): boolean {
-  return paths.some((p) => canonical === p || canonical.startsWith(p.endsWith('/') ? p : `${p}/`));
+  const c = foldForDeny(canonical);
+  return paths.some((raw) => {
+    const p = foldForDeny(raw);
+    return c === p || c.startsWith(p.endsWith('/') ? p : `${p}/`);
+  });
+}
+
+/** Bound on the combined parent steps and symlink hops of one resolution. */
+const MAX_RESOLVE_STEPS = 256;
+
+/**
+ * The realpath of `path`'s longest existing ancestor with the missing tail
+ * re-appended — where a write to `path` would actually land. A dangling
+ * symlink on the way is followed to its target. Null when the path cannot be
+ * resolved (an error other than ENOENT/ENOTDIR, or too many steps); callers
+ * deciding a deny refuse on null.
+ *
+ * Deliberate DUPLICATE of `realPathOfLongestExistingAncestor` in
+ * `packages/storage-fs/src/sensitive-paths.ts` (core may not import
+ * storage-fs at runtime, ARCHITECTURE.md §II) — the two MUST change together.
+ */
+export function realPathOfLongestExistingAncestor(path: string): string | null {
+  let cursor = resolve(path);
+  const tail: string[] = [];
+  for (let step = 0; step < MAX_RESOLVE_STEPS; step++) {
+    try {
+      const real = realpathSync(cursor);
+      return tail.length === 0 ? real : join(real, ...[...tail].reverse());
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+    }
+    let isLink: boolean;
+    try {
+      isLink = lstatSync(cursor, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTDIR') return null;
+      isLink = false;
+    }
+    if (isLink) {
+      cursor = resolve(dirname(cursor), readlinkSync(cursor));
+      continue;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    tail.push(basename(cursor));
+    cursor = parent;
+  }
+  return null;
+}
+
+/**
+ * `dirs` followed by the realpath of each one not already listed — the
+ * state-dir forms a deny must know (verification round A2). Mirror of
+ * `withRealPaths` in `packages/storage-fs/src/sensitive-paths.ts`.
+ */
+export function withRealPaths(dirs: readonly string[]): string[] {
+  const out = [...dirs];
+  for (const dir of dirs) {
+    const real = realPathOfLongestExistingAncestor(dir);
+    if (real !== null && !out.includes(real)) out.push(real);
+  }
+  return out;
 }
 
 /**

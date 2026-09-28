@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BoundaryError, privateMemoryPathDeny } from '@ethosagent/types';
@@ -7,6 +7,7 @@ import { defaultAlwaysDeny } from '../default-deny';
 import { FsStorage } from '../fs-storage';
 import { InMemoryStorage } from '../in-memory-storage';
 import { ScopedStorage } from '../scoped-storage';
+import { ethosStateDirs, personalityDefinitionFloor } from '../sensitive-paths';
 
 describe('ScopedStorage', () => {
   let inner: InMemoryStorage;
@@ -559,5 +560,113 @@ describe('ScopedStorage — definition floor (every personality)', () => {
     } finally {
       await rm(elsewhere, { recursive: true, force: true });
     }
+  });
+});
+
+// Verification round A1/A2 — the deny layers fail closed on case variants
+// (on a case-insensitive file system `Toolset.yaml` IS `toolset.yaml`) and on
+// a state dir reached through a symlink. Mirror of the same block in
+// packages/core/src/__tests__/scoped-fs.test.ts.
+describe('ScopedStorage — case variants and a symlinked state dir', () => {
+  let tmp: string;
+  let state: string;
+  let own: string;
+  let other: string;
+
+  beforeEach(async () => {
+    tmp = await realpath(await mkdtemp(join(tmpdir(), 'ethos-scoped-case-')));
+    state = join(tmp, '.ethos');
+    vi.stubEnv('ETHOS_STATE_DIR', state);
+    own = join(state, 'personalities', 'bob');
+    other = join(state, 'personalities', 'alice');
+    await mkdir(join(own, 'files'), { recursive: true });
+    await mkdir(join(other, 'files'), { recursive: true });
+    await writeFile(join(other, 'toolset.yaml'), '- read_file\n');
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const everything = (root: string) => ({ read: [`${root}/`], write: [`${root}/`] });
+
+  it('refuses case variants of every definition entry (floor and writeDeny)', async () => {
+    const scoped = new ScopedStorage(new FsStorage(), {
+      ...everything(tmp),
+      alwaysDeny: defaultAlwaysDeny(),
+      writeDeny: [join(own, 'toolset.yaml'), join(own, 'skills/')],
+    });
+    for (const p of [
+      join(other, 'TOOLSET.yaml'),
+      join(other, 'Toolset.yaml'),
+      join(other, 'soul.md'),
+      join(own, 'Toolset.yaml'),
+      join(own, 'SKILLS', 'x', 'SKILL.md'),
+    ]) {
+      await expect(scoped.write(p, 'x'), p).rejects.toThrow(/operator-owned/);
+    }
+    await expect(scoped.remove(join(tmp, '.ETHOS', 'PERSONALITIES'))).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    expect(await readFile(join(other, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
+  });
+
+  it('refuses case variants of the state dir and its always-deny entries', async () => {
+    const scoped = new ScopedStorage(new FsStorage(), {
+      ...everything(tmp),
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    for (const p of [
+      join(tmp, '.ETHOS', 'keys.json'),
+      join(state, 'KEYS.JSON'),
+      join(state, 'LEARNING', 'audit.jsonl'),
+    ]) {
+      await expect(scoped.read(p), p).rejects.toThrow(/always-deny floor/);
+    }
+  });
+
+  it('refuses case variants of private memory on a shared turn', async () => {
+    const scoped = new ScopedStorage(new FsStorage(), {
+      ...everything(tmp),
+      denyWhen: privateMemoryPathDeny({ stateDirs: [state] }),
+    });
+    for (const p of [
+      join(own, 'MEMORY.md'),
+      join(own, 'memory.md'),
+      join(own, 'Memory.MD'),
+      join(state, 'Users', 'u1', 'USER.md'),
+    ]) {
+      await expect(scoped.read(p), p).rejects.toThrow(/shared-audience memory/);
+    }
+  });
+
+  it('judges the real target when the state dir or the reach is reached through a symlink', async () => {
+    const link = join(tmp, 'linked-ethos');
+    await symlink(state, link);
+    vi.stubEnv('ETHOS_STATE_DIR', link);
+    expect(ethosStateDirs()).toContain(state);
+    const reachLink = join(tmp, 'work');
+    await symlink(other, reachLink);
+    const scoped = new ScopedStorage(new FsStorage(), {
+      read: [`${state}/`, `${reachLink}/`],
+      write: [`${state}/`, `${reachLink}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+      denyWhen: privateMemoryPathDeny({ stateDirs: ethosStateDirs() }),
+    });
+    await expect(scoped.write(join(other, 'toolset.yaml'), 'x')).rejects.toThrow(/operator-owned/);
+    await expect(scoped.write(join(reachLink, 'toolset.yaml'), 'x')).rejects.toThrow(
+      /operator-owned/,
+    );
+    await expect(scoped.remove(join(reachLink, 'skills'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.read(join(reachLink, 'MEMORY.md'))).rejects.toThrow(
+      /shared-audience memory/,
+    );
+    await expect(scoped.read(join(state, 'keys.json'))).rejects.toThrow(/always-deny floor/);
+    await scoped.write(join(reachLink, 'files', 'ok.txt'), 'x');
+    expect(
+      personalityDefinitionFloor()(join(state, 'personalities', 'a', 'SOUL.md'), 'access'),
+    ).toBe(true);
+    expect(await readFile(join(other, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
   });
 });

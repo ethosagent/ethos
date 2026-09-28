@@ -1,4 +1,5 @@
-import { homedir } from 'node:os';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BoundaryError } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -111,5 +112,35 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
       BoundaryError,
     );
     expect(await scoped.read(join(other, 'toolset.yaml'))).toBe('- read_file\n');
+  });
+});
+
+// Verification round A2 — a state dir that is a symlink is also listed by its
+// real name, so the always-deny floor and the definition floor match a path
+// spelled through the real directory.
+describe('state dirs — symlinked (verification round A2)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('lists the realpath beside the lexical form, and the floors cover both', async () => {
+    const tmp = await realpath(await mkdtemp(join(tmpdir(), 'ethos-state-link-')));
+    try {
+      const real = join(tmp, 'dot', 'ethos');
+      const link = join(tmp, '.ethos');
+      await mkdir(real, { recursive: true });
+      await symlink(real, link);
+      vi.stubEnv('ETHOS_STATE_DIR', link);
+      const dirs = ethosStateDirs();
+      expect(dirs.indexOf(link)).toBeGreaterThan(-1);
+      expect(dirs.indexOf(real)).toBeGreaterThan(dirs.indexOf(link));
+      expect(sensitiveDenyPaths()).toContain(join(real, 'keys.json'));
+      expect(sensitiveDenyPaths()).toContain(join(real, 'learning'));
+      const floor = personalityDefinitionFloor();
+      expect(floor(join(real, 'personalities', 'a', 'toolset.yaml'), 'access')).toBe(true);
+      expect(floor(join(link, 'personalities', 'a', 'toolset.yaml'), 'access')).toBe(true);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 });

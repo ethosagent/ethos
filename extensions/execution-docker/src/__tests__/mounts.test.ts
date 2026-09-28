@@ -33,12 +33,25 @@ const logger: Logger = {
   child: () => logger,
 };
 
-function modes(reach?: PersonalityConfig['fs_reach']): Map<string, 'ro' | 'rw'> {
+// `foldsCase` pins the host's case sensitivity (the backend's sixth
+// constructor argument) so the Linux layout is asserted on every platform.
+function modes(
+  reach?: PersonalityConfig['fs_reach'],
+  foldsCase = false,
+  cwd = CWD,
+): Map<string, 'ro' | 'rw'> {
   const config: ExecutionBackendConfig = {
     images: { default: 'x@sha256:abc' },
-    substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+    substitutionVars: { ethosHome: ETHOS_HOME, cwd },
   };
-  const be = new DockerExecutionBackend({ config, secrets, logger }, async () => false);
+  const be = new DockerExecutionBackend(
+    { config, secrets, logger },
+    async () => false,
+    undefined,
+    undefined,
+    undefined,
+    () => foldsCase,
+  );
   const p = { id: 'bob', name: 'bob', fs_reach: reach } as unknown as PersonalityConfig;
   return new Map(be.mountsFor(p).map((m) => [m.hostPath, m.mode]));
 }
@@ -112,5 +125,58 @@ describe('mountsFor — every personality definition and learning/ are read-only
     const m = modes(undefined);
     expect(m.has(PERSONALITIES)).toBe(false);
     expect(m.has(LEARNING)).toBe(false);
+  });
+});
+
+// verification round A1/A6 — case variants. The floor folds case on every
+// host; on a case-insensitive host (macOS/Windows Docker Desktop) a rw mount
+// that CONTAINS a read-only guard is itself downgraded, because
+// `<rw>/.ETHOS/personalities/…` reaches the same host file through the rw
+// parent and never meets the ro mount.
+describe('mountsFor — case variants', () => {
+  const PERSONALITIES = `${ETHOS_HOME}/personalities`;
+
+  it('floors a declared rw case variant of a definition entry or learning/ on every host', () => {
+    for (const foldsCase of [false, true]) {
+      const m = modes(
+        {
+          write: [
+            '${ETHOS_HOME}/personalities/carol/TOOLSET.yaml',
+            '${ETHOS_HOME}/personalities/carol/Soul.md',
+            '${ETHOS_HOME}/LEARNING/',
+            '${ETHOS_HOME}/personalities/BOB/',
+          ],
+        },
+        foldsCase,
+      );
+      expect(m.get(`${PERSONALITIES}/carol/TOOLSET.yaml`)).toBe('ro');
+      expect(m.get(`${PERSONALITIES}/carol/Soul.md`)).toBe('ro');
+      expect(m.get(`${ETHOS_HOME}/LEARNING`)).toBe('ro');
+      // A case variant of the caller's own directory is floored, never exempted.
+      expect(m.get(`${PERSONALITIES}/BOB`)).toBe('ro');
+    }
+  });
+
+  it('case-insensitive host: a rw state dir or ancestor becomes ro, own files/ stays rw', () => {
+    const m = modes({ write: ['${ETHOS_HOME}/'] }, true);
+    expect(m.get(ETHOS_HOME)).toBe('ro');
+    expect(m.get(PERSONALITIES)).toBe('ro');
+    expect(m.get(`${ETHOS_HOME}/learning`)).toBe('ro');
+    expect(m.get(`${OWN}/files`)).toBe('rw');
+
+    const fromHome = modes(undefined, true, '/home/tester');
+    expect(fromHome.get('/home/tester')).toBe('ro');
+    expect(fromHome.get(`${OWN}/files`)).toBe('rw');
+  });
+
+  it('case-sensitive host keeps the rw parent (the nested ro guards hold there)', () => {
+    const m = modes(undefined, false, '/home/tester');
+    expect(m.get('/home/tester')).toBe('rw');
+    expect(m.get(PERSONALITIES)).toBe('ro');
+  });
+
+  it('case-insensitive host: a rw mount beside the state dir is untouched', () => {
+    const m = modes({ write: ['/data/out'] }, true);
+    expect(m.get('/data/out')).toBe('rw');
   });
 });

@@ -93,6 +93,10 @@ async function setup() {
   await storage.write(join(userDir, 'config.yaml'), 'name: Reviewer\n');
   await storage.write(join(userDir, 'toolset.yaml'), '- read_file\n');
   await storage.write(join(userDir, 'SOUL.md'), '# Reviewer\n');
+  // verification round A5 — a mixed-case, SOUL.md-only directory: on a
+  // case-insensitive file system `writer` IS this directory.
+  await storage.mkdir(join(PERSONALITIES, 'Writer'));
+  await storage.write(join(PERSONALITIES, 'Writer', 'SOUL.md'), '# Writer\n');
 
   const tool = createPersonalityDesignTools({
     toolRegistry: toolRegistry(['scaffold_personality', 'read_file', 'web_search', 'terminal']),
@@ -170,6 +174,55 @@ describe('scaffold_personality — no overwrite, no escalation', () => {
       (tool) => tool.execute(args('researcher'), ctx('designer')),
       'already exists',
     );
+  });
+
+  it('(a2) refuses an id matching an existing directory case-insensitively, config.yaml or not', async () => {
+    await expectRefusedUntouched(
+      (tool) => tool.execute(args('writer'), ctx('designer')),
+      'already exists',
+    );
+  });
+
+  it('(b2) refuses an id matching a registered id case-insensitively', async () => {
+    const storage = new InMemoryStorage();
+    const tool = createPersonalityDesignTools({
+      toolRegistry: toolRegistry(['scaffold_personality', 'read_file']),
+      storage,
+      modelCatalog: [],
+      skills: [],
+      personalityRegistry: personalityRegistry([
+        DESIGNER,
+        { id: 'Editor', name: 'Editor', toolset: ['read_file'] },
+      ]),
+    }).find((t) => t.name === 'scaffold_personality');
+    if (!tool) throw new Error('scaffold_personality not registered');
+    const result = await tool.execute(args('editor'), ctx('designer'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('already exists');
+  });
+
+  it('(d3) writes under the injected dataDir, not ~/.ethos', async () => {
+    const storage = new InMemoryStorage();
+    const dataDir = '/srv/ethos-state';
+    await storage.mkdir(join(dataDir, 'personalities', 'Taken'));
+    const tool = createPersonalityDesignTools({
+      toolRegistry: toolRegistry(['scaffold_personality', 'read_file']),
+      storage,
+      modelCatalog: [],
+      skills: [],
+      personalityRegistry: personalityRegistry([DESIGNER]),
+      dataDir,
+    }).find((t) => t.name === 'scaffold_personality');
+    if (!tool) throw new Error('scaffold_personality not registered');
+
+    const refused = await tool.execute(args('taken'), ctx('designer'));
+    expect(refused.ok).toBe(false);
+    const result = await tool.execute(args('fresh'), ctx('designer'));
+    expect(result.ok).toBe(true);
+    expect(await storage.read(join(dataDir, 'personalities', 'fresh', 'toolset.yaml'))).toBe(
+      '- read_file\n',
+    );
+    expect(await storage.exists(join(PERSONALITIES, 'fresh'))).toBe(false);
   });
 
   it("(c) refuses the caller's own personality id", async () => {

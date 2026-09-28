@@ -217,6 +217,27 @@ describe('audience module (unit)', () => {
     expect(fallback?.(join(homedir(), '.ethos', 'users', 'u1', 'USER.md'), 'access')).toBe(true);
   });
 
+  // Verification round A3 — one state-dir set: wired roots, `~/.ethos`,
+  // `ETHOS_STATE_DIR`, and the realpath of each (a symlinked state dir).
+  it('privateMemoryDenyFor: always adds ETHOS_STATE_DIR, ~/.ethos and realpaths', async () => {
+    const tmp = await realpath(await mkdtemp(join(tmpdir(), 'ethos-audience-roots-')));
+    try {
+      const real = join(tmp, 'real-state');
+      const link = join(tmp, 'linked-state');
+      await mkdir(real);
+      await symlink(real, link);
+      vi.stubEnv('ETHOS_STATE_DIR', link);
+      const deny = privateMemoryDenyFor('shared', { stateDirs: ['/s'] });
+      expect(deny?.(join(link, 'users', 'u1', 'USER.md'), 'access')).toBe(true);
+      expect(deny?.(join(real, 'personalities', 'p', 'MEMORY.md'), 'access')).toBe(true);
+      expect(deny?.(join(homedir(), '.ethos', 'MEMORY.md'), 'access')).toBe(true);
+      expect(deny?.('/s/personalities/p/memory.md', 'access')).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('memoryFlushForbidden: shared, or memory_write excluded', () => {
     expect(memoryFlushForbidden('shared', undefined)).toBe(true);
     expect(memoryFlushForbidden('private', ['memory_write'])).toBe(true);

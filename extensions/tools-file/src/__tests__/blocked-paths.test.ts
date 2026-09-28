@@ -1,7 +1,8 @@
 // Containment 3a — write_file / patch_file name the refusal when a turn tries
 // to rewrite a personality's own definition. The ENFORCER is the boundary
-// (`ScopedFsImpl`'s write-deny list); `isPersonalityDefinitionPath` is defence
-// in depth with a better message. Both are exercised: with `ETHOS_STATE_DIR`
+// (`ScopedFsImpl`'s write-deny list); the tool's own pre-check (the storage-fs
+// `personalityDefinitionFloor`, not a copy of it) is defence in depth with a
+// better message. Both are exercised: with `ETHOS_STATE_DIR`
 // pointing at the data dir the tool's own check fires first; without it the
 // boundary refuses and the tool still reports the named error, not a generic
 // "outside fs_reach".
@@ -13,7 +14,7 @@ import { personalityWriteDeny, ScopedFsImpl } from '@ethosagent/core';
 import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isPersonalityDefinitionPath, patchFileTool, writeFileTool } from '../index';
+import { patchFileTool, writeFileTool } from '../index';
 
 describe('tools-file — personality definition files are operator-owned', () => {
   let dataDir: string;
@@ -84,6 +85,20 @@ describe('tools-file — personality definition files are operator-owned', () =>
         expect(await readFile(join(own, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
       });
 
+      // verification round A1 — on a case-insensitive file system these name
+      // toolset.yaml / SOUL.md themselves; refused on every platform.
+      it.each(['Toolset.yaml', 'TOOLSET.yaml', 'soul.md', 'SKILLS/x/SKILL.md'])(
+        'write_file on a case variant (%s) returns the named error',
+        async (entry) => {
+          const result = await writeFileTool.execute(
+            { path: join(own, entry), content: '- terminal\n' },
+            ctx(),
+          );
+          expectNamedRefusal(result);
+          expect(await readFile(join(own, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
+        },
+      );
+
       it('personalities/<self>/files/x.md is allowed', async () => {
         const result = await writeFileTool.execute(
           { path: join(own, 'files', 'x.md'), content: 'note' },
@@ -93,19 +108,4 @@ describe('tools-file — personality definition files are operator-owned', () =>
       });
     });
   }
-
-  it('isPersonalityDefinitionPath matches every definition entry and nothing else', () => {
-    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
-    for (const entry of ['SOUL.md', 'config.yaml', 'toolset.yaml', 'mcp.yaml', 'tools.yaml']) {
-      expect(isPersonalityDefinitionPath(join(own, entry))).toBe(true);
-    }
-    expect(isPersonalityDefinitionPath(join(own, 'ETHOS.md'))).toBe(true);
-    expect(isPersonalityDefinitionPath(join(own, 'skills', 'x', 'SKILL.md'))).toBe(true);
-    expect(isPersonalityDefinitionPath(join(dataDir, 'personalities', 'other', 'SOUL.md'))).toBe(
-      true,
-    );
-    expect(isPersonalityDefinitionPath(join(own, 'files', 'toolset.yaml'))).toBe(false);
-    expect(isPersonalityDefinitionPath(join(own, 'MEMORY.md'))).toBe(false);
-    expect(isPersonalityDefinitionPath(join(dataDir, 'toolset.yaml'))).toBe(false);
-  });
 });

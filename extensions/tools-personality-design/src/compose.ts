@@ -13,7 +13,7 @@ export interface PersonalityDesignToolsCompose {
 }
 
 export function compose(
-  _ctx: WiringContext,
+  ctx: WiringContext,
   deps: {
     toolRegistry: ToolRegistry;
     storage: Storage;
@@ -29,6 +29,7 @@ export function compose(
       modelCatalog: deps.modelCatalog,
       skills: deps.skills,
       personalityRegistry: deps.personalityRegistry,
+      dataDir: ctx.dataDir,
     }),
   };
 }

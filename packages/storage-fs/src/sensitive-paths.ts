@@ -1,5 +1,9 @@
+// Raw `node:fs` (`realpathSync`, `lstatSync`, `readlinkSync`) is the storage-fs
+// carve-out: this package IS the filesystem adapter, and a realpath is a
+// filesystem fact no `Storage` method answers.
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { type DefinitionWriteFloor, personalityDefinitionWriteFloor } from '@ethosagent/types';
 
 /**
@@ -83,6 +87,12 @@ export function sensitiveDenyPaths(): string[] {
  * process can run under an override while the default dir still holds a
  * previous profile's keys.
  *
+ * Each dir is listed in its lexical form AND its realpath ({@link withRealPaths}),
+ * lexical first: a state dir that is (or sits under) a symlink — `~/.ethos` →
+ * `~/dot/ethos` — is otherwise reachable by its real name with no deny or
+ * floor matching it (verification round A2). Pinned by the symlinked-state-dir
+ * cases in `state-dir-deny.test.ts`.
+ *
  * Also consumed by the terminal and process argv floors
  * (`extensions/tools-terminal/src/guard.ts`, `extensions/tools-process/src/guard.ts`),
  * which refuse a command that names a state dir at all (S16).
@@ -91,7 +101,68 @@ export function ethosStateDirs(): string[] {
   const dirs = [join(homedir(), '.ethos')];
   const override = process.env.ETHOS_STATE_DIR;
   if (override && resolve(override) !== dirs[0]) dirs.push(resolve(override));
-  return dirs;
+  return withRealPaths(dirs);
+}
+
+/**
+ * `dirs` followed by the realpath of each one that differs from every entry
+ * already listed. The realpath is {@link realPathOfLongestExistingAncestor},
+ * so a state dir that does not exist yet still gets the real form of the
+ * directory it would be created in; one that cannot be resolved at all keeps
+ * only its lexical form.
+ */
+export function withRealPaths(dirs: readonly string[]): string[] {
+  const out = [...dirs];
+  for (const dir of dirs) {
+    const real = realPathOfLongestExistingAncestor(dir);
+    if (real !== null && !out.includes(real)) out.push(real);
+  }
+  return out;
+}
+
+/** Bound on the combined parent steps and symlink hops of one resolution. */
+const MAX_RESOLVE_STEPS = 256;
+
+/**
+ * The realpath of `path`'s longest existing ancestor with the missing tail
+ * re-appended — where a write to `path` would actually land. A dangling
+ * symlink on the way is followed to its target (a write through it creates
+ * the target). Returns null when the path cannot be resolved: an error other
+ * than ENOENT/ENOTDIR (EACCES, ELOOP, …) or too many steps. Callers deciding
+ * a DENY treat null as a refusal.
+ *
+ * Mirror of `realPathOfLongestExistingAncestor` in
+ * `packages/core/src/scoped/scoped-fs.ts` — core cannot import this package at
+ * runtime (ARCHITECTURE.md §II); the two MUST change together.
+ */
+export function realPathOfLongestExistingAncestor(path: string): string | null {
+  let cursor = resolve(path);
+  const tail: string[] = [];
+  for (let step = 0; step < MAX_RESOLVE_STEPS; step++) {
+    try {
+      const real = realpathSync(cursor);
+      return tail.length === 0 ? real : join(real, ...[...tail].reverse());
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+    }
+    let isLink: boolean;
+    try {
+      isLink = lstatSync(cursor, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTDIR') return null;
+      isLink = false;
+    }
+    if (isLink) {
+      cursor = resolve(dirname(cursor), readlinkSync(cursor));
+      continue;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    tail.push(basename(cursor));
+    cursor = parent;
+  }
+  return null;
 }
 
 /** A SQLite database and the two side files WAL mode keeps beside it. */
@@ -142,7 +213,8 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
  * enumeration of existing personalities.
  *
  * Applied by EVERY `ScopedStorage` on its own (constructor → `check` /
- * `checkSubtree`, lexical path and every symlink hop), and handed by wiring to
+ * `checkSubtree`, lexical path, every symlink hop and the target's realpath;
+ * case-folded, `foldForDeny` in `@ethosagent/types`), and handed by wiring to
  * every `ScopedFsImpl` through `CapabilityBackends.definitionWriteFloor`
  * (packages/wiring/src/build-infrastructure.ts) — the same predicate, so the
  * two boundary copies cannot disagree. Reads stay open: a turn may read a

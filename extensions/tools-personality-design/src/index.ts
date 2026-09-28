@@ -42,6 +42,8 @@ export interface PersonalityDesignDeps {
   skills: Skill[];
   /** Consulted by scaffold_personality: existing ids (built-ins included) and the caller's toolset. */
   personalityRegistry: PersonalityRegistry;
+  /** The Ethos state dir scaffold writes under (`WiringContext.dataDir`). Absent → `~/.ethos`. */
+  dataDir?: string;
 }
 
 export interface TeamDesignDeps {
@@ -60,7 +62,12 @@ export function createPersonalityDesignTools(deps: PersonalityDesignDeps): Tool[
     listAvailableToolsTool(deps.toolRegistry),
     listAvailableModelsTool(deps.modelCatalog),
     listAvailableSkillsTool(deps.skills),
-    scaffoldPersonalityTool(deps.storage, deps.toolRegistry, deps.personalityRegistry),
+    scaffoldPersonalityTool(
+      deps.storage,
+      deps.toolRegistry,
+      deps.personalityRegistry,
+      deps.dataDir ?? join(homedir(), '.ethos'),
+    ),
   ];
 }
 
@@ -202,6 +209,7 @@ function scaffoldPersonalityTool(
   storage: Storage,
   toolRegistry: ToolRegistry,
   personalityRegistry: PersonalityRegistry,
+  dataDir: string,
 ): Tool {
   return {
     name: 'scaffold_personality',
@@ -311,16 +319,23 @@ function scaffoldPersonalityTool(
 
       // Existing ids are refused two ways: the registry covers built-ins (they
       // live in the personalities package's data/ dir, not under
-      // ~/.ethos/personalities/, so a user dir with a built-in's id would
+      // <dataDir>/personalities/, so a user dir with a built-in's id would
       // shadow it) and the on-disk check covers a user personality the
-      // registry has not refreshed yet. Every refusal above and here runs
-      // before the first storage.mkdir. Pinned by
-      // src/__tests__/no-overwrite.test.ts. Known residual: two concurrent
-      // scaffolds of the same NEW id can both pass (check-then-write).
-      const base = join(homedir(), '.ethos', 'personalities', args.id);
+      // registry has not refreshed yet. Both compare CASE-INSENSITIVELY and
+      // the on-disk check counts ANY existing directory entry, not only one
+      // with a config.yaml: on a case-insensitive file system `foo` IS an
+      // existing `Foo/` (even a SOUL.md-only one), and scaffolding it would
+      // write into that personality's definition (verification round A5).
+      // Every refusal above and here runs before the first storage.mkdir.
+      // Pinned by src/__tests__/no-overwrite.test.ts. Known residual: two
+      // concurrent scaffolds of the same NEW id can both pass
+      // (check-then-write).
+      const personalitiesDir = join(dataDir, 'personalities');
+      const base = join(personalitiesDir, args.id);
+      const onDisk = await storage.list(personalitiesDir);
       if (
-        personalityRegistry.get(args.id) !== undefined ||
-        (await storage.exists(join(base, 'config.yaml')))
+        personalityRegistry.list().some((p) => p.id.toLowerCase() === args.id) ||
+        onDisk.some((name) => name.toLowerCase() === args.id)
       ) {
         return {
           ok: false,

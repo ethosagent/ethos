@@ -15,13 +15,14 @@
 // Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   type PrivateMemoryRoots,
   type PrivatePathDeny,
   privateMemoryPathDeny,
   type TurnAudience,
 } from '@ethosagent/types';
+import { withRealPaths } from '../scoped/scoped-fs';
 
 /**
  * The `Session.metadata` key holding the sticky stamp. Its only value is
@@ -154,13 +155,32 @@ export function memoryFlushForbidden(
 }
 
 /**
+ * The Ethos state dirs a host that wires nothing still has: `~/.ethos` and,
+ * when set, `ETHOS_STATE_DIR`. Mirror of `ethosStateDirs` in
+ * `packages/storage-fs/src/sensitive-paths.ts` (core may not import storage-fs
+ * at runtime) minus the realpaths, which {@link privateMemoryDenyFor} and the
+ * definition-floor fallback in `resolveCapabilities` add via `withRealPaths`.
+ */
+export function defaultEthosStateDirs(): string[] {
+  const dirs = [join(homedir(), '.ethos')];
+  const override = process.env.ETHOS_STATE_DIR;
+  if (override && resolve(override) !== dirs[0]) dirs.push(resolve(override));
+  return dirs;
+}
+
+/**
  * The file-boundary deny predicate for a turn (G1-5): on a shared turn, a
  * `PrivatePathDeny` over `roots` (`privateMemoryPathDeny`, @ethosagent/types);
  * on a private turn, `undefined`, so private turns carry no predicate at all.
- * Absent `roots` falls back to the default `~/.ethos` state dir — fail closed
- * on the common layout rather than open. Called by turn-setup (the turn's
- * `fsReach.denyWhen` → `ScopedStorage`) and by `resolveCapabilities` (every
- * `ScopedFsImpl`); pinned by the G1-5 cases in
+ * The state dirs judged are ALWAYS `roots.stateDirs` plus
+ * {@link defaultEthosStateDirs} — the wiring's `dataDir`, `~/.ethos` and
+ * `ETHOS_STATE_DIR` as one set, the set the definition floor uses — and every
+ * state dir and extra root is widened with its realpath (`withRealPaths`,
+ * ../scoped/scoped-fs.ts), so a symlinked state dir is private under its real
+ * name too (verification round A2/A3). Absent `roots` is therefore the default
+ * set — fail closed on the common layout rather than open. Called by
+ * turn-setup (the turn's `fsReach.denyWhen` → `ScopedStorage`) and by
+ * `resolveCapabilities` (every `ScopedFsImpl`); pinned by the G1-5 cases in
  * `packages/core/src/__tests__/shared-audience.test.ts`.
  */
 export function privateMemoryDenyFor(
@@ -168,5 +188,7 @@ export function privateMemoryDenyFor(
   roots: PrivateMemoryRoots | undefined,
 ): PrivatePathDeny | undefined {
   if (audience !== 'shared') return undefined;
-  return privateMemoryPathDeny(roots ?? { stateDirs: [join(homedir(), '.ethos')] });
+  const stateDirs = withRealPaths([...(roots?.stateDirs ?? []), ...defaultEthosStateDirs()]);
+  const extraRoots = withRealPaths(roots?.extraRoots ?? []);
+  return privateMemoryPathDeny({ stateDirs, extraRoots });
 }
