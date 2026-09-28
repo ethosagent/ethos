@@ -44,6 +44,21 @@ export interface RepeatPolicy {
 export interface JobOrigin {
   platform: string;
   chatId: string;
+  /**
+   * The bot the job was created through (segment 1 of the gateway lane key,
+   * captured by `extractOrigin` in `@ethosagent/tools-cron`). Delivery goes
+   * through THIS bot (`createCronDeliver`, apps/ethos/src/lib/cron-deliver.ts),
+   * never the platform's first adapter. Absent on jobs created before it was
+   * recorded: those deliver only when the platform has exactly one bot.
+   */
+  botKey?: string;
+  /**
+   * The thread or forum topic the job was created in (UBP-024), captured by
+   * `extractOrigin` in `@ethosagent/tools-cron` from the gateway's live turn.
+   * Delivery returns there (`createCronDeliver` passes it to
+   * `Gateway.notifyTracked`). Absent → the chat root.
+   */
+  threadId?: string;
 }
 
 /**
@@ -108,11 +123,17 @@ export interface CronJob {
    * Mid-execution signal (plan/phases/idle-watcher.md §1 check #7). Epoch ms
    * stamped inside `claimDueJob`'s compare-and-swap — so only the winning
    * claimant ever sets it — and cleared in `executeJob`'s `finally`, including
-   * when the job throws. `null` or absent means "not running": records written
+   * when the job throws. A turn abandoned at its `maxRunMs` keeps the stamp
+   * until that turn's promise settles. A fresh stamp blocks a second claim and
+   * `runJobNow` (`CronScheduler.isRunning`, UBP-026). `null` or absent means "not running": records written
    * before this field existed simply have no key, which reads the same as
    * cleared. Read through `hasRunningJobs()`, never directly.
    */
   runningSince?: number | null;
+  /** When the last failure notice for this job was delivered (ISO-8601). Rate-
+   *  limits the notice a failed prompt run sends its origin to one per
+   *  `CRON_FAILURE_NOTICE_INTERVAL_MS` (`CronScheduler.recordRunFailure`). */
+  failureNoticeAt?: string;
 }
 
 export interface CronJobUpdate {
@@ -139,6 +160,14 @@ export interface CronRunResult {
    * delivered message and break silent-job suppression. See ./progress.ts.
    */
   progress?: CronRunProgress[];
+  /**
+   * Everything the turn streamed, across every LLM iteration, when it differs
+   * from `output`. `output` is only the final answer — what is delivered and
+   * what `decideEscalation` reads — so pre-tool narration can neither lead the
+   * delivered message nor push a `[SILENT]` answer off position 0 (UBP-025).
+   * The persisted run file keeps this full stream (`persistAndDeliver`).
+   */
+  transcript?: string;
 }
 
 export interface CronRunInfo {
@@ -193,7 +222,8 @@ export interface CronRunJobOptions {
 
 /** Built-in wall-clock cap on a prompt job's turn when neither the job nor
  *  `cron.defaultMaxRunMs` sets one. Below `CRON_RUNNING_STALE_MS`, so a capped
- *  run always clears its `runningSince` stamp before the stamp reads stale. */
+ *  run that honours its abort clears its `runningSince` stamp before the stamp
+ *  reads stale; one that ignores it keeps the stamp until it settles. */
 export const DEFAULT_CRON_MAX_RUN_MS = 30 * 60 * 1000;
 
 /** The largest `maxRunMs` a timer can hold: Node clamps a `setTimeout` delay
@@ -221,7 +251,8 @@ export interface CronSchedulerConfig {
    * Cap on cron jobs executing at once across overlapping ticks (mapped from
    * `cron.maxParallelJobs`). A due job reached while the cap is met is left
    * unclaimed — `nextRunAt` is not advanced, so it stays due and fires on a
-   * later tick rather than being dropped. Unset = no cap.
+   * later tick rather than being dropped, and the deferral exempts it from the
+   * `skip` policy (the cap check runs first in `tick()`). Unset = no cap.
    */
   maxParallelJobs?: number;
   /** Storage backend. Injected by the composition root; required — never
@@ -252,8 +283,17 @@ export interface CronSchedulerConfig {
   armingBackend?: CronArmingBackend;
 }
 
-/** Audit actions: heartbeat escalate/silent plus the script-job outcomes. */
-export type CronDecisionAction = HeartbeatAction | 'script-silent' | 'precheck-skip';
+/**
+ * Audit actions: heartbeat escalate/silent, the script-job outcomes, and the
+ * two occurrences that did not run — `missed` (`skipMissed`, the `skip`
+ * policy) and `overlap-skip` (the previous run still executing, UBP-026).
+ */
+export type CronDecisionAction =
+  | HeartbeatAction
+  | 'script-silent'
+  | 'precheck-skip'
+  | 'missed'
+  | 'overlap-skip';
 
 export interface CronDecision {
   action: CronDecisionAction;
@@ -437,16 +477,18 @@ const noopSecrets: SecretsResolver = {
 
 /**
  * Staleness bound on `CronJob.runningSince`, applied at READ time by
- * `hasRunningJobs()`.
+ * `hasRunningJobs()` and — raised to the job's own turn cap when that is
+ * longer — by `CronScheduler.isRunning`, the overlap guard on a claim and on
+ * `runJobNow`.
  *
  * `runningSince` is persisted (jobs.json), so a process killed mid-run leaves
  * a stamp with nobody behind it. This is the equivalent of
  * `JobStore.reclaimStale(staleMs)` — with one deliberate difference: there is
- * no sweep that rewrites the record. `runningSince` has exactly one consumer
- * (the `cron-executions` busy source) and no state machine to transition into,
+ * no sweep that rewrites the record. `runningSince` has no state machine to
+ * transition into,
  * unlike a job row that must move `running` → `stale`, so a ghost stamp only
- * needs to stop reading as busy. It ages out here, and the job's next claim
- * overwrites it outright.
+ * needs to stop reading as busy (and stop blocking a claim). It ages out here,
+ * and the job's next claim overwrites it outright.
  *
  * One hour, because a cron prompt job is a full agent turn with tool calls and
  * has no heartbeat to shorten this against. Erring long is the safe direction:
@@ -454,6 +496,14 @@ const noopSecrets: SecretsResolver = {
  * that loses work; too long only delays a suspend.
  */
 export const CRON_RUNNING_STALE_MS = 60 * 60 * 1000;
+
+/**
+ * Minimum gap between two failure notices for one job (UBP-029). A job failing
+ * every five minutes through a provider outage tells its chat once, not every
+ * run; `lastError` still records every failure. Enforced by
+ * `CronScheduler.recordRunFailure` against `CronJob.failureNoticeAt`.
+ */
+export const CRON_FAILURE_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export class CronScheduler {
   private readonly cronDir: string;
@@ -467,6 +517,14 @@ export class CronScheduler {
   private readonly maxParallelJobs: number | null;
   /** Jobs currently executing, across every concurrent `tick()`. */
   private inFlight = 0;
+  /** Due jobs this process left unclaimed at the `maxParallelJobs` cap. A
+   *  deferral is not a miss, so these are exempt from the skip policy until
+   *  they are claimed (UBP-027). */
+  private readonly deferred = new Set<string>();
+  /** When the previous `tick()` started, and the gap before that one — the
+   *  observed fire cadence the missed-run grace is measured against. */
+  private lastTickAtMs: number | null = null;
+  private observedCadenceMs: number | null = null;
   private readonly storage: Storage;
   private readonly logger: Logger;
   private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
@@ -664,14 +722,14 @@ export class CronScheduler {
   async resumeJob(id: string): Promise<void> {
     const job = await this.getJob(id);
     if (!job) throw new Error(`Job not found: ${id}`);
-    await this.patchJob(id, {
-      status: 'active',
-      nextRunAt: nextRunForSchedule(
-        job.schedule,
-        new Date(),
-        new Date(job.createdAt),
-      )?.toISOString(),
-    });
+    const now = new Date();
+    const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
+    // A one-shot whose moment has passed (it was paused after a failed run —
+    // see `recordRunFailure`) is due NOW on resume. Without this it would come
+    // back with no `nextRunAt` and the next tick would retire it unrun.
+    const nextRunAt =
+      upcoming ?? (isOneShotSchedule(job.schedule) && job.runCount === 0 ? now : undefined);
+    await this.patchJob(id, { status: 'active', nextRunAt: nextRunAt?.toISOString() });
   }
 
   async updateJob(id: string, patch: CronJobUpdate): Promise<CronJob> {
@@ -767,12 +825,53 @@ export class CronScheduler {
   async runJobNow(id: string): Promise<CronRunResult> {
     const job = await this.getJob(id);
     if (!job) throw new Error(`Job not found: ${id}`);
-    // A manual run is mid-execution too — it does not go through the due-scan
-    // CAS (there is nothing to race with; the caller asked for this one job by
-    // id), but the busy signal must see it, so it gets its own stamp.
+    // A manual run is mid-execution too, so it stamps `runningSince` — and it
+    // is refused while another run of the same job holds a fresh stamp
+    // (UBP-026): "Run now" during a scheduled run would otherwise execute the
+    // turn, its side effects and its delivery twice. Checked and stamped in one
+    // jobs-lock critical section, like `claimDueJob`.
     const runningStamp = Date.now();
-    await this.patchJob(id, { runningSince: runningStamp }).catch(() => {});
-    return this.executeJob(job, runningStamp);
+    const busy: { since: number | null } = { since: null };
+    await this.withJobsLock(async (jobs) => {
+      const idx = jobs.findIndex((j) => j.id === id);
+      const existing = idx >= 0 ? jobs[idx] : undefined;
+      if (!existing) return jobs;
+      if (this.isRunning(existing, runningStamp)) {
+        busy.since = existing.runningSince ?? null;
+        return jobs;
+      }
+      jobs[idx] = { ...existing, runningSince: runningStamp };
+      return jobs;
+    }).catch(() => {});
+    if (busy.since !== null) {
+      throw new Error(
+        `Job "${id}" is already running (started ${new Date(busy.since).toISOString()}) — wait for that run to finish`,
+      );
+    }
+    try {
+      return await this.executeJob(job, runningStamp);
+    } catch (err) {
+      // A failed manual run is on the job's record too, not only in the
+      // caller's error (UBP-004). No pause and no notice: a person asked for
+      // this run and is looking at its result.
+      await this.patchJob(id, {
+        lastError: err instanceof Error ? err.message : String(err),
+      }).catch(() => {});
+      throw err;
+    }
+  }
+
+  /**
+   * Whether `job` holds a FRESH mid-execution stamp at `nowMs`. Fresh means
+   * younger than the larger of `CRON_RUNNING_STALE_MS` and the job's own turn
+   * cap, so a legitimately long run is never mistaken for a ghost stamp left
+   * by a killed process. The one overlap test for `claimDueJob` and
+   * `runJobNow`.
+   */
+  private isRunning(job: CronJob, nowMs: number): boolean {
+    if (typeof job.runningSince !== 'number') return false;
+    const staleMs = Math.max(CRON_RUNNING_STALE_MS, job.maxRunMs ?? this.defaultMaxRunMs);
+    return job.runningSince > nowMs - staleMs;
   }
 
   /**
@@ -978,6 +1077,18 @@ export class CronScheduler {
 
   private async tick(): Promise<void> {
     const now = new Date();
+    const nowMs = now.getTime();
+    // UBP-027 — the grace before a due occurrence counts as MISSED is measured
+    // against how often this engine is actually fired, not the configured
+    // interval alone: an external `POST /cron/fire` every 5 minutes reaches
+    // every due job more than 60s late. The cadence is the gap BEFORE the
+    // previous fire, so one long gap (a laptop sleep, downtime) still reads as
+    // downtime and is skipped as the policy intends. Plus one interval of slack,
+    // so a tick a few hundred ms late is never a miss.
+    const cadenceMs = Math.max(this.tickIntervalMs, this.observedCadenceMs ?? 0);
+    const missedGraceMs = cadenceMs + this.tickIntervalMs;
+    if (this.lastTickAtMs !== null) this.observedCadenceMs = nowMs - this.lastTickAtMs;
+    this.lastTickAtMs = nowMs;
     const jobs = await this.readJobs();
 
     for (const job of jobs) {
@@ -989,8 +1100,17 @@ export class CronScheduler {
         if (upcoming) {
           await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
         } else {
-          // One-shot schedule has fully elapsed — retire the job.
-          await this.patchJob(job.id, { status: 'done' }).catch(() => {});
+          // One-shot schedule has fully elapsed — retire the job, on the record
+          // when it never completed a run (a claim a killed process abandoned).
+          const retire: Partial<CronJob> = { status: 'done' };
+          if ((job.runCount ?? 0) === 0) {
+            retire.lastError = `retired without completing a run: its one-shot time (${job.schedule}) has passed`;
+            this.logger.warn(`[cron] One-shot job "${job.id}" retired without a completed run`, {
+              component: 'cron',
+              jobId: job.id,
+            });
+          }
+          await this.patchJob(job.id, retire).catch(() => {});
         }
         continue;
       }
@@ -998,30 +1118,31 @@ export class CronScheduler {
       const due = new Date(job.nextRunAt);
       if (now < due) continue;
 
-      // Bug 1+2 fix: only apply skip policy when the job is genuinely overdue
-      // (server was down for more than one full tick interval). A job that fired
-      // within the normal tick window is not "missed" — execute it.
-      const missedByMs = now.getTime() - due.getTime();
-      if (job.missedRunPolicy === 'skip' && missedByMs > this.tickIntervalMs) {
-        const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
-        if (upcoming) {
-          await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
-        } else {
-          await this.patchJob(job.id, { status: 'done' }).catch(() => {});
-        }
-        continue;
-      }
-
       // `cron.maxParallelJobs` — stop firing once the in-flight count is at the
-      // cap. Checked BEFORE the claim so the deferred job keeps its `nextRunAt`
-      // and stays due for a later tick instead of being silently consumed.
+      // cap. Checked BEFORE the skip policy and the claim: the deferred job
+      // keeps its `nextRunAt`, stays due for a later tick, and is remembered as
+      // deferred so the wait is never mistaken for a missed run (UBP-027).
       if (this.maxParallelJobs !== null && this.inFlight >= this.maxParallelJobs) {
-        this.logger.debug('[cron] parallel job cap reached — deferring due jobs', {
+        this.deferred.add(job.id);
+        this.logger.debug('[cron] parallel job cap reached — deferring due job', {
           component: 'cron',
+          jobId: job.id,
           inFlight: this.inFlight,
           maxParallelJobs: this.maxParallelJobs,
         });
-        break;
+        continue;
+      }
+
+      // Skip policy: only when the job is genuinely overdue (the engine was not
+      // being fired at its due time) — see `missedGraceMs` above.
+      const missedByMs = nowMs - due.getTime();
+      if (
+        job.missedRunPolicy === 'skip' &&
+        missedByMs > missedGraceMs &&
+        !this.deferred.has(job.id)
+      ) {
+        await this.skipMissed(job, due, now);
+        continue;
       }
 
       // Claim the job by advancing nextRunAt BEFORE executing so a crash
@@ -1034,9 +1155,9 @@ export class CronScheduler {
       const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
       // Stamped inside the CAS below, so a losing claimant never writes it.
       const runningStamp = Date.now();
-      let claimed: boolean;
+      let claim: ClaimOutcome;
       try {
-        claimed = await this.claimDueJob(job.id, job.nextRunAt, {
+        claim = await this.claimDueJob(job.id, job.nextRunAt, {
           lastRunAt: now.toISOString(),
           nextRunAt: upcoming?.toISOString(),
           runningSince: runningStamp,
@@ -1049,25 +1170,40 @@ export class CronScheduler {
         });
         continue;
       }
-      if (!claimed) {
+      if (claim.kind === 'lost') {
         // Another concurrent tick already claimed this job — expected
         // whenever a local interval and an external fire overlap, not an
         // error.
         continue;
       }
+      if (claim.kind === 'overlap') {
+        // UBP-026 — the previous run of this job is still executing. Never a
+        // second concurrent copy: the occurrence is skipped, on the record.
+        const since = new Date(claim.runningSince).toISOString();
+        this.logger.warn(
+          `[cron] Job "${job.id}" still running since ${since} — occurrence skipped`,
+          {
+            component: 'cron',
+            jobId: job.id,
+          },
+        );
+        const skipped = `[skipped: overlap] due ${job.nextRunAt}; the previous run (started ${since}) was still executing`;
+        await this.persistRun(job, skipped, now.toISOString()).catch(() => {});
+        this.notifyDecision(
+          job,
+          { action: 'overlap-skip', output: skipped },
+          now.toISOString(),
+          false,
+        );
+        continue;
+      }
+      this.deferred.delete(job.id);
 
       this.inFlight++;
       try {
         await this.executeJob(job, runningStamp);
       } catch (err) {
-        this.logger.error(`[cron] Job "${job.id}" failed`, {
-          component: 'cron',
-          jobId: job.id,
-          error: String(err),
-        });
-        await this.patchJob(job.id, {
-          lastError: err instanceof Error ? err.message : String(err),
-        }).catch(() => {});
+        await this.recordRunFailure(job, err, upcoming === null);
         continue;
       } finally {
         this.inFlight--;
@@ -1106,6 +1242,67 @@ export class CronScheduler {
         // arming is fail-open — never breaks the tick
       }
     }
+  }
+
+  /**
+   * UBP-027 — the `skip` policy's miss, on the record. A recurring job's
+   * occurrence is skipped (nextRunAt advanced) with a run-history entry and a
+   * warning. A one-shot has no later occurrence, so it is retired — but never
+   * silently: `lastError` names the miss and its origin gets a notice, because
+   * the user was promised this run and would otherwise never learn it did not
+   * happen.
+   */
+  private async skipMissed(job: CronJob, due: Date, now: Date): Promise<void> {
+    const lateSec = Math.round((now.getTime() - due.getTime()) / 1000);
+    const reason = `missed: due ${due.toISOString()}, reached ${lateSec}s late (missedRunPolicy 'skip')`;
+    this.logger.warn(`[cron] Job "${job.id}" ${reason}`, { component: 'cron', jobId: job.id });
+    const skipped = `[skipped: ${reason}]`;
+    await this.persistRun(job, skipped, now.toISOString()).catch(() => {});
+    const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
+    if (upcoming) {
+      await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
+      this.notifyDecision(job, { action: 'missed', output: skipped }, now.toISOString(), false);
+      return;
+    }
+    const delivered = await this.deliverTo(
+      job,
+      `Cron job "${job.name}" was due at ${due.toISOString()} but was missed, so it did not run.`,
+    );
+    this.notifyDecision(job, { action: 'missed', output: skipped }, now.toISOString(), delivered);
+    await this.patchJob(job.id, {
+      status: 'done',
+      nextRunAt: undefined,
+      lastError: reason,
+    }).catch(() => {});
+  }
+
+  /**
+   * A run that threw is a FAILED run (UBP-004): `lastError` holds the reason,
+   * `runCount` is not bumped, and a job with no later occurrence (a one-shot)
+   * is paused rather than left for the next tick to retire unrun — `resumeJob`
+   * makes it due again. A prompt job with an origin also tells its chat, at
+   * most once per `CRON_FAILURE_NOTICE_INTERVAL_MS` (UBP-029); script jobs
+   * already deliver their own notice in `executeScriptJob`.
+   */
+  private async recordRunFailure(job: CronJob, err: unknown, noLaterRun: boolean): Promise<void> {
+    const message = err instanceof Error ? err.message : String(err);
+    this.logger.error(`[cron] Job "${job.id}" failed`, {
+      component: 'cron',
+      jobId: job.id,
+      error: String(err),
+    });
+    const failurePatch: Partial<CronJob> = { lastError: message };
+    const isPromptJob = !job.script && job.source !== 'system';
+    const lastNotice = job.failureNoticeAt ? new Date(job.failureNoticeAt).getTime() : 0;
+    if (isPromptJob && job.origin && Date.now() - lastNotice >= CRON_FAILURE_NOTICE_INTERVAL_MS) {
+      const notice = `Cron job "${job.name}" failed: ${message.slice(0, 500)}`;
+      // `deliverTo` writes its own `delivery failed` lastError on a refusal;
+      // the patch below runs after it so the run's own failure is what stays.
+      if (await this.deliverTo(job, notice))
+        failurePatch.failureNoticeAt = new Date().toISOString();
+    }
+    if (noLaterRun) failurePatch.status = 'paused';
+    await this.patchJob(job.id, failurePatch).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
@@ -1170,16 +1367,27 @@ export class CronScheduler {
    * permanently busy and never suspend again.
    */
   private async executeJob(job: CronJob, runningStamp?: number): Promise<CronRunResult> {
+    // Set only when a turn outlived its `maxRunMs`: the run is abandoned, but
+    // the turn may still be executing, so the stamp must outlive the race
+    // (UBP-026) — it is released when that promise settles, not now.
+    let abandoned: Promise<unknown> | undefined;
     try {
-      return await this.runExecution(job);
+      return await this.runExecution(job, (turn) => {
+        abandoned = turn;
+      });
     } finally {
       if (runningStamp !== undefined) {
-        await this.clearRunning(job.id, runningStamp).catch(() => {});
+        const release = () => this.clearRunning(job.id, runningStamp).catch(() => {});
+        if (abandoned) void abandoned.then(release, release);
+        else await release();
       }
     }
   }
 
-  private async runExecution(job: CronJob): Promise<CronRunResult> {
+  private async runExecution(
+    job: CronJob,
+    onAbandoned: (turn: Promise<unknown>) => void,
+  ): Promise<CronRunResult> {
     // System jobs dispatch to a registered handler instead of the LLM runJob path
     if (job.source === 'system' && job.systemTask) {
       const handler = this.systemTasks[job.systemTask];
@@ -1235,8 +1443,14 @@ export class CronScheduler {
     // whole effective prompt through the injection guard before the LLM sees it.
     const contextPrefix = await this.resolveContext(job);
     const effectivePrompt = sanitize(precheckContext + contextPrefix + (job.prompt ?? ''));
-    const result = await this.runTurnCapped({ ...job, prompt: effectivePrompt });
-    await this.persistAndDeliver(job, result.output, result.ranAt, result.progress);
+    const result = await this.runTurnCapped({ ...job, prompt: effectivePrompt }, onAbandoned);
+    await this.persistAndDeliver(
+      job,
+      result.output,
+      result.ranAt,
+      result.progress,
+      result.transcript,
+    );
     return result;
   }
 
@@ -1247,18 +1461,25 @@ export class CronScheduler {
    * so a stalled turn cannot hold its `runningSince` stamp or a
    * `maxParallelJobs` slot. The throw lands in `lastError` like any failed run.
    */
-  private async runTurnCapped(job: CronJob): Promise<CronRunResult> {
+  private async runTurnCapped(
+    job: CronJob,
+    onAbandoned: (turn: Promise<unknown>) => void,
+  ): Promise<CronRunResult> {
     const maxRunMs = Math.min(job.maxRunMs ?? this.defaultMaxRunMs, MAX_CRON_RUN_MS);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const turn = this.runJob(job, { abortSignal: controller.signal });
     const timedOut = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         controller.abort();
+        // The turn ignored its signal and is still running: hand it to
+        // `executeJob`, which keeps `runningSince` until it settles.
+        onAbandoned(turn);
         reject(new Error(`Cron job "${job.id}" turn timed out after ${maxRunMs}ms (maxRunMs)`));
       }, maxRunMs);
     });
     try {
-      return await Promise.race([this.runJob(job, { abortSignal: controller.signal }), timedOut]);
+      return await Promise.race([turn, timedOut]);
     } finally {
       clearTimeout(timer);
     }
@@ -1379,12 +1600,18 @@ export class CronScheduler {
     output: string,
     ranAt: string,
     progress?: CronRunProgress[],
+    transcript?: string,
   ): Promise<void> {
-    await this.persistRun(job, output, ranAt, progress);
+    // The run file keeps the whole stream (narration included); only the
+    // final answer is judged and delivered — see CronRunResult.transcript.
+    await this.persistRun(job, transcript ?? output, ranAt, progress);
 
     // `output` is passed to `decideEscalation` and `deliverTo` EXACTLY as the
     // runner produced it. Progress never joins it — see CronRunResult.progress.
-    const decision = decideEscalation(output);
+    // An empty output is never delivered (UBP-004): there is nothing to say,
+    // and a platform refusing an empty message would read as a delivery fault.
+    const decision: CronDecision =
+      output.trim() === '' ? { action: 'silent', output } : decideEscalation(output);
     const delivered = decision.action === 'escalate' ? await this.deliverTo(job, output) : false;
     this.notifyDecision(job, decision, ranAt, delivered);
   }
@@ -1481,8 +1708,8 @@ export class CronScheduler {
     jobId: string,
     expectedNextRunAt: string | undefined,
     patch: Partial<CronJob>,
-  ): Promise<boolean> {
-    let claimed = false;
+  ): Promise<ClaimOutcome> {
+    const outcome: { value: ClaimOutcome } = { value: { kind: 'lost' } };
     await this.withJobsLock(async (jobs) => {
       const idx = jobs.findIndex((j) => j.id === jobId);
       const existing = idx >= 0 ? jobs[idx] : undefined;
@@ -1491,11 +1718,21 @@ export class CronScheduler {
         // Already claimed (or otherwise moved) by a concurrent tick — no-op.
         return jobs;
       }
+      // UBP-026 — a fresh `runningSince` means the previous run of this job is
+      // still executing (a long turn, a run-now, a timed-out turn that ignored
+      // its abort). Refuse the claim; advance past the occurrence so the job
+      // is not left due on every tick. A one-shot has no later occurrence and
+      // stays due until its running copy finishes.
+      if (typeof existing.runningSince === 'number' && this.isRunning(existing, Date.now())) {
+        if (patch.nextRunAt !== undefined) jobs[idx] = { ...existing, nextRunAt: patch.nextRunAt };
+        outcome.value = { kind: 'overlap', runningSince: existing.runningSince };
+        return jobs;
+      }
       jobs[idx] = { ...existing, ...patch };
-      claimed = true;
+      outcome.value = { kind: 'claimed' };
       return jobs;
     });
-    return claimed;
+    return outcome.value;
   }
 
   /**
@@ -1515,6 +1752,14 @@ export class CronScheduler {
     });
   }
 }
+
+/** What `claimDueJob`'s compare-and-swap decided. */
+type ClaimOutcome =
+  | { kind: 'claimed' }
+  /** A concurrent tick moved the job first. */
+  | { kind: 'lost' }
+  /** The job's previous run still holds a fresh `runningSince` stamp. */
+  | { kind: 'overlap'; runningSince: number };
 
 // ---------------------------------------------------------------------------
 // Re-exports from heartbeat + schedule modules

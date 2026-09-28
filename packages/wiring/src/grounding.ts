@@ -129,10 +129,12 @@ async function drainExitCode(
 /**
  * Reject at the deadline rather than waiting for the killed child's `close`.
  *
- * `ScopedProcessImpl` reports a killed process as exit code 1 (`exitCode ?? 1`),
- * which a `check: run … exit 1` would read as the run having genuinely failed
- * that way — a timeout passing for a verified fact. The timer fires before the
- * SIGTERM'd child's `close` can be delivered, so a timed-out run throws and the
+ * `ScopedProcessImpl` reports a timed-out process as exit code 124 with a
+ * `[timed out after Nms; process group killed]` stderr note
+ * (`TIMEOUT_EXIT_CODE`, packages/core/src/scoped/scoped-process.ts), which a
+ * `check: run … exit 124` would read as the run having genuinely exited that
+ * way — a timeout passing for a verified fact. The timer fires before the
+ * killed child's `close` can be delivered, so a timed-out run throws and the
  * verifier turns the throw into a rejection. A late rejection from the losing
  * promise is consumed by the race, not left unhandled.
  */

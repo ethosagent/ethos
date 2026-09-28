@@ -11,7 +11,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ethosDir, secretRefForConfigKey } from '@ethosagent/config';
-import { declaredWorkdirs } from '@ethosagent/core';
+import { DefaultToolRegistry, declaredWorkdirs } from '@ethosagent/core';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { BundleManifest, ExportStamp, PersonalityConfig } from '@ethosagent/types';
 import { getStorage } from '../wiring';
@@ -558,8 +558,9 @@ function parseMcpServerConfig(
     tools: [],
   };
 
-  // Extract tools prefixed with mcp__<serverName>__
-  const prefix = `mcp__${serverName}__`;
+  // Extract tools prefixed with mcp__<server half>__ — the registry rewrites a
+  // non-conforming server name, so the prefix comes from it (UBP-035).
+  const prefix = DefaultToolRegistry.mcpToolPrefix(serverName);
   info.tools = toolset.filter((t) => t.startsWith(prefix));
 
   const configPath = join(personalityDir, 'mcp', serverName, 'config.yaml');

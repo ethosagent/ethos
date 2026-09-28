@@ -53,6 +53,16 @@ export const CHAT_ERROR_MAP: Record<string, ChatErrorEntry> = {
     action: 'send a new message to continue',
     retryable: false,
   },
+  // UBP-020 — `emptyCompletionError` (packages/core/src/agent-loop/output-cap.ts):
+  // the turn ended with no reply text. When the output token cap was the cause
+  // the raw message says so; the action covers both.
+  empty_completion: {
+    title: 'the model returned no reply',
+    action:
+      'send it again or rephrase; if the output token limit cut it off, ask for a shorter ' +
+      'answer or raise models.<provider>/<model>.maxOutputTokens in ~/.ethos/config.yaml',
+    retryable: true,
+  },
   rate_limited: {
     title: 'rate limited by the provider',
     action: 'wait a moment and retry',

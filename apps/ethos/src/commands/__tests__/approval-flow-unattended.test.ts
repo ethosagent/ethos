@@ -95,6 +95,7 @@ function wire(opts: {
   withOperatorKey?: boolean;
 }) {
   const gateway = {
+    onLaneStop: () => () => {},
     resolveApprovalRoute: () =>
       opts.routeAdapter
         ? {

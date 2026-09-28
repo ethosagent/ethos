@@ -1740,8 +1740,15 @@ export async function composeAllTools(
   }
 
   // Cron tool — registered only when a CronScheduler was threaded through.
+  // The gateway hosts' thread resolver (`gatewayTurnOrigin` →
+  // `Gateway.originThreadIdFor`) rides along so a job created in a Slack
+  // thread / Telegram topic records `origin.threadId` and delivers back there
+  // (UBP-024; pinned by `__tests__/cron-origin-thread-wiring.test.ts`).
   if (opts.cronScheduler) {
-    for (const tool of composeCron(wiringCtx, { scheduler: opts.cronScheduler }).tools)
+    for (const tool of composeCron(wiringCtx, {
+      scheduler: opts.cronScheduler,
+      ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+    }).tools)
       tools.register(tool);
   }
 

@@ -1,3 +1,4 @@
+import { DefaultToolRegistry } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { type McpInstallFlow, McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
 import { describe, expect, it, vi } from 'vitest';
@@ -149,6 +150,15 @@ describe('McpService.serverTools — per-server tool discovery', () => {
     const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
     expect(result.available).toBe(false);
     expect(result.tools).toEqual([]);
+  });
+
+  it('finds the tools of a server whose name the registry rewrote (UBP-035)', async () => {
+    const service = makeService(async () => [
+      tool(DefaultToolRegistry.mcpToolName('acme.docs', 'search'), 'Search docs'),
+    ]);
+    const result = await service.serverTools({ personalityId: 'p1', serverName: 'acme.docs' });
+    expect(result.available).toBe(true);
+    expect(result.tools).toEqual([{ name: 'search', description: 'Search docs' }]);
   });
 
   it('returns available:false when discovery throws (server unreachable)', async () => {

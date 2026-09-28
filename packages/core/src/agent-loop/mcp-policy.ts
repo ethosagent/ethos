@@ -1,4 +1,16 @@
 import type { McpPolicy } from '@ethosagent/types';
+import { mcpServerSegment, mcpToolName } from '../tool-registry';
+
+/**
+ * The mcp.yaml server key whose provider-safe half is `segment` (UBP-035).
+ * mcp.yaml names servers by their ORIGINAL name, and `mcpToolName`
+ * (tool-registry.ts) rewrites a non-conforming one, so a key matches either
+ * verbatim or through `mcpServerSegment` — the same rule the registry's
+ * allowlist gates use. Pinned by __tests__/mcp-policy-rewritten-names.test.ts.
+ */
+function policyServerKey(servers: Record<string, unknown>, segment: string): string | undefined {
+  return Object.keys(servers).find((k) => k === segment || mcpServerSegment(k) === segment);
+}
 
 // ---------------------------------------------------------------------------
 // MCP reject_args policy — standalone so it can be tested without constructing
@@ -20,7 +32,13 @@ export function checkMcpRejectArgs(
 
   const server = toolName.slice(firstSep + 2, secondSep);
   const bareTool = toolName.slice(secondSep + 2);
-  const argRules = servers[server]?.reject_args?.[bareTool];
+  const serverKey = policyServerKey(servers, server);
+  const rules = serverKey !== undefined ? servers[serverKey]?.reject_args : undefined;
+  const toolKey =
+    rules && serverKey !== undefined
+      ? Object.keys(rules).find((t) => t === bareTool || mcpToolName(serverKey, t) === toolName)
+      : undefined;
+  const argRules = toolKey !== undefined ? rules?.[toolKey] : undefined;
   if (!argRules) return undefined;
 
   const typedArgs = args as Record<string, unknown>;
@@ -50,7 +68,8 @@ export function checkMcpEnabled(
   if (secondSep === -1) return undefined;
 
   const server = toolName.slice(firstSep + 2, secondSep);
-  if (servers[server]?.enabled === false) {
+  const serverKey = policyServerKey(servers, server);
+  if (serverKey !== undefined && servers[serverKey]?.enabled === false) {
     return `MCP policy: server '${server}' is disabled for this personality`;
   }
   return undefined;

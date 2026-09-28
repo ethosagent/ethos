@@ -52,6 +52,13 @@ describe('CHAT_ERROR_MAP coverage (A3)', () => {
     const code = match[1];
     if (code) literals.add(code);
   }
+  // UBP-020 — `emptyCompletionError` (output-cap.ts) returns `{ error, code }`
+  // with `code: EMPTY_COMPLETION_CODE`, which agent-loop.ts spreads the same way.
+  const outputCap = readFileSync(join(CORE_SRC, 'agent-loop', 'output-cap.ts'), 'utf8');
+  for (const match of outputCap.matchAll(/_CODE\s*=\s*'([^']+)'/g)) {
+    const code = match[1];
+    if (code) literals.add(code);
+  }
 
   it('the extraction still sees the known core codes (regex rot guard)', () => {
     for (const code of [
@@ -60,6 +67,7 @@ describe('CHAT_ERROR_MAP coverage (A3)', () => {
       'streaming_timeout',
       'model_unresolved',
       'context_overflow',
+      'empty_completion',
     ]) {
       expect([...literals]).toContain(code);
     }

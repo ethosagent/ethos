@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import {
   buildRemoteWords,
   buildSshArgs,
+  ExecAbortedError,
   ExecTimeoutError,
   knownHostsFromSshConfig,
   type SshConfigResolver,
@@ -1586,5 +1587,50 @@ describe('SshExecutionBackend contract surface', () => {
     const result = await runExecutionConformance(backend({}));
     expect(result.failures).toEqual([]);
     expect(result.passed).toBe(true);
+  });
+});
+
+// exec-fs H4 — `ExecOpts.signal` (threaded from tools-terminal / tools-code)
+// must stop the command: an abort mid-run kills the local ssh client, which
+// drops the connection so sshd hangs the remote session up; an already-aborted
+// signal must not dial the host at all.
+describe('SshExecutionBackend.exec — abort signal', () => {
+  /** A client that never closes on its own, as a long remote command would. */
+  function useHangingClient(): void {
+    vi.mocked(spawn).mockImplementation(((_cmd: string, args: readonly string[]) => {
+      const child = new FakeChild();
+      if (args[0] === '-G') {
+        setTimeout(() => child.emit('close', 1), 0);
+        return child as unknown as ChildProcess;
+      }
+      spawned.push({ args: [...args], child });
+      setTimeout(() => child.stdout.emit('data', Buffer.from('STARTED\n')), 0);
+      return child as unknown as ChildProcess;
+    }) as unknown as typeof spawn);
+  }
+
+  it('an abort mid-run kills the ssh client and rejects with ExecAbortedError', async () => {
+    useHangingClient();
+    const controller = new AbortController();
+    const seen: ExecChunk[] = [];
+    const run = (async () => {
+      for await (const c of backend({}).exec('sleep 600', { signal: controller.signal })) {
+        seen.push(c);
+        if (c.stream === 'stdout') controller.abort();
+      }
+    })();
+    await expect(run).rejects.toBeInstanceOf(ExecAbortedError);
+    expect(seen.some((c) => c.stream === 'stdout')).toBe(true);
+    expect(spawned[0]?.child.kills).toBeGreaterThan(0);
+  });
+
+  it('an already-aborted signal opens no ssh connection', async () => {
+    useHangingClient();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      collect(backend({}).exec('echo hi', { signal: controller.signal })),
+    ).rejects.toBeInstanceOf(ExecAbortedError);
+    expectNoSshConnection();
   });
 });

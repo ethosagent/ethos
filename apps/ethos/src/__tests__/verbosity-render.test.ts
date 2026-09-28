@@ -257,6 +257,22 @@ describe('FW-10 verbosity projection', () => {
       expect(described.trace).toBe('tr-123');
     });
 
+    // UBP-020 — a turn with no reply text ends in `error(code: 'empty_completion')`
+    // (packages/core/src/agent-loop/output-cap.ts); the CLI renders it, mapped.
+    it('an empty completion renders an error line with mapped wording', () => {
+      const empty: AgentEvent = {
+        type: 'error',
+        error: 'The model reached its output token limit before writing any reply.',
+        code: 'empty_completion',
+      };
+      const lines = projectEvent(empty, 'default', { streamedText: '', aborted: false });
+      expect(lines.filter((l) => l.kind === 'error')).toHaveLength(1);
+      const described = describeChatError('empty_completion', empty.error);
+      expect(described.title).toBe('the model returned no reply');
+      expect(described.action).toContain('output token limit');
+      expect(described.retryable).toBe(true);
+    });
+
     it('no trace id → no trace line material', () => {
       expect(describeChatError('llm_error', 'raw').trace).toBeUndefined();
     });

@@ -96,6 +96,7 @@ function wireCardBot() {
     { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
   ] as unknown as GatewayBotConfig[];
   const gateway = {
+    onLaneStop: () => () => {},
     resolveApprovalRoute: () => ({
       adapter,
       chatId: 'C1',
@@ -172,6 +173,7 @@ describe('gateway — command substitution asks on a card surface', () => {
       { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
     ] as unknown as GatewayBotConfig[];
     const gateway = {
+      onLaneStop: () => () => {},
       resolveApprovalRoute: () => ({
         adapter,
         chatId: 'C1',
@@ -207,6 +209,7 @@ describe('gateway — command substitution asks on a card surface', () => {
       { botKey: 'bot-1', loop, binding: { type: 'personality', name: 'default' } },
     ] as unknown as GatewayBotConfig[];
     const gateway = {
+      onLaneStop: () => () => {},
       resolveApprovalRoute: () => ({
         adapter,
         chatId: 'C1',
@@ -227,7 +230,10 @@ describe('gateway — command substitution asks on a card surface', () => {
     const bots = [
       { botKey: 'bot-2', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
     ] as unknown as GatewayBotConfig[];
-    const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
+    const gateway = {
+      onLaneStop: () => () => {},
+      resolveApprovalRoute: () => undefined,
+    } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, bots, [], seams);
     expect(hasHostApprovalGate(hooks)).toBe(true);
     const result = await fire(hooks, 'kill $(lsof -t -i:3000)');

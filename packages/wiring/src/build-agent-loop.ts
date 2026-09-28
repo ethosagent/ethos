@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
 import {
@@ -66,6 +67,7 @@ import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
+import { cwdReachWarning } from './cwd-reach-warning';
 import type { DisposerStack } from './disposer-stack';
 import type {
   CreateAgentLoopOptions,
@@ -994,6 +996,10 @@ export async function buildAgentLoop(
   // asked of the loop's own file-context injector for the directory the turn
   // resolves — the same text, not a second discovery (project-context-floor.ts).
   const startupWorkdir = resolveTurnWorkdir(activePerson, { dataDir, cwd: workingDir });
+  // UBP-047 — say once at boot when the process cwd (`/`, `$HOME`) becomes a
+  // personality's whole default fs reach.
+  const cwdWarning = cwdReachWarning(personalities.list(), workingDir, homedir());
+  if (cwdWarning) log.warn(cwdWarning);
   const projectContextOf = (person: PersonalityConfig, workdir: string) =>
     projectContextFor({
       injectors,

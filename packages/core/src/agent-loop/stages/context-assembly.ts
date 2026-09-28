@@ -34,7 +34,7 @@ import {
   DEFAULT_AGING_STATE,
 } from '../tool-result-aging';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
-import { ageVisionBlocks } from '../vision-aging';
+import { ageVisionBlocks, KEEP_RECENT_VISION_TURNS } from '../vision-aging';
 import { checkContextDrift } from './context-drift';
 import { emitContextEvents } from './context-emit';
 import { turnToolDefinitions } from './stream-step';
@@ -644,8 +644,11 @@ export async function* assembleContext(
   // unconditional path, ahead of the pressure-gated aging below, because this
   // one is about RECENCY: a session that never nears its context window would
   // otherwise re-send every screenshot on every request for the rest of its
-  // life. No-op (and no allocation) when nothing aged.
-  llmMessages = ageVisionBlocks(llmMessages);
+  // life. No-op (and no allocation) when nothing aged. UBP-019 — `nativeVision`
+  // also degrades a replayed block THIS turn's model cannot read (a tier or
+  // personality switch onto a text-only model) to a line naming it; pinned by
+  // __tests__/vision-replay-rejected.test.ts.
+  llmMessages = ageVisionBlocks(llmMessages, KEEP_RECENT_VISION_TURNS, { vision: nativeVision });
   // Phase 1c — actuals-first gate signal. The most recent assistant turn's
   // real input tokens (+ measured static sections system+tools) were persisted
   // by Phase 0; prefer them over the chars/4 estimate. Absent on the first

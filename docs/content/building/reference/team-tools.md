@@ -31,7 +31,7 @@ Toolset `kanban`. Thirteen tools backed by a STRICT-mode SQLite store with FTS5 
 | `kanban_assign` | Set or clear `assignee` (personality id or `human:<name>`). | coordinator only |
 | `kanban_link` | Add a `parent → child` edge. Cycles rejected. | coordinator only |
 | `kanban_archive` | Soft-delete a task. Preserves audit trail. | coordinator only |
-| `kanban_update_status` | Move a task to a new status (`todo`, `ready`, `running`, `blocked`, `done`, `archived`, `scheduled`, `failed`, `needs_revision`). | coordinator or current assignee |
+| `kanban_update_status` | Move a task to a new status (`todo`, `ready`, `running`, `blocked`, `archived`, `scheduled`, `failed`, `needs_revision`). It cannot set `done`: use `kanban_complete` (`SETTABLE_STATUS_VALUES`, `extensions/tools-kanban/src/index.ts`). | coordinator or current assignee |
 | `kanban_complete` | End the open run as `completed`, status → `done`. Fires the [`before_ticket_complete` hook](#before-ticket-complete). | assignee only |
 | `kanban_block` | End the open run as `blocked`, status → `blocked`. Reason is recorded as both run summary and a comment, atomically. | assignee only |
 | `kanban_unblock` | Flip a blocked task back to `ready` (parents all done) or `todo` (parents still pending). | assignee only |

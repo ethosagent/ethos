@@ -1,4 +1,4 @@
-import { SsrfError, validateUrl } from '@ethosagent/core';
+import { DefaultToolRegistry, SsrfError, validateUrl } from '@ethosagent/core';
 import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import {
   ConfidentialClientUnsupported,
@@ -320,7 +320,9 @@ export class McpService {
     limit?: number;
     cursor?: string;
   }) {
-    const prefix = `mcp__${input.serverName}__`;
+    // UBP-035 — the registry rewrites a non-conforming server name
+    // (`DefaultToolRegistry.mcpToolPrefix`), so the prefix comes from there.
+    const prefix = DefaultToolRegistry.mcpToolPrefix(input.serverName);
     let all: Awaited<ReturnType<McpManager['getToolsForPersonality']>>;
     try {
       all = await this.mcpManager.getToolsForPersonality(input.personalityId);

@@ -215,6 +215,8 @@ export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { DefaultRealtimeVoiceProviderRegistry } from './providers/realtime-registry';
 export { DefaultStorageRegistry } from './providers/storage-registry';
 export { DefaultSttProviderRegistry } from './providers/stt-registry';
+export type { TransientRetryOptions } from './providers/transient-retry';
+export { fetchWithTransientRetry } from './providers/transient-retry';
 export { DefaultTtsProviderRegistry } from './providers/tts-registry';
 export type {
   RealtimeEntrySelection,

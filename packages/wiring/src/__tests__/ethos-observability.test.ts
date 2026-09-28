@@ -293,6 +293,17 @@ describe('EthosObservability', () => {
       });
     });
 
+    it('recordHeartbeatDecision records a skipped occurrence (UBP-027)', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      obs.recordHeartbeatDecision({ jobId: 'daily', decision: 'missed', delivered: false });
+      obs.recordHeartbeatDecision({ jobId: 'triage', decision: 'overlap-skip', delivered: false });
+      expect(events.map((e) => e.details)).toMatchObject([
+        { jobId: 'daily', decision: 'missed' },
+        { jobId: 'triage', decision: 'overlap-skip' },
+      ]);
+    });
+
     it('recordDecisionToolCall emits decision.tool — info on ok, warn otherwise (decision-tool D7)', () => {
       const { writer, events } = makeFakeWriter();
       const obs = new EthosObservability(writer);

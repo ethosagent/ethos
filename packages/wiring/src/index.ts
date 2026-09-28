@@ -1404,6 +1404,13 @@ async function createLLMFromRegistry(
         config,
         log,
       );
+      // UBP-033 — the model profile's output cap, the same merge `resolveOne`
+      // applies on the factory path; pinned by
+      // __tests__/rotation-max-output-tokens.test.ts.
+      const maxOutputTokens = mergeModelProfile(
+        lookupProfile(config.provider, config.model),
+        config.models?.[`${config.provider}/${config.model}`],
+      )?.maxOutputTokens;
       const pool = new AuthRotatingProvider(
         [
           { id: 'primary', apiKey: config.apiKey, priority: 100 },
@@ -1420,13 +1427,15 @@ async function createLLMFromRegistry(
         // would silently not apply to a rotation deployment.
         config.toolOrder !== undefined ||
           config.requestTimeoutMs !== undefined ||
-          serverCompaction !== undefined
+          serverCompaction !== undefined ||
+          maxOutputTokens !== undefined
           ? {
               ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
               ...(config.requestTimeoutMs !== undefined
                 ? { requestTimeoutMs: config.requestTimeoutMs }
                 : {}),
               ...(serverCompaction ? { serverCompaction } : {}),
+              ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             }
           : undefined,
       );

@@ -703,7 +703,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       const webOrigin =
         job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
       const ranAt = new Date().toISOString();
-      const { sessionKey, output, reusedWebOrigin, progress } = await runCronTurn({
+      const { sessionKey, output, transcript, reusedWebOrigin, progress } = await runCronTurn({
         loop,
         sessions: session,
         jobId: job.id,
@@ -725,7 +725,15 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           ...(reusedWebOrigin && webOrigin ? { sessionKey: webOrigin } : {}),
         });
       }
-      return { jobId: job.id, ranAt, output, sessionKey, progress };
+      // UBP-025 — the run file records the whole turn, as boot.ts does.
+      return {
+        jobId: job.id,
+        ranAt,
+        output,
+        sessionKey,
+        progress,
+        ...(transcript !== undefined ? { transcript } : {}),
+      };
     },
   });
   // Late-bind the scheduler into the watcher manager (the manager was

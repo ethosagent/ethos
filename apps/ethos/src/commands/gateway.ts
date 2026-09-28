@@ -37,7 +37,6 @@ import {
 } from '@ethosagent/core';
 import {
   buildCronTriggers,
-  CronProgressRecorder,
   CronScheduler,
   type CronTriggers,
   runScriptFile,
@@ -95,7 +94,6 @@ import { createA2aTools } from '@ethosagent/tools-a2a';
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
 import {
-  answerSuffix,
   type ChannelTranscriptStore,
   type ClarifyResponse,
   EthosError,
@@ -213,6 +211,7 @@ import {
   getStorage,
   loadTeamManifest,
 } from '../wiring';
+import { createCronRunJob } from './cron-turn';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
@@ -827,55 +826,35 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     deliver: async (job, output) => {
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
-    runJob: async (job, runOpts) => {
-      if (!systemLoop) {
-        throw new EthosError({
-          code: 'INTERNAL',
-          cause: 'System loop not yet initialised at cron firing time',
-          action:
-            'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
-        });
-      }
+    // The one cron turn implementation (`runCronTurn`, via `createCronRunJob`):
+    // an `error` event fails the run instead of recording it as a success, and
+    // only the final answer is delivered (UBP-004, UBP-025).
+    runJob: createCronRunJob({
+      loop: () => {
+        if (!systemLoop) {
+          throw new EthosError({
+            code: 'INTERNAL',
+            cause: 'System loop not yet initialised at cron firing time',
+            action:
+              'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
+          });
+        }
+        return systemLoop;
+      },
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
       // Refresh-before-use (not create-once-cache-forever) so a personality
       // created/edited after boot is honored the next time cron fires.
-      if (!cronPersonalities) {
-        cronPersonalities = await createPersonalityRegistry(getStorage());
-      }
-      await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
-      const pid = job.personalityId;
-      const pers = cronPersonalities.get(pid);
-      const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
-
-      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
-      let output = '';
-      // Progress is collected separately from `output` — never appended to it.
-      // `output` is delivered verbatim and `decideEscalation` tests it with a
-      // start-anchored `[SILENT]` regex. The recorder gates on
-      // `audience: 'user'`; internal progress stays internal.
-      const progress = new CronProgressRecorder();
-      for await (const event of systemLoop.run(job.prompt ?? '', {
-        sessionKey,
-        personalityId: pid,
-        toolsetOverride,
-        // R10 — the scheduler aborts this at the job's `maxRunMs`.
-        abortSignal: runOpts?.abortSignal,
-      })) {
-        if (event.type === 'text_delta') output += event.text;
-        // A `returnDirect` tool's answer arrives only as `done.text`, after
-        // any preamble that streamed — same rule as `runCronTurn`.
-        else if (event.type === 'done') output += answerSuffix(output, event.text);
-        else progress.record(event);
-      }
-      return {
-        jobId: job.id,
-        ranAt: new Date().toISOString(),
-        output,
-        sessionKey,
-        progress: progress.snapshot(),
-      };
-    },
+      toolsetFor: async (job) => {
+        if (!cronPersonalities) {
+          cronPersonalities = await createPersonalityRegistry(getStorage());
+        }
+        await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+        return cronPersonalities
+          .get(job.personalityId)
+          ?.toolset?.filter((t: string) => t !== 'cron');
+      },
+    }),
   });
 
   // Late-bind the scheduler into the watcher manager (the manager was
@@ -1691,8 +1670,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       console.error('[cron] system job reconciliation failed:', err);
     });
 
-  // Start all adapters
-  await Promise.all(adapters.map((a) => a.start()));
+  // Start all adapters — one failing adapter must not stop the rest (UBP-010).
+  await startAdaptersIsolated(adapters, {
+    observability: gatewayObservability(),
+    warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+  });
 
   // Durable delivery sweep (item 9). Deliberately AFTER adapter.start(): a
   // sweep against cold adapters would send into nothing while still burning
@@ -2119,7 +2101,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // (plan/phases/telegram-slack-webhook-mode.md §2b, §3c, §4)
   // ---------------------------------------------------------------------------
   //
-  // PLACED AFTER `adapters.map((a) => a.start())` ABOVE, AND THAT IS LOAD-BEARING.
+  // PLACED AFTER `startAdaptersIsolated(adapters, …)` ABOVE, AND THAT IS LOAD-BEARING.
   // `TelegramAdapter.webhook` is `undefined` until `start()` has registered the
   // webhook with Telegram and built grammy's callback; building the dispatch map
   // at adapter-construction time would mount nothing and 404 every delivery.
@@ -3058,6 +3040,12 @@ export function wireApprovalFlow(
     // operator setting, not an absent one.
     ...(seams.approvalTimeoutMs !== undefined ? { timeoutMs: seams.approvalTimeoutMs } : {}),
   });
+  // UBP-046 — `/stop` settles the stopped turn's pending approval now (card
+  // updated via `onResolved`, lane released), not at the approval timeout.
+  // Pinned by `../__tests__/stop-settles-approval.test.ts`.
+  const offLaneStop = gateway.onLaneStop(({ sessionId }) =>
+    coordinator.cancelForSession(sessionId, 'turn stopped'),
+  );
 
   // Where a posted card lives, keyed by `approvalId`. Populated once
   // `postApprovalCard` succeeds; consumed by the `onResolved` handler so the
@@ -3292,6 +3280,7 @@ export function wireApprovalFlow(
     // SIGINT/SIGTERM path: a hung adapter must cost a stale card, not a
     // shutdown that never completes.
     shutdown: async () => {
+      offLaneStop();
       coordinator.forceSettleAll();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<'expired'>((resolve) => {
@@ -4065,10 +4054,11 @@ export async function buildAdapters(
             token: botCfg.token,
             cache: telegramCache,
             botKey: deriveBotKey(botCfg),
-            // Straight through, NOT `?? true`: the adapter already defaults
-            // this to `true` (`dropPendingUpdates ?? true`), so defaulting it
-            // here as well would mean two places to change and a config
-            // `false` silently overridden if they ever drift.
+            // Straight through, no `??` default: the adapter already defaults
+            // this to `false` (`dropPendingUpdates ?? false`, owner decision
+            // D3 — a restart keeps the queued backlog), so defaulting it here
+            // as well would mean two places to change and a config value
+            // silently overridden if they ever drift.
             dropPendingUpdates: botCfg.dropPendingUpdates,
             // Webhook mode (plan/phases/telegram-slack-webhook-mode.md §2a).
             // Absent from config = long-poll, exactly today's behaviour. The
@@ -5022,6 +5012,52 @@ export function everyStartedAdapter(
   return [...new Set([...builtIn, ...gateway.listAdapters()])].filter(
     (a) => !gateway.hasStopped(a),
   );
+}
+
+/**
+ * Start every platform adapter with per-adapter isolation (UBP-010).
+ *
+ * `Promise.all` let ONE rejected `start()` — a revoked Discord token, a Slack
+ * socket that would not open — reject the whole command, exit 1 after Telegram
+ * had already started polling, and burn the supervisor's restart budget with
+ * every healthy bot offline. Here each rejection is warned about and recorded
+ * as a `gateway.adapter_start_failed` observability event, and the others keep
+ * serving. The failed adapter is not retried in-process; a restart retries it.
+ * Rejects (with the first failure) only when EVERY adapter failed, so a
+ * gateway with nothing to serve still exits. Used by `ethos gateway start` and
+ * `ethos boot`; pinned by `__tests__/gateway-adapter-start.test.ts`.
+ */
+export async function startAdaptersIsolated(
+  adapters: ReadonlyArray<{ id: string; start(): Promise<void> }>,
+  deps: {
+    observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
+    warn: (message: string) => void;
+  },
+): Promise<{ started: string[]; failed: { id: string; error: string }[] }> {
+  const results = await Promise.allSettled(adapters.map((a) => a.start()));
+  const started: string[] = [];
+  const failed: { id: string; error: string }[] = [];
+  let firstReason: unknown;
+  results.forEach((result, i) => {
+    const id = adapters[i]?.id ?? `adapter#${i}`;
+    if (result.status === 'fulfilled') {
+      started.push(id);
+      return;
+    }
+    if (failed.length === 0) firstReason = result.reason;
+    const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+    failed.push({ id, error });
+    deps.warn(
+      `adapter ${id} failed to start: ${error} — the other adapters keep running; restart the gateway once it is fixed`,
+    );
+    deps.observability.recordSafetyBlock({
+      code: 'gateway.adapter_start_failed',
+      cause: error,
+      details: { adapterId: id },
+    });
+  });
+  if (adapters.length > 0 && failed.length === adapters.length) throw firstReason;
+  return { started, failed };
 }
 
 /**

@@ -1202,6 +1202,7 @@ async function* streamChild(
   if (signal) {
     if (signal.aborted) {
       error = new ExecAbortedError();
+      child.kill();
       done = true;
     } else {
       signal.addEventListener(
@@ -1412,6 +1413,10 @@ export class SshExecutionBackend implements ExecutionBackend {
     // script that emits it and the stream reader that strips and reads it.
     const sentinel = newExit255Sentinel();
     const args = buildSshArgs(ssh, buildRemoteWords(ssh, cmd, opts, sentinel));
+    // An already-aborted signal never dials the host: `streamChild` would
+    // refuse the stream, but the client it was handed would already be running
+    // the command. Pinned by ssh.test.ts ("abort signal").
+    if (opts.signal?.aborted) throw new ExecAbortedError();
     const child = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
     yield* withByteCeiling(streamChild(child, opts, sentinel), MAX_EXEC_OUTPUT_BYTES, () => {
       child.kill();
