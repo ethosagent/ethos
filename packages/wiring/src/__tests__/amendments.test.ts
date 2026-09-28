@@ -24,11 +24,15 @@ import {
   amendmentAppliedPath,
   amendmentPriorPath,
   amendmentProposalPath,
+  autoPromotionDecision,
+  checkPendingLimits,
   createAmendment,
   expectedAfterHash,
   listAmendments,
   opsHash,
   readAmendment,
+  resolveAutoPromotion,
+  transitionAmendment,
 } from '@ethosagent/learning-inbox';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { noopLogger } from '@ethosagent/logger';
@@ -212,8 +216,15 @@ afterEach(() => {
 // --- surface -----------------------------------------------------------------
 
 describe('AmendmentService — surface', () => {
-  it('has no filing path: list, get, apply, decline, rollback only', () => {
-    expect(Object.keys(service).sort()).toEqual(['apply', 'decline', 'get', 'list', 'rollback']);
+  it('has no filing path: list, get, apply, decline, rollback, refresh only', () => {
+    expect(Object.keys(service).sort()).toEqual([
+      'apply',
+      'decline',
+      'get',
+      'list',
+      'refresh',
+      'rollback',
+    ]);
   });
 
   it('lists newest first and filters by status', async () => {
@@ -346,11 +357,28 @@ describe('AmendmentService.apply', () => {
     expect(recordSafetyApproval).not.toHaveBeenCalled();
   });
 
-  it('goes stale when toolset.yaml changed since filing', async () => {
+  it('a toolset.yaml changed since review is a hash_mismatch that records nothing (C6)', async () => {
     const record = await file();
     const hash = (await service.get(record.id))?.expectedAfterHash ?? '';
     const edited = `${SCOUT_TOOLSET}- web_fetch\n`;
     writeFileSync(toolsetPath('scout'), edited);
+
+    const result = await service.apply(record.id, {
+      actor: 'cli',
+      decidedBy: 'owner',
+      expectedAfterHash: hash,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'hash_mismatch' });
+    expect(await statusOf(record.id)).toBe('pending');
+    expect(toolsetOf('scout')).toBe(edited);
+    expect(recordSafetyApproval).not.toHaveBeenCalled();
+  });
+
+  it('goes stale when a hash reviewed over edited bytes is applied', async () => {
+    const record = await file();
+    const edited = `${SCOUT_TOOLSET}- web_fetch\n`;
+    writeFileSync(toolsetPath('scout'), edited);
+    const hash = (await service.get(record.id))?.expectedAfterHash ?? '';
 
     const result = await service.apply(record.id, {
       actor: 'cli',
@@ -407,6 +435,28 @@ describe('AmendmentService.apply', () => {
     );
   });
 
+  it('refuses, recording nothing, when the LIVE definition already violates the constitution (C6)', async () => {
+    const record = await file();
+    const hash = (await service.get(record.id))?.expectedAfterHash ?? '';
+    // read_file is in the live toolset AND the after toolset: not this change's doing.
+    writeFileSync(join(dataDir, 'constitution.yaml'), 'forbidden:\n  tools:\n    - read_file\n');
+
+    const result = await service.apply(record.id, {
+      actor: 'cli',
+      decidedBy: 'owner',
+      expectedAfterHash: hash,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'constitution_violation',
+      reason: expect.stringMatching(/not the cause/),
+    });
+    expect(result.ok ? null : result.record).toBeUndefined();
+    expect(await statusOf(record.id)).toBe('pending');
+    expect(toolsetOf('scout')).toBe(SCOUT_TOOLSET);
+    expect(recordSafetyApproval).not.toHaveBeenCalled();
+  });
+
   it('refuses under a malformed constitution and leaves the record pending', async () => {
     const record = await file();
     const hash = (await service.get(record.id))?.expectedAfterHash ?? '';
@@ -453,10 +503,59 @@ describe('AmendmentService.apply', () => {
   });
 });
 
+// --- refresh ------------------------------------------------------------------
+
+describe('AmendmentService.refresh (C3)', () => {
+  it('marks a pending request stale when toolset.yaml changed, freeing its pending slot', async () => {
+    tools.register(tool('extra_a'));
+    const records = [
+      await file(ADD_TERMINAL),
+      await file(ADD_WEB_FETCH),
+      await file([{ op: 'add_tool', tool: 'extra_a' }]),
+    ];
+    const next = opsHash([{ op: 'remove_tool', tool: 'read_file' }]);
+    expect(await checkPendingLimits(storage, dataDir, 'scout', next)).toMatchObject({
+      kind: 'limit',
+    });
+    writeFileSync(toolsetPath('scout'), `${SCOUT_TOOLSET}- offline_tool\n`);
+
+    const first = records[0]?.id ?? '';
+    const result = await service.refresh(first, { actor: 'cli', decidedBy: 'owner' });
+    expect(result).toMatchObject({ ok: false, code: 'stale', record: { status: 'stale' } });
+    expect(await statusOf(first)).toBe('stale');
+    expect(await checkPendingLimits(storage, dataDir, 'scout', next)).toEqual({ kind: 'ok' });
+  });
+
+  it('marks a request stale when an op no longer names a registered tool', async () => {
+    const record = await file();
+    tools.unregister('terminal');
+    expect(await service.refresh(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      code: 'stale',
+    });
+    expect(await statusOf(record.id)).toBe('stale');
+  });
+
+  it('leaves a request that still applies pending, and a decided one alone', async () => {
+    const record = await file();
+    expect(await service.refresh(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: true,
+      record: { status: 'pending' },
+    });
+    await approve(record.id);
+    expect(await service.refresh(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: true,
+      record: { status: 'applied' },
+    });
+  });
+});
+
 // --- lock ---------------------------------------------------------------------
 
-describe('the .apply.lock is shared by filing, apply and decline', () => {
-  it('a held lock refuses apply, decline and filing, and nothing changes', async () => {
+describe('the .apply.lock is shared by filing, apply, decline, rollback and refresh', () => {
+  it('a held lock refuses apply, decline, rollback, refresh and filing, and nothing changes', async () => {
+    const applied = await file(ADD_WEB_FETCH);
+    await approve(applied.id);
+    const appliedBytes = toolsetOf('scout');
     const record = await file();
     const hash = (await service.get(record.id))?.expectedAfterHash ?? '';
     const sessions = new InMemorySessionStore();
@@ -495,7 +594,16 @@ describe('the .apply.lock is shared by filing, apply and decline', () => {
       expect(
         await service.decline(record.id, { actor: 'cli', decidedBy: 'o', reason: 'no' }),
       ).toMatchObject({ ok: false, code: 'locked' });
-      expect(await intake.submit({ ops: ADD_WEB_FETCH, rationale: 'r' }, ctx)).toMatchObject({
+      expect(await service.rollback(applied.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+        ok: false,
+        code: 'locked',
+      });
+      expect(await service.refresh(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+        ok: false,
+        code: 'locked',
+      });
+      const removeRead: AmendmentOp[] = [{ op: 'remove_tool', tool: 'read_file' }];
+      expect(await intake.submit({ ops: removeRead, rationale: 'r' }, ctx)).toMatchObject({
         ok: false,
         reason: expect.stringContaining('.apply.lock'),
       });
@@ -503,8 +611,9 @@ describe('the .apply.lock is shared by filing, apply and decline', () => {
       release();
     }
     expect(await statusOf(record.id)).toBe('pending');
-    expect(toolsetOf('scout')).toBe(SCOUT_TOOLSET);
-    expect(await listAmendments(storage, dataDir)).toHaveLength(1);
+    expect(await statusOf(applied.id)).toBe('applied');
+    expect(toolsetOf('scout')).toBe(appliedBytes);
+    expect(await listAmendments(storage, dataDir)).toHaveLength(2);
   });
 });
 
@@ -527,7 +636,7 @@ describe('crash safety (the promote.ts snapshot order)', () => {
     expect(await approve(record.id)).toMatchObject({ ok: true, record: { status: 'applied' } });
   });
 
-  it('a crash after the live write and before the status update is shown, goes stale, and is closed by decline', async () => {
+  it('a crash after the live write is shown, recovered to applied by the next apply, and rolls back (C4)', async () => {
     const record = await file();
     const crashing = build({
       loadPersonalities: wrappedLoader((real) => async (...args) => {
@@ -539,26 +648,86 @@ describe('crash safety (the promote.ts snapshot order)', () => {
     await expect(approve(record.id, crashing)).rejects.toThrow('crash after the write');
     expect(await statusOf(record.id)).toBe('pending');
     expect(toolsetOf('scout')).toBe(review?.afterBytes);
-
     expect(await service.get(record.id)).toMatchObject({ stale: true, interruptedApply: true });
-    const retry = await service.apply(record.id, {
-      actor: 'cli',
-      decidedBy: 'owner',
-      expectedAfterHash: review?.expectedAfterHash ?? '',
-    });
-    expect(retry).toMatchObject({
-      ok: false,
-      code: 'stale',
-      reason: expect.stringMatching(/decline/),
-    });
+
+    // Declining would leave `declined` over live approved bytes: refused.
     expect(
       await service.decline(record.id, {
         actor: 'cli',
         decidedBy: 'owner',
         reason: 'already live',
       }),
-    ).toMatchObject({ ok: true, record: { status: 'declined' } });
-    expect(toolsetOf('scout')).toBe(review?.afterBytes);
+    ).toMatchObject({ ok: false, code: 'not_pending', reason: expect.stringMatching(/apply/) });
+
+    const retry = await service.apply(record.id, {
+      actor: 'cli',
+      decidedBy: 'someone-else',
+      expectedAfterHash: 'not-needed',
+    });
+    expect(retry).toMatchObject({
+      ok: true,
+      record: {
+        status: 'applied',
+        applied: { appliedHash: hashDefinitionBytes(review?.afterBytes ?? '') },
+      },
+    });
+    // The approver the marker recorded, not whoever ran the recovery.
+    expect(retry.ok && retry.record.history.at(-1)).toMatchObject({
+      action: 'approve',
+      actor: 'cli',
+      decidedBy: 'owner',
+    });
+    expect(codes()).toEqual(['amendment.approve']);
+    expect(await service.rollback(record.id, { actor: 'cli', decidedBy: 'owner' })).toMatchObject({
+      ok: true,
+      record: { status: 'rolled_back' },
+    });
+    expect(toolsetOf('scout')).toBe(SCOUT_TOOLSET);
+  });
+
+  it('a record an older build left stale over live approved bytes is recovered by refresh', async () => {
+    const record = await file();
+    const crashing = build({
+      loadPersonalities: wrappedLoader((real) => async (...args) => {
+        await real(...args);
+        throw new Error('crash after the write');
+      }),
+    });
+    await expect(approve(record.id, crashing)).rejects.toThrow('crash after the write');
+    // What the pre-recovery service did: marked it stale. And a legacy marker
+    // with no approver recorded.
+    await transitionAmendment(storage, dataDir, record.id, { to: 'stale', actor: 'cli' });
+    const markerPath = amendmentAppliedPath(dataDir, record.id);
+    const { actor: _a, decidedBy: _d, ...legacy } = JSON.parse(readFileSync(markerPath, 'utf-8'));
+    writeFileSync(markerPath, JSON.stringify(legacy));
+
+    const result = await service.refresh(record.id, { actor: 'cli', decidedBy: 'recoverer' });
+    expect(result).toMatchObject({ ok: true, record: { status: 'applied' } });
+    expect(result.ok && result.record.history.at(-1)).toMatchObject({ decidedBy: 'recoverer' });
+  });
+
+  it('a marker that does not match the live bytes is not a recovery', async () => {
+    const record = await file();
+    await approve(record.id);
+    await service.rollback(record.id, { actor: 'cli', decidedBy: 'o' });
+    const again = await file();
+    // A stray marker under the new id whose afterHash is not what is live.
+    writeFileSync(
+      amendmentAppliedPath(dataDir, again.id),
+      JSON.stringify({
+        amendmentId: again.id,
+        personalityId: 'scout',
+        priorHash: again.baseHash,
+        afterHash: 'f'.repeat(64),
+        at: 'now',
+      }),
+    );
+    writeFileSync(amendmentPriorPath(dataDir, again.id), SCOUT_TOOLSET);
+    expect(await service.get(again.id)).toMatchObject({ interruptedApply: false });
+    expect(await service.refresh(again.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: true,
+      record: { status: 'pending' },
+    });
   });
 });
 
@@ -660,6 +829,55 @@ describe('AmendmentService.rollback', () => {
     expect(await statusOf(record.id)).toBe('applied');
   });
 
+  it('shows the rollback diff, live → prior, for an applied record', async () => {
+    const record = await file();
+    await approve(record.id);
+    expect((await service.get(record.id))?.rollbackDiff).toEqual([
+      ' - read_file',
+      ` - ${PROPOSE_SELF_AMENDMENT_TOOL}`,
+      '-- terminal',
+    ]);
+  });
+
+  it('refuses record_mismatch when the stored ops or opsHash no longer bind prior to applied (C5)', async () => {
+    const record = await file();
+    await approve(record.id);
+    const applied = toolsetOf('scout');
+    const path = amendmentProposalPath(dataDir, record.id);
+    const original = readFileSync(path, 'utf-8');
+    const stored = JSON.parse(original);
+
+    // Ops swapped for others, with a matching opsHash: prior + ops ≠ applied bytes.
+    const swapped: AmendmentOp[] = [{ op: 'add_tool', tool: 'web_fetch' }];
+    writeFileSync(path, JSON.stringify({ ...stored, ops: swapped, opsHash: opsHash(swapped) }));
+    expect(await service.rollback(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: false,
+      code: 'record_mismatch',
+    });
+    // Right ops, forged opsHash.
+    writeFileSync(path, JSON.stringify({ ...stored, opsHash: 'f'.repeat(64) }));
+    expect(await service.rollback(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: false,
+      code: 'record_mismatch',
+    });
+    expect(toolsetOf('scout')).toBe(applied);
+
+    writeFileSync(path, original);
+    expect(await service.rollback(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('refuses prior_missing when the snapshot was edited', async () => {
+    const record = await file();
+    await approve(record.id);
+    writeFileSync(amendmentPriorPath(dataDir, record.id), '- terminal\n- web_fetch\n');
+    expect(await service.rollback(record.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: false,
+      code: 'prior_missing',
+    });
+  });
+
   it('ignores a forged destination in the record: writes are recomputed from the personality id', async () => {
     const record = await file();
     const path = amendmentProposalPath(dataDir, record.id);
@@ -677,6 +895,69 @@ describe('AmendmentService.rollback', () => {
     });
     expect(toolsetOf('scout')).toBe(SCOUT_TOOLSET);
     expect(toolsetOf('victim')).toBe('- read_file\n');
+  });
+});
+
+// --- G2-3: the constitution never mutates the live config --------------------------
+
+describe('G2-3: enforcing the constitution does not mutate the registry config', () => {
+  it('filing, apply and rollback under a budget-clamping constitution leave budgetCapUsd alone', async () => {
+    seed('scout', SCOUT_TOOLSET, 'name: scout\nbudgetCapUsd: 5\n');
+    writeFileSync(join(dataDir, 'constitution.yaml'), 'budget:\n  maxUsdPerSession: 1\n');
+    const loaded = await amendmentPersonalityLoader({ storage, dataDir })();
+    const config = loaded.describe('scout')?.config;
+    expect(config?.budgetCapUsd).toBe(5);
+    const snapshot = structuredClone(config);
+
+    const sessions = new InMemorySessionStore();
+    const session = await sessions.createSession({
+      key: 'cli:amend',
+      platform: 'cli',
+      model: 'm',
+      provider: 'p',
+      personalityId: 'scout',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0,
+        apiCallCount: 0,
+        compactionCount: 0,
+      },
+    });
+    const intake = createAmendmentIntake({
+      storage,
+      dataDir,
+      workingDir: root,
+      personalities: { get: (id: string) => loaded.describe(id)?.config },
+      tools,
+      sessions,
+      log: noopLogger,
+    });
+    const filed = await intake.submit({ ops: ADD_TERMINAL, rationale: 'r' }, {
+      sessionId: session.id,
+      sessionKey: 'cli:amend',
+      platform: 'cli',
+      personalityId: 'scout',
+      initiator: 'user',
+      roomAudience: 'private',
+      workingDir: root,
+      currentTurn: 1,
+      messageCount: 1,
+      abortSignal: new AbortController().signal,
+      emit: () => {},
+      resultBudgetChars: 80_000,
+    } as ToolContext);
+    expect(filed).toMatchObject({ ok: true, status: 'pending' });
+    expect(config).toEqual(snapshot);
+
+    const svc = build({ loadPersonalities: async () => loaded });
+    const id = filed.ok ? filed.id : '';
+    expect(await approve(id, svc)).toMatchObject({ ok: true });
+    expect(await svc.rollback(id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({ ok: true });
+    expect(loaded.describe('scout')?.config.budgetCapUsd).toBe(5);
+    expect(config?.budgetCapUsd).toBe(5);
   });
 });
 
@@ -743,6 +1024,17 @@ describe('G2-1: a pending amendment is never applied by any automated path', () 
     );
     expect(result.steps.length).toBeGreaterThan(0);
     expect(replayed).toEqual([]);
+
+    // The auto-promotion decision itself says promote for this personality —
+    // and still nothing routes the amendment to it: its id is not a candidate.
+    expect(
+      autoPromotionDecision({
+        candidate: { kind: 'skill', personalityId: 'scout' },
+        verdict: 'pass',
+        mode: resolveAutoPromotion('skill', policy.knobs),
+        scope: policy.scope,
+      }),
+    ).toEqual({ promote: true, reason: null });
 
     const unused = async (): Promise<never> => {
       throw new Error('unused');

@@ -38,6 +38,7 @@ import {
   amendmentApplyLockPath,
   amendmentPriorPath,
   applyOps,
+  canonicalizeOps,
   checkPendingLimits,
   createAmendment,
   expectedAfterHash,
@@ -166,8 +167,9 @@ const refuse = (reason: string): AmendmentSubmitResult => ({ ok: false, reason }
  *
  * `initiator === 'user'` is set only by attended surfaces: the CLI REPL
  * (apps/ethos/src/commands/chat.ts), the TUI (apps/tui/src/components/App.tsx),
- * web chat for a COOKIE session (apps/web-api/src/features/chat/rpc/send.ts —
- * a bearer key gets `'system'`) and the gateway for a real inbound message.
+ * web chat for a POSITIVE cookie session (apps/web-api/src/features/chat/rpc/
+ * send.ts — a bearer key or an unrecorded auth method gets `'system'`) and the
+ * gateway for a real inbound message.
  * The key-prefix check is the second lock: it drops gateway DMs (owner DMs are
  * v1.1) and `acp:`, which mesh peers open.
  */
@@ -187,20 +189,30 @@ export function gateRefusal(ctx: ToolContext): string | null {
 }
 
 /**
- * Check 2: nothing untrusted is in the context the model saw — this session's
- * stored messages from the active compaction watermark on (the same
- * `reconstructFromWatermark` the loop's context assembly uses; the scan reads
+ * Check 2: nothing untrusted is in the context the model saw. The scan reads
  * every stored message rather than the loop's `historyLimit` tail, so it can
- * only refuse more, never less). Tainted by:
+ * only refuse more, never less. Its window:
+ * - with no compaction watermark, the whole stored history;
+ * - with a DROP-ONLY watermark (no `summaryText`), the stored messages from the
+ *   watermark on — the same `reconstructFromWatermark` the loop's context
+ *   assembly uses; what it dropped never reaches the model again;
+ * - with a SUMMARY watermark, the whole stored history again: the summary was
+ *   written from the dropped rows and is re-injected as a synthetic message
+ *   (`reconstructFromWatermark`, packages/core/src/agent-loop/manual-compact.ts),
+ *   so untrusted text summarised out of the window is still in the context.
+ * Tainted by:
  * - an attachment on this turn or on any user message in the window;
- * - a successful result from a tool whose `outputIsUntrusted` is set — looked
- *   up by name, because stored rows do not record the flag;
+ * - a result from a tool whose `outputIsUntrusted` is set — looked up by name,
+ *   because stored rows do not record the flag;
  * - any `mcp__*` result, any result from a tool no longer registered, and any
- *   result with no tool name.
- * A result recorded as an error (`isError === true`) is skipped: core wraps
- * only SUCCESS output as untrusted (`Tool.outputIsUntrusted`), and a refused
- * call is exactly the evidence check 6 accepts. An unrecorded status is not
- * skipped.
+ *   result with no tool name;
+ * - any `session_search` result: it returns snippets of stored messages, this
+ *   session's pre-watermark rows included, so it can carry anything above.
+ * A failed result is judged exactly like a successful one — a failing
+ * `terminal` still printed what `curl` fetched, and an MCP server's error text
+ * is its own. The only rows skipped are the framework's own refusals
+ * (`isFrameworkRefusal`), which carry no tool output and are the evidence
+ * check 6 accepts.
  */
 export async function taintRefusal(
   deps: Pick<AmendmentIntakeDeps, 'sessions' | 'tools'>,
@@ -211,20 +223,62 @@ export async function taintRefusal(
     (m) => m.role !== 'system',
   );
   const watermark = selectActiveWatermark(await deps.sessions.listCompressions(ctx.sessionId));
-  const window = watermark ? reconstructFromWatermark(history, watermark).history : history;
+  const window =
+    watermark && !watermark.summaryText
+      ? reconstructFromWatermark(history, watermark).history
+      : history;
   for (const message of window) {
     if (isTainted(deps.tools, message)) return AMENDMENT_TAINT_REFUSAL;
   }
   return null;
 }
 
+/**
+ * The refusals the framework itself writes for a call that never ran, by the
+ * tool name the row records: the registry's unknown-tool, surface, toolset and
+ * availability refusals (`DefaultToolRegistry.executeParallel`,
+ * packages/core/src/tool-registry.ts) and the approval hook's toolset refusal
+ * (`notPermittedRefusal`, packages/wiring/src/approval-seams.ts). Pinned
+ * against both producers by the 'framework refusal texts' case in
+ * packages/wiring/src/__tests__/propose-amendment.test.ts, so a reworded
+ * refusal fails a test instead of silently tainting.
+ */
+function frameworkRefusalTexts(tool: string): readonly string[] {
+  return [
+    `Unknown tool: ${tool}`,
+    `Tool ${tool} is not available on this surface`,
+    `Tool ${tool} is not permitted for this personality`,
+    `Tool ${tool} is not currently available`,
+  ];
+}
+
+/**
+ * A stored row is a framework refusal only when it is recorded as an error AND
+ * its content is EXACTLY one of {@link frameworkRefusalTexts} for its own tool
+ * name. Exact, not a prefix: a tool's own error that merely starts with the
+ * same words is judged as tool output. A registry refusal of an
+ * `outputIsUntrusted` tool (an MCP tool included) is stored inside the
+ * untrusted wrap (packages/core/src/agent-loop/stages/tool-processing.ts), so
+ * it does not match and taints — the fail-safe side; it still counts as
+ * evidence, which reads only `isError`.
+ */
+export function isFrameworkRefusal(message: StoredMessage): boolean {
+  if (message.role !== 'tool_result' || message.isError !== true || !message.toolName) {
+    return false;
+  }
+  return frameworkRefusalTexts(message.toolName).includes(message.content);
+}
+
+/** Tools whose output is stored conversation text, and so can carry anything that was ever in it. */
+const RECALL_TOOLS: ReadonlySet<string> = new Set(['session_search']);
+
 function isTainted(tools: Pick<ToolRegistry, 'get'>, message: StoredMessage): boolean {
   if (message.role === 'user' || message.role === 'user_steer') {
     return (message.contentBlocks?.length ?? 0) > 0 || message.content.includes('<attachments>');
   }
-  if (message.role !== 'tool_result' || message.isError === true) return false;
+  if (message.role !== 'tool_result' || isFrameworkRefusal(message)) return false;
   const name = message.toolName;
-  if (!name || name.startsWith('mcp__')) return true;
+  if (!name || name.startsWith('mcp__') || RECALL_TOOLS.has(name)) return true;
   const tool = tools.get(name);
   return !tool || tool.outputIsUntrusted === true;
 }
@@ -472,9 +526,9 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
 }
 
 // ---------------------------------------------------------------------------
-// The review service: list, get, apply, decline, rollback (plan G2, "Apply,
-// decline, rollback"). No filing path: it cannot create a record, and the
-// `propose_self_amendment` tool is never handed it (compose-tools.ts passes
+// The review service: list, get, apply, decline, rollback, refresh (plan G2,
+// "Apply, decline, rollback"). No filing path: it cannot create a record, and
+// the `propose_self_amendment` tool is never handed it (compose-tools.ts passes
 // the intake alone). Every mutation holds `.apply.lock`
 // (`acquireAmendmentLock`), the lock filing holds too.
 // ---------------------------------------------------------------------------
@@ -554,11 +608,11 @@ export interface AmendmentReview {
   /** The live file is not the bytes the proposal was filed against — apply would go `stale`. */
   stale: boolean;
   /**
-   * An apply wrote `applied.json` and the live file already holds exactly the
-   * after-bytes of its prior snapshot, but the record never reached `applied`
-   * — the process died between the live write and the status update. The plan
-   * leaves recovery to the owner in v1: apply answers `stale`, and the owner
-   * closes it with `decline`.
+   * A `pending` or `stale` record whose earlier apply wrote `applied.json` and
+   * the live file, and died before recording it: the live bytes are exactly
+   * the marker's `afterHash`, which is the ops applied to the prior snapshot.
+   * The next `apply` or `refresh` completes it to `applied`
+   * (`recoverInterruptedApply`), so it can be rolled back.
    */
   interruptedApply: boolean;
   /** `applyOps` on the LIVE bytes; `null` when the ops no longer apply (`opsProblem`). */
@@ -571,6 +625,11 @@ export interface AmendmentReview {
   expectedAfterHash: string | null;
   /** Line diff of `toolset.yaml`, live → after: each line prefixed `' '`, `'-'` or `'+'`. */
   textDiff: string[];
+  /**
+   * For an `applied` record: the line diff a rollback would make, live → the
+   * prior snapshot. Empty when there is nothing to roll back or no snapshot.
+   */
+  rollbackDiff: string[];
   permissionDiff: PermissionDiff | null;
   /** `Not compared: …` — printed beside the permission diff (D27). */
   notCompared: string;
@@ -590,6 +649,7 @@ export type AmendmentActionCode =
   | 'constitution_malformed'
   | 'live_edited'
   | 'prior_missing'
+  | 'record_mismatch'
   | 'reason_required'
   | 'locked';
 
@@ -614,15 +674,69 @@ export interface AmendmentService {
     id: string,
     opts: { actor: AmendmentActor; decidedBy: string },
   ): Promise<AmendmentActionResult>;
+  /**
+   * Bring a `pending` or `stale` record in line with live state, under the
+   * lock: an interrupted apply is completed to `applied`
+   * (`recoverInterruptedApply`); a `pending` record whose live `toolset.yaml`
+   * no longer hashes to `baseHash`, or whose ops no longer apply, becomes
+   * `stale` (answered `ok: false`, code `stale`) and stops counting toward the
+   * pending limit (`checkPendingLimits` counts `pending` only). Anything else
+   * is returned unchanged. Writes no definition bytes.
+   */
+  refresh(
+    id: string,
+    opts: { actor: AmendmentActor; decidedBy: string },
+  ): Promise<AmendmentActionResult>;
 }
 
-/** Body of `applied.json`, written before the live write (the `promote.ts` order). */
+/**
+ * Body of `applied.json`, written before the live write (the `promote.ts`
+ * order). `actor`/`decidedBy` are the approving decision, so crash recovery
+ * records the person who approved, not whoever ran the recovery; absent on a
+ * marker written before they were recorded.
+ */
 interface AppliedMarker {
   amendmentId: string;
   personalityId: string;
   priorHash: string;
   afterHash: string;
   at: string;
+  actor?: AmendmentActor;
+  decidedBy?: string;
+}
+
+const ACTORS: ReadonlySet<string> = new Set<AmendmentActor>(['intake', 'cli', 'web']);
+
+/** `applied.json` for `amendmentId`, or null when it is missing, unparseable or another record's. */
+function parseAppliedMarker(raw: string, amendmentId: string): AppliedMarker | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const m = parsed as Record<string, unknown>;
+  if (
+    m.amendmentId !== amendmentId ||
+    typeof m.personalityId !== 'string' ||
+    typeof m.priorHash !== 'string' ||
+    typeof m.afterHash !== 'string' ||
+    typeof m.at !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    amendmentId,
+    personalityId: m.personalityId,
+    priorHash: m.priorHash,
+    afterHash: m.afterHash,
+    at: m.at,
+    ...(typeof m.actor === 'string' && ACTORS.has(m.actor)
+      ? { actor: m.actor as AmendmentActor }
+      : {}),
+    ...(typeof m.decidedBy === 'string' && m.decidedBy ? { decidedBy: m.decidedBy } : {}),
+  };
 }
 
 type ConstitutionOutcome =
@@ -793,14 +907,83 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
     return { ok: true, registry, described, path };
   }
 
-  /** True when an earlier apply of this record wrote the live file but never recorded it. */
-  async function interruptedApply(record: AmendmentRecord, liveHash: string | null) {
-    if (liveHash === null) return false;
-    const marker = await deps.storage.read(amendmentAppliedPath(deps.dataDir, record.id));
+  /**
+   * The `applied.json` of an earlier apply of `record` that wrote the live file
+   * but never recorded it, or null. Proof, not a hint: the marker names this
+   * record, the prior snapshot hashes to `baseHash`, the record's ops turn that
+   * snapshot into the marker's `afterHash`, and the live file hashes to it.
+   */
+  async function interruptedMarker(
+    record: AmendmentRecord,
+    liveHash: string | null,
+  ): Promise<AppliedMarker | null> {
+    if (liveHash === null) return null;
+    const raw = await deps.storage.read(amendmentAppliedPath(deps.dataDir, record.id));
     const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, record.id));
-    if (marker === null || prior === null) return false;
+    if (raw === null || prior === null) return null;
+    const marker = parseAppliedMarker(raw, record.id);
+    if (!marker || marker.afterHash !== liveHash) return null;
+    if (hashDefinitionBytes(prior) !== record.baseHash) return null;
     const after = applyOps(prior, record.ops);
-    return after.ok && hashDefinitionBytes(after.afterBytes) === liveHash;
+    return after.ok && hashDefinitionBytes(after.afterBytes) === liveHash ? marker : null;
+  }
+
+  /**
+   * Complete an apply that wrote the live bytes and died before recording it
+   * (C4): `pending`/`stale` → `applied` with the marker's `afterHash`, and the
+   * `amendment.approve` row the crash skipped. The approver is the one the
+   * marker recorded; a marker from before that was recorded falls back to the
+   * caller. Nothing is written to the definition — the bytes are already live.
+   */
+  async function recoverInterruptedApply(
+    record: AmendmentRecord,
+    marker: AppliedMarker,
+    caller: { actor: AmendmentActor; decidedBy: string },
+  ): Promise<AmendmentActionResult> {
+    const decidedBy = marker.decidedBy ?? caller.decidedBy;
+    const next = await transitionAmendment(
+      deps.storage,
+      deps.dataDir,
+      record.id,
+      {
+        to: 'applied',
+        actor: marker.actor ?? caller.actor,
+        decidedBy,
+        reason: 'recovered: an interrupted apply had already written the approved bytes',
+        appliedHash: marker.afterHash,
+      },
+      now,
+    );
+    deps.observability?.recordSafetyApproval({
+      decision: 'approved',
+      severity: 'warn',
+      code: 'amendment.approve',
+      cause: `applied by ${decidedBy} (recovered after an interrupted apply)`,
+      details: {
+        amendmentId: record.id,
+        personalityId: record.personalityId,
+        ops: record.ops,
+        baseHash: record.baseHash,
+        appliedHash: marker.afterHash,
+        recovered: true,
+      },
+    });
+    return { ok: true, record: next };
+  }
+
+  /** Why a `pending` record no longer applies to the live bytes, or null when it still does. */
+  function staleReason(
+    record: AmendmentRecord,
+    liveBytes: string | null,
+    liveHash: string | null,
+  ): string | null {
+    if (liveBytes === null || liveHash !== record.baseHash) {
+      return 'toolset.yaml changed since this amendment was filed';
+    }
+    const registryProblem = opsRefusal(deps.tools, record.ops);
+    if (registryProblem) return registryProblem;
+    const after = applyOps(liveBytes, record.ops);
+    return after.ok ? null : describeOpsRefusal(after);
   }
 
   async function markStale(
@@ -830,23 +1013,25 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
       const path = described ? liveToolsetPath(described) : null;
       const liveBytes = path ? await deps.storage.read(path) : null;
       const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
+      const open = record.status === 'pending' || record.status === 'stale';
       const review: AmendmentReview = {
         record,
         personality: !described || !path ? 'not_found' : described.builtin ? 'builtin' : 'ok',
         liveBytes,
         liveHash,
         stale: liveHash !== record.baseHash,
-        interruptedApply: await interruptedApply(record, liveHash),
+        interruptedApply: open && (await interruptedMarker(record, liveHash)) !== null,
         afterBytes: null,
         expectedAfterHash: null,
         textDiff: [],
+        rollbackDiff: [],
         permissionDiff: null,
         notCompared: notComparedLine(),
         flags: [],
       };
       const liveToolset = liveBytes === null ? [] : parseToolsetYaml(liveBytes);
       let afterToolset: string[] = liveToolset;
-      if (described && (record.status === 'pending' || record.status === 'stale')) {
+      if (described && open) {
         const registryProblem = opsRefusal(deps.tools, record.ops);
         const after = applyOps(liveBytes, record.ops);
         if (registryProblem) review.opsProblem = registryProblem;
@@ -866,6 +1051,10 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           );
         }
       }
+      if (record.status === 'applied' && liveBytes !== null) {
+        const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, record.id));
+        if (prior !== null) review.rollbackDiff = lineDiff(liveBytes, prior);
+      }
       review.flags = amendmentFlags({
         record,
         tools: deps.tools,
@@ -882,32 +1071,50 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         // 2. Status.
         const record = await readAmendment(deps.storage, deps.dataDir, id);
         if (!record) return { ok: false, code: 'not_found', reason: `no amendment ${id}` };
-        if (record.status !== 'pending') {
+        if (record.status !== 'pending' && record.status !== 'stale') {
           return { ok: false, code: 'not_pending', reason: `amendment ${id} is ${record.status}` };
         }
         // 3. The personality exists and is user-owned.
         const target = await mutableTarget(record);
         if (!target.ok) return target.result;
         const { registry, described, path } = target;
-
-        // 4. The live bytes are the ones the proposal was filed against.
         const liveBytes = await deps.storage.read(path);
         const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
-        if (liveBytes === null || liveHash !== record.baseHash) {
-          const reason = (await interruptedApply(record, liveHash))
-            ? 'an earlier apply wrote toolset.yaml but did not record it; the live file already ' +
-              'holds the approved bytes — decline this amendment to close it'
-            : 'toolset.yaml changed since this amendment was filed';
-          return markStale(record, opts.decidedBy, opts.actor, reason);
+
+        // An earlier apply already wrote the approved bytes: record it (C4).
+        // No reviewer hash is needed — no new bytes are written.
+        const marker = await interruptedMarker(record, liveHash);
+        if (marker) return recoverInterruptedApply(record, marker, opts);
+        if (record.status !== 'pending') {
+          return { ok: false, code: 'not_pending', reason: `amendment ${id} is ${record.status}` };
         }
 
-        // 5. Recompute; re-validate the ops against the live registry; the constitution.
-        const registryProblem = opsRefusal(deps.tools, record.ops);
-        if (registryProblem) return markStale(record, opts.decidedBy, opts.actor, registryProblem);
+        // 4. The reviewer approved exactly these bytes (G2-5) — checked before
+        //    anything is recorded, so a mismatched hash changes no status.
         const after = applyOps(liveBytes, record.ops);
-        if (!after.ok) {
-          return markStale(record, opts.decidedBy, opts.actor, describeOpsRefusal(after));
+        if (
+          !after.ok ||
+          expectedAfterHash(record.baseHash, opsHash(after.ops), after.afterBytes) !==
+            opts.expectedAfterHash
+        ) {
+          return {
+            ok: false,
+            code: 'hash_mismatch',
+            reason: 'the change to apply is not the one reviewed; show it again and re-approve',
+          };
         }
+
+        // 5. The live bytes are the ones the proposal was filed against, and
+        //    the ops still name registered, toolset-gated tools.
+        const stale = staleReason(record, liveBytes, liveHash);
+        if (stale || liveBytes === null || liveHash === null) {
+          return markStale(record, opts.decidedBy, opts.actor, stale ?? 'toolset.yaml is missing');
+        }
+
+        // 6. The constitution. A violation the LIVE definition already has is
+        //    not this change's doing — often a `${CWD}` rule read from the
+        //    reviewer's working directory — so it refuses and records nothing;
+        //    only a violation the delta introduces auto-rejects.
         const constitution = await checkConstitution(deps, described.config, after.after);
         if (constitution.kind === 'malformed') {
           return {
@@ -917,6 +1124,16 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           };
         }
         if (constitution.kind === 'violation') {
+          const live = await checkConstitution(deps, described.config, parseToolsetYaml(liveBytes));
+          if (live.kind !== 'ok') {
+            return {
+              ok: false,
+              code: 'constitution_violation',
+              reason:
+                `the constitution already forbids ${record.personalityId}'s current definition, ` +
+                `so this change is not the cause; nothing was recorded (${constitution.reason})`,
+            };
+          }
           const next = await transitionAmendment(
             deps.storage,
             deps.dataDir,
@@ -934,31 +1151,24 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           return { ok: false, code: 'auto_rejected', reason: constitution.reason, record: next };
         }
 
-        // 6. The reviewer approved exactly these bytes (G2-5).
-        const hash = expectedAfterHash(record.baseHash, opsHash(after.ops), after.afterBytes);
-        if (hash !== opts.expectedAfterHash) {
-          return {
-            ok: false,
-            code: 'hash_mismatch',
-            reason: 'the change to apply is not the one reviewed; show it again and re-approve',
-          };
-        }
-
         // 7. Prior snapshot and marker BEFORE the live write (the promote.ts
         //    order): a crash after this and before the write leaves the record
-        //    `pending` over untouched live bytes, and a retry proceeds.
+        //    `pending` over untouched live bytes, and a retry proceeds; a crash
+        //    after the write is completed by the next apply or refresh.
         const afterHash = hashDefinitionBytes(after.afterBytes);
         await deps.storage.writeAtomic(amendmentPriorPath(deps.dataDir, id), liveBytes);
-        const marker: AppliedMarker = {
+        const appliedMarker: AppliedMarker = {
           amendmentId: id,
           personalityId: record.personalityId,
           priorHash: liveHash,
           afterHash,
           at: new Date(now()).toISOString(),
+          actor: opts.actor,
+          decidedBy: opts.decidedBy,
         };
         await deps.storage.writeAtomic(
           amendmentAppliedPath(deps.dataDir, id),
-          `${JSON.stringify(marker, null, 2)}\n`,
+          `${JSON.stringify(appliedMarker, null, 2)}\n`,
         );
 
         // 8. Compare-and-swap onto the bytes the proposal was filed against.
@@ -1015,6 +1225,22 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         if (record.status !== 'pending' && record.status !== 'stale') {
           return { ok: false, code: 'not_pending', reason: `amendment ${id} is ${record.status}` };
         }
+        // Declining a change that is already live would leave `declined` over
+        // the approved bytes with no way to roll them back (C4).
+        const target = await mutableTarget(record);
+        if (target.ok) {
+          const live = await deps.storage.read(target.path);
+          const liveHash = live === null ? null : hashDefinitionBytes(live);
+          if (await interruptedMarker(record, liveHash)) {
+            return {
+              ok: false,
+              code: 'not_pending',
+              reason:
+                `an earlier apply of ${id} already wrote toolset.yaml; run apply to record it, ` +
+                'then rollback to undo it',
+            };
+          }
+        }
         const next = await transitionAmendment(
           deps.storage,
           deps.dataDir,
@@ -1064,6 +1290,24 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             ok: false,
             code: 'prior_missing',
             reason: `the prior toolset.yaml snapshot for ${id} is missing or does not match`,
+          };
+        }
+        // The record binds the two ends (C5): its ops are the canonical ops it
+        // was filed with, and they turn the prior snapshot into exactly the
+        // bytes this apply wrote. A record or snapshot edited on disk fails
+        // here, so rollback restores only what this amendment replaced.
+        const canonical = canonicalizeOps(record.ops);
+        const replayed = applyOps(prior, record.ops);
+        if (
+          !canonical.ok ||
+          opsHash(canonical.ops) !== record.opsHash ||
+          !replayed.ok ||
+          hashDefinitionBytes(replayed.afterBytes) !== appliedHash
+        ) {
+          return {
+            ok: false,
+            code: 'record_mismatch',
+            reason: `amendment ${id} does not match the bytes it applied, so nothing was rolled back`,
           };
         }
         const constitution = await checkConstitution(
@@ -1117,6 +1361,23 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           },
         });
         return { ok: true, record: next };
+      });
+    },
+
+    refresh(id, opts) {
+      return locked(async () => {
+        const record = await readAmendment(deps.storage, deps.dataDir, id);
+        if (!record) return { ok: false, code: 'not_found', reason: `no amendment ${id}` };
+        if (record.status !== 'pending' && record.status !== 'stale') return { ok: true, record };
+        const target = await mutableTarget(record);
+        if (!target.ok) return target.result;
+        const liveBytes = await deps.storage.read(target.path);
+        const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
+        const marker = await interruptedMarker(record, liveHash);
+        if (marker) return recoverInterruptedApply(record, marker, opts);
+        if (record.status === 'stale') return { ok: true, record };
+        const stale = staleReason(record, liveBytes, liveHash);
+        return stale ? markStale(record, opts.decidedBy, opts.actor, stale) : { ok: true, record };
       });
     },
   };

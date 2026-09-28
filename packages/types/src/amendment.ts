@@ -33,7 +33,8 @@ export type AmendmentTarget = 'toolset';
  * - `auto_rejected` — the constitution forbade the after-state, at filing or
  *   at apply.
  * - `stale` — the live file no longer matches `baseHash`, or an op no longer
- *   applies.
+ *   applies. Closed by `declined`, or — crash recovery only, when an earlier
+ *   apply is proven to have written the live bytes — by `applied`.
  * - `rolled_back` — an applied amendment whose prior bytes were restored.
  */
 export type AmendmentStatus =
@@ -177,15 +178,19 @@ export type AmendmentSubmitResult =
  * that `ethos personality amendments apply|rollback` refuses to run under
  * (D32). Set by the host paths of `terminal` (extensions/tools-terminal),
  * `process_start` (`spawnDetached`, extensions/tools-process/src/spawn.ts)
- * and `run_code` and its command tools (extensions/tools-code); read by
- * `assertNotToolProcess` (apps/ethos/src/commands/personality-amendments.ts).
+ * and the code tools' command runners (extensions/tools-code — `run_code`
+ * itself never runs on the host, so it has no host path to set it on); read
+ * by `assertNotToolProcess` (apps/ethos/src/commands/personality-amendments.ts).
  *
  * A TRIPWIRE, NOT A BOUNDARY: `env -u ETHOS_TOOL_PROCESS` defeats it. It
  * catches a personality holding a shell tool under local execution that runs
  * the CLI plainly; such a personality can already edit its own definition
  * files (G2-1's exception). Routed backends are not given it: ssh cannot
- * deliver env (`SshEnvUnsupportedError`), and a docker container has neither
- * the CLI nor `learning/` (denied, `STATE_DIR_DENY_ENTRIES`).
+ * deliver env (`SshEnvUnsupportedError`), and a Docker container has no Ethos
+ * CLI to run. It is not blind, though: when its reach spans the state
+ * directory, `learning/` is mounted read-only (`DockerExecutionBackend.
+ * mountsFor`, extensions/execution-docker/src/index.ts), so it can read filed
+ * requests but cannot write one or apply one.
  */
 export const TOOL_PROCESS_ENV_VAR = 'ETHOS_TOOL_PROCESS';
 

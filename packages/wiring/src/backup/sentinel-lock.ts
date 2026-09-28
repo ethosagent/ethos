@@ -1,7 +1,8 @@
 // The advisory `wx` sentinel lock shared by this package's cross-process locks:
 // `acquireBackupLock` (`backup-schedule.ts`, `backups/.lock`),
-// `acquireIdentityMapLock` (`identity-map.ts`, `users/identity-map.json.lock`)
-// and `acquireGatewayLock` (`gateway-lock.ts`, `gateway.lock`).
+// `acquireIdentityMapLock` (`identity-map.ts`, `users/identity-map.json.lock`),
+// `acquireGatewayLock` (`gateway-lock.ts`, `gateway.lock`) and
+// `acquireAmendmentLock` (`amendments.ts`, `learning/amendments/.apply.lock`).
 // One implementation, because two copies of a lock primitive in one package
 // drift. Each caller keeps its own wait bound, poll interval, unreadable-body
 // stale window and refusal text, passed in as options.

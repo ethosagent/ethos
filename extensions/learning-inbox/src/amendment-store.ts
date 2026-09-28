@@ -11,8 +11,8 @@
 // `amendmentApplyLockPath`. This package cannot take that lock itself
 // (`acquireSentinelLock` lives in `packages/wiring`); its callers there take
 // it: the filing intake (`createAmendmentIntake`, packages/wiring/src/
-// amendments.ts, via `acquireAmendmentLock`) and, from plan step 11, the apply
-// service.
+// amendments.ts, via `acquireAmendmentLock`) and the review service
+// (`createAmendmentService`, same file).
 
 import type {
   AmendmentActor,
@@ -50,7 +50,20 @@ const STATUSES: ReadonlySet<string> = new Set<AmendmentStatus>([
   'rolled_back',
 ]);
 
-/** Null for a missing, unparseable or foreign-shaped record — a broken file must not stop a listing. */
+/** One stored op: `{ op: 'add_tool' | 'remove_tool', tool: string }`, nothing looser. */
+function isOpShape(value: unknown): value is AmendmentOp {
+  if (!value || typeof value !== 'object') return false;
+  const { op, tool } = value as Record<string, unknown>;
+  return (op === 'add_tool' || op === 'remove_tool') && typeof tool === 'string';
+}
+
+/**
+ * Null for a missing, unparseable or foreign-shaped record — a broken file must
+ * not stop a listing. The ops are re-validated on every read (shape, then
+ * `canonicalizeOps`), so a hand-edited `proposal.json` cannot hand apply or
+ * rollback an op no filing could have produced. Pinned by the forged-record
+ * cases in extensions/learning-inbox/src/__tests__/amendment-store.test.ts.
+ */
 export async function readAmendment(
   storage: Storage,
   dataDir: string,
@@ -72,6 +85,9 @@ export async function readAmendment(
     typeof r.personalityId !== 'string' ||
     r.target !== 'toolset' ||
     !Array.isArray(r.ops) ||
+    !r.ops.every(isOpShape) ||
+    !canonicalizeOps(r.ops).ok ||
+    typeof r.opsHash !== 'string' ||
     typeof r.baseHash !== 'string' ||
     typeof r.status !== 'string' ||
     !STATUSES.has(r.status) ||
@@ -233,12 +249,16 @@ export async function createAmendment(
 
 /**
  * The transitions a record may take. `stale` → `declined` is how an owner
- * closes out a stale proposal (including the crash-after-write case, whose live
- * file already holds the after-bytes). Every other status is terminal.
+ * closes out a stale proposal. `stale` → `applied` is crash recovery only: an
+ * apply that wrote the live file and died before recording it left the record
+ * `pending` (or, before recovery existed, `stale`), and the service completes
+ * it once `applied.json` and the live bytes prove the approved write landed
+ * (`recoverInterruptedApply`, packages/wiring/src/amendments.ts). Every other
+ * status is terminal.
  */
 const TRANSITIONS: Record<AmendmentStatus, readonly AmendmentStatus[]> = {
   pending: ['applied', 'declined', 'stale', 'auto_rejected'],
-  stale: ['declined'],
+  stale: ['declined', 'applied'],
   applied: ['rolled_back'],
   declined: [],
   auto_rejected: [],

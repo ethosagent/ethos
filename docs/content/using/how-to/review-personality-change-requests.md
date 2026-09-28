@@ -45,7 +45,11 @@ The personality can file only for itself, and only from a conversation you start
 | A web chat driven by an API key | No |
 | Telegram, Slack, Discord, WhatsApp, email | No |
 | A cron job, watcher, goal, background job or delegated sub-agent | No |
-| A conversation with a web page, MCP result or attachment in its context | No — the agent is told to file from a fresh session |
+| A conversation with a web page, MCP result, `session_search` result or attachment in its context | No — the agent is told to file from a fresh session |
+
+A failed call counts as well as a successful one: a `terminal` command that exits 1 still printed what it fetched. Only the framework's own refusals, such as `Tool web_fetch is not permitted for this personality`, are not counted. A compacted conversation is checked in full when its summary was written from the earlier messages.
+
+A fresh session does not reset memory. If untrusted text reached `MEMORY.md` or `USER.md` in an earlier session, the memory snapshot carries it into every later session, and this check does not see it. Read the rationale and evidence as the personality's claim either way.
 
 A request adds or removes toolset entries. Each personality holds at most 3 pending requests. A filing that your `~/.ethos/constitution.yaml` forbids is rejected on the spot and recorded as `auto_rejected`.
 
@@ -105,7 +109,7 @@ Every part is recomputed from the live files each time you run `show`:
 | Flags | `no-recorded-refusal`: no refused call was cited. `tool-unavailable`: the tool is not usable on this machine right now. |
 | Rationale, Evidence | The personality's own words. Read them as a claim, not as fact. |
 
-If the review starts with `! this personality can already edit its own definition — this review is not a boundary for it.`, the personality holds a shell tool under `execution: local`. It can edit `toolset.yaml` directly, so the review protects nothing for it. Move it to `execution: docker` if that matters to you.
+If the review starts with `! this personality can already edit its own definition — this review is not a boundary for it.`, the personality holds a shell tool and its tools run locally, not in the Docker sandbox. It can edit `toolset.yaml` directly, so the review protects nothing for it. Local execution is an operator setting, not a personality one: `execution.containerized: true` or `ETHOS_EXECUTION_BACKEND=local` says this deployment is itself the boundary, and `execution.allowLocalFallback: true` runs tools locally when Docker is missing. If that matters to you, remove those settings from `~/.ethos/config.yaml` and install Docker, so exec tools run in the sandbox, the default.
 
 ### 5. Apply, decline or roll back
 
@@ -121,7 +125,7 @@ Type the personality id (scout) to apply: scout
 Undo with: ethos personality amendments rollback a-mukzpjf2-qiiphi
 ```
 
-Apply writes exactly the bytes the review showed, onto exactly the file the request was filed against. If `toolset.yaml` changed in between, it refuses and writes nothing.
+Apply writes exactly the bytes the review showed, onto exactly the file the request was filed against. If `toolset.yaml` changed in between, it refuses, writes nothing, and marks the request `stale`. A stale request no longer counts toward the 3 pending.
 
 Decline a request you do not want. A reason is required:
 
@@ -139,10 +143,24 @@ Roll back an applied request. It restores the `toolset.yaml` saved at apply time
 ethos personality amendments rollback a-mukzpjf2-qiiphi
 ```
 
+The command first prints the `toolset.yaml` change the rollback makes:
+
 ```
+Roll back a-mukzpjf2-qiiphi — scout
+  Undoes: + web_extract
+  Restores the toolset.yaml saved when it was applied (2026-09-28T08:41:10.118Z).
+  Refused if toolset.yaml was edited since, or the constitution forbids the result.
+
+  toolset.yaml (live → restored)
+     - think_deeper
+     - propose_self_amendment
+    -- web_extract
+
 Type the personality id (scout) to roll back: scout
 ✓ Rolled back a-mukzpjf2-qiiphi; scout's toolset.yaml is restored.
 ```
+
+Rollback refuses when the stored request or its saved `toolset.yaml` was edited on disk and no longer matches the bytes the apply wrote.
 
 If you applied several requests to one personality, roll them back newest first.
 
@@ -158,6 +176,9 @@ Run `ethos personality show <personality-id>` and read the toolset. After an app
 | `FORBIDDEN: ETHOS_TOOL_PROCESS=1: ...` | The command ran inside a process an agent's `terminal`, `process_start` or code tool started. | Run it from your own terminal. The check is a tripwire, not a boundary: `env -u ETHOS_TOOL_PROCESS` defeats it. |
 | `FORBIDDEN: Confirmation did not match` | The typed id differed from the personality id. | Re-run and type the id exactly. |
 | `CONFIG_CONFLICT: ... is stale` | `toolset.yaml` changed after the request was filed. | Decline it. The personality can file again against the new file. |
+| `An earlier apply was interrupted after it wrote toolset.yaml` in `show` | Ethos stopped between writing `toolset.yaml` and recording the apply. | Run `ethos personality amendments apply <id>`. It records the request as applied without writing anything, so you can roll it back. Decline is refused for it. |
 | `FORBIDDEN: ... constitution ...` | `~/.ethos/constitution.yaml` forbids the result. | Nothing was written. Change the constitution first if you still want it. |
+| `FORBIDDEN: ... already forbids <personality-id>'s current definition` | The personality breaks the constitution without this change, often a `${CWD}` rule read from the directory you ran the command in. | Nothing was recorded. Fix the personality or the constitution, or run the command from the directory the rule expects. |
+| `CONFIG_CONFLICT: ... does not match the bytes it applied` | The stored request or its saved `toolset.yaml` was edited on disk. | Nothing was rolled back. Restore `toolset.yaml` by hand. |
 
 The web **Learning** page has no apply button in this release. It shows each pending request with its permission diff and the command to run.

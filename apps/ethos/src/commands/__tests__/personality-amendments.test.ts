@@ -189,6 +189,12 @@ describe('list and show', () => {
   it('personality-written text is stripped of terminal control sequences', () => {
     expect(clean('ok\x1b[2Jgone\nnext')).toBe('ok?[2Jgone\nnext');
   });
+
+  it('bidi overrides, isolates and zero-width characters are replaced too', () => {
+    expect(clean('a\u202Eb\u2066c\u2069d\u200Be\u200Ff\u2060g\uFEFFh')).toBe('a?b?c?d?e?f?g?h');
+    expect(clean('\u202A\u202B\u202C\u202D\u2067\u2068\u200C\u200D\u200E')).toBe('?????????');
+    expect(clean('plain — text')).toBe('plain — text');
+  });
 });
 
 describe('apply', () => {
@@ -275,6 +281,35 @@ describe('apply', () => {
     expect(err.code).toBe('CONFIG_CONFLICT');
     expect(err.cause).toContain('stale');
     expect(ask).not.toHaveBeenCalled();
+    // Recorded, so it stops counting toward the pending limit (C3).
+    expect((await readAmendment(storage, dataDir, record.id))?.status).toBe('stale');
+  });
+
+  it('records an interrupted apply as applied instead of refusing it (C4)', async () => {
+    const record = await file();
+    const review = await service.get(record.id);
+    // The live write landed; the status update did not.
+    await service.apply(record.id, {
+      actor: 'cli',
+      decidedBy: 'cli:tester',
+      expectedAfterHash: review?.expectedAfterHash ?? '',
+    });
+    const proposal = join(dataDir, 'learning', 'amendments', record.id, 'proposal.json');
+    const stored = JSON.parse(readFileSync(proposal, 'utf-8'));
+    writeFileSync(
+      proposal,
+      JSON.stringify({
+        ...stored,
+        status: 'pending',
+        applied: undefined,
+        history: stored.history.slice(0, 1),
+      }),
+    );
+    const ask = vi.fn(async () => 'scout');
+    await runPersonalityAmendmentsCommand(['apply', record.id], deps({ ask }));
+    expect(ask).not.toHaveBeenCalled();
+    expect(printed()).toContain('Recorded');
+    expect((await readAmendment(storage, dataDir, record.id))?.status).toBe('applied');
   });
 });
 
@@ -307,6 +342,25 @@ describe('rollback', () => {
     await runPersonalityAmendmentsCommand(['rollback', record.id], deps());
     expect(toolsetOf('scout')).toBe(before);
     expect((await readAmendment(storage, dataDir, record.id))?.status).toBe('rolled_back');
+  });
+
+  it('prints the toolset.yaml diff it would make, live → restored, before asking (C5)', async () => {
+    const record = await file();
+    await runPersonalityAmendmentsCommand(['apply', record.id], deps());
+    out = [];
+    let seenBeforeAsk = '';
+    await runPersonalityAmendmentsCommand(
+      ['rollback', record.id],
+      deps({
+        ask: async () => {
+          seenBeforeAsk = printed();
+          return 'scout';
+        },
+      }),
+    );
+    expect(seenBeforeAsk).toContain('live → restored');
+    expect(seenBeforeAsk).toContain('-- terminal');
+    expect(seenBeforeAsk).toContain(' - read_file');
   });
 
   it('is gated like apply: no TTY, the tripwire, a wrong confirmation', async () => {

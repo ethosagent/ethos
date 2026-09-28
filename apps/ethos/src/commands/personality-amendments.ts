@@ -220,6 +220,17 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
   assertTty(deps.isTty);
   const review = await getReview(id, deps);
   const { record } = review;
+  const by = { actor: 'cli' as const, decidedBy: deps.decidedBy };
+  if (review.interruptedApply) {
+    // An earlier apply wrote these bytes and died before recording it: record
+    // it now (`AmendmentService.refresh`). Nothing new is written.
+    const done = settled(id, await deps.service.refresh(id, by));
+    deps.out(
+      `${c.green}✓${c.reset} Recorded ${id} as applied: an earlier apply had already written ${done.personalityId}'s toolset.yaml.`,
+    );
+    deps.out(`${c.dim}Undo with: ethos personality amendments rollback ${id}${c.reset}`);
+    return;
+  }
   if (record.status !== 'pending') {
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
@@ -229,23 +240,25 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
   }
   const expected = review.expectedAfterHash;
   if (review.stale || expected === null) {
+    // Record what the review found, so a request that can no longer apply is
+    // `stale` and stops counting toward the pending limit.
+    const refreshed = await deps.service.refresh(id, by);
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
       cause: review.stale
         ? `Amendment ${id} is stale: ${record.personalityId}'s toolset.yaml changed since it was filed`
-        : `Amendment ${id} no longer applies: ${review.opsProblem ?? 'nothing to change'}`,
+        : `Amendment ${id} no longer applies: ${clean(review.opsProblem ?? 'nothing to change')}`,
       action: `Close it with: ethos personality amendments decline ${id} --reason "<text>"`,
+      details: { status: refreshed.ok ? refreshed.record.status : refreshed.record?.status },
     });
   }
   printReview(review, deps);
   await confirmTyped(record.personalityId, 'apply', deps);
   // The hash of the review just printed — the service writes exactly these
   // bytes, onto exactly the bytes it was filed against, or refuses (G2-5).
-  const result = await deps.service.apply(id, {
-    actor: 'cli',
-    decidedBy: deps.decidedBy,
-    expectedAfterHash: expected,
-  });
+  const result = await deps.service.apply(id, { ...by, expectedAfterHash: expected });
+  // The file moved after the review: record whether the request still applies.
+  if (!result.ok && result.code === 'hash_mismatch') await deps.service.refresh(id, by);
   const done = settled(id, result);
   deps.out(
     `${c.green}✓${c.reset} Applied ${id} to ${done.personalityId}'s toolset.yaml. Other processes pick it up on their next turn.`,
@@ -291,6 +304,13 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
   deps.out(`  Restores the toolset.yaml saved when it was applied (${record.applied?.at ?? '?'}).`);
   deps.out('  Refused if toolset.yaml was edited since, or the constitution forbids the result.');
   deps.out('');
+  deps.out(`  ${c.bold}toolset.yaml${c.reset} (live → restored)`);
+  if (review.rollbackDiff.length === 0) {
+    deps.out(`    ${c.dim}(no saved snapshot — rollback will refuse)${c.reset}`);
+  }
+  for (const line of review.rollbackDiff)
+    deps.out(`    ${diffColour(line)}${clean(line)}${c.reset}`);
+  deps.out('');
   await confirmTyped(record.personalityId, 'roll back', deps);
   const result = await deps.service.rollback(id, { actor: 'cli', decidedBy: deps.decidedBy });
   const done = settled(id, result);
@@ -323,7 +343,7 @@ function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
   }
   if (review.interruptedApply) {
     out(
-      `  ${c.yellow}An earlier apply was interrupted after it wrote toolset.yaml. Close this with decline.${c.reset}`,
+      `  ${c.yellow}An earlier apply was interrupted after it wrote toolset.yaml. Run apply to record it.${c.reset}`,
     );
   }
   if (review.opsProblem)
@@ -344,10 +364,7 @@ function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
   out('');
   out(`  ${c.bold}toolset.yaml${c.reset}`);
   if (review.textDiff.length === 0) out(`    ${c.dim}(no diff — see above)${c.reset}`);
-  for (const line of review.textDiff) {
-    const colour = line.startsWith('+') ? c.green : line.startsWith('-') ? c.red : c.dim;
-    out(`    ${colour}${clean(line)}${c.reset}`);
-  }
+  for (const line of review.textDiff) out(`    ${diffColour(line)}${clean(line)}${c.reset}`);
   out('');
   out(
     `  ${c.bold}Flags${c.reset}        ${review.flags.length > 0 ? review.flags.join(', ') : 'none'}`,
@@ -387,6 +404,9 @@ function personalityNote(review: AmendmentReview): string {
 
 function nextStep(review: AmendmentReview): string | null {
   const id = review.record.id;
+  if (review.interruptedApply) {
+    return `Record the interrupted apply with: ethos personality amendments apply ${id}`;
+  }
   switch (review.record.status) {
     case 'pending':
       return review.stale || review.expectedAfterHash === null
@@ -402,17 +422,27 @@ function nextStep(review: AmendmentReview): string | null {
 }
 
 function opsLabel(record: Pick<AmendmentRecord, 'ops'>): string {
-  return record.ops.map((o) => `${o.op === 'add_tool' ? '+' : '-'} ${o.tool}`).join(', ');
+  return clean(record.ops.map((o) => `${o.op === 'add_tool' ? '+' : '-'} ${o.tool}`).join(', '));
+}
+
+function diffColour(line: string): string {
+  return line.startsWith('+') ? c.green : line.startsWith('-') ? c.red : c.dim;
 }
 
 /**
- * Personality-written text is untrusted: strip terminal control sequences
+ * Personality-written text is untrusted: replace terminal control sequences
  * (C0 except newline and tab, DEL, C1) so it cannot recolour, move the cursor
- * or overwrite the lines around it.
+ * or overwrite the lines around it, and the invisible characters that make
+ * text read other than it is — bidi embeddings and overrides (U+202A–U+202E),
+ * bidi isolates (U+2066–U+2069), and zero-width and direction marks
+ * (U+200B–U+200F, U+2060, U+FEFF).
  */
 export function clean(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '?');
+  return text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g,
+    '?',
+  );
 }
 
 function table(header: string[], rows: string[][]): string[] {
@@ -450,6 +480,7 @@ const ACTION_ERROR_CODES: Record<AmendmentActionCode, EthosErrorCode> = {
   constitution_malformed: 'CONFIG_INVALID',
   live_edited: 'CONFIG_CONFLICT',
   prior_missing: 'FILE_NOT_FOUND',
+  record_mismatch: 'CONFIG_CONFLICT',
   reason_required: 'INVALID_INPUT',
   locked: 'CONFIG_CONFLICT',
 };
@@ -458,11 +489,14 @@ const ACTION_HINTS: Partial<Record<AmendmentActionCode, string>> = {
   stale: 'The definition changed under it. Close it with decline; the personality can file again.',
   hash_mismatch: 'toolset.yaml changed after the review was printed. Run show again, then apply.',
   auto_rejected: 'The constitution forbids the result. Nothing was written.',
-  constitution_violation: 'The constitution forbids the restored toolset. Nothing was written.',
+  constitution_violation:
+    'The constitution forbids the result, or the current definition already. Nothing was written.',
   constitution_malformed: 'Fix ~/.ethos/constitution.yaml, then retry.',
   live_edited:
     'toolset.yaml was edited after the apply; roll back later amendments first, or edit it by hand.',
   locked: 'Another amendment operation is running. Retry in a moment.',
+  record_mismatch:
+    'The stored amendment or its snapshot was edited on disk. Restore toolset.yaml by hand.',
 };
 
 /** The record an action settled on, or the `EthosError` for its refusal. */

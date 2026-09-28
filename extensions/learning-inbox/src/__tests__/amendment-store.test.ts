@@ -117,6 +117,28 @@ describe('amendment round trip', () => {
     expect(await listAmendments(storage, DATA, { status: 'applied' })).toEqual([]);
   });
 
+  it('reads a forged record with malformed ops as no record at all (C5)', async () => {
+    const record = await created();
+    const path = amendmentProposalPath(DATA, record.id);
+    const stored = JSON.parse((await storage.read(path)) ?? '{}');
+    const forgeries: unknown[] = [
+      [{ op: 'grant_all', tool: 'terminal' }],
+      [{ op: 'add_tool', tool: 42 }],
+      [{ op: 'add_tool', tool: 'terminal\n- web_fetch' }],
+      ['add_tool terminal'],
+      [
+        { op: 'add_tool', tool: 'terminal' },
+        { op: 'remove_tool', tool: 'terminal' },
+      ],
+    ];
+    for (const ops of forgeries) {
+      await storage.write(path, JSON.stringify({ ...stored, ops }));
+      expect(await readAmendment(storage, DATA, record.id)).toBeNull();
+    }
+    await storage.write(path, JSON.stringify({ ...stored, opsHash: undefined }));
+    expect(await readAmendment(storage, DATA, record.id)).toBeNull();
+  });
+
   it('returns an empty list when the directory does not exist', async () => {
     expect(await listAmendments(storage, DATA)).toEqual([]);
   });
@@ -250,6 +272,19 @@ describe('transitions (decision history on the record, D29)', () => {
       now,
     );
     expect(declined.status).toBe('declined');
+  });
+
+  it('stale → applied is allowed (crash recovery completes an apply that already wrote)', async () => {
+    const record = await created();
+    await transitionAmendment(storage, DATA, record.id, { to: 'stale', actor: 'cli' }, now);
+    const applied = await transitionAmendment(
+      storage,
+      DATA,
+      record.id,
+      { to: 'applied', actor: 'cli', decidedBy: 'owner', appliedHash: 'h' },
+      now,
+    );
+    expect(applied).toMatchObject({ status: 'applied', applied: { appliedHash: 'h' } });
   });
 
   it('refuses transitions out of a terminal status, applied without a hash, and a missing record', async () => {
