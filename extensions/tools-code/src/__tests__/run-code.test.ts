@@ -513,3 +513,59 @@ describe('run_code exit-code evidence', () => {
     expect(result.structured).toEqual({ command: 'pnpm test' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// UBP-042 — the turn's abort signal reaches every execution path
+// ---------------------------------------------------------------------------
+
+describe('abort (UBP-042)', () => {
+  /** A backend whose exec runs until its signal aborts, then throws like a real one. */
+  function makeHangingBackend(): FakeBackend {
+    const backend = makeBackend(true);
+    backend.exec = (cmd: string, opts: ExecOpts): AsyncIterable<ExecChunk> => {
+      backend.lastCmd = cmd;
+      backend.lastOpts = opts;
+      async function* gen(): AsyncIterable<ExecChunk> {
+        await new Promise<void>((_, reject) => {
+          const fail = () => reject(new Error('Execution aborted'));
+          if (opts.signal?.aborted) fail();
+          opts.signal?.addEventListener('abort', fail, { once: true });
+        });
+      }
+      return gen();
+    };
+    return backend;
+  }
+
+  it('run_code resolves promptly with an aborted error when ctx.abortSignal aborts', async () => {
+    const backend = makeHangingBackend();
+    const [runCode] = createCodeTools({ backend });
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 100);
+    const started = Date.now();
+    const result = await runCode.execute(
+      { runtime: 'python', code: 'import time; time.sleep(30)' },
+      { ...ctx, abortSignal: ac.signal },
+    );
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/aborted/i);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'run_tests on the host kills the command when ctx.abortSignal aborts',
+    async () => {
+      const [, runTests] = createCodeTools();
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 100);
+      const started = Date.now();
+      const result = await runTests.execute(
+        { command: 'sleep 30; echo late' },
+        { ...ctx, abortSignal: ac.signal },
+      );
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/aborted/i);
+    },
+  );
+});

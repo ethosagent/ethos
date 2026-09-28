@@ -34,6 +34,10 @@ export interface SpawnResult {
  * needed for a shell + common toolchains to function, then layer the caller's
  * explicitly-opted `env` on top. Anything secret the command genuinely needs
  * must be passed explicitly via the tool's `env` arg, not inherited silently.
+ *
+ * Copied, not shared, into `packages/core/src/scoped/scoped-process.ts` (the
+ * host `terminal`/`run_tests`/`lint` path) and
+ * `extensions/execution-local/src/index.ts`; the three lists change together.
  */
 const PASSTHROUGH_ENV_KEYS = [
   'PATH',

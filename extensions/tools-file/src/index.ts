@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { PERSONALITY_DEFINITION_ENTRIES } from '@ethosagent/core';
-import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import { foldDenyKey, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -67,10 +67,11 @@ function writeEvidence(
 }
 
 export function isWriteBlocked(abs: string): boolean {
-  const normalized = resolve(abs);
-  if (BLOCKED_WRITE_PATHS.some((p) => resolve(p) === normalized)) return true;
+  // Deny-side compare: folds case on APFS/NTFS (`foldDenyKey`, UBP-008).
+  const normalized = foldDenyKey(resolve(abs));
+  if (BLOCKED_WRITE_PATHS.some((p) => foldDenyKey(resolve(p)) === normalized)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => {
-    const np = resolve(prefix);
+    const np = foldDenyKey(resolve(prefix));
     return normalized === np || normalized.startsWith(`${np}/`);
   });
 }
@@ -88,19 +89,24 @@ export function isWriteBlocked(abs: string): boolean {
  * (`packages/core/src/scoped/scoped-fs.ts`), which covers only the CALLING
  * personality's definition. This check covers every personality directory,
  * because no turn has a reason to rewrite another personality's toolset.
+ *
+ * Compares as deny keys (`foldDenyKey` from `@ethosagent/storage-fs`): on
+ * APFS/NTFS `TOOLSET.yaml` opens `toolset.yaml` (UBP-008).
  */
 export function isPersonalityDefinitionPath(abs: string): boolean {
-  const normalized = resolve(abs);
+  const normalized = foldDenyKey(resolve(abs));
   const homes = [join(homedir(), '.ethos')];
   const override = process.env.ETHOS_STATE_DIR;
   if (override) homes.push(resolve(override));
   for (const home of homes) {
-    const root = `${join(home, 'personalities')}/`;
+    const root = foldDenyKey(`${join(home, 'personalities')}/`);
     if (!normalized.startsWith(root)) continue;
     // [<id>, <entry>, ...rest]
     const entry = normalized.slice(root.length).split('/')[1];
     if (entry === undefined) continue;
-    if (PERSONALITY_DEFINITION_ENTRIES.some((e) => e.replace(/\/$/, '') === entry)) return true;
+    if (PERSONALITY_DEFINITION_ENTRIES.some((e) => foldDenyKey(e.replace(/\/$/, '')) === entry)) {
+      return true;
+    }
   }
   return false;
 }
@@ -558,7 +564,13 @@ export const patchFileTool: Tool = {
         };
       }
 
-      const patched = content.replace(old_text, new_text);
+      // A literal splice, never `content.replace(old_text, new_text)`: a string
+      // replacement expands `$$`, `$&`, `` $` `` and `$'`, so bash `$'\n'` or JS
+      // `'$' + n` would splice the file's tail into the middle, and the
+      // read-back below would compare against the already-corrupted string.
+      // Pinned by 'writes new_text literally' in __tests__/tools-file.test.ts.
+      const at = content.indexOf(old_text);
+      const patched = content.slice(0, at) + new_text + content.slice(at + old_text.length);
       await fs.write(abs, patched);
 
       // Self-recovery — same read-back-and-compare write_file does, for the

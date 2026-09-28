@@ -20,4 +20,9 @@ export {
   type FileSecretsResolverOptions,
   InMemorySecretsResolver,
 } from './secrets';
-export { ethosStateDirs, sensitiveDenyPaths } from './sensitive-paths';
+export {
+  CASE_INSENSITIVE_FS,
+  ethosStateDirs,
+  foldDenyKey,
+  sensitiveDenyPaths,
+} from './sensitive-paths';

@@ -1,9 +1,11 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { listProcesses, readProcessLogs, stopProcess } from '../operations';
 import { type ProcessEntry, saveRegistry } from '../registry';
+import { spawnDetached } from '../spawn';
 
 let dataDir: string;
 
@@ -131,5 +133,37 @@ describe('stopProcess', () => {
     if (!result.ok) {
       expect(result.error).toContain('SIGNAL_NOT_SUPPORTED');
     }
+  });
+});
+
+// UBP-041 — a compound command's shell is only the group leader; stopping it
+// must take the children with it.
+describe.skipIf(process.platform === 'win32')('stopProcess process group', () => {
+  it('leaves no member of the process group alive', async () => {
+    const s = `7.${Math.floor(Math.random() * 1e6)
+      .toString()
+      .padStart(6, '0')}`;
+    const { pid } = spawnDetached(
+      'grp',
+      `cd /tmp && sleep ${s}; true`,
+      dataDir,
+      undefined,
+      dataDir,
+    );
+    saveRegistry(dataDir, {
+      grp: makeEntry('grp', { status: 'running', pid, exitCode: undefined }),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const result = await stopProcess(dataDir, 'grp', 'SIGTERM');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.stopped).toBe(true);
+    await new Promise((r) => setTimeout(r, 200));
+    let alive = '';
+    try {
+      alive = execFileSync('pgrep', ['-f', `sleep ${s}`], { encoding: 'utf8' }).trim();
+    } catch {
+      // pgrep exits 1 when nothing matches — the answer this test wants.
+    }
+    expect(alive).toBe('');
   });
 });

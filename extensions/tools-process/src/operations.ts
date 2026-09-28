@@ -204,6 +204,45 @@ export type StopResult =
   | { ok: false; error: string };
 
 /**
+ * Signal the process group a host process leads (`spawnDetached` spawns
+ * `detached`, so the shell's pid is the group id) — a compound command like
+ * `cd web && npm run dev` runs the server as the shell's CHILD, and signalling
+ * the shell alone left it holding the port while the entry read `killed`
+ * (UBP-041). Falls back to the pid when there is no such group (an entry from
+ * before detached spawn, or a leader that already exited alone); throws ESRCH
+ * when neither exists. Never negates a pid <= 1: `kill(-1)` is every process
+ * the user owns and `kill(-0)` is our own group. POSIX only; Windows signals
+ * the pid. Pinned by 'stopProcess process group' in
+ * `__tests__/operations.test.ts`.
+ */
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  if (pid > 1 && process.platform !== 'win32') {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+    }
+  }
+  process.kill(pid, signal);
+}
+
+/** Liveness by group: any member of `pid`'s process group, or `pid` itself. */
+function isGroupAlive(pid: number): boolean {
+  if (pid > 1 && process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (err) {
+      // EPERM: a member exists that we may not signal — still alive. ESRCH
+      // (no such group) falls through to the single-pid probe.
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') return true;
+    }
+  }
+  return isAlive(pid);
+}
+
+/**
  * Send a signal to stop a running process. SIGTERM waits up to 5s for a
  * graceful exit then escalates to SIGKILL — identical behaviour to the
  * `process_stop` tool.
@@ -265,7 +304,7 @@ export async function stopProcess(
   }
 
   try {
-    process.kill(entry.pid, signal);
+    signalProcessGroup(entry.pid, signal);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ESRCH') {
@@ -285,11 +324,11 @@ export async function stopProcess(
     const deadline = Date.now() + SIGTERM_GRACE_MS;
     while (Date.now() < deadline) {
       await sleep(WAIT_POLL_MS);
-      if (!isAlive(entry.pid)) break;
+      if (!isGroupAlive(entry.pid)) break;
     }
-    if (isAlive(entry.pid)) {
+    if (isGroupAlive(entry.pid)) {
       try {
-        process.kill(entry.pid, 'SIGKILL');
+        signalProcessGroup(entry.pid, 'SIGKILL');
       } catch {
         // ESRCH means it exited just before SIGKILL — fine
       }

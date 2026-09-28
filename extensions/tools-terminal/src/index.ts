@@ -202,6 +202,8 @@ function makeTerminalTool(route: ExecutionRouter): Tool {
               env: {},
               personality,
               sessionId: ctx.sessionId,
+              // UBP-042 — /stop or a steer aborts the turn; the command dies with it.
+              signal: ctx.abortSignal,
             }),
           );
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();
@@ -275,6 +277,9 @@ function makeTerminalTool(route: ExecutionRouter): Tool {
           {
             cwd: cwd ?? ctx.workingDir,
             timeout,
+            // UBP-042 — aborting kills the command's whole process group
+            // (`ScopedProcessImpl` in packages/core/src/scoped/scoped-process.ts).
+            signal: ctx.abortSignal,
           },
         );
 

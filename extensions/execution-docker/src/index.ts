@@ -956,8 +956,6 @@ class DockerPersistentSession implements ExecSession {
     const self = this;
     async function* gen(): AsyncIterable<ExecChunk> {
       await self.start(opts);
-      const shell = self.shell;
-      if (!shell?.stdin || !shell.stdout) throw new DockerUnavailableError();
       // serialize: chain onto the queue so only one command runs at a time
       let release: () => void = () => {};
       const prev = self.queue;
@@ -965,6 +963,18 @@ class DockerPersistentSession implements ExecSession {
         release = r;
       });
       await prev;
+      // Read the shell AFTER the queue: the command before this one may have
+      // replaced it (recycleShell below).
+      const shell = self.shell;
+      if (!shell?.stdin || !shell.stdout) {
+        release();
+        throw new DockerUnavailableError();
+      }
+      // UBP-040 — a command that did not run to its sentinel (timeout, abort,
+      // byte ceiling, or a consumer that stopped iterating) is still running in
+      // the shared bash, or that bash is dead. Reusing it would queue the next
+      // command behind the stuck one and hand it the stuck one's late output.
+      let settled = false;
       try {
         // F4 — kill the in-container process when the byte ceiling trips, so a
         // runaway command in a persistent session is actually stopped, not just
@@ -973,11 +983,17 @@ class DockerPersistentSession implements ExecSession {
         // broadcasts to the session container's user processes; the session is
         // dedicated to one logical workload, so a broadcast is the correct
         // "stop this" semantics (mirroring the one-shot path's killContainer).
+        let ceilingHit = false;
         yield* withByteCeiling(self.runOne(shell, cmd, opts), MAX_EXEC_OUTPUT_BYTES, () => {
+          ceilingHit = true;
           void self.stop('SIGKILL');
         });
+        settled = !ceilingHit;
       } finally {
-        release();
+        // The next exec waits in the queue until the fresh shell is up, while
+        // this one's error reaches its caller now.
+        if (settled) release();
+        else void self.recycleShell().finally(release);
       }
     }
     return gen();
@@ -1130,6 +1146,30 @@ class DockerPersistentSession implements ExecSession {
       });
       p.on('close', () => resolve());
       p.on('error', () => resolve());
+    });
+  }
+
+  /**
+   * Replace a poisoned shell (UBP-040): kill everything the session user runs
+   * in the container — the stuck command and the bash running it — then
+   * attach a new `docker exec -i … bash` to the same container. Shell state
+   * (cwd, exported vars) does not survive; a command that had to be killed has
+   * already left it undefined. Pinned by `__tests__/session-recovery.test.ts`.
+   */
+  private async recycleShell(): Promise<void> {
+    const old = this.shell;
+    this.shell = null;
+    await this.stop('SIGKILL');
+    try {
+      old?.stdin?.end();
+    } catch {
+      // the old shell's stdin may already be closed — it is being discarded
+    }
+    old?.kill('SIGKILL');
+    const name = this.container;
+    if (this.disposed || !name) return;
+    this.shell = spawn('docker', ['exec', '-i', name, 'bash'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
   }
 

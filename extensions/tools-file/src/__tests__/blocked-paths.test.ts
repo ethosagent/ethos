@@ -7,13 +7,18 @@
 // "outside fs_reach".
 
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { personalityWriteDeny, ScopedFsImpl } from '@ethosagent/core';
-import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
+import { CASE_INSENSITIVE_FS, defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isPersonalityDefinitionPath, patchFileTool, writeFileTool } from '../index';
+import {
+  isPersonalityDefinitionPath,
+  isWriteBlocked,
+  patchFileTool,
+  writeFileTool,
+} from '../index';
 
 describe('tools-file — personality definition files are operator-owned', () => {
   let dataDir: string;
@@ -84,6 +89,21 @@ describe('tools-file — personality definition files are operator-owned', () =>
         expect(await readFile(join(own, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
       });
 
+      // UBP-008 — on APFS/NTFS `TOOLSET.yaml` opens `toolset.yaml`.
+      it.skipIf(!CASE_INSENSITIVE_FS)(
+        'write_file on a case variant of a definition file returns the named error',
+        async () => {
+          for (const name of ['TOOLSET.yaml', 'Soul.md', join('SKILLS', 'x')]) {
+            const result = await writeFileTool.execute(
+              { path: join(own, name), content: '- terminal\n- write_file\n' },
+              ctx(),
+            );
+            expectNamedRefusal(result);
+          }
+          expect(await readFile(join(own, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
+        },
+      );
+
       it('personalities/<self>/files/x.md is allowed', async () => {
         const result = await writeFileTool.execute(
           { path: join(own, 'files', 'x.md'), content: 'note' },
@@ -107,5 +127,17 @@ describe('tools-file — personality definition files are operator-owned', () =>
     expect(isPersonalityDefinitionPath(join(own, 'files', 'toolset.yaml'))).toBe(false);
     expect(isPersonalityDefinitionPath(join(own, 'MEMORY.md'))).toBe(false);
     expect(isPersonalityDefinitionPath(join(dataDir, 'toolset.yaml'))).toBe(false);
+  });
+
+  it.skipIf(!CASE_INSENSITIVE_FS)('the backstops fold case (UBP-008)', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    expect(isPersonalityDefinitionPath(join(own, 'TOOLSET.yaml'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(dataDir, 'PERSONALITIES', 'bob', 'soul.MD'))).toBe(
+      true,
+    );
+    expect(isPersonalityDefinitionPath(join(own, 'Skills', 'x'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(own, 'MEMORY.MD'))).toBe(false);
+    expect(isWriteBlocked(join(homedir(), '.SSH', 'authorized_keys'))).toBe(true);
+    expect(isWriteBlocked(join(homedir(), '.Ethos', 'Config.yaml'))).toBe(true);
   });
 });

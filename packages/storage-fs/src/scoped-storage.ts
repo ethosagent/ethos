@@ -13,6 +13,7 @@ import {
   type StorageRemoveOptions,
   type StorageWriteOptions,
 } from '@ethosagent/types';
+import { ethosStateDirs, foldDenyKey } from './sensitive-paths';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -64,6 +65,16 @@ const WRITE_DENY_REASON = 'personality definition is operator-owned';
  *      and follows any link it finds, re-judging layers 1, 1b and 2 against
  *      where the link actually lands (G11).
  *
+ * Layer 2 also applies the **state-dir exclusion** (UBP-047): an allow
+ * prefix that is a STRICT ancestor of an Ethos state dir ({@link ethosStateDirs})
+ * — the cwd grant when the process runs from `~` or `/` — does not reach
+ * INTO that state dir; a path there must be granted by a prefix at or below
+ * it (`ownDir`, `skills/`, or an explicit `${ETHOS_HOME}/`). Mirror of layer
+ * 2b in `ScopedFsImpl.checkReach`; the two change together.
+ *
+ * Deny-side comparisons (1, 1b, the state-dir exclusion) fold case on
+ * case-insensitive filesystems ({@link foldDenyKey}, UBP-008).
+ *
  * This closes **misdirection**, not **TOCTOU**: an attacker who can swap a
  * path between this walk and the subsequent open still wins, and closing
  * that needs container-level remediation.
@@ -99,6 +110,9 @@ export class ScopedStorage implements Storage {
   private readonly writePrefixes: string[];
   private readonly denyPrefixes: string[];
   private readonly writeDenyPrefixes: string[];
+  /** {@link foldDenyKey} forms of the two deny lists, for matching. */
+  private readonly denyKeys: string[];
+  private readonly writeDenyKeys: string[];
 
   constructor(
     private readonly inner: Storage,
@@ -108,11 +122,18 @@ export class ScopedStorage implements Storage {
     this.writePrefixes = scope.write.map(normalizePrefix);
     this.denyPrefixes = (scope.alwaysDeny ?? []).map(normalizePrefix);
     this.writeDenyPrefixes = (scope.writeDeny ?? []).map(normalizePrefix);
+    this.denyKeys = this.denyPrefixes.map((p) => foldDenyKey(p));
+    this.writeDenyKeys = this.writeDenyPrefixes.map((p) => foldDenyKey(p));
+  }
+
+  /** True when `path` is (or is under) an always-deny entry, compared as deny keys. */
+  private hitsDenyFloor(path: string): boolean {
+    return matchPrefix(foldDenyKey(path), this.denyKeys) !== null;
   }
 
   /** True when `path` is a `writeDeny` entry or lies under one. */
   private hitsWriteDeny(path: string, kind: 'read' | 'write'): boolean {
-    return kind === 'write' && isPathAllowed(path, this.writeDenyPrefixes);
+    return kind === 'write' && matchPrefix(foldDenyKey(path), this.writeDenyKeys) !== null;
   }
 
   /**
@@ -123,8 +144,9 @@ export class ScopedStorage implements Storage {
    */
   private checkSubtree(rawPath: string): void {
     const path = resolve(rawPath);
-    const withSlash = path.endsWith('/') ? path : `${path}/`;
-    if (this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash))) {
+    const key = foldDenyKey(path);
+    const withSlash = key.endsWith('/') ? key : `${key}/`;
+    if (this.writeDenyPrefixes.some((entry) => foldDenyKey(resolve(entry)).startsWith(withSlash))) {
       throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
   }
@@ -133,7 +155,7 @@ export class ScopedStorage implements Storage {
     // Normalize the path before checking against prefixes so that `..`
     // segments cannot bypass the prefix-based allowlist.
     const path = resolve(rawPath);
-    if (isPathAllowed(path, this.denyPrefixes)) {
+    if (this.hitsDenyFloor(path)) {
       throw new BoundaryError(kind, path, this.denyPrefixes, 'always-deny floor');
     }
     if (this.hitsWriteDeny(path, kind)) {
@@ -162,7 +184,7 @@ export class ScopedStorage implements Storage {
       const next = followFirstSymlink(prefix, current);
       if (next === null) return;
       const nextPrefix = matchAllowedPrefix(next, allowed);
-      if (nextPrefix === null || isPathAllowed(next, this.denyPrefixes)) {
+      if (nextPrefix === null || this.hitsDenyFloor(next)) {
         throw new BoundaryError(
           kind,
           path,
@@ -262,21 +284,50 @@ export class ScopedStorage implements Storage {
 function normalizePrefix(prefix: string): string {
   // A prefix matches any path where prefix is followed by '/' or end-of-string,
   // OR where the path equals the prefix exactly. We keep the prefix as-given
-  // (with or without trailing slash) and handle the boundary in isPathAllowed.
+  // (with or without trailing slash) and handle the boundary in matchPrefix.
   return prefix;
 }
 
-function isPathAllowed(path: string, prefixes: readonly string[]): boolean {
-  return matchAllowedPrefix(path, prefixes) !== null;
+/**
+ * The matched ALLOW prefix containing `path` in slash-less root form, or null
+ * when none does. Purely lexical — no filesystem access. The root form is
+ * what the symlink walk uses as its floor: only segments BELOW it are
+ * inspected. A prefix that covers `path` only as a strict ancestor of the
+ * state dir holding it is skipped (the state-dir exclusion, UBP-047).
+ */
+function matchAllowedPrefix(path: string, prefixes: readonly string[]): string | null {
+  const stateDirKeys = ethosStateDirs().map((d) => foldDenyKey(resolve(d)));
+  const pathKey = foldDenyKey(path);
+  for (const prefix of prefixes) {
+    const root = matchPrefix(path, [prefix]);
+    if (root === null) continue;
+    if (shadowsStateDir(foldDenyKey(root), pathKey, stateDirKeys)) continue;
+    return root;
+  }
+  return null;
+}
+
+/** True when `path` equals `root` or lies below it. */
+function within(root: string, path: string): boolean {
+  return path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`);
 }
 
 /**
- * The matched prefix containing `path` in slash-less root form, or null when
- * no prefix contains it. Purely lexical — no filesystem access. The root
- * form is what the symlink walk uses as its floor: only segments BELOW it
- * are inspected.
+ * True when `prefixKey` covers `pathKey` only because it is a strict ancestor
+ * of a state dir that holds the path. All three are {@link foldDenyKey} keys —
+ * this is a deny-direction test.
  */
-function matchAllowedPrefix(path: string, prefixes: readonly string[]): string | null {
+function shadowsStateDir(prefixKey: string, pathKey: string, stateDirKeys: string[]): boolean {
+  return stateDirKeys.some(
+    (dir) => within(dir, pathKey) && within(prefixKey, dir) && prefixKey !== dir,
+  );
+}
+
+/**
+ * The first of `prefixes` containing `path`, in slash-less root form, or null.
+ * Plain lexical match; callers fold both sides for deny lists.
+ */
+function matchPrefix(path: string, prefixes: readonly string[]): string | null {
   for (const prefix of prefixes) {
     if (path === prefix) return prefix.endsWith('/') ? prefix.slice(0, -1) || sep : prefix;
     const withoutSlash = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;

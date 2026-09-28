@@ -32,12 +32,25 @@ import { join, resolve } from 'node:path';
  * `skills/` sit under it and are in its default reach
  * (`deriveFsReachPaths`, `packages/core/src/fs-reach.ts`).
  *
- * LIMITATION: the entries are an enumeration, not "everything but my own
- * directory". Stores not listed (`delivery-ledger.db`, `inbound-spool.db`,
- * `cron/`, `teams/`, …) and OTHER personalities' directories stay readable to
- * a personality whose declared or default reach covers the state dir (the
- * default reach covers it when the process cwd is `~` or the state dir). The
- * floor is static and has no notion of which personality is asking.
+ * The entries are an enumeration, not "everything but my own directory":
+ * stores not listed (`delivery-ledger.db`, `inbound-spool.db`, `cron/`,
+ * `teams/`, …) and OTHER personalities' directories are kept out of the
+ * DEFAULT reach by two further rules, not by this floor (UBP-047):
+ *   - a grant that is a strict ANCESTOR of a state dir (the cwd grant when the
+ *     process runs from `~` or `/`) does not reach into it — layer 2b in
+ *     `ScopedStorage.check` (`scoped-storage.ts`) and `ScopedFsImpl.checkReach`
+ *     (`packages/core/src/scoped/scoped-fs.ts`);
+ *   - a process cwd AT or inside the state dir is dropped from the default
+ *     reach (`deriveFsReachPaths`, `packages/core/src/fs-reach.ts`).
+ * Pinned by `__tests__/scoped-storage-casefold-statedir.test.ts` and
+ * `packages/core/src/__tests__/scoped-fs-casefold-statedir.test.ts`.
+ *
+ * LIMITATION: a personality that DECLARES `fs_reach` naming the state dir
+ * itself (`${ETHOS_HOME}/`) or a directory inside it still reaches what that
+ * names, other personalities included — an explicit grant is honoured, and
+ * the floor is static with no notion of which personality is asking. Local
+ * `terminal` is not mediated by Storage at all (see `PERSONALITY_DEFINITION_ENTRIES`
+ * in `packages/core/src/fs-reach.ts`).
  * `backups/` is deliberately NOT listed although its archives carry every
  * store above: the operator's own archive download confines its reads to that
  * directory with a `ScopedStorage` over this same floor
@@ -69,6 +82,34 @@ export function sensitiveDenyPaths(): string[] {
     '/proc/self/environ',
     '/proc/self/cmdline',
   ];
+}
+
+/**
+ * Whether this platform's default filesystems compare names case-insensitively
+ * — APFS on macOS and NTFS on Windows, where `~/.SSH/id_rsa` opens `~/.ssh/id_rsa`
+ * and `TOOLSET.yaml` opens `toolset.yaml`. Linux is treated as case-sensitive,
+ * so its behaviour is unchanged; a case-sensitive APFS volume only over-denies.
+ */
+export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+
+/**
+ * The key every DENY-side path comparison uses (UBP-008): this manifest's
+ * floor in `ScopedStorage`, its write-deny list and state-dir exclusion, the
+ * tools-file write blocklists and the terminal/process argv floors. On a
+ * case-insensitive filesystem two spellings that differ only in case name one
+ * file, so a deny entry must match every spelling. Upper-then-lower (not
+ * `toLowerCase` alone) so characters that case-FOLD onto ASCII — U+017F long
+ * s, U+212A Kelvin sign — land on the same key, and NFC so composed and
+ * decomposed spellings agree. Folding more than the filesystem does only
+ * over-denies. Allow-side matches stay exact, so a case variant of an allowed
+ * path is refused rather than widened.
+ *
+ * Mirror of `foldDenyKey` in `packages/core/src/scoped/scoped-fs.ts` — core
+ * cannot import this package at runtime; the two change together. Pinned by
+ * `__tests__/scoped-storage-casefold-statedir.test.ts`.
+ */
+export function foldDenyKey(path: string, insensitive: boolean = CASE_INSENSITIVE_FS): string {
+  return insensitive ? path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC') : path;
 }
 
 /**

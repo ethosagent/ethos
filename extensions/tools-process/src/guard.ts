@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ethosStateDirs, sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import { ethosStateDirs, foldDenyKey, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -525,10 +525,16 @@ const PATH_END = '(?=[/\\s\'"`;|&)]|$)';
 
 export function stateDirReference(cmd: string): string | null {
   const defaultDir = join(homedir(), '.ethos');
+  // Deny-side match: on APFS/NTFS `~/.ETHOS` is the state dir too, so the
+  // command, the dir and the spellings are all compared as `foldDenyKey`
+  // keys (UBP-008). On Linux the fold is the identity.
+  const probe = foldDenyKey(cmd);
   for (const dir of ethosStateDirs()) {
-    const spellings = [escapeRegExp(dir)];
-    if (dir === defaultDir) spellings.push(String.raw`(?:~|\$HOME|\$\{HOME\})/\.ethos`);
-    if (new RegExp(`(?:${spellings.join('|')})${PATH_END}`).test(cmd)) return dir;
+    const spellings = [escapeRegExp(foldDenyKey(dir))];
+    if (dir === defaultDir) {
+      spellings.push(foldDenyKey(String.raw`(?:~|\$HOME|\$\{HOME\})/\.ethos`));
+    }
+    if (new RegExp(`(?:${spellings.join('|')})${PATH_END}`).test(probe)) return dir;
   }
   if (/\$\{?ETHOS_STATE_DIR\b/.test(cmd)) return '$ETHOS_STATE_DIR';
   return null;
@@ -546,8 +552,11 @@ export function checkCommand(command: string): DangerResult {
   }
   const evalReason = inlineEvalReason(command);
   if (evalReason) return { dangerous: true, reason: evalReason };
+  // The argv patterns are lowercase literals; testing the folded command makes
+  // `cat ~/.SSH/id_rsa` fire on a case-insensitive filesystem (UBP-008).
+  const folded = foldDenyKey(command);
   for (const { test, paths } of ARGV_FS_DENY_PATTERNS) {
-    if (test(command)) {
+    if (test(folded)) {
       return { dangerous: true, reason: `command targets always-deny path '${paths.join(', ')}'` };
     }
   }

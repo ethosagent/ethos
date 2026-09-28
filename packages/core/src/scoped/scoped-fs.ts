@@ -8,11 +8,52 @@
 // and called from both sync and async paths; making it async would ripple
 // through the whole `ScopedFs` contract for no security gain.
 import { lstatSync, readlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
 import type { ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
+
+/**
+ * Whether this platform's default filesystems compare names case-insensitively
+ * — APFS on macOS and NTFS on Windows, where `TOOLSET.yaml` opens the existing
+ * `toolset.yaml`. Linux is treated as case-sensitive, so its behaviour is
+ * unchanged; a case-sensitive APFS volume only over-denies, never under.
+ */
+export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+
+/**
+ * The key every DENY-side comparison uses (UBP-008). On a case-insensitive
+ * filesystem two spellings that differ only in case name one file, so a deny
+ * entry must match every spelling. Upper-then-lower (not `toLowerCase` alone)
+ * so characters that case-FOLD onto ASCII — U+017F long s, U+212A Kelvin sign
+ * — land on the same key, and NFC so composed and decomposed spellings agree.
+ * Folding more than the filesystem does only over-denies.
+ *
+ * Only deny-direction checks fold: the always-deny floor, the write-deny list
+ * and the state-dir exclusion. Allow prefixes stay exact, so a case variant of
+ * an allowed path is refused rather than widened.
+ *
+ * Mirror of `foldDenyKey` in `packages/storage-fs/src/sensitive-paths.ts` —
+ * core cannot import storage-fs at runtime; the two change together. Pinned
+ * by `packages/core/src/__tests__/scoped-fs-casefold-statedir.test.ts`.
+ */
+export function foldDenyKey(path: string, insensitive: boolean = CASE_INSENSITIVE_FS): string {
+  return insensitive ? path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC') : path;
+}
+
+/**
+ * Every directory Ethos keeps its state in: `~/.ethos` plus `ETHOS_STATE_DIR`
+ * when set, read per call. Copy of `ethosStateDirs` in
+ * `packages/storage-fs/src/sensitive-paths.ts` (core cannot import it).
+ */
+function ethosStateDirs(): string[] {
+  const dirs = [join(homedir(), '.ethos')];
+  const override = process.env.ETHOS_STATE_DIR;
+  if (override && resolve(override) !== dirs[0]) dirs.push(resolve(override));
+  return dirs;
+}
 
 /**
  * Scoped filesystem capability. Enforces three layers on every call:
@@ -47,6 +88,17 @@ const MAX_SYMLINK_HOPS = 32;
  * path between this walk and the subsequent open still wins, and closing
  * that needs container-level remediation.
  *
+ *  2b. **State-dir exclusion** (UBP-047) — an allow prefix that is a STRICT
+ *     ancestor of an Ethos state dir (the cwd grant when the process runs
+ *     from `~` or `/`) does not reach INTO that state dir: a path there must
+ *     be granted by a prefix at or below the state dir (`ownDir`, `skills/`,
+ *     or an explicit `${ETHOS_HOME}/`). Otherwise the cwd would hand every
+ *     personality the others' `MEMORY.md`/`USER.md` and every unlisted store.
+ *     Mirror of the same rule in `ScopedStorage` — the two change together.
+ *
+ * Deny-side comparisons (1, 1b, 2b) fold case on case-insensitive
+ * filesystems ({@link foldDenyKey}, UBP-008).
+ *
  * The floor cannot be disabled by configuration. Tests that need to
  * exercise a forbidden path override `$HOME` before constructing the
  * wrapper.
@@ -62,8 +114,8 @@ export class ScopedFsImpl implements ScopedFs {
     alwaysDenyPaths: string[] = [],
     writeDenyPaths: string[] = [],
   ) {
-    this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
-    this.writeDenyPaths = writeDenyPaths.map((p) => normalize(resolve(p)));
+    this.denyPaths = alwaysDenyPaths.map((p) => foldDenyKey(normalize(resolve(p))));
+    this.writeDenyPaths = writeDenyPaths.map((p) => foldDenyKey(normalize(resolve(p))));
   }
 
   async read(path: string): Promise<string> {
@@ -167,12 +219,13 @@ export class ScopedFsImpl implements ScopedFs {
   }
 
   private hitsWriteDeny(canonical: string, kind: string): boolean {
-    return kind === 'write' && matchesAny(canonical, this.writeDenyPaths);
+    return kind === 'write' && matchesAny(foldDenyKey(canonical), this.writeDenyPaths);
   }
 
   private hitsDenyFloor(canonical: string): boolean {
+    const key = foldDenyKey(canonical);
     return this.denyPaths.some(
-      (deny) => canonical === deny || canonical.startsWith(deny.endsWith('/') ? deny : `${deny}/`),
+      (deny) => key === deny || key.startsWith(deny.endsWith('/') ? deny : `${deny}/`),
     );
   }
 }
@@ -184,19 +237,40 @@ function matchesAny(canonical: string, paths: readonly string[]): boolean {
 
 /**
  * The canonical form of the first allowed prefix containing `canonical`, or
- * null when no prefix does. Purely lexical — no filesystem access.
+ * null when no prefix does. Purely lexical — no filesystem access. A prefix
+ * that would reach into an Ethos state dir only as its ancestor is skipped
+ * (layer 2b, {@link shadowsStateDir}).
  */
 function matchAllowedPrefix(canonical: string, allowed: Iterable<string>): string | null {
+  const stateDirKeys = ethosStateDirs().map((d) => foldDenyKey(normalize(resolve(d))));
+  const pathKey = foldDenyKey(canonical);
   for (const prefix of allowed) {
     const canonicalPrefix = normalize(resolve(prefix));
     if (
       canonical === canonicalPrefix ||
       canonical.startsWith(canonicalPrefix.endsWith('/') ? canonicalPrefix : `${canonicalPrefix}/`)
     ) {
+      if (shadowsStateDir(foldDenyKey(canonicalPrefix), pathKey, stateDirKeys)) continue;
       return canonicalPrefix;
     }
   }
   return null;
+}
+
+/** True when `path` equals `root` or lies below it (both already canonical). */
+function within(root: string, path: string): boolean {
+  return path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`);
+}
+
+/**
+ * Layer 2b (UBP-047): true when `prefixKey` covers `pathKey` only because it is
+ * a strict ancestor of a state dir that holds the path. All three are
+ * {@link foldDenyKey} keys — this is a deny-direction test.
+ */
+function shadowsStateDir(prefixKey: string, pathKey: string, stateDirKeys: string[]): boolean {
+  return stateDirKeys.some(
+    (dir) => within(dir, pathKey) && within(prefixKey, dir) && prefixKey !== dir,
+  );
 }
 
 // Layer 3 of `checkReach` above is a deliberate DUPLICATE of `ScopedStorage.check`
