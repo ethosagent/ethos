@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-09-06
+updated: 2026-09-28
 ---
 
 ## Task
@@ -208,7 +208,7 @@ HOME=/srv/ethos-workspace-b ethos gateway start &
 
 Each `HOME` carries its own `slackBotToken`, `slackAppToken`, `slackSigningSecret`, SQLite store, logs, and pairing database. The bots stay isolated; sessions never cross.
 
-- Or run one gateway against one workspace and add Telegram or Discord tokens alongside. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`) suppresses duplicate outbound text on the same session across every adapter.
+- Or run one gateway against one workspace and add Telegram or Discord tokens alongside. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply — `replyDedupScope`) suppresses a duplicate send on the same session across every adapter.
 
 A single Slack adapter instance binds to one bot token. Multi-tenant Slack distribution (one app, many workspaces, OAuth per workspace) is not yet wired through `apps/ethos/src/commands/gateway.ts`.
 
@@ -245,7 +245,7 @@ Have a non-allowlisted account `@mention` the bot. With the default config, the 
 
 **Dedup is active.**
 
-Send the same prompt twice within 30 seconds. The bot answers once if generated text is identical.
+Send the same prompt twice within 30 seconds. The bot answers both, even with identical text — reply dedup is scoped to the inbound message it answers (`replyDedupScope`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). What dedup drops is one reply sent twice.
 
 ## Troubleshoot
 
@@ -274,7 +274,7 @@ Expected. The adapter caps outbound text at 3,000 characters per `chat.postMessa
 The inbound message had no `thread_ts`. Reply to one of the bot's existing messages in the thread to seed it, or include `thread_ts` when calling the gateway directly.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
 
 **Pairing code expired.**
 Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again. Owners can `/communications approve-all` to approve every pending sender.

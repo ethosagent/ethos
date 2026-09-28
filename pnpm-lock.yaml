@@ -1734,9 +1734,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ethosagent/safety-redact':
+      '@ethosagent/surface-kit':
         specifier: workspace:*
-        version: link:../../packages/safety/redact
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1786,9 +1786,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@ethosagent/safety-redact':
+      '@ethosagent/surface-kit':
         specifier: workspace:*
-        version: link:../../packages/safety/redact
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2710,6 +2710,9 @@ importers:
 
   packages/surface-kit:
     dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types

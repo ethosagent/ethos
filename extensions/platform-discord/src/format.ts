@@ -20,7 +20,9 @@ You are replying inside a Discord server or DM. Follow these rules:
  * else between `<` and `>` is text — generics (`Map<string, number[]>`),
  * comparisons (`x < 5 and y > 3`), or Discord's own syntax (`<@id>`, `<#id>`,
  * `<t:…>`, `<https://…>`). Pings stay neutralised by `allowedMentions:
- * { parse: [] }` on every send, not by this formatter (`DiscordAdapter.send`).
+ * { parse: [] }` — the Client's default (`DiscordAdapter` constructor) and
+ * passed on every send and edit — not by this formatter. Pinned by
+ * `__tests__/thread-typing.test.ts` ('never lets a reply ping').
  */
 const HTML_TAG =
   /<\/?(?:a|abbr|b|blockquote|br|code|del|div|em|h[1-6]|hr|i|img|ins|kbd|li|mark|ol|p|pre|s|small|span|strike|strong|sub|sup|table|tbody|td|th|thead|tr|u|ul)(?:\s[^<>]*)?\/?>/gi;

@@ -4,7 +4,7 @@ description: "Every Ethos domain term in one place: personality, skill, tool, ho
 kind: reference
 audience: shared
 slug: glossary
-updated: 2026-09-13
+updated: 2026-09-28
 ---
 
 Every domain term used elsewhere in the docs has one canonical entry here. Pages link to the entry on first use. The list is alphabetical inside each cluster; clusters are ordered by how often a newcomer hits them.
@@ -155,7 +155,7 @@ The Electron application (`@ethosagent/desktop`) that provides a native experien
 
 ### Gateway {#gateway}
 
-The runtime layer between channel adapters and `AgentLoop`. Routes inbound messages to the correct session, dedupes outbound messages (30-second TTL, keyed by `(sessionId, sha256(content))`), and fans events out to the right adapter.
+The runtime layer between channel adapters and `AgentLoop`. Routes inbound messages to the correct session, dedupes outbound messages (30-second TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message a reply answers), and fans events out to the right adapter.
 
 ### Remote gateway {#remote-gateway}
 

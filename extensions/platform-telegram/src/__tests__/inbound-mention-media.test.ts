@@ -51,7 +51,7 @@ vi.mock('grammy', () => {
   return { Bot: MockBot, InlineKeyboard: MockInlineKeyboard };
 });
 
-import { TelegramAdapter } from '../index';
+import { MEDIA_DOWNLOAD_TIMEOUT_MS, TelegramAdapter } from '../index';
 import { loadTelegramSdk } from '../sdk';
 
 beforeAll(async () => {
@@ -167,5 +167,56 @@ describe('Telegram media hand-off (UBP-016)', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0].text).toBe('@EthosBot look');
     expect(captured[0].attachments).toBeUndefined();
+  });
+});
+
+// V-GC-2 — the handler awaits the download (UBP-016) and grammY's polling runs
+// one update at a time, so a stalled getFile or file fetch held up every chat
+// on the bot for as long as undici's defaults allowed. Each file now has a
+// deadline (`MEDIA_DOWNLOAD_TIMEOUT_MS`, `downloadTelegramFile`); past it the
+// message goes on caption-only, the same as any other failed download.
+describe('Telegram media download deadline (V-GC-2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    mockApi.getFile.mockResolvedValue({ file_path: 'photos/f1.jpg', file_size: 4 });
+  });
+
+  it('a file fetch that never finishes is forwarded caption-only at the deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    // Ignores its abort signal: only the deadline race can end it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    );
+    const { captured, handler } = await mount();
+    const pending = handler(groupCtx({ photo, caption: '@EthosBot look' }));
+    await vi.advanceTimersByTimeAsync(MEDIA_DOWNLOAD_TIMEOUT_MS);
+    await pending;
+    expect(captured).toHaveLength(1);
+    expect(captured[0].text).toBe('@EthosBot look');
+    expect(captured[0].attachments).toBeUndefined();
+  });
+
+  it('a getFile that never answers is forwarded caption-only at the deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    stubDownload();
+    mockApi.getFile.mockImplementation(() => new Promise(() => {}));
+    const { captured, handler } = await mount();
+    const pending = handler(groupCtx({ photo, caption: '@EthosBot look' }));
+    await vi.advanceTimersByTimeAsync(MEDIA_DOWNLOAD_TIMEOUT_MS);
+    await pending;
+    expect(captured).toHaveLength(1);
+    expect(captured[0].attachments).toBeUndefined();
+  });
+
+  it('the file fetch is given an abort signal, so the request itself is cancelled', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { handler } = await mount();
+    await handler(groupCtx({ photo, caption: '@EthosBot look' }));
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

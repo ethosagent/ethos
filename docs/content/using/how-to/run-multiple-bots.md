@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-multiple-bots
 time: "10 min"
-updated: 2026-09-13
+updated: 2026-09-28
 ---
 
 ## Task
@@ -166,7 +166,7 @@ Ask `researcher-bot` a question that establishes context ("my project is named F
 
 **Same content, both bots — both replies.**
 
-The outbound dedup cache is keyed by `(sessionId, sha256(content))`. Since each bot has its own session lane, two bots in the same channel can emit identical text on the same turn without one being suppressed.
+The outbound dedup cache is keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply (`replyDedupScope`). Since each bot has its own session lane, two bots in the same channel can emit identical text on the same turn without one being suppressed.
 
 ## Troubleshoot
 

@@ -12,6 +12,8 @@ interface FakeChannel {
   sent: Array<{ content?: string }>;
   deleted: string[];
   edited: Array<[string, string]>;
+  /** The raw payload of every edit, for the allowedMentions assertion. */
+  editPayloads: unknown[];
   typing: number;
 }
 
@@ -22,7 +24,14 @@ function makeAdapter() {
   const channelFor = (id: string) => {
     const existing = channels.get(id);
     if (existing) return existing;
-    const state: FakeChannel = { id, sent: [], deleted: [], edited: [], typing: 0 };
+    const state: FakeChannel = {
+      id,
+      sent: [],
+      deleted: [],
+      edited: [],
+      editPayloads: [],
+      typing: 0,
+    };
     channels.set(id, state);
     return state;
   };
@@ -44,8 +53,12 @@ function makeAdapter() {
             delete: async () => {
               state.deleted.push(mid);
             },
-            edit: async (text: string) => {
-              state.edited.push([mid, text]);
+            edit: async (payload: string | { content?: string }) => {
+              state.editPayloads.push(payload);
+              state.edited.push([
+                mid,
+                typeof payload === 'string' ? payload : (payload.content ?? ''),
+              ]);
               return { id: mid };
             },
           };
@@ -100,5 +113,31 @@ describe('DiscordAdapter thread-targeted typing and edits', () => {
     await adapter.sendTyping('parent');
     expect(channelFor('parent').typing).toBe(1);
     expect(channelFor('parent').sent.map((p) => p.content)).toEqual(['Thinking…']);
+  });
+});
+
+// V-GC-3 — the formatter no longer strips `<@id>` / `<@&role>` (UBP-013); pings
+// are neutralised by `allowedMentions: { parse: [] }`. Every send path passed
+// it, but the streamed edit called `msg.edit(chunk)` bare, so an edited draft
+// that named a user or role was parsed with Discord's default (everything).
+describe('DiscordAdapter never lets a reply ping (V-GC-3)', () => {
+  beforeAll(async () => {
+    await loadDiscordSdk();
+  });
+
+  it('a streamed edit carries allowedMentions: { parse: [] }', async () => {
+    const { adapter, channelFor } = makeAdapter();
+    const sent = await adapter.send('chan', { text: 'draft' });
+    await adapter.editMessage('chan', sent.messageId ?? '', 'ping <@123> and <@&456>');
+    expect(channelFor('chan').editPayloads).toEqual([
+      { content: 'ping <@123> and <@&456>', allowedMentions: { parse: [] } },
+    ]);
+  });
+
+  it('the client defaults allowedMentions to none, for any path that omits it', () => {
+    const adapter = new DiscordAdapter({ token: 'fake-token', botKey: 'test-bot' });
+    const client = (adapter as unknown as { client: { options: { allowedMentions?: unknown } } })
+      .client;
+    expect(client.options.allowedMentions).toEqual({ parse: [] });
   });
 });

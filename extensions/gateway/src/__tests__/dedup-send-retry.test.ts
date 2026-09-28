@@ -86,3 +86,55 @@ describe('Gateway.sendAsBot — a failed send can be retried inside the dedup TT
     expect(sent).toHaveLength(1);
   });
 });
+
+// V-GC-1 — checking without recording opened a window: two IDENTICAL sends in
+// flight at once (parallel `send_message` calls in one tool batch, a cron and a
+// watcher notifying the same target) both passed the check and both reached
+// the platform. `sendThrough` now reserves the key at the check, releases it
+// on failure and commits it on success; a duplicate that arrives while the
+// first is in flight shares that send's outcome.
+describe('Gateway.sendAsBot — concurrent identical sends (V-GC-1)', () => {
+  function gatedAdapter() {
+    const { adapter, sent } = flakyAdapter([]);
+    const gates: Array<(r: DeliveryResult) => void> = [];
+    (adapter as { send: PlatformAdapter['send'] }).send = (chatId, m) => {
+      sent.push({ chatId, text: m.text });
+      return new Promise<DeliveryResult>((resolve) => gates.push(resolve));
+    };
+    return { adapter, sent, gates };
+  }
+
+  it('two identical sends in flight at once reach the platform once', async () => {
+    const { adapter, sent, gates } = gatedAdapter();
+    const gw = gatewayWith(adapter);
+
+    const a = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    const b = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(1);
+    gates[0]?.({ ok: true, messageId: '1' });
+    expect(await a).toEqual({ ok: true });
+    expect(await b).toEqual({ ok: true });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('when the in-flight send fails, the duplicate reports that failure and a retry goes out', async () => {
+    const { adapter, sent, gates } = gatedAdapter();
+    const gw = gatewayWith(adapter);
+
+    const a = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    const b = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    gates[0]?.({ ok: false, error: 'flood wait' });
+    expect((await a).ok).toBe(false);
+    expect((await b).ok).toBe(false);
+    expect(sent).toHaveLength(1);
+
+    // The failure released the reservation: a retry is sent, not swallowed.
+    const retry = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    gates[1]?.({ ok: true });
+    expect(await retry).toEqual({ ok: true });
+    expect(sent).toHaveLength(2);
+  });
+});

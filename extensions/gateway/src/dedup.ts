@@ -85,8 +85,9 @@ export class MessageDedupCache {
    * Records at the CHECK, so it is for sends whose failure is owned elsewhere
    * — the ledger-backed reply and notice paths, where a refused send stays a
    * `pending` obligation the sweep redelivers. A send with no ledger behind it
-   * uses {@link wouldSend} and records with {@link record} only after the
-   * platform confirmed it (UBP-003), so a failed send never arms the key.
+   * treats the check as a reservation: {@link record} commits it once the
+   * platform confirmed, {@link release} un-arms it on failure (UBP-003,
+   * V-GC-1), so a failed send never leaves the key armed.
    */
   shouldSend(sessionId: string, content: string, scope?: DedupScope): boolean {
     if (!this.wouldSend(sessionId, content, scope)) return false;
@@ -158,6 +159,21 @@ export class MessageDedupCache {
     if (this.disabled) return;
     if (!content) return;
     this.setEntry(dedupKey(sessionId, sha256(content), scope));
+  }
+
+  /**
+   * Un-arm a key armed by {@link shouldSend} whose send then failed (V-GC-1).
+   * A send with no ledger behind it (`Gateway.sendThrough`) RESERVES the key
+   * with `shouldSend` — so a second identical send while the first is still
+   * in flight is a duplicate, not a second platform call — then commits it
+   * with {@link record} once the platform confirmed, or releases it here so a
+   * retry inside the TTL goes out (UBP-003). Pinned by
+   * `__tests__/dedup-send-retry.test.ts`.
+   */
+  release(sessionId: string, content: string, scope?: DedupScope): void {
+    if (this.disabled) return;
+    if (!content) return;
+    this.entries.delete(dedupKey(sessionId, sha256(content), scope));
   }
 
   /** Forget every key associated with `sessionId` (called by `/new`). */

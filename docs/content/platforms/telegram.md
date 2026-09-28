@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-09-05
+updated: 2026-09-28
 ---
 
 ## Task
@@ -215,7 +215,7 @@ HOME=/srv/ethos-workspace-b ethos gateway start &
 
 Each `HOME` gets its own `config.yaml`, SQLite store, logs, and pairing database. The bots stay isolated; sessions never cross.
 
-- Or run one gateway with several platform adapters by attaching Discord and Slack tokens in the same `config.yaml`. The gateway processes every adapter against the same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`) — duplicate outbound text on the same session is suppressed regardless of which adapter emitted it.
+- Or run one gateway with several platform adapters by attaching Discord and Slack tokens in the same `config.yaml`. The gateway processes every adapter against the same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply — `replyDedupScope`) — a duplicate send on the same session is suppressed regardless of which adapter emitted it.
 
 A single gateway cannot proxy two Telegram bots from the same token. Use distinct tokens or distinct `HOME` roots.
 
@@ -249,7 +249,7 @@ DM from a non-allowlisted account. With `dmPolicy: pairing`, the bot replies wit
 
 **Dedup is active.**
 
-Send the same prompt twice within 30 seconds in the same chat. The second message gets an answer (inbound dedup keys on `messageId`, not content); the bot's reply is sent once if the generated text is identical.
+Send the same prompt twice within 30 seconds in the same chat. The second message gets an answer (inbound dedup keys on `messageId`, not content), and its reply is sent even when the generated text is identical — reply dedup is scoped to the inbound message it answers (`replyDedupScope`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`).
 
 ## Troubleshoot
 
@@ -275,7 +275,7 @@ Telegram's Markdown is strict (unmatched `_` or `*` rejects the whole message). 
 Expected. Telegram caps outbound text at 4,096 characters; `chunkText` splits at newlines (>60% of the limit) or spaces. Streamed edits re-flow with `reflowChunks` — first chunks are edited, extras are appended, trailing chunks are deleted.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable (one-release escape hatch — see `extensions/gateway/src/dedup.ts`).
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable (one-release escape hatch — see `extensions/gateway/src/dedup.ts`).
 
 **Pairing code expired.**
 Codes live for the configured TTL in `pairing-store.ts`. If the user waited too long, ask them to DM again — a new code is issued. Owners can also `/communications approve-all` to approve every pending sender at once.

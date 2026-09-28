@@ -464,3 +464,108 @@ describe('a mid-turn attachment is steered with its bytes (UBP-012)', () => {
     expect(d.drained[0]?.text).toContain('also book the train');
   });
 });
+
+// V-GC-4 — a steer with a voice note awaits STT before it is pushed, while a
+// text-only steer pushes at once. A voice note followed quickly by a text on
+// the same busy lane was steered text-first, and a turn that ended during the
+// STT sent the voice note down the enqueue path, where `runTurn` transcribed it
+// a second time.
+describe('mid-turn voice notes keep arrival order and are transcribed once (V-GC-4)', () => {
+  function gatedStt() {
+    let calls = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const provider: SttProvider = {
+      name: 'local-stt',
+      caps: { kind: 'stt', formats: ['opus'], local: true, contractVersion: STT_CONTRACT_VERSION },
+      transcribeBuffer: async () => {
+        calls++;
+        await gate;
+        return 'also book the train';
+      },
+    };
+    const registry = new DefaultSttProviderRegistry();
+    registry.register('local-stt', () => provider);
+    return { registry, calls: () => calls, release: () => release() };
+  }
+
+  const voiceConfig = (registry: DefaultSttProviderRegistry): Partial<GatewayConfig> => ({
+    attachmentCache: {
+      write: async () => 'file:///note.ogg',
+      clear: async () => {},
+      pruneOlderThan: async () => ({ removedCount: 0 }),
+      resolveLocalPath: (url) => url.replace('file://', ''),
+    },
+    storage: { readBytes: async () => Uint8Array.from([1, 2, 3]) } as unknown as Storage,
+    sttProviderRegistry: registry,
+    sttProviderName: 'local-stt',
+  });
+
+  const voiceNote = () =>
+    msg('(voice message)', {
+      attachments: [{ type: 'audio', ref: 'v1', url: 'file:///note.ogg', mimeType: 'audio/ogg' }],
+    });
+
+  it('a voice note then a text are steered in arrival order', async () => {
+    const out = recordingAdapter();
+    const stt = gatedStt();
+    const drained: SteerEntry[] = [];
+    let releaseTurn: () => void = () => {};
+    const turnGate = new Promise<void>((r) => {
+      releaseTurn = r;
+    });
+    const s = scriptedLoop(async function* (_text, opts, n) {
+      if (n === 1) {
+        await turnGate;
+        drained.push(...(opts.steerSink?.drainEntries?.() ?? []));
+      }
+      yield { type: 'done', text: `reply ${n}`, turnCount: 1 };
+    });
+    const gw = gateway(s.loop, out.adapter, voiceConfig(stt.registry));
+    const turn = gw.handleMessage(msg('book a table'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+
+    const voice = gw.handleMessage(voiceNote(), out.adapter);
+    await waitUntil(() => stt.calls() === 1);
+    const text = gw.handleMessage(msg('for two people'), out.adapter);
+    await new Promise((r) => setTimeout(r, 10));
+    stt.release();
+    await Promise.all([voice, text]);
+    releaseTurn();
+    await turn;
+
+    expect(drained.map((e) => e.text)).toEqual([
+      expect.stringContaining('also book the train'),
+      'for two people',
+    ]);
+  });
+
+  it('a turn that ends during the STT runs the voice note without transcribing it again', async () => {
+    const out = recordingAdapter();
+    const stt = gatedStt();
+    let releaseTurn: () => void = () => {};
+    const turnGate = new Promise<void>((r) => {
+      releaseTurn = r;
+    });
+    const s = scriptedLoop(async function* (_text, _opts, n) {
+      if (n === 1) await turnGate;
+      yield { type: 'done', text: `reply ${n}`, turnCount: 1 };
+    });
+    const gw = gateway(s.loop, out.adapter, voiceConfig(stt.registry));
+    const turn = gw.handleMessage(msg('book a table'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+
+    const voice = gw.handleMessage(voiceNote(), out.adapter);
+    await waitUntil(() => stt.calls() === 1);
+    releaseTurn();
+    await turn;
+    stt.release();
+    await voice;
+    await waitUntil(() => s.texts.length === 2);
+
+    expect(s.texts[1]).toContain('also book the train');
+    expect(stt.calls()).toBe(1);
+  });
+});
