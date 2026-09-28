@@ -183,6 +183,11 @@ function finishReasonOf(
   if (stopReason === 'tool_use') return 'tool_use';
   if (stopReason === 'max_tokens') return 'max_tokens';
   if (stopReason === 'stop_sequence') return 'stop_sequence';
+  // The context window cut the output off — the same consequence as the
+  // output cap, so the loop's max_tokens handling applies.
+  if (stopReason === 'model_context_window_exceeded') return 'max_tokens';
+  // end_turn, guardrail_intervened, content_filtered, malformed_model_output,
+  // malformed_tool_use (the MessageStopEvent values documented on 2026-09-28).
   return 'end_turn';
 }
 
@@ -327,17 +332,30 @@ function* handleBedrockMessage(
       if (!usage) return;
       const inputTokens = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0;
       const outputTokens = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0;
+      // TokenUsage.inputTokens already EXCLUDES cache reads and writes
+      // (Bedrock prompt-caching guide: total input = inputTokens +
+      // cacheReadInputTokens + cacheWriteInputTokens), the same split
+      // TokenUsage uses.
+      const cacheReadTokens =
+        typeof usage.cacheReadInputTokens === 'number' ? usage.cacheReadInputTokens : 0;
+      const cacheCreationTokens =
+        typeof usage.cacheWriteInputTokens === 'number' ? usage.cacheWriteInputTokens : 0;
       // Bedrock model ids carry the vendor model name
       // (`us.anthropic.claude-sonnet-4-...`), so the shared table resolves
       // them without Bedrock-specific rows.
-      const costEstimate = estimateCost(modelId, { inputTokens, outputTokens });
+      const costEstimate = estimateCost(modelId, {
+        inputTokens,
+        outputTokens,
+        cacheReadTokens,
+        cacheCreationTokens,
+      });
       yield {
         type: 'usage',
         usage: {
           inputTokens,
           outputTokens,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
+          cacheReadTokens,
+          cacheCreationTokens,
           estimatedCostUsd: costEstimate.costUsd,
         },
         costBasis: costEstimate.basis,

@@ -5,11 +5,16 @@
 // (falling back to the bundled one) and names a 405 as a version rejection.
 
 import type { Logger } from '@ethosagent/types';
+import type { fetchLatestWaWebVersion } from '@whiskeysockets/baileys';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const evHandlers = new Map<string, (payload: unknown) => unknown>();
 const socketConfigs: Array<Record<string, unknown>> = [];
-const fetchLatest = vi.fn();
+// Every resolved value below is checked against the installed Baileys'
+// declared return type (7.0.0-rc13, lib/Utils/generics.d.ts), so a Baileys
+// upgrade that changes the shape fails typecheck here.
+type WaWebVersionResult = Awaited<ReturnType<typeof fetchLatestWaWebVersion>>;
+const fetchLatest = vi.fn<(options?: RequestInit) => Promise<WaWebVersionResult>>();
 
 vi.mock('@whiskeysockets/baileys', () => ({
   makeWASocket: (config: Record<string, unknown>) => {
@@ -26,9 +31,23 @@ vi.mock('@whiskeysockets/baileys', () => ({
       end: () => {},
     };
   },
-  fetchLatestWaWebVersion: (...args: unknown[]) => fetchLatest(...args),
+  fetchLatestWaWebVersion: (options?: RequestInit) => fetchLatest(options),
   useMultiFileAuthState: async () => ({ state: {}, saveCreds: () => {} }),
-  DisconnectReason: { loggedOut: 401 },
+  // 7.0.0-rc13 lib/Types/index.d.ts `DisconnectReason` (405 is not a member:
+  // it arrives as the `reason` attribute of the server's `failure` node, which
+  // lib/Socket/socket.js `CB:failure` turns into a Boom statusCode).
+  DisconnectReason: {
+    connectionClosed: 428,
+    connectionLost: 408,
+    connectionReplaced: 440,
+    timedOut: 408,
+    loggedOut: 401,
+    badSession: 500,
+    restartRequired: 515,
+    multideviceMismatch: 411,
+    forbidden: 403,
+    unavailableService: 503,
+  },
   downloadMediaMessage: vi.fn(async () => Buffer.from([])),
 }));
 
@@ -100,6 +119,8 @@ describe('WhatsApp WA Web version (UBP-018)', () => {
     expect('version' in (socketConfigs[0] ?? {})).toBe(false);
   });
 
+  // Defensive only: the real fetchLatestWaWebVersion catches everything and
+  // resolves `{ isLatest: false, error }` (wa-version-real.test.ts).
   it('falls back to the bundled version when the fetch throws', async () => {
     fetchLatest.mockRejectedValue(new Error('boom'));
     await startOpen(makeAdapter().adapter);

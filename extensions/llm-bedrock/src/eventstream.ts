@@ -12,10 +12,15 @@
 //   message CRC    uint32 BE   CRC32 of everything before it
 //
 // A header is: name length (uint8), name (UTF-8), value type (uint8), value.
+// Header values decode as the reference decoder (smithy-typescript
+// `HeaderMarshaller.parse`) decodes them, except that a long is a lossless
+// `bigint` rather than smithy's `Int64` wrapper; a timestamp is a `Date`, a
+// uuid its 8-4-4-4-12 hex string. Pinned against smithy's published test
+// vectors in ./__tests__/eventstream-spec.test.ts.
 // Both CRCs are verified; a mismatch throws rather than guessing at a frame
 // boundary, because every later frame would be misaligned too.
 
-export type EventStreamHeaderValue = boolean | number | bigint | string | Uint8Array;
+export type EventStreamHeaderValue = boolean | number | bigint | string | Uint8Array | Date;
 
 export interface EventStreamMessage {
   headers: Record<string, EventStreamHeaderValue>;
@@ -94,10 +99,14 @@ function parseHeaders(bytes: Uint8Array): Record<string, EventStreamHeaderValue>
         at += 4;
         break;
       case 5:
-      case 8:
-        // long, timestamp (ms since epoch) — both int64
         need(8);
         headers[name] = view.getBigInt64(at);
+        at += 8;
+        break;
+      case 8:
+        // timestamp: int64 milliseconds since the epoch
+        need(8);
+        headers[name] = new Date(Number(view.getBigInt64(at)));
         at += 8;
         break;
       case 6:
@@ -112,11 +121,17 @@ function parseHeaders(bytes: Uint8Array): Record<string, EventStreamHeaderValue>
         at += length;
         break;
       }
-      case 9:
+      case 9: {
         need(16);
-        headers[name] = bytes.slice(at, at + 16);
+        const hex = Array.from(bytes.subarray(at, at + 16), (b) =>
+          b.toString(16).padStart(2, '0'),
+        ).join('');
+        headers[name] =
+          `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-` +
+          `${hex.slice(16, 20)}-${hex.slice(20)}`;
         at += 16;
         break;
+      }
       default:
         throw new EventStreamFramingError(`unknown event-stream header type ${type} on "${name}"`);
     }

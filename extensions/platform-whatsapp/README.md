@@ -153,6 +153,7 @@ If something looks wrong after Step 4, work top-to-bottom — earlier rows block
 | Bot was working, now silent and logs show it logged out | WhatsApp invalidated the device link (logged out from the phone, or flagged) | Delete `~/.ethos/whatsapp/<botKey>/` and re-pair by scanning a new QR |
 | Bot never replies in a group | Mode is `mention_only` (default) and the message didn't address the bot | `@`-mention the bot in the group, DM it instead, or set `whatsapp.<n>.default_mode: all` |
 | Bot ignores a specific sender | `allowed_numbers` is set and that sender isn't on it | Add the sender's number/JID to `allowed_numbers`, or remove the allowlist to answer everyone |
+| Log says `WhatsApp rejected the client version (405)` and no QR appears | WhatsApp retired the WA Web version the socket advertised; the version lookup at connect failed, so Baileys' bundled default was used | Let the host reach `https://web.whatsapp.com/sw.js` and restart, or upgrade `@whiskeysockets/baileys` |
 
 ---
 
@@ -174,6 +175,10 @@ adapter id = `whatsapp:<botKey>`
 ### Media
 
 Inbound images and documents are downloaded with Baileys' `downloadMediaMessage` and written to the shared `AttachmentCache` (`~/.ethos/cache/attachments/`), keyed by session, so the personality's vision/document tools can read them. Files larger than **25 MB** are skipped (checked both from the declared length and the actual bytes). The adapter is inbound-media only — its `canSendFiles` capability is `false`, so the agent replies in text.
+
+### WA Web version
+
+Every connect asks Baileys' `fetchLatestWaWebVersion` (10 s timeout) for the current WA Web version and passes it to `makeWASocket({ version })`; when the lookup reports `isLatest: false` the socket keeps Baileys' bundled default (`resolveWaWebVersion` in `src/index.ts`). A close with status 405 is logged as a client-version rejection, not rate-limiting. Verified against the installed `@whiskeysockets/baileys@7.0.0-rc13` source on 2026-09-28 (no live test): the function's signature and return shape (`lib/Utils/generics.js`, `.d.ts`), the `version: WAVersion` socket option (`lib/Types/Socket.d.ts`), and the origin of 405 — not a `DisconnectReason` member, but the server's `failure` node `reason` (`CB:failure` in `lib/Socket/socket.js`). Pinned by `src/__tests__/wa-version.test.ts` and `src/__tests__/wa-version-real.test.ts` (which drives the real function).
 
 ### Receipt reactions
 
