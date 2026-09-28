@@ -70,6 +70,7 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
       'cron create/update',
       'goal_create',
       'kanban_create',
+      'kanban_block',
       'background delegate_task',
       'watcher_create',
       'scaffold_personality',

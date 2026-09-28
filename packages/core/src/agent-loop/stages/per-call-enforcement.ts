@@ -307,7 +307,8 @@ export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
  * Tools that schedule a LATER run whose prompt this run writes (V2-SEC-2): a
  * cron job, a goal, a kanban ticket, a background sub-agent, a watcher that
  * wakes the personality (V3-2 — `wake.prompt_prefix` is prepended, unwrapped,
- * to every wake prompt, and the woken run starts fresh). That text is
+ * to every wake prompt, and the woken run starts fresh), and a kanban block
+ * reason (carried into the ticket's next dispatch prompt). That text is
  * authored under the taint, and the run it seeds starts fresh — so, like the
  * memory writers, they stay refused for the rest of the run once an untrusted
  * result was seen. Refused rather than marked tainted-origin because the runs
@@ -331,6 +332,13 @@ const RUN_SCOPED_SCHEDULERS: ReadonlyMap<string, SchedulerRule> = new Map<string
   ['kanban_create_goal', () => true],
   ['kanban_create_swarm', () => true],
   ['kanban_decompose', () => true],
+  // Not a scheduler, but it writes a later run's prompt: the reason becomes the
+  // blocked run's summary, which `renderOperatorContext`
+  // (extensions/kanban-store/src/prompt-thread.ts) carries into the ticket's
+  // next dispatch prompt — a fresh, untainted run. Refused like the creators
+  // rather than wrapped there, because the store records no taint to wrap on.
+  // Pinned by extensions/tools-kanban/src/__tests__/untrusted-taint.test.ts.
+  ['kanban_block', () => true],
   ['delegate_task', (a) => a.background === true],
   // A deliver-only watcher seeds no run; any wake does (V3-2).
   ['watcher_create', (a) => a.wake !== undefined],
