@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { defaultAlwaysDeny, FsStorage, personalityDefinitionFloor } from '@ethosagent/storage-fs';
 import { privateMemoryPathDeny } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { privateMemoryDenyFor } from '../agent-loop/audience';
+import { sharedTurnDenyFor } from '../agent-loop/audience';
 import { resolveCapabilities } from '../capability-resolver';
 import { personalityWriteDeny } from '../fs-reach';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
@@ -346,7 +346,7 @@ describe('ScopedFsImpl — case variants and a symlinked state dir', () => {
       everything(tmp),
       [],
       [],
-      privateMemoryDenyFor('shared', { stateDirs: [state] }),
+      sharedTurnDenyFor('shared', { stateDirs: [state] }, 'bob'),
     );
     for (const p of [
       join(own, 'MEMORY.md'),
@@ -373,7 +373,7 @@ describe('ScopedFsImpl — case variants and a symlinked state dir', () => {
       new Set([`${state}/`, `${reachLink}/`]),
       defaultAlwaysDeny(),
       [],
-      privateMemoryDenyFor('shared', { stateDirs: [link] }),
+      sharedTurnDenyFor('shared', { stateDirs: [link] }, 'alice'),
       personalityDefinitionFloor(),
     );
     await expect(fs.write(join(other, 'toolset.yaml'), 'x')).rejects.toThrow(/operator-owned/);

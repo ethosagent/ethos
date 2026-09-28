@@ -246,8 +246,8 @@ export async function runAgentSafetyConformance(
   }
 
   // --- scopedStorageFactory: denyWhen (G-MEM, shared-room case) -------------
-  // A shared turn hands the factory a `denyWhen` predicate over the private
-  // memory files (`privateMemoryDenyFor`, ./agent-loop/audience.ts). A factory
+  // A shared turn hands the factory a `denyWhen` predicate over the state dir
+  // and the private memory files (`sharedTurnDenyFor`, ./agent-loop/audience.ts). A factory
   // that rebuilds the scope from `read`/`write` alone passes every check above
   // and silently drops it — the shared room then reads `MEMORY.md`.
   try {

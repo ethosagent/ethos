@@ -13,8 +13,9 @@ import type { AgentSafety, Storage } from '@ethosagent/types';
  * `writeDeny` (the personality's definition files, `personalityWriteDeny` in
  * `fs-reach.ts`) is passed through unchanged; the factory enforces it. So is
  * `denyWhen`, present only on a shared turn (plan personality-memory-boundary
- * G1-5, `privateMemoryDenyFor` in ./audience.ts): the factory forwards it to
- * `ScopedStorage`, which refuses the private memory files.
+ * G1-5 / E4, `sharedTurnDenyFor` in ./audience.ts): the factory forwards it to
+ * `ScopedStorage`, which refuses the state dir (bar the turn's own `files/`,
+ * `ui/`, `SOUL.md` and the skills) and the private memory files.
  *
  * Returns undefined when no base Storage is wired, leaving
  * `ToolContext.storage` unset (legacy behaviour — tools fall back to raw fs).

@@ -31,10 +31,10 @@ import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import {
   memoryFlushForbidden,
-  privateMemoryDenyFor,
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
   SHARED_AUDIENCE_EXCLUDED_TOOLS,
+  sharedTurnDenyFor,
   withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../agent-loop/audience';
@@ -206,19 +206,19 @@ describe('audience module (unit)', () => {
     expect(SHARED_AUDIENCE_EXCLUDED_TOOLS).not.toContain('session_search');
   });
 
-  it('privateMemoryDenyFor: a predicate only on a shared turn; absent roots fail closed on ~/.ethos', () => {
-    expect(privateMemoryDenyFor('private', { stateDirs: ['/s'] })).toBeUndefined();
-    expect(privateMemoryDenyFor(undefined, { stateDirs: ['/s'] })).toBeUndefined();
-    const deny = privateMemoryDenyFor('shared', { stateDirs: ['/s'] });
+  it('sharedTurnDenyFor: a predicate only on a shared turn; absent roots fail closed on ~/.ethos', () => {
+    expect(sharedTurnDenyFor('private', { stateDirs: ['/s'] }, 'p')).toBeUndefined();
+    expect(sharedTurnDenyFor(undefined, { stateDirs: ['/s'] }, 'p')).toBeUndefined();
+    const deny = sharedTurnDenyFor('shared', { stateDirs: ['/s'] }, 'p');
     expect(deny?.('/s/personalities/p/MEMORY.md', 'access')).toBe(true);
     expect(deny?.('/s/personalities/p/files/a.png', 'access')).toBe(false);
-    const fallback = privateMemoryDenyFor('shared', undefined);
+    const fallback = sharedTurnDenyFor('shared', undefined, 'p');
     expect(fallback?.(join(homedir(), '.ethos', 'users', 'u1', 'USER.md'), 'access')).toBe(true);
   });
 
   // Verification round A3 — one state-dir set: wired roots, `~/.ethos`,
   // `ETHOS_STATE_DIR`, and the realpath of each (a symlinked state dir).
-  it('privateMemoryDenyFor: always adds ETHOS_STATE_DIR, ~/.ethos and realpaths', async () => {
+  it('sharedTurnDenyFor: always adds ETHOS_STATE_DIR, ~/.ethos and realpaths', async () => {
     const tmp = await realpath(await mkdtemp(join(tmpdir(), 'ethos-audience-roots-')));
     try {
       const real = join(tmp, 'real-state');
@@ -226,7 +226,7 @@ describe('audience module (unit)', () => {
       await mkdir(real);
       await symlink(real, link);
       vi.stubEnv('ETHOS_STATE_DIR', link);
-      const deny = privateMemoryDenyFor('shared', { stateDirs: ['/s'] });
+      const deny = sharedTurnDenyFor('shared', { stateDirs: ['/s'] }, 'p');
       expect(deny?.(join(link, 'users', 'u1', 'USER.md'), 'access')).toBe(true);
       expect(deny?.(join(real, 'personalities', 'p', 'MEMORY.md'), 'access')).toBe(true);
       expect(deny?.(join(homedir(), '.ethos', 'MEMORY.md'), 'access')).toBe(true);
@@ -366,10 +366,47 @@ describe('verification round B3/B15 — the session audience a turn records and 
       safety: createTestSafety(),
     });
     const key = 'discord:bot:555';
-    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private' }));
+    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private', judgeAudience: true }));
     const stored = await session.getSessionByKey(key);
     expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('private');
     expect(stored && turnWasShared(stored)).toBe(false);
+  });
+
+  // Verification round E5 — only a caller that judged the room (the gateway,
+  // `judgeAudience`) records the private stamp. An ACP client naming a
+  // pre-upgrade group lane key with an explicit 'private' runs private for
+  // that turn but leaves the key to be judged by its shape next time; ACP
+  // itself now passes no audience, so the key runs shared.
+  it('an explicit private without judgeAudience never writes the judged stamp', async () => {
+    const session = new InMemorySessionStore();
+    const loop = new AgentLoop({
+      llm: recordingLLM([]),
+      personalities: personalities([]),
+      session,
+      safety: createTestSafety(),
+    });
+    const key = 'telegram:bot:-1002';
+    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private' }));
+    const stored = await session.getSessionByKey(key);
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBeUndefined();
+    expect(stored && turnWasShared(stored)).toBe(true);
+  });
+
+  it('an ACP-style caller (no audience) on a pre-upgrade group lane key runs shared', async () => {
+    const session = new InMemorySessionStore();
+    const memory = spyMemory({ entries: [{ key: 'MEMORY.md', content: MEMORY_CONTENT }] });
+    const loop = new AgentLoop({
+      llm: recordingLLM([]),
+      personalities: personalities([]),
+      session,
+      safety: createTestSafety(),
+      memory,
+    });
+    const key = 'discord:bot:777';
+    await drain(loop.run('hi', { sessionKey: key, credentialPrompt: true }));
+    expect(memory.calls.prefetch).toBe(0);
+    const stored = await session.getSessionByKey(key);
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('shared');
   });
 
   it('a caller naming no audience runs a pre-upgrade group session shared and stamps it', async () => {
@@ -403,7 +440,7 @@ describe('verification round B3/B15 — the session audience a turn records and 
       memory,
     });
     const key = 'discord:bot:555';
-    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private' }));
+    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private', judgeAudience: true }));
     await drain(loop.run('again', { sessionKey: key }));
     expect(memory.calls.prefetch).toBe(2);
     const stored = await session.getSessionByKey(key);
@@ -829,5 +866,196 @@ describe('G1-5 — no file tool reaches a private memory file on a shared turn',
     return expect(resolved.scopedFs?.read(join(own, 'MEMORY.md'))).rejects.toThrow(
       /^PATH_NOT_REACHABLE: .*shared conversation/,
     );
+  });
+});
+
+// Verification round E4 — a shared turn can read nothing under the Ethos state
+// directory except its own files/, ui/, SOUL.md and the skills
+// (`sharedTurnDenyFor` → `sharedTurnPathDeny`). The cwd IS the state dir here,
+// so the allowlist admits every path and only the deny can refuse.
+describe('E4 — a shared turn reads nothing else under the state dir', () => {
+  let home: string;
+  let own: string;
+
+  const refusedReads = (h: string) => [
+    join(h, 'cron', 'output', 'daily', '2026-09-28.md'),
+    join(h, 'compaction', 'lean', 'summary.md'),
+    join(h, 'sessions.db'),
+    join(h, 'config.yaml'),
+    join(h, 'cron', 'jobs.json'),
+    join(h, 'personalities', 'other', 'files', 'secret.txt'),
+    join(h, 'personalities', 'lean', 'config.yaml'),
+  ];
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-e4-')));
+    own = join(home, 'personalities', 'lean');
+    for (const d of [
+      join(own, 'files'),
+      join(own, 'ui'),
+      join(home, 'skills', 'digest'),
+      join(home, 'cron', 'output', 'daily'),
+      join(home, 'compaction', 'lean'),
+      join(home, 'personalities', 'other', 'files'),
+    ]) {
+      await mkdir(d, { recursive: true });
+    }
+    for (const p of refusedReads(home)) await writeFile(p, `private:${p}`);
+    await writeFile(join(own, 'files', 'logo.txt'), 'asset');
+    await writeFile(join(own, 'ui', 'report.html'), '<p>template</p>');
+    await writeFile(join(own, 'SOUL.md'), 'I am lean.');
+    await writeFile(join(home, 'skills', 'digest', 'SKILL.md'), 'skill body');
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  interface Op {
+    path: string;
+    write?: string;
+  }
+
+  function opsLLM(ops: Op[]): LLMProvider {
+    let n = 0;
+    return {
+      name: 'mock',
+      model: 'mock-model',
+      maxContextTokens: 200_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete(): AsyncIterable<CompletionChunk> {
+        if (n++ === 0) {
+          for (const [i, op] of ops.entries()) {
+            yield { type: 'tool_use_start', toolCallId: `c${i}`, toolName: 'storage_op' };
+            yield { type: 'tool_use_end', toolCallId: `c${i}`, inputJson: JSON.stringify(op) };
+          }
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+      async countTokens() {
+        return 1;
+      },
+    };
+  }
+
+  /** Reads (or, with `write`, writes) through the turn's scoped `ctx.storage`. */
+  function storageOp(out: Record<string, string>): Tool {
+    return {
+      name: 'storage_op',
+      description: 'storage',
+      toolset: 'file',
+      capabilities: {},
+      schema: { type: 'object', properties: { path: { type: 'string' } } },
+      async execute(input, ctx) {
+        const op = input as Op;
+        const key = op.write === undefined ? op.path : `write:${op.path}`;
+        try {
+          if (!ctx.storage) throw new Error('no storage');
+          if (op.write === undefined) out[key] = (await ctx.storage.read(op.path)) ?? '(missing)';
+          else {
+            await ctx.storage.write(op.path, op.write);
+            out[key] = 'written';
+          }
+        } catch (err) {
+          out[key] = `refused: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        return { ok: true, value: 'done' };
+      },
+    };
+  }
+
+  async function runOps(ops: Op[], roomAudience?: 'shared'): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    const tools = new DefaultToolRegistry();
+    tools.register(storageOp(out));
+    const loop = new AgentLoop({
+      llm: opsLLM(ops),
+      tools,
+      personalities: personalities(['storage_op']),
+      storage: new FsStorage(),
+      dataDir: home,
+      safety: createTestSafety(),
+      options: { workingDir: home },
+    });
+    await drain(loop.run('go', roomAudience ? { roomAudience } : {}));
+    return out;
+  }
+
+  it('refuses cron output, compaction, sessions.db, config.yaml, jobs and another personality’s files', async () => {
+    const out = await runOps(
+      refusedReads(home).map((path) => ({ path })),
+      'shared',
+    );
+    for (const p of refusedReads(home)) {
+      expect(out[p], p).toMatch(/^refused: .*shared-audience memory/);
+    }
+    expect(JSON.stringify(out)).not.toContain('private:');
+  });
+
+  it('refuses the state dir under its macOS firmlink name', async () => {
+    const firmlinked = join('/System/Volumes/Data', home, 'config.yaml');
+    const deny = sharedTurnDenyFor('shared', { stateDirs: [home] }, 'lean');
+    expect(deny?.(firmlinked, 'access', 'read')).toBe(true);
+    expect(deny?.(join('/System/Volumes/Data', own, 'files', 'a.png'), 'access', 'read')).toBe(
+      false,
+    );
+  });
+
+  it('still reads its own files/, ui/ and SOUL.md and the skills, and writes files/', async () => {
+    const out = await runOps(
+      [
+        { path: join(own, 'files', 'logo.txt') },
+        { path: join(own, 'ui', 'report.html') },
+        { path: join(own, 'SOUL.md') },
+        { path: join(home, 'skills', 'digest', 'SKILL.md') },
+        { path: join(own, 'files', 'new.txt'), write: 'made in the room' },
+        { path: join(own, 'SOUL.md'), write: 'rewritten' },
+        { path: join(home, 'skills', 'digest', 'SKILL.md'), write: 'poisoned' },
+      ],
+      'shared',
+    );
+    expect(out[join(own, 'files', 'logo.txt')]).toBe('asset');
+    expect(out[join(own, 'ui', 'report.html')]).toBe('<p>template</p>');
+    expect(out[join(own, 'SOUL.md')]).toBe('I am lean.');
+    expect(out[join(home, 'skills', 'digest', 'SKILL.md')]).toBe('skill body');
+    expect(out[`write:${join(own, 'files', 'new.txt')}`]).toBe('written');
+    expect(out[`write:${join(own, 'SOUL.md')}`]).toMatch(/^refused:/);
+    expect(out[`write:${join(home, 'skills', 'digest', 'SKILL.md')}`]).toMatch(/^refused:/);
+  });
+
+  it('a private turn is unaffected', async () => {
+    const out = await runOps([{ path: join(home, 'cron', 'output', 'daily', '2026-09-28.md') }]);
+    expect(out[join(home, 'cron', 'output', 'daily', '2026-09-28.md')]).toMatch(/^private:/);
+  });
+
+  it('warns once per personality when the read reach covers /', async () => {
+    const warnings: string[] = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: (m: string) => warnings.push(m),
+      error: () => {},
+      child() {
+        return this;
+      },
+    };
+    const loop = new AgentLoop({
+      llm: opsLLM([]),
+      tools: new DefaultToolRegistry(),
+      personalities: personalities([]),
+      storage: new FsStorage(),
+      dataDir: home,
+      safety: createTestSafety(),
+      logger,
+      options: { workingDir: '/' },
+    });
+    await drain(loop.run('one'));
+    await drain(loop.run('two'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"lean" can read the whole filesystem');
   });
 });

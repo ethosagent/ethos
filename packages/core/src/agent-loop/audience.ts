@@ -9,9 +9,10 @@
 //     (`withSharedAudienceExclusions`);
 //   - context-assembly skips the memory read and sets `PromptContext.isDm`;
 //   - turn-end skips the memory flush (`memoryFlushForbidden`);
-//   - both file boundaries refuse the private memory files
-//     (`privateMemoryDenyFor` → `denyWhen` on `ScopedStorage` via turn-setup's
-//     `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`).
+//   - both file boundaries refuse everything under the state dir but the
+//     turn's own `files/`, `ui/`, `SOUL.md` and the skills, and private memory
+//     everywhere (`sharedTurnDenyFor` → `denyWhen` on `ScopedStorage` via
+//     turn-setup's `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`).
 //
 // Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
 
@@ -20,7 +21,7 @@ import { join, resolve } from 'node:path';
 import {
   type PrivateMemoryRoots,
   type PrivatePathDeny,
-  privateMemoryPathDeny,
+  sharedTurnPathDeny,
   type TurnAudience,
 } from '@ethosagent/types';
 import { withRealPaths } from '../scoped/scoped-fs';
@@ -168,7 +169,7 @@ export function memoryFlushForbidden(
  * The Ethos state dirs a host that wires nothing still has: `~/.ethos` and,
  * when set, `ETHOS_STATE_DIR`. Mirror of `ethosStateDirs` in
  * `packages/storage-fs/src/sensitive-paths.ts` (core may not import storage-fs
- * at runtime) minus the realpaths, which {@link privateMemoryDenyFor} and the
+ * at runtime) minus the realpaths, which {@link sharedTurnDenyFor} and the
  * definition-floor fallback in `resolveCapabilities` add via `withRealPaths`.
  */
 export function defaultEthosStateDirs(): string[] {
@@ -179,26 +180,32 @@ export function defaultEthosStateDirs(): string[] {
 }
 
 /**
- * The file-boundary deny predicate for a turn (G1-5): on a shared turn, a
- * `PrivatePathDeny` over `roots` (`privateMemoryPathDeny`, @ethosagent/types);
- * on a private turn, `undefined`, so private turns carry no predicate at all.
- * The state dirs judged are ALWAYS `roots.stateDirs` plus
- * {@link defaultEthosStateDirs} — the wiring's `dataDir`, `~/.ethos` and
- * `ETHOS_STATE_DIR` as one set, the set the definition floor uses — and every
- * state dir and extra root is widened with its realpath (`withRealPaths`,
- * ../scoped/scoped-fs.ts), so a symlinked state dir is private under its real
- * name too (verification round A2/A3). Absent `roots` is therefore the default
- * set — fail closed on the common layout rather than open. Called by
- * turn-setup (the turn's `fsReach.denyWhen` → `ScopedStorage`) and by
- * `resolveCapabilities` (every `ScopedFsImpl`); pinned by the G1-5 cases in
- * `packages/core/src/__tests__/shared-audience.test.ts`.
+ * The file-boundary deny predicate for a turn (G1-5, widened by verification
+ * round E4): on a shared turn, `sharedTurnPathDeny` (@ethosagent/types) —
+ * a shared turn can read nothing under the Ethos state directory except its
+ * own `files/`, `ui/`, `SOUL.md` and the skills, and no private memory
+ * anywhere (the vault root included); on a private turn, `undefined`, so
+ * private turns carry no predicate at all. `self` is the turn's personality
+ * id (absent → nothing under `personalities/` is allowed). The state dirs
+ * judged are ALWAYS `roots.stateDirs` plus {@link defaultEthosStateDirs} —
+ * the wiring's `dataDir`, `~/.ethos` and `ETHOS_STATE_DIR` as one set, the
+ * set the definition floor uses — and every state dir and extra root is
+ * widened with its realpath (`withRealPaths`, ../scoped/scoped-fs.ts), so a
+ * symlinked state dir is judged under its real name too (verification round
+ * A2/A3); case and the macOS `/System/Volumes/Data` firmlink are folded by
+ * the predicate (`foldForDeny`). Absent `roots` is therefore the default set
+ * — fail closed on the common layout rather than open. Called by turn-setup
+ * (the turn's `fsReach.denyWhen` → `ScopedStorage`) and by
+ * `resolveCapabilities` (every `ScopedFsImpl`); pinned by the G1-5 and E4
+ * cases in `packages/core/src/__tests__/shared-audience.test.ts`.
  */
-export function privateMemoryDenyFor(
+export function sharedTurnDenyFor(
   audience: TurnAudience | undefined,
   roots: PrivateMemoryRoots | undefined,
+  self: string | undefined,
 ): PrivatePathDeny | undefined {
   if (audience !== 'shared') return undefined;
   const stateDirs = withRealPaths([...(roots?.stateDirs ?? []), ...defaultEthosStateDirs()]);
   const extraRoots = withRealPaths(roots?.extraRoots ?? []);
-  return privateMemoryPathDeny({ stateDirs, extraRoots });
+  return sharedTurnPathDeny({ stateDirs, extraRoots }, self ?? '');
 }

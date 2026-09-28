@@ -133,17 +133,33 @@ export interface WatcherToolsOptions {
 const PERSONALITY_REQUIRED: ToolResult = fail('watchers require a personality context');
 
 /**
+ * Whether the calling turn may see and act on `watcher` (plan
+ * personality-memory-boundary G1, verification round E6): its own
+ * personality's watchers, and on a SHARED turn only those a shared turn
+ * created (`owner.roomAudience === 'shared'`). A private watcher's target,
+ * wake prompt and delivery chat are the owner's; a room must neither read
+ * them nor pause, resume or delete the watcher. Pinned by
+ * `src/__tests__/room-audience.test.ts`.
+ */
+function visibleTo(watcher: WatcherRecord, caller: string, shared: boolean): boolean {
+  if (watcher.owner?.personalityId !== caller) return false;
+  return !shared || watcher.owner.roomAudience === 'shared';
+}
+
+/**
  * The single ownership gate for pause/resume/delete: a watcher owned by another
- * personality — or by none — returns the SAME result as an id that does not
- * exist, so the tools are not an existence oracle across personalities.
+ * personality — or by none — or, on a shared turn, a watcher no shared turn
+ * created (`visibleTo`), returns the SAME result as an id that does not exist,
+ * so the tools are not an existence oracle across personalities or audiences.
  */
 async function loadOwnedWatcher(
   manager: WatcherManager,
   id: string,
   caller: string,
+  shared: boolean,
 ): Promise<{ ok: true; watcher: WatcherRecord } | { ok: false; result: ToolResult }> {
   const watcher = await manager.getWatcher(id);
-  if (!watcher || watcher.owner?.personalityId !== caller) {
+  if (!watcher || !visibleTo(watcher, caller, shared)) {
     return { ok: false, result: fail(`Watcher not found: ${id}`) };
   }
   return { ok: true, watcher };
@@ -320,9 +336,8 @@ export function createWatcherTools(
     async execute(_args, ctx): Promise<ToolResult> {
       if (!ctx.personalityId) return PERSONALITY_REQUIRED;
       const caller = ctx.personalityId;
-      const watchers = (await manager.listWatchers()).filter(
-        (w) => w.owner?.personalityId === caller,
-      );
+      const shared = ctx.roomAudience === 'shared';
+      const watchers = (await manager.listWatchers()).filter((w) => visibleTo(w, caller, shared));
       if (watchers.length === 0) return { ok: true, value: 'No watchers configured.' };
       return { ok: true, value: watchers.map(formatWatcher).join('\n') };
     },
@@ -347,7 +362,12 @@ export function createWatcherTools(
       if (!ctx.personalityId) return PERSONALITY_REQUIRED;
       const { id } = args as { id?: string };
       if (!id) return fail('id is required');
-      const owned = await loadOwnedWatcher(manager, id, ctx.personalityId);
+      const owned = await loadOwnedWatcher(
+        manager,
+        id,
+        ctx.personalityId,
+        ctx.roomAudience === 'shared',
+      );
       if (!owned.ok) return owned.result;
       try {
         await action(id);

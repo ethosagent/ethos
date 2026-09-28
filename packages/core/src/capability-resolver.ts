@@ -10,7 +10,7 @@ import {
   type ToolContext,
   type TurnAudience,
 } from '@ethosagent/types';
-import { defaultEthosStateDirs, privateMemoryDenyFor } from './agent-loop/audience';
+import { defaultEthosStateDirs, sharedTurnDenyFor } from './agent-loop/audience';
 import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
 import { type SafeFetchFn, ScopedFetchImpl } from './scoped/scoped-fetch';
 import { ScopedFsImpl, withRealPaths } from './scoped/scoped-fs';
@@ -80,7 +80,9 @@ export interface CapabilityBackends {
   /**
    * Where private memory lives (plan personality-memory-boundary G1-5). On a
    * call whose `CapabilityScopeIds.roomAudience` is `'shared'`, every
-   * `ScopedFsImpl` built here refuses those files (`privateMemoryDenyFor`,
+   * `ScopedFsImpl` built here refuses those files and everything else under
+   * the state dirs but the caller's own `files/`, `ui/`, `SOUL.md` and the
+   * skills (`sharedTurnDenyFor`,
    * ./agent-loop/audience.ts), which always adds `~/.ethos`, `ETHOS_STATE_DIR`
    * and the realpaths of every root. Absent → that default set, so a host that
    * forgets to wire it fails closed on the common layout.
@@ -129,10 +131,15 @@ export function resolveCapabilities(
     writeDenyCache ??= backends.personalityFsWriteDeny?.(scopeIds.personalityId) ?? [];
     return writeDenyCache;
   };
-  // plan personality-memory-boundary G1-5 — a shared call's `scopedFs`
-  // (all three constructions below, the attachments rebuild included) refuses
-  // the private memory files. Undefined on a private call.
-  const sharedDeny = privateMemoryDenyFor(scopeIds.roomAudience, backends.privateMemoryRoots);
+  // plan personality-memory-boundary G1-5 / E4 — a shared call's `scopedFs`
+  // (all three constructions below, the attachments rebuild included) reads
+  // nothing under the state dir but the caller's own files/, ui/, SOUL.md and
+  // the skills, and no private memory. Undefined on a private call.
+  const sharedDeny = sharedTurnDenyFor(
+    scopeIds.roomAudience,
+    backends.privateMemoryRoots,
+    scopeIds.personalityId,
+  );
   // G2-pre B — no call's `scopedFs` writes any personality's definition.
   const definitionFloor =
     backends.definitionWriteFloor ??

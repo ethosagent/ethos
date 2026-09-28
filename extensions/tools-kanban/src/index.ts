@@ -94,6 +94,25 @@ function audienceStamp(
   return ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {};
 }
 
+/**
+ * Whether this turn must not see or touch `taskId` (plan
+ * personality-memory-boundary G1, verification round E2): a shared turn sees
+ * only tasks stamped `'shared'`. A private or unstamped task's runs may have
+ * read private memory (the poll loop runs an unstamped task private,
+ * apps/ethos/src/lib/kanban-poll.ts), and a comment or block reason a shared
+ * turn wrote would reach that task's next private run through
+ * `renderOperatorContext` (kanban-store/src/prompt-thread.ts). Every tool that
+ * names one task answers a hidden task exactly as it answers a missing one —
+ * the same text and code, pinned against a real missing id by
+ * `__tests__/task-audience.test.ts` ("hidden from a shared turn") — and
+ * `kanban_list` leaves hidden tasks out. A private turn sees every task.
+ */
+function hiddenFrom(store: KanbanStore, ctx: ToolContext, taskId: string): boolean {
+  if (ctx.roomAudience !== 'shared') return false;
+  const task = store.getTask(taskId);
+  return task !== null && task.roomAudience !== 'shared';
+}
+
 const STATUS_VALUES: TaskStatus[] = [
   'todo',
   'ready',
@@ -742,7 +761,7 @@ function createKanbanDecompose(store: KanbanStore, decomposerProvider?: LLMProvi
           'execution_failed',
         );
       }
-      const task = store.getTask(taskId);
+      const task = hiddenFrom(store, ctx, taskId) ? undefined : store.getTask(taskId);
       if (!task) return errorResult(`task not found: ${taskId}`, 'input_invalid');
 
       const maxChildren = Math.min(
@@ -874,7 +893,7 @@ function createKanbanList(store: KanbanStore): Tool {
         },
       },
     },
-    async execute(rawArgs) {
+    async execute(rawArgs, ctx) {
       const args = (rawArgs ?? {}) as Partial<ListArgs>;
       if (args.status !== undefined && !isStatus(args.status)) {
         return errorResult(`status must be one of ${STATUS_VALUES.join(', ')}`, 'input_invalid');
@@ -911,7 +930,10 @@ function createKanbanList(store: KanbanStore): Tool {
         ...(args.q !== undefined ? { q: args.q } : {}),
         limit,
       });
-      return jsonResult(tasks.map(summariseTask));
+      // A shared turn lists only tasks stamped shared (`hiddenFrom`).
+      const visible =
+        ctx.roomAudience === 'shared' ? tasks.filter((t) => t.roomAudience === 'shared') : tasks;
+      return jsonResult(visible.map(summariseTask));
     },
   };
 }
@@ -934,12 +956,12 @@ function createKanbanShow(store: KanbanStore): Tool {
       required: ['task_id'],
       properties: { task_id: { type: 'string' } },
     },
-    async execute(rawArgs) {
+    async execute(rawArgs, ctx) {
       const args = (rawArgs ?? {}) as { task_id?: unknown };
       if (typeof args.task_id !== 'string') {
         return errorResult('task_id must be a string', 'input_invalid');
       }
-      const task = store.getTask(args.task_id);
+      const task = hiddenFrom(store, ctx, args.task_id) ? undefined : store.getTask(args.task_id);
       if (!task) return errorResult(`task not found: ${args.task_id}`, 'input_invalid');
 
       const allRuns = store.listRuns(task.id);
@@ -984,6 +1006,9 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
       if (!isStatus(args.status)) {
         return errorResult(`status must be one of ${STATUS_VALUES.join(', ')}`, 'input_invalid');
       }
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`updateStatus: task ${args.task_id} not found`, 'input_invalid');
+      }
       try {
         const reason = typeof args.reason === 'string' ? args.reason : undefined;
         const t = store.updateStatus(args.task_id, args.status, reason, actorOf(ctx));
@@ -1024,6 +1049,9 @@ function createKanbanComment(store: KanbanStore): Tool {
       }
       const bodyErr = tooLong('body', args.body, MAX_COMMENT_CHARS);
       if (bodyErr) return bodyErr;
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`task not found: ${args.task_id}`, 'input_invalid');
+      }
       try {
         const c = store.addComment(args.task_id, actorOf(ctx), args.body);
         return jsonResult({ comment_id: c.id });
@@ -1075,6 +1103,13 @@ function createKanbanComplete(
       if (summaryErr) return summaryErr;
       const taskId = args.task_id;
       const summary = args.summary;
+      if (hiddenFrom(store, ctx, taskId)) {
+        // The two answers a missing task gets: the hook path's pre-check, or
+        // `completeRun`'s own not-found.
+        return hooks !== undefined
+          ? errorResult(`no open run: ${taskId}`, 'execution_failed')
+          : errorResult(`endRun: task ${taskId} not found`, 'input_invalid');
+      }
       try {
         // before_ticket_complete is a claiming hook: the first handler to return
         // { handled: true } rejects the running -> done transition. The architectural
@@ -1180,6 +1215,9 @@ function createKanbanBlock(store: KanbanStore, hooks?: HookRegistry): Tool {
       if (args.kind !== undefined && !isBlockKind(args.kind)) {
         return errorResult(`kind must be one of: ${BLOCK_KINDS.join(', ')}`, 'input_invalid');
       }
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`endRun: task ${args.task_id} not found`, 'input_invalid');
+      }
       try {
         // blockRun atomically records the reason as both run.summary and a comment,
         // and (when kind is set) tracks the unblock-loop breaker.
@@ -1218,7 +1256,7 @@ function createKanbanUnblock(store: KanbanStore): Tool {
       if (typeof args.task_id !== 'string') {
         return errorResult('task_id must be a string', 'input_invalid');
       }
-      const task = store.getTask(args.task_id);
+      const task = hiddenFrom(store, ctx, args.task_id) ? undefined : store.getTask(args.task_id);
       if (!task) return errorResult(`task not found: ${args.task_id}`, 'input_invalid');
       if (task.status !== 'blocked') {
         return errorResult(
@@ -1264,6 +1302,9 @@ function createKanbanHeartbeat(store: KanbanStore): Tool {
       if (typeof args.task_id !== 'string') {
         return errorResult('task_id must be a string', 'input_invalid');
       }
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`heartbeatRun: task ${args.task_id} not found`, 'input_invalid');
+      }
       try {
         const note = typeof args.note === 'string' ? args.note : undefined;
         store.heartbeatRun(args.task_id, note, actorOf(ctx));
@@ -1296,6 +1337,15 @@ function createKanbanLink(store: KanbanStore): Tool {
       const args = (rawArgs ?? {}) as { parent_id?: unknown; child_id?: unknown };
       if (typeof args.parent_id !== 'string' || typeof args.child_id !== 'string') {
         return errorResult('parent_id and child_id must be strings', 'input_invalid');
+      }
+      if (
+        args.parent_id !== args.child_id &&
+        (hiddenFrom(store, ctx, args.parent_id) || hiddenFrom(store, ctx, args.child_id))
+      ) {
+        return errorResult(
+          `not found: parent or child task does not exist (${args.parent_id} -> ${args.child_id})`,
+          'input_invalid',
+        );
       }
       try {
         store.link(args.parent_id, args.child_id, actorOf(ctx));
@@ -1336,6 +1386,9 @@ function createKanbanAssign(store: KanbanStore, hooks?: HookRegistry): Tool {
       } else {
         return errorResult('assignee must be a string or null (or omitted)', 'input_invalid');
       }
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`assign: task ${args.task_id} not found`, 'input_invalid');
+      }
       try {
         const t = store.assign(args.task_id, assignee, actorOf(ctx));
         if (hooks !== undefined) {
@@ -1370,6 +1423,9 @@ function createKanbanArchive(store: KanbanStore): Tool {
       const args = (rawArgs ?? {}) as { task_id?: unknown };
       if (typeof args.task_id !== 'string') {
         return errorResult('task_id must be a string', 'input_invalid');
+      }
+      if (hiddenFrom(store, ctx, args.task_id)) {
+        return errorResult(`updateStatus: task ${args.task_id} not found`, 'input_invalid');
       }
       try {
         const t = store.archive(args.task_id, actorOf(ctx));

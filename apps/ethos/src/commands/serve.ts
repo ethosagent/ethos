@@ -130,7 +130,7 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
-import { cronFiringAudience, runCronTurn } from './cron-turn';
+import { cronContextAudience, cronFiringAudience, runCronTurn } from './cron-turn';
 import { buildBotSpeakers } from './gateway';
 import { createA2aRunner } from './serve-a2a-runner';
 import {
@@ -651,6 +651,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     storage: getStorage(),
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
+    // A shared firing reads only shared `contextFrom` output (E1).
+    runAudience: cronContextAudience(privateChatSetFrom(config.gateway?.privateChats)),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.defaultMaxRunMs !== undefined
       ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }

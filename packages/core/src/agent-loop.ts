@@ -110,7 +110,7 @@ export interface AgentLoopConfig {
    * `storage` is set.
    */
   dataDir?: string;
-  /** G1-5 — wholly private dirs beyond `dataDir`'s layout (the vault root), refused on shared turns (`privateMemoryDenyFor`). */
+  /** G1-5 — wholly private dirs beyond `dataDir`'s layout (the vault root), refused on shared turns (`sharedTurnDenyFor`). */
   privateMemoryRoots?: readonly string[];
   /**
    * Optional observability adapter. When provided, AgentLoop records traces,
@@ -294,6 +294,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   reviewOfJobId?: string;
   /** plan personality-memory-boundary G1 — `'shared'` withholds private memory; absent = private. Narrowed by the session's sticky stamp (`resolveTurnAudience`, ./agent-loop/audience.ts) → `ToolContext.roomAudience`. */
   roomAudience?: import('@ethosagent/types').TurnAudience;
+  /** Verification round E5 — the caller JUDGED the live room (only the gateway, `Gateway.runTurn`); only then does a private turn on an unstamped channel-shaped session record the judged `'private'` stamp (`sessionAudienceStampFor`, ./chat-audience.ts), so a client-supplied key never turns a pre-upgrade group lane private. Pinned in `__tests__/shared-audience.test.ts`. */
+  judgeAudience?: boolean;
   /** Who started this turn → `ToolContext.initiator`, verbatim. Children never inherit it. */
   initiator?: import('@ethosagent/types').TurnInitiator;
   /** plan personality-memory-boundary D8 — a non-owner DM: runs shared for this turn (not persisted) but keeps the sender's own `user:<id>` read (`withPersonalityMemoryWithheld`, ./agent-loop/audience.ts). */
@@ -405,6 +407,8 @@ export class AgentLoop {
   private readonly approverDecisionSinks?: AgentLoopConfig['approverDecisionSinks'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
+  private readonly rootReachWarned = new Set<string>(); // E3 `once` per personality, per loop
+  private readonly logger?: Logger;
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
   private readonly compaction?: AgentLoopConfig['compaction'];
   private readonly memoryConsolidation?: AgentLoopConfig['memoryConsolidation'];
@@ -498,6 +502,7 @@ export class AgentLoop {
     if (config.credentialCheck) this.credentialCheck = config.credentialCheck;
     this.safety = config.safety;
     this.checkApprovalPosture = createApprovalPostureGuard(this.safety, this.hooks, config.logger);
+    if (config.logger) this.logger = config.logger;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
     if (config.llmHandle) this.llmHandle = config.llmHandle;
   }
@@ -624,6 +629,8 @@ export class AgentLoop {
       tierRouter: this.tierRouter,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,
+      rootReachWarned: this.rootReachWarned,
+      ...(this.logger ? { logger: this.logger } : {}),
       compaction: this.compaction,
       memoryConsolidation: this.memoryConsolidation,
       promptBudget: this.promptBudget,

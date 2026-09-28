@@ -2,6 +2,7 @@
 // startup warning `buildGateway` prints for a team deployment whose
 // `gateway.private_chats` lists no room (`teamPrivateChatsWarning`).
 
+import { SHARED_AUDIENCE_EXCLUDED_TOOLS } from '@ethosagent/core';
 import { describe, expect, it } from 'vitest';
 import { teamPrivateChatsWarning } from '../commands/gateway';
 
@@ -14,6 +15,12 @@ describe('teamPrivateChatsWarning', () => {
     expect(warning).toContain('team eng');
     expect(warning).toContain('gateway.private_chats');
     expect(teamPrivateChatsWarning([team], { slack: [] })).toBeDefined();
+  });
+
+  // Verification round E7 — the warning names every tool a shared task loses.
+  it('lists every tool a shared turn loses', () => {
+    const warning = teamPrivateChatsWarning([team], undefined) ?? '';
+    for (const tool of SHARED_AUDIENCE_EXCLUDED_TOOLS) expect(warning).toContain(tool);
   });
 
   it('is silent with no team binding, or once any room is listed', () => {

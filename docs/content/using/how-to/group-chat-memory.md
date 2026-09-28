@@ -87,10 +87,10 @@ Delete its id from the line and restart the gateway. Until that restart the room
 
 ### 6. Trust your team's own channel (teams)
 
-A task created in a team's channel is stamped shared, so every worker that runs it loses `terminal`, `run_code`, the `process_*` tools, the `team_memory_*` tools and `route_to_agent`. A team deployment with an empty `gateway.private_chats` prints this at startup:
+A task created in a team's channel is stamped shared, so every worker that runs it loses private memory and every tool listed under [What a shared turn loses](../explanation/memory-model.md#what-a-shared-turn-loses) — among them `terminal`, `run_code`, `run_tests`, `lint`, the `process_*` and `team_memory_*` tools, `route_to_agent`, `dispatch_team` and `broadcast_to_agents`. A team deployment with an empty `gateway.private_chats` prints this at startup, naming every tool:
 
 ```
-⚠ team <team-name>: gateway.private_chats is empty, so every team channel is a shared room — tasks created there run without terminal, run_code, process_*, team_memory_* and route_to_agent on every worker. If the channel is only your team's, list it under gateway.private_chats.<platform> and restart.
+⚠ team <team-name>: gateway.private_chats is empty, so every team channel is a shared room — tasks created there run on every worker without private memory and without these tools: memory_read, memory_write, session_list_by_date, … If the channel is only your team's, list it under gateway.private_chats.<platform> and restart.
 ```
 
 If only your team reads the channel, list it as in step 3 and restart. A shared task's revision postmortem is not written to team memory.

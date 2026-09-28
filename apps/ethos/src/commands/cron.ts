@@ -17,7 +17,7 @@ import { writeJson } from '../json-output';
 import { gateCronLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
-import { cronFiringAudience } from './cron-turn';
+import { cronContextAudience, cronFiringAudience } from './cron-turn';
 
 const c = {
   reset: '\x1b[0m',
@@ -47,6 +47,8 @@ function makeScheduler(config: EthosConfig): {
     storage: getStorage(),
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
+    // A shared firing reads only shared `contextFrom` output (E1).
+    runAudience: cronContextAudience(privateChatSetFrom(config.gateway?.privateChats)),
     logger: new ConsoleLogger({}, config.logs?.level),
     ...(config.cron?.defaultMaxRunMs !== undefined
       ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }

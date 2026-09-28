@@ -97,7 +97,9 @@ export interface CronJob {
    * a CLI-created job has no origin but still has an audience. Absent on jobs
    * written before the field existed. Narrowed to `'shared'` by `updateJob`
    * when a shared turn edits or runs the job (`CronJobUpdate.roomAudience`).
-   * Never read here — the runners resolve a firing's audience with
+   * Read here only by `resolveContext`'s fire-time check (through
+   * `CronSchedulerConfig.runAudience`, or `stampAudience` when a host passes
+   * none) — the runners resolve a firing's audience with
    * `cronRunAudience` (packages/wiring/src/cron-audience.ts), which also judges
    * the delivery target and `contextFrom`, and judges an absent stamp by the
    * delivery target alone (D11): a channel target that is not provably private
@@ -280,6 +282,19 @@ export interface CronSchedulerConfig {
    *  `CronArmingBackend` seam. Optional; when absent no arming call is made.
    *  Failures are swallowed (arming is fail-open, never breaks the run). */
   armingBackend?: CronArmingBackend;
+  /**
+   * The room audience a job's firing runs under, for `resolveContext`'s
+   * fire-time audience check (plan personality-memory-boundary G1,
+   * verification round E1): when the firing job runs shared, a `contextFrom`
+   * reference that does not itself run shared is skipped, so a private job's
+   * output never reaches a shared turn. Hosts pass `cronContextAudience`
+   * (apps/ethos/src/commands/cron-turn.ts), the same `cronRunAudience` rule the
+   * runner then applies to the turn. Absent → judged by the stamps alone
+   * (`stampAudience` below): shared iff `roomAudience === 'shared'` on the job
+   * or a job its `contextFrom` names. Pinned by the E1 cases in
+   * `src/__tests__/cron.test.ts`.
+   */
+  runAudience?: (job: CronJob, jobs: readonly CronJob[]) => TurnAudience;
 }
 
 /** Audit actions: heartbeat escalate/silent plus the script-job outcomes. */
@@ -508,6 +523,7 @@ export class CronScheduler {
     decision: CronDecision & { ranAt: string; delivered: boolean },
   ) => void;
   private armingBackend?: CronArmingBackend;
+  private readonly runAudience: (job: CronJob, jobs: readonly CronJob[]) => TurnAudience;
 
   constructor(config: CronSchedulerConfig) {
     this.cronDir = config.cronDir;
@@ -526,6 +542,7 @@ export class CronScheduler {
     this.executionBackend = config.executionBackend ?? null;
     this.onDecision = config.onDecision;
     this.armingBackend = config.armingBackend;
+    this.runAudience = config.runAudience ?? stampAudience;
   }
 
   /**
@@ -1149,6 +1166,7 @@ export class CronScheduler {
 
     const blocks: string[] = [];
     const jobs = await this.readJobs();
+    const firesShared = this.runAudience(job, jobs) === 'shared';
     for (const ref of job.contextFrom) {
       // Only the firing job's own personality's output (S15). A reference
       // stored before `createJob` refused foreign ones resolves to nothing.
@@ -1158,6 +1176,17 @@ export class CronScheduler {
           component: 'cron',
           jobId: job.id,
           reason: `no job "${ref}" owned by personality "${job.personalityId}"`,
+        });
+        continue;
+      }
+      // A shared firing reads only output that was itself produced shared
+      // (verification round E1): a private job's run may have read private
+      // memory, and its output would otherwise land in the room.
+      if (firesShared && this.runAudience(refJob, jobs) !== 'shared') {
+        this.logger.warn(`[cron] contextFrom "${ref}" skipped for job "${job.id}"`, {
+          component: 'cron',
+          jobId: job.id,
+          reason: `job "${refJob.id}" does not run shared; "${job.id}" does`,
         });
         continue;
       }
@@ -1617,8 +1646,27 @@ function filenameToIso(filename: string): string {
  * `resolveContext`'s fire-time re-check (S15). Pinned by the S15 cases in
  * `src/__tests__/cron.test.ts` ("CronScheduler job chaining").
  */
-function findOwnedRef(jobs: CronJob[], ref: string, personalityId: string): CronJob | undefined {
+function findOwnedRef(
+  jobs: readonly CronJob[],
+  ref: string,
+  personalityId: string,
+): CronJob | undefined {
   return jobs.find((j) => (j.id === ref || j.name === ref) && j.personalityId === personalityId);
+}
+
+/**
+ * `CronSchedulerConfig.runAudience`'s default: the stamps alone. Shared iff
+ * the job, or any job its `contextFrom` names, is stamped `'shared'`. The
+ * hosts pass the full rule (`cronRunAudience`, which also judges the delivery
+ * target); this keeps a scheduler built without it from reading a private
+ * job's output into a job stamped shared.
+ */
+function stampAudience(job: CronJob, jobs: readonly CronJob[]): TurnAudience {
+  if (job.roomAudience === 'shared') return 'shared';
+  for (const ref of job.contextFrom ?? []) {
+    if (findOwnedRef(jobs, ref, job.personalityId)?.roomAudience === 'shared') return 'shared';
+  }
+  return 'private';
 }
 
 function slugify(name: string): string {

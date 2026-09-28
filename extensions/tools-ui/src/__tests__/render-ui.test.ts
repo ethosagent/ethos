@@ -4,7 +4,12 @@
 // templates. The caps are the third leg — an oversized frame or an unknown
 // library is refused at the tool, never on the wire.
 
-import { BoundaryError, type ScopedFs, type ToolContext } from '@ethosagent/types';
+import {
+  BoundaryError,
+  type ScopedFs,
+  sharedTurnPathDeny,
+  type ToolContext,
+} from '@ethosagent/types';
 import { CARD_SPEC_VERSION, CanvasCardPayloadSchema } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
 import { createRenderUiTool, type PersonalityDirResolver } from '../render-ui';
@@ -67,6 +72,24 @@ describe('render_ui inline mode', () => {
 });
 
 describe('render_ui template mode', () => {
+  // Verification round E4 — a shared turn reads nothing under the state dir
+  // but its own files/, ui/, SOUL.md and the skills; the template path
+  // render_ui builds is inside that allowance, and another personality's is not.
+  it('reads its own template under the shared-turn deny; another personality’s is refused', async () => {
+    const deny = sharedTurnPathDeny({ stateDirs: ['/home/tester/.ethos'] }, 'trader');
+    const { ctx } = makeCtx(async (path) => {
+      if (deny(path, 'access', 'read')) throw new Error(`PATH_NOT_REACHABLE: ${path}`);
+      return '<h1>own template</h1>';
+    });
+    const own = await tool.execute({ template: 'market-brief' }, ctx);
+    expect(own.ok).toBe(true);
+    const other = await createRenderUiTool(() => '/home/tester/.ethos/personalities/other').execute(
+      { template: 'market-brief' },
+      ctx,
+    );
+    expect(other.ok).toBe(false);
+  });
+
   it('reads through scopedFs and inlines the resolved html', async () => {
     const { ctx, reads } = makeCtx();
     const result = await tool.execute({ template: 'market-brief', title: 'Brief' }, ctx);

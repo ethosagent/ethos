@@ -157,7 +157,7 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
-import { cronFiringAudience, runCronTurn } from './cron-turn';
+import { cronContextAudience, cronFiringAudience, runCronTurn } from './cron-turn';
 import {
   adapterRegistries,
   buildBotSpeakers,
@@ -434,6 +434,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     storage,
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
+    // A shared firing reads only shared `contextFrom` output (E1).
+    runAudience: cronContextAudience(privateChatSetFrom(cfg.gateway?.privateChats)),
     logger,
     ...(cfg.cron?.defaultMaxRunMs !== undefined
       ? { defaultMaxRunMs: cfg.cron.defaultMaxRunMs }

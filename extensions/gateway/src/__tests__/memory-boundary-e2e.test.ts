@@ -28,10 +28,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   AgentLoop,
+  buildLaneKey,
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
   InMemorySessionStore,
   privateChatSetFrom,
+  ROOM_AUDIENCE_METADATA_KEY,
 } from '@ethosagent/core';
 import type { CronJob } from '@ethosagent/cron';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
@@ -265,11 +267,12 @@ describe('memory boundary through the gateway (plan step 4)', () => {
       ],
     });
     const scripted = scriptedLLM(memoryPath);
+    const sessions = new InMemorySessionStore();
     const loop = new AgentLoop({
       llm: scripted.llm,
       tools,
       memory,
-      session: new InMemorySessionStore(),
+      session: sessions,
       personalities,
       storage: new FsStorage(),
       dataDir: home,
@@ -304,7 +307,7 @@ describe('memory boundary through the gateway (plan step 4)', () => {
       // The user scope is only read when the gateway resolves a user id.
       resolveUserId: async (_platform, platformUserId) => `u-${platformUserId}`,
     });
-    return { gw, loop, out, memory, toolRuns, memoryWrites, fileReads, scripted };
+    return { gw, loop, out, memory, toolRuns, memoryWrites, fileReads, scripted, sessions };
   }
 
   function msg(overrides: Partial<InboundMessage>): InboundMessage {
@@ -381,6 +384,20 @@ describe('memory boundary through the gateway (plan step 4)', () => {
       h.out.adapter,
     );
     expectPrivate(h);
+  });
+
+  // Verification round E5 — the gateway judged this room, so it (and only it,
+  // `RunOptions.judgeAudience`) records the judged-private stamp.
+  it('a listed group’s session carries the gateway’s judged private stamp', async () => {
+    const h = harness();
+    await h.gw.handleMessage(
+      msg({ chatId: '-100listed', isDm: false, isGroupMention: true }),
+      h.out.adapter,
+    );
+    const stored = await h.sessions.getSessionByKey(
+      buildLaneKey('telegram', 'bot-a', '-100listed'),
+    );
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('private');
   });
 
   it('a thread in a listed group inherits the parent chat’s audience', async () => {

@@ -14,6 +14,7 @@ import {
   PRIVATE_MEMORY_DB_FILE,
   PRIVATE_MEMORY_FILE_NAMES,
   privateMemoryPathDeny,
+  sharedTurnPathDeny,
 } from '../memory-paths';
 
 const HOME = '/home/u/.ethos';
@@ -173,5 +174,74 @@ describe('isPrivateMemoryPath — case variants', () => {
   it('non-memory files stay reachable in any case', () => {
     expect(isPrivateMemoryPath(`${own}/FILES/logo.png`, roots)).toBe(false);
     expect(isPrivateMemoryPath(`${own}/Soul.md`, roots)).toBe(false);
+  });
+});
+
+// Verification round E4 — the shared-turn deny: nothing under a state dir but
+// the turn's own files/, ui/, SOUL.md (read) and skills/ (read).
+describe('sharedTurnPathDeny', () => {
+  const H = '/home/u/.ethos';
+  const deny = sharedTurnPathDeny({ stateDirs: [H], extraRoots: ['/vault'] }, 'lean');
+
+  it('refuses every other state-dir path, for read and write', () => {
+    for (const p of [
+      H,
+      `${H}/config.yaml`,
+      `${H}/sessions.db`,
+      `${H}/cron/output/job/2026.md`,
+      `${H}/compaction/lean/x.md`,
+      `${H}/kanban.db`,
+      `${H}/personalities`,
+      `${H}/personalities/lean`,
+      `${H}/personalities/lean/config.yaml`,
+      `${H}/personalities/lean/skills/s/SKILL.md`,
+      `${H}/personalities/other/files/a.png`,
+      `${H}/personalities/other/SOUL.md`,
+    ]) {
+      expect(deny(p, 'access', 'read'), p).toBe(true);
+      expect(deny(p, 'access', 'write'), p).toBe(true);
+    }
+  });
+
+  it('allows own files/ and ui/ both ways, SOUL.md and skills/ for reading only', () => {
+    for (const p of [`${H}/personalities/lean/files/a.png`, `${H}/personalities/lean/ui/r.html`]) {
+      expect(deny(p, 'access', 'read'), p).toBe(false);
+      expect(deny(p, 'access', 'write'), p).toBe(false);
+    }
+    for (const p of [`${H}/personalities/lean/SOUL.md`, `${H}/skills/digest/SKILL.md`]) {
+      expect(deny(p, 'access', 'read'), p).toBe(false);
+      expect(deny(p, 'access', 'write'), p).toBe(true);
+      // No kind → judged as a write (fail closed).
+      expect(deny(p, 'access'), p).toBe(true);
+    }
+  });
+
+  it('keeps private memory refused, inside files/ excepted as before, and the vault', () => {
+    expect(deny('/vault/j.md', 'access', 'read')).toBe(true);
+    expect(deny('/work/MEMORY.md', 'access', 'read')).toBe(false);
+    expect(deny(`${H}/personalities/lean/MEMORY.md`, 'access', 'read')).toBe(true);
+  });
+
+  it('folds case and the macOS firmlink', () => {
+    expect(deny('/HOME/U/.ETHOS/Config.yaml', 'access', 'read')).toBe(true);
+    expect(deny(`/System/Volumes/Data${H}/config.yaml`, 'access', 'read')).toBe(true);
+    expect(deny(`/System/Volumes/Data${H}/personalities/LEAN/Files/a.png`, 'access', 'read')).toBe(
+      false,
+    );
+  });
+
+  it('subtree: refuses removing anything it would refuse to write, or an ancestor', () => {
+    expect(deny(`${H}/personalities/lean/files/old`, 'subtree')).toBe(false);
+    expect(deny(`${H}/personalities/lean/files`, 'subtree')).toBe(false);
+    expect(deny(`${H}/personalities/lean`, 'subtree')).toBe(true);
+    expect(deny(`${H}/skills/digest`, 'subtree')).toBe(true);
+    expect(deny('/home/u', 'subtree')).toBe(true);
+    expect(deny('/work/project', 'subtree')).toBe(false);
+  });
+
+  it('an empty self allows nothing under personalities/', () => {
+    const none = sharedTurnPathDeny({ stateDirs: [H] }, '');
+    expect(none(`${H}/personalities/lean/files/a.png`, 'access', 'read')).toBe(true);
+    expect(none(`${H}/skills/s/SKILL.md`, 'access', 'read')).toBe(false);
   });
 });

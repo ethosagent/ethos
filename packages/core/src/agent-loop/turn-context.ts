@@ -7,6 +7,7 @@ import type {
   ContextLog,
   HookRegistry,
   LLMProvider,
+  Logger,
   McpPolicy,
   MemoryProvider,
   ModelResolutionContext,
@@ -83,6 +84,11 @@ export interface LoopDeps {
    *  the other's. Per process, never persisted — a restart re-announces, which
    *  is correct, because a restart is when a config change takes effect. */
   deviationSeen: Map<string, true>;
+  /** Verification round E3 — personalities already warned that their read
+   *  reach covers `/` (turn-setup). Per loop instance, like `deviationSeen`. */
+  rootReachWarned: Set<string>;
+  /** `AgentLoopConfig.logger` — the library output sink (Law 10). */
+  logger?: Logger;
   /** §5 — resolved compaction gate config (pressure/target fractions +
    *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
    *  defaults. Phase 3 adds `autoCompact` (turn-end trigger; default on since
@@ -214,7 +220,7 @@ export interface TurnSetup {
     read: string[];
     write: string[];
     writeDeny: string[];
-    /** Shared turns only: the private-memory deny (`privateMemoryDenyFor`, ./agent-loop/audience.ts). */
+    /** Shared turns only: the state-dir and private-memory deny (`sharedTurnDenyFor`, ./agent-loop/audience.ts). */
     denyWhen?: import('@ethosagent/types').PrivatePathDeny;
   };
   obsConfig: PersonalityObservabilityConfig | undefined;

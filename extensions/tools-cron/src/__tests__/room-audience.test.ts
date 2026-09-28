@@ -137,6 +137,59 @@ describe('cron tool — room audience', () => {
     expect((await scheduler.getJob(job.id))?.roomAudience).toBe('private');
   });
 
+  // verification round E1: chaining from a private job is refused on a shared
+  // turn, with the scheduler's own unknown-reference text and code, so the
+  // refusal does not tell a private job from a missing one.
+  it('create from a shared turn refuses context_from naming a private job, like a missing one', async () => {
+    const { scheduler, tool } = harness();
+    await seed(scheduler, 'Private', 'private');
+    await seed(scheduler, 'Legacy');
+    const room = await seed(scheduler, 'Room', 'shared');
+    const create = (ref: string) =>
+      tool.execute(
+        {
+          action: 'create',
+          name: `c-${ref}`,
+          schedule: 'every 1h',
+          prompt: 'p',
+          context_from: [ref],
+        },
+        ctx('shared'),
+      );
+
+    const missing = await create('no-such-job');
+    expect(missing).toEqual({
+      ok: false,
+      error: 'contextFrom references unknown job: "no-such-job"',
+      code: 'execution_failed',
+    });
+    for (const ref of ['private', 'Private', 'legacy']) {
+      expect(await create(ref)).toEqual({
+        ok: false,
+        error: `contextFrom references unknown job: "${ref}"`,
+        code: 'execution_failed',
+      });
+    }
+    okValue(await create(room.job.id));
+  });
+
+  it('create from a private turn may chain from a private job', async () => {
+    const { scheduler, tool } = harness();
+    const priv = await seed(scheduler, 'Private', 'private');
+    okValue(
+      await tool.execute(
+        {
+          action: 'create',
+          name: 'chained',
+          schedule: 'every 1h',
+          prompt: 'p',
+          context_from: [priv.job.id],
+        },
+        ctx('private'),
+      ),
+    );
+  });
+
   it('run from a shared turn restamps the job BEFORE it runs', async () => {
     const { scheduler, tool, ran } = harness();
     const { job } = await seed(scheduler, 'Private', 'private');

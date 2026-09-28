@@ -153,3 +153,17 @@ export async function cronFiringAudience(
     },
   });
 }
+
+/**
+ * `CronSchedulerConfig.runAudience` for every host that builds a
+ * `CronScheduler`: the same `cronRunAudience` rule as `cronFiringAudience`
+ * above, over the jobs `resolveContext` already read, so the scheduler's
+ * fire-time `contextFrom` check (verification round E1) and the turn's
+ * audience agree. No unstamped-job warning here — the runner logs it once per
+ * firing. Pinned by `apps/ethos/src/__tests__/cron-audience-run.test.ts`.
+ */
+export function cronContextAudience(
+  privateChats?: PrivateChatSet,
+): (job: CronJob, jobs: readonly CronJob[]) => TurnAudience {
+  return (job, jobs) => cronRunAudience(job, { jobs, ...(privateChats ? { privateChats } : {}) });
+}

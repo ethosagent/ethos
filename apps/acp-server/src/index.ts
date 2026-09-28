@@ -411,8 +411,10 @@ export class AcpServer {
       // A team dispatcher forwards a kanban task's `'shared'` stamp (plan
       // personality-memory-boundary D20, `defaultDispatchCall` in
       // @ethosagent/team-supervisor). Honoured only as `'shared'`: a request can
-      // narrow this turn, never widen it.
-      const roomAudience = parsed.roomAudience === 'shared' ? 'shared' : 'private';
+      // narrow this turn, never widen it. Anything else passes NO audience, so
+      // core falls back to the session's own (`isSharedSession`, verification
+      // round E5).
+      const roomAudience = parsed.roomAudience === 'shared' ? 'shared' : undefined;
       void this.lane.enqueue(async (_signal) => {
         await this.runBlocking(prompt, sessionKey, undefined, roomAudience).catch(() => {});
       });
@@ -726,7 +728,7 @@ export class AcpServer {
           try {
             let fullText = '';
             let turnCount = 0;
-            // audience: private-by-design (ACP — the local owner editor client)
+            // audience: private-by-design (ACP owner editor client; no audience passed so core uses the session's own — E5)
             for await (const event of this.runner.run(p.text, {
               sessionKey: p.sessionKey,
               personalityId: p.personalityId,
@@ -1042,18 +1044,22 @@ export class AcpServer {
     text: string,
     sessionKey: string,
     personalityId?: string,
-    roomAudience: 'private' | 'shared' = 'private',
+    roomAudience?: 'shared',
   ): Promise<{ text: string; turnCount: number }> {
     let fullText = '';
     let turnCount = 0;
     let failure: string | undefined;
-    // Private by design (ACP — the local owner editor client), except a
-    // `/notify` carrying a shared kanban task's stamp (D20).
+    // audience: session-judged (verification round E5). ACP names `'shared'`
+    // only for a `/notify` carrying a shared kanban task's stamp (D20) and
+    // otherwise passes none: the session key is CLIENT-supplied, and an
+    // explicit `'private'` would run a pre-upgrade group lane key private.
+    // With no audience, turn-setup uses the session's own (`isSharedSession`)
+    // and — no `judgeAudience` — never records a judged-private stamp.
     for await (const event of this.runner.run(text, {
       sessionKey,
       personalityId,
       credentialPrompt: true,
-      roomAudience,
+      ...(roomAudience ? { roomAudience } : {}),
     })) {
       const refusal = credentialRefusalText(event);
       if (refusal !== null) fullText = refusal;

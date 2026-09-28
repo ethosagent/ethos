@@ -45,8 +45,10 @@ export interface ScopedStorageScope {
   writeDeny?: readonly string[];
   /**
    * Read+write deny predicate, set only on a shared turn (plan
-   * personality-memory-boundary G1-5): the private memory files
-   * (`privateMemoryPathDeny` in `@ethosagent/types`). Judged with `'access'`
+   * personality-memory-boundary G1-5 / E4): everything under the state dir
+   * but the turn's own `files/`, `ui/`, `SOUL.md` and the skills, and the
+   * private memory files anywhere (`sharedTurnPathDeny` in
+   * `@ethosagent/types`). Judged with `'access'` and the access's kind
    * on the lexical path AND on every symlink-resolved hop in `check`, and with
    * `'subtree'` in `checkSubtree` so `remove`/`rename` of a directory that
    * contains one is refused too. Mirror of `ScopedFsImpl`'s `denyWhen`
@@ -76,7 +78,8 @@ const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
  *      `remove` and `rename` additionally refuse a path that CONTAINS one,
  *      because deleting or moving a directory rewrites everything below it.
  *   1c. deny-when — reads AND writes: request rejected when the `denyWhen`
- *      predicate (a shared turn's private memory files) says so; `remove` and
+ *      predicate (a shared turn's state-dir and private-memory deny, told
+ *      whether the access is a read or a write) says so; `remove` and
  *      `rename` also ask it about the subtree.
  *   2. allow allowlist — request rejected if no prefix matches.
  *   3. symbolic containment — layers 1 and 2 are lexical, and `resolve()`
@@ -154,9 +157,9 @@ export class ScopedStorage implements Storage {
     this.denyWhen = scope.denyWhen;
   }
 
-  /** True when the `denyWhen` predicate refuses `path` (read or write alike). */
-  private hitsDenyWhen(path: string): boolean {
-    return this.denyWhen?.(path, 'access') ?? false;
+  /** True when the `denyWhen` predicate refuses a `kind` access to `path`. */
+  private hitsDenyWhen(path: string, kind: 'read' | 'write'): boolean {
+    return this.denyWhen?.(path, 'access', kind) ?? false;
   }
 
   /**
@@ -217,7 +220,7 @@ export class ScopedStorage implements Storage {
     if (this.hitsWriteDeny(real, kind)) {
       throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
-    if (this.hitsDenyWhen(real)) {
+    if (this.hitsDenyWhen(real, kind)) {
       throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
     }
   }
@@ -232,7 +235,7 @@ export class ScopedStorage implements Storage {
     if (this.hitsWriteDeny(path, kind)) {
       throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
-    if (this.hitsDenyWhen(path)) {
+    if (this.hitsDenyWhen(path, kind)) {
       throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
     }
     const allowed = kind === 'read' ? this.readPrefixes : this.writePrefixes;
@@ -276,7 +279,7 @@ export class ScopedStorage implements Storage {
       }
       // …and so is `denyWhen`: an innocently named link inside the cwd that
       // points at `personalities/<id>/MEMORY.md` is refused on where it lands.
-      if (this.hitsDenyWhen(next)) {
+      if (this.hitsDenyWhen(next, kind)) {
         throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
       }
       current = next;

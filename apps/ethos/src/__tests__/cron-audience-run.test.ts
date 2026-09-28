@@ -11,7 +11,7 @@ import { type CronJob, CronScheduler } from '@ethosagent/cron';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { AgentEvent, TurnAudience, TurnInitiator } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cronFiringAudience, runCronTurn } from '../commands/cron-turn';
+import { cronContextAudience, cronFiringAudience, runCronTurn } from '../commands/cron-turn';
 
 interface Call {
   sessionKey: string;
@@ -214,5 +214,52 @@ describe('cron firing audience, end to end through runCronTurn', () => {
     const { call, result } = await fire(sched, job);
     expect(result.reusedWebOrigin).toBe(true);
     expect(call).toMatchObject({ sessionKey: 'web:owner-chat', roomAudience: 'private' });
+  });
+});
+
+// verification round E1 — every host passes `cronContextAudience` as the
+// scheduler's `runAudience`, so a firing that runs shared by its delivery
+// target alone (no stamp) still reads no private job's output.
+describe('cronContextAudience as the scheduler runAudience', () => {
+  it('an unstamped group-target job does not read a private job’s output', async () => {
+    const prompts: string[] = [];
+    const sched = new CronScheduler({
+      storage: new FsStorage(),
+      cronDir: dir,
+      scriptsDir: join(dir, 'scripts'),
+      runAudience: cronContextAudience(),
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: `out:${job.id}`,
+          sessionKey: '',
+        };
+      },
+    });
+    const source = await createVia(sched, 'private-source', { roomAudience: 'private' });
+    await sched.runJobNow(source.id);
+    const chained = await createVia(sched, 'group-digest', {
+      origin: { platform: 'telegram', chatId: '-100200' },
+      contextFrom: [source.id],
+    });
+    await sched.runJobNow(chained.id);
+    expect(prompts.at(-1)).not.toContain(`out:${source.id}`);
+
+    const privateChained = await createVia(sched, 'dm-digest', {
+      roomAudience: 'private',
+      contextFrom: [source.id],
+    });
+    await sched.runJobNow(privateChained.id);
+    expect(prompts.at(-1)).toContain(`out:${source.id}`);
+  });
+
+  it('honours gateway.private_chats for the firing job’s target', async () => {
+    const job = await createVia(scheduler(), 'discord-job', {
+      origin: { platform: 'discord', chatId: '99' },
+    });
+    expect(cronContextAudience()(job, [])).toBe('shared');
+    expect(cronContextAudience(privateChatSetFrom({ discord: ['99'] }))(job, [])).toBe('private');
   });
 });

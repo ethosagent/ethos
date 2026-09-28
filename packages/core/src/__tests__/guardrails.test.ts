@@ -252,7 +252,12 @@ describe('Orchestrator guardrails', () => {
     // Bumped 1104 -> 1106 (personality-memory-boundary step 4, D8): the
     // `skipPersonalityMemory` RunOptions field (a one-line doc and a
     // declaration). The narrowing lives in agent-loop/audience.ts.
-    expect(lineCount).toBeLessThanOrEqual(1106);
+    // Bumped 1106 -> 1113 (personality-memory-boundary verification round
+    // E3/E5): the `judgeAudience` RunOptions field (a one-line doc and a
+    // declaration), and the logger + per-loop `rootReachWarned` set (two
+    // fields, a constructor assignment, two deps lines) the turn-setup
+    // root-reach warning needs. The logic lives in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1113);
   });
 
   it('no stage file exceeds 700 lines', () => {

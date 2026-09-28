@@ -533,8 +533,12 @@ describe('AcpServer /notify — room audience', () => {
     expect(await audienceFor({ ref: 't', roomAudience: 'shared' })).toBe('shared');
   });
 
-  it('runs private otherwise — a request cannot widen it', async () => {
-    expect(await audienceFor({ ref: 't' })).toBe('private');
-    expect(await audienceFor({ ref: 't', roomAudience: 'public' })).toBe('private');
+  // Verification round E5 — anything but 'shared' passes NO audience, so core
+  // judges the session by its own stamp or key (`isSharedSession`); a request
+  // can never make a turn private.
+  it('passes no audience otherwise — a request cannot widen it', async () => {
+    expect(await audienceFor({ ref: 't' })).toBeUndefined();
+    expect(await audienceFor({ ref: 't', roomAudience: 'public' })).toBeUndefined();
+    expect(await audienceFor({ ref: 't', roomAudience: 'private' })).toBeUndefined();
   });
 });

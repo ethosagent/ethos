@@ -39,6 +39,7 @@ function makeScheduler(opts?: {
   deliver?: (job: CronJob, output: string) => Promise<void>;
   onDecision?: CronSchedulerConfig['onDecision'];
   armingBackend?: CronArmingBackend;
+  runAudience?: CronSchedulerConfig['runAudience'];
 }) {
   return new CronScheduler({
     cronDir: testDir,
@@ -56,6 +57,7 @@ function makeScheduler(opts?: {
       })),
     ...(opts?.deliver ? { deliver: opts.deliver } : {}),
     ...(opts?.onDecision ? { onDecision: opts.onDecision } : {}),
+    ...(opts?.runAudience ? { runAudience: opts.runAudience } : {}),
   });
 }
 
@@ -1092,6 +1094,73 @@ describe('CronScheduler job chaining', () => {
     await scheduler.runJobNow(aJob.id);
 
     expect(prompts.at(-1)).toBe('a prompt');
+  });
+  // plan personality-memory-boundary G1, verification round E1: a firing that
+  // runs shared reads only output that was itself produced shared.
+  describe('fire-time audience check (E1)', () => {
+    async function chain(
+      runAudience?: CronSchedulerConfig['runAudience'],
+      stamps: { source?: 'private' | 'shared'; chained?: 'private' | 'shared' } = {},
+    ) {
+      const prompts: string[] = [];
+      const scheduler = makeScheduler({
+        ...(runAudience ? { runAudience } : {}),
+        runJob: async (job) => {
+          prompts.push(job.prompt ?? '');
+          return {
+            jobId: job.id,
+            ranAt: new Date().toISOString(),
+            output: `secret of ${job.id}`,
+            sessionKey: 'k',
+          };
+        },
+      });
+      const source = await scheduler.createJob({
+        name: 'Source',
+        schedule: '0 8 * * *',
+        prompt: 'source prompt',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+        ...(stamps.source ? { roomAudience: stamps.source } : {}),
+      });
+      await scheduler.runJobNow(source.id);
+      const chained = await scheduler.createJob({
+        name: 'Chained',
+        schedule: '0 9 * * *',
+        prompt: 'chained prompt',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+        contextFrom: [source.id],
+        ...(stamps.chained ? { roomAudience: stamps.chained } : {}),
+      });
+      await scheduler.runJobNow(chained.id);
+      return { prompt: prompts.at(-1) ?? '', source };
+    }
+
+    it('skips a private reference when the firing job is stamped shared', async () => {
+      const { prompt, source } = await chain(undefined, { source: 'private', chained: 'shared' });
+      expect(prompt).not.toContain(`secret of ${source.id}`);
+    });
+
+    it('reads a shared reference into a shared firing', async () => {
+      const { prompt, source } = await chain(undefined, { source: 'shared', chained: 'shared' });
+      expect(prompt).toContain(`secret of ${source.id}`);
+    });
+
+    it('reads a private reference into a private firing', async () => {
+      const { prompt, source } = await chain(undefined, { source: 'private' });
+      expect(prompt).toContain(`secret of ${source.id}`);
+    });
+
+    it('judges both jobs with the injected runAudience', async () => {
+      // The host's rule says the chained job runs shared (e.g. a group
+      // delivery target) and the source does not.
+      const { prompt, source } = await chain((job) =>
+        job.name === 'Chained' ? 'shared' : 'private',
+      );
+      expect(prompt).not.toContain(`secret of ${source.id}`);
+      expect(prompt).toContain('chained prompt');
+    });
   });
 });
 

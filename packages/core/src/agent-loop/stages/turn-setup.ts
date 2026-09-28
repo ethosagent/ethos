@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type {
   AgentEvent,
   ModelDeviation,
@@ -14,8 +14,8 @@ import { isSharedSession, sessionAudienceStampFor } from '../../chat-audience';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
 import {
-  privateMemoryDenyFor,
   resolveTurnAudience,
+  sharedTurnDenyFor,
   withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../audience';
@@ -92,6 +92,7 @@ export async function* setupTurn(
     credentialPrompt?: boolean;
     roomAudience?: TurnAudience;
     skipPersonalityMemory?: boolean;
+    judgeAudience?: boolean;
   },
   /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
   decisions?: TurnDecisions,
@@ -131,7 +132,9 @@ export async function* setupTurn(
   // The session is then stamped (`sessionAudienceStampFor`): a shared turn
   // stamps `'shared'` so every later turn is shared too, whoever the caller is;
   // a private turn on an unstamped channel-shaped key records the judged
-  // `'private'`; a D8 turn records the withheld marker. The write MERGES into
+  // `'private'` only when the caller judged the room (`opts.judgeAudience`,
+  // the gateway — verification round E5); a D8 turn records the withheld
+  // marker. The write MERGES into
   // metadata (`updateSession` replaces it wholesale). Pinned by
   // `packages/core/src/__tests__/shared-audience.test.ts`.
   const requestedAudience =
@@ -146,7 +149,12 @@ export async function* setupTurn(
     sessionAudience,
     opts.skipPersonalityMemory,
   );
-  const stamped = sessionAudienceStampFor(sessionAudience, userMemoryOnly, ethosSession);
+  const stamped = sessionAudienceStampFor(
+    sessionAudience,
+    userMemoryOnly,
+    ethosSession,
+    opts.judgeAudience === true,
+  );
   if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
 
   // A session's personality is bound at creation and never changes. The
@@ -232,14 +240,33 @@ export async function* setupTurn(
       cwd: deps.workingDir,
     });
     workingDir = derived.workdir;
-    // plan personality-memory-boundary G1-5 — a shared turn's scoped Storage
-    // refuses the private memory files (`privateMemoryDenyFor`, ../audience.ts);
-    // `resolveCapabilities` builds the same deny for `scopedFs`. A private turn
-    // carries no predicate. Pinned by the G1-5 cases in shared-audience.test.ts.
-    const denyWhen = privateMemoryDenyFor(roomAudience, {
-      stateDirs: [ethosHome],
-      ...(deps.privateMemoryRoots ? { extraRoots: deps.privateMemoryRoots } : {}),
-    });
+    // plan personality-memory-boundary G1-5 / E4 — a shared turn's scoped
+    // Storage reads nothing under the state dir but its own files/, ui/,
+    // SOUL.md and the skills, and no private memory anywhere
+    // (`sharedTurnDenyFor`, ../audience.ts); `resolveCapabilities` builds the
+    // same deny for `scopedFs`. A private turn carries no predicate. Pinned by
+    // the G1-5 and E4 cases in shared-audience.test.ts.
+    const denyWhen = sharedTurnDenyFor(
+      roomAudience,
+      {
+        stateDirs: [ethosHome],
+        ...(deps.privateMemoryRoots ? { extraRoots: deps.privateMemoryRoots } : {}),
+      },
+      personality.id,
+    );
+    // Verification round E3 — a read reach of `/` (a gateway started with cwd
+    // `/`, as a desktop-spawned one is) reaches every path on the machine,
+    // including the macOS `/System/Volumes/Data` firmlink view of the state
+    // dir. The deny layers fold that firmlink (`foldForDeny`), but a reach
+    // this wide is almost never meant: say so once per personality per loop.
+    if (derived.read.some((p) => resolve(p) === '/') && !deps.rootReachWarned.has(personality.id)) {
+      deps.rootReachWarned.add(personality.id);
+      deps.logger?.warn(
+        `[fs_reach] personality "${personality.id}" can read the whole filesystem ("/" is in ` +
+          `its read reach — the working directory is "${derived.workdir}"). Start Ethos from a ` +
+          `project directory, or declare fs_reach.read in the personality's config.yaml.`,
+      );
+    }
     fsReach = {
       read: derived.read,
       write: derived.write,

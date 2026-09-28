@@ -5622,6 +5622,11 @@ export class Gateway {
           // writes private memory (enforced in core by `resolveTurnAudience`).
           roomAudience: audience.roomAudience,
           initiator: audience.initiator,
+          // The gateway alone judged this room (chat type, private_chats), so
+          // it alone may record a judged-private stamp (verification round
+          // E5, `RunOptions.judgeAudience`). A review runs its job's audience,
+          // not a judgement of the lane.
+          ...(review ? {} : { judgeAudience: true }),
           ...(audience.skipPersonalityMemory ? { skipPersonalityMemory: true } : {}),
           ...(voiceOrigin ? { voiceOrigin } : {}),
           ...(toolsetNarrow ? { toolsetNarrow } : {}),

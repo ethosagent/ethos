@@ -61,7 +61,8 @@ export interface RedactionKit {
  * additive; enforced by `ScopedStorage.check` in `@ethosagent/storage-fs`.
  *
  * `denyWhen` — a read+write deny predicate, set only on a shared turn: the
- * private memory files (`privateMemoryPathDeny`, ./memory-paths.ts). A factory
+ * state dir bar the turn's own `files/`, `ui/`, `SOUL.md` and the skills, and
+ * the private memory files (`sharedTurnPathDeny`, ./memory-paths.ts). A factory
  * MUST forward it; `ScopedStorage.check`/`checkSubtree` apply it to the
  * lexical path and every symlink-resolved hop. Checked by
  * `runAgentSafetyConformance` (packages/core/src/safety-conformance.ts).

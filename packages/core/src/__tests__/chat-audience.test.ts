@@ -160,21 +160,31 @@ describe('sessionAudienceStampFor', () => {
     ).toBeUndefined();
   });
 
-  it('a private turn judges only an unstamped channel-shaped key private', () => {
-    expect(sessionAudienceStampFor('private', false, { key: dm })).toEqual({
+  it('a judged private turn stamps only an unstamped channel-shaped key private', () => {
+    expect(sessionAudienceStampFor('private', false, { key: dm }, true)).toEqual({
       [ROOM_AUDIENCE_METADATA_KEY]: 'private',
     });
     // Key shape already private, or not a channel lane: nothing to write.
     expect(
-      sessionAudienceStampFor('private', false, { key: buildLaneKey('slack', 'b', 'D1') }),
+      sessionAudienceStampFor('private', false, { key: buildLaneKey('slack', 'b', 'D1') }, true),
     ).toBeUndefined();
-    expect(sessionAudienceStampFor('private', false, { key: 'cli:repo' })).toBeUndefined();
+    expect(sessionAudienceStampFor('private', false, { key: 'cli:repo' }, true)).toBeUndefined();
     // Never over a shared stamp (a private turn cannot run on one anyway).
     expect(
-      sessionAudienceStampFor('private', false, {
-        key: dm,
-        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'shared' },
-      }),
+      sessionAudienceStampFor(
+        'private',
+        false,
+        { key: dm, metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'shared' } },
+        true,
+      ),
+    ).toBeUndefined();
+  });
+
+  // Verification round E5 — only the gateway judged the room.
+  it('an unjudged private turn never writes the private stamp', () => {
+    expect(sessionAudienceStampFor('private', false, { key: dm })).toBeUndefined();
+    expect(
+      sessionAudienceStampFor('private', false, { key: buildLaneKey('telegram', 'b', '-100') }),
     ).toBeUndefined();
   });
 

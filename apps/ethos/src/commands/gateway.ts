@@ -35,6 +35,7 @@ import {
   LaneVoiceModeStore,
   laneVoiceModePath,
   privateChatSetFrom,
+  SHARED_AUDIENCE_EXCLUDED_TOOLS,
   targetAudience,
 } from '@ethosagent/core';
 import {
@@ -214,7 +215,7 @@ import {
   getStorage,
   loadTeamManifest,
 } from '../wiring';
-import { cronFiringAudience } from './cron-turn';
+import { cronContextAudience, cronFiringAudience } from './cron-turn';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
@@ -793,6 +794,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     storage: getStorage(),
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
+    // A shared firing reads only shared `contextFrom` output (E1).
+    runAudience: cronContextAudience(privateChatSetFrom(config.gateway?.privateChats)),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.defaultMaxRunMs !== undefined
       ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
@@ -5211,13 +5214,15 @@ export function resolveGatewayQuietHours(
 
 /**
  * The one-time startup warning for team deployments with no trusted rooms
- * (plan personality-memory-boundary G1, verification round B9): a task a team
- * channel creates is stamped shared, so every worker that runs it has
- * `terminal`, `run_code`, `process_*`, `team_memory_*` and `route_to_agent`
- * withheld (`SHARED_AUDIENCE_EXCLUDED_TOOLS`) — fail closed, and surprising
- * the first time a team loses its shell. Listing the team's own channel in
- * `gateway.private_chats.<platform>` restores it. `undefined` when no bot is
- * team-bound or any room is listed. Printed once by `buildGateway`; pinned by
+ * (plan personality-memory-boundary G1, verification rounds B9/E7): a task a
+ * team channel creates is stamped shared, so every worker that runs it has
+ * every tool in `SHARED_AUDIENCE_EXCLUDED_TOOLS` withheld — the shell and
+ * process tools, team memory, the mesh tools and the rest — fail closed, and
+ * surprising the first time a team loses its shell. The warning names the
+ * whole list, read from the constant so it cannot drift. Listing the team's
+ * own channel in `gateway.private_chats.<platform>` restores them.
+ * `undefined` when no bot is team-bound or any room is listed. Printed once
+ * by `buildGateway`; pinned by
  * `apps/ethos/src/__tests__/team-private-chats-warning.test.ts`.
  */
 export function teamPrivateChatsWarning(
@@ -5230,9 +5235,10 @@ export function teamPrivateChatsWarning(
   if (listed) return undefined;
   return (
     `team ${[...new Set(teams)].join(', ')}: gateway.private_chats is empty, so every team ` +
-    'channel is a shared room — tasks created there run without terminal, run_code, ' +
-    'process_*, team_memory_* and route_to_agent on every worker. If the channel is only ' +
-    "your team's, list it under gateway.private_chats.<platform> and restart."
+    'channel is a shared room — tasks created there run on every worker without private ' +
+    `memory and without these tools: ${SHARED_AUDIENCE_EXCLUDED_TOOLS.join(', ')}. ` +
+    "If the channel is only your team's, list it under gateway.private_chats.<platform> " +
+    'and restart.'
   );
 }
 

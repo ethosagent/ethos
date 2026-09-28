@@ -21,4 +21,16 @@ describe('foldForDeny', () => {
     expect(foldForDeny('Keys.json')).toBe('keys.json');
     expect(foldForDeny('ſoul.md')).toBe('soul.md');
   });
+
+  // verification round E3 — `/System/Volumes/Data` is a firmlink on macOS.
+  it('drops a leading /System/Volumes/Data firmlink root, in any case', () => {
+    expect(foldForDeny('/System/Volumes/Data/Users/u/.ethos/MEMORY.md')).toBe(
+      '/users/u/.ethos/memory.md',
+    );
+    expect(foldForDeny('/SYSTEM/volumes/DATA/Users/u')).toBe('/users/u');
+    expect(foldForDeny('/System/Volumes/Data')).toBe('/');
+    expect(foldForDeny('/System/Volumes/Data/')).toBe('/');
+    expect(foldForDeny('/System/Volumes/DataX/u')).toBe('/system/volumes/datax/u');
+    expect(foldForDeny('/opt/System/Volumes/Data/x')).toBe('/opt/system/volumes/data/x');
+  });
 });

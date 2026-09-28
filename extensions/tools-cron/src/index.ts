@@ -374,6 +374,31 @@ async function handleCreate(
 
   const origin = extractOrigin(ctx);
 
+  // A shared turn may chain only from jobs it could read (`readableFrom`,
+  // verification round E1): a private job's output would otherwise be read
+  // into a job that runs shared. The refusal is the scheduler's own
+  // unknown-reference error, word for word and code for code, so it does not
+  // tell a private job from a missing one. The fire-time half is
+  // `CronScheduler.resolveContext`. Pinned by `__tests__/room-audience.test.ts`.
+  if (ctx.roomAudience === 'shared' && context_from && context_from.length > 0) {
+    const jobs = await scheduler.listJobs();
+    for (const ref of context_from) {
+      const readable = jobs.some(
+        (j) =>
+          (j.id === ref || j.name === ref) &&
+          j.personalityId === callerPersonality &&
+          readableFrom(true, j),
+      );
+      if (!readable) {
+        return {
+          ok: false,
+          error: `contextFrom references unknown job: "${ref}"`,
+          code: 'execution_failed',
+        };
+      }
+    }
+  }
+
   try {
     // scheduler.createJob enforces the scripts-dir path guards and the
     // must-already-exist rule for script/precheck files (plan §5.1c).

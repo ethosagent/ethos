@@ -139,7 +139,9 @@ export function turnWasShared(
  *     judgement — shared only narrows);
  *   - a private turn on an UNSTAMPED session whose key shape reads shared
  *     stamps the judged `'private'` (a Discord/email DM, a listed room), so
- *     post-turn learners stop excluding it on its key (verification round B3);
+ *     post-turn learners stop excluding it on its key (verification round B3)
+ *     — only when `judged` is true, i.e. the caller set
+ *     `RunOptions.judgeAudience` (the gateway alone, verification round E5);
  *   - a D8 turn (`personalityMemoryWithheld`) sets the withheld marker.
  *
  * Called by turn-setup (packages/core/src/agent-loop/stages/turn-setup.ts);
@@ -150,6 +152,7 @@ export function sessionAudienceStampFor(
   audience: TurnAudience,
   personalityMemoryWithheld: boolean,
   session: Pick<Session, 'key' | 'metadata'>,
+  judged = false,
 ): Record<string, unknown> | undefined {
   const current = session.metadata ?? {};
   const next: Record<string, unknown> = { ...current };
@@ -158,7 +161,12 @@ export function sessionAudienceStampFor(
   if (audience === 'shared' && stamp !== 'shared') {
     next[ROOM_AUDIENCE_METADATA_KEY] = 'shared';
     changed = true;
-  } else if (audience === 'private' && stamp === undefined && keyShapeShared(session.key)) {
+  } else if (
+    judged &&
+    audience === 'private' &&
+    stamp === undefined &&
+    keyShapeShared(session.key)
+  ) {
     next[ROOM_AUDIENCE_METADATA_KEY] = 'private';
     changed = true;
   }

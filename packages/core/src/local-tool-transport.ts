@@ -129,7 +129,8 @@ export class LocalToolTransport implements ToolTransport {
         {
           sessionId: request.sessionId,
           personalityId: request.personalityId,
-          // G1-5 — a shared call's `scopedFs` refuses the private memory files.
+          // G1-5 / E4 — a shared call's `scopedFs` refuses the state dir (bar its
+          // own files/, ui/, SOUL.md and the skills) and private memory.
           ...(request.roomAudience !== undefined ? { roomAudience: request.roomAudience } : {}),
         },
         { ...this.backends, inboundAttachments: live?.inboundAttachments },

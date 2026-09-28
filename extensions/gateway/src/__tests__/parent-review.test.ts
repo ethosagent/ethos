@@ -64,6 +64,7 @@ interface RunOpts {
   reviewOfJobId?: string;
   roomAudience?: string;
   initiator?: string;
+  judgeAudience?: boolean;
 }
 type RunImpl = (
   text: string,
@@ -77,6 +78,7 @@ function scriptedLoop(impl?: RunImpl) {
     reviewOfJobId?: string;
     roomAudience?: string;
     initiator?: string;
+    judgeAudience?: boolean;
   }> = [];
   const run = vi.fn((text: string, opts: RunOpts) => {
     calls.push({
@@ -85,6 +87,7 @@ function scriptedLoop(impl?: RunImpl) {
       ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}),
       ...(opts.roomAudience ? { roomAudience: opts.roomAudience } : {}),
       ...(opts.initiator ? { initiator: opts.initiator } : {}),
+      ...(opts.judgeAudience ? { judgeAudience: true } : {}),
     });
     if (impl) return impl(text, opts);
     return (async function* () {
@@ -346,6 +349,8 @@ describe('parent review — room audience', () => {
   it('a job stamped private (launched from a DM) reviews private', async () => {
     const call = await reviewedWith({ roomAudience: 'private', originChatId: '42' });
     expect(call).toMatchObject({ roomAudience: 'private', initiator: 'system' });
+    // A review runs its job's audience, not a judgement of the lane (E5).
+    expect(call?.judgeAudience).toBeUndefined();
   });
 
   it('a job stamped shared (launched from a group) reviews shared', async () => {

@@ -12,8 +12,11 @@
 // `ScopedStorage.check` / `checkSubtree` (packages/storage-fs/src/scoped-storage.ts)
 // and `ScopedFsImpl.checkReach` (packages/core/src/scoped/scoped-fs.ts), each
 // judging the lexical path AND every symlink-resolved hop. The predicate is
-// built per shared turn by `privateMemoryDenyFor`
-// (packages/core/src/agent-loop/audience.ts). The file-name set is pinned
+// built per shared turn by `sharedTurnDenyFor`
+// (packages/core/src/agent-loop/audience.ts), inside `sharedTurnPathDeny`
+// below — which, since verification round E4, also refuses everything else
+// under the state dir but the turn's own `files/`, `ui/`, `SOUL.md` and the
+// skills. The file-name set is pinned
 // against each memory backend's own constants by
 // `packages/types/src/__tests__/memory-paths.test.ts`.
 //
@@ -44,7 +47,7 @@ import { foldForDeny } from './deny-fold';
  *
  * Roots are matched lexically (case-folded): a state directory reached
  * through a symlink ABOVE it is matched only by the names the caller passed.
- * Callers therefore pass every form of each root — `privateMemoryDenyFor`
+ * Callers therefore pass every form of each root — `sharedTurnDenyFor`
  * (packages/core/src/agent-loop/audience.ts) adds the default state dirs and
  * the realpath of every root — and both boundaries also judge the realpath of
  * the target's longest existing ancestor.
@@ -58,9 +61,16 @@ export interface PrivateMemoryRoots {
  * A boundary's private-path deny predicate. `'access'` asks about the path
  * itself (read, write, list, exists …); `'subtree'` asks whether removing or
  * renaming the path would move a private memory path without naming it (a
- * directory that CONTAINS one).
+ * directory that CONTAINS one). `kind` says whether an `'access'` is a read
+ * or a write; both boundaries pass it, and a predicate given none must judge
+ * the access as a write (fail closed). `privateMemoryPathDeny` ignores it;
+ * `sharedTurnPathDeny` allows two entries for reading only.
  */
-export type PrivatePathDeny = (absPath: string, op: 'access' | 'subtree') => boolean;
+export type PrivatePathDeny = (
+  absPath: string,
+  op: 'access' | 'subtree',
+  kind?: 'read' | 'write',
+) => boolean;
 
 /** Memory file names in a personality scope directory (`MarkdownFileMemoryProvider`). */
 export const PRIVATE_MEMORY_FILE_NAMES: readonly string[] = ['MEMORY.md', 'USER.md'];
@@ -194,4 +204,68 @@ export function privateMemoryPathDeny(roots: PrivateMemoryRoots): PrivatePathDen
     op === 'subtree'
       ? containsPrivateMemoryPath(absPath, roots)
       : isPrivateMemoryPath(absPath, roots);
+}
+
+/**
+ * The file deny for a SHARED turn (plan personality-memory-boundary G1,
+ * verification round E4): a shared turn can read nothing under the Ethos
+ * state directory except its own `files/`, `ui/`, `SOUL.md` and the skills.
+ *
+ * Private memory is not the only private thing under a state dir — cron run
+ * output (`cron/output/**`), compaction transcripts (`compaction/**`), the
+ * session, job, kanban and goal databases, `config.yaml` and every other
+ * personality's directory all carry what private turns read and said. So
+ * under each of `roots.stateDirs` the rule is an allowlist, not a denylist:
+ *
+ * - `personalities/<self>/files/**` and `personalities/<self>/ui/**` — read
+ *   and write (the asset drop and the Canvas templates `render_ui` reads);
+ * - `personalities/<self>/SOUL.md` — read only (its write is refused by the
+ *   definition floor anyway);
+ * - `skills/**` — read only;
+ * - everything else, the state dir itself included — refused.
+ *
+ * On top of that, {@link isPrivateMemoryPath} still applies everywhere, so
+ * `roots.extraRoots` (the vault) and memory anywhere else stay refused.
+ * `self` is compared folded like every segment; an empty `self` (a call with
+ * no personality) allows nothing under `personalities/`. `'subtree'` refuses
+ * a remove/rename of anything the access rule refuses to write, of an
+ * ancestor of a state dir, or of anything holding private memory.
+ *
+ * Built per shared turn by `sharedTurnDenyFor`
+ * (packages/core/src/agent-loop/audience.ts), which passes every form of each
+ * state dir (lexical, realpath; case and the macOS firmlink are folded here).
+ * Pinned by the E4 cases in `packages/types/src/__tests__/memory-paths.test.ts`
+ * and `packages/core/src/__tests__/shared-audience.test.ts`.
+ */
+export function sharedTurnPathDeny(roots: PrivateMemoryRoots, self: string): PrivatePathDeny {
+  const ownId = foldForDeny(self);
+  const refusedUnderStateDir = (absPath: string, kind: 'read' | 'write'): boolean => {
+    for (const stateDir of roots.stateDirs) {
+      const rel = segmentsBelow(absPath, stateDir);
+      if (rel === null) continue;
+      if (!sharedTurnMayReach(rel, ownId, kind)) return true;
+    }
+    return false;
+  };
+  return (absPath, op, kind) => {
+    if (op === 'subtree') {
+      if (containsPrivateMemoryPath(absPath, roots)) return true;
+      return refusedUnderStateDir(absPath, 'write');
+    }
+    if (isPrivateMemoryPath(absPath, roots)) return true;
+    return refusedUnderStateDir(absPath, kind ?? 'write');
+  };
+}
+
+/** The allowlist in {@link sharedTurnPathDeny}, over folded segments below a state dir. */
+function sharedTurnMayReach(
+  rel: readonly string[],
+  ownId: string,
+  kind: 'read' | 'write',
+): boolean {
+  if (rel[0] === 'skills') return kind === 'read';
+  if (rel[0] !== 'personalities' || ownId.length === 0 || rel[1] !== ownId) return false;
+  const entry = rel[2];
+  if (entry === 'files' || entry === 'ui') return true;
+  return entry === 'soul.md' && rel.length === 3 && kind === 'read';
 }
