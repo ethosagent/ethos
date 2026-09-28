@@ -528,6 +528,8 @@ describe('mesh orchestration tools', () => {
       const payload = JSON.parse(String(init?.body)) as { method: string };
       if (payload.method === 'new_session') {
         return {
+          ok: true,
+          status: 200,
           json: async () => ({ result: { sessionKey: 'acp:test' } }),
         };
       }
@@ -535,11 +537,17 @@ describe('mesh orchestration tools', () => {
         throw new Error('network down');
       }
       return {
+        ok: true,
+        status: 200,
         json: async () => ({ result: { text: 'fallback response' } }),
       };
     }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
-    const tool = createRouteToAgentTool(storage, registryPath);
+    // 127.0.0.1 is a loopback member: reached through `loopbackFetch`, not the
+    // scoped fetch (`meshFetch`, pinned by mesh-transport-e2e.test.ts).
+    const tool = createRouteToAgentTool(storage, registryPath, undefined, {
+      loopbackFetch: mockFetch,
+    });
     const result = await tool.execute(
       { capability: 'research', prompt: 'analyze', retries: 2, timeout_s: 5 },
       makeCtx({ scopedFetch: { fetch: mockFetch } }),
@@ -578,12 +586,20 @@ describe('mesh orchestration tools', () => {
         params?: { text?: string };
       };
       if (payload.method === 'new_session') {
-        return { json: async () => ({ result: { sessionKey: 'acp:test' } }) };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ result: { sessionKey: 'acp:test' } }),
+        };
       }
-      return { json: async () => ({ result: { text: `ok:${payload.params?.text}` } }) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { text: `ok:${payload.params?.text}` } }),
+      };
     }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
-    const tool = createDispatchTeamTool(storage, registryPath);
+    const tool = createDispatchTeamTool(storage, registryPath, { loopbackFetch: mockFetch });
     const result = await tool.execute(
       {
         tasks: [

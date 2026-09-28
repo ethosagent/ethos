@@ -5,12 +5,13 @@ import {
   defaultRegistryPath,
   type MeshEntry,
 } from '@ethosagent/agent-mesh';
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, runIsTainted } from '@ethosagent/core';
 import type {
   BackgroundJob,
   BackgroundJobEvent,
   JobRunnerRegistry,
   JobStore,
+  SecretsResolver,
   Storage,
   Tool,
   ToolContext,
@@ -832,20 +833,134 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
 
 type FetchImpl = (url: string | URL, init?: RequestInit) => Promise<Response>;
 
+/**
+ * How the mesh tools reach a peer's `AcpServer`, injected at construction
+ * (`createDelegationTools`, wired by `buildAgentLoop` in packages/wiring).
+ */
+export interface MeshTransportDeps {
+  /** Resolves a member's `authTokenRef` — a secret NAME (ARCHITECTURE.md S9) —
+   *  to the bearer token its `/rpc` requires (`meshAuthHeaders`). */
+  secrets?: SecretsResolver;
+  /** Test seam: the fetch a loopback member is reached through. Absent →
+   *  `globalThis.fetch`. */
+  loopbackFetch?: FetchImpl;
+}
+
+/** Hosts a same-machine `ethos serve` registers under (serve.ts registers `localhost`). */
+function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'localhost' || h === '::1' || h === '[::1]' || /^127(\.\d{1,3}){3}$/.test(h);
+}
+
+/**
+ * The fetch a call to mesh member `entry` goes through. The host and port come
+ * from the mesh registry (`AgentMesh.list`, written by `ethos serve`), never
+ * from the model, so a member on a LOOPBACK host is reached directly — the
+ * personality's `safeFetch` floor refuses every private range, which made each
+ * mesh call to a same-machine peer fail (pinned by
+ * apps/acp-server/src/__tests__/mesh-transport-e2e.test.ts). Redirects are
+ * refused on that path so a peer cannot bounce the call elsewhere. Every other
+ * member goes through the scoped fetch, floor included; nothing about
+ * `safeFetch` itself is relaxed.
+ */
+function meshFetch(entry: MeshEntry, scoped: FetchImpl, deps?: MeshTransportDeps): FetchImpl {
+  if (!isLoopbackHost(entry.host)) return scoped;
+  const direct = deps?.loopbackFetch ?? ((url, init) => globalThis.fetch(url, init));
+  return (url, init) => direct(url, { ...init, redirect: 'error' });
+}
+
+/**
+ * The headers a call to `entry` carries: its bearer token, resolved from its
+ * `authTokenRef` through the injected `SecretsResolver` — the way `Dispatcher`
+ * does (extensions/team-supervisor/src/dispatcher.ts). A ref that cannot be
+ * resolved is refused here, before any request, with the ref named.
+ */
+async function meshAuthHeaders(
+  entry: MeshEntry,
+  deps?: MeshTransportDeps,
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const ref = entry.authTokenRef;
+  if (!ref) return headers;
+  if (!deps?.secrets) {
+    throw new Error(
+      `cannot resolve the bearer token for peer ${entry.agentId} (authTokenRef "${ref}"): ` +
+        'no secrets resolver is wired',
+    );
+  }
+  const token = await deps.secrets.get(ref);
+  if (!token) {
+    throw new Error(
+      `the bearer token for peer ${entry.agentId} is not stored: secret "${ref}" was not found`,
+    );
+  }
+  return { ...headers, Authorization: `Bearer ${token}` };
+}
+
+/**
+ * The bearer headers for a peer the registry lists at `host:port`, for a
+ * caller that holds only those coordinates — `MeshProxyReconciler`'s
+ * `job_status` poll of a `route_to_agent(background: true)` job. A peer the
+ * registry no longer lists gets `Content-Type` only.
+ */
+export function createMeshAuthHeaderResolver(
+  storage: Storage,
+  registryPath: string = defaultRegistryPath(),
+  transport?: MeshTransportDeps,
+): (host: string, port: string) => Promise<Record<string, string>> {
+  return async (host, port) => {
+    const entries = await new AgentMesh(registryPath, { storage }).list();
+    const entry = entries.find((e) => e.host === host && String(e.port) === port);
+    return entry ? meshAuthHeaders(entry, transport) : { 'Content-Type': 'application/json' };
+  };
+}
+
+/** Parse a peer's JSON-RPC answer; a 401 or any other HTTP failure is named. */
+async function readMeshRpc<T>(res: Response, entry: MeshEntry): Promise<T> {
+  if (res.status === 401) {
+    throw new Error(
+      `peer ${entry.agentId} refused the call with 401 Unauthorized: ` +
+        (entry.authTokenRef
+          ? `the token in secret "${entry.authTokenRef}" is not the one it accepts`
+          : 'it registered no authTokenRef, so it shares no bearer token ' +
+            '(a solo `ethos serve` keeps a private one; start it with `ethos serve --team`)'),
+    );
+  }
+  if (!res.ok) throw new Error(`peer ${entry.agentId} answered HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * MESH-TAINT — the peer's run is started by another process's `AcpServer`,
+ * which no AsyncLocalStorage link reaches, so the taint of the tool call this
+ * runs inside (`runIsTainted`, packages/core/src/scoped/run-taint.ts) travels
+ * as an explicit `untrustedOrigin: true` on the `prompt` params. `AcpServer`
+ * starts that run with `RunOptions.untrustedOrigin` (the `prompt` cases in
+ * apps/acp-server/src/index.ts), arming the downgrade before its first call.
+ * The field only ever adds refusals, so a peer that omits or strips it gains
+ * nothing it did not already have. Pinned by
+ * apps/acp-server/src/__tests__/mesh-taint-e2e.test.ts.
+ */
+function meshTaintParams(): { untrustedOrigin?: true } {
+  return runIsTainted() ? { untrustedOrigin: true } : {};
+}
+
 async function callMeshAgent(
-  host: string,
-  port: number,
+  entry: MeshEntry,
   prompt: string,
   personalityId: string | undefined,
   signal: AbortSignal | undefined,
-  fetchImpl: FetchImpl,
+  scopedFetch: FetchImpl,
+  transport?: MeshTransportDeps,
 ): Promise<string> {
-  const base = `http://${host}:${port}/rpc`;
+  const base = `http://${entry.host}:${entry.port}/rpc`;
+  const fetchImpl = meshFetch(entry, scopedFetch, transport);
+  const headers = await meshAuthHeaders(entry, transport);
 
   // Create a fresh session on the remote agent
   const sessionRes = await fetchImpl(base, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -854,27 +969,30 @@ async function callMeshAgent(
     }),
     signal,
   });
-  const sessionData = (await sessionRes.json()) as { result?: { sessionKey?: string } };
+  const sessionData = await readMeshRpc<{ result?: { sessionKey?: string } }>(sessionRes, entry);
   const sessionKey = sessionData.result?.sessionKey ?? `acp:${Date.now()}`;
 
   // Send the prompt and wait for the full result
   const promptRes = await fetchImpl(base, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 2,
       method: 'prompt',
-      params: personalityId
-        ? { sessionKey, text: prompt, personalityId }
-        : { sessionKey, text: prompt },
+      params: {
+        sessionKey,
+        text: prompt,
+        ...(personalityId ? { personalityId } : {}),
+        ...meshTaintParams(),
+      },
     }),
     signal,
   });
-  const promptData = (await promptRes.json()) as {
+  const promptData = await readMeshRpc<{
     result?: { text?: string };
     error?: { message?: string };
-  };
+  }>(promptRes, entry);
   if (promptData.error) throw new Error(promptData.error.message ?? 'Remote agent error');
   return promptData.result?.text ?? '';
 }
@@ -885,16 +1003,17 @@ async function callMeshAgent(
  * transport failure — the caller decides whether to try the next candidate.
  */
 async function spawnOnMeshPeer(
-  host: string,
-  port: number,
+  entry: MeshEntry,
   prompt: string,
   personalityId: string | undefined,
   signal: AbortSignal | undefined,
-  fetchImpl: FetchImpl,
+  scopedFetch: FetchImpl,
+  transport?: MeshTransportDeps,
 ): Promise<string> {
-  const res = await fetchImpl(`http://${host}:${port}/rpc`, {
+  const fetchImpl = meshFetch(entry, scopedFetch, transport);
+  const res = await fetchImpl(`http://${entry.host}:${entry.port}/rpc`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await meshAuthHeaders(entry, transport),
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -903,10 +1022,10 @@ async function spawnOnMeshPeer(
     }),
     signal,
   });
-  const data = (await res.json()) as {
+  const data = await readMeshRpc<{
     result?: { jobId?: string; status?: string };
     error?: { message?: string };
-  };
+  }>(res, entry);
   if (data.error) throw new Error(data.error.message ?? 'remote spawn error');
   const jobId = data.result?.jobId;
   if (!jobId) throw new Error('remote spawn returned no jobId');
@@ -950,6 +1069,7 @@ async function routeWithFailover(params: {
   abortSignal?: AbortSignal;
   personalityId?: string;
   fetchImpl: FetchImpl;
+  transport?: MeshTransportDeps;
 }): Promise<RoutedCall> {
   const candidates = selectCandidates(params.entries, params.capability);
   if (candidates.length === 0)
@@ -964,12 +1084,12 @@ async function routeWithFailover(params: {
     try {
       const signal = withTimeout(params.abortSignal, params.timeoutMs);
       const text = await callMeshAgent(
-        agent.host,
-        agent.port,
+        agent,
         params.prompt,
         params.personalityId,
         signal,
         params.fetchImpl,
+        params.transport,
       );
       return { ok: true, agent, text, attempts: i + 1, errors };
     } catch (err) {
@@ -1025,6 +1145,7 @@ export function createRouteToAgentTool(
   storage: Storage,
   registryPath = defaultRegistryPath(),
   background?: BackgroundToolDeps,
+  transport?: MeshTransportDeps,
 ): Tool {
   return {
     name: 'route_to_agent',
@@ -1119,12 +1240,12 @@ export function createRouteToAgentTool(
           try {
             const signal = withTimeout(ctx.abortSignal, timeoutMs);
             const remoteJobId = await spawnOnMeshPeer(
-              agent.host,
-              agent.port,
+              agent,
               prompt,
               ctx.personalityId,
               signal,
               fetchFn,
+              transport,
             );
 
             // Local proxy row: unique owner → the local executor (a different
@@ -1194,6 +1315,7 @@ export function createRouteToAgentTool(
         timeoutMs,
         abortSignal: ctx.abortSignal,
         fetchImpl: fetchFn,
+        ...(transport ? { transport } : {}),
       });
 
       if (!routed.ok || !routed.agent || routed.text === undefined) {
@@ -1230,6 +1352,7 @@ export function createRouteToAgentTool(
 export function createDispatchTeamTool(
   storage: Storage,
   registryPath = defaultRegistryPath(),
+  transport?: MeshTransportDeps,
 ): Tool {
   return {
     name: 'dispatch_team',
@@ -1304,6 +1427,7 @@ export function createDispatchTeamTool(
             timeoutMs,
             abortSignal: ctx.abortSignal,
             fetchImpl: fetchFn,
+            ...(transport ? { transport } : {}),
           });
 
           if (!routed.ok || !routed.agent || routed.text === undefined) {
@@ -1345,6 +1469,7 @@ export function createDispatchTeamTool(
 export function createBroadcastToAgentsTool(
   storage: Storage,
   registryPath = defaultRegistryPath(),
+  transport?: MeshTransportDeps,
 ): Tool {
   return {
     name: 'broadcast_to_agents',
@@ -1388,12 +1513,12 @@ export function createBroadcastToAgentsTool(
       const results = await Promise.allSettled(
         agents.map(async (agent) => {
           const text = await callMeshAgent(
-            agent.host,
-            agent.port,
+            agent,
             prompt,
             undefined,
             ctx.abortSignal,
             fetchFn,
+            transport,
           );
           return { agentId: agent.agentId, text };
         }),
@@ -1584,14 +1709,15 @@ export function createDelegationTools(
   storage: Storage,
   registryPath?: string,
   background?: BackgroundToolDeps,
+  transport?: MeshTransportDeps,
 ): Tool[] {
   return [
     createDelegateTaskTool(loop, background),
     createMixtureOfAgentsTool(loop),
     createListTeamTool(storage, registryPath),
-    createDispatchTeamTool(storage, registryPath),
-    createRouteToAgentTool(storage, registryPath, background),
-    createBroadcastToAgentsTool(storage, registryPath),
+    createDispatchTeamTool(storage, registryPath, transport),
+    createRouteToAgentTool(storage, registryPath, background, transport),
+    createBroadcastToAgentsTool(storage, registryPath, transport),
     createTaskStatusTool(background),
     createTaskResultTool(background),
     createTaskCancelTool(background),

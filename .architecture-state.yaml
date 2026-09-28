@@ -100,6 +100,10 @@ register_anchors:
     - { path: packages/wiring/src/decision-site.ts, line: 222, contains: "export function meetsThreshold" }
     - { path: packages/wiring/src/decision-site.ts, line: 239, contains: "export async function runDecisionSite" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 91, contains: "const containsInstructions = tier1Hit ||" }
+    - { path: extensions/tools-delegation/src/index.ts, line: 944, contains: "function meshTaintParams(" }
+    - { path: apps/acp-server/src/index.ts, line: 501, contains: "p.untrustedOrigin === true," }
+    - { path: apps/acp-server/src/index.ts, line: 732, contains: "p.untrustedOrigin === true ?" }
+    - { path: apps/ethos/src/commands/serve-a2a-runner.ts, line: 102, contains: "untrustedOrigin: true," }
 
   G-SEC:
     - { path: packages/types/src/secrets.ts, line: 18, contains: "export interface SecretsResolver" }
@@ -145,7 +149,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 584, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 586, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 124, contains: "export function checkMessage" }
