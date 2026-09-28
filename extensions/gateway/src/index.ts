@@ -489,6 +489,14 @@ interface SteerOrigin {
 interface WakeReview {
   jobId: string;
   fallbackText: string;
+  /**
+   * The job's run read untrusted content (`BackgroundJob.tainted`, V2-SEC-2):
+   * the review turn starts with the post-read downgrade armed
+   * (`RunOptions.untrustedOrigin`), so the summary it is fed cannot be
+   * persisted by it. Pinned by 'parent review — a tainted job' in
+   * `__tests__/parent-review.test.ts`.
+   */
+  tainted?: boolean;
 }
 
 /** Where a spooled turn's notices go: its own bot, chat and thread. */
@@ -1539,6 +1547,16 @@ export interface GatewayConfig {
    * `__tests__/slow-turn-notice.test.ts`.
    */
   slowTurnNoticeMs?: number;
+  /**
+   * V2-RT-3 — ms a mid-turn voice note's transcription may take while it is
+   * being built into a steer. Every later message on the lane waits behind it
+   * in the steer order (`steerOrder`), and STT is called without a deadline,
+   * so a hung provider would hold the whole lane. On expiry the voice note is
+   * steered as its placeholder text, and the transcription is recorded as
+   * `gateway.steer_transcription_timeout`. Absent → 60000. Pinned by
+   * `__tests__/steer-mid-turn.test.ts` ('a hung STT').
+   */
+  steerTranscribeTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1759,6 +1777,8 @@ export class Gateway {
   private readonly streamingEditIntervalMs: number;
   /** See `GatewayConfig.slowTurnNoticeMs` (H1). 0 = disabled. */
   private readonly slowTurnNoticeMs: number;
+  /** See `GatewayConfig.steerTranscribeTimeoutMs` (V2-RT-3). */
+  private readonly steerTranscribeTimeoutMs: number;
   /** Chats (`${platform}:${chatId}`) where streaming was disabled after
    *  repeated flood-waits — future turns there fall back to non-streaming. */
   private readonly streamingDisabledChats = new Set<string>();
@@ -1776,8 +1796,10 @@ export class Gateway {
    * V-GC-4 — per lane, the settle of the last mid-turn message still building
    * its steer (a voice note's STT, attachment reads). A later message on the
    * lane waits for it before it pushes or enqueues, so a quick text never
-   * overtakes a voice note sent before it. Pinned by
-   * `__tests__/steer-mid-turn.test.ts` ('arrival order').
+   * overtakes a voice note sent before it. A voice note's STT is bounded by
+   * `steerTranscribeTimeoutMs`, so a hung provider cannot hold the lane
+   * (V2-RT-3). Pinned by `__tests__/steer-mid-turn.test.ts` ('arrival order',
+   * 'a hung STT').
    */
   private readonly steerOrder = new Map<string, Promise<void>>();
   /**
@@ -2069,6 +2091,7 @@ export class Gateway {
     this.streamingGroup = config.streamingEdits?.group ?? false;
     this.streamingEditIntervalMs = config.streamingEditIntervalMs ?? 2500;
     this.slowTurnNoticeMs = config.slowTurnNoticeMs ?? 8000;
+    this.steerTranscribeTimeoutMs = config.steerTranscribeTimeoutMs ?? 60_000;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.clarifyEscalationDelayMs = config.clarifyEscalationDelayMs ?? DEFAULT_ESCALATION_DELAY_MS;
@@ -5099,14 +5122,32 @@ export class Gateway {
       return;
     }
     counts.replayed++;
+    const jobId = row.reviewJobId ?? '';
+    const tainted = await this.reviewJobTainted(bot, jobId);
     this.enqueueReview(
       bot,
       adapter,
       message,
       row.id,
-      { jobId: row.reviewJobId ?? '', fallbackText },
+      { jobId, fallbackText, ...(tainted ? { tainted: true } : {}) },
       row.laneKey,
     );
+  }
+
+  /**
+   * Whether a replayed review's job is tainted (`WakeReview.tainted`). The
+   * spool row does not carry it, so it is read back from the job store — and
+   * when that read cannot answer (no store, no row, a throw) the review is
+   * treated as tainted: a missed downgrade can persist an injection, a spurious
+   * one only refuses memory writes for one review turn.
+   */
+  private async reviewJobTainted(bot: GatewayBotConfig, jobId: string): Promise<boolean> {
+    try {
+      const job = bot.jobStore ? await bot.jobStore.get(jobId) : null;
+      return job ? job.tainted === true : true;
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -5246,9 +5287,30 @@ export class Gateway {
         bot.binding.type === 'team'
           ? undefined
           : (this.personalityIds.get(laneKey) ?? bot.binding.name);
-      steerText = (
-        await this.transcribeVoiceNote(message, text, personalityId, { attachmentCache, storage })
-      ).text;
+      // Bounded (V2-RT-3): the lane's later messages wait on this build.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<undefined>((resolve) => {
+        const t = setTimeout(() => resolve(undefined), this.steerTranscribeTimeoutMs);
+        t.unref?.();
+        timer = t;
+      });
+      try {
+        const transcribed = await Promise.race([
+          this.transcribeVoiceNote(message, text, personalityId, { attachmentCache, storage }),
+          deadline,
+        ]);
+        if (transcribed) {
+          steerText = transcribed.text;
+        } else {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.steer_transcription_timeout',
+            cause: `voice note not transcribed within ${this.steerTranscribeTimeoutMs}ms; steered as its placeholder text`,
+            details: { platform: message.platform, chatId: message.chatId },
+          });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
     }
     const blocks = await steerAttachmentBlocks(attachments, {
       ...(storage ? { storage } : {}),
@@ -5841,6 +5903,8 @@ export class Gateway {
           // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
           // from inside a review turn by reading this off its ToolContext.
           ...(review ? { reviewOfJobId: review.jobId } : {}),
+          // V2-SEC-2 — a tainted job's review starts downgraded (`WakeReview.tainted`).
+          ...(review?.tainted ? { untrustedOrigin: true } : {}),
           // openclaw-9.5 item 1 — a user turn answers `credential_required`
           // with a link, never by taking the secret in chat (`deliverAnswer`).
           // A review turn does not opt in: its refusal would reach the user as
@@ -6404,7 +6468,8 @@ export class Gateway {
       this.closeSpool(row.id);
       return false;
     }
-    this.enqueueReview(bot, adapter, message, row.id, { jobId: job.id, fallbackText }, laneKey);
+    const review = { jobId: job.id, fallbackText, ...(job.tainted ? { tainted: true } : {}) };
+    this.enqueueReview(bot, adapter, message, row.id, review, laneKey);
     return true;
   }
 
@@ -8249,26 +8314,37 @@ export class Gateway {
       // Route through outbound dedup — same path as normal responses.
       // Use target as the session key for dedup so repeated sends to the
       // same target with same content are suppressed within TTL. No ledger
-      // stands behind this send, so the check is a RESERVATION: `shouldSend`
+      // stands behind this send, so the check is a RESERVATION: `reserve`
       // arms the key now (a second identical send while this one is in
       // flight is a duplicate — V-GC-1), `record` commits it once the
       // platform confirms, and `release` un-arms it on failure so a retry
       // inside the TTL goes out instead of being reported as sent (UBP-003).
       // A duplicate that arrives while the first is in flight shares that
-      // send's outcome (`inFlightSends`). Pinned by
-      // `__tests__/dedup-send-retry.test.ts`.
+      // send's outcome (`inFlightSends`). Both are owned (V2-RT-4): a send
+      // that outlived the TTL commits, releases and clears only its own
+      // reservation and flight, never those of the identical send that went
+      // out after the TTL. Pinned by `__tests__/dedup-send-retry.test.ts`.
       const dedupKey = `outbound:${platform}:${target}`;
       const flightKey = `${dedupKey}\u0000${body}`;
-      if (!this.outboundDedup.shouldSend(dedupKey, body)) {
+      const reservation = this.outboundDedup.reserve(dedupKey, body);
+      if (!reservation) {
         // Silently deduplicated — against a send still in flight, its outcome.
         return (await this.inFlightSends.get(flightKey)) ?? { ok: true };
       }
-      const flight = this.sendReserved(adapter, platform, target, body, media, dedupKey);
+      const flight = this.sendReserved(
+        adapter,
+        platform,
+        target,
+        body,
+        media,
+        dedupKey,
+        reservation,
+      );
       this.inFlightSends.set(flightKey, flight);
       try {
         return await flight;
       } finally {
-        this.inFlightSends.delete(flightKey);
+        if (this.inFlightSends.get(flightKey) === flight) this.inFlightSends.delete(flightKey);
       }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -8284,6 +8360,7 @@ export class Gateway {
     body: string,
     media: unknown,
     dedupKey: string,
+    reservation: symbol,
   ): Promise<{ ok: boolean; error?: string }> {
     let confirmed = false;
     try {
@@ -8312,12 +8389,12 @@ export class Gateway {
         return { ok: false, error: result.error ?? 'Adapter send failed' };
       }
       confirmed = true;
-      this.outboundDedup.record(dedupKey, body);
+      this.outboundDedup.record(dedupKey, body, undefined, reservation);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     } finally {
-      if (!confirmed) this.outboundDedup.release(dedupKey, body);
+      if (!confirmed) this.outboundDedup.release(dedupKey, body, undefined, reservation);
     }
   }
 

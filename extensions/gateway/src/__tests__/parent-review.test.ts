@@ -60,6 +60,7 @@ function recordingAdapter() {
 interface RunOpts {
   abortSignal?: AbortSignal;
   reviewOfJobId?: string;
+  untrustedOrigin?: boolean;
 }
 type RunImpl = (
   text: string,
@@ -67,9 +68,13 @@ type RunImpl = (
 ) => AsyncGenerator<{ type: string; [k: string]: unknown }>;
 
 function scriptedLoop(impl?: RunImpl) {
-  const calls: Array<{ text: string; reviewOfJobId?: string }> = [];
+  const calls: Array<{ text: string; reviewOfJobId?: string; untrustedOrigin?: boolean }> = [];
   const run = vi.fn((text: string, opts: RunOpts) => {
-    calls.push({ text, ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}) });
+    calls.push({
+      text,
+      ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}),
+      ...(opts.untrustedOrigin ? { untrustedOrigin: true } : {}),
+    });
     if (impl) return impl(text, opts);
     return (async function* () {
       yield { type: 'text_delta', text: 'Reviewed: the build is green.' };
@@ -311,13 +316,35 @@ describe("parent review — deliver: 'parent'", () => {
   });
 });
 
+// V2-SEC-2 follow-up (fix2-sec H2): a review turn is a fresh run fed the job's
+// result. When the job's child read untrusted content (`BackgroundJob.tainted`,
+// recorded by the executor — extensions/job-runner/src/__tests__/untrusted-taint.test.ts
+// pins that half and the refused memory_write), the review starts with the
+// post-read downgrade already armed (`RunOptions.untrustedOrigin`).
+describe('parent review — a tainted job', () => {
+  it('starts the review turn with untrustedOrigin; an untainted job does not', async () => {
+    for (const tainted of [true, false]) {
+      const spool = new SQLiteInboundSpool(':memory:');
+      const out = recordingAdapter();
+      const j = job(tainted ? { tainted: true } : {});
+      const s = scriptedLoop();
+      const exec = fakeExecutor();
+      gateway(s.loop, out.adapter, fakeJobStore([j]), spool, { executor: exec.executor });
+      exec.fire(j);
+      await waitUntil(() => rows(spool)[0]?.status === 'done');
+      expect(s.calls).toHaveLength(1);
+      expect(s.calls[0]?.untrustedOrigin).toBe(tainted ? true : undefined);
+    }
+  });
+});
+
 describe('parent review — a crash mid-review', () => {
   /** First process: admit the review, let `impl` run it, then "kill -9". */
-  async function crashDuringReview(impl: RunImpl) {
+  async function crashDuringReview(impl: RunImpl, overrides: Partial<BackgroundJob> = {}) {
     const spool = new SQLiteInboundSpool(':memory:');
     const ledger = new SQLiteDeliveryLedger(':memory:');
     const out = recordingAdapter();
-    const j = job();
+    const j = job(overrides);
     const store = fakeJobStore([j]);
     const first = scriptedLoop(impl);
     const exec = fakeExecutor();
@@ -344,6 +371,20 @@ describe('parent review — a crash mid-review', () => {
     expect(second.calls).toHaveLength(1);
     expect(second.calls[0]?.reviewOfJobId).toBe(j.id);
     expect(out.sends).toEqual(['Reviewed: the build is green.']);
+  });
+
+  it('a replayed review of a tainted job starts downgraded too (V2-SEC-2)', async () => {
+    const { spool, ledger, out, store } = await crashDuringReview(
+      async function* () {
+        await new Promise(() => {});
+      },
+      { tainted: true },
+    );
+    const second = scriptedLoop();
+    const gw2 = gateway(second.loop, out.adapter, store, spool, { deliveryLedger: ledger });
+    await gw2.replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(second.calls[0]?.untrustedOrigin).toBe(true);
   });
 
   it('with a tool started, the next process sends the plain notice and re-runs nothing', async () => {

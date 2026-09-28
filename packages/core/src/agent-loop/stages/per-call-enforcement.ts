@@ -1,5 +1,12 @@
-import type { BeforeToolCallResult, HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
+import type {
+  BeforeToolCallResult,
+  HookRegistry,
+  InjectionDefenseKit,
+  PersonalityConfig,
+  VoiceTurnOrigin,
+} from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
+import { activeRunTaint, type RunTaintLink, withRunTaint } from '../../scoped/run-taint';
 import { type IdenticalStreak, updateIdenticalStreak } from '../budgets';
 import { canonicalizeArgs, denyRuleReason, matchDenyRule } from '../deny-rules';
 import type { HaltDecision, WatcherTap } from '../turn-context';
@@ -296,34 +303,79 @@ export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
   'skill_propose',
 ]);
 
+/**
+ * Tools that schedule a LATER run whose prompt this run writes (V2-SEC-2): a
+ * cron job, a goal, a kanban ticket, a background sub-agent. That text is
+ * authored under the taint, and the run it seeds starts fresh — so, like the
+ * memory writers, they stay refused for the rest of the run once an untrusted
+ * result was seen. Refused rather than marked tainted-origin because the runs
+ * they seed are started by schedulers this loop does not own (the cron
+ * scheduler, the kanban dispatcher, `BackgroundExecutor`); a mark nothing reads
+ * would be a guarantee with no enforcer. Not part of the operator's
+ * `postReadDowngrade.tools` list (that list is also the step window, and a
+ * foreground `delegate_task` or `cron list` has no reason to pause), so
+ * `postReadDowngrade.enabled: false` is their off switch. The predicate
+ * answers for the call's args; absent args (an in-script call through
+ * `ScriptToolBridge`, which passes none) refuse — fail closed. Pinned by
+ * `../../__tests__/downgrade-derived-runs.test.ts`.
+ */
+const CRON_NON_AUTHORING = ['list', 'get', 'read_run', 'pause', 'resume', 'run', 'remove'];
+type SchedulerRule = (args: Record<string, unknown>) => boolean;
+const RUN_SCOPED_SCHEDULERS: ReadonlyMap<string, SchedulerRule> = new Map<string, SchedulerRule>([
+  // Only `create`/`update` author a prompt; the other actions name an existing job.
+  ['cron', (a) => !CRON_NON_AUTHORING.includes(String(a.action))],
+  ['goal_create', () => true],
+  ['kanban_create', () => true],
+  ['kanban_create_goal', () => true],
+  ['kanban_create_swarm', () => true],
+  ['kanban_decompose', () => true],
+  ['delegate_task', (a) => a.background === true],
+]);
+
 /** One run's downgrade state: the step window, and whether any untrusted result was seen. */
 export interface DowngradeState {
   value: number;
   untrustedSeen?: boolean;
+  /** Called once, when `untrustedSeen` first turns true — taints the run this one derives from. */
+  onTaint?: () => void;
 }
 
-/** True when the downgrade refuses `toolName` right now. */
+/** True when the downgrade refuses `toolName` (called with `args`) right now. */
 export function isDowngraded(
   state: DowngradeState,
   enabled: boolean,
   tools: ReadonlySet<string>,
   toolName: string,
+  args?: unknown,
 ): boolean {
-  if (!enabled || !tools.has(toolName)) return false;
+  if (!enabled) return false;
+  const scheduler = RUN_SCOPED_SCHEDULERS.get(toolName);
+  if (state.untrustedSeen === true && scheduler) {
+    const record = typeof args === 'object' && args !== null ? args : undefined;
+    if (!record || scheduler(record as Record<string, unknown>)) return true;
+  }
+  if (!tools.has(toolName)) return false;
   if (state.value > 0) return true;
   return state.untrustedSeen === true && RUN_SCOPED_DOWNGRADE_TOOLS.has(toolName);
 }
 
+function taint(state: DowngradeState): void {
+  if (state.untrustedSeen === true) return;
+  state.untrustedSeen = true;
+  state.onTaint?.();
+}
+
 /**
  * An untrusted result seen INSIDE an iteration — an in-script call through the
- * `ScriptToolBridge` (./script-tool-bridge.ts) — arms the window and the
- * run-scoped taint at once, so a later call in the same script is refused
- * too. The iteration-end `advanceDowngrade` then runs as usual.
+ * `ScriptToolBridge` (./script-tool-bridge.ts), or a derived run's taint
+ * reported back (`resolveRunDowngrade`) — arms the window and the run-scoped
+ * taint at once, so a later call in the same iteration is refused too. The
+ * iteration-end `advanceDowngrade` then runs as usual.
  */
 export function armDowngrade(state: DowngradeState, enabled: boolean, turns: number): void {
   if (!enabled) return;
   state.value = Math.max(state.value, turns);
-  state.untrustedSeen = true;
+  taint(state);
 }
 
 /**
@@ -341,6 +393,77 @@ export function advanceDowngrade(
   if (state.value > 0) state.value--;
   if (enabled && untrustedRead) {
     state.value = turns;
-    state.untrustedSeen = true;
+    taint(state);
   }
+}
+
+type DowngradeConfig = NonNullable<
+  NonNullable<NonNullable<PersonalityConfig['safety']>['injectionDefense']>['postReadDowngrade']
+>;
+
+/**
+ * One run's downgrade settings and state, fresh per `AgentLoop.run()` (a new
+ * user message lifts the refusals). A run started INSIDE a tool call of
+ * another run — a sub-agent — is DERIVED from it (V2-SEC-2): when that run is
+ * already tainted this one starts armed (window and taint), and when this one
+ * reads untrusted content it taints that run too, whose context receives this
+ * run's answer. The link comes from `activeRunTaint` (../../scoped/run-taint.ts),
+ * so it follows every nested `run()` without the tool forwarding anything.
+ * Pinned by `../../__tests__/downgrade-derived-runs.test.ts`.
+ *
+ * A run DETACHED from its origin — a background job's child, the gateway's
+ * parent-review turn of that job — has no open link, so `origin` carries it
+ * explicitly: `untrustedOrigin` starts the run armed (`RunOptions.untrustedOrigin`,
+ * set by `Gateway` for a job whose `BackgroundJob.tainted` is recorded) and
+ * `onUntrustedRead` reports this run's own taint (`RunOptions.onUntrustedRead`,
+ * wired by `EthosJobRunner` to `JobRunnerContext.markTainted`). Pinned by
+ * extensions/job-runner/src/__tests__/untrusted-taint.test.ts.
+ */
+export function resolveRunDowngrade(
+  config: DowngradeConfig | undefined,
+  injection: Pick<InjectionDefenseKit, 'resolveDowngradedTools'>,
+  origin: { untrustedOrigin?: boolean; onUntrustedRead?: () => void } = {},
+): { dgEnabled: boolean; dgTurns: number; dgTools: Set<string>; dgRemainingRef: DowngradeState } {
+  const dgEnabled = config?.enabled !== false;
+  const dgTurns = config?.turns ?? 2;
+  const dgRemainingRef: DowngradeState = { value: 0 };
+  const parent = activeRunTaint();
+  // Armed BEFORE `onTaint` is set: starting tainted is not news to the parent.
+  if (parent?.state.untrustedSeen === true || origin.untrustedOrigin === true) {
+    armDowngrade(dgRemainingRef, dgEnabled, dgTurns);
+  }
+  const notify = origin.onUntrustedRead;
+  if (dgRemainingRef.untrustedSeen === true) notify?.();
+  if (parent || notify) {
+    dgRemainingRef.onTaint = () => {
+      if (parent?.open) parent.mark();
+      notify?.();
+    };
+  }
+  return {
+    dgEnabled,
+    dgTurns,
+    dgTools: injection.resolveDowngradedTools(config?.tools),
+    dgRemainingRef,
+  };
+}
+
+/**
+ * Run one tool batch with this run's taint visible to everything the batch
+ * starts (`withRunTaint`, ../../scoped/run-taint.ts): a sub-agent run reads it
+ * in `resolveRunDowngrade`, `ScopedFsImpl.checkReach` reads it for writes into
+ * the Ethos state dir. The link closes when the batch settles.
+ */
+export function runToolsInTaintScope<T>(
+  dg: { dgRemaining: DowngradeState; dgEnabled: boolean; dgTurns: number },
+  batch: () => Promise<T>,
+): Promise<T> {
+  const link: RunTaintLink = {
+    state: dg.dgRemaining,
+    open: true,
+    mark: () => armDowngrade(dg.dgRemaining, dg.dgEnabled, dg.dgTurns),
+  };
+  return withRunTaint(link, batch).finally(() => {
+    link.open = false;
+  });
 }

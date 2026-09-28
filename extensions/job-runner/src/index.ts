@@ -652,6 +652,13 @@ export class BackgroundExecutor {
 
   private async runOne(job: BackgroundJob, controller: AbortController): Promise<void> {
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    // V2-SEC-2 — set by the runner's `markTainted`; every terminal write carries it.
+    const tainted = { value: false };
+    const finish = (
+      terminal: 'done' | 'failed' | 'aborted',
+      fields: { summary?: string; error?: string },
+    ): Promise<void> =>
+      this.finishAndNotify(job.id, terminal, tainted.value ? { ...fields, tainted: true } : fields);
     try {
       // Pre-start aggregate spend gate. Sum spend across the root's jobs
       // (excluding this one); refuse to run if the cap is already reached.
@@ -662,7 +669,7 @@ export class BackgroundExecutor {
           .filter((j) => j.id !== job.id)
           .reduce((acc, j) => acc + (j.spendUsd ?? 0), 0);
         if (sum >= cap) {
-          await this.finishAndNotify(job.id, 'failed', {
+          await finish('failed', {
             error: `root background spend cap $${cap} reached (already spent $${sum})`,
           });
           return;
@@ -732,6 +739,10 @@ export class BackgroundExecutor {
         // `emitArtifact` above, batched by `createLogSink` into bounded
         // `runner_log` rows instead of one write per line.
         appendLog: (stream, line) => logSink.appendLog(stream, line),
+        // V2-SEC-2 — recorded with the terminal transition (`finishAndNotify`).
+        markTainted: () => {
+          tainted.value = true;
+        },
       })) {
         // Cancel, cost cap, shutdown: stop here rather than drain (contrast
         // `done` below). Past an abort AgentLoop starts no new tool work —
@@ -834,18 +845,18 @@ export class BackgroundExecutor {
 
       // Terminal transition, in priority order.
       if (costBreached) {
-        await this.finishAndNotify(job.id, 'failed', {
+        await finish('failed', {
           error: `exceeded max_cost_usd $${job.maxCostUsd} (spent $${spend.toFixed(4)})`,
         });
       } else if (cancelled && !answered) {
-        await this.finishAndNotify(job.id, 'aborted', { error: 'cancelled by task_cancel' });
+        await finish('aborted', { error: 'cancelled by task_cancel' });
       } else if (this.shuttingDown && !answered) {
-        await this.finishAndNotify(job.id, 'aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
+        await finish('aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
       } else if (errorText) {
-        await this.finishAndNotify(job.id, 'failed', { error: errorText });
+        await finish('failed', { error: errorText });
       } else {
         const summary = extractSummarySection(output) ?? output;
-        await this.finishAndNotify(job.id, 'done', {
+        await finish('done', {
           summary: capText(summary, SUMMARY_RESULT_CAP),
         });
       }
@@ -855,9 +866,9 @@ export class BackgroundExecutor {
       // the honest terminal state.
       try {
         if (this.shuttingDown) {
-          await this.finishAndNotify(job.id, 'aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
+          await finish('aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
         } else {
-          await this.finishAndNotify(job.id, 'failed', { error: errMsg(err) });
+          await finish('failed', { error: errMsg(err) });
         }
       } catch (finishErr) {
         this.log?.(`finish failed for ${job.id}: ${errMsg(finishErr)}`);
@@ -1011,7 +1022,7 @@ export class BackgroundExecutor {
   private async finishAndNotify(
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
-    fields: { summary?: string; error?: string },
+    fields: { summary?: string; error?: string; tainted?: boolean },
   ): Promise<void> {
     await this.store.finish(id, terminal, fields);
     // The card's last sample. Published before the completion notice so the run

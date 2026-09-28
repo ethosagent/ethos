@@ -66,15 +66,15 @@ register_anchors:
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
     - { path: packages/core/src/capability-resolver.ts, line: 80, contains: "export function resolveCapabilities" }
-    - { path: packages/core/src/scoped/scoped-process.ts, line: 110, contains: "this.allowedBinaries.has(binary)" }
+    - { path: packages/core/src/scoped/scoped-process.ts, line: 127, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
     - { path: packages/core/src/fs-reach.ts, line: 152, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 205, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 244, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 154, contains: "private check(rawPath" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 233, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 277, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 155, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
@@ -93,8 +93,8 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 33, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 459, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 731, contains: "resolveDowngradedTools(dgConfig?.tools)" }
-    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 779, contains: "await handleUntrustedResult(" }
+    - { path: packages/core/src/agent-loop.ts, line: 728, contains: "= resolveRunDowngrade(" }
+    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 781, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
     - { path: packages/wiring/src/decision-site.ts, line: 222, contains: "export function meetsThreshold" }
@@ -107,9 +107,9 @@ register_anchors:
     - { path: packages/wiring/src/skill-passthrough.ts, line: 16, contains: "export function deriveSkillPassthrough" }
 
   G-RED:
-    - { path: packages/safety/redact/src/index.ts, line: 203, contains: "export function detectSecrets" }
-    - { path: packages/safety/redact/src/index.ts, line: 215, contains: "export function redactString" }
-    - { path: packages/safety/redact/src/index.ts, line: 232, contains: "export function redactJson" }
+    - { path: packages/safety/redact/src/index.ts, line: 235, contains: "export function detectSecrets" }
+    - { path: packages/safety/redact/src/index.ts, line: 247, contains: "export function redactString" }
+    - { path: packages/safety/redact/src/index.ts, line: 264, contains: "export function redactJson" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 206, contains: "redactJson(trace.attrs)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 344, contains: "redactJson(span.attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 397, contains: "redactJson(attrs, extraRedactPatterns)" }
@@ -122,8 +122,8 @@ register_anchors:
     - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 79, contains: "export async function enforceBeforeToolCall" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 83, contains: "const denied = checkDenyRules(" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 86, contains: "export async function enforceBeforeToolCall" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 90, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
     - { path: packages/wiring/src/approval-seams.ts, line: 142, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }

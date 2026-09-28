@@ -586,7 +586,7 @@ describe('SQLiteJobStore', () => {
     // Bump user_version beyond the code's supported version out-of-band.
     const Database = (await import('@ethosagent/sqlite')).default;
     const raw = new Database(path);
-    raw.pragma('user_version = 10');
+    raw.pragma('user_version = 11');
     raw.close();
 
     expect(() => new SQLiteJobStore(path)).toThrow(/newer than code/);
@@ -771,7 +771,7 @@ describe('SQLiteJobStore', () => {
     procB.close();
   });
 
-  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices + deliver + origin user + narrowing) to v9, preserving rows', async () => {
+  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices + deliver + origin user + narrowing + taint) to v10, preserving rows', async () => {
     const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
     tmpFiles.push(path);
     // Build a v1 jobs table out-of-band: the full v1 shape minus the remote
@@ -831,7 +831,7 @@ describe('SQLiteJobStore', () => {
       .run();
     rawSeed.close();
 
-    // Opening with current code migrates v1 -> v9.
+    // Opening with current code migrates v1 -> v10.
     const store = new SQLiteJobStore(path);
     const legacy = await store.get('legacy-1');
     expect(legacy?.summary).toBe('legacy summary');
@@ -846,6 +846,8 @@ describe('SQLiteJobStore', () => {
     // Old rows name no originator — the honest state before the column.
     expect(legacy?.originUserId).toBeUndefined();
     expect(legacy?.toolsetNarrowing).toBeUndefined();
+    // Old rows were never marked tainted — nothing recorded a taint then.
+    expect(legacy?.tainted).toBeUndefined();
 
     const created = await store.create(
       baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-1' }),
@@ -863,7 +865,7 @@ describe('SQLiteJobStore', () => {
       raw2.prepare(`UPDATE jobs SET delivered_at = 'not-a-number' WHERE id = 'legacy-1'`).run(),
     ).toThrow();
     raw2.close();
-    expect(version).toBe(9);
+    expect(version).toBe(10);
   });
 
   it('round-trips originUserId, absent when the spawn had no originating user', async () => {
@@ -883,6 +885,19 @@ describe('SQLiteJobStore', () => {
       (await store.create(baseInput({ toolsetNarrowing: { narrow: [] } }))).toolsetNarrowing,
     ).toEqual({ narrow: [] });
     expect((await store.create(baseInput())).toolsetNarrowing).toBeUndefined();
+    store.close();
+  });
+
+  it('finish records tainted; absent when the run read nothing untrusted (V2-SEC-2)', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const a = await store.create(baseInput());
+    const b = await store.create(baseInput());
+    await store.claimNextQueued(a.owner);
+    await store.claimNextQueued(b.owner);
+    await store.finish(a.id, 'done', { summary: 's', tainted: true });
+    await store.finish(b.id, 'done', { summary: 's' });
+    expect((await store.get(a.id))?.tainted).toBe(true);
+    expect((await store.get(b.id))?.tainted).toBeUndefined();
     store.close();
   });
 

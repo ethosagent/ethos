@@ -31,6 +31,7 @@ import { recoverFromOverflow } from './agent-loop/stages/overflow-recovery';
 import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
+  resolveRunDowngrade,
 } from './agent-loop/stages/per-call-enforcement';
 import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
@@ -292,6 +293,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   jobId?: string;
   /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
   reviewOfJobId?: string;
+  untrustedOrigin?: boolean; // V2-SEC-2: start tainted (resolveRunDowngrade)
+  onUntrustedRead?: () => void; // V2-SEC-2: fires on taint (resolveRunDowngrade)
   /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
   credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
@@ -720,16 +723,13 @@ export class AgentLoop {
       plan: [] as DryRunToolPlan[],
     };
 
-    // Ch.3d — post-untrusted-read downgrade. After any `outputIsUntrusted`
-    // tool returns, dangerous tools are blocked for the next N iterations.
-    // Counter resets at the start of each `run()` (a fresh user message),
-    // matching the chapter's "counter resets when the user sends a fresh
-    // message" contract.
-    const dgConfig = personality.safety?.injectionDefense?.postReadDowngrade;
-    const dgEnabled = dgConfig?.enabled !== false;
-    const dgTurns = dgConfig?.turns ?? 2;
-    const dgTools = this.safety.injection.resolveDowngradedTools(dgConfig?.tools);
-    const dgRemainingRef = { value: 0 };
+    // Ch.3d — post-untrusted-read downgrade: fresh per run() (a new user message), pre-armed
+    // when this run is a sub-agent of a tainted one (`resolveRunDowngrade`, V2-SEC-2).
+    const { dgEnabled, dgTurns, dgTools, dgRemainingRef } = resolveRunDowngrade(
+      personality.safety?.injectionDefense?.postReadDowngrade,
+      this.safety.injection,
+      opts,
+    );
 
     const tierEscalationRef: { value?: string } = {};
     const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
@@ -1062,10 +1062,9 @@ export class AgentLoop {
       abortSignal,
       contextStore,
       rootSessionKey: opts.rootSessionKey ?? sessionKey,
+      untrustedSeen: dgRemainingRef.untrustedSeen === true, // V2-SEC-2: no tainted flush
       systemPrompt: systemPrompt ?? '',
-      ...(opts.maxCompletionTokens !== undefined
-        ? { maxCompletionTokens: opts.maxCompletionTokens }
-        : {}),
+      maxCompletionTokens: opts.maxCompletionTokens, // dropped when undefined (buildTurnEndCtx)
     };
     yield* maybeConsolidateAtTurnEnd(turnDeps, buildTurnEndCtx(setup, turnEndExtras));
   }
