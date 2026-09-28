@@ -232,7 +232,7 @@ Prevent · Do not roll adapter-local dedup. The gateway is the single dedup path
 
 ### Telegram or Discord bot does not respond {#bot-not-responding}
 
-Cause · The bot's token is invalid or the bot is not added to the channel. An adapter that fails to start does not stop the other bots. A transient failure (a network error) is retried in the background, from 5 seconds up to every 5 minutes, until the adapter starts. A refused credential (`401`, `TokenInvalid`, `invalid_auth`) is logged as permanent and not retried (`startAdaptersIsolated` in `apps/ethos/src/commands/gateway.ts`).
+Cause · The bot's token is invalid or the bot is not added to the channel. An adapter that fails to start does not stop the other bots. A transient failure (a network error) is retried in the background, from 5 seconds up to every 5 minutes, until the adapter starts. A refused credential (`401`, `TokenInvalid`, `invalid_auth`) is logged as permanent and not retried (`startAdaptersIsolated` in `apps/ethos/src/commands/gateway.ts`). When every adapter's credential is refused, `ethos gateway start` exits with code `78`, which `ethos run-all` and the service templates do not restart. `ethos boot` keeps the web UI, cron and serve running and warns `no chat adapter started`, so you can fix the token in Settings.
 
 Fix · Look in `~/.ethos/logs/gateway.log` for `adapter <id> failed to start` or `failed permanently`. For a permanent failure, re-run `ethos setup messaging`, paste a fresh token, and restart the gateway. Confirm the bot is in the target chat with the required permissions.
 

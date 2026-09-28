@@ -295,3 +295,32 @@ describe('MessageDedupCache — wouldSend() + record() after a confirmed send (U
     expect(drops).toHaveLength(1);
   });
 });
+
+// V2-RT-4 — a reservation is owned: only the token `reserve` returned may
+// commit or release it, so a stale holder cannot touch a newer reservation.
+describe('MessageDedupCache — owned reservations', () => {
+  it('reserve arms the key and refuses a duplicate while armed', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.reserve('s1', 'hello')).toBeDefined();
+    expect(cache.reserve('s1', 'hello')).toBeUndefined();
+  });
+
+  it("a stale token neither releases nor commits a newer reservation's key", () => {
+    let now = 1_000;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      const cache = new MessageDedupCache({ ttlMs: 10 });
+      const stale = cache.reserve('s1', 'hello');
+      now += 20; // past the TTL
+      const current = cache.reserve('s1', 'hello');
+      expect(current).toBeDefined();
+      cache.release('s1', 'hello', undefined, stale);
+      expect(cache.wouldSend('s1', 'hello')).toBe(false);
+      cache.release('s1', 'hello', undefined, current);
+      expect(cache.wouldSend('s1', 'hello')).toBe(true);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});

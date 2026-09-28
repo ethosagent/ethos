@@ -256,6 +256,16 @@ export class DiscordAdapter
   private commandContext?: CommandContext;
 
   private readonly pendingInteractions = new Map<string, Interaction>();
+  /**
+   * V2-RT-1 — `start()` is re-entrant: the gateway's adapter-start retry
+   * (`retryAdapterStart`, apps/ethos/src/commands/gateway.ts) calls it again on
+   * this same instance after a transient login failure, and discord.js runs
+   * every listener registered for an event. The handlers are therefore
+   * registered once per instance; only the loads, the slash-command upload and
+   * the login are repeated. Pinned by `__tests__/start-permanent-error.test.ts`
+   * ('registers each event handler once across a retried start').
+   */
+  private handlersRegistered = false;
   private extraCommands: { name: string; description: string }[] = [];
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
@@ -356,17 +366,20 @@ export class DiscordAdapter
       },
     };
 
-    registerMessageHandler(messageCtx);
-    registerEditHandler(messageCtx);
+    if (!this.handlersRegistered) {
+      this.handlersRegistered = true;
+      registerMessageHandler(messageCtx);
+      registerEditHandler(messageCtx);
 
-    registerInteractionHandler(this.client, {
-      pendingInteractions: this.pendingInteractions,
-      onClarifyInteraction: (raw) => this.clarifyInteractionHandler?.(raw),
-      onCommand: (payload, interaction) => this.handleCommand(payload, interaction),
-      onApprovalDecision: (approvalId, decision, userId, interaction) => {
-        this.handleApprovalDecision(approvalId, decision, userId, interaction);
-      },
-    });
+      registerInteractionHandler(this.client, {
+        pendingInteractions: this.pendingInteractions,
+        onClarifyInteraction: (raw) => this.clarifyInteractionHandler?.(raw),
+        onCommand: (payload, interaction) => this.handleCommand(payload, interaction),
+        onApprovalDecision: (approvalId, decision, userId, interaction) => {
+          this.handleApprovalDecision(approvalId, decision, userId, interaction);
+        },
+      });
+    }
 
     if (this.applicationId && this.registerCommandsTo) {
       await this.registerSlashCommands();

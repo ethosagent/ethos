@@ -3,7 +3,7 @@
 // an explicit trust grant keyed on (directory, content hash), and never shadows
 // a same-id plugin the user installed under `~/.ethos/plugins`.
 
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -268,4 +268,69 @@ describe('workspace plugin trust covers what executes', () => {
   });
   // Import containment runs in Node's resolver, which vitest's module runner
   // bypasses — pinned in a real process by workspace-import-guard.test.ts.
+});
+
+// V2-RT-2 — pnpm links each dependency as a DIRECTORY symlink
+// (`node_modules/dep -> .pnpm/dep@1.0.0/node_modules/dep`). The hash records a
+// link as its target text and never reads through it (the target's files are
+// hashed where they really live); a link that leaves the folder refuses the
+// grant with a message instead of an EISDIR.
+describe('workspace plugin trust over symlinks', () => {
+  async function pnpmPlugin(): Promise<{ dir: string; real: string }> {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `pn-${tag}`, 't');
+    const real = join(dir, 'node_modules', '.pnpm', 'dep@1.0.0', 'node_modules', 'dep');
+    await mkdir(real, { recursive: true });
+    await writeFile(join(real, 'index.js'), 'export const v = 1;');
+    await symlink(
+      join('.pnpm', 'dep@1.0.0', 'node_modules', 'dep'),
+      join(dir, 'node_modules', 'dep'),
+    );
+    return { dir, real };
+  }
+
+  it('trusts a plugin whose dependencies were installed with pnpm inside its folder', async () => {
+    const { dir, real } = await pnpmPlugin();
+    const storage = new FsStorage();
+    const pluginsDir = join(dataDir, 'plugins');
+    await trustWorkspacePlugin(storage, pluginsDir, dir);
+    expect(await workspaceTrustState(storage, pluginsDir, dir)).toBe('trusted');
+
+    await writeFile(join(real, 'index.js'), 'export const v = 2;');
+    expect(await workspaceTrustState(storage, pluginsDir, dir)).toBe('changed');
+  });
+
+  it('a retargeted symlink voids the grant', async () => {
+    const { dir } = await pnpmPlugin();
+    const other = join(dir, 'node_modules', '.pnpm', 'dep@2.0.0', 'node_modules', 'dep');
+    await mkdir(other, { recursive: true });
+    const storage = new FsStorage();
+    const pluginsDir = join(dataDir, 'plugins');
+    await trustWorkspacePlugin(storage, pluginsDir, dir);
+    await unlink(join(dir, 'node_modules', 'dep'));
+    await symlink(
+      join('.pnpm', 'dep@2.0.0', 'node_modules', 'dep'),
+      join(dir, 'node_modules', 'dep'),
+    );
+    expect(await workspaceTrustState(storage, pluginsDir, dir)).toBe('changed');
+  });
+
+  it('refuses to trust a plugin with a symlink that leaves its folder', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `out-${tag}`, 't');
+    await mkdir(join(cwd, 'outside'), { recursive: true });
+    await symlink(join(cwd, 'outside'), join(dir, 'lib'));
+    await expect(
+      trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir),
+    ).rejects.toThrow(/symlink .*lib.* outside the plugin folder/);
+  });
+
+  it('warns, naming the reason, when a trusted plugin can no longer be hashed', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `w-${tag}`, 't');
+    await trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir);
+    await symlink(tmpdir(), join(dir, 'escape'));
+    const { logger, warnings } = captureLogger();
+    const { loader: l } = loader(logger);
+    await l.loadAll();
+    expect(l.isLoaded('helper')).toBe(false);
+    expect(warnings.join('\n')).toMatch(/"helper".*not loaded.*outside the plugin folder/s);
+  });
 });

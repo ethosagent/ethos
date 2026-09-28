@@ -94,4 +94,28 @@ describe('SlackAdapter.start — permanent start errors', () => {
     app.start = () => Promise.reject(network);
     expect(await startError(adapter)).toBe(network);
   });
+
+  // V2-RT-1 — the gateway retries a transient start failure on the SAME
+  // instance. Bolt runs every matching listener, so registering again would
+  // dispatch each message, `/ethos` command and button click twice.
+  it('registers each listener once across a retried start', async () => {
+    const adapter = new SlackAdapter(config());
+    withAuthTest(adapter, () => Promise.resolve({ ok: true, user_id: 'UBOT', user: 'bot' }));
+    const app = (adapter as unknown as { app: Record<string, unknown> }).app;
+    const spies = ['event', 'message', 'command', 'action', 'view'].map((m) =>
+      vi.spyOn(app as Record<string, () => unknown>, m as never),
+    );
+    const registrations = () => spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+    app.start = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND slack.com'))
+      .mockResolvedValue(undefined);
+
+    expect(await startError(adapter)).toBeInstanceOf(Error);
+    const afterFirst = registrations();
+    expect(afterFirst).toBeGreaterThan(0);
+    await expect(adapter.start()).resolves.toBeUndefined();
+    expect(app.start).toHaveBeenCalledTimes(2);
+    expect(registrations()).toBe(afterFirst);
+  });
 });

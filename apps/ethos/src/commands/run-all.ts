@@ -83,7 +83,9 @@ export interface ChildSpec {
    * another gateway already holds this state dir's lock (plan
    * reach-and-containment D2-14) — restarting it forever would spam the log
    * and never succeed. It exits 78 (`CONFIG_INVALID_EXIT_CODE`) when its
-   * config cannot be started from, for the same reason.
+   * config cannot be started from, or when the platform refused every
+   * adapter's credentials (`adapterStartFailureExitCode`, commands/gateway.ts),
+   * for the same reason.
    */
   terminalExitCodes?: readonly number[];
 }

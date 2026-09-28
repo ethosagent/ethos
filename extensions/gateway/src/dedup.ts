@@ -62,6 +62,8 @@ function dedupKey(sessionId: string, contentHash: string, scope?: DedupScope): s
  */
 export class MessageDedupCache {
   private readonly entries = new Map<string, number>();
+  /** The token of the reservation that currently holds a key (V2-RT-4). */
+  private readonly owners = new Map<string, symbol>();
   private readonly ttlMs: number;
   private readonly disabled: boolean;
   private readonly maxEntries: number;
@@ -126,6 +128,30 @@ export class MessageDedupCache {
   }
 
   /**
+   * {@link shouldSend} for a send that owns its outcome (V2-RT-4): arms the
+   * key and returns the reservation's token, or `undefined` for a duplicate.
+   * Pass the token to {@link record} or {@link release}: only the current
+   * holder may commit or un-arm the key, so a send that outlived the TTL
+   * cannot un-arm the reservation of the identical send that went out after
+   * it. Pinned by `__tests__/dedup.test.ts` ('owned reservations') and
+   * `__tests__/dedup-send-retry.test.ts` ('outlives the TTL').
+   */
+  reserve(sessionId: string, content: string, scope?: DedupScope): symbol | undefined {
+    if (!this.wouldSend(sessionId, content, scope)) return undefined;
+    const token = Symbol('dedup-reservation');
+    if (this.disabled || !content) return token;
+    const key = dedupKey(sessionId, sha256(content), scope);
+    this.setEntry(key);
+    this.owners.set(key, token);
+    return token;
+  }
+
+  /** Whether `token` may act on `key`: no token (an unowned caller) always may. */
+  private holds(key: string, token: symbol | undefined): boolean {
+    return token === undefined || this.owners.get(key) === token;
+  }
+
+  /**
    * Insert (or refresh) `key` with a fresh TTL and enforce the size cap by
    * evicting the oldest entry. Shared by `shouldSend` and `record` so the
    * eviction policy — a security-adjacent primitive — lives in one place.
@@ -136,7 +162,10 @@ export class MessageDedupCache {
     this.entries.set(key, Date.now() + this.ttlMs);
     if (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
-      if (oldest !== undefined) this.entries.delete(oldest);
+      if (oldest !== undefined) {
+        this.entries.delete(oldest);
+        this.owners.delete(oldest);
+      }
     }
   }
 
@@ -154,11 +183,16 @@ export class MessageDedupCache {
    *
    * No-op on the disabled (legacy) path and for empty content, mirroring
    * `shouldSend`. Never fires `onDrop` — recording is not a dropped send.
+   * With a `token` from {@link reserve}, a no-op unless that reservation still
+   * holds the key; the key is then committed and no longer owned.
    */
-  record(sessionId: string, content: string, scope?: DedupScope): void {
+  record(sessionId: string, content: string, scope?: DedupScope, token?: symbol): void {
     if (this.disabled) return;
     if (!content) return;
-    this.setEntry(dedupKey(sessionId, sha256(content), scope));
+    const key = dedupKey(sessionId, sha256(content), scope);
+    if (!this.holds(key, token)) return;
+    this.setEntry(key);
+    this.owners.delete(key);
   }
 
   /**
@@ -167,13 +201,18 @@ export class MessageDedupCache {
    * with `shouldSend` — so a second identical send while the first is still
    * in flight is a duplicate, not a second platform call — then commits it
    * with {@link record} once the platform confirmed, or releases it here so a
-   * retry inside the TTL goes out (UBP-003). Pinned by
+   * retry inside the TTL goes out (UBP-003). With a `token` from
+   * {@link reserve}, a no-op unless that reservation still holds the key
+   * (V-GC-1's follow-up, V2-RT-4). Pinned by
    * `__tests__/dedup-send-retry.test.ts`.
    */
-  release(sessionId: string, content: string, scope?: DedupScope): void {
+  release(sessionId: string, content: string, scope?: DedupScope, token?: symbol): void {
     if (this.disabled) return;
     if (!content) return;
-    this.entries.delete(dedupKey(sessionId, sha256(content), scope));
+    const key = dedupKey(sessionId, sha256(content), scope);
+    if (!this.holds(key, token)) return;
+    this.entries.delete(key);
+    this.owners.delete(key);
   }
 
   /** Forget every key associated with `sessionId` (called by `/new`). */
@@ -183,7 +222,10 @@ export class MessageDedupCache {
     // a root lane `a:b:c` is a colon-prefix of a threaded lane `a:b:c:thread`,
     // and a prefix match would wrongly evict the sibling thread's entries.
     for (const key of this.entries.keys()) {
-      if (key.slice(0, key.lastIndexOf(':')) === sessionId) this.entries.delete(key);
+      if (key.slice(0, key.lastIndexOf(':')) === sessionId) {
+        this.entries.delete(key);
+        this.owners.delete(key);
+      }
     }
   }
 

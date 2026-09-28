@@ -479,6 +479,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private clarifyHomeReader?: ClarifyHomeReader;
   /** Bolt-internal inbound handle. Resolved during `start()` via auth.test. */
   private selfUserId: string | null = null;
+  /** Set on the first `start()`; see `registerHandlers`. */
+  private handlersRegistered = false;
   /** The bot's Slack display name. Resolved during `start()` via auth.test;
    *  falls back to `displayName` ('Slack') when unavailable. */
   private selfDisplayName: string | null = null;
@@ -643,6 +645,42 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       this.selfDisplayName = null;
     }
 
+    if (!this.handlersRegistered) {
+      this.handlersRegistered = true;
+      this.registerHandlers();
+    }
+
+    // Transport start. Every registration in `registerHandlers` is identical
+    // in both modes — only the final step differs.
+    //
+    // In HTTP mode we deliberately do NOT call `this.app.start()`: for an
+    // `HTTPReceiver` that call binds its OWN port
+    // (`HTTPReceiver.js:118-183`), and this deployment has exactly one shared
+    // listener, owned by `apps/ethos/src/platform-webhook-server.ts`, which
+    // mounts `this.requestListener` instead. Adding `app.start()` back here
+    // would bind a second, unwanted port. The receiver is fully live without
+    // it: `App`'s constructor already called `receiver.init(this)`
+    // (`App.js:177`), so the handlers `registerHandlers` added are wired.
+    if (!this.httpMode) {
+      try {
+        await this.app.start();
+      } catch (err) {
+        throw classifySlackStartError(err);
+      }
+    }
+  }
+
+  /**
+   * Every Bolt listener this adapter owns. Called ONCE per instance (V2-RT-1):
+   * the gateway's adapter-start retry (`retryAdapterStart`,
+   * apps/ethos/src/commands/gateway.ts) calls `start()` again on this same
+   * instance after a transient failure, and Bolt runs every matching listener,
+   * so a second registration would dispatch each message, slash command and
+   * button click twice. Pinned by `__tests__/start-permanent-error.test.ts`
+   * ('registers each listener once across a retried start'). The member
+   * greeting reads `selfUserId` as it was on the start that registered it.
+   */
+  private registerHandlers(): void {
     registerMessageEvents(
       this.app,
       {
@@ -902,25 +940,6 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       kanban: this.kanbanUnfurl,
       personality: this.personalityUnfurl,
     });
-
-    // Transport start. Every registration above is identical in both modes —
-    // only the final step differs.
-    //
-    // In HTTP mode we deliberately do NOT call `this.app.start()`: for an
-    // `HTTPReceiver` that call binds its OWN port
-    // (`HTTPReceiver.js:118-183`), and this deployment has exactly one shared
-    // listener, owned by `apps/ethos/src/platform-webhook-server.ts`, which
-    // mounts `this.requestListener` instead. Adding `app.start()` back here
-    // would bind a second, unwanted port. The receiver is fully live without
-    // it: `App`'s constructor already called `receiver.init(this)`
-    // (`App.js:177`), so the handlers registered above are wired.
-    if (!this.httpMode) {
-      try {
-        await this.app.start();
-      } catch (err) {
-        throw classifySlackStartError(err);
-      }
-    }
   }
 
   async stop(): Promise<void> {

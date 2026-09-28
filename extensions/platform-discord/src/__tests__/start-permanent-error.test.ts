@@ -4,6 +4,7 @@
 // (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) stops
 // instead of retrying a dead token for ever. Anything else is thrown as-is.
 
+import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { DiscordAdapter } from '../index';
 import { loadDiscordSdk } from '../sdk';
@@ -49,5 +50,27 @@ describe('DiscordAdapter.start — permanent start errors', () => {
     );
     expect(thrown).toBe(cause);
     expect(thrown).not.toHaveProperty('permanent');
+  });
+
+  // V2-RT-1 — the gateway retries a transient start failure on the SAME
+  // instance. discord.js runs every listener for an event, so a second
+  // registration would dispatch each message and interaction twice.
+  it('registers each event handler once across a retried start', async () => {
+    const adapter = new DiscordAdapter({ token: 'fake-token', botKey: 'test-bot' });
+    const client = Object.assign(new EventEmitter(), {
+      login: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND discord.com'))
+        .mockResolvedValue('fake-token'),
+    });
+    (adapter as unknown as { client: unknown }).client = client;
+
+    await expect(adapter.start()).rejects.toThrow('ENOTFOUND');
+    await adapter.start();
+
+    expect(client.login).toHaveBeenCalledTimes(2);
+    for (const event of ['messageCreate', 'messageUpdate', 'interactionCreate']) {
+      expect(client.listenerCount(event), event).toBe(1);
+    }
   });
 });

@@ -825,6 +825,8 @@ export class TelegramAdapter
   /** Resolved inbound-attachment ceiling, bytes. Defaults to MAX_FILE_SIZE. */
   private readonly maxInboundMediaBytes: number;
   private messageHandler?: (message: InboundMessage) => void;
+  /** Set on the first `start()`; see `registerHandlers`. */
+  private handlersRegistered = false;
   /** Registered by the clarify surface to receive inline-keyboard taps. */
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
@@ -1053,6 +1055,56 @@ export class TelegramAdapter
     this.warnIfPrivacyModeHidesObserved();
     this.warnIfOverridesUnreadable();
 
+    if (!this.handlersRegistered) {
+      this.handlersRegistered = true;
+      this.registerHandlers();
+    }
+
+    // --- Start: webhook or long-polling (Gap 6) ---
+    if (this.config.useWebhook && !this.config.webhookUrl) {
+      throw new Error('TelegramAdapter: useWebhook requires webhookUrl to be set');
+    }
+    if (this.config.useWebhook && !this.config.webhookSecretToken) {
+      throw new Error(
+        'TelegramAdapter: useWebhook requires webhookSecretToken for request verification',
+      );
+    }
+    if (this.config.useWebhook && this.config.webhookUrl) {
+      await this.bot.api
+        .setWebhook(this.config.webhookUrl, {
+          secret_token: this.config.webhookSecretToken,
+        })
+        .catch((err: unknown) => {
+          throw isRejectedTelegramToken(err) ? telegramTokenRejected(err) : err;
+        });
+      this.webhookCb = grammy().webhookCallback(this.bot, 'http', {
+        secretToken: this.config.webhookSecretToken,
+      });
+    } else {
+      // Non-blocking: bot.start() runs the polling loop in the background.
+      // grammy's start() rejects on init failure (e.g. invalid token -> getMe 404)
+      // and on terminal polling errors. Without a .catch() the rejection becomes
+      // an unhandled promise rejection, which Node 24 treats as fatal — killing
+      // the whole gateway and any other adapters running with it. Attach a
+      // handler so a bad Telegram token degrades to a logged warning instead.
+      this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        this.logger?.error(`[telegram] bot polling stopped: ${detail}`);
+      });
+    }
+  }
+
+  /**
+   * The grammY update handlers. Registered ONCE per instance (V2-RT-1): the
+   * gateway's adapter-start retry (`retryAdapterStart`,
+   * apps/ethos/src/commands/gateway.ts) calls `start()` again on this same
+   * instance after a transient `setWebhook` failure. None of these handlers
+   * calls `next()`, so a duplicate would never run today, but a second copy
+   * of every handler on each retry is one `next()` away from dispatching each
+   * update twice. Pinned by `__tests__/start-permanent-error.test.ts`
+   * ('registers each update handler once across a retried start').
+   */
+  private registerHandlers(): void {
     // Async on purpose (UBP-016): grammY awaits this handler before it acks
     // the update (poll mode advances the offset, webhook mode answers the
     // request), so a media message reaches `messageHandler` — the gateway's
@@ -1349,39 +1401,6 @@ export class TelegramAdapter
         this.callbackQueryHandler(event);
       }
     });
-
-    // --- Start: webhook or long-polling (Gap 6) ---
-    if (this.config.useWebhook && !this.config.webhookUrl) {
-      throw new Error('TelegramAdapter: useWebhook requires webhookUrl to be set');
-    }
-    if (this.config.useWebhook && !this.config.webhookSecretToken) {
-      throw new Error(
-        'TelegramAdapter: useWebhook requires webhookSecretToken for request verification',
-      );
-    }
-    if (this.config.useWebhook && this.config.webhookUrl) {
-      await this.bot.api
-        .setWebhook(this.config.webhookUrl, {
-          secret_token: this.config.webhookSecretToken,
-        })
-        .catch((err: unknown) => {
-          throw isRejectedTelegramToken(err) ? telegramTokenRejected(err) : err;
-        });
-      this.webhookCb = grammy().webhookCallback(this.bot, 'http', {
-        secretToken: this.config.webhookSecretToken,
-      });
-    } else {
-      // Non-blocking: bot.start() runs the polling loop in the background.
-      // grammy's start() rejects on init failure (e.g. invalid token -> getMe 404)
-      // and on terminal polling errors. Without a .catch() the rejection becomes
-      // an unhandled promise rejection, which Node 24 treats as fatal — killing
-      // the whole gateway and any other adapters running with it. Attach a
-      // handler so a bad Telegram token degrades to a logged warning instead.
-      this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
-        const detail = err instanceof Error ? err.message : String(err);
-        this.logger?.error(`[telegram] bot polling stopped: ${detail}`);
-      });
-    }
   }
 
   async stop(): Promise<void> {

@@ -336,7 +336,20 @@ export class PluginLoader {
       );
       return false;
     }
-    const state = await workspaceTrustState(this.storage, join(this.dataDir, 'plugins'), dir);
+    let state: Awaited<ReturnType<typeof workspaceTrustState>>;
+    try {
+      state = await workspaceTrustState(this.storage, join(this.dataDir, 'plugins'), dir);
+    } catch (err) {
+      // V2-RT-2 — a tree that cannot be hashed (a symlink leaving the folder,
+      // an unreadable file) is refused out loud: the caller's `catch {}` would
+      // otherwise skip the plugin with no word to the operator.
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `[plugin-loader] Workspace plugin "${id}" at ${dir} not loaded: its trust could not be checked: ${detail}`,
+        { component: 'plugin-loader', pluginId: id },
+      );
+      return false;
+    }
     if (state === 'trusted') {
       // The grant hashes this folder only, so nothing outside it may run under
       // it: contain the module graph before anything is imported (V-CC-1).
@@ -363,7 +376,8 @@ export class PluginLoader {
    * V-CC-1 — whether a workspace plugin's `skills_dir` resolves outside its
    * folder. Skills there are repo content the trust grant never hashed, so the
    * plugin is refused (warned) rather than loaded with them. Lexical; a
-   * symlinked directory inside the folder already fails the hash closed.
+   * symlink inside the folder that points out already fails the hash closed
+   * (`hashPluginTree`, ./workspace-trust.ts).
    */
   private workspaceSkillsDirEscapes(id: string, dir: string, skillsDir: unknown): boolean {
     if (typeof skillsDir !== 'string') return false;

@@ -1354,17 +1354,30 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // `shutdown` aborts `adapterStartRetry` (V-CC-4). One that recovers after the
   // platform-webhook mounts below were built is mounted by
   // `onAdapterRecovered`, assigned there.
+  //
+  // Unlike `ethos gateway start`, boot does not exit when EVERY adapter failed
+  // (V2-RT-5, `allFailed: 'continue'`): this process also hosts the web UI —
+  // the Settings page where a revoked token gets fixed — cron and serve. Each
+  // failure is already warned about and recorded (`gateway.adapter_start_failed`,
+  // then `_abandoned` for a refused credential), and `/healthz`, `/readyz` and
+  // `gateway-health.json` report the adapter not ok through its own `health()`.
   const adapterStartRetry = new AbortController();
   let onAdapterRecovered: (adapter: PlatformAdapter) => void = () => {};
-  await startAdaptersIsolated(adapters, {
+  const adapterStart = await startAdaptersIsolated(adapters, {
     observability: gatewayObservability(),
     warn: (message) => console.warn(`${c.yellow}⚠${c.reset} ${message}`),
+    allFailed: 'continue',
     retry: {
       signal: adapterStartRetry.signal,
       onStarted: (a) => onAdapterRecovered(a),
       isRetired: (a) => gateway.hasStopped(a),
     },
   });
+  if (adapters.length > 0 && adapterStart.started.length === 0) {
+    console.warn(
+      `${c.yellow}⚠ no chat adapter started — the web UI, cron and serve keep running; fix the bot credentials in Settings or ~/.ethos/config.yaml${c.reset}`,
+    );
+  }
   heartbeatStartedAt = new Date().toISOString();
   await gateway.pluginsReady();
 

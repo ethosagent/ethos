@@ -568,4 +568,42 @@ describe('mid-turn voice notes keep arrival order and are transcribed once (V-GC
     expect(s.texts[1]).toContain('also book the train');
     expect(stt.calls()).toBe(1);
   });
+
+  // V2-RT-3 — a hung STT must not block the lane: the steer build is bounded
+  // (`GatewayConfig.steerTranscribeTimeoutMs`), and on expiry the voice note
+  // is steered as its placeholder text, as it was before UBP-012.
+  it('a hung STT is steered as its placeholder text and does not hold the lane', async () => {
+    const out = recordingAdapter();
+    const stt = gatedStt(); // never released
+    const drained: SteerEntry[] = [];
+    let releaseTurn: () => void = () => {};
+    const turnGate = new Promise<void>((r) => {
+      releaseTurn = r;
+    });
+    const s = scriptedLoop(async function* (_text, opts, n) {
+      if (n === 1) {
+        await turnGate;
+        drained.push(...(opts.steerSink?.drainEntries?.() ?? []));
+      }
+      yield { type: 'done', text: `reply ${n}`, turnCount: 1 };
+    });
+    const gw = gateway(s.loop, out.adapter, {
+      ...voiceConfig(stt.registry),
+      steerTranscribeTimeoutMs: 20,
+    });
+    const turn = gw.handleMessage(msg('book a table'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+
+    const voice = gw.handleMessage(voiceNote(), out.adapter);
+    await waitUntil(() => stt.calls() === 1);
+    const text = gw.handleMessage(msg('for two people'), out.adapter);
+    await Promise.race([
+      Promise.all([voice, text]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('lane held')), 1000)),
+    ]);
+    releaseTurn();
+    await turn;
+
+    expect(drained.map((e) => e.text)).toEqual(['(voice message)', 'for two people']);
+  });
 });

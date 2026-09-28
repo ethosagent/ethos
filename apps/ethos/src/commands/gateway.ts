@@ -117,6 +117,7 @@ import {
 } from '@ethosagent/watchers';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  CONFIG_INVALID_EXIT_CODE,
   createApprovalDangerPredicate,
   createLazyProvider,
   createOutboundPolicyGate,
@@ -1677,15 +1678,27 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // `onAdapterRecovered`, assigned there.
   const adapterStartRetry = new AbortController();
   let onAdapterRecovered: (adapter: PlatformAdapter) => void = () => {};
-  await startAdaptersIsolated(adapters, {
-    observability: gatewayObservability(),
-    warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
-    retry: {
-      signal: adapterStartRetry.signal,
-      onStarted: (a) => onAdapterRecovered(a),
-      isRetired: (a) => gateway.hasStopped(a),
-    },
-  });
+  try {
+    await startAdaptersIsolated(adapters, {
+      observability: gatewayObservability(),
+      warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+      retry: {
+        signal: adapterStartRetry.signal,
+        onStarted: (a) => onAdapterRecovered(a),
+        isRetired: (a) => gateway.hasStopped(a),
+      },
+    });
+  } catch (err) {
+    // Every adapter failed. A refused credential on each is final (V2-RT-5):
+    // exit 78 so a supervisor stops respawning it; anything else rethrows and
+    // exits 1 like a crash, which a restart may cure.
+    const refusal = adapterStartFailureExitCode(err);
+    if (refusal === undefined) throw err;
+    console.error(
+      `${c.red}Every adapter's credentials were refused (${err instanceof Error ? err.message : String(err)}). Fix the tokens in ~/.ethos/config.yaml (ethos doctor), then start the gateway again.${c.reset}`,
+    );
+    process.exit(refusal);
+  }
 
   // Durable delivery sweep (item 9). Deliberately AFTER adapter.start(): a
   // sweep against cold adapters would send into nothing while still burning
@@ -5192,6 +5205,36 @@ async function retryAdapterStart<A extends AdapterStartable>(
 }
 
 /**
+ * `startAdaptersIsolated` rejected because EVERY adapter failed to start. The
+ * message is the first failure's; `permanent` is whether every failure was a
+ * credential the platform refused (`isPermanentAdapterStartError`).
+ */
+export class AllAdaptersFailedError extends Error {
+  readonly permanent: boolean;
+  constructor(first: unknown, permanent: boolean) {
+    super(first instanceof Error ? first.message : String(first), { cause: first });
+    this.name = 'AllAdaptersFailedError';
+    this.permanent = permanent;
+  }
+}
+
+/**
+ * The exit code `ethos gateway start` uses for an adapter-start failure, or
+ * undefined for "not a refusal — exit 1 like any crash". Every adapter refused
+ * its credentials (V2-RT-5) → `CONFIG_INVALID_EXIT_CODE` (78, EX_CONFIG): the
+ * tokens live in config and no restart can fix them, and 78 is already final
+ * for `ethos run-all` (`defaultChildSpecs` terminalExitCodes), the systemd unit
+ * (`RestartPreventExitStatus`), the launchd wrapper and the Windows supervisor,
+ * so none of them burns its restart budget respawning a dead token. Pinned by
+ * `__tests__/gateway-adapter-start.test.ts`.
+ */
+export function adapterStartFailureExitCode(err: unknown): number | undefined {
+  return err instanceof AllAdaptersFailedError && err.permanent
+    ? CONFIG_INVALID_EXIT_CODE
+    : undefined;
+}
+
+/**
  * Start every platform adapter with per-adapter isolation (UBP-010).
  *
  * `Promise.all` let ONE rejected `start()` — a revoked Discord token, a Slack
@@ -5202,9 +5245,16 @@ async function retryAdapterStart<A extends AdapterStartable>(
  * serving. With `deps.retry`, each failed adapter is retried in the background
  * (`retryAdapterStart`: 5s doubling to 5min, jittered; stops on a permanent
  * credential error or when `retry.signal` aborts); `retrying` settles when
- * every retry loop has ended. Rejects (with the first failure, and no retries)
- * only when EVERY adapter failed, so a gateway with nothing to serve still
- * exits. Used by `ethos gateway start` and `ethos boot`; pinned by
+ * every retry loop has ended.
+ *
+ * When EVERY adapter failed, `allFailed` decides. `'throw'` (the default, used
+ * by `ethos gateway start`, a process that exists only to serve its adapters)
+ * rejects with an {@link AllAdaptersFailedError} and starts no retries, so a
+ * gateway with nothing to serve still exits — with the refusal code when every
+ * failure was a refused credential (`adapterStartFailureExitCode`). `'continue'`
+ * (used by `ethos boot`, which also hosts the web UI, cron and serve —
+ * V2-RT-5) resolves like a partial failure: the transient failures are retried,
+ * the permanent ones abandoned, and the other services come up. Pinned by
  * `__tests__/gateway-adapter-start.test.ts`.
  */
 export async function startAdaptersIsolated<A extends AdapterStartable>(
@@ -5213,6 +5263,8 @@ export async function startAdaptersIsolated<A extends AdapterStartable>(
     observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
     warn: (message: string) => void;
     retry?: AdapterStartRetryOptions<A>;
+    /** What an all-adapters-failed start does. Default `'throw'`. */
+    allFailed?: 'throw' | 'continue';
   },
 ): Promise<{
   started: string[];
@@ -5246,7 +5298,12 @@ export async function startAdaptersIsolated<A extends AdapterStartable>(
       details: { adapterId: id },
     });
   });
-  if (adapters.length > 0 && failed.length === adapters.length) throw firstReason;
+  if (adapters.length > 0 && failed.length === adapters.length && deps.allFailed !== 'continue') {
+    throw new AllAdaptersFailedError(
+      firstReason,
+      toRetry.every(({ reason }) => isPermanentAdapterStartError(reason)),
+    );
+  }
   const retry = deps.retry;
   const retrying = retry
     ? Promise.all(

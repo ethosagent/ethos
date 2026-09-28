@@ -34,8 +34,9 @@ function flakyAdapter(results: DeliveryResult[]) {
   return { adapter, sent };
 }
 
-function gatewayWith(adapter: PlatformAdapter): Gateway {
+function gatewayWith(adapter: PlatformAdapter, outboundDedupTtlMs?: number): Gateway {
   return new Gateway({
+    ...(outboundDedupTtlMs !== undefined ? { outboundDedupTtlMs } : {}),
     bots: [
       {
         botKey: 'bot-a',
@@ -135,6 +136,34 @@ describe('Gateway.sendAsBot — concurrent identical sends (V-GC-1)', () => {
     await new Promise((r) => setImmediate(r));
     gates[1]?.({ ok: true });
     expect(await retry).toEqual({ ok: true });
+    expect(sent).toHaveLength(2);
+  });
+
+  // V2-RT-4 — a send that outlives the dedup TTL (a flood-wait backoff, a large
+  // upload) must not clear the bookkeeping of the identical send that
+  // legitimately went out after the TTL. Each reservation is owned by a token
+  // (`MessageDedupCache.reserve`), and the in-flight entry is removed only by
+  // the flight that set it.
+  it('a send that outlives the TTL does not release the next send’s reservation', async () => {
+    const { adapter, sent, gates } = gatedAdapter();
+    const gw = gatewayWith(adapter, 20);
+
+    const first = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setTimeout(r, 40)); // past the 20ms TTL
+    const second = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(2);
+
+    gates[0]?.({ ok: false, error: 'flood wait' });
+    expect((await first).ok).toBe(false);
+
+    // The second send is still in flight and still owns the key.
+    const third = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(2);
+    gates[1]?.({ ok: true });
+    expect(await second).toEqual({ ok: true });
+    expect(await third).toEqual({ ok: true });
     expect(sent).toHaveLength(2);
   });
 });

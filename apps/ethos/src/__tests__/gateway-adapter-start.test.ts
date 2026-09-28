@@ -9,8 +9,10 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CONFIG_INVALID_EXIT_CODE } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  adapterStartFailureExitCode,
   adapterStartRetryDelayMs,
   isPermanentAdapterStartError,
   startAdaptersIsolated,
@@ -58,6 +60,63 @@ describe('startAdaptersIsolated', () => {
         warn: () => {},
       }),
     ).rejects.toThrow('TokenInvalid');
+  });
+
+  // V2-RT-5 — `ethos gateway start` exits 78 (CONFIG_INVALID_EXIT_CODE) when
+  // every adapter's credentials were refused: a restart cannot fix a revoked
+  // token, and `ethos run-all`, systemd, launchd and the Windows supervisor all
+  // treat 78 as final instead of burning their restart budget on it.
+  it('reports a refusal exit code only when EVERY failure is a refused credential', async () => {
+    const allPermanent = await startAdaptersIsolated(
+      [adapter('discord:a', 'TokenInvalid'), adapter('slack:b', 'invalid_auth')],
+      { observability: { recordSafetyBlock: () => {} }, warn: () => {} },
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(adapterStartFailureExitCode(allPermanent)).toBe(CONFIG_INVALID_EXIT_CODE);
+
+    const oneTransient = await startAdaptersIsolated(
+      [adapter('discord:a', 'TokenInvalid'), adapter('slack:b', 'ECONNRESET')],
+      { observability: { recordSafetyBlock: () => {} }, warn: () => {} },
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(adapterStartFailureExitCode(oneTransient)).toBeUndefined();
+    expect(adapterStartFailureExitCode(new Error('TokenInvalid'))).toBeUndefined();
+  });
+
+  // V2-RT-5 — `ethos boot` hosts the web UI, cron and serve too: an all-failed
+  // adapter start must not take them down (the Settings page is where the
+  // operator fixes the token), and a transient failure is still retried.
+  it("with allFailed: 'continue', resolves when every adapter failed and keeps retrying", async () => {
+    let attempts = 0;
+    const flakyTelegram = {
+      id: 'telegram:ops',
+      async start() {
+        attempts++;
+        if (attempts === 1) throw new Error('ECONNRESET');
+      },
+    };
+    const warn = vi.fn();
+    const result = await startAdaptersIsolated(
+      [flakyTelegram, adapter('slack:b', 'invalid_auth')],
+      {
+        observability: { recordSafetyBlock: () => {} },
+        warn,
+        allFailed: 'continue',
+        retry: {
+          signal: new AbortController().signal,
+          sleep: async (_ms, signal) => !signal.aborted,
+        },
+      },
+    );
+    expect(result.started).toEqual([]);
+    expect(result.failed.map((f) => f.id)).toEqual(['telegram:ops', 'slack:b']);
+    await result.retrying;
+    expect(attempts).toBe(2);
+    expect(warn.mock.calls.map((c) => c[0]).join('\n')).toMatch(/slack:b failed permanently/);
   });
 
   it('resolves for no adapters at all', async () => {
@@ -251,4 +310,14 @@ describe('startAdaptersIsolated', () => {
       expect(src).not.toContain('await Promise.all(adapters.map((a) => a.start()))');
     });
   }
+
+  it('boot keeps its other services up when every adapter failed (V2-RT-5)', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'boot.ts'), 'utf-8');
+    expect(src).toContain("allFailed: 'continue'");
+  });
+
+  it('gateway start exits with the refusal code when every credential was refused', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'gateway.ts'), 'utf-8');
+    expect(src).toContain('const refusal = adapterStartFailureExitCode(err);');
+  });
 });

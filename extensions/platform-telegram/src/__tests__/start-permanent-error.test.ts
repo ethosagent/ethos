@@ -17,12 +17,15 @@ const mockApi = {
   getMe: vi.fn(),
 };
 const startCalls: unknown[] = [];
+const onCalls: string[] = [];
 
 vi.mock('grammy', () => {
   class MockBot {
     token = '1:fake-token';
     api = mockApi;
-    on() {}
+    on(filter: string) {
+      onCalls.push(filter);
+    }
     start(opts: unknown) {
       startCalls.push(opts);
       return Promise.resolve();
@@ -78,6 +81,7 @@ describe('TelegramAdapter.start — permanent start errors', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     startCalls.length = 0;
+    onCalls.length = 0;
     mockApi.setWebhook.mockResolvedValue(true);
   });
 
@@ -123,5 +127,18 @@ describe('TelegramAdapter.start — permanent start errors', () => {
         (e: unknown) => e,
       );
     expect(thrown).toBe(cause);
+  });
+
+  // V2-RT-1 — the gateway retries a transient start failure on the SAME
+  // instance; the retried start must not stack a second copy of every handler.
+  it('registers each update handler once across a retried start', async () => {
+    mockApi.getMe.mockResolvedValue(BOT_INFO);
+    mockApi.setWebhook.mockRejectedValueOnce(new Error('socket hang up')).mockResolvedValue(true);
+    const a = adapter(true);
+    await expect(a.start()).rejects.toThrow('socket hang up');
+    await expect(a.start()).resolves.toBeUndefined();
+    expect(mockApi.setWebhook).toHaveBeenCalledTimes(2);
+    expect(onCalls.length).toBeGreaterThan(0);
+    expect(new Set(onCalls).size).toBe(onCalls.length);
   });
 });

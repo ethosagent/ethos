@@ -26,8 +26,8 @@
 //     (`guardWorkspacePluginImports`, ./workspace-import-guard.ts);
 //   - skills: a `skills_dir` that resolves outside the folder refuses the
 //     plugin (`PluginLoader.workspaceSkillsDirEscapes`, ./index.ts).
-// A symlinked directory inside the folder cannot be hashed (it reads as a file)
-// and fails the grant closed. Not covered: `node:` builtins and the Ethos
+// A symlink inside the folder is hashed as its link text, and one that points
+// outside the folder refuses the grant (`hashPluginTree`). Not covered: `node:` builtins and the Ethos
 // process itself — what the plugin is handed through `activate(api)`.
 //
 // Like the capability grant in ./grants.ts this is a consent record, not a
@@ -35,7 +35,8 @@
 // ---------------------------------------------------------------------------
 
 import { createHash } from 'node:crypto';
-import { join, relative, resolve } from 'node:path';
+import { lstat, readlink, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Storage } from '@ethosagent/types';
 
 const TRUST_FILE = 'workspace-trust.json';
@@ -94,15 +95,31 @@ async function writeWorkspaceTrust(
  * bytes, a nested `node_modules/` included (a trusted plugin may only import
  * from inside its folder, so its dependencies live there), `.git/` skipped.
  * Any added, removed, renamed or edited file changes it.
+ *
+ * A symbolic link (V2-RT-2) is hashed as its link TEXT and never read through:
+ * pnpm links each dependency as a directory symlink
+ * (`node_modules/dep -> .pnpm/dep@1.0.0/node_modules/dep`), whose real files
+ * are hashed where they live, so retargeting a link or editing its target both
+ * change the hash. A link whose target resolves outside the folder throws —
+ * the grant could not cover what it names, and the import guard
+ * (`guardWorkspacePluginImports`, ./workspace-import-guard.ts) would refuse
+ * it at load anyway. Pinned by `__tests__/workspace-trust.test.ts`
+ * ('workspace plugin trust over symlinks').
  */
 export async function hashPluginTree(storage: Storage, dir: string): Promise<string> {
   const root = resolve(dir);
+  const realRoot = await realpath(root).catch(() => root);
   const files: string[] = [];
+  const links = new Map<string, string>();
   const walk = async (current: string): Promise<void> => {
     const entries = await storage.listEntries(current).catch(() => []);
     for (const entry of entries) {
       const full = join(current, entry.name);
-      if (entry.isDir) {
+      const target = await symlinkTarget(full);
+      if (target !== undefined) {
+        await assertLinkContained(full, target, root, realRoot);
+        links.set(full, target);
+      } else if (entry.isDir) {
         if (entry.name === '.git') continue;
         await walk(full);
       } else {
@@ -111,16 +128,52 @@ export async function hashPluginTree(storage: Storage, dir: string): Promise<str
     }
   };
   await walk(root);
-  files.sort();
+  const paths = [...files, ...links.keys()].sort();
   const hash = createHash('sha256');
-  for (const file of files) {
-    const bytes = await storage.readBytes(file);
-    hash.update(relative(root, file));
+  for (const path of paths) {
+    hash.update(relative(root, path));
     hash.update('\0');
-    hash.update(bytes ?? new Uint8Array());
+    const target = links.get(path);
+    if (target !== undefined) hash.update(`symlink:${target}`);
+    else hash.update((await storage.readBytes(path)) ?? new Uint8Array());
     hash.update('\0');
   }
   return `sha256-${hash.digest('hex')}`;
+}
+
+/**
+ * The link text when `path` is a symbolic link, else undefined. Raw `node:fs`
+ * (`lstat`/`readlink`/`realpath`): `Storage` follows symlinks and has no
+ * `lstat`, and the path is a workspace plugin folder, not `~/.ethos` state
+ * (extensions/plugin-loader is on the no-raw-fs prefix allowlist). A path the
+ * real filesystem does not know (an in-memory Storage) is not a link.
+ */
+async function symlinkTarget(path: string): Promise<string | undefined> {
+  const stat = await lstat(path).catch(() => undefined);
+  if (!stat?.isSymbolicLink()) return undefined;
+  return readlink(path);
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+async function assertLinkContained(
+  link: string,
+  target: string,
+  root: string,
+  realRoot: string,
+): Promise<void> {
+  // The resolved target decides when it exists (the import guard compares
+  // realpaths too); a dangling link is judged by where its text points.
+  const real = await realpath(link).catch(() => undefined);
+  const inside =
+    real !== undefined ? isInside(realRoot, real) : isInside(root, resolve(dirname(link), target));
+  if (inside) return;
+  throw new Error(
+    `symlink ${relative(root, link)} -> ${target} points outside the plugin folder ${root}; a workspace plugin trust grant covers only files inside its folder. Vendor the target into the folder (or remove the link), then run: ethos plugin trust`,
+  );
 }
 
 /** Whether `dir` is trusted at its CURRENT content. */
