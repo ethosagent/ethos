@@ -603,7 +603,8 @@ export class DefaultToolRegistry implements ToolRegistry {
 // `adaptMcpTool` (extensions/tools-mcp) registers under it, and the allowlist
 // gates in `passesFilter` above resolve configured names through it.
 //
-// A name that already conforms is returned unchanged, so no existing
+// A name that already conforms (for the server half, also: no `__`, no trailing
+// `_` — `isVerbatimServerSegment`) is returned unchanged, so no existing
 // deployment's tool names (or the allowlists and mcp.yaml keys that name them)
 // move. Otherwise each non-conforming half is rewritten — disallowed characters
 // become `_`, it is truncated to fit — and suffixed with `-` + an 8-hex FNV-1a
@@ -631,9 +632,25 @@ function foldToCharset(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, '_');
 }
 
+/**
+ * True when `server` can be the `<server>` half verbatim. Besides the charset
+ * and length, the half is read back by splitting on `__` (`mcpServerName`
+ * above, `checkMcpEnabled`/`checkMcpRejectArgs` in agent-loop/mcp-policy.ts),
+ * so it may not contain `__` or end in `_` (`x_` + `__` reads as `x` + `__` +
+ * `_…`). A leading `_` splits back correctly and is kept (V-CP-4).
+ */
+function isVerbatimServerSegment(server: string): boolean {
+  return (
+    /^[A-Za-z0-9_-]+$/.test(server) &&
+    server.length <= MAX_MCP_SERVER_SEGMENT &&
+    !server.includes('__') &&
+    !server.endsWith('_')
+  );
+}
+
 /** The `<server>` half of an MCP tool name. Pure function of the server name. */
 export function mcpServerSegment(server: string): string {
-  if (/^[A-Za-z0-9_-]+$/.test(server) && server.length <= MAX_MCP_SERVER_SEGMENT) return server;
+  if (isVerbatimServerSegment(server)) return server;
   const suffix = `-${fnv1aHex(server)}`;
   const folded = foldToCharset(server)
     .replace(/_{2,}/g, '_')

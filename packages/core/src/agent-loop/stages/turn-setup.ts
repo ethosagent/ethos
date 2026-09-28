@@ -500,6 +500,7 @@ export async function* setupTurn(
       memScopeId,
       ...(toolLoading ? { toolLoading } : {}),
       ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
+      ...(ethosSession.metadata ? { sessionMetadata: ethosSession.metadata } : {}),
     },
   };
 }

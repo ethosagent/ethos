@@ -22,17 +22,25 @@ export interface TextEndContext {
   abortSignal: AbortSignal;
   /** The turn's reply so far. */
   fullText: string;
+  /** Tool calls this turn has made so far (`TurnBudgetCounters.totalToolCalls`). */
+  toolCalls: number;
 }
 
 /**
  * What the loop does after a call that ended in text with no tool call:
  *   - `continue` — a steer was folded in (UBP-001 / D1); run one more call;
- *   - `return` — the whole turn produced no reply text (UBP-020); an `error`
- *     with code `empty_completion` was yielded in place of a blank `done`;
+ *   - `return` — the whole turn produced no reply text (UBP-020) AND either the
+ *     output cap cut it off or no tool ran; an `error` with code
+ *     `empty_completion` was yielded in place of a blank `done`;
  *   - `break` — the answer is final; the finalizer yields `done`.
  * A reply the output cap cut off gets a `_loop` notice first (UBP-033).
+ * A turn that did its work through tools and then stopped without a word is a
+ * success and ends with a blank `done` (V-CP-1): the dream executor, delegate_task
+ * and the goal runner treat `error` as failure; the gateway turns a blank `done`
+ * into EMPTY_REPLY_NOTICE.
  *
- * Pinned by __tests__/steer-text-end.test.ts and __tests__/output-cap.test.ts.
+ * Pinned by __tests__/steer-text-end.test.ts, __tests__/output-cap.test.ts and
+ * __tests__/silent-tool-turn.test.ts.
  */
 export async function* settleTextEnd(
   deps: TextEndDeps,
@@ -88,8 +96,9 @@ export async function* settleTextEnd(
   }
 
   // A turn with no reply text and no error would reach the surface as a blank
-  // `done` and deliver nothing.
-  if (!fullText.trim()) {
+  // `done` and deliver nothing — a failure when the cap cut the answer off or
+  // the model did nothing at all. Silence after tool work is a normal end.
+  if (!fullText.trim() && (step.finishReason === 'max_tokens' || ctx.toolCalls === 0)) {
     await flushTurnUsage(deps.session, ctx.sessionId, deps.turnUsage, deps.observability);
     yield { type: 'error', ...emptyCompletionError(step.finishReason) };
     if (ctx.traceId) {

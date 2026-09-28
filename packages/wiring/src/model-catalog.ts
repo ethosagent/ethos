@@ -19,6 +19,12 @@ export const MIN_CONTEXT_WINDOW = 64_000;
 
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
   // Anthropic — source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
+  // No Anthropic row carries `profile.maxOutputTokens`: this catalog records
+  // context windows only, and nothing in the repo sources each model's output
+  // limit. With no profile and no per-call cap the provider sends
+  // `DEFAULT_MAX_OUTPUT_TOKENS` (8096, extensions/llm-anthropic/src/index.ts).
+  // Raise it per model with `models.anthropic/<id>.maxOutputTokens` in
+  // ~/.ethos/config.yaml (`mergeModelProfile` below: the config beats the catalog).
   {
     providerId: 'anthropic',
     modelId: 'claude-fable-5-1',

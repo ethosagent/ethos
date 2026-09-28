@@ -5,8 +5,9 @@
 
 import type { StepFinishReason } from './stages/stream-step';
 
-/** Error code of a turn that ended with no reply text and no other error. An
- *  `error` AgentEvent code, not a new variant (frozen union). */
+/** Error code of a turn that ended with no reply text and no other error,
+ *  when the cap cut it off or no tool ran (`settleTextEnd`, stages/text-end.ts).
+ *  An `error` AgentEvent code, not a new variant (frozen union). */
 export const EMPTY_COMPLETION_CODE = 'empty_completion';
 
 /** `_loop` progress line (audience 'user') after a reply cut off at the cap. */

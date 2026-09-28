@@ -2,9 +2,13 @@
 // LLM call. When the provider rejected that turn (a PDF over its page limit,
 // say), no assistant row followed, so block aging — which counts assistant
 // turns — never retired the block, and every later message resent it and
-// failed the same way until /new. A block whose turn got no reply is now
-// replayed as a line naming it. A replayed block the CURRENT model cannot read
-// is degraded the same way when the caller passes that model's capabilities.
+// failed the same way until /new. A block the provider DETERMINISTICALLY
+// rejected is now replayed as a line naming it; the loop records which rows
+// that was (`recordVisionRejection`, agent-loop/vision-rejection.ts). A turn
+// that failed transiently (overload, 429, timeout, abort) records nothing, so
+// the user's "try again" resends the attachment (V-CP-3). A replayed block the
+// CURRENT model cannot read is degraded the same way when the caller passes
+// that model's capabilities.
 
 import type {
   AgentEvent,
@@ -16,7 +20,8 @@ import type {
 } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { AgentLoop } from '../agent-loop';
-import { ageVisionBlocks } from '../agent-loop/vision-aging';
+import { ageVisionBlocks, degradeRejectedRows } from '../agent-loop/vision-aging';
+import { isDeterministicRejection, VISION_REJECTED_KEY } from '../agent-loop/vision-rejection';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { createTestSafety } from './helpers/test-safety';
 
@@ -83,45 +88,133 @@ function hasBlock(messages: Message[] | undefined, type: 'image' | 'document'): 
   );
 }
 
-describe('UBP-019 — a block whose turn got no reply is not replayed', () => {
-  it('the next turn does not resend a document the provider rejected', async () => {
-    const captured: Message[][] = [];
-    const session = new InMemorySessionStore();
-    const loop = new AgentLoop({
-      llm: rejectsDocuments(captured),
-      session,
-      safety: createTestSafety(),
-    });
-    // Turn 1 creates the session; its reply is the one that got rejected: a
-    // user row carrying the PDF, and no assistant row after it.
-    await collect(loop.run('first', { sessionKey: 'cli:rej' }));
-    const s = await session.getSessionByKey('cli:rej');
-    if (!s) throw new Error('no session');
-    await session.appendMessage({
-      sessionId: s.id,
-      role: 'user',
-      content: 'summarize this',
-      contentBlocks: [PDF],
-    });
+/** A vision provider that fails the FIRST request carrying a document with `err`, then answers. */
+function failsOnceOnDocument(captured: Message[][], err: unknown): LLMProvider {
+  let failed = false;
+  return {
+    name: 'scripted',
+    model: 'mock-model',
+    maxContextTokens: 200_000,
+    supportsCaching: false,
+    supportsThinking: false,
+    capabilities: VISION,
+    async *complete(messages: Message[]): AsyncGenerator<CompletionChunk> {
+      captured.push(JSON.parse(JSON.stringify(messages)));
+      const hasDoc = messages.some(
+        (m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'document'),
+      );
+      if (hasDoc && !failed) {
+        failed = true;
+        throw err;
+      }
+      yield { type: 'text_delta', text: 'page 1 says hello' };
+      yield { type: 'done', finishReason: 'end_turn' };
+    },
+    async countTokens() {
+      return 1;
+    },
+  };
+}
 
-    const events = await collect(loop.run('ok, just summarize page 1', { sessionKey: 'cli:rej' }));
+function statusError(status: number, message: string): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+/**
+ * Turn 1 creates the session. Then a user row carrying the PDF is persisted
+ * (as context assembly does before the call) and turn 2 sends it: the provider
+ * fails that call. Turn 3 is the user's follow-up.
+ */
+async function rejectThenRetry(llm: LLMProvider, key: string) {
+  const session = new InMemorySessionStore();
+  const loop = new AgentLoop({ llm, session, safety: createTestSafety() });
+  await collect(loop.run('first', { sessionKey: key }));
+  const s = await session.getSessionByKey(key);
+  if (!s) throw new Error('no session');
+  const pdfRow = await session.appendMessage({
+    sessionId: s.id,
+    role: 'user',
+    content: 'summarize this',
+    contentBlocks: [PDF],
+  });
+  const failedTurn = await collect(loop.run('please', { sessionKey: key }));
+  const followUp = await collect(loop.run('ok, just summarize page 1', { sessionKey: key }));
+  const metadata = (await session.getSession(s.id))?.metadata;
+  return { failedTurn, followUp, metadata, pdfRowId: pdfRow.id };
+}
+
+describe('UBP-019 / V-CP-3 — only a deterministic rejection retires a block', () => {
+  it('after a 400 rejection the next turn does not resend the document', async () => {
+    const captured: Message[][] = [];
+    const { failedTurn, followUp, metadata, pdfRowId } = await rejectThenRetry(
+      rejectsDocuments(captured),
+      'cli:rej',
+    );
+    expect(failedTurn.find((e) => e.type === 'error')).toMatchObject({ code: 'llm_error' });
+    expect(metadata?.[VISION_REJECTED_KEY]).toEqual([pdfRowId]);
     const sent = captured.at(-1);
     expect(hasBlock(sent, 'document')).toBe(false);
-    expect(JSON.stringify(sent)).toContain('big.pdf');
-    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(JSON.stringify(sent)).toContain(
+      '[document not resent: big.pdf — the provider rejected the turn it came with]',
+    );
+    expect(followUp.some((e) => e.type === 'error')).toBe(false);
   });
 
-  it('ageVisionBlocks degrades a block followed by another user message with no reply', () => {
+  it.each([
+    ['529 overloaded', statusError(529, 'Overloaded')],
+    ['429 rate limit', statusError(429, 'rate limit exceeded')],
+    ['503 unavailable', statusError(503, 'service unavailable')],
+    ['a timeout', new Error('Request timed out')],
+    ['a network error', new Error('socket hang up')],
+    ['an abort', Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })],
+  ])('after %s the follow-up resends the document', async (_label, err) => {
+    const captured: Message[][] = [];
+    const { failedTurn, followUp, metadata } = await rejectThenRetry(
+      failsOnceOnDocument(captured, err),
+      'cli:transient',
+    );
+    expect(failedTurn.some((e) => e.type === 'error')).toBe(true);
+    expect(metadata?.[VISION_REJECTED_KEY]).toBeUndefined();
+    expect(hasBlock(captured.at(-1), 'document')).toBe(true);
+    expect(followUp.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('ageVisionBlocks alone no longer degrades an unanswered block', () => {
     const messages: Message[] = [
       { role: 'user', content: [PDF, { type: 'text', text: 'summarize' }] },
       { role: 'user', content: 'page 1 only' },
     ];
-    const out = ageVisionBlocks(messages);
-    expect(hasBlock(out, 'document')).toBe(false);
-    expect(out[0]?.content).toEqual([
-      { type: 'text', text: '[document not resent: big.pdf — the turn it came with got no reply]' },
-      { type: 'text', text: 'summarize' },
+    expect(ageVisionBlocks(messages)).toBe(messages);
+  });
+
+  it('degradeRejectedRows replaces only the recorded rows’ blocks, in place', () => {
+    const rows = [
+      { id: 'a', sessionId: 's', role: 'user' as const, content: 'x', contentBlocks: [PDF] },
+      { id: 'b', sessionId: 's', role: 'user' as const, content: 'y', contentBlocks: [IMG] },
+    ].map((r) => ({ ...r, timestamp: new Date(0) }));
+    const out = degradeRejectedRows(rows, new Set(['a']));
+    expect(out[0]?.contentBlocks).toEqual([
+      {
+        type: 'text',
+        text: '[document not resent: big.pdf — the provider rejected the turn it came with]',
+      },
     ]);
+    expect(out[1]).toBe(rows[1]);
+    expect(degradeRejectedRows(rows, new Set())).toBe(rows);
+  });
+
+  it('isDeterministicRejection: 400/413/415/422 yes; transient, auth and unknown no', () => {
+    expect(isDeterministicRejection(statusError(400, 'bad'))).toBe(true);
+    expect(isDeterministicRejection(statusError(413, 'too big'))).toBe(true);
+    expect(isDeterministicRejection(new Error('400 invalid_request_error: pages'))).toBe(true);
+    expect(isDeterministicRejection(statusError(422, 'x'))).toBe(true);
+    for (const status of [408, 429, 500, 502, 503, 504, 529, 401, 403, 404]) {
+      expect(isDeterministicRejection(statusError(status, 'x'))).toBe(false);
+    }
+    expect(isDeterministicRejection(new Error('request id abc4001 failed'))).toBe(false);
+    expect(isDeterministicRejection(new Error('socket hang up'))).toBe(false);
+    // A structured transient status wins over a 400 in the text.
+    expect(isDeterministicRejection(statusError(503, 'upstream said 400'))).toBe(false);
   });
 
   it('a block whose turn WAS answered keeps it inside the recency window', () => {

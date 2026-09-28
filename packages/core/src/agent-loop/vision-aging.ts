@@ -1,4 +1,4 @@
-import type { Message, MessageContent } from '@ethosagent/types';
+import type { Message, MessageContent, StoredMessage } from '@ethosagent/types';
 
 /**
  * C3 — block aging.
@@ -27,14 +27,14 @@ export const KEEP_RECENT_VISION_TURNS = 4;
 type VisionBlock = Extract<MessageContent, { type: 'image' | 'document' }>;
 
 /** Why a block is not sent; each has its own placeholder line. */
-type DegradeReason = 'aged' | 'unanswered' | 'unreadable';
+type DegradeReason = 'aged' | 'rejected' | 'unreadable';
 
 /** The text a block degrades to. */
 function placeholder(block: VisionBlock, reason: DegradeReason): string {
   const kind = block.type === 'document' ? 'document' : 'image';
   const name = block.filename ? `: ${block.filename}` : '';
-  if (reason === 'unanswered') {
-    return `[${kind} not resent${name} — the turn it came with got no reply]`;
+  if (reason === 'rejected') {
+    return `[${kind} not resent${name} — the provider rejected the turn it came with]`;
   }
   if (reason === 'unreadable') return `[${kind} not sent${name} — this model cannot read ${kind}s]`;
   return `[${kind} aged out${name}]`;
@@ -58,13 +58,11 @@ export interface AgeVisionOptions {
 /**
  * Replace image/document blocks with placeholder text when:
  *   - they are older than `keepRecentTurns` assistant turns (C3, recency);
- *   - their message got no reply — another user message follows it with no
- *     assistant message between (UBP-019). The user row persists its blocks
- *     before the call, and a turn the provider rejected writes no assistant
- *     row, so without this the block never ages and every later turn resends
- *     it and fails the same way. The cost: an image from a turn that died for
- *     another reason (an abort, a crash) is named, not resent;
- *   - `opts.vision` says the current model cannot read that kind.
+ *   - `opts.vision` says the current model cannot read that kind (UBP-019).
+ * A block the provider rejected is degraded earlier, on the stored rows, by
+ * {@link degradeRejectedRows}; an unanswered block alone is NOT degraded here,
+ * because a turn that failed transiently (overload, 429, timeout, abort) must
+ * resend it on the user's retry (V-CP-3).
  *
  * Returns the input array unchanged when nothing degraded, so an ordinary
  * text-only session pays one pass and no allocation. Pinned by
@@ -80,8 +78,6 @@ export function ageVisionBlocks(
   // from the CURRENT turn, which is what "recent" has to mean when history is
   // also being truncated from the head.
   let assistantTurns = 0;
-  // A user message was seen after this point with no assistant message since.
-  let laterUnansweredUser = false;
   let agedAny = false;
   const out: Message[] = new Array(messages.length);
   const vision = opts.vision;
@@ -90,12 +86,7 @@ export function ageVisionBlocks(
     const msg = messages[i];
     if (!msg) continue;
 
-    if (msg.role === 'assistant') {
-      assistantTurns++;
-      laterUnansweredUser = false;
-    }
-    const unanswered = msg.role === 'user' && laterUnansweredUser;
-    if (msg.role === 'user') laterUnansweredUser = true;
+    if (msg.role === 'assistant') assistantTurns++;
 
     if (!Array.isArray(msg.content) || !msg.content.some(isVisionBlock)) {
       out[i] = msg;
@@ -104,7 +95,6 @@ export function ageVisionBlocks(
     const aged = assistantTurns > keepRecentTurns;
     const reasonFor = (block: VisionBlock): DegradeReason | undefined => {
       if (aged) return 'aged';
-      if (unanswered) return 'unanswered';
       if (vision && !(block.type === 'document' ? vision.documents : vision.images)) {
         return 'unreadable';
       }
@@ -128,6 +118,30 @@ export function ageVisionBlocks(
   }
 
   return agedAny ? out : messages;
+}
+
+/**
+ * UBP-019 / V-CP-3 — replace the image/document blocks of the stored rows the
+ * provider deterministically rejected (ids recorded by `recordVisionRejection`,
+ * vision-rejection.ts) with a line naming each. Runs on the rows before
+ * `toLLMMessages`, so the prompt build never mutates what is stored. Returns
+ * the input array unchanged when no recorded row is present.
+ */
+export function degradeRejectedRows(
+  rows: StoredMessage[],
+  rejectedIds: ReadonlySet<string>,
+): StoredMessage[] {
+  if (rejectedIds.size === 0) return rows;
+  let changed = false;
+  const out = rows.map((row) => {
+    if (!rejectedIds.has(row.id) || !row.contentBlocks?.some(isVisionBlock)) return row;
+    changed = true;
+    const contentBlocks: MessageContent[] = row.contentBlocks.map((block) =>
+      isVisionBlock(block) ? { type: 'text', text: placeholder(block, 'rejected') } : block,
+    );
+    return { ...row, contentBlocks };
+  });
+  return changed ? out : rows;
 }
 
 /**

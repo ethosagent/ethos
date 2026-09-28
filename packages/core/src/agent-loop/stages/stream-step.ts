@@ -27,6 +27,7 @@ import { isContextOverflowError } from '../overflow';
 import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
+import { isDeterministicRejection, recordVisionRejection } from '../vision-rejection';
 import type { TurnUsageAccumulator } from './turn-finalizer';
 
 // ---------------------------------------------------------------------------
@@ -510,6 +511,11 @@ export async function* streamStep(
     deps.observability?.endTrace(ctx.traceId ?? '', 'error');
     deps.observability?.flush();
     await persistInterruptedAssistant(deps.session, ctx.sessionId, chunkText, msg, ctx.traceId);
+    // UBP-019 / V-CP-3 — only a rejection resending cannot fix retires the
+    // call's unanswered image/document blocks; a transient failure keeps them.
+    if (!chunkText.trim() && isDeterministicRejection(err)) {
+      await recordVisionRejection(deps.session, ctx.sessionId);
+    }
     yield { type: 'error', error: msg, code: 'llm_error' };
     return { outcome: 'fatal' };
   }

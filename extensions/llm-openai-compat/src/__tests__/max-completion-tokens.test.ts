@@ -77,6 +77,25 @@ describe('output-cap parameter (UBP-038)', () => {
     expect(JSON.stringify(params.oaiParams)).toContain('"max_tokens":64');
   });
 
+  // V-CP-5 — Azure addresses a DEPLOYMENT, whose name is the model id Ethos
+  // sees. The rule stays the model-id rule there (the portal names a
+  // deployment after its model by default): a deployment named for a
+  // reasoning family gets max_completion_tokens, anything else keeps
+  // max_tokens (outputCapParam's doc says why it is not sent everywhere).
+  it('Azure: a deployment named for a reasoning family gets max_completion_tokens', async () => {
+    const body = await wireBody('azure', 'https://res.openai.azure.com', 'o3-mini');
+    expect(body).toContain('"max_completion_tokens":256');
+    expect(body).not.toContain('"max_tokens"');
+  });
+
+  it('Azure: any other deployment name keeps max_tokens', async () => {
+    for (const deployment of ['gpt-4o', 'prod-chat']) {
+      const body = await wireBody('azure', 'https://res.openai.azure.com', deployment);
+      expect(body).toContain('"max_tokens":256');
+      expect(body).not.toContain('max_completion_tokens');
+    }
+  });
+
   it('matches only the reasoning families', () => {
     for (const id of ['o1', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5.6-sol', 'GPT-5-mini']) {
       expect(isOpenAiReasoningModelId(id)).toBe(true);

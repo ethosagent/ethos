@@ -34,7 +34,8 @@ import {
   DEFAULT_AGING_STATE,
 } from '../tool-result-aging';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
-import { ageVisionBlocks, KEEP_RECENT_VISION_TURNS } from '../vision-aging';
+import { ageVisionBlocks, degradeRejectedRows, KEEP_RECENT_VISION_TURNS } from '../vision-aging';
+import { readVisionRejected } from '../vision-rejection';
 import { checkContextDrift } from './context-drift';
 import { emitContextEvents } from './context-emit';
 import { turnToolDefinitions } from './stream-step';
@@ -637,9 +638,13 @@ export async function* assembleContext(
   // `replayHistory` carries any active compaction watermark (summary + tail).
   // Item 7 — the compaction envelope only for a provider that compacts
   // server-side; every other provider gets the readable summary (history.ts).
-  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts), {
-    serverCompaction: setup.serverCompaction.active,
-  });
+  // UBP-019 / V-CP-3 — the blocks of a call the provider deterministically
+  // rejected are replayed as lines naming them (vision-rejection.ts).
+  const rejectedVision = readVisionRejected(setup.sessionMetadata);
+  let llmMessages = toLLMMessages(
+    dedupHistory(degradeRejectedRows(replayHistory, rejectedVision), ghostOpts),
+    { serverCompaction: setup.serverCompaction.active },
+  );
   // C3 — age out image/document blocks past the recency window. Runs on the
   // unconditional path, ahead of the pressure-gated aging below, because this
   // one is about RECENCY: a session that never nears its context window would

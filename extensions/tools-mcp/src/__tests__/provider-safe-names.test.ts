@@ -75,10 +75,33 @@ describe('mcpToolName', () => {
     for (const n of [a, b, c, long1, long2]) expect(n).toMatch(PROVIDER_SAFE);
   });
 
-  it('never yields a server half containing "__"', () => {
-    const segment = DefaultToolRegistry.mcpServerSegment('acme..docs  hub');
+  // V-CP-4 — the server half is read back by splitting on '__'
+  // (tool-registry.ts `mcpServerName`, agent-loop/mcp-policy.ts), so it may not
+  // contain '__' or end in '_' — even when the name is otherwise in the charset.
+  it.each([
+    ['a folded name', 'acme..docs  hub'],
+    ['a charset-conforming name containing "__"', 'a__b'],
+    ['a name ending in "_"', 'x_'],
+    ['a name of underscores', '___'],
+  ])('never yields a server half containing "__" or ending in "_" (%s)', (_label, server) => {
+    const segment = DefaultToolRegistry.mcpServerSegment(server);
     expect(segment).not.toContain('__');
-    expect(segment).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+    expect(segment).not.toMatch(/_$/);
+    expect(segment).toMatch(/^[A-Za-z0-9_][A-Za-z0-9_-]*$/);
+    // The full name splits back to exactly this half.
+    const full = DefaultToolRegistry.mcpToolName(server, 'read');
+    expect(full.split('__')[1]).toBe(segment);
+    expect(full.endsWith('__read')).toBe(true);
+  });
+
+  it('two servers "a__b" and "a" get different halves', () => {
+    expect(DefaultToolRegistry.mcpServerSegment('a__b')).not.toBe('a');
+    expect(DefaultToolRegistry.mcpServerSegment('a')).toBe('a');
+  });
+
+  it('a leading "_" already splits back unambiguously, so it stays unchanged', () => {
+    expect(DefaultToolRegistry.mcpServerSegment('_internal')).toBe('_internal');
+    expect(DefaultToolRegistry.mcpToolName('_internal', 't').split('__')[1]).toBe('_internal');
   });
 });
 

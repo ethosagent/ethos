@@ -39,3 +39,40 @@ describe('UBP-035 — mcp.yaml policy applies to rewritten MCP tool names', () =
     expect(checkMcpRejectArgs(policy, name, { path: 'x' })).toBeUndefined();
   });
 });
+
+// V-CP-4 — a server name inside the charset that contains '__' or ends in '_'
+// used to be kept verbatim, and the name then split back to the wrong server.
+describe.each(['a__b', 'x_'])('V-CP-4 — mcp.yaml policy for server %s', (server) => {
+  const tool = DefaultToolRegistry.mcpToolName(server, 'read');
+
+  it('enabled: false on the server refuses its tool', () => {
+    const policy: McpPolicy = { servers: { [server]: { enabled: false } } };
+    expect(checkMcpEnabled(policy, tool)).toContain('disabled for this personality');
+  });
+
+  it('reject_args keyed by the server and tool fires', () => {
+    const policy: McpPolicy = {
+      servers: { [server]: { reject_args: { read: { path: ['/etc/shadow'] } } } },
+    };
+    expect(checkMcpRejectArgs(policy, tool, { path: '/etc/shadow' })).toContain(
+      "argument 'path' value '/etc/shadow' is rejected",
+    );
+  });
+
+  it('the registry allowlist gate lists the tool under its server', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register({
+      name: tool,
+      description: 'read',
+      schema: { type: 'object' },
+      capabilities: {},
+      async execute() {
+        return { ok: true, value: '' };
+      },
+    });
+    const names = registry
+      .toDefinitions(undefined, { allowedMcpServers: [server] })
+      .map((d) => d.name);
+    expect(names).toEqual([tool]);
+  });
+});

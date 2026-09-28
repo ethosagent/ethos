@@ -1,7 +1,9 @@
 // UBP-020 — a turn that ends with no reply text and no error used to reach the
 // surface as a blank `done`, and the gateway delivered nothing at all. It now
 // ends with an `error` event (code `empty_completion`), not a new AgentEvent
-// variant. UBP-033 — a `max_tokens` stop is visible: a reply cut off at the cap
+// variant — when the cap cut the reply off, or when no tool ran either. A turn
+// that did its work through tools and then stopped silently still ends with a
+// blank `done` (V-CP-1); the gateway turns that into EMPTY_REPLY_NOTICE. UBP-033 — a `max_tokens` stop is visible: a reply cut off at the cap
 // gets a user-audience `_loop` notice, and a tool call whose arguments the cap
 // cut off is rejected with a cap-specific reason instead of "malformed".
 
@@ -113,7 +115,7 @@ describe('UBP-020 — an empty final answer is surfaced, not a blank done', () =
     expect(err?.type === 'error' && err.error).toMatch(/output token limit/);
   });
 
-  it('empty after a tool call with no preamble → error; a preamble counts as the reply', async () => {
+  it('silent after a tool call → a blank done, not an error (V-CP-1); a preamble is the reply', async () => {
     const calls: unknown[] = [];
     const tools = new DefaultToolRegistry();
     tools.register(recordingTool('side', calls));
@@ -127,7 +129,10 @@ describe('UBP-020 — an empty final answer is surfaced, not a blank done', () =
         tools,
       ).run('go', { sessionKey: 'cli:empty-tool' }),
     );
-    expect(bare.find((e) => e.type === 'error')).toMatchObject({ code: 'empty_completion' });
+    // The work was done through the tool; the turn succeeded without words.
+    expect(calls).toEqual([{}]);
+    expect(bare.some((e) => e.type === 'error')).toBe(false);
+    expect(bare.find((e) => e.type === 'done')).toMatchObject({ text: '' });
 
     const withPreamble = await collect(
       loop(
@@ -145,6 +150,25 @@ describe('UBP-020 — an empty final answer is surfaced, not a blank done', () =
     );
     expect(withPreamble.some((e) => e.type === 'error')).toBe(false);
     expect(withPreamble.find((e) => e.type === 'done')).toMatchObject({ text: 'Checking now.' });
+  });
+
+  it('max_tokens with no text after a tool call → still error empty_completion', async () => {
+    const tools = new DefaultToolRegistry();
+    tools.register(recordingTool('side', []));
+    const events = await collect(
+      loop(
+        [
+          { toolCalls: [{ id: 't1', name: 'side', json: '{}' }], finishReason: 'tool_use' },
+          { finishReason: 'max_tokens' },
+        ],
+        [],
+        tools,
+      ).run('go', { sessionKey: 'cli:empty-tool-cap' }),
+    );
+    const err = events.find((e) => e.type === 'error');
+    expect(err).toMatchObject({ code: 'empty_completion' });
+    expect(err?.type === 'error' && err.error).toMatch(/output token limit/);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
   });
 });
 

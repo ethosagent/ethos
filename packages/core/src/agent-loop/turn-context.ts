@@ -238,6 +238,9 @@ export interface TurnSetup {
    *  personality (small-window flag, budgets, history limit); `AgentLoop.run`
    *  applies it (`withSmallWindow`). */
   smallWindowOverlay?: SmallWindowOverlay;
+  /** `Session.metadata` as read at turn start. Context assembly reads the
+   *  rows of a rejected vision call from it (vision-rejection.ts). */
+  sessionMetadata?: Record<string, unknown>;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };
