@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { PERSONALITY_DEFINITION_ENTRIES } from '@ethosagent/core';
-import { foldDenyKey, sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import { foldDenyKey, isOpaqueVolumeAlias, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +68,8 @@ function writeEvidence(
 
 export function isWriteBlocked(abs: string): boolean {
   // Deny-side compare: folds case on APFS/NTFS (`foldDenyKey`, UBP-008).
+  // `/.vol/<dev>/<inode>` names a file no string compare can see (V2-SEC-1).
+  if (isOpaqueVolumeAlias(resolve(abs))) return true;
   const normalized = foldDenyKey(resolve(abs));
   if (BLOCKED_WRITE_PATHS.some((p) => foldDenyKey(resolve(p)) === normalized)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => {
@@ -197,6 +199,14 @@ function reachFailure(kind: 'read' | 'write', path: string, err?: Error): ToolRe
   // `ScopedFsImpl`'s write-deny refusal is not an out-of-reach path — name it.
   if (err?.message.includes('personality definition is operator-owned')) {
     return definitionWriteRefused(path);
+  }
+  // V2-SEC-2 — the state-dir refusal after an untrusted read (`ScopedFsImpl.checkReach`).
+  if (err?.message.includes('this run read untrusted content')) {
+    return {
+      ok: false,
+      error: `Refused: this run read untrusted content, so "${path}" (Ethos state — memory, skills, personalities, schedules) cannot be written for the rest of the run. Tell the user what you would have written instead.`,
+      code: 'execution_failed',
+    };
   }
   return {
     ok: false,

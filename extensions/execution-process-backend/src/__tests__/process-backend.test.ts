@@ -119,6 +119,13 @@ describe('process backend env allowlist (V-ES-7, V-ES-8)', () => {
       GITHUB_TOKEN: 'ves7-secret-2',
       AWS_REGION: 'ves7-secret-3',
       ALL_PROXY: 'ves7-secret-4',
+      // V2-SEC-6: credentials in an allowed family's value, and *_PWD / *_PASS names.
+      NVM_NODEJS_ORG_MIRROR: 'https://bob:ves7-secret-5@mirror.ves7/node',
+      CONDA_CHANNEL_ALIAS: 'https://tok:ves7-secret-6@conda.ves7',
+      CONDA_PWD: 'ves7-secret-7',
+      XDG_DB_PASS: 'ves7-secret-8',
+      LC_VES7_HINT: 'ghp_ves7secret9ves7secret9ves7secret9xxxxx',
+      NVM_DIR: '/tmp/ves7-nvm',
       ETHOS_DOTENV_KEYS: 'ALL_PROXY',
     };
     const saved = new Map(Object.keys(staged).map((k) => [k, process.env[k]]));
@@ -131,7 +138,9 @@ describe('process backend env allowlist (V-ES-7, V-ES-8)', () => {
       expect(out).toContain('SSH_AUTH_SOCK=/tmp/ves7-agent.sock\n');
       expect(out).toContain('HTTPS_PROXY=http://proxy.ves7:3128\n');
       expect(out).toContain('LC_CTYPE=UTF-8\n');
+      expect(out).toContain('NVM_DIR=/tmp/ves7-nvm\n');
       expect(out).not.toMatch(/ves7-secret/);
+      expect(out).not.toMatch(/ves7secret/);
     } finally {
       for (const [k, v] of saved) {
         if (v === undefined) delete process.env[k];

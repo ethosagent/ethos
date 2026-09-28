@@ -58,6 +58,16 @@ const ADVERSARIAL: Array<[string, string]> = [
   ['digits with separators', fill('1 ')],
   ['digit runs', fill('1')],
   ['IBAN-like run', fill('AB12')],
+  // V2-SEC-4 additions.
+  ['secret name, 100k spaces, then =', fill(' ', 'db_password', '= x')],
+  ['repeated aligned assignments', fill('api_token          = ')],
+  ['repeated x-api-key headers', fill('x-api-key: ')],
+  ['Basic then 100k spaces', fill(' ', 'Authorization: Basic')],
+  ['repeated Authorization headers', fill('Authorization: Basic ')],
+  ['repeated URL schemes', fill('a://')],
+  ['URL userinfo with no @', fill('b', 'https://user:')],
+  ['repeated user:pass with no @', fill('u:p', 'https://')],
+  ['repeated prose secrets', fill('PASSWORD: required ')],
 ];
 
 function timeMs(fn: () => void): number {

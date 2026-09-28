@@ -42,6 +42,7 @@ import {
   type DowngradeState,
   enforceBeforeToolCall,
   isDowngraded,
+  runToolsInTaintScope,
 } from './per-call-enforcement';
 import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
@@ -307,9 +308,8 @@ export async function* processTools(
       }
     }
 
-    // Ch.3d — the step window, and the run-scoped persistence refusal (`isDowngraded`,
-    // ./per-call-enforcement.ts). A fresh run() resets both (`dgRemainingRef`, agent-loop.ts).
-    if (isDowngraded(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTools, tc.toolName)) {
+    // Ch.3d — step window + run-scoped refusals (`isDowngraded`, ./per-call-enforcement.ts).
+    if (isDowngraded(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTools, tc.toolName, tc.args)) {
       deps.observability?.recordSafetyBlock({
         traceId: ctx.traceId,
         code: 'tool_downgraded_post_untrusted_read',
@@ -469,12 +469,14 @@ export async function* processTools(
   let toolsDone = false;
   const toolsPromise =
     execInputs.length > 0
-      ? deps.tools.executeParallel(
-          execInputs,
-          toolCtx,
-          ctx.allowedTools,
-          ctx.filterOpts,
-          ctx.opts.attachments,
+      ? runToolsInTaintScope(ctx, () =>
+          deps.tools.executeParallel(
+            execInputs,
+            toolCtx,
+            ctx.allowedTools,
+            ctx.filterOpts,
+            ctx.opts.attachments,
+          ),
         )
       : Promise.resolve([]);
   // Signal the drain loop when tools complete (success or error).

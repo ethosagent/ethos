@@ -136,6 +136,13 @@ const SECRET_ENV: Record<string, string> = {
   CONDA_PASSWORD: 'ves8-secret-5',
   XDG_SECRET_KEY: 'ves8-secret-6',
   ALL_PROXY: 'ves8-secret-7',
+  // V2-SEC-6: a credential inside an allowed family's VALUE, and the
+  // *_PWD / *_PASS spellings the name filter used to miss.
+  NVM_NODEJS_ORG_MIRROR: 'https://bob:ves8-secret-8@mirror.ves8/node',
+  CONDA_CHANNEL_ALIAS: 'https://tok:ves8-secret-9@conda.ves8',
+  CONDA_PWD: 'ves8-secret-10',
+  XDG_DB_PASS: 'ves8-secret-11',
+  LC_VES8_HINT: 'ghp_ves8secret12ves8secret12ves8secret12xx',
 };
 
 /** Sets the fixture vars (ALL_PROXY marked as loaded from ~/.ethos/.env) and returns a restore. */

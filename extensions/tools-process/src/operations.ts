@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { matchesIdentity } from './process-identity';
 import {
   isAlive,
+  isEntryAlive,
   loadRegistry,
   type ProcessStatus,
   type Registry,
@@ -46,8 +47,8 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Liveness pass: flip every entry still marked `running` whose `pid` is no
- * longer alive to `orphan` (with a fresh `lastTouchedAt`). Mutates `reg` in
+ * Liveness pass: flip every entry still marked `running` whose process is no
+ * longer alive (`isEntryAlive` — a reused pid counts as gone) to `orphan` (with a fresh `lastTouchedAt`). Mutates `reg` in
  * place; returns true if anything changed so the caller can skip a needless
  * save. Shared by `listProcesses` (per-call liveness) and `reconcileRegistry`
  * (startup crash recovery) so the rule lives in exactly one place.
@@ -56,7 +57,7 @@ export function markDeadRunningAsOrphan(reg: Registry): boolean {
   let dirty = false;
   for (const entry of Object.values(reg)) {
     if (entry.status !== 'running') continue;
-    if (!isAlive(entry.pid)) {
+    if (!isEntryAlive(entry)) {
       reg[entry.id] = {
         ...entry,
         status: 'orphan',

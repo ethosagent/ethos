@@ -21,7 +21,7 @@ import {
 } from './operations';
 import type { ProcessIdentity } from './process-identity';
 import {
-  isAlive,
+  isEntryAlive,
   loadRegistry,
   type ProcessEntry,
   saveRegistry,
@@ -508,7 +508,7 @@ function makeProcessWait(dataDir: string, notifier?: CompletionNotifier): Tool {
             value: JSON.stringify({ exited: true, exit_code: current.exitCode }),
           };
         }
-        if (!isAlive(current.pid)) {
+        if (!isEntryAlive(current)) {
           await updateEntry(dataDir, id, { status: 'orphan' });
           notifier?.fire(current, ctx.sessionId, ctx.sessionKey);
           return { ok: true, value: JSON.stringify({ exited: true }) };
@@ -611,6 +611,7 @@ function makeProcessWatch(dataDir: string): Tool {
       const watchResult = await watchLogs({
         id,
         pid: entry.pid,
+        identity: entry,
         dataDir,
         logFiles,
         compiled: result.compiled,

@@ -1,6 +1,6 @@
 import { closeSync, type FSWatcher, fstatSync, openSync, readSync, watch } from 'node:fs';
 import { join } from 'node:path';
-import { isAlive, loadRegistry } from './registry';
+import { isEntryAlive, loadRegistry, type ProcessEntry } from './registry';
 import { BACKEND_ROUTED_PID } from './spawn';
 
 export type WatchMatch = {
@@ -15,6 +15,8 @@ type CompiledPattern = { raw: string; re: RegExp | null };
 export interface WatchConfig {
   id: string;
   pid: number;
+  /** The identity recorded at spawn, so a reused pid reads as exited (`isEntryAlive`). */
+  identity?: Pick<ProcessEntry, 'pidStartToken' | 'bootId'>;
   dataDir: string;
   logFiles: Array<{ path: string; label: 'stdout' | 'stderr' }>;
   compiled: CompiledPattern[];
@@ -68,8 +70,18 @@ export function buildLogFiles(
 }
 
 export function watchLogs(config: WatchConfig): Promise<WatchResult> {
-  const { id, pid, dataDir, logFiles, compiled, stopFirst, timeoutMs, abortSignal, onMatch } =
-    config;
+  const {
+    id,
+    pid,
+    identity,
+    dataDir,
+    logFiles,
+    compiled,
+    stopFirst,
+    timeoutMs,
+    abortSignal,
+    onMatch,
+  } = config;
   const startTime = Date.now();
   const matches: WatchMatch[] = [];
 
@@ -140,12 +152,13 @@ export function watchLogs(config: WatchConfig): Promise<WatchResult> {
 
     // Backend-routed processes have no host pid (-1); their liveness is the
     // registry status, flipped to terminal by the spawnViaBackend drain loop
-    // when the exec stream ends. Host-pid processes use the signal(0) probe.
+    // when the exec stream ends. Host-pid processes use `isEntryAlive` (the pid
+    // is alive AND still wears the identity recorded at spawn).
     function isProcessDead(): boolean {
       if (pid === BACKEND_ROUTED_PID) {
         return loadRegistry(dataDir)[id]?.status !== 'running';
       }
-      return !isAlive(pid);
+      return !isEntryAlive({ ...identity, pid });
     }
 
     function checkLiveness() {

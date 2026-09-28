@@ -2,14 +2,14 @@
 // UBP-047 — a grant that is an ANCESTOR of the Ethos state dir does not reach
 // into it. Mirror of packages/core/src/__tests__/scoped-fs-casefold-statedir.test.ts.
 
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BoundaryError } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FsStorage } from '../fs-storage';
 import { ScopedStorage } from '../scoped-storage';
-import { CASE_INSENSITIVE_FS, foldDenyKey } from '../sensitive-paths';
+import { CASE_INSENSITIVE_FS, foldDenyKey, isOpaqueVolumeAlias } from '../sensitive-paths';
 
 describe('foldDenyKey (UBP-008)', () => {
   it('folds case, including characters whose lowercase alone would miss', () => {
@@ -44,6 +44,34 @@ describe('foldDenyKey (UBP-008)', () => {
     expect(foldDenyKey('/System/Volumes/Data/Users/u', false, false)).toBe(
       '/System/Volumes/Data/Users/u',
     );
+  });
+
+  // V2-SEC-1: /.nofollow/<p> and /.resolve/<n>/<p> open /<p> on macOS.
+  it('maps the macOS /.nofollow and /.resolve/<n> alias prefixes onto the plain path', () => {
+    const plain = foldDenyKey('/Users/u/.ssh/id', true, true);
+    for (const alias of [
+      '/.nofollow/Users/u/.ssh/id',
+      '/.resolve/1/Users/u/.ssh/id',
+      '/.resolve/0/Users/u/.ssh/id',
+      '/.resolve/16/Users/u/.ssh/id',
+      '/.resolve/1/System/Volumes/Data/.nofollow/Users/u/.ssh/id',
+      '/System/Volumes/Data/.nofollow/Users/u/.ssh/id',
+      '/.NOFOLLOW/Users/u/.ssh/id',
+    ]) {
+      expect(foldDenyKey(alias, true, true)).toBe(plain);
+    }
+    expect(foldDenyKey('/.nofollow', true, true)).toBe('/');
+    expect(foldDenyKey('/.nofollowx/a', true, true)).toBe('/.nofollowx/a');
+    expect(foldDenyKey('/.resolve/x/a', true, true)).toBe('/.resolve/x/a');
+    expect(foldDenyKey('/.nofollow/a', false, false)).toBe('/.nofollow/a');
+  });
+
+  it('names /.vol/<dev>/<inode> as an alias a string cannot resolve', () => {
+    expect(isOpaqueVolumeAlias('/.vol/16777232/2', true)).toBe(true);
+    expect(isOpaqueVolumeAlias('/.VOL', true)).toBe(true);
+    expect(isOpaqueVolumeAlias('/.nofollow/.vol/1/2', true)).toBe(true);
+    expect(isOpaqueVolumeAlias('/.volume/x', true)).toBe(false);
+    expect(isOpaqueVolumeAlias('/.vol/1/2', false)).toBe(false);
   });
 });
 
@@ -96,6 +124,30 @@ describe.skipIf(process.platform !== 'darwin')('ScopedStorage on APFS (V-ES-1, V
     const other = join(home, '.ethos', 'personalities', 'therapist', 'MEMORY.md');
     await expect(scoped.read(alias(other))).rejects.toBeInstanceOf(BoundaryError);
     await expect(scoped.write(alias(other), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    expect(await readFile(other, 'utf8')).toBe('THERAPIST-PRIVATE');
+  });
+
+  // V2-SEC-1 (verify2-sec/firm2.mts): the kernel opens every one of these as
+  // the plain path, so each must hit the same deny key.
+  it('refuses the /.nofollow, /.resolve/<n> and /.vol aliases of the floor and the state dir', async () => {
+    const key = join(home, '.ssh', 'id_ed25519');
+    const other = join(home, '.ethos', 'personalities', 'therapist', 'MEMORY.md');
+    expect(await readFile(`/.nofollow${key}`, 'utf8')).toBe('PRIVATE-KEY');
+    const st = await stat(other);
+    const vol = `/.vol/${st.dev}/${st.ino}`;
+    expect(await readFile(vol, 'utf8')).toBe('THERAPIST-PRIVATE');
+    for (const prefix of ['/.nofollow', '/.resolve/1', '/.resolve/0', '/.resolve/1/.nofollow']) {
+      await expect(scoped.read(`${prefix}${key}`)).rejects.toThrow(/always-deny floor/);
+      await expect(scoped.exists(`${prefix}${join(home, '.ssh')}`)).rejects.toThrow(
+        /always-deny floor/,
+      );
+      await expect(scoped.read(`${prefix}${other}`)).rejects.toBeInstanceOf(BoundaryError);
+      await expect(scoped.write(`${prefix}${other}`, 'OVERWRITTEN')).rejects.toBeInstanceOf(
+        BoundaryError,
+      );
+    }
+    await expect(scoped.read(vol)).rejects.toThrow(/always-deny floor/);
+    await expect(scoped.write(vol, 'OVERWRITTEN')).rejects.toThrow(/always-deny floor/);
     expect(await readFile(other, 'utf8')).toBe('THERAPIST-PRIVATE');
   });
 });

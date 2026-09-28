@@ -75,24 +75,41 @@ const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
 ]);
 /** Whole families forwarded by prefix: locale, nvm, conda, XDG dirs, terminal identity. */
 const PASSTHROUGH_ENV_PREFIXES = ['LC_', 'NVM_', 'CONDA_', 'XDG_', 'TERM_'] as const;
-/** A name that looks like a credential is never forwarded, even inside an allowed family. */
-const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_/i;
+/**
+ * A name that looks like a credential is never forwarded, even inside an
+ * allowed family. `_PWD`/`_PASS` as whole segments (V2-SEC-6): `CONDA_PWD`,
+ * `XDG_DB_PASS`.
+ */
+const SECRET_ENV_NAME =
+  /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_|(?:^|_)(?:PWD|PASS)(?:_|$)/i;
+/**
+ * A family (prefix) var whose VALUE carries a credential is not forwarded
+ * either (V2-SEC-6): URL userinfo (`https://user:pass@mirror` in an
+ * `NVM_*_MIRROR` or `CONDA_CHANNEL_ALIAS`), a PEM private key, or a vendor
+ * token shape — the high-signal prefixes of `PATTERNS` in
+ * packages/safety/redact/src/index.ts, which this copy cannot import. The
+ * named keys (`HTTPS_PROXY` and friends) are exempt: a proxy URL with
+ * credentials is the documented way an authenticated proxy is configured.
+ */
+const SECRET_ENV_VALUE =
+  /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s:]+:[^/@\s]+@|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?<![A-Za-z0-9_-])(?:sk-|sk_live_|ghp_|gh[sour]_|github_pat_|xox[bpoa]-|xapp-|gsk_|xai-|AKIA|ASIA|AIza)[A-Za-z0-9_-]{16,}|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ/;
 
 /**
  * True when `key` may pass from the host env to a child. Names `loadDotEnv`
  * copied in from `~/.ethos/.env` (recorded in `ETHOS_DOTENV_KEYS`,
  * packages/storage-fs/src/env-secrets.ts) never pass, whatever they are.
  */
-function isPassthroughEnvKey(key: string, dotenvKeys: ReadonlySet<string>): boolean {
+function isPassthroughEnvKey(key: string, val: string, dotenvKeys: ReadonlySet<string>): boolean {
   if (dotenvKeys.has(key) || SECRET_ENV_NAME.test(key)) return false;
-  return PASSTHROUGH_ENV_KEYS.has(key) || PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p));
+  if (PASSTHROUGH_ENV_KEYS.has(key)) return true;
+  return PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p)) && !SECRET_ENV_VALUE.test(val);
 }
 
 function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
   const base: Record<string, string> = {};
   const dotenvKeys = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
   for (const [key, val] of Object.entries(process.env)) {
-    if (val !== undefined && isPassthroughEnvKey(key, dotenvKeys)) base[key] = val;
+    if (val !== undefined && isPassthroughEnvKey(key, val, dotenvKeys)) base[key] = val;
   }
   return env ? { ...base, ...env } : base;
 }

@@ -11,6 +11,7 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
 import type { ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
+import { runIsTainted } from './run-taint';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -32,9 +33,11 @@ export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.plat
  * The fold is lower-upper-lower (V-ES-1): U+1E9E CAPITAL SHARP S uppercases
  * to itself and lowercases to `ß`, so upper-then-lower left `.ẞh` as `.ßh`
  * while APFS opens it as `.ssh`; lowercasing first reaches `ß`, whose
- * uppercase is `SS`. On macOS the key also drops a leading
- * `/System/Volumes/Data` ({@link DATA_VOLUME_FIRMLINK}, V-ES-3), so the
- * firmlink spelling of a denied path or of the state dir is the same key.
+ * uppercase is `SS`. On macOS the key also drops leading
+ * `/System/Volumes/Data`, `/.nofollow` and `/.resolve/<n>` components
+ * ({@link VOLUME_ALIAS_PREFIX}, V-ES-3, V2-SEC-1), so an alias spelling of a
+ * denied path or of the state dir is the same key; `/.vol/<dev>/<inode>` is
+ * refused outright ({@link isOpaqueVolumeAlias}).
  * Folding more than the filesystem does only over-denies.
  *
  * Only deny-direction checks fold: the always-deny floor, the write-deny list
@@ -53,7 +56,7 @@ export function foldDenyKey(
   const folded = insensitive
     ? path.normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
     : path;
-  return dataVolumeAlias ? stripDataVolume(folded) : folded;
+  return dataVolumeAlias ? stripVolumeAliases(folded) : folded;
 }
 
 /**
@@ -64,23 +67,48 @@ export function foldDenyKey(
  */
 export const DATA_VOLUME_FIRMLINK = process.platform === 'darwin';
 
-const DATA_VOLUME = '/system/volumes/data';
+/**
+ * The leading components macOS resolves to the path that follows them, so
+ * `<alias>/<p>` opens `/<p>` (compared case-insensitively — over-matching a
+ * deny key only over-denies):
+ * - `/System/Volumes/Data` — the data-volume firmlink (V-ES-3).
+ * - `/.nofollow` — the VFS "no symlinks in this lookup" prefix (V2-SEC-1).
+ * - `/.resolve/<n>` — the VFS lookup with `RESOLVE_*` flags `<n>` (V2-SEC-1).
+ * Each was checked against a live macOS 26 volume (`/.nofollow/Users/…` and
+ * `/.resolve/0/…`, `/.resolve/1/…`, `/.resolve/99/…` all open the plain path);
+ * they may stack, so {@link stripVolumeAliases} loops.
+ */
+const VOLUME_ALIAS_PREFIX = /^(?:\/system\/volumes\/data|\/\.nofollow|\/\.resolve\/\d+)(?=\/|$)/i;
 
 /**
- * Drops every leading `/System/Volumes/Data` (compared case-insensitively, as
- * APFS does). Mapping a data-volume entry that is NOT firmlinked onto the root
- * only over-denies, which is the safe direction for a deny key.
+ * Drops every leading {@link VOLUME_ALIAS_PREFIX} component. Mapping an entry
+ * that is NOT an alias onto the root only over-denies, which is the safe
+ * direction for a deny key.
  */
-function stripDataVolume(key: string): string {
+function stripVolumeAliases(key: string): string {
   let out = key;
   for (;;) {
-    const head = out.slice(0, DATA_VOLUME.length).toLowerCase();
-    if (head !== DATA_VOLUME) return out;
-    const rest = out.slice(DATA_VOLUME.length);
+    const match = VOLUME_ALIAS_PREFIX.exec(out);
+    if (match === null) return out;
+    const rest = out.slice(match[0].length);
     if (rest === '' || rest === '/') return '/';
-    if (!rest.startsWith('/')) return out;
     out = rest;
   }
+}
+
+/**
+ * True when `path` goes through macOS `/.vol/<dev>/<inode>` (V2-SEC-1), which
+ * opens a file by device and inode number. No string fold can say which file
+ * that is, so every deny-direction check refuses it outright:
+ * `ScopedFsImpl.hitsDenyFloor` (`packages/core/src/scoped/scoped-fs.ts`),
+ * `ScopedStorage.hitsDenyFloor` (`packages/storage-fs/src/scoped-storage.ts`)
+ * and `isWriteBlocked` (`extensions/tools-file/src/index.ts`).
+ */
+export function isOpaqueVolumeAlias(
+  path: string,
+  volumeAliases: boolean = DATA_VOLUME_FIRMLINK,
+): boolean {
+  return volumeAliases && /^\/\.vol(?:\/|$)/i.test(stripVolumeAliases(path));
 }
 
 /**
@@ -219,6 +247,11 @@ export class ScopedFsImpl implements ScopedFs {
         `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
       );
     }
+    if (kind === 'write' && runIsTainted() && writesEthosState(canonical)) {
+      throw new Error(
+        `PATH_NOT_REACHABLE: write of "${path}" refused — this run read untrusted content, and the Ethos state dir holds what later prompts read`,
+      );
+    }
 
     let prefix = matchAllowedPrefix(canonical, allowed);
     if (prefix === null) {
@@ -263,11 +296,33 @@ export class ScopedFsImpl implements ScopedFs {
   }
 
   private hitsDenyFloor(canonical: string): boolean {
+    if (isOpaqueVolumeAlias(canonical)) return true;
     const key = foldDenyKey(canonical);
     return this.denyPaths.some(
       (deny) => key === deny || key.startsWith(deny.endsWith('/') ? deny : `${deny}/`),
     );
   }
+}
+
+/**
+ * V2-SEC-2 (b): true when a write to `canonical` lands in an Ethos state dir
+ * outside a personality's asset folder (`personalities/<id>/files/`,
+ * `personalityAssetDir` in ../fs-reach.ts). Everything else there is text a
+ * LATER prompt carries — `MEMORY.md`/`USER.md` (deliberately not write-denied:
+ * the memory provider writes them), team memory, skills, a new personality's
+ * `SOUL.md`, cron's `jobs.json` — so once the run has read untrusted content
+ * (`runIsTainted`, ./run-taint.ts) `checkReach` refuses it for the rest of the
+ * run, the same promise the memory writers keep. Compared as deny keys.
+ * Pinned by `../__tests__/downgrade-derived-runs.test.ts`.
+ */
+function writesEthosState(canonical: string): boolean {
+  const key = foldDenyKey(canonical);
+  return ethosStateDirs().some((dir) => {
+    const root = foldDenyKey(normalize(resolve(dir)));
+    if (!within(root, key)) return false;
+    const [top, , sub] = key.slice(root.length + 1).split('/');
+    return !(top === 'personalities' && sub === 'files');
+  });
 }
 
 /** True when `canonical` equals, or lies under, one of the canonical `paths`. */

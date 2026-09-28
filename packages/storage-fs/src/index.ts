@@ -24,5 +24,6 @@ export {
   CASE_INSENSITIVE_FS,
   ethosStateDirs,
   foldDenyKey,
+  isOpaqueVolumeAlias,
   sensitiveDenyPaths,
 } from './sensitive-paths';

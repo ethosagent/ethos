@@ -153,4 +153,16 @@ describe('tools-file — personality definition files are operator-owned', () =>
       true,
     );
   });
+
+  // V2-SEC-1 — /.nofollow/<p> and /.resolve/<n>/<p> open /<p>; /.vol/<dev>/<ino>
+  // names a file by inode, which no string compare can resolve.
+  it.skipIf(process.platform !== 'darwin')('the backstops fold the macOS alias prefixes', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    const keys = join(homedir(), '.ssh', 'authorized_keys');
+    for (const prefix of ['/.nofollow', '/.resolve/1', '/.resolve/0', '/.resolve/1/.nofollow']) {
+      expect(isWriteBlocked(`${prefix}${keys}`)).toBe(true);
+      expect(isPersonalityDefinitionPath(`${prefix}${join(own, 'toolset.yaml')}`)).toBe(true);
+    }
+    expect(isWriteBlocked('/.vol/16777232/169332821')).toBe(true);
+  });
 });

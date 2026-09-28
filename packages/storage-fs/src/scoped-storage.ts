@@ -13,7 +13,7 @@ import {
   type StorageRemoveOptions,
   type StorageWriteOptions,
 } from '@ethosagent/types';
-import { ethosStateDirs, foldDenyKey } from './sensitive-paths';
+import { ethosStateDirs, foldDenyKey, isOpaqueVolumeAlias } from './sensitive-paths';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -128,6 +128,7 @@ export class ScopedStorage implements Storage {
 
   /** True when `path` is (or is under) an always-deny entry, compared as deny keys. */
   private hitsDenyFloor(path: string): boolean {
+    if (isOpaqueVolumeAlias(path)) return true;
     return matchPrefix(foldDenyKey(path), this.denyKeys) !== null;
   }
 

@@ -298,3 +298,57 @@ describe('redactString — V-ES-4 lowercase and embedded secret forms', () => {
     expect(redactString(first)).toBe(first);
   });
 });
+
+// V2-SEC-4 (verify2-sec/shapes.mts): column-aligned assignments (terraform
+// fmt, INI), standard credential names the lowercase list omitted, the
+// `x-api-key` and `Authorization: Basic` headers, and a password in a URL's
+// userinfo all passed through. And the UPPER rule redacted English prose
+// (`PASSWORD: required`, `The SECRET: congratulations`).
+describe('redactString — V2-SEC-4 shapes', () => {
+  it.each([
+    ['db_password     = "', 'SuperSecretValue123'],
+    ['db_password      = "', 'SuperSecretValue123'],
+    ['DB_PASSWORD          = ', 'SuperSecretValue123'],
+    ['password:     ', 'hunter2hunter2hunter2'],
+    ['  password:   ', 'hunter2hunter2hunter2'],
+    ['aws_session_token = ', 'FwoGZXIvYXdzEBYaDHqa0AP1b2c3d4e5f6g7h8i9j0'],
+    ['api_token = "', 'abcdef1234567890abcdef'],
+    ['cloudflare_api_token = "', 'abcdef1234567890abcdef'],
+    ['session_token: ', 'abcdef1234567890abcdef1234'],
+    ['bearer_token=', 'abcdef1234567890abcdef1234'],
+    ['x-api-key: ', 'abcdef1234567890abcdef1234'],
+    ['X-Api-Key:', 'abcdef1234567890abcdef1234'],
+    ['Authorization: Basic ', 'dXNlcjpwYXNzd29yZDEyMzQ1Njc4OTA='],
+    ['Proxy-Authorization: Basic ', 'YWxpY2U6czNjcjN0'],
+    ['mysql://root:', 'SuperSecretValue123'],
+    ['postgres://app_user:', 'pw'],
+    ['https://alice:', 'S3cretProxyPw'],
+  ])('redacts the value of %s', (prefix, value) => {
+    const suffix = prefix.startsWith('mysql') || prefix.includes('://') ? '@db:3306/app' : '';
+    const text = `${prefix}${value}${suffix}`;
+    const result = redactString(text);
+    expect(result).not.toContain(value);
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(result).toContain('[REDACTED:');
+    expect(detectSecrets(text).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'PASSWORD: required',
+    'The SECRET: congratulations',
+    'API_KEY: Optional',
+    'DB_PASSWORD: <your-password>',
+    'API_TOKEN: ********',
+    'password:   required.',
+    'Authorization: Basic authentication is disabled',
+    'see https://example.com:8080/path for details',
+    'git@github.com:org/repo.git',
+    'ssh://git@github.com/org/repo',
+  ])('leaves %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
+  });
+
+  it('still redacts a letters-only value assigned with `=`', () => {
+    expect(redactString('DB_PASSWORD=supersecretpass')).toBe('DB_PASSWORD=[REDACTED:secret-value]');
+  });
+});

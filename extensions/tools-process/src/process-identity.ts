@@ -12,7 +12,12 @@
 // - Linux: `starttime` from `/proc/<pid>/stat` (clock ticks since boot), plus
 //   `/proc/sys/kernel/random/boot_id`, because ticks-since-boot repeat across
 //   boots.
-// - macOS: `ps -o lstart=` (the recorded start time, second resolution).
+// - macOS: `ps -o lstart=` (the recorded start time, second resolution), run
+//   as `/bin/ps` under a fixed env (`DARWIN_PS_ENV`: C locale, UTC) so the
+//   spelling does not depend on the Ethos process's locale or time zone, and
+//   neither the host PATH nor the process's secrets reach it (V2-SEC-3).
+//   Tokens recorded before that (`darwin:` prefix) were spelled under the
+//   process env of the time and are still compared that way.
 // - Elsewhere: no identity, and `stopProcess` falls back to signalling the pid
 //   alone, which is what it did before process groups.
 //
@@ -47,19 +52,43 @@ export function processStartToken(pid: number): string | null {
     }
   }
   if (process.platform === 'darwin') {
-    try {
-      const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-        encoding: 'utf8',
-        timeout: 2_000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      return out ? `darwin:${out}` : null;
-    } catch {
-      // ps exits 1 when no such pid exists.
-      return null;
-    }
+    const out = darwinLstart(pid, DARWIN_PS_ENV);
+    return out ? `${DARWIN_TOKEN}${out}` : null;
   }
   return null;
+}
+
+const DARWIN_TOKEN = 'darwin-utc:';
+/** Pre-V2-SEC-3 tokens: `lstart` spelled under the Ethos process's own env. */
+const LEGACY_DARWIN_TOKEN = 'darwin:';
+const DARWIN_PS_ENV: NodeJS.ProcessEnv = { LC_ALL: 'C', TZ: 'UTC', PATH: '/usr/bin:/bin' };
+
+/** `lstart` of `pid` from `/bin/ps` under `env` (inherited when undefined), whitespace-collapsed; null when gone. */
+function darwinLstart(pid: number, env: NodeJS.ProcessEnv | undefined): string | null {
+  try {
+    const out = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      ...(env ? { env } : {}),
+      timeout: 2_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    // `lstart` pads a one-digit day with a second space; collapse runs.
+    return out.trim().replace(/\s+/g, ' ') || null;
+  } catch {
+    // ps exits 1 when no such pid exists.
+    return null;
+  }
+}
+
+/**
+ * A legacy token's comparison value: `lstart` spelled the way it was recorded,
+ * under the Ethos process's own locale and zone — so `/bin/ps` inherits this
+ * process's env (no `env` option). Only for entries recorded before V2-SEC-3;
+ * the binary is still the absolute system one.
+ */
+function legacyDarwinToken(pid: number): string | null {
+  const out = darwinLstart(pid, undefined);
+  return out ? `${LEGACY_DARWIN_TOKEN}${out}` : null;
 }
 
 /** The kernel's per-boot UUID on Linux; null elsewhere (see holder-identity.ts for why). */
@@ -92,6 +121,13 @@ export function matchesIdentity(
     const boot = currentBootId();
     if (boot !== null && boot !== recorded.bootId) return 'different';
   }
-  if (recorded.pidStartToken === undefined) return 'unknown';
-  return processStartToken(pid) === recorded.pidStartToken ? 'same' : 'different';
+  const token = recorded.pidStartToken;
+  if (token === undefined) return 'unknown';
+  if (process.platform === 'darwin' && token.startsWith(LEGACY_DARWIN_TOKEN)) {
+    const legacy = legacyDarwinToken(pid);
+    return legacy !== null && legacy.replace(/\s+/g, ' ') === token.replace(/\s+/g, ' ')
+      ? 'same'
+      : 'different';
+  }
+  return processStartToken(pid) === token ? 'same' : 'different';
 }
