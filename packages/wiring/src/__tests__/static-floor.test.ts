@@ -130,15 +130,15 @@ describe('resolveResultBudget (Lane 1c/1e)', () => {
 });
 
 describe('resolveResultBudgetGate (post-review FIX 1 — local-only engagement)', () => {
-  it('hosted deepseek (catalog 64k window, no keys) keeps the flat 80k and NO gate-reserve term', () => {
-    // The exact hosted config the review named: hosted DeepSeek's catalog
-    // default window (64,000) is below the ~80k-token compactible threshold,
-    // so pre-fix the scaling engaged automatically — a hosted behavior change
-    // with no key set. The classification says hosted → flat default.
-    const windowTokens = lookupContextWindow('deepseek', 'deepseek-chat');
-    expect(windowTokens).toBe(64_000);
-    const localRuntime =
-      detectLocalRuntime('deepseek', 'https://api.deepseek.com/v1') !== undefined;
+  it('a hosted model with a small catalog window (32k, no keys) keeps the flat 80k and NO gate-reserve term', () => {
+    // The review named hosted DeepSeek's 64,000 window, below the ~80k-token
+    // compactible threshold: pre-fix the scaling engaged automatically — a
+    // hosted behavior change with no key set. DeepSeek's retired 64k rows left
+    // the catalog (2026-09-28 refresh); Mistral Small's 32k row is the same
+    // case. The classification says hosted → flat default.
+    const windowTokens = lookupContextWindow('mistral', 'mistral-small-latest');
+    expect(windowTokens).toBe(32_000);
+    const localRuntime = detectLocalRuntime('mistral', 'https://api.mistral.ai/v1') !== undefined;
     expect(localRuntime).toBe(false);
 
     const gate = resolveResultBudgetGate({
@@ -150,8 +150,11 @@ describe('resolveResultBudgetGate (post-review FIX 1 — local-only engagement)'
     expect(gate.maxSingleToolResultTokens).toBeUndefined();
   });
 
-  it('hosted groq gemma2-9b-it (8k catalog window, no keys) also stays flat', () => {
-    const windowTokens = lookupContextWindow('groq', 'gemma2-9b-it');
+  it('hosted fireworks firefunction-v2 (8k catalog window, no keys) also stays flat', () => {
+    const windowTokens = lookupContextWindow(
+      'fireworks',
+      'accounts/fireworks/models/firefunction-v2',
+    );
     expect(windowTokens).toBe(8_192);
     const gate = resolveResultBudgetGate({
       windowTokens: windowTokens ?? 0,

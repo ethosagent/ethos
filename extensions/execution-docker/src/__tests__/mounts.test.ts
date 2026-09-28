@@ -250,12 +250,19 @@ describe('mountsFor — every state dir, not only ethosHome', () => {
 // `scripts/`, `cron/jobs.json` and the rest stay writable from a shell.
 describe('mountsFor — a rw mount holding a state dir is read-only on every host', () => {
   for (const foldsCase of [false, true]) {
-    it(`cwd at or above ETHOS_HOME is ro, own files/ stays rw (foldsCase=${foldsCase})`, () => {
-      for (const cwd of [ETHOS_HOME, '/home/tester']) {
-        const m = modes(undefined, foldsCase, cwd);
-        expect([cwd, m.get(cwd)]).toEqual([cwd, 'ro']);
-        expect(m.get(`${OWN}/files`)).toBe('rw');
-      }
+    it(`cwd above ETHOS_HOME is ro, own files/ stays rw (foldsCase=${foldsCase})`, () => {
+      const cwd = '/home/tester';
+      const m = modes(undefined, foldsCase, cwd);
+      expect([cwd, m.get(cwd)]).toEqual([cwd, 'ro']);
+      expect(m.get(`${OWN}/files`)).toBe('rw');
+    });
+
+    // UBP-047 (main): a cwd AT the state dir is dropped from the default reach
+    // (`deriveFsReachPaths`), so it is not mounted at all.
+    it(`cwd at ETHOS_HOME is not mounted, own files/ stays rw (foldsCase=${foldsCase})`, () => {
+      const m = modes(undefined, foldsCase, ETHOS_HOME);
+      expect(m.has(ETHOS_HOME)).toBe(false);
+      expect(m.get(`${OWN}/files`)).toBe('rw');
     });
   }
 

@@ -47,14 +47,14 @@ afterEach(() => {
 
 describe('spawnDetached', () => {
   it('returns a pid and the process is alive', async () => {
-    const result = spawnDetached('p1', 'sleep 30', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p1', 'sleep 30', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     expect(result.pid).toBeGreaterThan(0);
     expect(isAlive(result.pid)).toBe(true);
   });
 
   it('creates and writes the log files', async () => {
-    const result = spawnDetached('p2', 'echo hello-stdout', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p2', 'echo hello-stdout', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     await waitFor(
       () =>
@@ -77,8 +77,7 @@ describe('spawnDetached', () => {
       [
         `import { writeFileSync } from 'node:fs';`,
         `import { spawnDetached } from ${JSON.stringify(spawnModule)};`,
-        `const r = spawnDetached('gc', 'sleep 10', ${JSON.stringify(dataDir)}, undefined, ${JSON.stringify(dataDir)});`,
-        `writeFileSync(${JSON.stringify(pidFile)}, String(r.pid), 'utf8');`,
+        `spawnDetached('gc', 'sleep 10', ${JSON.stringify(dataDir)}, undefined, ${JSON.stringify(dataDir)}).then((r) => writeFileSync(${JSON.stringify(pidFile)}, String(r.pid), 'utf8'));`,
       ].join('\n'),
       'utf8',
     );
@@ -94,7 +93,7 @@ describe('spawnDetached', () => {
   });
 
   it('detached child is in its own process group (survives parent group signals)', async () => {
-    const result = spawnDetached('p4', 'sleep 10', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p4', 'sleep 10', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     // detached:true puts the child in a new process group whose pgid === child pid.
     const pgid = Number(
@@ -131,7 +130,7 @@ describe('spawnDetached env (F3)', () => {
     try {
       const out = join(dataDir, 'env-out.txt');
       // The child prints the probe var; with the clean env it must be empty.
-      const result = spawnDetached(
+      const result = await spawnDetached(
         'envtest',
         `printf '%s' "$ETHOS_LEAK_PROBE" > ${JSON.stringify(out)}`,
         dataDir,
@@ -150,7 +149,7 @@ describe('spawnDetached env (F3)', () => {
 
   it('sets the self-amendment tripwire, and a caller env cannot clear it (D32)', async () => {
     const out = join(dataDir, 'env-tripwire.txt');
-    const result = spawnDetached(
+    const result = await spawnDetached(
       'envtripwire',
       `printf '%s' "$ETHOS_TOOL_PROCESS" > ${JSON.stringify(out)}`,
       dataDir,
@@ -164,7 +163,7 @@ describe('spawnDetached env (F3)', () => {
 
   it('forwards an explicitly-opted env var to the spawned child', async () => {
     const out = join(dataDir, 'env-explicit.txt');
-    const result = spawnDetached(
+    const result = await spawnDetached(
       'envexplicit',
       `printf '%s' "$EXPLICIT_VAR" > ${JSON.stringify(out)}`,
       dataDir,
@@ -240,11 +239,82 @@ describe('rotateLogIfNeeded', () => {
     const log = join(dir, 'stdout.log');
     writeFileSync(log, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
     // spawnDetached should rotate the oversized log before re-opening it for append
-    const result = spawnDetached('p5', 'echo after-rotate', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p5', 'echo after-rotate', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     expect(existsSync(`${log}.1`)).toBe(true);
     await waitFor(() => readFileSync(log, 'utf8').includes('after-rotate'));
     // fresh log should not contain the pre-rotation filler
     expect(readFileSync(log, 'utf8')).not.toContain('xxxxxxxxxx');
+  });
+});
+
+// V-ES-8 — the allowlist must keep ordinary commands working (git over ssh,
+// a corporate proxy, locale, toolchain roots) and still never pass a name
+// that looks like a secret or one loaded from ~/.ethos/.env.
+const OPERATIONAL_ENV: Record<string, string> = {
+  SSH_AUTH_SOCK: '/tmp/ves8-agent.sock',
+  HTTPS_PROXY: 'http://proxy.ves8:3128',
+  https_proxy: 'http://proxy.ves8:3128',
+  NO_PROXY: 'localhost,.ves8',
+  LC_CTYPE: 'UTF-8',
+  GOPATH: '/tmp/ves8-go',
+  NVM_DIR: '/tmp/ves8-nvm',
+  XDG_CONFIG_HOME: '/tmp/ves8-xdg',
+  TERM_PROGRAM: 'ves8-term',
+  COLORTERM: 'truecolor',
+  VIRTUAL_ENV: '/tmp/ves8-venv',
+  JAVA_HOME: '/tmp/ves8-jdk',
+};
+const SECRET_ENV: Record<string, string> = {
+  VES8_API_KEY: 'ves8-secret-1',
+  GITHUB_TOKEN: 'ves8-secret-2',
+  AWS_REGION: 'ves8-secret-3',
+  NVM_AUTH_TOKEN: 'ves8-secret-4',
+  CONDA_PASSWORD: 'ves8-secret-5',
+  XDG_SECRET_KEY: 'ves8-secret-6',
+  ALL_PROXY: 'ves8-secret-7',
+  // V2-SEC-6: a credential inside an allowed family's VALUE, and the
+  // *_PWD / *_PASS spellings the name filter used to miss.
+  NVM_NODEJS_ORG_MIRROR: 'https://bob:ves8-secret-8@mirror.ves8/node',
+  CONDA_CHANNEL_ALIAS: 'https://tok:ves8-secret-9@conda.ves8',
+  CONDA_PWD: 'ves8-secret-10',
+  XDG_DB_PASS: 'ves8-secret-11',
+  LC_VES8_HINT: 'ghp_ves8secret12ves8secret12ves8secret12xx',
+};
+
+/** Sets the fixture vars (ALL_PROXY marked as loaded from ~/.ethos/.env) and returns a restore. */
+function stageEnv(): () => void {
+  const saved = new Map<string, string | undefined>();
+  const all = { ...OPERATIONAL_ENV, ...SECRET_ENV, ETHOS_DOTENV_KEYS: 'ALL_PROXY' };
+  for (const [k, v] of Object.entries(all)) {
+    saved.set(k, process.env[k]);
+    process.env[k] = v;
+  }
+  return () => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+}
+
+function expectOperationalOnly(out: string): void {
+  for (const [k, v] of Object.entries(OPERATIONAL_ENV)) expect(out).toContain(`${k}=${v}\n`);
+  for (const v of Object.values(SECRET_ENV)) expect(out).not.toContain(v);
+}
+
+describe('minimalHostEnv allowlist (V-ES-8)', () => {
+  it('forwards operational vars and withholds secret-shaped and .env-loaded ones', () => {
+    const restore = stageEnv();
+    try {
+      const env = minimalHostEnv(undefined);
+      expectOperationalOnly(
+        Object.entries(env)
+          .map(([k, v]) => `${k}=${v}\n`)
+          .join(''),
+      );
+    } finally {
+      restore();
+    }
   });
 });

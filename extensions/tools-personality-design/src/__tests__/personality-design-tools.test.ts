@@ -8,7 +8,7 @@ import type {
   ToolContext,
   ToolRegistry,
 } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createPersonalityDesignTools,
   createTeamDesignTools,
@@ -158,6 +158,40 @@ describe('list_available_models', () => {
       expect(result.value).toContain('claude-sonnet-4-6');
       expect(result.value).toContain('claude-opus-4-7');
       expect(result.value).toContain('**(default)**');
+    }
+  });
+
+  it('lists a deprecated model until its retirement date, then hides it', async () => {
+    const designTools = createPersonalityDesignTools({
+      toolRegistry: makeToolRegistry([]),
+      storage: new InMemoryStorage(),
+      modelCatalog: [
+        ...TEST_MODELS,
+        {
+          providerId: 'codex',
+          modelId: 'gpt-5.5',
+          label: 'deprecated — retires 2026-10-14',
+          contextWindow: 1_050_000,
+          retiresOn: '2026-10-14',
+        },
+      ],
+      skills: TEST_SKILLS,
+      personalityRegistry: makePersonalityRegistry([]),
+    });
+    const listTool = designTools.find((t) => t.name === 'list_available_models');
+    const listAt = async (iso: string): Promise<string> => {
+      vi.setSystemTime(new Date(iso));
+      const result = await listTool?.execute({}, makeCtx());
+      return result?.ok ? result.value : '';
+    };
+    vi.useFakeTimers();
+    try {
+      expect(await listAt('2026-10-13T23:59:59Z')).toContain('gpt-5.5');
+      const after = await listAt('2026-10-14T00:00:00Z');
+      expect(after).not.toContain('gpt-5.5');
+      expect(after).toContain('claude-sonnet-4-6');
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

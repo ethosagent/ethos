@@ -24,23 +24,26 @@ import type {
 import { createApprovalPostureGuard } from './agent-loop/approval-posture';
 import { budgetGuardEvents, checkTurnBudgets, updateDenialStreak } from './agent-loop/budgets';
 import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
-import { applyOverflowRetry, overflowErrorEvent } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
 import { historyLimitFor, withSmallWindow } from './agent-loop/small-window';
 import { assembleContext, type MemoryPrefetchGate } from './agent-loop/stages/context-assembly';
+import { recoverFromOverflow } from './agent-loop/stages/overflow-recovery';
 import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
+  resolveRunDowngrade,
 } from './agent-loop/stages/per-call-enforcement';
 import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
+import { settleTextEnd } from './agent-loop/stages/text-end';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
 import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
+import { steerVisionFor } from './agent-loop/steer';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import { isToolPermitted } from './agent-loop/tool-permitted';
 import type { LoopDeps } from './agent-loop/turn-context';
@@ -125,7 +128,7 @@ export interface AgentLoopConfig {
   modelResolution?: ModelResolutionContext;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
   // biome-ignore format: §5 gate + Phase 3 turn-end/overflow/engine + Lane 1a knobs; one line keeps agent-loop.ts under the size guardrail.
-  compaction?: { pressure?: number; target?: number; charsPerToken?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; abortOnSummaryFailure?: boolean; defaultEngine?: string; maxContextTokens?: number; minTailUserMessages?: number; maxSingleToolResultTokens?: number };
+  compaction?: { pressure?: number; target?: number; charsPerToken?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; abortOnSummaryFailure?: boolean; defaultEngine?: string; maxContextTokens?: number; minTailUserMessages?: number; maxSingleToolResultTokens?: number; contextWindowFor?: (model: string) => number | undefined };
   // biome-ignore format: Phase 3 silent memory-flush knobs (docs on LoopDeps.memoryConsolidation); one line keeps agent-loop.ts under the size guardrail.
   memoryConsolidation?: { enabled?: boolean; flushThreshold?: number; timeboxMs?: number; maxTokens?: number; maxDeltaChars?: number; minMessagesSinceFlush?: number };
   // biome-ignore format: §2/Phase 4 prompt-economy knobs (docs on LoopDeps.promptBudget); one line keeps agent-loop.ts under the size guardrail.
@@ -300,20 +303,21 @@ export interface RunOptions extends MemoryPrefetchGate {
   initiator?: import('@ethosagent/types').TurnInitiator;
   /** plan personality-memory-boundary D8 — a non-owner DM: runs shared for this turn (not persisted) but keeps the sender's own `user:<id>` read (`withPersonalityMemoryWithheld`, ./agent-loop/audience.ts). */
   skipPersonalityMemory?: boolean;
+  untrustedOrigin?: boolean; // V2-SEC-2: start tainted (resolveRunDowngrade)
+  onUntrustedRead?: () => void; // V2-SEC-2: fires on taint (resolveRunDowngrade)
   /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
   credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
   /**
-   * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL) push user-typed text
-   * here while the agent is mid-turn. AgentLoop drains the sink at the
-   * iteration seam (after tool_results land, before the next LLM call) and
-   * folds each entry in as a `[USER STEER]: <text>` text block on the user
-   * message carrying the tool_results.
-   *
-   * Pre-first-iteration (no tool_results yet) and idle (no run in flight)
-   * steering falls back to `queue` at the surface, never reaching AgentLoop.
+   * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL, gateway) push user
+   * text here while the agent is mid-turn. AgentLoop drains the sink at the
+   * tool seam (onto the tool_results message) and, UBP-001, at text-end (as
+   * its own user message, then one more LLM call) — see agent-loop/steer.ts.
+   * A steer left in the sink when the turn ends (last allowed iteration, an
+   * abort, or one pushed after the final drain) is the surface's to report.
+   * Idle steering (no run in flight) falls back to `queue` at the surface.
    */
   steerSink?: SteerSink;
   /** Per-turn inbound attachments from the user message. Persisted as an
@@ -692,8 +696,7 @@ export class AgentLoop {
     // Phase 3 — mutable so the overflow→compact-and-retry path can re-anchor the
     // prompt cache after it shrinks the in-memory history.
     let cacheBreakpoints = initialCacheBreakpoints;
-    // Phase 3 — one emergency compaction per turn on a context-overflow rejection.
-    let overflowRetried = false;
+    const overflowRetry = { iteration: -1 }; // Phase 3 — one compact-and-retry per iteration
 
     // Destructure setup for loop usage
     const {
@@ -704,8 +707,6 @@ export class AgentLoop {
       fsReach,
       obsConfig,
       traceId,
-      turnNumber,
-      lastCompactionTurn,
       activeTier,
       effectiveModel,
       modelOverride: setupModelOverride,
@@ -740,16 +741,13 @@ export class AgentLoop {
       plan: [] as DryRunToolPlan[],
     };
 
-    // Ch.3d — post-untrusted-read downgrade. After any `outputIsUntrusted`
-    // tool returns, dangerous tools are blocked for the next N iterations.
-    // Counter resets at the start of each `run()` (a fresh user message),
-    // matching the chapter's "counter resets when the user sends a fresh
-    // message" contract.
-    const dgConfig = personality.safety?.injectionDefense?.postReadDowngrade;
-    const dgEnabled = dgConfig?.enabled !== false;
-    const dgTurns = dgConfig?.turns ?? 2;
-    const dgTools = this.safety.injection.resolveDowngradedTools(dgConfig?.tools);
-    const dgRemainingRef = { value: 0 };
+    // Ch.3d — post-untrusted-read downgrade: fresh per run() (a new user message), pre-armed
+    // when this run is a sub-agent of a tainted one (`resolveRunDowngrade`, V2-SEC-2).
+    const { dgEnabled, dgTurns, dgTools, dgRemainingRef } = resolveRunDowngrade(
+      personality.safety?.injectionDefense?.postReadDowngrade,
+      this.safety.injection,
+      opts,
+    );
 
     const tierEscalationRef: { value?: string } = {};
     const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
@@ -793,6 +791,13 @@ export class AgentLoop {
       checkBudgets,
       redaction: this.safety.redaction,
       personality,
+      downgrade: {
+        state: dgRemainingRef,
+        enabled: dgEnabled,
+        tools: dgTools,
+        turns: dgTurns,
+        rejectionMessage: this.safety.injection.downgradeRejectionMessage,
+      },
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
       denyRules: personality.safety?.denyRules,
@@ -805,6 +810,11 @@ export class AgentLoop {
     // A1 — this turn's token/cost rollup: filled as each assistant message is
     // persisted, flushed by the finalizer (and by the early exits that skip it).
     const turnUsage = createTurnUsage();
+
+    const steerVision = steerVisionFor(this.llm, modelOverride); // UBP-012
+    const endCtx = { sessionId, traceId, steerSink: opts.steerSink, steerVision, abortSignal };
+    const overflowDeps = { ...turnDeps, session: this.session, turnUsage };
+    const overflowCtx = { ...setup, systemPrompt: systemPrompt ?? '', traceId };
 
     const streamDeps: StreamStepDeps = {
       llm: this.llm,
@@ -842,6 +852,7 @@ export class AgentLoop {
         activeTier,
         effectiveModel,
         modelOverride,
+        gateWindowTokens: setup.gateWindowTokens,
         providerEntry,
         serverCompaction,
         allowedPlugins,
@@ -902,36 +913,13 @@ export class AgentLoop {
       // Stage: Stream one LLM call
       const stepResult = yield* streamStep(streamDeps, stepCtx(), tierEscalationRef);
 
-      // Phase 3 — a context-overflow rejection is recoverable (the assistant
-      // message was NOT persisted): compact the in-memory history and retry once.
+      // Phase 3 / UBP-021 — compact-and-retry a context overflow (stages/overflow-recovery.ts).
       if (stepResult.outcome === 'overflow') {
-        const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
-        overflowRetried = true;
-        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
-        const retry = canRetry
-          ? await applyOverflowRetry(turnDeps, llmMessages, systemPrompt ?? '', personality, meta)
-          : { retried: false };
-        if (retry.retried) {
-          // A4 — the compact-and-retry is user-visible work, not silence.
-          // `_loop` is a reserved name (DefaultToolRegistry.register refuses
-          // `_`-prefixed tools), so renderers can key on it for notice style.
-          yield {
-            type: 'tool_progress',
-            toolName: '_loop',
-            message: 'context overflow — compacting and retrying',
-            audience: 'user',
-          };
-          cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
-          iteration--; // retry this iteration with the shrunk history
-          continue;
-        }
-        await flushTurnUsage(this.session, sessionId, turnUsage, this.observability);
-        yield { type: 'error', ...overflowErrorEvent(retry, stepResult.error, this.compaction) };
-        if (traceId) {
-          this.observability?.endTrace(traceId, 'error');
-          this.observability?.flush();
-        }
-        return;
+        const recover = { ...overflowCtx, llmMessages, iteration, lastRetry: overflowRetry };
+        if (!(yield* recoverFromOverflow(overflowDeps, recover, stepResult.error))) return;
+        cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
+        iteration--; // retry this iteration with the shrunk history
+        continue;
       }
 
       if (stepResult.outcome === 'fatal') {
@@ -949,7 +937,19 @@ export class AgentLoop {
         }
       }
 
-      if (stepResult.outcome === 'text-end') break;
+      if (stepResult.outcome === 'text-end') {
+        const last = iteration + 1 >= this.maxIterations; // UBP-001/020/033, stages/text-end.ts
+        const end = yield* settleTextEnd(
+          streamDeps,
+          stepResult,
+          { ...endCtx, llmMessages, fullText, toolCalls: budgetCounters.totalToolCalls },
+          last,
+        );
+        if (end.next === 'return') return;
+        fullText = end.fullText;
+        if (end.next === 'break') break;
+        continue;
+      }
 
       const { completedToolCalls } = stepResult;
       const usageSink = stepResult.usageSink;
@@ -1025,6 +1025,7 @@ export class AgentLoop {
           dryRunState,
           tierEscalationRef,
           steerSink: opts.steerSink,
+          steerVision,
           ...(opts.voiceOrigin ? { voiceOrigin: opts.voiceOrigin } : {}),
           opts: {
             agentId: opts.agentId,
@@ -1083,10 +1084,9 @@ export class AgentLoop {
       contextStore,
       rootSessionKey: opts.rootSessionKey ?? sessionKey,
       ...(opts.initiator !== undefined ? { initiator: opts.initiator } : {}),
+      untrustedSeen: dgRemainingRef.untrustedSeen === true, // V2-SEC-2: no tainted flush
       systemPrompt: systemPrompt ?? '',
-      ...(opts.maxCompletionTokens !== undefined
-        ? { maxCompletionTokens: opts.maxCompletionTokens }
-        : {}),
+      maxCompletionTokens: opts.maxCompletionTokens, // dropped when undefined (buildTurnEndCtx)
     };
     yield* maybeConsolidateAtTurnEnd(turnDeps, buildTurnEndCtx(setup, turnEndExtras));
   }

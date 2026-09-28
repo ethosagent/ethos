@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
+import { DefaultToolRegistry } from '@ethosagent/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTar, type Entry, parseTar, parseVaultManifest } from '../backup';
 import { runPersonalityExport } from '../personality-export';
@@ -775,5 +776,48 @@ describe('personality export — known secret fields name the real vault ref', (
     ]);
     expect(manifest).not.toContain('ethos keys set');
     expect(manifest).not.toContain('never-exported');
+  });
+});
+
+// UBP-035 — the registry rewrites a non-conforming MCP server name, so the
+// bundle's per-server tool list must match on `DefaultToolRegistry.mcpToolPrefix`,
+// not on the raw `mcp__<name>__`.
+describe('personality export — MCP tools of a rewritten server name', () => {
+  let stateDir: string;
+  let prevStateDir: string | undefined;
+
+  beforeEach(async () => {
+    stateDir = await mkdtemp(join(tmpdir(), 'ethos-export-mcp-'));
+    prevStateDir = process.env.ETHOS_STATE_DIR;
+    process.env.ETHOS_STATE_DIR = stateDir;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (prevStateDir === undefined) delete process.env.ETHOS_STATE_DIR;
+    else process.env.ETHOS_STATE_DIR = prevStateDir;
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
+  it('lists the rewritten tool under its server', async () => {
+    const tool = DefaultToolRegistry.mcpToolName('acme.docs', 'search');
+    const dir = join(stateDir, 'personalities', 'demo');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'config.yaml'), 'name: Demo\nmcp_servers: acme.docs\n');
+    await writeFile(join(dir, 'SOUL.md'), '# Demo\n');
+    await writeFile(join(dir, 'toolset.yaml'), `- read_file\n- ${tool}\n`);
+
+    const out = join(stateDir, 'bundle.tar.gz');
+    await runPersonalityExport(['demo', '--output', out]);
+    const entries = parseTar(gunzipSync(await readFile(out)));
+    const ethos = entries.find(([relPath]) => relPath === 'ETHOS.md');
+    if (!ethos) throw new Error('bundle has no ETHOS.md');
+    const manifest = JSON.parse(ethos[1].toString('utf8')) as {
+      mcpServers: Array<{ name: string; tools: string[] }>;
+    };
+    expect(manifest.mcpServers).toEqual([
+      expect.objectContaining({ name: 'acme.docs', tools: [tool] }),
+    ]);
   });
 });

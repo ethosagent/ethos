@@ -116,7 +116,24 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     await expect(scoped.write(join(other, 'toolset.yaml'), '- terminal\n')).rejects.toBeInstanceOf(
       BoundaryError,
     );
-    expect(await scoped.read(join(other, 'toolset.yaml'))).toBe('- read_file\n');
+    // UBP-047 (main): the home-dir grant is only an ANCESTOR of the state dir,
+    // so it does not reach into it at all — the read is refused too.
+    await expect(scoped.read(join(other, 'toolset.yaml'))).rejects.toBeInstanceOf(BoundaryError);
+
+    // An explicit state-dir grant reaches it: the definition stays readable,
+    // and `learning/` and the definition write are still floored.
+    const granted = new ScopedStorage(inner, {
+      read: [`${homedir()}/`, `${home}/`],
+      write: [`${homedir()}/`, `${home}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    await expect(granted.read(join(home, 'learning', 'audit.jsonl'))).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(granted.write(join(other, 'toolset.yaml'), '- terminal\n')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    expect(await granted.read(join(other, 'toolset.yaml'))).toBe('- read_file\n');
   });
 });
 

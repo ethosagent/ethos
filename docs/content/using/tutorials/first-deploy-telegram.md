@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: first-deploy-telegram
 time: "30 min"
-updated: 2026-09-13
+updated: 2026-09-28
 ---
 
 Your [personality](../../getting-started/glossary.md#personality) runs locally in `ethos chat`. This tutorial puts it in front of real users on Telegram. The path is: create a bot, paste its token, foreground-test the gateway, then wrap it in a service manager that survives reboots.
@@ -340,7 +340,7 @@ From Telegram, DM your bot. You should see a reply within a few seconds. Three t
 
 The bot's [session](../../getting-started/glossary.md#session) is independent from your CLI session — each Telegram chat has its own session key. Your CLI conversation history is untouched, and vice versa. They do share the personality's `MEMORY.md`: memory is scoped to the personality (`personality:<id>`, set in `setupTurn`), not to the session or the platform, and there is no setting that changes that. `USER.md` is the exception — a Telegram turn carries the sender's user id, so the bot reads and writes that person's `USER.md` under `~/.ethos/users/<userId>/` instead of the personality's own.
 
-The outbound deduplication cache is keyed by `(sessionId, sha256(content))` with a 30-second TTL. If the agent emits the same message twice in quick succession (a streaming retry, for example), Telegram only sees the first. This is automatic; adapters do not roll their own deduplication. If you ever see the bot ignore a message you sent twice on purpose, that is the same gate firing — wait 30 seconds and try again.
+The outbound deduplication cache is keyed by `(sessionId, sha256(content))` with a 30-second TTL, and a reply's key also carries the inbound message it answers. If the agent emits the same reply twice in quick succession (a streaming retry, for example), Telegram only sees the first. This is automatic; adapters do not roll their own deduplication. Two different messages that get the same answer ("Done.") both get it.
 
 ## 8. Operate it
 
@@ -411,7 +411,7 @@ Inside `ethos chat`, the bot's per-chat sessions are visible through SQLite. The
 - The pairing-code flow (`/communications`, `/allow`, `/deny`) is the access list — one approval per sender, kept in `~/.ethos/communications.json`.
 - Wrapping the gateway in `launchd` or `systemd` is what turns "running in a shell" into "running in production." Use absolute paths; set `HOME` explicitly.
 - `ethos upgrade` plus a service restart is the deploy loop.
-- Outbound dedup is in the gateway, not the adapter; the same `(sessionId, content)` does not get sent twice within 30 seconds.
+- Outbound dedup is in the gateway, not the adapter; the same reply to the same message does not get sent twice within 30 seconds.
 
 ## Next step
 

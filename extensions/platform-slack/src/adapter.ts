@@ -348,6 +348,38 @@ function isPermanentSlackError(err: unknown): boolean {
   return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
 }
 
+/**
+ * Web API error codes that mean Slack refused the TOKEN — a mistyped, revoked
+ * or expired bot or app token, or a deactivated workspace account. No retry
+ * fixes these; an operator has to.
+ */
+const REJECTED_SLACK_TOKEN_ERRORS = new Set([
+  'invalid_auth',
+  'not_authed',
+  'token_revoked',
+  'token_expired',
+  'account_inactive',
+]);
+
+/**
+ * `err` re-thrown carrying `permanent: true` when it is a
+ * {@link REJECTED_SLACK_TOKEN_ERRORS} refusal (read by the Web API error shape,
+ * `data.error`), so the gateway's adapter-start retry
+ * (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) gives up
+ * instead of retrying a dead token for ever. Anything else — a network error,
+ * `ratelimited`, a 5xx — is returned unchanged.
+ */
+function classifySlackStartError(err: unknown): unknown {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return err;
+  const data = err.data;
+  if (typeof data !== 'object' || data === null || !('error' in data)) return err;
+  const code = data.error;
+  if (typeof code !== 'string' || !REJECTED_SLACK_TOKEN_ERRORS.has(code)) return err;
+  return Object.assign(new Error(`Slack refused the token: ${code}`, { cause: err }), {
+    permanent: true,
+  });
+}
+
 /** `{ ok: false }` for a failed Web API call, marked `permanent` when it is. */
 function slackFailure(err: unknown): DeliveryResult {
   const error = err instanceof Error ? err.message : String(err);
@@ -447,6 +479,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private clarifyHomeReader?: ClarifyHomeReader;
   /** Bolt-internal inbound handle. Resolved during `start()` via auth.test. */
   private selfUserId: string | null = null;
+  /** Set on the first `start()`; see `registerHandlers`. */
+  private handlersRegistered = false;
   /** The bot's Slack display name. Resolved during `start()` via auth.test;
    *  falls back to `displayName` ('Slack') when unavailable. */
   private selfDisplayName: string | null = null;
@@ -593,7 +627,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // Resolve the bot's own user id so member-joined can distinguish
     // self-join from third-party joins. We tolerate failure (missing
     // scope, network blip) by leaving selfUserId null and skipping the
-    // greeting — the rest of the adapter still works.
+    // greeting — the rest of the adapter still works. A refused token is
+    // not tolerated: nothing else can work either, so start fails with a
+    // `permanent` error (`classifySlackStartError`) the gateway does not retry.
     try {
       const auth = await this.client.auth.test();
       const { user_id: userId, user: userName } = auth as { user_id?: string; user?: string };
@@ -602,11 +638,51 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
 
       const botName = userName ?? userId ?? 'unknown';
       this.logger.info(`Slack bot authenticated as @${botName}`);
-    } catch {
+    } catch (err) {
+      const classified = classifySlackStartError(err);
+      if (classified !== err) throw classified;
       this.selfUserId = null;
       this.selfDisplayName = null;
     }
 
+    if (!this.handlersRegistered) {
+      this.handlersRegistered = true;
+      this.registerHandlers();
+    }
+
+    // Transport start. Every registration in `registerHandlers` is identical
+    // in both modes — only the final step differs.
+    //
+    // In HTTP mode we deliberately do NOT call `this.app.start()`: for an
+    // `HTTPReceiver` that call binds its OWN port
+    // (`HTTPReceiver.js:118-183`), and this deployment has exactly one shared
+    // listener, owned by `apps/ethos/src/platform-webhook-server.ts`, which
+    // mounts `this.requestListener` instead. Adding `app.start()` back here
+    // would bind a second, unwanted port. The receiver is fully live without
+    // it: `App`'s constructor already called `receiver.init(this)`
+    // (`App.js:177`), so the handlers `registerHandlers` added are wired.
+    if (!this.httpMode) {
+      try {
+        await this.app.start();
+      } catch (err) {
+        throw classifySlackStartError(err);
+      }
+    }
+  }
+
+  /**
+   * Every Bolt listener this adapter owns. Called ONCE per instance (V2-RT-1):
+   * the gateway's adapter-start retry (`retryAdapterStart`,
+   * apps/ethos/src/commands/gateway.ts) calls `start()` again on this same
+   * instance after a transient failure, and Bolt runs every matching listener,
+   * so a second registration would dispatch each message, slash command and
+   * button click twice. Pinned by `__tests__/start-permanent-error.test.ts`
+   * ('registers each listener once across a retried start'). The member
+   * greeting and the App Home header read `selfUserId` / `selfDisplayName`
+   * from this instance when they run, so the latest `auth.test` wins (V3-6,
+   * pinned by 'a retried start reaches the handlers' in the same file).
+   */
+  private registerHandlers(): void {
     registerMessageEvents(
       this.app,
       {
@@ -649,9 +725,15 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         channelOverrides: this.channelOverrides,
       });
 
+    // `selfUserId` and `selfDisplayName` are read at CALL time through getters
+    // (V3-6): these handlers are registered once, on the first `start()`, and
+    // a retried start is the one whose `auth.test` may have succeeded.
+    const adapter = this;
     if (this.binding) {
       registerMemberEvents(this.app, {
-        selfUserId: this.selfUserId,
+        get selfUserId() {
+          return adapter.selfUserId;
+        },
         binding: this.binding,
         resolveChannelMode: resolveMode,
       });
@@ -845,7 +927,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // unset the header still renders with the default identity.
     registerHomeEvents(this.app, {
       binding: this.binding ?? { type: 'personality', name: 'unbound' },
-      displayName: this.selfDisplayName ?? this.displayName,
+      get displayName() {
+        return adapter.selfDisplayName ?? adapter.displayName;
+      },
       channelOverrides: this.channelOverrides,
       session: this.session,
       memory: this.memory,
@@ -866,21 +950,6 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       kanban: this.kanbanUnfurl,
       personality: this.personalityUnfurl,
     });
-
-    // Transport start. Every registration above is identical in both modes —
-    // only the final step differs.
-    //
-    // In HTTP mode we deliberately do NOT call `this.app.start()`: for an
-    // `HTTPReceiver` that call binds its OWN port
-    // (`HTTPReceiver.js:118-183`), and this deployment has exactly one shared
-    // listener, owned by `apps/ethos/src/platform-webhook-server.ts`, which
-    // mounts `this.requestListener` instead. Adding `app.start()` back here
-    // would bind a second, unwanted port. The receiver is fully live without
-    // it: `App`'s constructor already called `receiver.init(this)`
-    // (`App.js:177`), so the handlers registered above are wired.
-    if (!this.httpMode) {
-      await this.app.start();
-    }
   }
 
   async stop(): Promise<void> {

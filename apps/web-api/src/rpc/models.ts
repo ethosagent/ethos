@@ -1,5 +1,5 @@
 import type { ModelCatalogManifest } from '@ethosagent/types';
-import { MODEL_CATALOG } from '@ethosagent/wiring/model-catalog';
+import { listedModels, MODEL_CATALOG } from '@ethosagent/wiring/model-catalog';
 import { os } from './context';
 
 // Group the in-process MODEL_CATALOG by raw provider id (the same provider
@@ -22,18 +22,19 @@ export function groupByProvider(entries: typeof MODEL_CATALOG): ModelCatalogMani
   return providers;
 }
 
-export function buildManifest(): ModelCatalogManifest {
+// Stamped once at module load so the timestamp is process-stable.
+const UPDATED_AT = new Date().toISOString();
+
+// Rebuilt per request so a deprecated model drops out on its retirement day
+// without a server restart (`listedModels`, packages/wiring/src/model-catalog.ts).
+export function buildManifest(now: Date = new Date()): ModelCatalogManifest {
   return {
     version: 1,
-    updatedAt: new Date().toISOString(),
-    providers: groupByProvider(MODEL_CATALOG),
+    updatedAt: UPDATED_AT,
+    providers: groupByProvider(listedModels(MODEL_CATALOG, now)),
   };
 }
 
-// Built once at module load so the manifest (and its timestamp) is
-// process-stable; the handler returns the same object on every request.
-const MANIFEST = buildManifest();
-
 export const modelsRouter = {
-  catalog: os.models.catalog.handler(() => MANIFEST),
+  catalog: os.models.catalog.handler(() => buildManifest()),
 };

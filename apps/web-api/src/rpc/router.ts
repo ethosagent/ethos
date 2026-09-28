@@ -11,6 +11,7 @@ import { sessionsGet } from '../features/sessions/rpc/get';
 import { sessionsList } from '../features/sessions/rpc/list';
 import { sessionsMessages } from '../features/sessions/rpc/messages';
 import { sessionsPin } from '../features/sessions/rpc/pin';
+import { sessionsUndoTurns } from '../features/sessions/rpc/undo-turns';
 import { sessionsUnpin } from '../features/sessions/rpc/unpin';
 import { sessionsUpdate } from '../features/sessions/rpc/update';
 import { a2aRouter } from './a2a';
@@ -80,6 +81,7 @@ export const apiRouter = {
     unpin: sessionsUnpin,
     contextAnatomy: sessionsContextAnatomy,
     compact: sessionsCompact,
+    undoTurns: sessionsUndoTurns,
   },
   activity: activityRouter,
   chat: {

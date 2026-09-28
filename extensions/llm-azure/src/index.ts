@@ -34,6 +34,14 @@ export interface AzureOpenAIProviderConfig {
   /** SDK retry count. Wiring sets `0` on a hop in a provider chain so failover
    *  is not delayed by `retry-after`-honouring retries. Absent → SDK default. */
   maxRetries?: number;
+  /**
+   * V-CP-5 / UBP-038 — force the output-cap parameter (`providers.<n>.outputCapParam`).
+   * Absent → the model-id rule applied to the deployment name (`outputCapParam`
+   * in @ethosagent/llm-openai-compat), which sends `max_tokens` to a reasoning
+   * deployment whose name is not a reasoning model id; such a deployment needs
+   * `max_completion_tokens` here. Pinned by `__tests__/output-cap-param.test.ts`.
+   */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
 }
 
 // ---------------------------------------------------------------------------
@@ -77,9 +85,11 @@ export class AzureOpenAIProvider implements LLMProvider {
   }
 
   private readonly client: AzureOpenAI;
+  private readonly outputCapParam: AzureOpenAIProviderConfig['outputCapParam'];
 
   constructor(config: AzureOpenAIProviderConfig) {
     this.name = config.name;
+    this.outputCapParam = config.outputCapParam;
     this.model = config.model;
     this.maxContextTokens = config.maxContextTokens ?? 128_000;
     this.client = new AzureOpenAI({
@@ -97,6 +107,7 @@ export class AzureOpenAIProvider implements LLMProvider {
   ): AsyncIterable<CompletionChunk> {
     const params = await buildChatCompletionsParamsAsync(messages, tools, options, this.model, {
       countTokens: (msgs) => this.countTokens(msgs),
+      ...(this.outputCapParam !== undefined ? { outputCapParam: this.outputCapParam } : {}),
     });
     yield* streamChatCompletions(this.client, params, options.abortSignal);
   }
@@ -128,6 +139,17 @@ export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets, l
         '(e.g. https://my-resource.openai.azure.com).',
     );
   }
+  const outputCapParam = cfg.outputCapParam;
+  if (
+    outputCapParam !== undefined &&
+    outputCapParam !== 'max_tokens' &&
+    outputCapParam !== 'max_completion_tokens'
+  ) {
+    throw new Error(
+      `Azure provider \`outputCapParam\` must be max_tokens or max_completion_tokens, ` +
+        `not ${JSON.stringify(outputCapParam)}.`,
+    );
+  }
   const secretKey = await secrets.get('providers/azure/apiKey');
   const apiKey = secretKey ?? (cfg.apiKey as string);
   if (secretKey === null && cfg.apiKey) {
@@ -142,6 +164,7 @@ export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets, l
     endpoint: cfg.baseUrl as string,
     apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
     ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
+    ...(outputCapParam !== undefined ? { outputCapParam } : {}),
   });
 };
 

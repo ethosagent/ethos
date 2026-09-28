@@ -91,7 +91,10 @@ function wire(decision?: SmartApproverDecisionSite) {
     onApprovalDecision: () => {},
   } as unknown as PlatformAdapter;
   const cardless = { id: 'whatsapp:plain', botKey: 'plain' } as unknown as PlatformAdapter;
-  const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
+  const gateway = {
+    onLaneStop: () => () => {},
+    resolveApprovalRoute: () => undefined,
+  } as unknown as Gateway;
   return wireApprovalFlow(gateway, [bot('card'), bot('plain')], [card, cardless], {
     executionPostureFor: () => undefined,
     personalities,

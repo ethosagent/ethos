@@ -48,6 +48,9 @@ export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/de
 // serializer here would prove nothing (Hermes #4555 failure class).
 export { dedupHistory, toLLMMessages } from './agent-loop/history';
 export { reconstructFromWatermark, selectActiveWatermark } from './agent-loop/manual-compact';
+// V-CP-2 — the cut-off line core yields when the output cap ends a reply; the
+// gateway appends exactly this text to the delivered answer (`Gateway.runTurn`).
+export { MAX_TOKENS_REPLY_NOTICE } from './agent-loop/output-cap';
 // The app-layer half of fs_reach enforcement. Exported so the docker/ScopedStorage
 // parity test drives EXACTLY the scope the loop builds, not a re-statement of it.
 export { buildScopedStorage } from './agent-loop/scoped-storage';
@@ -234,6 +237,8 @@ export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { DefaultRealtimeVoiceProviderRegistry } from './providers/realtime-registry';
 export { DefaultStorageRegistry } from './providers/storage-registry';
 export { DefaultSttProviderRegistry } from './providers/stt-registry';
+export type { TransientRetryOptions } from './providers/transient-retry';
+export { fetchWithTransientRetry } from './providers/transient-retry';
 export { DefaultTtsProviderRegistry } from './providers/tts-registry';
 export type {
   RealtimeEntrySelection,
@@ -285,6 +290,9 @@ export {
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
+// MESH-TAINT: a tool that hands text to another process's run (the mesh tools,
+// extensions/tools-delegation) reads its call's taint here to send it along.
+export { runIsTainted } from './scoped/run-taint';
 export type { ScriptExclusionCategory, ScriptSafeToolMeta } from './script-safe';
 export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './script-safe';
 export {

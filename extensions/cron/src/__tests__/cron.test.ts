@@ -2183,7 +2183,7 @@ describe('CronScheduler mid-execution signal', () => {
       runningSince: Date.now(),
     });
 
-    expect(claimed).toBe(false);
+    expect(claimed).toEqual({ kind: 'lost' });
     expect((await scheduler.getJob(job.id))?.runningSince).toBeUndefined();
     expect(await scheduler.hasRunningJobs()).toBe(false);
   });
@@ -2240,6 +2240,9 @@ describe('CronScheduler mid-execution signal', () => {
     // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await (scheduler as any).patchJob(job.id, {
       runningSince: Date.now() - CRON_RUNNING_STALE_MS - 1_000,
+      // A live owner, so only the age decides (owner liveness is pinned in
+      // run-integrity.test.ts).
+      runningOwner: { pid: process.ppid, boot: null, token: 'peer' },
     });
 
     expect(await scheduler.hasRunningJobs()).toBe(false);
@@ -2312,7 +2315,10 @@ describe('cron maxRunMs', () => {
     const updated = await scheduler.getJob(job.id);
     expect(updated?.lastError).toMatch(/timed out after 30ms/);
     expect(updated?.runCount).toBe(0);
-    expect(updated?.runningSince ?? null).toBeNull();
+    // The turn ignored its abort and never settles, so it may still be doing
+    // work: the stamp stays until it settles (UBP-026) or ages out past
+    // `CRON_RUNNING_STALE_MS` — a second copy must not start meanwhile.
+    expect(typeof updated?.runningSince).toBe('number');
   });
 
   it('falls back to the scheduler defaultMaxRunMs when the job sets none', async () => {

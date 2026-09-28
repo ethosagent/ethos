@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ScopedFsImpl } from '@ethosagent/core';
@@ -276,6 +276,24 @@ describe('patch_file', () => {
     expect(result.ok).toBe(true);
     const readBack = await readFileTool.execute({ path }, makeCtx(testDir));
     if (readBack.ok) expect(readBack.value).toContain('const y = 42;');
+  });
+
+  // UBP-006: String.prototype.replace with a string replacement expands
+  // `$$`, `$&`, `` $` `` and `$'`, which splices the file's head or tail into
+  // the middle. The file must equal the literal splice of new_text.
+  it('writes new_text literally, with no $-substitution patterns expanded', async () => {
+    const path = join(testDir, 'dollar.sh');
+    const before = '#!/bin/bash\n';
+    const after = '\necho done\n';
+    await writeFile(path, `${before}OLD${after}`);
+    // `$` + `{HOME}` kept apart so the literal is not read as a template placeholder.
+    const newText = `IFS=$'\\n' ; echo $$ ; x='$&' ; y=$\` ; z=$1 ; w=$` + '{HOME}';
+    const result = await patchFileTool.execute(
+      { path, old_text: 'OLD', new_text: newText },
+      makeCtx(testDir),
+    );
+    expect(result.ok).toBe(true);
+    expect(await readFile(path, 'utf8')).toBe(`${before}${newText}${after}`);
   });
 
   it('returns error if old_text not found', async () => {

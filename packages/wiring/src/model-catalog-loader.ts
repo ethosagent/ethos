@@ -52,6 +52,11 @@ function isValidManifest(obj: unknown): boolean {
       )
         return false;
       if (entry.default !== undefined && typeof entry.default !== 'boolean') return false;
+      if (
+        entry.retiresOn !== undefined &&
+        (typeof entry.retiresOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(entry.retiresOn))
+      )
+        return false;
       if (entry.profile !== undefined && !isValidProfile(entry.profile)) return false;
     }
   }
@@ -187,6 +192,7 @@ export function bundledToManifest(): ModelCatalogManifest {
     };
     if (entry.default) model.default = true;
     if (entry.profile) model.profile = entry.profile;
+    if (entry.retiresOn) model.retiresOn = entry.retiresOn;
     providers[key].models.push(model);
   }
   return { version: 1, updatedAt: new Date().toISOString(), providers };
@@ -271,6 +277,7 @@ export function manifestToEntries(manifest: ModelCatalogManifest): ModelCatalogE
       };
       if (model.default) entry.default = true;
       if (model.profile) entry.profile = model.profile;
+      if (model.retiresOn) entry.retiresOn = model.retiresOn;
       entries.push(entry);
     }
   }

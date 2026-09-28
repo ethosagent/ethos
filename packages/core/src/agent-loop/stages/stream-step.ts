@@ -22,10 +22,12 @@ import type { AgentLoopObservability } from '../../observability/agent-loop-obse
 import { handleChunk } from '../chunk-handler';
 import { currentTurnFitError, currentTurnStart } from '../compaction';
 import { routeTurnModel } from '../model-route';
+import { rejectCutOffToolCalls } from '../output-cap';
 import { isContextOverflowError } from '../overflow';
 import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
+import { isDeterministicRejection, recordVisionRejection } from '../vision-rejection';
 import type { TurnUsageAccumulator } from './turn-finalizer';
 
 // ---------------------------------------------------------------------------
@@ -52,15 +54,20 @@ export interface CompletedToolCall {
   repair?: { outcome: 'repaired' | 'failed' };
 }
 
+/** Why the provider stopped this call (the `done` chunk's `finishReason`). */
+export type StepFinishReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
+
+/** UBP-020/033 — `finishReason` is read by stages/text-end.ts. */
+type StepEnd = { usageSink: UsageSink; finishReason: StepFinishReason | undefined };
+
 export type StreamStepResult =
-  | { outcome: 'text-end'; chunkText: string; fullTextDelta: string; usageSink: UsageSink }
-  | {
+  | ({ outcome: 'text-end'; chunkText: string; fullTextDelta: string } & StepEnd)
+  | ({
       outcome: 'tool-calls';
       completedToolCalls: CompletedToolCall[];
       chunkText: string;
       fullTextDelta: string;
-      usageSink: UsageSink;
-    }
+    } & StepEnd)
   // Phase 3 — the provider rejected the request for exceeding the context
   // window. No `error` event is emitted here so the orchestrator can
   // compact-and-retry; if the retry is disabled or already spent, the caller
@@ -99,6 +106,8 @@ export interface StreamStepContext {
   activeTier: ModelTierName;
   effectiveModel: string;
   modelOverride: string | undefined;
+  /** `TurnSetup.gateWindowTokens` — the context-fit preflight's window. */
+  gateWindowTokens?: number | undefined;
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
   /** Item 7 — `TurnSetup.serverCompaction`; cleared here when the provider
    *  reports `SERVER_COMPACTION_REJECTED_WARNING`. */
@@ -206,6 +215,7 @@ export async function* streamStep(
     const fitError = currentTurnFitError(
       {
         llm: deps.llm,
+        ...(ctx.gateWindowTokens !== undefined ? { windowTokens: ctx.gateWindowTokens } : {}),
         ...(ctx.opts.maxCompletionTokens !== undefined
           ? { reservedOutputTokens: ctx.opts.maxCompletionTokens }
           : {}),
@@ -328,7 +338,7 @@ export async function* streamStep(
   let llmCacheCreationTokens = 0;
   let llmEstimatedCostUsd = 0;
   let llmRequestTokens: { system: number; tools: number; messages: number } | undefined;
-  let llmFinishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | undefined;
+  let llmFinishReason: StepFinishReason | undefined;
   // B2 — the provider's server-assigned id for this call, when it reports one.
   let providerRequestId: string | undefined;
   // Gap 3 — why `llmEstimatedCostUsd` is what it is, for the
@@ -504,6 +514,11 @@ export async function* streamStep(
     deps.observability?.endTrace(ctx.traceId ?? '', 'error');
     deps.observability?.flush();
     await persistInterruptedAssistant(deps.session, ctx.sessionId, chunkText, msg, ctx.traceId);
+    // UBP-019 / V-CP-3 — only a rejection resending cannot fix retires the
+    // call's unanswered image/document blocks; a transient failure keeps them.
+    if (!chunkText.trim() && isDeterministicRejection(err)) {
+      await recordVisionRejection(deps.session, ctx.sessionId);
+    }
     yield { type: 'error', error: msg, code: 'llm_error' };
     return { outcome: 'fatal' };
   }
@@ -522,6 +537,8 @@ export async function* streamStep(
       });
     }
   }
+
+  if (llmFinishReason === 'max_tokens') rejectCutOffToolCalls(pendingToolCalls); // UBP-033
 
   // Determine which tool calls completed parsing. Calls with a parse error are
   // kept — they still need a matching tool_result (rejected in tool-processing)
@@ -665,9 +682,22 @@ export async function* streamStep(
       });
     }
     ctx.llmMessages.push({ role: 'assistant', content: assistantContent });
-    return { outcome: 'tool-calls', completedToolCalls, chunkText, fullTextDelta, usageSink };
+    return {
+      outcome: 'tool-calls',
+      completedToolCalls,
+      chunkText,
+      fullTextDelta,
+      usageSink,
+      finishReason: llmFinishReason,
+    };
   }
 
   ctx.llmMessages.push({ role: 'assistant', content: chunkText });
-  return { outcome: 'text-end', chunkText, fullTextDelta, usageSink };
+  return {
+    outcome: 'text-end',
+    chunkText,
+    fullTextDelta,
+    usageSink,
+    finishReason: llmFinishReason,
+  };
 }

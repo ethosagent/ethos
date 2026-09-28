@@ -66,15 +66,15 @@ register_anchors:
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
     - { path: packages/core/src/capability-resolver.ts, line: 114, contains: "export function resolveCapabilities" }
-    - { path: packages/core/src/scoped/scoped-process.ts, line: 8, contains: "this.allowedBinaries.has(binary)" }
+    - { path: packages/core/src/scoped/scoped-process.ts, line: 127, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
-    - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 159, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 204, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 239, contains: "private check(rawPath" }
+    - { path: packages/core/src/fs-reach.ts, line: 152, contains: "export function deriveFsReachPaths" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 289, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 339, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 263, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
@@ -91,15 +91,19 @@ register_anchors:
   G-INJ:
     - { path: packages/safety/injection/src/wrap.ts, line: 35, contains: "export function wrapUntrusted" }
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
-    - { path: packages/safety/injection/src/downgrade.ts, line: 24, contains: "export function resolveDowngradedTools" }
-    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 474, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 751, contains: "resolveDowngradedTools(dgConfig?.tools)" }
-    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 775, contains: "await handleUntrustedResult(" }
+    - { path: packages/safety/injection/src/downgrade.ts, line: 34, contains: "export function resolveDowngradedTools" }
+    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 475, contains: "deps.safety.injection.prelude" }
+    - { path: packages/core/src/agent-loop.ts, line: 746, contains: "= resolveRunDowngrade(" }
+    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 785, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
     - { path: packages/wiring/src/decision-site.ts, line: 222, contains: "export function meetsThreshold" }
     - { path: packages/wiring/src/decision-site.ts, line: 239, contains: "export async function runDecisionSite" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 91, contains: "const containsInstructions = tier1Hit ||" }
+    - { path: extensions/tools-delegation/src/index.ts, line: 960, contains: "function meshTaintParams(" }
+    - { path: apps/acp-server/src/index.ts, line: 516, contains: "p.untrustedOrigin === true," }
+    - { path: apps/acp-server/src/index.ts, line: 755, contains: "p.untrustedOrigin === true ?" }
+    - { path: apps/ethos/src/commands/serve-a2a-runner.ts, line: 106, contains: "untrustedOrigin: true," }
 
   G-SEC:
     - { path: packages/types/src/secrets.ts, line: 18, contains: "export interface SecretsResolver" }
@@ -107,15 +111,14 @@ register_anchors:
     - { path: packages/wiring/src/skill-passthrough.ts, line: 16, contains: "export function deriveSkillPassthrough" }
 
   G-RED:
-    - { path: packages/safety/redact/src/index.ts, line: 94, contains: "export function detectSecrets" }
-    - { path: packages/safety/redact/src/index.ts, line: 106, contains: "export function redactString" }
-    - { path: packages/safety/redact/src/index.ts, line: 123, contains: "export function redactJson" }
+    - { path: packages/safety/redact/src/index.ts, line: 259, contains: "export function detectSecrets" }
+    - { path: packages/safety/redact/src/index.ts, line: 271, contains: "export function redactString" }
+    - { path: packages/safety/redact/src/index.ts, line: 288, contains: "export function redactJson" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 206, contains: "redactJson(trace.attrs)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 344, contains: "redactJson(span.attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 397, contains: "redactJson(attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 527, contains: "redactJson(event.details, extraRedactPatterns)" }
-    - { path: extensions/platform-slack/src/blocks/approval.ts, line: 118, contains: "function formatArgs" }
-    - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
+    - { path: packages/surface-kit/src/approval-args.ts, line: 41, contains: "export function formatApprovalArgs" }
 
   G-APP:
     - { path: packages/wiring/src/danger-predicate.ts, line: 451, contains: "mode === 'smart' && opts.smartApprove" }
@@ -123,8 +126,8 @@ register_anchors:
     - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 79, contains: "export async function enforceBeforeToolCall" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 83, contains: "const denied = checkDenyRules(" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 86, contains: "export async function enforceBeforeToolCall" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 90, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
     - { path: packages/wiring/src/approval-seams.ts, line: 142, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
@@ -146,7 +149,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 642, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 646, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 124, contains: "export function checkMessage" }
@@ -165,13 +168,13 @@ register_anchors:
   G-MEM:
     - { path: packages/core/src/agent-loop/audience.ts, line: 106, contains: "export function resolveTurnAudience" }
     - { path: packages/core/src/agent-loop/audience.ts, line: 202, contains: "export function sharedTurnDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 142, contains: "resolveTurnAudience(requestedAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 249, contains: "sharedTurnDenyFor(" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 493, contains: "withSharedAudienceExclusions(" }
-    - { path: packages/core/src/agent-loop/turn-end.ts, line: 329, contains: "memoryFlushForbidden(ctx.roomAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 143, contains: "resolveTurnAudience(requestedAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 250, contains: "sharedTurnDenyFor(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 494, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/turn-end.ts, line: 345, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 150, contains: "export function isPrivateMemoryPath" }
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 293, contains: "this.hitsDenyWhen(next, kind)" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 317, contains: "this.hitsDenyWhen(next, kind)" }
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and

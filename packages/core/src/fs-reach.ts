@@ -3,6 +3,14 @@
 // template strings.
 import { basename, join, resolve } from 'node:path';
 import { PERSONALITY_DEFINITION_ENTRIES, type PersonalityConfig } from '@ethosagent/types';
+import { foldDenyKey } from './scoped/scoped-fs';
+
+/** True when `path` equals `root` or lies below it, compared as deny keys. */
+function within(root: string, path: string): boolean {
+  const r = foldDenyKey(root);
+  const p = foldDenyKey(path);
+  return p === r || p.startsWith(r.endsWith('/') ? r : `${r}/`);
+}
 
 /**
  * A personality's `fs_reach` is enforced at TWO layers — the app layer
@@ -122,7 +130,10 @@ function withWorkdir(paths: string[], workdir: string): string[] {
  *   read  = [ownDir, `${ethosHome}/skills/`, workdir]
  *   write = [ownDir, workdir]
  *
- * where `ownDir = ${ethosHome}/personalities/<self>/`. The defaults use the raw
+ * where `ownDir = ${ethosHome}/personalities/<self>/`, and an UNDECLARED
+ * workdir (the process cwd) is left out when it lies at or inside `ethosHome`
+ * (UBP-047 — it would grant every other personality's directory). The
+ * defaults use the raw
  * variable values and never call `substitute`, so a personality that declares
  * nothing can never hit `EmptySubstitutionError`.
  *
@@ -148,14 +159,25 @@ export function deriveFsReachPaths(
   const effective: FsReachVars = { ...vars, cwd: workdir };
 
   const ownDir = `${join(effective.ethosHome, 'personalities', effective.self)}/`;
+  // UBP-047 — a process started AT (or inside) the state dir does not get it
+  // as its default cwd grant: that would hand this personality every other
+  // personality's directory and every unlisted store. `ownDir` and `skills/`
+  // already cover what is legitimately its own there. A cwd ABOVE the state
+  // dir (`~`, `/`) stays in the list; the boundaries refuse it the state dir
+  // itself (layer 2b in `ScopedFsImpl`/`ScopedStorage`). A DECLARED workdir is
+  // an explicit grant and is kept wherever it points.
+  const cwdGrant =
+    !declaredWorkdir && within(resolve(effective.ethosHome), resolve(effective.cwd))
+      ? []
+      : [effective.cwd];
   const read =
     reach?.read && reach.read.length > 0
       ? reach.read.map((path) => substitute(path, effective))
-      : [ownDir, `${join(effective.ethosHome, 'skills')}/`, effective.cwd];
+      : [ownDir, `${join(effective.ethosHome, 'skills')}/`, ...cwdGrant];
   const write =
     reach?.write && reach.write.length > 0
       ? reach.write.map((path) => substitute(path, effective))
-      : [ownDir, effective.cwd];
+      : [ownDir, ...cwdGrant];
 
   const writeDeny = personalityWriteDeny(effective.ethosHome, effective.self);
 

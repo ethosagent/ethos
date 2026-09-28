@@ -4,7 +4,12 @@
 // be computed from the environment alone, so every state-dir deny and the
 // definition write floor missed that directory. This drives the REAL wiring:
 // a `write_file` / `read_file` through the registry `createAgentLoop` built,
-// with the working directory (and so the default reach) on the data dir.
+// with the working directory (and so the default reach) ABOVE the data dir. Not
+// AT it: a cwd at or inside the state dir is dropped from the default reach
+// (UBP-047, `deriveFsReachPaths`), and wiring passes the data dir as the
+// reach's `ethosHome`. The ancestor-grant exclusion (layer 2b) knows only
+// `~/.ethos` and `ETHOS_STATE_DIR`, so the root's grant still reaches this
+// wiring-only data dir — which is exactly what the floors below must hold.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,7 +47,7 @@ describe('a custom dataDir is floored on the scopedFs boundary (verification rou
     };
     runtime = await createAgentLoop(config, {
       dataDir,
-      workingDir: dataDir,
+      workingDir: root,
       disableDocker: true,
       profile: 'cli',
     });
@@ -63,7 +68,7 @@ describe('a custom dataDir is floored on the scopedFs boundary (verification rou
       sessionKey: 'cli:custom-datadir',
       platform: 'cli',
       personalityId: 'p',
-      workingDir: dataDir,
+      workingDir: root,
       currentTurn: 1,
       messageCount: 1,
       abortSignal: new AbortController().signal,

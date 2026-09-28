@@ -23,12 +23,15 @@ import {
   type PersonalityConfig,
   TOOL_PROCESS_ENV_VAR,
 } from '@ethosagent/types';
+import { identityOf, type ProcessIdentity } from './process-identity';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
   pid: number;
   stdoutLog: string;
   stderrLog: string;
+  /** What `stopProcess` checks before signalling the group (V-ES-5, ./process-identity.ts). */
+  identity: ProcessIdentity;
 }
 
 /**
@@ -39,19 +42,77 @@ export interface SpawnResult {
  * needed for a shell + common toolchains to function, then layer the caller's
  * explicitly-opted `env` on top. Anything secret the command genuinely needs
  * must be passed explicitly via the tool's `env` arg, not inherited silently.
+ *
+ * Copied, not shared, into `packages/core/src/scoped/scoped-process.ts` (the
+ * host `terminal`/`run_tests`/`lint` path),
+ * `extensions/execution-local/src/index.ts` and
+ * `extensions/execution-process-backend/src/index.ts`; the four change
+ * together. Pinned by `__tests__/spawn.test.ts` ('allowlist (V-ES-8)').
  */
-const PASSTHROUGH_ENV_KEYS = [
+const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
   'PATH',
   'HOME',
   'USER',
   'LOGNAME',
   'SHELL',
   'LANG',
-  'LC_ALL',
   'TERM',
+  'COLORTERM',
   'TMPDIR',
   'TZ',
-] as const;
+  // V-ES-8: without these `git push` over ssh, a corporate proxy, the locale
+  // macOS sets (LC_CTYPE only) and the common toolchain roots all break.
+  'SSH_AUTH_SOCK',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'NODE_PATH',
+  'GOPATH',
+  'GOROOT',
+  'GOBIN',
+  'JAVA_HOME',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'PYENV_ROOT',
+  'PYTHONPATH',
+  'VIRTUAL_ENV',
+]);
+/** Whole families forwarded by prefix: locale, nvm, conda, XDG dirs, terminal identity. */
+const PASSTHROUGH_ENV_PREFIXES = ['LC_', 'NVM_', 'CONDA_', 'XDG_', 'TERM_'] as const;
+/**
+ * A name that looks like a credential is never forwarded, even inside an
+ * allowed family. `_PWD`/`_PASS` as whole segments (V2-SEC-6): `CONDA_PWD`,
+ * `XDG_DB_PASS`.
+ */
+const SECRET_ENV_NAME =
+  /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_|(?:^|_)(?:PWD|PASS)(?:_|$)/i;
+/**
+ * A family (prefix) var whose VALUE carries a credential is not forwarded
+ * either (V2-SEC-6): URL userinfo (`https://user:pass@mirror` in an
+ * `NVM_*_MIRROR` or `CONDA_CHANNEL_ALIAS`), a PEM private key, or a vendor
+ * token shape — the high-signal prefixes of `PATTERNS` in
+ * packages/safety/redact/src/index.ts, which this copy cannot import. The
+ * named keys (`HTTPS_PROXY` and friends) are exempt: a proxy URL with
+ * credentials is the documented way an authenticated proxy is configured.
+ */
+const SECRET_ENV_VALUE =
+  /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s:]+:[^/@\s]+@|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?<![A-Za-z0-9_-])(?:sk-|sk_live_|ghp_|gh[sour]_|github_pat_|xox[bpoa]-|xapp-|gsk_|xai-|AKIA|ASIA|AIza)[A-Za-z0-9_-]{16,}|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ/;
+
+/**
+ * True when `key` may pass from the host env to a child. Names `loadDotEnv`
+ * copied in from `~/.ethos/.env` (recorded in `ETHOS_DOTENV_KEYS`,
+ * packages/storage-fs/src/env-secrets.ts) never pass, whatever they are.
+ */
+function isPassthroughEnvKey(key: string, val: string, dotenvKeys: ReadonlySet<string>): boolean {
+  if (dotenvKeys.has(key) || SECRET_ENV_NAME.test(key)) return false;
+  if (PASSTHROUGH_ENV_KEYS.has(key)) return true;
+  return PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p)) && !SECRET_ENV_VALUE.test(val);
+}
 
 /**
  * Build the minimal base env for a host child process: the passthrough
@@ -60,9 +121,9 @@ const PASSTHROUGH_ENV_KEYS = [
  */
 export function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
   const base: Record<string, string> = {};
-  for (const key of PASSTHROUGH_ENV_KEYS) {
-    const val = process.env[key];
-    if (val !== undefined) base[key] = val;
+  const dotenvKeys = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
+  for (const [key, val] of Object.entries(process.env)) {
+    if (val !== undefined && isPassthroughEnvKey(key, val, dotenvKeys)) base[key] = val;
   }
   return env ? { ...base, ...env } : base;
 }
@@ -126,14 +187,14 @@ export function rotateLogIfNeeded(logPath: string): void {
   closeSync(openSync(logPath, 'a'));
 }
 
-export function spawnDetached(
+export async function spawnDetached(
   id: string,
   command: string,
   cwd: string,
   env: Record<string, string> | undefined,
   dataDir: string,
   onExit?: (result: { exitCode: number | null; signal: NodeJS.Signals | null }) => void,
-): SpawnResult {
+): Promise<SpawnResult> {
   const dir = join(dataDir, 'processes', id);
   mkdirSync(dir, { recursive: true });
 
@@ -194,7 +255,7 @@ export function spawnDetached(
     throw new Error('Failed to spawn process: pid is undefined');
   }
 
-  return { pid: child.pid, stdoutLog, stderrLog };
+  return { pid: child.pid, stdoutLog, stderrLog, identity: await identityOf(child.pid) };
 }
 
 /** Sentinel pid for backend-routed (containerized) processes — they have no
@@ -284,5 +345,5 @@ export function spawnViaBackend(
     }
   })();
 
-  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog };
+  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog, identity: {} };
 }

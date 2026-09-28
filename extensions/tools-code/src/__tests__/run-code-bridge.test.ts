@@ -119,6 +119,13 @@ function makeHarness(
     // Item 7 seam — these tests exercise no secrets, so a kit that detects none.
     redaction: { redactPii: (t) => t, redactString: (t) => t, detectSecrets: () => [] },
     personality: { id: 'default', name: 'Default' },
+    downgrade: {
+      state: { value: 0 },
+      enabled: false,
+      tools: new Set(),
+      turns: 0,
+      rejectionMessage: '',
+    },
     watcherTap: { observe: () => {}, getHalt: opts?.getHalt ?? (() => null) },
     counters,
     checkBudgets: () =>
@@ -186,7 +193,8 @@ describe('run_code × ScriptToolBridge', () => {
     expect(result.ok).toBe(true);
     expect(backend.lastCmd).toBe('python3 -');
     expect(backend.lastOpts?.rpc).toBeUndefined();
-    expect(backend.lastOpts?.signal).toBeUndefined();
+    // UBP-042 — the unframed run still carries the turn's abort signal.
+    expect(backend.lastOpts?.signal).toBeDefined();
   });
 
   it('bash stays unframed even when the bridge is wired (no bash shim at v1)', async () => {
@@ -201,7 +209,7 @@ describe('run_code × ScriptToolBridge', () => {
     expect(backend.lastOpts?.rpc).toBeUndefined();
   });
 
-  it('clamps timeout_ms to 300s for tool-API executions; plain executions keep the raw value', async () => {
+  it('clamps timeout_ms to 300s for tool-API executions and 600s for plain ones', async () => {
     const backend = makeRpcBackend(async function* () {
       yield { stream: 'exit', code: 0 };
     });
@@ -214,7 +222,8 @@ describe('run_code × ScriptToolBridge', () => {
     await tools
       .get('run_code')
       ?.execute({ runtime: 'python', code: 'x', timeout_ms: 900_000 }, makeTestToolContext());
-    expect(backend.lastOpts?.timeoutMs).toBe(900_000);
+    // UBP-042 — plain executions share terminal's 10-minute ceiling.
+    expect(backend.lastOpts?.timeoutMs).toBe(600_000);
 
     // The default stays 30s on both paths.
     await tools.get('run_code')?.execute({ runtime: 'python', code: 'x' }, ctx);

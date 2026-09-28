@@ -34,12 +34,13 @@ function deriveActuals(raw: StoredMessage[]): {
 /** `evaluateGate` deps for a finished turn, from its stored history `raw`. */
 export function turnGateDeps(
   deps: Pick<LoopDeps, 'llm' | 'compaction' | 'tools'>,
-  ctx: Pick<TurnEndCtx, 'maxCompletionTokens' | 'toolScope'>,
+  ctx: Pick<TurnEndCtx, 'maxCompletionTokens' | 'toolScope' | 'gateWindowTokens'>,
   raw: StoredMessage[],
 ): Parameters<typeof evaluateGate>[0] {
   const { lastActualInputTokens, staticTokens } = deriveActuals(raw);
   return {
     llm: deps.llm,
+    ...(ctx.gateWindowTokens !== undefined ? { windowTokens: ctx.gateWindowTokens } : {}),
     ...(ctx.maxCompletionTokens !== undefined
       ? { reservedOutputTokens: ctx.maxCompletionTokens }
       : {}),

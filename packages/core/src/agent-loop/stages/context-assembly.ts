@@ -34,7 +34,8 @@ import {
   DEFAULT_AGING_STATE,
 } from '../tool-result-aging';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
-import { ageVisionBlocks } from '../vision-aging';
+import { ageVisionBlocks, degradeRejectedRows, KEEP_RECENT_VISION_TURNS } from '../vision-aging';
+import { readVisionRejected } from '../vision-rejection';
 import { checkContextDrift } from './context-drift';
 import { emitContextEvents } from './context-emit';
 import { turnToolDefinitions } from './stream-step';
@@ -654,15 +655,22 @@ export async function* assembleContext(
   // `replayHistory` carries any active compaction watermark (summary + tail).
   // Item 7 — the compaction envelope only for a provider that compacts
   // server-side; every other provider gets the readable summary (history.ts).
-  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts), {
-    serverCompaction: setup.serverCompaction.active,
-  });
+  // UBP-019 / V-CP-3 — the blocks of a call the provider deterministically
+  // rejected are replayed as lines naming them (vision-rejection.ts).
+  const rejectedVision = readVisionRejected(setup.sessionMetadata);
+  let llmMessages = toLLMMessages(
+    dedupHistory(degradeRejectedRows(replayHistory, rejectedVision), ghostOpts),
+    { serverCompaction: setup.serverCompaction.active },
+  );
   // C3 — age out image/document blocks past the recency window. Runs on the
   // unconditional path, ahead of the pressure-gated aging below, because this
   // one is about RECENCY: a session that never nears its context window would
   // otherwise re-send every screenshot on every request for the rest of its
-  // life. No-op (and no allocation) when nothing aged.
-  llmMessages = ageVisionBlocks(llmMessages);
+  // life. No-op (and no allocation) when nothing aged. UBP-019 — `nativeVision`
+  // also degrades a replayed block THIS turn's model cannot read (a tier or
+  // personality switch onto a text-only model) to a line naming it; pinned by
+  // __tests__/vision-replay-rejected.test.ts.
+  llmMessages = ageVisionBlocks(llmMessages, KEEP_RECENT_VISION_TURNS, { vision: nativeVision });
   // Phase 1c — actuals-first gate signal. The most recent assistant turn's
   // real input tokens (+ measured static sections system+tools) were persisted
   // by Phase 0; prefer them over the chars/4 estimate. Absent on the first
@@ -683,7 +691,7 @@ export async function* assembleContext(
   // state is reused so the aged prefix stays byte-identical (cache holds).
   let agingCacheBreakpoint: number | undefined;
   {
-    const window = deps.llm.maxContextTokens || 200_000;
+    const window = setup.gateWindowTokens ?? (deps.llm.maxContextTokens || 200_000);
     const prevState = await loadAgingState(deps.storage, deps.dataDir, sessionId);
     const usageEstimate =
       lastActualInputTokens ??
@@ -733,6 +741,7 @@ export async function* assembleContext(
     : await maybeCompact(
         {
           llm: deps.llm,
+          ...(setup.gateWindowTokens !== undefined ? { windowTokens: setup.gateWindowTokens } : {}),
           contextEngines: deps.contextEngines,
           session: deps.session,
           observability: deps.observability,

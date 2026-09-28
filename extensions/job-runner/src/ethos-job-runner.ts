@@ -91,6 +91,9 @@ export class EthosJobRunner implements JobRunner {
       // tool the parent turn was narrowed out of.
       ...(job.toolsetNarrowing?.narrow ? { toolsetNarrow: job.toolsetNarrowing.narrow } : {}),
       ...(job.toolsetNarrowing?.exclude ? { toolsetExclude: job.toolsetNarrowing.exclude } : {}),
+      // V2-SEC-2 — the child read untrusted content: the executor records it on
+      // the row (`BackgroundJob.tainted`) so a parent-review turn starts armed.
+      ...(ctx.markTainted ? { onUntrustedRead: () => ctx.markTainted?.() } : {}),
     });
   }
 }

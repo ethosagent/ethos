@@ -6,7 +6,7 @@
 // so the interaction handler can correlate the click back to the pending
 // approval without parsing anything out of the message itself.
 
-import { redactJson, redactString } from '@ethosagent/safety-redact';
+import { formatApprovalArgs } from '@ethosagent/surface-kit';
 import { context, escapeMrkdwn, header, type SlackBlock, section } from './shared';
 
 /** `action_id` for the Allow button. The interaction handler matches on this. */
@@ -92,50 +92,18 @@ export function approvalResolvedBlocks(input: ApprovalResolvedInput): SlackBlock
 }
 
 /**
- * Redact credentials, JSON-stringify args, falling back gracefully,
- * neutralize any code-fence breakout, then cap the length.
- *
- * Two independent threats, handled in this order:
- *
- * 1. **Credential disclosure.** This card is the one place either adapter
- *    renders tool args in full rather than summarized, and it lands in a
- *    channel every member can read, with the platform's retention. A gated
- *    `terminal` or `web_fetch` call can carry a bearer token or a DSN, so
- *    args go through Tier 0 `@ethosagent/safety-redact` first. Redaction runs
- *    on the values *before* `JSON.stringify`, not on its output: the
- *    generic-secret pattern anchors on a string boundary, which JSON quoting
- *    would hide.
- * 2. **Code-fence breakout.** A literal ```` ``` ```` inside args would close
- *    the mrkdwn fence the caller wraps this in, letting the rest of the args
- *    render as live Slack markup (mentions, links) on a privileged approval
- *    surface. Slack mrkdwn has no in-fence escape, so we break up runs of
- *    backticks with a zero-width space — the text reads the same, but no
- *    substring can be parsed as a fence delimiter.
- *
- * Redaction is a leak-reducer, not a boundary (G-RED): a credential in a
- * shape the pattern set does not know still reaches the channel.
+ * The shared approval-args formatter (`formatApprovalArgs`,
+ * @ethosagent/surface-kit — credential redaction, then the cap) with Slack's
+ * code-fence hardening. A literal ```` ``` ```` inside args would close the
+ * mrkdwn fence the caller wraps this in, letting the rest of the args render as
+ * live Slack markup (mentions, links) on a privileged approval surface. Slack
+ * mrkdwn has no in-fence escape, so every run of backticks is broken up with a
+ * zero-width space — the text reads the same, but no substring can be parsed
+ * as a fence delimiter.
  */
 function formatArgs(args: unknown): string {
-  let text: string;
-  if (args === null || args === undefined) {
-    text = '(no arguments)';
-  } else if (typeof args === 'string') {
-    text = redactString(args);
-  } else {
-    try {
-      // `args` is non-null here, so `typeof 'object'` means object or array —
-      // both of which `redactJson` walks. Inside the `try` because a circular
-      // arg would otherwise overflow the stack outside the stringify guard.
-      const safe = typeof args === 'object' ? redactJson(args as Record<string, unknown>) : args;
-      text = JSON.stringify(safe, null, 2);
-    } catch {
-      text = redactString(String(args));
-    }
-  }
-  // Insert a zero-width space between consecutive backticks.
-  text = text.replace(/`+/g, (run) => run.split('').join('​'));
-  if (text.length > ARGS_PREVIEW_MAX) {
-    return `${text.slice(0, ARGS_PREVIEW_MAX)}\n… (truncated)`;
-  }
-  return text;
+  return formatApprovalArgs(args, {
+    maxChars: ARGS_PREVIEW_MAX,
+    neutralize: (text) => text.replace(/`+/g, (run) => run.split('').join('​')),
+  });
 }

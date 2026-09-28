@@ -22,6 +22,7 @@ import type {
   MemoryProvider,
   MemorySnapshot,
   Message,
+  PersonalityConfig,
   PromptContext,
   Tool,
   ToolDefinitionLite,
@@ -119,12 +120,13 @@ function spyMemory(prefetchReturns: MemorySnapshot | null): MemoryProvider & {
   };
 }
 
-function personalities(toolset?: string[]) {
+function personalities(toolset?: string[], extra: Partial<PersonalityConfig> = {}) {
   const reg = new DefaultPersonalityRegistry();
   vi.spyOn(reg, 'getDefault').mockReturnValue({
     id: 'lean',
     name: 'Lean',
     ...(toolset ? { toolset } : {}),
+    ...extra,
   });
   return reg;
 }
@@ -975,14 +977,18 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
     };
   }
 
-  async function runOps(ops: Op[], roomAudience?: 'shared'): Promise<Record<string, string>> {
+  async function runOps(
+    ops: Op[],
+    roomAudience?: 'shared',
+    extra: Partial<PersonalityConfig> = {},
+  ): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     const tools = new DefaultToolRegistry();
     tools.register(storageOp(out));
     const loop = new AgentLoop({
       llm: opsLLM(ops),
       tools,
-      personalities: personalities(['storage_op']),
+      personalities: personalities(['storage_op'], extra),
       storage: new FsStorage(),
       dataDir: home,
       safety: createTestSafety(),
@@ -1049,8 +1055,14 @@ describe('E4 — a shared turn reads nothing else under the state dir', () => {
     expect(out[`write:${join(home, 'skills', 'digest', 'SKILL.md')}`]).toMatch(/^refused:/);
   });
 
+  // The working dir IS the state dir here, which UBP-047 drops from the
+  // DEFAULT reach; a declared workdir is an explicit grant and is kept.
   it('a private turn is unaffected', async () => {
-    const out = await runOps([{ path: join(home, 'cron', 'output', 'daily', '2026-09-28.md') }]);
+    const out = await runOps(
+      [{ path: join(home, 'cron', 'output', 'daily', '2026-09-28.md') }],
+      undefined,
+      { fs_reach: { workdir: home } },
+    );
     expect(out[join(home, 'cron', 'output', 'daily', '2026-09-28.md')]).toMatch(/^private:/);
   });
 

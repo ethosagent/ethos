@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
 import {
@@ -42,6 +43,7 @@ import { type CallCaptureToolsOptions, runCallCapture } from '@ethosagent/tools-
 import {
   type BackgroundToolDeps,
   createDelegationTools,
+  createMeshAuthHeaderResolver,
   MeshProxyReconciler,
 } from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
@@ -70,6 +72,7 @@ import { amendmentPersonalityLoader, createAmendmentService } from './amendments
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
+import { cwdReachWarning } from './cwd-reach-warning';
 import type { DisposerStack } from './disposer-stack';
 import { goalRoomAudience } from './goal-audience';
 import type {
@@ -88,6 +91,7 @@ import {
   privateMemoryExtraRoots,
 } from './memory-backend';
 import {
+  lookupContextWindow,
   lookupLegacyCatalogModelId,
   lookupProfile,
   mergeModelProfile,
@@ -1049,6 +1053,10 @@ export async function buildAgentLoop(
   // asked of the loop's own file-context injector for the directory the turn
   // resolves — the same text, not a second discovery (project-context-floor.ts).
   const startupWorkdir = resolveTurnWorkdir(activePerson, { dataDir, cwd: workingDir });
+  // UBP-047 — say once at boot when the process cwd (`/`, `$HOME`) becomes a
+  // personality's whole default fs reach.
+  const cwdWarning = cwdReachWarning(personalities.list(), workingDir, homedir());
+  if (cwdWarning) log.warn(cwdWarning);
   const projectContextOf = (person: PersonalityConfig, workdir: string) =>
     projectContextFor({
       injectors,
@@ -1267,6 +1275,17 @@ export async function buildAgentLoop(
     compaction: {
       ...compaction,
       ...(maxSingleToolResultTokens !== undefined ? { maxSingleToolResultTokens } : {}),
+      // A turn routed by `modelOverride` to a model with a smaller window is
+      // gated against that window (`turnGateWindow`, packages/core/src/agent-loop/
+      // turn-window.ts): the catalog window on the loop's provider, then on any
+      // chain entry's provider. Unknown → the provider's own window.
+      contextWindowFor: (model: string) => {
+        for (const p of [config.provider, ...(config.providers ?? []).map((e) => e.provider)]) {
+          const window = lookupContextWindow(p, model);
+          if (window !== undefined) return window;
+        }
+        return undefined;
+      },
     },
     ...(memoryConsolidation ? { memoryConsolidation } : {}),
     ...(promptBudget ? { promptBudget } : {}),
@@ -1565,6 +1584,13 @@ export async function buildAgentLoop(
     meshProxyReconciler = new MeshProxyReconciler({
       store: jobStore,
       fetchImpl: (url, init) => globalThis.fetch(url, init),
+      // The peer's bearer token, resolved from its registry `authTokenRef` the
+      // way the mesh tools resolve it (`meshAuthHeaders`, tools-delegation).
+      authHeadersFor: createMeshAuthHeaderResolver(
+        wiringStorage,
+        opts.meshRegistryPath,
+        config.secretsResolver ? { secrets: config.secretsResolver } : undefined,
+      ),
       log: (m) => log.info(`[mesh-reconciler] ${m}`),
     });
     meshProxyReconciler.start();
@@ -1573,11 +1599,14 @@ export async function buildAgentLoop(
   }
 
   // Delegation tools need the loop reference; register after loop creation.
+  // The mesh tools resolve each peer's `authTokenRef` through the operator's
+  // secrets store (`meshAuthHeaders`, extensions/tools-delegation/src/index.ts).
   for (const tool of createDelegationTools(
     loop,
     wiringStorage,
     opts.meshRegistryPath,
     backgroundDeps,
+    config.secretsResolver ? { secrets: config.secretsResolver } : undefined,
   ))
     tools.register(tool);
 

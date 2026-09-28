@@ -1,12 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
 import {
   describeInstallFailure,
   describeUndoneInstall,
+  discoverWorkspacePluginDirs,
   draftPluginGrant,
   execNpm,
   findPreviousCopy,
@@ -29,8 +30,10 @@ import {
   readPluginPermissions,
   recordGrant,
   revokeGrant,
+  trustWorkspacePlugin,
   type UndoPluginInstallInput,
   undoPluginInstall,
+  untrustWorkspacePlugin,
 } from '@ethosagent/plugin-loader';
 import { FileSecretsResolver } from '@ethosagent/storage-fs';
 import type { SecretsResolver, Storage } from '@ethosagent/types';
@@ -146,11 +149,68 @@ export async function runPlugin(args: string[]): Promise<void> {
       break;
     }
 
+    case 'trust': {
+      await trustWorkspacePlugins(resolve(args[1] ?? process.cwd()));
+      break;
+    }
+
+    case 'untrust': {
+      await untrustWorkspacePlugins(resolve(args[1] ?? process.cwd()));
+      break;
+    }
+
     default:
       console.log(
-        'Usage: ethos plugin [install <pkg> | remove <pkg> | list | grants | revoke <pluginId> | credentials <pluginId>]',
+        'Usage: ethos plugin [install <pkg> | remove <pkg> | list | grants | revoke <pluginId> | credentials <pluginId> | trust [dir] | untrust [dir]]',
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace plugin trust (UBP-009, owner decision D4)
+// ---------------------------------------------------------------------------
+
+/**
+ * `ethos plugin trust [dir]` — grant trust to every workspace plugin under
+ * `dir` (default: the current directory): each `<dir>/.ethos/plugins/<name>/`
+ * and each `<dir>/node_modules/{ethos-plugin-*,@ethos-plugins/*,@ethosagent/*}`
+ * package. The grant is keyed on the plugin directory and a hash of its files
+ * (`trustWorkspacePlugin` in @ethosagent/plugin-loader), stored through Storage
+ * at `~/.ethos/plugins/workspace-trust.json`; `PluginLoader.loadAll` refuses a
+ * workspace plugin without one, or whose files changed since.
+ */
+async function trustWorkspacePlugins(dir: string): Promise<void> {
+  const storage = getStorage();
+  const found = await discoverWorkspacePluginDirs(storage, dir);
+  if (found.length === 0) {
+    console.log(`${c.dim}No workspace plugins under ${dir}.${c.reset}`);
+    return;
+  }
+  console.log(
+    `${c.yellow}Workspace plugins run inside Ethos with your full privileges (files, network, API keys).${c.reset}`,
+  );
+  for (const pluginDir of found) {
+    const hash = await trustWorkspacePlugin(storage, pluginsDir(), pluginDir);
+    console.log(
+      `${c.green}✓${c.reset} trusted ${relative(dir, pluginDir)} ${c.dim}(${hash.slice(0, 19)}…)${c.reset}`,
+    );
+  }
+  console.log(
+    `${c.dim}Any change to these files (a nested node_modules included) voids the grant; run this command again after reviewing it. A trusted plugin may import only files inside its own folder.${c.reset}`,
+  );
+}
+
+/** `ethos plugin untrust [dir]` — withdraw the grants `trust` recorded. */
+async function untrustWorkspacePlugins(dir: string): Promise<void> {
+  const storage = getStorage();
+  let removed = 0;
+  for (const pluginDir of await discoverWorkspacePluginDirs(storage, dir)) {
+    if (await untrustWorkspacePlugin(storage, pluginsDir(), pluginDir)) {
+      removed++;
+      console.log(`${c.green}✓${c.reset} untrusted ${relative(dir, pluginDir)}`);
+    }
+  }
+  if (removed === 0) console.log(`${c.dim}No trusted workspace plugins under ${dir}.${c.reset}`);
 }
 
 /** N2 — the last few lines of a piped npm stderr, for the error envelope.

@@ -268,6 +268,8 @@ describe('findRate — current-generation rows', () => {
   const PINNED: ReadonlyArray<{ id: string; prefix: string; input: number; output: number }> = [
     // OpenAI
     { id: 'gpt-6-astra', prefix: 'gpt-6-astra', input: 10, output: 50 },
+    { id: 'gpt-6-sol', prefix: 'gpt-6-sol', input: 2, output: 10 },
+    { id: 'gpt-6-luna', prefix: 'gpt-6-luna', input: 0.1, output: 0.5 },
     { id: 'gpt-5.6-sol', prefix: 'gpt-5.6-sol', input: 4, output: 20 },
     { id: 'gpt-5.6-terra', prefix: 'gpt-5.6-terra', input: 2, output: 12 },
     { id: 'gpt-5.6-luna', prefix: 'gpt-5.6-luna', input: 0.2, output: 1.2 },
@@ -282,10 +284,12 @@ describe('findRate — current-generation rows', () => {
     { id: 'claude-opus-4-8', prefix: 'claude-opus-4-8', input: 5, output: 25 },
     { id: 'claude-opus-4-7', prefix: 'claude-opus-4-7', input: 5, output: 25 },
     { id: 'claude-opus-4-6', prefix: 'claude-opus-4-6', input: 5, output: 25 },
+    { id: 'claude-opus-4-5-20251101', prefix: 'claude-opus-4-5', input: 5, output: 25 },
     { id: 'claude-sonnet-5', prefix: 'claude-sonnet-5', input: 2, output: 10 },
     { id: 'claude-sonnet-4-6', prefix: 'claude-sonnet-4-6', input: 3, output: 15 },
     { id: 'claude-haiku-4-5', prefix: 'claude-haiku-4-5', input: 1, output: 5 },
     // xAI (rows pre-date this change; pinned here so the set is complete)
+    { id: 'grok-4.7', prefix: 'grok-4.7', input: 2, output: 6 },
     { id: 'grok-4.6', prefix: 'grok-4.6', input: 2, output: 6 },
     { id: 'grok-4.5', prefix: 'grok-4.5', input: 2, output: 6 },
     { id: 'grok-4.3', prefix: 'grok-4.3', input: 1.25, output: 2.5 },
@@ -297,6 +301,14 @@ describe('findRate — current-generation rows', () => {
     { id: 'gemini-3.5-flash', prefix: 'gemini-3.5-flash', input: 1.5, output: 9 },
     { id: 'gemini-3.5-flash-lite', prefix: 'gemini-3.5-flash-lite', input: 0.3, output: 2.5 },
     { id: 'gemini-3.1-pro-preview', prefix: 'gemini-3.1-pro-preview', input: 2, output: 12 },
+    { id: 'gemini-3.1-flash-lite', prefix: 'gemini-3.1-flash-lite', input: 0.25, output: 1.5 },
+    { id: 'gemini-3-flash-preview', prefix: 'gemini-3-flash-preview', input: 0.5, output: 3 },
+    { id: 'gemini-2.5-flash-lite', prefix: 'gemini-2.5-flash-lite', input: 0.1, output: 0.4 },
+    // DeepSeek (standard peak rate — see table.ts)
+    { id: 'deepseek-flash', prefix: 'deepseek-flash', input: 0.3, output: 1.2 },
+    { id: 'deepseek-v4-pro', prefix: 'deepseek-v4-pro', input: 1.32, output: 3.96 },
+    // Mistral
+    { id: 'mistral-medium-3-5', prefix: 'mistral-medium-3-5', input: 1.5, output: 7.5 },
   ];
 
   it('resolves each current id to its own row at the verified rate', () => {
@@ -326,6 +338,9 @@ describe('findRate — current-generation rows', () => {
       { id: 'claude-opus-4-8', expected: 'claude-opus-4-8', not: 'claude-opus-4' },
       { id: 'claude-opus-4-7', expected: 'claude-opus-4-7', not: 'claude-opus-4' },
       { id: 'claude-opus-4-6', expected: 'claude-opus-4-6', not: 'claude-opus-4' },
+      { id: 'claude-opus-4-5-20251101', expected: 'claude-opus-4-5', not: 'claude-opus-4' },
+      { id: 'anthropic/claude-opus-5.5', expected: 'claude-opus-5-5', not: 'claude-opus-5' },
+      { id: 'gemini-2.5-flash-lite', expected: 'gemini-2.5-flash-lite', not: 'gemini-2.5-flash' },
       { id: 'claude-sonnet-4-6', expected: 'claude-sonnet-4-6', not: 'claude-sonnet-4' },
       { id: 'claude-haiku-4-5', expected: 'claude-haiku-4-5', not: 'claude-haiku-4' },
     ];
@@ -335,11 +350,37 @@ describe('findRate — current-generation rows', () => {
     }
   });
 
+  it("prices OpenRouter's dotted Claude ids at the dashed row of the same model", () => {
+    // OpenRouter spells Claude versions with a dot (`anthropic/claude-opus-4.8`).
+    // Without normalisation the substring test stops at the shorter dashed row
+    // (`claude-opus-4`, the retired 15/75 price) — 3x the real Opus 4.8 rate.
+    const CASES: ReadonlyArray<{ id: string; expected: string }> = [
+      { id: 'anthropic/claude-opus-5.5', expected: 'claude-opus-5-5' },
+      { id: 'anthropic/claude-opus-4.8', expected: 'claude-opus-4-8' },
+      { id: 'anthropic/claude-opus-4.7', expected: 'claude-opus-4-7' },
+      { id: 'anthropic/claude-opus-4.6', expected: 'claude-opus-4-6' },
+      { id: 'anthropic/claude-opus-4.5', expected: 'claude-opus-4-5' },
+      { id: 'anthropic/claude-haiku-4.5', expected: 'claude-haiku-4-5' },
+      { id: 'anthropic/claude-sonnet-4.6', expected: 'claude-sonnet-4-6' },
+      { id: 'anthropic/claude-fable-5.1', expected: 'claude-fable-5-1' },
+      { id: 'anthropic/claude-mythos-5.1', expected: 'claude-mythos-5-1' },
+      { id: 'anthropic/claude-3.5-sonnet', expected: 'claude-3-5-sonnet' },
+      { id: 'anthropic/claude-3.7-sonnet', expected: 'claude-3-7-sonnet' },
+      { id: 'anthropic/claude-3.5-haiku', expected: 'claude-3-5-haiku' },
+    ];
+    for (const { id, expected } of CASES) {
+      expect(findRate(id)?.prefix, `id: ${id}`).toBe(expected);
+    }
+    expect(findRate('anthropic/claude-opus-4.8')?.input).toBe(5);
+    expect(findRate('anthropic/claude-haiku-4.5')?.output).toBe(5);
+    expect(findRate('anthropic/claude-fable-5.1')?.cacheRead).toBe(0.25);
+  });
+
   it('does not price an unlisted sibling off a shorter row', () => {
     // No bare `gpt-5` row exists, so a 5.x id without its own row is unknown —
     // `gpt-5.6-luna` reaches its row because it has one, not because of a
     // generic. `gpt-5.4-pro` / `-nano` DO contain a priced prefix and are
-    // excluded by name; `claude-opus-4-5` falls through to the legacy row.
+    // excluded by name; `claude-opus-4-1` (retired) keeps the legacy row.
     expect(findRate('gpt-5.6-luna')?.prefix).toBe('gpt-5.6-luna');
     expect(findRate('gpt-5.6')).toBeUndefined();
     expect(findRate('gpt-5.4-pro')).toBeUndefined();
@@ -348,6 +389,62 @@ describe('findRate — current-generation rows', () => {
     expect(findRate('claude-opus-4-1')?.prefix).toBe('claude-opus-4');
     expect(findRate('claude-sonnet-5')?.prefix).not.toBe('claude-sonnet-4');
     expect(findRate('claude-opus-5')?.prefix).not.toBe('claude-opus-4');
+  });
+
+  // Anthropic pricing page, re-verified 2026-09-28: Opus 5.5 $4/$20, cache
+  // reads $0.20, 5m writes $5; Mythos 5.1 and Mythos 5 $10/$50 with 5m writes
+  // $12.50; Mythos 5.1 reads at 0.025x ($0.25), Mythos 5 at 0.1x ($1).
+  it('prices Opus 5.5 and Mythos 5.1 / 5 at their documented rates', () => {
+    const CASES: ReadonlyArray<{
+      id: string;
+      prefix: string;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }> = [
+      {
+        id: 'claude-opus-5-5',
+        prefix: 'claude-opus-5-5',
+        input: 4,
+        output: 20,
+        cacheRead: 0.2,
+        cacheWrite: 5,
+      },
+      {
+        id: 'claude-mythos-5-1',
+        prefix: 'claude-mythos-5-1',
+        input: 10,
+        output: 50,
+        cacheRead: 0.25,
+        cacheWrite: 12.5,
+      },
+      {
+        id: 'claude-mythos-5',
+        prefix: 'claude-mythos-5',
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+      },
+    ];
+    for (const c of CASES) {
+      const rate = findRate(c.id);
+      expect(rate?.prefix, `id: ${c.id}`).toBe(c.prefix);
+      expect(rate?.input, `id: ${c.id} input`).toBe(c.input);
+      expect(rate?.output, `id: ${c.id} output`).toBe(c.output);
+      expect(rate?.cacheRead, `id: ${c.id} cacheRead`).toBeCloseTo(c.cacheRead, 12);
+      expect(rate?.cacheWrite, `id: ${c.id} cacheWrite`).toBeCloseTo(c.cacheWrite, 12);
+    }
+    // Opus 5.5 must not fall through to the Opus 5 row ($5/$25).
+    expect(
+      estimateCost('claude-opus-5-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 }).costUsd,
+    ).toBeCloseTo(24, 12);
+    // Routed ids match the same rows.
+    expect(findRate('anthropic/claude-opus-5-5')?.prefix).toBe('claude-opus-5-5');
+    expect(findRate('anthropic/claude-mythos-5-1')?.prefix).toBe('claude-mythos-5-1');
+    // OpenRouter's dotted id prices at the Opus 5.5 rate, not Opus 5.
+    expect(findRate('anthropic/claude-opus-5.5')?.input).toBe(4);
   });
 
   it('bills Fable 5.1 cache reads at a quarter of Fable 5', () => {
@@ -364,6 +461,7 @@ describe('findRate — current-generation rows', () => {
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
+      'claude-opus-4-5',
       'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
@@ -379,6 +477,8 @@ describe('findRate — current-generation rows', () => {
   it('bills cached input at a tenth of input on current OpenAI and Gemini rows', () => {
     for (const id of [
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -390,6 +490,11 @@ describe('findRate — current-generation rows', () => {
       'gemini-3.5-flash',
       'gemini-3.5-flash-lite',
       'gemini-3.1-pro-preview',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
     ]) {
       const rate = findRate(id);
       expect(rate, `id: ${id}`).toBeDefined();
@@ -425,6 +530,7 @@ describe('findRate — resolved-id collision guard', () => {
   /** `prefix: null` means the id resolves to no row at all (basis `unknown`). */
   const RESOLVED_IDS: ReadonlyArray<{ id: string; prefix: string | null }> = [
     // xAI direct — the ids this change exists to price.
+    { id: 'grok-4.7', prefix: 'grok-4.7' },
     { id: 'grok-4.6', prefix: 'grok-4.6' },
     { id: 'grok-4.5', prefix: 'grok-4.5' },
     { id: 'grok-4.3', prefix: 'grok-4.3' },
@@ -437,6 +543,7 @@ describe('findRate — resolved-id collision guard', () => {
     // OpenRouter — allowlisted by `x-ai/grok`, so reachable. NOT priced off the
     // xAI rows: those carry xAI's direct list price, which is not what
     // OpenRouter charges. An honest unknown, decided in table.ts.
+    { id: 'x-ai/grok-4.7', prefix: null },
     { id: 'x-ai/grok-4.6', prefix: null },
     { id: 'x-ai/grok-4.5', prefix: null },
     { id: 'x-ai/grok-4.3', prefix: null },
@@ -448,6 +555,25 @@ describe('findRate — resolved-id collision guard', () => {
     { id: 'google/gemini-2.5-pro', prefix: 'gemini-2.5-pro' },
     { id: 'openai/gpt-4o-mini', prefix: 'gpt-4o-mini' },
     { id: 'deepseek/deepseek-chat', prefix: 'deepseek-chat' },
+    // The 2026-09-28 DeepSeek rows carry DeepSeek's direct price and exclude
+    // reseller ids, so the OpenRouter and Together ids stay unpriced.
+    { id: 'deepseek/deepseek-v4-pro-0813', prefix: null },
+    { id: 'deepseek/deepseek-v4.1-flash', prefix: null },
+    { id: 'deepseek-ai/DeepSeek-V4-Pro-0813', prefix: null },
+    // Known limitation (table.ts): Azure's deployment name has no reseller
+    // prefix, so it prices at DeepSeek's direct rate.
+    { id: 'DeepSeek-V4-Pro', prefix: 'deepseek-v4-pro' },
+    // Unpriced on purpose (table.ts, "Unpriced catalog rows"): Groq's ids are
+    // byte-identical to OpenRouter's, and Azure publishes no DeepSeek-V4-Flash
+    // rate in text.
+    { id: 'openai/gpt-oss-120b', prefix: null },
+    { id: 'openai/gpt-oss-20b', prefix: null },
+    { id: 'qwen/qwen3.8-27b', prefix: null },
+    { id: 'DeepSeek-V4-Flash', prefix: null },
+    { id: 'anthropic/claude-opus-5.5', prefix: 'claude-opus-5-5' },
+    { id: 'openai/gpt-6-sol', prefix: 'gpt-6-sol' },
+    { id: 'google/gemini-3.8-flash', prefix: 'gemini-3.8-flash' },
+    { id: 'qwen/qwen3.8-max-0902', prefix: null },
     { id: 'mistralai/mistral-large', prefix: 'mistral-large' },
     { id: 'meta-llama/llama-3.3-70b-instruct', prefix: null },
     { id: 'moonshotai/kimi-k2.6', prefix: null },

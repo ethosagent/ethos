@@ -116,6 +116,11 @@ export interface LoopDeps {
     /** Lane 1(a) — largest-single-tool-result reserve, in tokens; subtracted
      *  from the compactible region by `evaluateGate`. Absent → 0 (unchanged). */
     maxSingleToolResultTokens?: number;
+    /** The context window of a model a turn may be routed to by `modelOverride`
+     *  (wiring: the model catalog). Read once per turn by `setupTurn` through
+     *  `turnGateWindow` (./turn-window). Absent → every turn is gated against
+     *  `llm.maxContextTokens`, as before. */
+    contextWindowFor?: (model: string) => number | undefined;
   };
   /** Phase 3 — silent memory-flush turn config. `enabled` gates the whole
    *  feature (default off); the rest tune the soft threshold, hard timebox +
@@ -268,6 +273,13 @@ export interface TurnSetup {
    *  personality (small-window flag, budgets, history limit); `AgentLoop.run`
    *  applies it (`withSmallWindow`). */
   smallWindowOverlay?: SmallWindowOverlay;
+  /** Set when this turn's `modelOverride` names a model whose window is
+   *  smaller than `llm.maxContextTokens` (`turnGateWindow`, ./compaction):
+   *  every pressure gate of the turn measures against it instead. */
+  gateWindowTokens?: number;
+  /** `Session.metadata` as read at turn start. Context assembly reads the
+   *  rows of a rejected vision call from it (vision-rejection.ts). */
+  sessionMetadata?: Record<string, unknown>;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };

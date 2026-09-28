@@ -12,81 +12,146 @@ export interface ModelCatalogEntry {
    *  format, output-token cap). Absent for models without a profile, in which
    *  case no defaults are applied and behavior is byte-identical to today. */
   profile?: ModelProfile;
+  /** ISO date (`YYYY-MM-DD`, UTC) the vendor retires this model. A row that
+   *  carries it is deprecated but still served: its `label` says
+   *  `deprecated — retires <date>`, and from that date on it drops out of every
+   *  listing (`getModelsForProvider`, `listedModels`) while the lookups
+   *  (`lookupContextWindow`, `lookupProfile`, `lookupCatalogModel`) keep
+   *  answering, so a config that names it keeps working until the vendor turns
+   *  it off. Pinned by __tests__/model-catalog-retirement.test.ts. */
+  retiresOn?: string;
 }
 
 /** Context window below which a warning is shown in the model picker. */
 export const MIN_CONTEXT_WINDOW = 64_000;
 
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-  // Anthropic — source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
+  // Anthropic — source: Anthropic's model reference (models overview, re-verified
+  // 2026-09-28): https://platform.claude.com/docs/en/models/overview, plus the
+  // per-model pages for the two 200K legacy rows (sonnet-4-5, opus-4-5: 64K
+  // max output each). `claude-opus-5-5` is the default because the overview
+  // says to start with it for most workloads.
+  // `contextWindow` and `profile.maxOutputTokens` are the documented context
+  // window and max output per model. The live source is the Models API:
+  // `GET /v1/models/{id}` → `max_input_tokens` / `max_tokens`. Wiring threads
+  // the cap to `AnthropicProvider` as `max_tokens` (`createLLMFromRegistry` and
+  // the rotation pool in packages/wiring/src/index.ts, pinned by
+  // __tests__/anthropic-output-cap-catalog.test.ts); `models.anthropic/<id>.
+  // maxOutputTokens` in ~/.ethos/config.yaml still wins (`mergeModelProfile`
+  // below). Every Anthropic row carries a cap (the same test checks each one);
+  // a model the catalog does not list sends `DEFAULT_MAX_OUTPUT_TOKENS` (8096,
+  // extensions/llm-anthropic/src/index.ts). The provider always streams, so a
+  // 128K `max_tokens` never meets the SDK's non-streaming timeout guard.
+  // Provider-keyed: the OpenRouter and Azure Claude rows below carry no cap.
   {
     providerId: 'anthropic',
     modelId: 'claude-fable-5-1',
     label: 'most capable',
     contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
-    modelId: 'claude-opus-5',
-    label: 'frontier, complex work',
+    modelId: 'claude-opus-5-5',
+    label: 'recommended for most work',
     contextWindow: 1_000_000,
+    default: true,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-sonnet-5',
     label: 'fast, balanced',
     contextWindow: 1_000_000,
-    default: true,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-haiku-4-5',
     label: 'cheapest, fast',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5',
+    label: 'prior gen',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-fable-5',
     label: 'prior gen',
     contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-8',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-7',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-6',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-sonnet-4-6',
     label: 'prior gen',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-mythos-5-1',
+    label: 'Project Glasswing access only',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-mythos-5',
+    label: 'Project Glasswing access only, prior gen',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-haiku-4-5-20251001',
+    label: 'dated snapshot of claude-haiku-4-5',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-sonnet-4-5-20250929',
     label: 'prior gen',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-5-20251101',
     label: 'prior gen',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
   },
-  // OpenAI — source: https://developers.openai.com/api/docs/models
+  // OpenAI — source: https://developers.openai.com/api/docs/models (re-verified
+  // 2026-09-28: flagship gpt-6-astra / gpt-6-sol / gpt-6-luna, 1.05M context
+  // each). None of the older rows is deprecated on the API.
   {
     providerId: 'openai',
     modelId: 'gpt-6-astra',
@@ -95,21 +160,33 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'openai',
-    modelId: 'gpt-5.6-sol',
-    label: 'flagship, complex work',
-    contextWindow: 1_050_000,
-  },
-  {
-    providerId: 'openai',
-    modelId: 'gpt-5.6-terra',
-    label: 'everyday, balanced',
+    modelId: 'gpt-6-sol',
+    label: 'flagship, everyday',
     contextWindow: 1_050_000,
     default: true,
   },
   {
     providerId: 'openai',
-    modelId: 'gpt-5.6-luna',
+    modelId: 'gpt-6-luna',
     label: 'fast, cheap',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'openai',
+    modelId: 'gpt-5.6-sol',
+    label: 'prior gen, complex work',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'openai',
+    modelId: 'gpt-5.6-terra',
+    label: 'prior gen, balanced',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'openai',
+    modelId: 'gpt-5.6-luna',
+    label: 'prior gen, fast',
     contextWindow: 1_050_000,
   },
   { providerId: 'openai', modelId: 'gpt-5.5', label: 'prior gen', contextWindow: 1_050_000 },
@@ -126,7 +203,10 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'prior gen, code-specialized',
     contextWindow: 400_000,
   },
-  // OpenRouter top picks
+  // OpenRouter top picks — ids and `context_length` from
+  // https://openrouter.ai/api/v1/models (re-verified 2026-09-28). OpenRouter
+  // writes Claude 4.6+ versions with a dot (`anthropic/claude-opus-5.5`).
+  // `google/gemini-2.5-pro` carries the API's own `expiration_date`.
   {
     providerId: 'openrouter',
     modelId: 'anthropic/claude-sonnet-5',
@@ -136,9 +216,21 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'openrouter',
+    modelId: 'anthropic/claude-opus-5.5',
+    label: 'Claude Opus 5.5',
+    contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'openrouter',
     modelId: 'anthropic/claude-opus-5',
     label: 'Claude Opus',
     contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'openrouter',
+    modelId: 'openai/gpt-6-sol',
+    label: 'GPT-6 Sol',
+    contextWindow: 1_050_000,
   },
   {
     providerId: 'openrouter',
@@ -154,39 +246,52 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'openrouter',
+    modelId: 'google/gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    contextWindow: 1_048_576,
+  },
+  {
+    providerId: 'openrouter',
     modelId: 'google/gemini-2.5-pro',
-    label: 'Gemini 2.5 Pro',
-    contextWindow: 1_000_000,
+    label: 'Gemini 2.5 Pro, deprecated — retires 2026-10-20',
+    contextWindow: 1_048_576,
+    retiresOn: '2026-10-20',
+  },
+  {
+    providerId: 'openrouter',
+    modelId: 'deepseek/deepseek-v4.1-flash',
+    label: 'DeepSeek V4.1 Flash, cheapest',
+    contextWindow: 1_048_576,
   },
   {
     providerId: 'openrouter',
     modelId: 'deepseek/deepseek-v4-flash-0731',
-    label: 'DeepSeek V4 Flash, cheapest',
-    contextWindow: 1_310_000,
+    label: 'DeepSeek V4 Flash',
+    contextWindow: 1_310_720,
   },
   {
     providerId: 'openrouter',
     modelId: 'deepseek/deepseek-v4-pro-0813',
     label: 'DeepSeek V4 Pro',
-    contextWindow: 1_310_000,
+    contextWindow: 1_048_576,
   },
   {
     providerId: 'openrouter',
     modelId: 'qwen/qwen3.8-27b',
     label: 'Qwen 3.8 27B',
-    contextWindow: 262_144,
+    contextWindow: 1_000_000,
   },
   {
     providerId: 'openrouter',
-    modelId: 'qwen/qwen3.8-max',
+    modelId: 'qwen/qwen3.8-max-0902',
     label: 'Qwen 3.8 Max',
-    contextWindow: 262_144,
+    contextWindow: 1_000_000,
   },
   {
     providerId: 'openrouter',
     modelId: 'meta-llama/llama-4-maverick',
     label: 'Llama 4 Maverick',
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
   },
   {
     providerId: 'openrouter',
@@ -197,14 +302,18 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     providerId: 'openrouter',
     modelId: 'moonshotai/kimi-k2.6',
-    label: 'Kimi K2',
-    contextWindow: 131_072,
+    label: 'Kimi K2.6',
+    contextWindow: 262_144,
   },
   // Azure AI Foundry — source: https://ai.azure.com/catalog/models
   // The `modelId` is the deployment name in Azure. By convention Azure admins
   // name a deployment after the base model. If yours uses a custom name
   // (e.g. `prod-chat-v2`), pick any entry here and edit `model:` in
   // ~/.ethos/config.yaml. Context windows are nominal; verify per-deployment.
+  // Re-verified 2026-09-28 against Microsoft Learn: "Foundry Models sold by
+  // Azure" (OpenAI + DeepSeek rows) and "Claude models in Microsoft Foundry"
+  // (Claude rows). The Claude rows added here are the ones that page lists as
+  // Hosted on Azure; Opus 4.6 and Sonnet 4.6 are Hosted on Anthropic only.
   {
     providerId: 'azure',
     modelId: 'gpt-6-astra',
@@ -213,21 +322,33 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'azure',
-    modelId: 'gpt-5.6-sol',
-    label: 'flagship, complex work',
-    contextWindow: 1_050_000,
-  },
-  {
-    providerId: 'azure',
-    modelId: 'gpt-5.6-terra',
-    label: 'everyday, balanced',
+    modelId: 'gpt-6-sol',
+    label: 'flagship, everyday',
     contextWindow: 1_050_000,
     default: true,
   },
   {
     providerId: 'azure',
-    modelId: 'gpt-5.6-luna',
+    modelId: 'gpt-6-luna',
     label: 'fast, cheap',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.6-sol',
+    label: 'prior gen, complex work',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.6-terra',
+    label: 'prior gen, balanced',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.6-luna',
+    label: 'prior gen, fast',
     contextWindow: 1_050_000,
   },
   { providerId: 'azure', modelId: 'gpt-5.5', label: 'prior gen', contextWindow: 1_050_000 },
@@ -246,14 +367,32 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'azure',
+    modelId: 'claude-opus-5-5',
+    label: 'Claude Opus 5.5 on Azure',
+    contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'claude-sonnet-5',
+    label: 'Claude Sonnet 5 on Azure',
+    contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'claude-haiku-4-5',
+    label: 'Claude Haiku 4.5 on Azure',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'azure',
     modelId: 'claude-opus-4-6',
-    label: 'Claude Opus on Azure, prior gen',
+    label: 'Claude Opus 4.6, hosted on Anthropic, prior gen',
     contextWindow: 1_000_000,
   },
   {
     providerId: 'azure',
     modelId: 'claude-sonnet-4-6',
-    label: 'Claude Sonnet on Azure, prior gen',
+    label: 'Claude Sonnet 4.6, hosted on Anthropic, prior gen',
     contextWindow: 1_000_000,
   },
   {
@@ -262,7 +401,16 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'reasoning MoE',
     contextWindow: 1_000_000,
   },
-  // Gemini — source: https://ai.google.dev/gemini-api/docs/models
+  {
+    providerId: 'azure',
+    modelId: 'DeepSeek-V4-Flash',
+    label: 'fast reasoning MoE',
+    contextWindow: 1_000_000,
+  },
+  // Gemini — source: https://ai.google.dev/gemini-api/docs/models (re-verified
+  // 2026-09-28) and the per-model pages for 3.1 Flash-Lite and 3.6 Flash. The
+  // 2.5 rows have no shutdown date, but Google limits them to accounts that
+  // already used them and no longer lists them for new projects.
   {
     providerId: 'gemini',
     modelId: 'gemini-3.8-flash',
@@ -284,7 +432,19 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'gemini',
+    modelId: 'gemini-3.1-flash-lite',
+    label: 'cheap, fast',
+    contextWindow: 1_048_576,
+  },
+  {
+    providerId: 'gemini',
     modelId: 'gemini-3.7-flash',
+    label: 'prior gen',
+    contextWindow: 1_048_576,
+  },
+  {
+    providerId: 'gemini',
+    modelId: 'gemini-3.6-flash',
     label: 'prior gen',
     contextWindow: 1_048_576,
   },
@@ -294,66 +454,72 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'prior gen',
     contextWindow: 1_048_576,
   },
-  { providerId: 'gemini', modelId: 'gemini-2.5-pro', label: 'prior gen', contextWindow: 1_048_576 },
+  {
+    providerId: 'gemini',
+    modelId: 'gemini-2.5-pro',
+    label: 'legacy, existing users only',
+    contextWindow: 1_048_576,
+  },
   {
     providerId: 'gemini',
     modelId: 'gemini-2.5-flash',
-    label: 'prior gen',
+    label: 'legacy, existing users only',
     contextWindow: 1_048_576,
   },
   {
     providerId: 'gemini',
     modelId: 'gemini-2.5-flash-lite',
-    label: 'prior gen, cheapest',
+    label: 'legacy, existing users only',
     contextWindow: 1_048_576,
   },
-  // Groq
+  // Groq — source: https://console.groq.com/docs/models and /docs/deprecations
+  // (re-verified 2026-09-28). `llama-3.1-8b-instant` and `llama-3.3-70b-versatile`
+  // are gone: the deprecations page gives both a 2026-08-16 shutdown for free and
+  // developer-tier usage (replacements openai/gpt-oss-20b and openai/gpt-oss-120b);
+  // only enterprise committed-spend contracts keep them.
   {
     providerId: 'groq',
-    modelId: 'llama-3.3-70b-versatile',
-    label: 'LLaMA 3.3 70B',
-    contextWindow: 32_768,
+    modelId: 'openai/gpt-oss-120b',
+    label: 'GPT-OSS 120B, open weights',
+    contextWindow: 131_072,
     default: true,
   },
   {
     providerId: 'groq',
-    modelId: 'llama-3.1-8b-instant',
-    label: 'fastest, cheapest',
+    modelId: 'openai/gpt-oss-20b',
+    label: 'GPT-OSS 20B, fastest, cheapest',
     contextWindow: 131_072,
   },
   {
     providerId: 'groq',
-    modelId: 'deepseek-r1-distill-llama-70b',
-    label: 'reasoning, distilled',
-    contextWindow: 128_000,
+    modelId: 'qwen/qwen3.8-27b',
+    label: 'Qwen 3.8 27B, preview',
+    contextWindow: 131_072,
   },
-  {
-    providerId: 'groq',
-    modelId: 'mixtral-8x7b-32768',
-    label: 'Mixtral 8x7B MoE',
-    contextWindow: 32_768,
-  },
-  { providerId: 'groq', modelId: 'gemma2-9b-it', label: 'Gemma 2 9B', contextWindow: 8_192 },
-  // DeepSeek
+  // DeepSeek — source: https://api-docs.deepseek.com/quick_start/pricing
+  // (re-verified 2026-09-28). The page gives both models a "1M" context; read
+  // literally as 1,000,000. `deepseek-chat` and `deepseek-reasoner` were
+  // retired 2026-07-24 (https://api-docs.deepseek.com/updates/).
   {
     providerId: 'deepseek',
-    modelId: 'deepseek-chat',
-    label: 'best balance',
-    contextWindow: 64_000,
+    modelId: 'deepseek-flash',
+    label: 'V4.1 Flash, fast, cheap',
+    contextWindow: 1_000_000,
     default: true,
   },
   {
     providerId: 'deepseek',
-    modelId: 'deepseek-reasoner',
-    label: 'reasoning model',
-    contextWindow: 64_000,
+    modelId: 'deepseek-v4-pro',
+    label: 'V4 Pro, most capable',
+    contextWindow: 1_000_000,
   },
   // Ollama — static fallbacks; the live /api/tags list wins when reachable.
   // contextWindow values are conservative ARCHITECTURE maxima; the Lane 0
   // resolution caps catalog values for local runtimes at ARCH_WINDOW_CAP_TOKENS
   // (32,768, local-models.ts) because the SERVED window is whatever num_ctx
   // Ollama allocated — the /api/ps probe reports the truth, and these rows are
-  // only the fallback behind it.
+  // only the fallback behind it. `deepseek-v4-flash` is gone: ollama.com says it
+  // was retired 2026-08-27 (re-verified 2026-09-28).
   {
     providerId: 'ollama',
     modelId: 'qwen3.8:27b',
@@ -381,12 +547,6 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'ollama',
-    modelId: 'deepseek-v4-flash',
-    label: 'DeepSeek V4 Flash',
-    contextWindow: 1_310_000,
-  },
-  {
-    providerId: 'ollama',
     modelId: 'llama3.2',
     label: '3B, small, fast',
     // Llama 3.2 (1B/3B) supports a 128k context window. Kept realistic so the
@@ -408,7 +568,10 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   // Mistral — direct API. baseUrl: https://api.mistral.ai/v1
   // Set `baseUrl` in ~/.ethos/config.yaml; OpenAICompatProvider handles the
   // rest. Context windows are nominal — verify against the official pricing
-  // page if a deployment behaves smaller than expected.
+  // page if a deployment behaves smaller than expected. The `-latest` rows keep
+  // their old windows: Mistral's docs (re-verified 2026-09-28) do not say which
+  // dated model each alias points at. `mistral-medium-3-5` is from its model
+  // card; `pixtral-large-latest` is gone (Pixtral Large 24.11 retired 2026-05-31).
   {
     providerId: 'mistral',
     modelId: 'mistral-large-latest',
@@ -436,9 +599,9 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'mistral',
-    modelId: 'pixtral-large-latest',
-    label: 'vision',
-    contextWindow: 128_000,
+    modelId: 'mistral-medium-3-5',
+    label: 'Medium 3.5, multimodal, agentic',
+    contextWindow: 256_000,
   },
   {
     providerId: 'mistral',
@@ -448,42 +611,45 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   // Together AI — direct API. baseUrl: https://api.together.xyz/v1
   // Model IDs are namespaced (`vendor/model-name`) and required verbatim.
+  // Source: https://docs.together.ai/docs/serverless-models (re-verified
+  // 2026-09-28); the Llama 3.1, Mixtral, Qwen 2.5 and DeepSeek-V3 rows this
+  // block used to carry are no longer served (docs.together.ai/docs/deprecations).
   {
     providerId: 'together',
-    modelId: 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo',
-    label: 'Llama 3.1 405B Turbo',
-    contextWindow: 130_000,
+    modelId: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    label: 'Llama 3.3 70B Turbo',
+    contextWindow: 131_072,
     default: true,
   },
   {
     providerId: 'together',
-    modelId: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-    label: 'Llama 3.1 70B Turbo',
-    contextWindow: 130_000,
+    modelId: 'openai/gpt-oss-120b',
+    label: 'GPT-OSS 120B, open weights',
+    contextWindow: 131_072,
   },
   {
     providerId: 'together',
-    modelId: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-    label: 'Llama 3.1 8B Turbo',
-    contextWindow: 130_000,
+    modelId: 'deepseek-ai/DeepSeek-V4-Pro-0813',
+    label: 'DeepSeek V4 Pro',
+    contextWindow: 1_048_576,
   },
   {
     providerId: 'together',
-    modelId: 'mistralai/Mixtral-8x22B-Instruct-v0.1',
-    label: 'Mixtral 8x22B',
-    contextWindow: 65_536,
+    modelId: 'deepseek-ai/DeepSeek-V4.1-Flash',
+    label: 'DeepSeek V4.1 Flash',
+    contextWindow: 1_000_000,
   },
   {
     providerId: 'together',
-    modelId: 'Qwen/Qwen2.5-72B-Instruct-Turbo',
-    label: 'Qwen 2.5 72B Turbo',
-    contextWindow: 32_768,
+    modelId: 'moonshotai/Kimi-K3',
+    label: 'Kimi K3',
+    contextWindow: 1_048_576,
   },
   {
     providerId: 'together',
-    modelId: 'deepseek-ai/DeepSeek-V3',
-    label: 'DeepSeek V3',
-    contextWindow: 128_000,
+    modelId: 'Qwen/Qwen3.7-Plus',
+    label: 'Qwen 3.7 Plus',
+    contextWindow: 1_000_000,
   },
   // Fireworks AI — direct API. baseUrl: https://api.fireworks.ai/inference/v1
   // The `accounts/fireworks/models/` prefix is canonical and required.
@@ -491,7 +657,8 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     providerId: 'fireworks',
     modelId: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
     label: 'Llama 3.3 70B',
-    contextWindow: 128_000,
+    // 131,072 per fireworks.ai/models/fireworks/llama-v3p3-70b-instruct (2026-09-28).
+    contextWindow: 131_072,
     default: true,
   },
   {
@@ -512,7 +679,10 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'FireFunction v2',
     contextWindow: 8_192,
   },
-  // Codex (ChatGPT OAuth transport) — source: https://developers.openai.com/codex/models
+  // Codex (ChatGPT OAuth transport) — source: https://learn.chatgpt.com/docs/models
+  // (the redirect target of developers.openai.com/codex/models, re-verified
+  // 2026-09-28): gpt-6-sol is recommended for everyday coding, and gpt-5.5
+  // retires from ChatGPT and Codex on 2026-10-14 (it stays on the API).
   {
     providerId: 'codex',
     modelId: 'gpt-6-astra',
@@ -521,32 +691,57 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
   {
     providerId: 'codex',
+    modelId: 'gpt-6-sol',
+    label: 'everyday and complex coding',
+    contextWindow: 1_050_000,
+    default: true,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-6-luna',
+    label: 'fast, focused tasks',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'codex',
     modelId: 'gpt-5.6-sol',
-    label: 'flagship, complex work',
+    label: 'prior gen, complex work',
     contextWindow: 1_050_000,
   },
   {
     providerId: 'codex',
     modelId: 'gpt-5.6-terra',
-    label: 'everyday, balanced',
+    label: 'prior gen, balanced',
     contextWindow: 1_050_000,
-    default: true,
   },
-  { providerId: 'codex', modelId: 'gpt-5.6-luna', label: 'fast', contextWindow: 1_050_000 },
-  { providerId: 'codex', modelId: 'gpt-5.5', label: 'prior gen', contextWindow: 1_050_000 },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.6-luna',
+    label: 'prior gen, fast',
+    contextWindow: 1_050_000,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.5',
+    label: 'deprecated — retires 2026-10-14',
+    contextWindow: 1_050_000,
+    retiresOn: '2026-10-14',
+  },
   // xAI Grok — direct API. baseUrl: https://api.x.ai/v1
   // No sampling `profile` on any of these rows, deliberately: whether Grok
   // accepts `temperature`, `top_p` and `seed` is unverified against a live
   // endpoint (xai-grok-provider open question 2), and `applySamplingDefaults`
   // would put a catalog profile's values on the wire on every turn. Add a
   // profile only once that probe passes.
+  // Source: https://docs.x.ai/docs/models (re-verified 2026-09-28).
   {
     providerId: 'xai',
-    modelId: 'grok-4.6',
+    modelId: 'grok-4.7',
     label: 'most capable',
     contextWindow: 500_000,
     default: true,
   },
+  { providerId: 'xai', modelId: 'grok-4.6', label: 'prior gen', contextWindow: 500_000 },
   { providerId: 'xai', modelId: 'grok-4.5', label: 'prior gen', contextWindow: 500_000 },
   {
     providerId: 'xai',
@@ -575,8 +770,38 @@ export const PROVIDER_WINDOW_DEFAULTS: Record<string, number> = {
   vllm: 32_768,
 };
 
-export function getModelsForProvider(providerId: string): ModelCatalogEntry[] {
-  return MODEL_CATALOG.filter((m) => m.providerId === providerId);
+/**
+ * True once `now` (UTC calendar day) has reached the row's `retiresOn`. A row
+ * without `retiresOn` is never retired. `YYYY-MM-DD` strings compare
+ * lexicographically, so the check is a string comparison.
+ */
+export function isModelRetired(entry: { retiresOn?: string }, now: Date = new Date()): boolean {
+  if (entry.retiresOn === undefined) return false;
+  return now.toISOString().slice(0, 10) >= entry.retiresOn;
+}
+
+/**
+ * The rows a picker or catalog listing may show: every row whose retirement
+ * date has not been reached. Evaluated per call, so a long-running process
+ * hides a model on its retirement day without a restart. Lookups never go
+ * through this — a config naming a hidden model still resolves.
+ */
+export function listedModels<T extends { retiresOn?: string }>(
+  entries: readonly T[],
+  now: Date = new Date(),
+): T[] {
+  return entries.filter((m) => !isModelRetired(m, now));
+}
+
+/** The listed (not yet retired) rows for one provider — what pickers show. */
+export function getModelsForProvider(
+  providerId: string,
+  now: Date = new Date(),
+): ModelCatalogEntry[] {
+  return listedModels(
+    MODEL_CATALOG.filter((m) => m.providerId === providerId),
+    now,
+  );
 }
 
 /**
@@ -767,8 +992,11 @@ export function scaleHistoryLimit(contextWindow: number | undefined): number {
   return Math.min(200, Math.max(40, Math.round(window / 400)));
 }
 
-export function getDefaultModel(providerId: string): ModelCatalogEntry | undefined {
-  const models = getModelsForProvider(providerId);
+export function getDefaultModel(
+  providerId: string,
+  now: Date = new Date(),
+): ModelCatalogEntry | undefined {
+  const models = getModelsForProvider(providerId, now);
   return models.find((m) => m.default) ?? models[0];
 }
 

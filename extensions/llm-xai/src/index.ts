@@ -23,7 +23,7 @@ import type {
 //   XaiProvider  (this file)
 //      │  · resolves providers/xai/apiKey — the ref tools-x-search already uses
 //      │  · pins baseUrl https://api.x.ai/v1, not overridable from config
-//      │  · owns its capabilities object and its default model (grok-4.6)
+//      │  · owns its capabilities object and its default model (grok-4.7)
 //      │  · builds ResponsesApiBody:
 //      │        model, input: toResponsesInput(messages),
 //      │        stream: true, store: false,
@@ -58,7 +58,7 @@ export const XAI_RESPONSES_ENDPOINT = `${XAI_BASE_URL}/responses`;
 /** Seed only — the operator overrides it with `model:` in config (D2). xAI's
  *  roster moves (the coding model is `grok-build-0.1`; `grok-code` is stale), so
  *  this package validates nothing locally and lets the vendor be the authority. */
-export const XAI_DEFAULT_MODEL = 'grok-4.6';
+export const XAI_DEFAULT_MODEL = 'grok-4.7';
 
 /** The EXISTING ref, already used by the `x_search` tool — one credential for
  *  the tool and the provider, never a second one. `XAI_API_KEY` resolves to it
@@ -74,10 +74,14 @@ export interface XaiProviderConfig {
   model: string;
   /** xAI API key (sent as `Authorization: Bearer`). */
   apiKey: string;
-  /** Context window. Defaults to grok-4.6's 500K; the roster spans 256K
+  /** Context window. Defaults to grok-4.7's 500K; the roster spans 256K
    *  (`grok-build-0.1`) to 1M (`grok-4.3`), so an operator on another model
    *  sets this. */
   maxContextTokens?: number;
+  /** UBP-030 — retries of a transient failure before the first byte, applied by
+   *  the shared transport (`fetchWithTransientRetry`, llm-codex). Absent → 2;
+   *  wiring passes 0 for a hop in a chain of two or more. */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +155,13 @@ export class XaiProvider implements LLMProvider {
   }
 
   private readonly apiKey: string;
+  private readonly maxRetries: number | undefined;
 
   constructor(config: XaiProviderConfig) {
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.maxContextTokens = config.maxContextTokens ?? 500_000;
+    this.maxRetries = config.maxRetries;
   }
 
   async *complete(
@@ -234,6 +240,7 @@ export class XaiProvider implements LLMProvider {
         options.abortSignal,
         requestTokens,
         'xAI',
+        this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : undefined,
       );
     } catch (err) {
       throw decorateModelError(err, effectiveModel);
@@ -284,6 +291,7 @@ export const xaiFactory: LLMProviderFactory = async ({ config: cfg, secrets, log
     model: (cfg.model as string | undefined) ?? XAI_DEFAULT_MODEL,
     apiKey,
     ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { IDENTITY_CACHE_MS, matchesIdentity } from './process-identity';
 
 export type ProcessStatus = 'running' | 'exited' | 'killed' | 'orphan';
 
@@ -31,6 +32,13 @@ export interface ProcessEntry {
    * default (`started_by ?? 'unknown'`).
    */
   started_by?: string;
+  /**
+   * The spawned process's recorded start time and boot (V-ES-5,
+   * ./process-identity.ts). `stopProcess` signals the process GROUP only
+   * while these still match the pid; absent on entries written before them.
+   */
+  pidStartToken?: string;
+  bootId?: string;
 }
 
 export type Registry = Record<string, ProcessEntry>;
@@ -159,6 +167,27 @@ export function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The one liveness predicate for a registry entry (V2-SEC-5): its pid is alive
+ * AND still wears the identity recorded at spawn (`matchesIdentity`,
+ * ./process-identity.ts). `kill(pid, 0)` alone answers "is SOME process wearing
+ * this number", so an entry whose pid was reused after a restart stayed
+ * `running` for good and held a PROCESS_CAP slot. `'unknown'` (no recorded
+ * identity, a platform with none, or a start-time read that failed or timed
+ * out — V3-4) keeps the pid-only answer, so a transient `ps` failure never
+ * orphans a live process. Used by `markDeadRunningAsOrphan` (./operations.ts:
+ * process_list, process_start's cap sweep, startup reconcile), process_wait
+ * (./index.ts) and the watcher (./watcher.ts). Pinned by
+ * `__tests__/pid-reuse-liveness.test.ts` and `__tests__/identity-unknown.test.ts`.
+ */
+export async function isEntryAlive(
+  entry: Pick<ProcessEntry, 'pid' | 'pidStartToken' | 'bootId'>,
+): Promise<boolean> {
+  if (!isAlive(entry.pid)) return false;
+  const identity = await matchesIdentity(entry.pid, entry, { cacheMs: IDENTITY_CACHE_MS });
+  return identity !== 'different';
 }
 
 const REAP_AGE_MS = 24 * 60 * 60 * 1000;

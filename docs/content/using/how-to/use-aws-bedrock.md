@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-aws-bedrock
 time: "10 min"
-updated: 2026-09-03
+updated: 2026-09-28
 ---
 
 ## Task
@@ -35,10 +35,10 @@ aws bedrock list-inference-profiles --region <your-region> \
 ```
 
 ```
-us.anthropic.claude-sonnet-4-20250514-v1:0	us.anthropic.claude-3-5-haiku-20241022-v1:0
+us.anthropic.claude-sonnet-4-6	us.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
-An id prefixed `us.` is a *cross-region inference profile* — it routes a request to whichever US region has capacity. A bare id like `anthropic.claude-3-5-haiku-20241022-v1:0` is a single-region foundation model. Either works; the prefix matters when you write the IAM policy in step 3.
+An id prefixed `us.` is a *cross-region inference profile* — it routes a request to whichever US region has capacity. A bare id like `anthropic.claude-haiku-4-5-20251001-v1:0` is a single-region foundation model. Either works; the prefix matters when you write the IAM policy in step 3.
 
 ### 2. Choose a credential path
 
@@ -133,7 +133,7 @@ To hand-edit instead, `~/.ethos/config.yaml` needs three keys:
 
 ```yaml
 provider: bedrock
-model: us.anthropic.claude-sonnet-4-20250514-v1:0
+model: us.anthropic.claude-sonnet-4-6
 region: us-west-2
 personality: researcher
 ```

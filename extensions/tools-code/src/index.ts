@@ -117,6 +117,13 @@ function isTransportFailure(err: unknown): err is Error {
 const TOOL_API_MAX_TIMEOUT_MS = 300_000;
 
 /**
+ * Ceiling for a plain (unframed) run_code execution — the same 10 minutes as
+ * `MAX_TIMEOUT_MS` in `@ethosagent/tools-terminal`. Without it a model-supplied
+ * `timeout_ms` was the only bound on the wait (UBP-042).
+ */
+const MAX_TIMEOUT_MS = 600_000;
+
+/**
  * Lane E — inner-call count at which run_code emits its single user-visible
  * `tool_progress` ("running N+ tool calls in code…").
  */
@@ -307,9 +314,10 @@ function createRunCodeTool(
       const cmd = framed
         ? buildShimCommand(runtime as ShimRuntime)
         : RUNTIMES[runtime as Runtime].cmd;
-      const timeout = framed
-        ? Math.min(timeout_ms ?? DEFAULT_TIMEOUT_MS, TOOL_API_MAX_TIMEOUT_MS)
-        : (timeout_ms ?? DEFAULT_TIMEOUT_MS);
+      const timeout = Math.min(
+        timeout_ms ?? DEFAULT_TIMEOUT_MS,
+        framed ? TOOL_API_MAX_TIMEOUT_MS : MAX_TIMEOUT_MS,
+      );
 
       const execOpts: ExecOpts = {
         stdin: code,
@@ -326,6 +334,8 @@ function createRunCodeTool(
         shell: false,
         personality,
         sessionId: ctx.sessionId,
+        // UBP-042 — /stop or a steer aborts the turn; the execution dies with it.
+        signal: ctx.abortSignal,
       };
       let abortReason: string | undefined;
       if (framed && scriptTools) {
@@ -339,7 +349,7 @@ function createRunCodeTool(
           // call's own id (`<toolCallId>#<n>`).
           ...(ctx.toolCallId !== undefined ? { parentToolCallId: ctx.toolCallId } : {}),
         });
-        execOpts.signal = abort.signal;
+        execOpts.signal = AbortSignal.any([ctx.abortSignal, abort.signal]);
         // Lane E — one user-visible progress event when an execution crosses
         // PROGRESS_CALL_THRESHOLD inner calls, so a long silent script stays
         // legible. Per-event opt-in per the audience contract; emitted once.
@@ -513,6 +523,7 @@ function makeCommandTool(
               env: {},
               personality,
               sessionId: ctx.sessionId,
+              signal: ctx.abortSignal,
             }),
           );
           const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
@@ -579,6 +590,8 @@ function makeCommandTool(
             // a tripwire, not a boundary. Host path only: run_code itself
             // never runs on the host.
             env: { [TOOL_PROCESS_ENV_VAR]: '1' },
+            // Aborting kills the whole process group (`ScopedProcessImpl`).
+            signal: ctx.abortSignal,
           },
         );
         const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());

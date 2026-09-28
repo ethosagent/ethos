@@ -49,9 +49,9 @@ provider: anthropic
 
 ## model {#model}
 
-Type: string · Default: `claude-sonnet-5` · Required (effectively)
+Type: string · Default: `claude-opus-5-5` · Required (effectively)
 
-Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser falls back to `claude-sonnet-5` when the line is absent; `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`), which for Anthropic is also `claude-sonnet-5`.
+Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser (`parseConfigYaml` in `packages/config/src/index.ts`) falls back to `claude-opus-5-5`, the catalog's Anthropic default, when the line is absent; the two are pinned equal by `packages/wiring/src/__tests__/config-default-model.test.ts`. `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`).
 
 ```yaml
 model: claude-sonnet-5
@@ -188,6 +188,16 @@ modelRouting.researcher: claude-opus-4-7
 modelRouting.engineer: moonshotai/kimi-k2.6
 ```
 
+## models.\<provider\>/\<model\>.maxOutputTokens {#models-max-output-tokens}
+
+Type: integer · Default: the model catalog's cap for that model, else the provider's default
+
+The output-token cap sent with each request to that model. It beats the bundled [model catalog](../../building/reference/model-catalog.md) (`mergeModelProfile`, `packages/wiring/src/model-catalog.ts`). The catalog records the documented cap for each Claude model on `provider: anthropic`: 128,000, or 64,000 for Claude Haiku 4.5. A Claude model the catalog does not list gets 8,096. The `anthropic` provider and OpenAI-compatible providers such as `openrouter` read this key. `azure` and `bedrock` do not.
+
+```yaml
+models.anthropic/claude-opus-5.maxOutputTokens: 32000
+```
+
 ## providers.\<i\>.\* {#providers-chain}
 
 Provider fallback chain. When two or more entries are present, the runtime wraps them in a `ChainedProvider` with cooldown-based failover. Index `0` is primary; higher indices fall back in order. With fewer than two entries, the top-level `provider` / `apiKey` / `model` fields are used instead. When Settings or `ethos fallback add` grows a chain from the top-level fields, entry `0` becomes the top-level provider, with the same key reference.
@@ -201,6 +211,7 @@ Provider fallback chain. When two or more entries are present, the runtime wraps
 | `providers.<i>.apiVersion` | string | Azure only: REST API version for entry `<i>`. |
 | `providers.<i>.region` | string | Bedrock only: AWS region for entry `<i>`. |
 | `providers.<i>.awsProfile` | string | Bedrock only: named AWS profile for entry `<i>`. |
+| `providers.<i>.outputCapParam` | `max_tokens` \| `max_completion_tokens` | Azure only: the output-cap parameter entry `<i>`'s deployment is sent. Default: `max_completion_tokens` when the deployment name is a reasoning model id (`o4-mini`, `gpt-5-mini`), `max_tokens` otherwise. Set `max_completion_tokens` for a reasoning deployment with any other name. Any other value is ignored with a warning at startup. The top-level fields count as entry `0`. |
 | `providers.<i>.serverCompaction` | boolean | Anthropic only. `true` lets the provider compact the conversation server-side instead of the local context engine. Default off. See [Server-side compaction](#server-compaction). |
 | `providers.<i>.serverCompactionTriggerTokens` | integer | Input-token count at which the server compacts. Default: the local compaction threshold for the model. A value below 50,000, the minimum in Anthropic's API documentation, is raised to 50,000 rather than rejected. |
 
@@ -254,7 +265,7 @@ Multi-bot list shape. When set, the gateway creates one `TelegramAdapter` and on
 | `telegram.bots.<i>.useWebhook` | boolean | `false` | Receive updates over an inbound webhook instead of long-polling. Requires `webhookUrl` and `webhookSecretToken` — the adapter throws at startup without either. See [Receive Slack and Telegram events over webhooks](../how-to/run-channels-over-webhooks.md). |
 | `telegram.bots.<i>.webhookUrl` | string | — | Required when `useWebhook` is `true`. The full public URL Telegram POSTs updates to, **including** the `/telegram/webhook/<botKey>` path — the host routes on that path, so a URL without it reaches no handler. Registered for you by `setWebhook()` at startup. |
 | `telegram.bots.<i>.webhookSecretToken` | string | — | Required when `useWebhook` is `true`. Echoed by Telegram in `X-Telegram-Bot-Api-Secret-Token` and compared by grammy before the update is processed. A credential: externalized to the secret vault exactly like `token`, so write it as `${secrets:<ref>}`. |
-| `telegram.bots.<i>.dropPendingUpdates` | boolean | `true` | Discard updates Telegram queued while the process was down. **Poll mode only** — `bot.start()` is never called for a webhook-mode bot, so the flag does nothing there. Set `false` on a poll-mode bot in a deployment that sleeps and wakes, so a restart does not wipe the backlog. |
+| `telegram.bots.<i>.dropPendingUpdates` | boolean | `false` | Discard updates Telegram queued while the process was down. With the default, messages sent during a restart are answered once the bot is back. **Poll mode only** — `bot.start()` is never called for a webhook-mode bot, so the flag does nothing there. Set `true` only if a restart should skip everything queued while the bot was down. |
 
 ```yaml
 telegram.bots.0.token: "123456:ABCdefGhIJklmNopQRstuVwxYZ"

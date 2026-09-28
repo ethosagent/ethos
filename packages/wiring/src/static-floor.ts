@@ -217,7 +217,7 @@ export function resolveResultBudget(opts: {
  * result-budget scaling (and the gate-reserve term derived from it) engages
  * ONLY for a detected LOCAL runtime or an explicit
  * `context_engine_options.resultBudgetChars`. A HOSTED provider with a small
- * catalog window (hosted DeepSeek 64k, groq gemma2-9b 8k, mistral 32k rows)
+ * catalog window (fireworks firefunction-v2 8k, mistral-small 32k rows)
  * and no knob set keeps the flat 80k default and NO
  * `maxSingleToolResultTokens` — the plan's law: local-model work never
  * changes hosted behavior without a key.

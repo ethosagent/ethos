@@ -8,13 +8,18 @@
 // "outside fs_reach".
 
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { personalityWriteDeny, ScopedFsImpl } from '@ethosagent/core';
-import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
+import { CASE_INSENSITIVE_FS, defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { patchFileTool, writeFileTool } from '../index';
+import {
+  isPersonalityDefinitionPath,
+  isWriteBlocked,
+  patchFileTool,
+  writeFileTool,
+} from '../index';
 
 describe('tools-file — personality definition files are operator-owned', () => {
   let dataDir: string;
@@ -108,4 +113,56 @@ describe('tools-file — personality definition files are operator-owned', () =>
       });
     });
   }
+
+  it('isPersonalityDefinitionPath matches every definition entry and nothing else', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    for (const entry of ['SOUL.md', 'config.yaml', 'toolset.yaml', 'mcp.yaml', 'tools.yaml']) {
+      expect(isPersonalityDefinitionPath(join(own, entry))).toBe(true);
+    }
+    expect(isPersonalityDefinitionPath(join(own, 'ETHOS.md'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(own, 'skills', 'x', 'SKILL.md'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(dataDir, 'personalities', 'other', 'SOUL.md'))).toBe(
+      true,
+    );
+    expect(isPersonalityDefinitionPath(join(own, 'files', 'toolset.yaml'))).toBe(false);
+    expect(isPersonalityDefinitionPath(join(own, 'MEMORY.md'))).toBe(false);
+    expect(isPersonalityDefinitionPath(join(dataDir, 'toolset.yaml'))).toBe(false);
+  });
+
+  it.skipIf(!CASE_INSENSITIVE_FS)('the backstops fold case (UBP-008)', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    expect(isPersonalityDefinitionPath(join(own, 'TOOLSET.yaml'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(dataDir, 'PERSONALITIES', 'bob', 'soul.MD'))).toBe(
+      true,
+    );
+    expect(isPersonalityDefinitionPath(join(own, 'Skills', 'x'))).toBe(true);
+    expect(isPersonalityDefinitionPath(join(own, 'MEMORY.MD'))).toBe(false);
+    expect(isWriteBlocked(join(homedir(), '.SSH', 'authorized_keys'))).toBe(true);
+    expect(isWriteBlocked(join(homedir(), '.Ethos', 'Config.yaml'))).toBe(true);
+  });
+
+  // V-ES-1 / V-ES-3 — APFS opens `.ẞh` as `.ssh`, and /System/Volumes/Data/<p>
+  // is the same file as /<p>.
+  it.skipIf(process.platform !== 'darwin')('the backstops fold ẞ and the firmlink', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    expect(isWriteBlocked(join(homedir(), '.ẞh', 'authorized_keys'))).toBe(true);
+    expect(
+      isWriteBlocked(`/System/Volumes/Data${join(homedir(), '.ssh', 'authorized_keys')}`),
+    ).toBe(true);
+    expect(isPersonalityDefinitionPath(`/System/Volumes/Data${join(own, 'toolset.yaml')}`)).toBe(
+      true,
+    );
+  });
+
+  // V2-SEC-1 — /.nofollow/<p> and /.resolve/<n>/<p> open /<p>; /.vol/<dev>/<ino>
+  // names a file by inode, which no string compare can resolve.
+  it.skipIf(process.platform !== 'darwin')('the backstops fold the macOS alias prefixes', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    const keys = join(homedir(), '.ssh', 'authorized_keys');
+    for (const prefix of ['/.nofollow', '/.resolve/1', '/.resolve/0', '/.resolve/1/.nofollow']) {
+      expect(isWriteBlocked(`${prefix}${keys}`)).toBe(true);
+      expect(isPersonalityDefinitionPath(`${prefix}${join(own, 'toolset.yaml')}`)).toBe(true);
+    }
+    expect(isWriteBlocked('/.vol/16777232/169332821')).toBe(true);
+  });
 });

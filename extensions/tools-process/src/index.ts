@@ -19,8 +19,9 @@ import {
   type StopSignal,
   stopProcess,
 } from './operations';
+import type { ProcessIdentity } from './process-identity';
 import {
-  isAlive,
+  isEntryAlive,
   loadRegistry,
   type ProcessEntry,
   saveRegistry,
@@ -224,7 +225,7 @@ function makeProcessStart(
 
       // Cap-check + spawn + add run under ONE lock acquisition so two parallel
       // process_start calls can't both pass the cap-check and over-commit.
-      return withRegistryLock(dataDir, (): ToolResult => {
+      return withRegistryLock(dataDir, async (): Promise<ToolResult> => {
         const registry = loadRegistry(dataDir);
 
         // Liveness sweep before the cap-check: entries still marked `running`
@@ -232,7 +233,7 @@ function makeProcessStart(
         // principle #5 — liveness is observed, not trusted). Reuse the shared
         // dead->orphan rule; the swept registry is the one we keep mutating,
         // so the single saveRegistry below persists the orphan flips too.
-        markDeadRunningAsOrphan(registry);
+        await markDeadRunningAsOrphan(registry);
         const entries = Object.values(registry);
 
         if (runningCountFor(entries, startedBy) >= capMax) {
@@ -244,6 +245,7 @@ function makeProcessStart(
         }
 
         let pid: number;
+        let identity: ProcessIdentity = {};
         try {
           // Gap 10 — fire process_complete on the REAL child exit, not just
           // when process_wait happens to observe it. The notifier's once-guard
@@ -263,8 +265,9 @@ function makeProcessStart(
           // used unchanged. Both write the same log files and fire onExit.
           const result = backend
             ? spawnViaBackend(id, command, effectiveCwd, env, dataDir, backend, personality, onExit)
-            : spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
+            : await spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
           pid = result.pid;
+          identity = result.identity;
         } catch (err) {
           return {
             ok: false,
@@ -283,6 +286,7 @@ function makeProcessStart(
           startedAt,
           lastTouchedAt: startedAt,
           started_by: startedBy,
+          ...identity,
         };
         saveRegistry(dataDir, registry);
 
@@ -504,7 +508,7 @@ function makeProcessWait(dataDir: string, notifier?: CompletionNotifier): Tool {
             value: JSON.stringify({ exited: true, exit_code: current.exitCode }),
           };
         }
-        if (!isAlive(current.pid)) {
+        if (!(await isEntryAlive(current))) {
           await updateEntry(dataDir, id, { status: 'orphan' });
           notifier?.fire(current, ctx.sessionId, ctx.sessionKey);
           return { ok: true, value: JSON.stringify({ exited: true }) };
@@ -607,6 +611,7 @@ function makeProcessWatch(dataDir: string): Tool {
       const watchResult = await watchLogs({
         id,
         pid: entry.pid,
+        identity: entry,
         dataDir,
         logFiles,
         compiled: result.compiled,

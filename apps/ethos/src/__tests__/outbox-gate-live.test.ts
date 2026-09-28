@@ -51,7 +51,7 @@ describe.each(ROOTS)('%s', (_label, source) => {
   });
 
   it('starts the dispatcher only after the adapters are up', () => {
-    const adaptersUp = source.indexOf('adapters.map((a) => a.start())');
+    const adaptersUp = source.indexOf('await startAdaptersIsolated(adapters, {');
     const dispatcherUp = source.indexOf('void outboxDispatcher.start();');
     expect(adaptersUp).toBeGreaterThan(-1);
     expect(dispatcherUp).toBeGreaterThan(adaptersUp);

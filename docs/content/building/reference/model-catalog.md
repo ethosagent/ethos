@@ -4,7 +4,7 @@ description: "Remote model catalog — how the CLI discovers available models wi
 kind: reference
 audience: developer
 slug: model-catalog
-updated: 2026-05-17
+updated: 2026-09-28
 ---
 
 # Model Catalog
@@ -30,6 +30,11 @@ interface ModelCatalogManifest {
         label: string;      // Display label for the picker
         contextWindow: number; // Max context in tokens
         default?: boolean;  // Default model for this provider
+        profile?: {         // Optional per-model profile
+          maxOutputTokens?: number; // Output-token cap (e.g. 128000)
+          // sampling, toolCallFormat, … — see ModelProfile in @ethosagent/types
+        };
+        retiresOn?: string; // "YYYY-MM-DD" (UTC) the vendor retires the model
       }>;
     };
   };
@@ -37,6 +42,39 @@ interface ModelCatalogManifest {
 ```
 
 The catalog ships exactly three provider keys: `anthropic`, `openai-compat`, `azure`.
+
+## Deprecated models {#deprecated-models}
+
+A model the vendor has deprecated but still serves keeps its row, with `retiresOn` set to the official retirement date and a label that reads `deprecated — retires <date>`. From that date on (UTC), the row drops out of every listing: the TUI setup step and model picker, the desktop and web model lists, the `models.catalog` RPC, and the `list_available_models` tool. Lookups by id keep answering, so a config that names the model keeps its context window and output cap until the vendor turns it off. The check runs against the clock on each call, so a long-running process hides the row on the day without a restart. `isModelRetired`, `listedModels` and `getModelsForProvider` in `packages/wiring/src/model-catalog.ts` implement it; `packages/wiring/src/__tests__/model-catalog-retirement.test.ts` pins it with a fixed clock on both sides of the date. The TUI model picker builds its list when it opens, so it is checked against the clock at that moment (`apps/tui/src/__tests__/model-picker-retirement.test.ts`). A live OpenRouter build (`CATALOG_LIVE_FETCH=1`) takes `retiresOn` from OpenRouter's own `expiration_date` (`transformOpenRouterEntry` in `packages/wiring/scripts/sources/openrouter.ts`, pinned by `packages/wiring/scripts/__tests__/openrouter.test.ts`).
+
+A model that is already retired is removed from the catalog. Its pricing row in `packages/pricing/src/table.ts` stays, because `recomputeMessageCosts` (`extensions/session-sqlite`) reprices old sessions from that table.
+
+As of the 2026-09-28 refresh, two rows carry a date:
+
+| Provider | Model id | Retires |
+|---|---|---|
+| `codex` | `gpt-5.5` | 2026-10-14 (from ChatGPT and Codex; it stays on the OpenAI API) |
+| `openrouter` | `google/gemini-2.5-pro` | 2026-10-20 (OpenRouter's `expiration_date`) |
+
+## Output caps for Claude models {#output-caps}
+
+Every Anthropic row carries `profile.maxOutputTokens`, the documented maximum output from Anthropic's model reference (re-verified 2026-09-28). The live source for both numbers is the Models API: `GET /v1/models/{id}` returns `max_input_tokens` (the context window) and `max_tokens` (the output cap).
+
+| Model id | Context window | Max output |
+|---|---|---|
+| `claude-fable-5-1`, `claude-fable-5` | 1,000,000 | 128,000 |
+| `claude-mythos-5-1`, `claude-mythos-5` | 1,000,000 | 128,000 |
+| `claude-opus-5-5`, `claude-opus-5` | 1,000,000 | 128,000 |
+| `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6` | 1,000,000 | 128,000 |
+| `claude-sonnet-5`, `claude-sonnet-4-6` | 1,000,000 | 128,000 |
+| `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | 200,000 | 64,000 |
+| `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101` | 200,000 | 64,000 |
+
+Wiring sends the cap as `max_tokens` on every Anthropic request: `lookupProfile` merged under any `models.anthropic/<id>.maxOutputTokens` config override (`mergeModelProfile`), threaded by `createLLMFromRegistry` and the key-rotation pool in `packages/wiring/src/index.ts`. A turn routed to another Claude model with `modelOverride` gets that model's cap. The request path reads the bundled `MODEL_CATALOG`, not the published JSON. A Claude model the catalog does not list sends `DEFAULT_MAX_OUTPUT_TOKENS` (8,096, `extensions/llm-anthropic/src/index.ts`). Pinned by `packages/wiring/src/__tests__/anthropic-output-cap-catalog.test.ts`, which also checks that every Anthropic row is in its table.
+
+Rows are keyed by provider. The OpenRouter and Azure rows for Claude models carry no cap, and Bedrock has no rows.
+
+The context window reaches the provider the same way. `createLLMFromRegistry` resolves it (`contextWindow` in config, then the catalog) and `anthropicFactory` and the key-rotation pool pass it to `AnthropicProvider.maxContextTokens`. The local compaction gate and the default server-compaction trigger both measure against that number. A model the catalog does not list falls back to 200,000 (`anthropicContextTokens` in `extensions/llm-anthropic/src/index.ts`). A turn that `modelOverride` routes to a model with a smaller window is gated against that model's window (`turnGateWindow`, `packages/core/src/agent-loop/turn-window.ts`), and its server-compaction trigger is clamped to that model's own gate threshold (an explicit trigger that already fits is kept). The gate reserves the output cap the provider sends (`capabilities.maxOutputTokens`, `evaluateGate` in `packages/core/src/agent-loop/compaction.ts`), so the history it admits plus the reply fits the window. Pinned by `packages/wiring/src/__tests__/anthropic-context-window-catalog.test.ts` and `packages/core/src/__tests__/override-context-window.test.ts`.
 
 ## Three-level Fallback {#three-level-fallback}
 

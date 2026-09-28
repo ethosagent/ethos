@@ -562,7 +562,15 @@ export class EthosObservability {
     opts: EventBase & {
       personalityId?: string;
       jobId: string;
-      decision: 'escalate' | 'silent' | 'script-silent' | 'precheck-skip';
+      /** `missed` / `overlap-skip`: an occurrence that did not run (UBP-027,
+       *  `CronDecisionAction` in extensions/cron). */
+      decision:
+        | 'escalate'
+        | 'silent'
+        | 'script-silent'
+        | 'precheck-skip'
+        | 'missed'
+        | 'overlap-skip';
       delivered: boolean;
     },
   ): void {

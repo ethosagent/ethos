@@ -181,7 +181,7 @@ describe('both adapter-owning commands take the lock and the spool', () => {
       /\n\s+inboundSpool,\n\s+inboundSpoolOptions,\n/,
     );
 
-    const start = at('await Promise.all(adapters.map((a) => a.start()));');
+    const start = at('await startAdaptersIsolated(adapters, {');
     const replay = at('startInboundSpoolReplay(gateway,');
     expect(start).toBeLessThan(replay);
     expect(at('await runBootReconciliation(')).toBeLessThan(replay);

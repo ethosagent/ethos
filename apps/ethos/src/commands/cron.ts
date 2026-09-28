@@ -2,8 +2,8 @@ import { join } from 'node:path';
 import { type EthosConfig, ethosCronDir, ethosDir, ethosScriptsDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import {
+  type CronJob,
   type CronJobUpdate,
-  CronProgressRecorder,
   CronScheduler,
   isValidSchedule,
   nextRunForSchedule,
@@ -11,13 +11,13 @@ import {
 } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
-import { answerSuffix, EthosError } from '@ethosagent/types';
+import { EthosError, type TurnAudience } from '@ethosagent/types';
 import { privateChatSetFrom } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
 import { gateCronLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
-import { cronContextAudience, cronFiringAudience } from './cron-turn';
+import { createCronRunJob, cronContextAudience, cronFiringAudience } from './cron-turn';
 
 const c = {
   reset: '\x1b[0m',
@@ -68,72 +68,44 @@ function makeScheduler(config: EthosConfig): {
         // observability unavailable — audit is fail-open
       }
     },
-    runJob: async (job, runOpts) => {
-      if (!personalities) {
-        personalities = await createPersonalityRegistry(getStorage());
-        await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
-      }
-      if (!personalities.get(job.personalityId)) {
-        throw new EthosError({
-          code: 'CRON_PERSONALITY_MISSING',
-          cause: `Personality "${job.personalityId}" not found for cron job "${job.id}"`,
-          action: `Run 'ethos cron list' to find affected jobs, then update or delete them`,
-        });
-      }
-      if (!loop) {
-        runtime = await createAgentLoop(config);
-        gateCronLoop(runtime, config);
-        loop = runtime.loop;
-      }
-      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
-      let output = '';
-
-      // Recursion guard: exclude 'cron' from the effective toolset so
-      // cron-spawned sessions cannot schedule further cron jobs.
-      if (!personalities) {
-        personalities = await createPersonalityRegistry(getStorage());
-        await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
-      }
-      const pid = job.personalityId;
-      const pers = personalities.get(pid);
-      const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
-
-      // Progress is collected separately from `output` — never appended to it.
-      // `output` is delivered verbatim and `decideEscalation` tests it with a
-      // start-anchored `[SILENT]` regex. The recorder gates on
-      // `audience: 'user'`; internal progress stays internal.
-      const progress = new CronProgressRecorder();
+    // The one cron turn implementation (`runCronTurn`, via `createCronRunJob`):
+    // a turn that errors fails the run rather than recording an empty or
+    // partial output as a successful manual run (UBP-004).
+    runJob: createCronRunJob({
+      toolsetFor: async (job: CronJob) => {
+        if (!personalities) {
+          personalities = await createPersonalityRegistry(getStorage());
+          await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+        }
+        const pers = personalities.get(job.personalityId);
+        if (!pers) {
+          throw new EthosError({
+            code: 'CRON_PERSONALITY_MISSING',
+            cause: `Personality "${job.personalityId}" not found for cron job "${job.id}"`,
+            action: `Run 'ethos cron list' to find affected jobs, then update or delete them`,
+          });
+        }
+        // Recursion guard: exclude 'cron' from the effective toolset so
+        // cron-spawned sessions cannot schedule further cron jobs.
+        return pers.toolset?.filter((t: string) => t !== 'cron');
+      },
       // The firing's room audience — the same rule every cron runner uses
       // (`cronFiringAudience`, ./cron-turn.ts).
-      const roomAudience = await cronFiringAudience(job, {
-        listJobs: () => scheduler.listJobs(),
-        privateChats: privateChatSetFrom(config.gateway?.privateChats),
-        warn: (line) => console.warn(line),
-      });
-      for await (const event of loop.run(job.prompt ?? '', {
-        sessionKey,
-        personalityId: pid,
-        toolsetOverride,
-        // R10 — the scheduler aborts this at the job's `maxRunMs`.
-        abortSignal: runOpts?.abortSignal,
-        roomAudience,
-        initiator: 'system',
-      })) {
-        if (event.type === 'text_delta') output += event.text;
-        // A `returnDirect` tool's answer arrives only as `done.text`, after
-        // any preamble that streamed — same rule as `runCronTurn`.
-        else if (event.type === 'done') output += answerSuffix(output, event.text);
-        else progress.record(event);
-      }
-
-      return {
-        jobId: job.id,
-        ranAt: new Date().toISOString(),
-        output,
-        sessionKey,
-        progress: progress.snapshot(),
-      };
-    },
+      audienceFor: (job: CronJob): Promise<TurnAudience> =>
+        cronFiringAudience(job, {
+          listJobs: (): Promise<CronJob[]> => scheduler.listJobs(),
+          privateChats: privateChatSetFrom(config.gateway?.privateChats),
+          warn: (line) => console.warn(line),
+        }),
+      loop: async () => {
+        if (!loop) {
+          runtime = await createAgentLoop(config);
+          gateCronLoop(runtime, config);
+          loop = runtime.loop;
+        }
+        return loop;
+      },
+    }),
   });
 
   // The CLI never starts a trigger loop (each subcommand is a one-shot CRUD

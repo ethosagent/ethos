@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { CASE_INSENSITIVE_FS } from '@ethosagent/storage-fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { approvalRequiredReason, checkCommand, createProcessGuardHook } from '../guard';
 
@@ -561,5 +562,26 @@ describe('command substitution — approval-required, not hardline', () => {
       call("bash -c 'id'"),
     );
     expect(result?.error).toMatch(/inline shell eval/);
+  });
+});
+
+// UBP-008 — on APFS/NTFS a case variant names the same file, so the argv
+// floor must fire on it too.
+describe.skipIf(!CASE_INSENSITIVE_FS)('argv floor on a case-insensitive filesystem', () => {
+  it('refuses case variants of credential paths and the state dir', () => {
+    expect(checkCommand('cat ~/.SSH/id_rsa').dangerous).toBe(true);
+    expect(checkCommand('cat /home/u/.Aws/Credentials').dangerous).toBe(true);
+    expect(checkCommand('sed -i s/a/b/ ~/.ETHOS/personalities/x/toolset.yaml').dangerous).toBe(
+      true,
+    );
+    expect(checkCommand(`cat ${homedir()}/.Ethos/keys.json`).dangerous).toBe(true);
+  });
+});
+
+// V-ES-1 — APFS opens U+1E9E CAPITAL SHARP S as `ss`, so `.ẞh` IS `.ssh`.
+describe.skipIf(process.platform !== 'darwin')('argv floor on APFS (V-ES-1)', () => {
+  it('refuses the capital-sharp-s spelling of ~/.ssh', () => {
+    expect(checkCommand('cat ~/.ẞh/id_rsa').dangerous).toBe(true);
+    expect(checkCommand(`cat ${homedir()}/.ẞh/id_ed25519`).dangerous).toBe(true);
   });
 });

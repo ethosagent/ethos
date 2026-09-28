@@ -18,6 +18,10 @@ import type { BackgroundJob, JobStore } from '@ethosagent/types';
 export interface MeshProxyReconcilerDeps {
   store: JobStore;
   fetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
+  /** The headers a poll of peer `host:port` carries — its bearer token, the
+   *  way the mesh tools send it (`createMeshAuthHeaderResolver` in ./index).
+   *  Absent → `Content-Type` only, which a bearer-secured peer answers 401. */
+  authHeadersFor?: (host: string, port: string) => Promise<Record<string, string>>;
   intervalMs?: number; // default 12_000
   timeoutMs?: number; // per-poll, default 10_000
   missThreshold?: number; // default 3
@@ -49,6 +53,7 @@ function splitPeer(peer: string): { host?: string; port?: string } {
 export class MeshProxyReconciler {
   private readonly store: JobStore;
   private readonly fetchImpl: MeshProxyReconcilerDeps['fetchImpl'];
+  private readonly authHeadersFor: MeshProxyReconcilerDeps['authHeadersFor'];
   private readonly intervalMs: number;
   private readonly timeoutMs: number;
   private readonly missThreshold: number;
@@ -62,6 +67,7 @@ export class MeshProxyReconciler {
   constructor(deps: MeshProxyReconcilerDeps) {
     this.store = deps.store;
     this.fetchImpl = deps.fetchImpl;
+    this.authHeadersFor = deps.authHeadersFor;
     this.intervalMs = deps.intervalMs ?? 12_000;
     this.timeoutMs = deps.timeoutMs ?? 10_000;
     this.missThreshold = deps.missThreshold ?? 3;
@@ -113,9 +119,12 @@ export class MeshProxyReconciler {
 
     let result: JobStatusResult | undefined;
     try {
+      const headers = this.authHeadersFor
+        ? await this.authHeadersFor(host, port)
+        : { 'Content-Type': 'application/json' };
       const res = await this.fetchImpl(`http://${host}:${port}/rpc`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           jsonrpc: '2.0',
           id: 1,

@@ -824,12 +824,13 @@ describe('route_to_agent background path', () => {
     const mockFetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body)) as { method: string };
       expect(payload.method).toBe('spawn');
-      return { json: async () => ({ result: { jobId: 'r1', status: 'queued' } }) };
+      return Response.json({ result: { jobId: 'r1', status: 'queued' } });
     }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
     const store = new FakeJobStore();
     const { deps } = makeDeps(store);
-    const tool = createRouteToAgentTool(storage, registryPath, deps);
+    // A loopback member is reached through `loopbackFetch` (`meshFetch`).
+    const tool = createRouteToAgentTool(storage, registryPath, deps, { loopbackFetch: mockFetch });
 
     const res = await tool.execute(
       { capability: 'research', prompt: 'analyze the data', background: true },

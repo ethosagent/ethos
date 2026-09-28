@@ -241,3 +241,86 @@ describe('MessageDedupCache — sessionId persists across `/new`', () => {
     expect(cache.shouldSend('chat:42:1700000000000', 'pong')).toBe(true);
   });
 });
+
+// UBP-014 (ARCHITECTURE.md §V S3 as amended 2026-09-28): a reply is deduped
+// per INBOUND message. Two messages whose correct replies are byte-identical
+// both get one; the same reply to the same message twice is still one send.
+describe('MessageDedupCache — scoped to the inbound message (UBP-014)', () => {
+  it('identical content answering two different inbound messages both send', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.shouldSend('s1', 'Done.', { inboundId: 'in-1' })).toBe(true);
+    expect(cache.shouldSend('s1', 'Done.', { inboundId: 'in-2' })).toBe(true);
+  });
+
+  it('the same content answering the same inbound message is still a silent drop', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.shouldSend('s1', 'Done.', { inboundId: 'in-1' })).toBe(true);
+    expect(cache.shouldSend('s1', 'Done.', { inboundId: 'in-1' })).toBe(false);
+  });
+
+  it('a scoped key and the content-only key do not collide', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.shouldSend('s1', 'Done.')).toBe(true);
+    expect(cache.shouldSend('s1', 'Done.', { inboundId: 'in-1' })).toBe(true);
+    expect(cache.shouldSend('s1', 'Done.')).toBe(false);
+  });
+
+  it('record() honours the scope, and clearSession forgets scoped keys', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    cache.record('s1', 'streamed final', { inboundId: 'in-1' });
+    expect(cache.shouldSend('s1', 'streamed final', { inboundId: 'in-1' })).toBe(false);
+    expect(cache.shouldSend('s1', 'streamed final', { inboundId: 'in-2' })).toBe(true);
+    cache.clearSession('s1');
+    expect(cache.size()).toBe(0);
+  });
+});
+
+// UBP-003: `wouldSend` checks without recording, so a send whose platform call
+// fails does not arm the key and an identical retry inside the TTL goes out.
+describe('MessageDedupCache — wouldSend() + record() after a confirmed send (UBP-003)', () => {
+  it('wouldSend never records; only record() arms the key', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.wouldSend('s1', 'hello')).toBe(true);
+    expect(cache.wouldSend('s1', 'hello')).toBe(true);
+    expect(cache.size()).toBe(0);
+    cache.record('s1', 'hello');
+    expect(cache.wouldSend('s1', 'hello')).toBe(false);
+  });
+
+  it('fires onDrop on a duplicate it refuses', () => {
+    const drops: DedupDropInfo[] = [];
+    const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (d) => drops.push(d) });
+    cache.record('s1', 'hello');
+    expect(cache.wouldSend('s1', 'hello')).toBe(false);
+    expect(drops).toHaveLength(1);
+  });
+});
+
+// V2-RT-4 — a reservation is owned: only the token `reserve` returned may
+// commit or release it, so a stale holder cannot touch a newer reservation.
+describe('MessageDedupCache — owned reservations', () => {
+  it('reserve arms the key and refuses a duplicate while armed', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    expect(cache.reserve('s1', 'hello')).toBeDefined();
+    expect(cache.reserve('s1', 'hello')).toBeUndefined();
+  });
+
+  it("a stale token neither releases nor commits a newer reservation's key", () => {
+    let now = 1_000;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      const cache = new MessageDedupCache({ ttlMs: 10 });
+      const stale = cache.reserve('s1', 'hello');
+      now += 20; // past the TTL
+      const current = cache.reserve('s1', 'hello');
+      expect(current).toBeDefined();
+      cache.release('s1', 'hello', undefined, stale);
+      expect(cache.wouldSend('s1', 'hello')).toBe(false);
+      cache.release('s1', 'hello', undefined, current);
+      expect(cache.wouldSend('s1', 'hello')).toBe(true);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});

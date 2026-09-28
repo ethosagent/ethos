@@ -23,9 +23,11 @@ while IFS= read -r file; do
     *__tests__*|*.test.ts|*.spec.ts) continue ;;
   esac
 
-  # tools-process internals: plan Q9 allows thin abstractions below ctx.process
+  # tools-process internals: plan Q9 allows thin abstractions below ctx.process.
+  # process-identity.ts is one (V-ES-5): it reads /proc and runs `ps` to fingerprint the
+  # pid `spawnDetached` started, so `stopProcess` never signals a reused pid.
   case "$file" in
-    *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts|*tools-process/src/watcher.ts) continue ;;
+    *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts|*tools-process/src/watcher.ts|*tools-process/src/process-identity.ts) continue ;;
   esac
 
   # tools-code/src/shim/js-shim.ts: textual false positive — the `node:fs` import lives inside a

@@ -128,7 +128,7 @@ launchctl unload ~/Library/LaunchAgents/ai.ethosagent.gateway.plist
 
 `RunAtLoad` plus the `~/Library/LaunchAgents/` location starts the agent at login. `KeepAlive` with `SuccessfulExit` set to `false` restarts it after a non-zero exit (a crash) and leaves it stopped after a clean exit.
 
-launchd has no equivalent of systemd's `RestartPreventExitStatus`, so the `/bin/sh -c` wrapper does that job. The gateway exits `78` when `config.yaml` is invalid and `3` when another gateway already holds the state directory. Both are refusals that a restart cannot fix. The wrapper turns them into exit `0`, so launchd leaves the job stopped instead of respawning it forever. The reason stays in `gateway.err.log`.
+launchd has no equivalent of systemd's `RestartPreventExitStatus`, so the `/bin/sh -c` wrapper does that job. The gateway exits `78` when `config.yaml` is invalid or every bot's credentials were refused, and `3` when another gateway already holds the state directory. Both are refusals that a restart cannot fix. The wrapper turns them into exit `0`, so launchd leaves the job stopped instead of respawning it forever. The reason stays in `gateway.err.log`.
 
 `ThrottleInterval` is the minimum gap, in seconds, between two launches of the job. launchd's default is 10. A value of 30 caps a crash loop at two starts a minute, which keeps a failing provider or platform from being hammered.
 
@@ -237,7 +237,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 while ($true) {
   & $ethos gateway start *>> $log
   $code = $LASTEXITCODE
-  # 0 = clean stop; 3 = another gateway holds the state dir; 78 = invalid config.
+  # 0 = clean stop; 3 = another gateway holds the state dir; 78 = invalid config or refused tokens.
   if ($code -eq 0 -or $code -eq 3 -or $code -eq 78) { exit $code }
   Start-Sleep -Seconds 30
 }
@@ -363,11 +363,11 @@ lsof +D ~/.ethos/ 2>/dev/null | grep -v ethos
 
 **`Run ethos setup first` on boot.** — `HOME` does not point at your user account. systemd user units inherit it correctly; launchd sometimes does not. Set `HOME` in the plist `EnvironmentVariables` block as shown above.
 
-**The unit is `failed` and systemd stopped restarting it.** — The gateway exits `78` when `~/.ethos/config.yaml` cannot be parsed or a bot binding points at nothing, and `3` when another gateway already holds this state directory. Both are refusals, not crashes, so `RestartPreventExitStatus=3 78` stops systemd retrying them. Run `ethos doctor` for a config error, or `ethos gateway status` for a held lock. Fix the cause, then run `systemctl --user restart ethos-gateway`. `StartLimitBurst=5` in `StartLimitIntervalSec=300` likewise gives up after five crashes in five minutes; `systemctl --user reset-failed ethos-gateway` clears it. A unit generated before these directives existed does not have them — regenerate it with `ethos systemd-unit ethos-gateway`.
+**The unit is `failed` and systemd stopped restarting it.** — The gateway exits `78` when `~/.ethos/config.yaml` cannot be parsed, a bot binding points at nothing, or the platform refused every bot's token, and `3` when another gateway already holds this state directory. Both are refusals, not crashes, so `RestartPreventExitStatus=3 78` stops systemd retrying them. Run `ethos doctor` for a config error, re-run `ethos setup messaging` for a refused token (the log says `failed permanently`), or run `ethos gateway status` for a held lock. Fix the cause, then run `systemctl --user restart ethos-gateway`. `StartLimitBurst=5` in `StartLimitIntervalSec=300` likewise gives up after five crashes in five minutes; `systemctl --user reset-failed ethos-gateway` clears it. A unit generated before these directives existed does not have them — regenerate it with `ethos systemd-unit ethos-gateway`.
 
 **launchd keeps the job stopped after a config fix.** — The wrapper mapped exit `78` or `3` to `0`, so launchd treats the job as done. Run `ethos doctor` (exit `78`) or `ethos gateway status` (exit `3`), fix the cause, then `launchctl start ai.ethosagent.gateway`.
 
-**The Windows task shows `Ready`, not `Running`.** — The supervisor exited. Read the last lines of `%USERPROFILE%\.ethos\logs\gateway.log`: exit `78` is a config error (`ethos doctor`), exit `3` is another gateway holding the state directory (`ethos gateway status`). Fix it, then run `Start-ScheduledTask -TaskName 'Ethos gateway'`. If the gateway keeps running after `Stop-ScheduledTask`, stop it by command line: `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*gateway start*' | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
+**The Windows task shows `Ready`, not `Running`.** — The supervisor exited. Read the last lines of `%USERPROFILE%\.ethos\logs\gateway.log`: exit `78` is a config error or refused bot tokens (`ethos doctor`, `ethos setup messaging`), exit `3` is another gateway holding the state directory (`ethos gateway status`). Fix it, then run `Start-ScheduledTask -TaskName 'Ethos gateway'`. If the gateway keeps running after `Stop-ScheduledTask`, stop it by command line: `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*gateway start*' | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
 
 **Telegram returns HTTP 429.** — Two gateway processes are polling the same bot token. Check for a duplicate launchd plist, a stale pm2 entry, or a forgotten `tmux` session. One process per bot token.
 

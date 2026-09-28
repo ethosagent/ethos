@@ -102,12 +102,37 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   // 4.1 price (15/75), and without the specific rows every 4.x id fell through
   // to it at 3x its real rate. Same shape for `claude-haiku-4-5` over
   // `claude-haiku-4` and `claude-sonnet-4-6` over `claude-sonnet-4`.
+  //
+  // Opus 5.5 and Mythos 5.1 / 5 re-verified 2026-09-28 against the same
+  // pricing page, which now states every column for all three: Opus 5.5 reads
+  // at 0.05x ($0.20/MTok) and writes at $5; Mythos 5.1 reads at 0.025x
+  // ($0.25/MTok, like Fable 5.1); Mythos 5 reads at the standard $1; both
+  // Mythos rows write at $12.50. `claude-opus-5-5` must precede
+  // `claude-opus-5` and `claude-mythos-5-1` must precede `claude-mythos-5`, for
+  // the same substring reason as Fable. Pinned by 'prices Opus 5.5 and
+  // Mythos 5.1 / 5 at their documented rates' in __tests__/pricing.test.ts.
+  //
+  // `claude-opus-4-5` (Opus 4.5, $5/$25 on the same page) needs its own row
+  // above the bare `claude-opus-4` row for the same reason as 4.6–4.8; without
+  // it `claude-opus-4-5-20251101` priced at the retired 15/75.
+  //
+  // OpenRouter spells Claude versions with a dot (`anthropic/claude-opus-4.8`,
+  // `anthropic/claude-3.5-sonnet`). `findRate` rewrites a dotted Claude version
+  // to the dashed form before matching (`normalizeClaudeVersion`), so those ids
+  // reach these rows instead of stopping at a shorter sibling (`claude-opus-4`,
+  // the retired 15/75 price). Pinned by "prices OpenRouter's dotted Claude ids"
+  // in __tests__/pricing.test.ts and by
+  // packages/wiring/src/__tests__/model-catalog-pricing.test.ts.
   { prefix: 'claude-fable-5-1', input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
   { prefix: 'claude-fable-5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
+  { prefix: 'claude-mythos-5-1', input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+  { prefix: 'claude-mythos-5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
+  { prefix: 'claude-opus-5-5', input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   { prefix: 'claude-opus-5', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4-8', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4-7', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4-6', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  { prefix: 'claude-opus-4-5', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4', input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
   { prefix: 'claude-sonnet-5', input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   { prefix: 'claude-sonnet-4-6', input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
@@ -134,13 +159,22 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   // billing shape the page does not state; a long-context turn under-reports
   // until someone confirms the semantics.
   //
+  // gpt-6-sol and gpt-6-luna re-verified 2026-09-28 on the same page. The page
+  // now also lists a cache-write rate for the gpt-6 family (1.25x input); the
+  // column stays 0 here because both OpenAI transports report
+  // `cacheCreationTokens: 0` on every call (extensions/llm-openai-compat/src/
+  // transport.ts, extensions/llm-codex/src/transport.ts), so the bucket is
+  // always empty and the rate would never be multiplied by anything.
+  //
   // Ordering: `gpt-5.4-mini` before `gpt-5.4`. There is deliberately no bare
   // `gpt-5` row, so an unlisted 5.x id stays `basis: 'unknown'` instead of
   // being priced off a sibling. The `gpt-5.4` row excludes `gpt-5.4-pro` and
-  // `gpt-5.4-nano` for the same reason: both are in the model catalog
-  // (packages/wiring/src/model-catalog.ts), both contain `gpt-5.4`, and neither
-  // bills at the base 5.4 rate — they stay unknown until they get their own row.
+  // `gpt-5.4-nano` for the same reason: both are live OpenAI models (not in the
+  // model catalog), both contain `gpt-5.4`, and neither bills at the base 5.4
+  // rate — they stay unknown until they get their own row.
   { prefix: 'gpt-6-astra', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 0 },
+  { prefix: 'gpt-6-sol', input: 2, output: 10, cacheRead: 0.2, cacheWrite: 0 },
+  { prefix: 'gpt-6-luna', input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0 },
   { prefix: 'gpt-5.6-sol', input: 4, output: 20, cacheRead: 0.4, cacheWrite: 0 },
   { prefix: 'gpt-5.6-terra', input: 2, output: 12, cacheRead: 0.2, cacheWrite: 0 },
   { prefix: 'gpt-5.6-luna', input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0 },
@@ -165,8 +199,9 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   //
   // 3.x rows verified 2026-09-05 against
   // https://ai.google.dev/gemini-api/docs/pricing (paid tier, standard, text);
-  // `cacheRead` is the page's context-caching rate (0.1x input on 3.x; the 2.5
-  // and earlier rows below bill it at a quarter of input, as those models did).
+  // `cacheRead` is the page's context-caching rate (0.1x input on 3.x).
+  // gemini-3.1-flash-lite, gemini-3-flash-preview and the three 2.5 rows were
+  // re-verified 2026-09-28 on the same page; 2.5 caching is now 0.1x input too.
   //
   // gemini-3.8/3.7/3.6-flash share one price, and the page schedules it to
   // DOUBLE on 2027-01-01 (1.50/7.50, cache 0.15) — re-verify then.
@@ -174,21 +209,61 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   // 0.40); the row is flat at the ≤200K rate for the same reason as the OpenAI
   // block — the page does not state whole-request vs overage semantics.
   //
-  // Ordering: `gemini-3.5-flash-lite` before `gemini-3.5-flash`.
+  // Ordering: `gemini-3.5-flash-lite` before `gemini-3.5-flash`, and
+  // `gemini-2.5-flash-lite` before `gemini-2.5-flash` (without its own row the
+  // lite model priced at the full Flash rate).
   { prefix: 'gemini-3.8-flash', input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
   { prefix: 'gemini-3.7-flash', input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
   { prefix: 'gemini-3.6-flash', input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
   { prefix: 'gemini-3.5-flash-lite', input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0 },
   { prefix: 'gemini-3.5-flash', input: 1.5, output: 9, cacheRead: 0.15, cacheWrite: 0 },
   { prefix: 'gemini-3.1-pro-preview', input: 2, output: 12, cacheRead: 0.2, cacheWrite: 0 },
-  // Older Gemini rows: cached content billed at a quarter of the input rate.
-  { prefix: 'gemini-2.5-pro', input: 1.25, output: 10, cacheRead: 0.3125, cacheWrite: 0 },
-  { prefix: 'gemini-2.5-flash', input: 0.3, output: 2.5, cacheRead: 0.075, cacheWrite: 0 },
+  { prefix: 'gemini-3.1-flash-lite', input: 0.25, output: 1.5, cacheRead: 0.025, cacheWrite: 0 },
+  { prefix: 'gemini-3-flash-preview', input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0 },
+  { prefix: 'gemini-2.5-pro', input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+  { prefix: 'gemini-2.5-flash-lite', input: 0.1, output: 0.4, cacheRead: 0.01, cacheWrite: 0 },
+  { prefix: 'gemini-2.5-flash', input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0 },
+  // Older Gemini rows (shut down; kept so old sessions still recompute a cost):
+  // cached content billed at a quarter of the input rate.
   { prefix: 'gemini-2.0-flash', input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite: 0 },
   { prefix: 'gemini-1.5-flash', input: 0.075, output: 0.3, cacheRead: 0.01875, cacheWrite: 0 },
   { prefix: 'gemini-1.5-pro', input: 1.25, output: 5.0, cacheRead: 0.3125, cacheWrite: 0 },
 
   // ── DeepSeek ──────────────────────────────────────────────────────────────
+  //
+  // `deepseek-flash` (V4.1 Flash) and `deepseek-v4-pro` from
+  // https://api-docs.deepseek.com/quick_start/pricing (2026-09-28). DeepSeek
+  // now bills by time of day — peak 01:00–04:00 and 06:00–10:00 UTC on
+  // weekdays, off-peak (half price) otherwise — and `ModelRate` has no
+  // time-of-day dimension, so these rows carry the standard PEAK rate
+  // ("cache hit" is `cacheRead`, "cache miss" is `input`). An off-peak turn
+  // over-reports by 2x; the discount is not modelled.
+  //
+  // The two new rows exclude reseller ids (`deepseek/` on OpenRouter,
+  // `deepseek-ai/` on Together) for the same reason as the xAI block below:
+  // those routes bill at their own price. Azure's `DeepSeek-V4-Pro`
+  // deployment name has no such prefix and does match `deepseek-v4-pro` — a
+  // known limitation of the substring test.
+  //
+  // The four rows below them describe models DeepSeek retired on 2026-07-24.
+  // They stay so `recomputeMessageCosts` (extensions/session-sqlite) can still
+  // price sessions recorded against them.
+  {
+    prefix: 'deepseek-flash',
+    input: 0.3,
+    output: 1.2,
+    cacheRead: 0.006,
+    cacheWrite: 0,
+    excludeIdsContaining: ['deepseek/', 'deepseek-ai/'],
+  },
+  {
+    prefix: 'deepseek-v4-pro',
+    input: 1.32,
+    output: 3.96,
+    cacheRead: 0.044,
+    cacheWrite: 0,
+    excludeIdsContaining: ['deepseek/', 'deepseek-ai/'],
+  },
   { prefix: 'deepseek-v3', input: 0.14, output: 0.28, cacheRead: 0.14, cacheWrite: 0 },
   { prefix: 'deepseek-chat', input: 0.14, output: 0.28, cacheRead: 0.14, cacheWrite: 0 },
   { prefix: 'deepseek-r1', input: 0.55, output: 2.19, cacheRead: 0.55, cacheWrite: 0 },
@@ -196,12 +271,19 @@ export const MODEL_PRICING: readonly ModelRate[] = [
 
   // ── Mistral (hosted only — a bare `mistral` tag is an Ollama local pull
   //    and deliberately matches nothing here) ────────────────────────────────
+  //
+  // `mistral-medium-3-5` from its model card (2026-09-28). The `-large` and
+  // `-small` rows are left as they were: which dated model `mistral-large-latest`
+  // and `mistral-small-latest` resolve to is not documented, so their price is
+  // unconfirmed.
+  { prefix: 'mistral-medium-3-5', input: 1.5, output: 7.5, cacheRead: 1.5, cacheWrite: 0 },
   { prefix: 'mistral-large', input: 2.0, output: 6.0, cacheRead: 2.0, cacheWrite: 0 },
   { prefix: 'mistral-small', input: 0.1, output: 0.3, cacheRead: 0.1, cacheWrite: 0 },
 
   // ── xAI Grok ──────────────────────────────────────────────────────────────
   //
-  // Rates from https://docs.x.ai/docs/models as of 2026-09-03. Date-stamped
+  // Rates from https://docs.x.ai/docs/models as of 2026-09-03 (grok-4.7 added
+  // 2026-09-28 from the same page). Date-stamped
   // deliberately: xAI's pricing PAGE moves faster than its docs, so treat these
   // as stale on sight and re-fetch before editing.
   //
@@ -232,6 +314,21 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   // about someone else's margin model, and an honest unknown beats a
   // confidently-wrong number. Pricing those ids needs OpenRouter's own rates in
   // an `x-ai/`-prefixed row; until someone has them, there is no row.
+  {
+    prefix: 'grok-4.7',
+    input: 2.0,
+    output: 6.0,
+    cacheRead: 0.5,
+    cacheWrite: 0,
+    excludeIdsContaining: ['x-ai/'],
+    tierBreak: {
+      abovePromptTokens: 200_000,
+      input: 4.0,
+      output: 12.0,
+      cacheRead: 1.0,
+      cacheWrite: 0,
+    },
+  },
   {
     prefix: 'grok-4.6',
     input: 2.0,
@@ -293,6 +390,19 @@ export const MODEL_PRICING: readonly ModelRate[] = [
     },
   },
 
+  // ── Unpriced catalog rows (2026-09-28) ─────────────────────────────────────
+  //
+  // Groq's `openai/gpt-oss-120b`, `openai/gpt-oss-20b` and `qwen/qwen3.8-27b`
+  // (Groq's default since the Llama rows shut down) have no row. `findRate` has
+  // no provider dimension and those ids are byte-identical to OpenRouter's (and
+  // `openai/gpt-oss-120b` to Together's), so a Groq-priced row would report
+  // Groq's rate for calls another reseller billed — the collision the xAI block
+  // declines. groq.com/pricing also served no rate for them as text on
+  // 2026-09-28. Azure's `DeepSeek-V4-Flash` deployment has no row either: the
+  // Azure Foundry DeepSeek pricing page renders its rates client-side, so no
+  // official number was readable. All four report `basis: 'unknown'`; pinned in
+  // the resolved-id collision guard in __tests__/pricing.test.ts.
+
   // ── TypeSafe Jev (a decision provider, not a chat model) ──────────────────
   //
   // $0.042 per 1M input tokens, output free (plan
@@ -308,8 +418,17 @@ export const MODEL_PRICING: readonly ModelRate[] = [
  * `excludeIdsContaining` does not also match it, or undefined.
  */
 export function findRate(model: string): ModelRate | undefined {
-  const id = model.toLowerCase();
+  const id = normalizeClaudeVersion(model.toLowerCase());
   return MODEL_PRICING.find(
     (r) => id.includes(r.prefix) && !r.excludeIdsContaining?.some((x) => id.includes(x)),
   );
+}
+
+/**
+ * `claude-opus-4.8` → `claude-opus-4-8`, `claude-3.5-sonnet` → `claude-3-5-sonnet`.
+ * Only the version dots inside a `claude-` id are rewritten; every other id is
+ * returned unchanged (a dot is significant in `gpt-5.4` and `gemini-2.5-pro`).
+ */
+function normalizeClaudeVersion(id: string): string {
+  return id.replace(/claude-[a-z0-9.-]*/g, (m) => m.replace(/(\d)\.(\d)/g, '$1-$2'));
 }

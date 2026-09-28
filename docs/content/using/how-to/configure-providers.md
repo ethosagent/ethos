@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-providers
 time: "5 min"
-updated: 2026-09-04
+updated: 2026-09-28
 ---
 
 ## Task
@@ -78,12 +78,21 @@ apiVersion: 2024-10-21
 personality: researcher
 ```
 
+A reasoning model (the o-series or `gpt-5.x`) needs `max_completion_tokens` instead of `max_tokens`. Ethos picks the parameter from the deployment name, so a deployment named after its model (`o4-mini`, the portal's default) works as is. If you named the deployment something else, set the parameter yourself on entry `0`:
+
+```yaml
+providers.0.provider: azure
+providers.0.outputCapParam: max_completion_tokens
+```
+
+Without it, Azure refuses the request because it was sent `max_tokens`.
+
 ### Provider matrix
 
 | `provider` | Default base URL | Where to get a key | Notes |
 |---|---|---|---|
 | `anthropic` | n/a (SDK default) | [console.anthropic.com](https://console.anthropic.com) | Best fit for `claude-*` models; supports key rotation via `ethos keys`. |
-| `openai` | `https://api.openai.com/v1` | [platform.openai.com](https://platform.openai.com/api-keys) | Use for `gpt-5.6-terra`, `gpt-6-astra`, etc. |
+| `openai` | `https://api.openai.com/v1` | [platform.openai.com](https://platform.openai.com/api-keys) | Use for `gpt-6-sol`, `gpt-6-astra`, `gpt-6-luna`, etc. |
 | `codex` | n/a — device auth | [openai.com](https://openai.com) (ChatGPT account) | Experimental; authenticates via device code, no API key. See [Use a ChatGPT subscription for coding work](use-chatgpt-subscription-via-codex). |
 | `openrouter` | `https://openrouter.ai/api/v1` | [openrouter.ai/keys](https://openrouter.ai/keys) | One key for Claude, GPT, Gemini, Llama, and 200+ more. |
 | `azure` | `https://<your-resource>.openai.azure.com` | [portal.azure.com](https://portal.azure.com) | `model:` is the deployment name; `apiVersion:` required (default `2024-10-21`). |
@@ -95,6 +104,18 @@ personality: researcher
 Provider strings are validated against [`packages/wiring/src/provider-catalog.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/provider-catalog.ts). Anything else is rejected by `ethos doctor`.
 
 `bedrock` is the one entry with no key step: the wizard skips the API-key prompt and asks for the model id as free text, because Bedrock signs each request with AWS SigV4 off the ambient credential chain. [Run Ethos on AWS Bedrock](use-aws-bedrock.md) covers the model id, the IAM permission, and how credentials resolve.
+
+### Output cap for Claude models
+
+With `provider: anthropic`, each request's `max_tokens` is the model's documented maximum output, taken from the bundled [model catalog](../../building/reference/model-catalog.md): 128,000 for Claude Fable 5.1, Fable 5, Mythos 5.1, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7 and 4.6, Sonnet 5 and Sonnet 4.6; 64,000 for Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5. A Claude model the catalog does not list gets 8,096. The request always streams, so a large cap does not hit the SDK's request timeout.
+
+To send a different cap for one model, set it in `~/.ethos/config.yaml`. The config value beats the catalog:
+
+```yaml
+models.anthropic/claude-opus-5.maxOutputTokens: 32000
+```
+
+The cap follows the model that answers. When a personality role routes a turn to another Claude model, that model's cap is sent, not the configured model's. The catalog cap applies only to `provider: anthropic`, because catalog rows are keyed by provider. The same Claude model through `openrouter`, `azure` or `bedrock` gets no catalog cap. `openrouter` honours `models.openrouter/<model>.maxOutputTokens`. `azure` and `bedrock` do not read that key.
 
 ### Local endpoints (Ollama and vLLM)
 

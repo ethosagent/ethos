@@ -160,6 +160,15 @@ export interface BackgroundJob {
    * result inside the parent session and ignore it.
    */
   deliver?: 'user' | 'parent';
+  /**
+   * The job's run read untrusted content (V2-SEC-2): its summary may carry an
+   * injection. Recorded at the terminal transition (`JobStore.finish`) from
+   * `JobRunnerContext.markTainted`; absent means nothing untrusted was read, and
+   * on every row written before the column. `Gateway.admitWakeReview` starts a
+   * `deliver: 'parent'` review turn of a tainted job with the post-read
+   * downgrade already armed, so it cannot persist the summary's instructions.
+   */
+  tainted?: boolean;
   // Remote proxy: set when this row tracks a background job running on a mesh peer
   // (created by route_to_agent background:true). A reconciler polls the peer and
   // mirrors status/spend/summary onto this row. No local executor runs a proxy.
@@ -311,7 +320,8 @@ export interface JobStore {
   finish(
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
-    fields: { summary?: string; error?: string },
+    /** `tainted` — see `BackgroundJob.tainted`; only `true` is recorded. */
+    fields: { summary?: string; error?: string; tainted?: boolean },
   ): Promise<void>;
   /** All jobs whose rootSessionKey === the given key, newest first. */
   listByRoot(rootSessionKey: string): Promise<BackgroundJob[]>;
@@ -486,6 +496,12 @@ export interface JobRunnerContext {
    * audit trail.
    */
   appendLog(stream: 'stdout' | 'stderr', line: string): void;
+  /**
+   * The run read untrusted content (V2-SEC-2) — the executor records it on the
+   * row as `BackgroundJob.tainted`. Optional: a runner that cannot tell never
+   * calls it. `EthosJobRunner` wires it to `RunOptions.onUntrustedRead`.
+   */
+  markTainted?(): void;
 }
 
 /**

@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-09-05
+updated: 2026-09-28
 ---
 
 ## Task
@@ -186,7 +186,7 @@ Skip `Administrator`. The gateway has no need for moderation or member-managemen
 
 Discord allows one gateway connection per bot token. To run several bots from one host:
 
-- **One bot across many guilds (`Guilds` intent supports any number) with one gateway.** This is the path Discord supports natively. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`) covers every guild and DM the bot serves.
+- **One bot across many guilds (`Guilds` intent supports any number) with one gateway.** This is the path Discord supports natively. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply — `replyDedupScope`) covers every guild and DM the bot serves.
 
 - **Two or more Discord bots — run them under separate `~/.ethos/` roots, not in one process.**
 
@@ -227,7 +227,7 @@ Have a non-allowlisted account `@mention` the bot in a guild. With the default c
 
 **Dedup is active.**
 
-Send the same prompt twice within 30 seconds. The bot answers once if generated text is identical.
+Send the same prompt twice within 30 seconds. The bot answers both, even with identical text — reply dedup is scoped to the inbound message it answers (`replyDedupScope`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). What dedup drops is one reply sent twice.
 
 ## Troubleshoot
 
@@ -250,7 +250,7 @@ Expected. Discord caps outbound text at 2,000 characters; `chunkText` splits at 
 `channels.fetch(chatId)` will start returning 404. The adapter logs the delivery failure and the lane stays alive for other chats. Re-invite or wait. If the chat id is the wrong type altogether (e.g. a category), `'send' in channel` is false and the adapter returns `Channel not found or not sendable`.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
 
 **Pairing code expired.**
 Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again — a new code is issued. Owners can `/communications approve-all` to approve every pending sender.

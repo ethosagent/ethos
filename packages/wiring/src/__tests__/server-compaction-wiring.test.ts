@@ -46,7 +46,11 @@ describe('createLLM — providers.<n>.serverCompaction', () => {
     expect(servesServerCompaction(llm, { key: 'claude' })).toBe(true);
     expect(servesServerCompaction(llm, { key: 'router' })).toBe(false);
     const hop = (llm as ChainedProvider).entryProvider('claude');
-    expect(triggerOf(hop)).toBe(pressureGateTokens(200_000));
+    // The gate reserves the output cap the provider reports
+    // (`capabilities.maxOutputTokens`), so the default trigger does too.
+    const cap = hop?.capabilities?.maxOutputTokens;
+    expect(cap).toBeDefined();
+    expect(triggerOf(hop)).toBe(pressureGateTokens(200_000, undefined, undefined, cap));
     expect(providerEntriesOf(llm)?.map((e) => e.key)).toEqual(['claude', 'router']);
   });
 
@@ -69,12 +73,14 @@ describe('createLLM — providers.<n>.serverCompaction', () => {
   it('follows the resolved compaction pressure and ceiling', async () => {
     const config: WiringConfig = {
       ...TOP,
-      compaction: { pressure: 0.5, maxContextTokens: 90_000 },
+      compaction: { pressure: 0.5, maxContextTokens: 60_000 },
       providers: [{ provider: 'anthropic', apiKey: 'sk-ant-test', serverCompaction: true }],
     };
     const llm = await createLLM(config);
-    expect(triggerOf(llm)).toBe(pressureGateTokens(200_000, 0.5, 90_000));
-    expect(triggerOf(llm)).toBe(90_000);
+    expect(triggerOf(llm)).toBe(
+      pressureGateTokens(200_000, 0.5, 60_000, llm.capabilities?.maxOutputTokens),
+    );
+    expect(triggerOf(llm)).toBe(60_000);
   });
 
   it('warns and compacts locally when the entry is not anthropic', async () => {

@@ -184,6 +184,7 @@ import {
   idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
+  startAdaptersIsolated,
   validateBindings,
   warnEmailSenderAuthUnconfigured,
   wireApprovalFlow,
@@ -472,7 +473,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
     // Serve-role turn shape (`runCronTurn`): reuses a web-origin session when
-    // the personality matches, which the gateway's simpler runJob does not.
+    // the personality matches, which the gateway's `createCronRunJob` does not.
     runJob: async (job, runOpts) => {
       const loop = sharedLoop;
       if (!loop) {
@@ -490,7 +491,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       const webOrigin =
         job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
       const ranAt = new Date().toISOString();
-      const { sessionKey, output, reusedWebOrigin, progress } = await runCronTurn({
+      const { sessionKey, output, transcript, reusedWebOrigin, progress } = await runCronTurn({
         loop,
         sessions: session,
         jobId: job.id,
@@ -513,7 +514,14 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         outputPath: null,
         ...(reusedWebOrigin && webOrigin ? { sessionKey: webOrigin } : {}),
       });
-      return { jobId: job.id, ranAt, output, sessionKey, progress };
+      return {
+        jobId: job.id,
+        ranAt,
+        output,
+        sessionKey,
+        progress,
+        ...(transcript !== undefined ? { transcript } : {}),
+      };
     },
   });
   watcherManager.attachScheduler(scheduler);
@@ -1340,7 +1348,35 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // §3b step 8 — adapters started. HARD PRECONDITION for step 9: a delivery
   // sweep against cold adapters sends into nothing while burning obligations.
   // -------------------------------------------------------------------------
-  await Promise.all(adapters.map((a) => a.start()));
+  // One failing adapter must not stop the rest (UBP-010), and a failed one is
+  // retried in the background until it starts, fails permanently, or
+  // `shutdown` aborts `adapterStartRetry` (V-CC-4). One that recovers after the
+  // platform-webhook mounts below were built is mounted by
+  // `onAdapterRecovered`, assigned there.
+  //
+  // Unlike `ethos gateway start`, boot does not exit when EVERY adapter failed
+  // (V2-RT-5, `allFailed: 'continue'`): this process also hosts the web UI —
+  // the Settings page where a revoked token gets fixed — cron and serve. Each
+  // failure is already warned about and recorded (`gateway.adapter_start_failed`,
+  // then `_abandoned` for a refused credential), and `/healthz`, `/readyz` and
+  // `gateway-health.json` report the adapter not ok through its own `health()`.
+  const adapterStartRetry = new AbortController();
+  let onAdapterRecovered: (adapter: PlatformAdapter) => void = () => {};
+  const adapterStart = await startAdaptersIsolated(adapters, {
+    observability: gatewayObservability(),
+    warn: (message) => console.warn(`${c.yellow}⚠${c.reset} ${message}`),
+    allFailed: 'continue',
+    retry: {
+      signal: adapterStartRetry.signal,
+      onStarted: (a) => onAdapterRecovered(a),
+      isRetired: (a) => gateway.hasStopped(a),
+    },
+  });
+  if (adapters.length > 0 && adapterStart.started.length === 0) {
+    console.warn(
+      `${c.yellow}⚠ no chat adapter started — the web UI, cron and serve keep running; fix the bot credentials in Settings or ~/.ethos/config.yaml${c.reset}`,
+    );
+  }
   heartbeatStartedAt = new Date().toISOString();
   await gateway.pluginsReady();
 
@@ -1615,7 +1651,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // this process's logs to say why. There is also nothing to duplicate: the
   // dispatch-map builder and the server are both shared imports.
   //
-  // PLACED AFTER `adapters.map((a) => a.start())` (§3b step 8 above), AND THAT
+  // PLACED AFTER `startAdaptersIsolated(adapters, …)` (§3b step 8 above), AND THAT
   // IS LOAD-BEARING — the same ordering constraint `runGatewayStart` documents.
   // `TelegramAdapter.webhook` is `undefined` until `start()` has registered the
   // webhook and built grammy's callback, so building the map any earlier mounts
@@ -1657,6 +1693,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     }
   };
   ensurePlatformWebhookServer();
+  // An adapter whose start succeeded on a background retry (V-CC-4) has only
+  // now built its webhook handler: mount it in the live table, binding the
+  // listener if this is the first route.
+  onAdapterRecovered = (adapter) => {
+    const mounts = buildPlatformWebhookMounts(cfg, [adapter], (message) => logger.warn(message));
+    for (const [botKey, handler] of mounts.telegram)
+      platformWebhookMounts.telegram.set(botKey, handler);
+    for (const [route, handler] of mounts.slack) platformWebhookMounts.slack.set(route, handler);
+    ensurePlatformWebhookServer();
+  };
   /** The inverse of `ensurePlatformWebhookServer` — see
    *  `releaseWebhookServerIfIdle` for why an on-demand bind owes an on-demand
    *  unbind. Both mount tables have to be empty: one listener serves the
@@ -1930,7 +1976,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // Phase C, §0 row 6 — start THIS adapter, then mount THIS adapter's
       // native webhook route, as one sequence. The cold-boot path gets the same
       // ordering per BOOT by placing `buildPlatformWebhookMounts` after
-      // `Promise.all(adapters.map(start))`; a hot-add needs it per ADAPTER,
+      // `startAdaptersIsolated(adapters, …)`; a hot-add needs it per ADAPTER,
       // which is what `startAndMountPlatformWebhook` is. A non-webhook-mode bot
       // mounts nothing and the call is just a start.
       start: async () => {
@@ -2487,6 +2533,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // promise, memoized; every caller awaits that same one.
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
+      adapterStartRetry.abort();
       // FIRST, and it is an await, not a `clearInterval`. A reconcile already
       // in flight adds bots, replaces adapters and rebinds the web server —
       // exactly the resources every step below tears down — so a teardown

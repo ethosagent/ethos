@@ -5,12 +5,16 @@ export const CODEX_DISCOVERY_TIMEOUT_MS = 10_000;
 /** How long a discovery result is reused before the models endpoint is asked again. */
 export const CODEX_DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1_000;
 
+/** The static roster used when discovery fails — Codex's current models per
+ *  https://learn.chatgpt.com/docs/models (2026-09-28). `gpt-5.5` is left out: it
+ *  retires from Codex on 2026-10-14, so it is not worth suggesting. */
 export const CODEX_FALLBACK_MODELS = [
   'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
-  'gpt-5.5',
 ];
 
 export interface ModelDiscovery {

@@ -50,7 +50,8 @@ const SCHEMA = `
     blocked_request_id TEXT,
     deliver            TEXT NOT NULL DEFAULT 'user',
     origin_user_id     TEXT,
-    toolset_narrowing  TEXT
+    toolset_narrowing  TEXT,
+    tainted            INTEGER NOT NULL DEFAULT 0
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS job_events (
@@ -90,11 +91,11 @@ const SCHEMA = `
 const DELIVERY_INDEX =
   'CREATE INDEX IF NOT EXISTS jobs_undelivered ON jobs(origin_bot_key, status, delivered_at)';
 
-const JOB_STORE_SCHEMA_VERSION = 9;
+const JOB_STORE_SCHEMA_VERSION = 10;
 
 /**
  * Forward-only DDL steps. Each brings a `(N-1)` database to `N`; the baseline
- * above already describes v9, so a FRESH database never runs one. The
+ * above already describes v10, so a FRESH database never runs one. The
  * `table_info` guards keep each ALTER idempotent even if a database was
  * hand-repaired to the newer shape without its `user_version` being bumped.
  */
@@ -135,6 +136,10 @@ const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
   // (`BackgroundJob.toolsetNarrowing`). NULL on every existing row, which
   // reads as "no narrowing" — what those jobs actually ran under.
   9: (db) => addColumnIfMissing(db, 'toolset_narrowing', 'TEXT'),
+  // v9 -> v10: the run read untrusted content (`BackgroundJob.tainted`,
+  // V2-SEC-2). The DEFAULT reads every existing row as untainted — no taint was
+  // ever recorded for them.
+  10: (db) => addColumnIfMissing(db, 'tainted', 'INTEGER NOT NULL DEFAULT 0'),
 };
 
 /**
@@ -148,8 +153,9 @@ const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
  * (extensions/goal-store/src/index.ts, "an ADDITIVE NULLABLE column does not
  * bump user_version"), also used by session-sqlite.
  *
- * Rule-5 conflict, flagged not rewritten: steps 2–9 of `JOB_STORE_MIGRATIONS`
- * above bumped `user_version` for additive columns too. New additive columns go
+ * Rule-5 conflict, flagged not rewritten: steps 2–10 of `JOB_STORE_MIGRATIONS`
+ * above bumped `user_version` for additive columns too (step 10, `tainted`,
+ * landed on main beside this helper). New additive columns go
  * here; those steps are left as they are (rewriting a shipped chain is its own
  * change) and are a cleanup candidate.
  *
@@ -206,6 +212,7 @@ interface JobRow {
   origin_user_id: string | null;
   toolset_narrowing: string | null;
   room_audience: string | null;
+  tainted: number;
 }
 
 interface JobEventRow {
@@ -256,6 +263,7 @@ function rowToJob(r: JobRow): BackgroundJob {
     blockedSince: r.blocked_since ?? undefined,
     blockedRequestId: r.blocked_request_id ?? undefined,
     deliver: r.deliver === 'parent' ? 'parent' : 'user',
+    ...(r.tainted === 1 ? { tainted: true } : {}),
   };
 }
 
@@ -516,7 +524,7 @@ export class SQLiteJobStore implements JobStore {
   async finish(
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
-    fields: { summary?: string; error?: string },
+    fields: { summary?: string; error?: string; tainted?: boolean },
   ): Promise<void> {
     const tx = this.db.transaction(() => {
       const row = this.db.prepare('SELECT status FROM jobs WHERE id = ?').get(id) as
@@ -534,10 +542,18 @@ export class SQLiteJobStore implements JobStore {
       this.db
         .prepare(
           `UPDATE jobs SET status = ?, summary = ?, error = ?, finished_at = ?,
-             blocked_since = NULL, blocked_request_id = NULL
+             blocked_since = NULL, blocked_request_id = NULL,
+             tainted = MAX(tainted, ?)
            WHERE id = ?`,
         )
-        .run(terminal, fields.summary ?? null, fields.error ?? null, Date.now(), id);
+        .run(
+          terminal,
+          fields.summary ?? null,
+          fields.error ?? null,
+          Date.now(),
+          fields.tainted === true ? 1 : 0,
+          id,
+        );
 
       // A stale row that turns out alive recovers: record it before the terminal
       // event so the audit trail reads stale -> recovered -> <terminal>.

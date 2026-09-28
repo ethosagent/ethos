@@ -24,9 +24,11 @@
 // don't depend on extensions.
 
 import { resolveDowngradedTools } from '@ethosagent/safety-injection';
+import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
 import { createFileTools } from '@ethosagent/tools-file';
+import { createMemoryTools, createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { createProposeSelfAmendmentTool } from '@ethosagent/tools-personality-design';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalTools } from '@ethosagent/tools-terminal';
@@ -42,6 +44,20 @@ const sandboxStub: SandboxLike = {
   run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
 } as unknown as SandboxLike;
 
+// The memory and skill factories only close over their ports; nothing is
+// called at construction, so an empty stub is enough to read `name`.
+type MemoryLike = Parameters<typeof createMemoryTools>[0];
+type SessionLike = Parameters<typeof createMemoryTools>[1];
+type SkillProposeOpts = Parameters<typeof createSkillProposeTool>[0];
+const memoryStub = {} as unknown as MemoryLike;
+const sessionStub = {} as unknown as SessionLike;
+const skillProposeStub = {
+  learning: {},
+  dataDir: '/tmp/ethos-test',
+  origin: 'chat',
+  target: () => null,
+} as unknown as SkillProposeOpts;
+
 describe('Ch.3d default downgrade list — drift gate', () => {
   it('every name in the default `auto` set is the name of an actual registered tool', () => {
     const registered = new Set<string>();
@@ -52,6 +68,9 @@ describe('Ch.3d default downgrade list — drift gate', () => {
     for (const t of createCodeTools(sandboxStub)) registered.add(t.name);
     for (const t of createBrowserTools({})) registered.add(t.name);
     registered.add(createProposeSelfAmendmentTool(undefined).name);
+    for (const t of createMemoryTools(memoryStub, sessionStub)) registered.add(t.name);
+    for (const t of createTeamMemoryTools(memoryStub)) registered.add(t.name);
+    registered.add(createSkillProposeTool(skillProposeStub).name);
 
     const downgraded = [...resolveDowngradedTools('auto')];
     const missing = downgraded.filter((name) => !registered.has(name));

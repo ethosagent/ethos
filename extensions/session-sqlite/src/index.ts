@@ -765,32 +765,39 @@ export class SQLiteSessionStore implements SessionStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Undo — soft-delete recent user+assistant turn pairs
+  // Undo — soft-delete the most recent whole turns
   // ---------------------------------------------------------------------------
 
+  /**
+   * Soft-delete the last `n` TURNS and return how many were removed (fewer
+   * when the session has fewer). A turn starts at a `role: 'user'` row and
+   * holds every later row — assistant, `tool_result`, `user_steer` — up to the
+   * next `user` row, so the cut is simply "from the n-th most recent live
+   * `user` row to the end" (UBP-023). Pairing rows by adjacency instead
+   * refused a tool-using turn and, asked for two, deleted a question and its
+   * tool_use while its tool_result and answer stayed live. Pinned by
+   * `__tests__/undo-turns.test.ts`.
+   */
   async undoTurns(sessionId: string, n: number): Promise<number> {
-    const rows = this.db
+    if (n < 1) return 0;
+    const users = this.db
       .prepare(
-        `SELECT id, role FROM messages
-         WHERE session_id = ? AND deleted_at IS NULL
+        `SELECT timestamp, rowid AS _row FROM messages
+         WHERE session_id = ? AND deleted_at IS NULL AND role = 'user'
          ORDER BY timestamp DESC, rowid DESC LIMIT ?`,
       )
-      .all(sessionId, n * 2 + 1) as Array<{ id: string; role: string }>;
-
-    const toDelete: string[] = [];
-    let pairs = 0;
-    let i = 0;
-    while (i < rows.length && pairs < n) {
-      const r = rows[i];
-      const next = rows[i + 1];
-      if (r?.role === 'assistant' && next?.role === 'user') {
-        toDelete.push(r.id, next.id);
-        pairs++;
-        i += 2;
-      } else {
-        i++;
-      }
-    }
+      .all(sessionId, n) as Array<{ timestamp: string; _row: number }>;
+    const cut = users[users.length - 1];
+    if (!cut) return 0;
+    const turns = users.length;
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM messages
+         WHERE session_id = ? AND deleted_at IS NULL
+           AND (timestamp > ? OR (timestamp = ? AND rowid >= ?))`,
+      )
+      .all(sessionId, cut.timestamp, cut.timestamp, cut._row) as Array<{ id: string }>;
+    const toDelete = rows.map((r) => r.id);
     if (toDelete.length === 0) return 0;
     const now = new Date().toISOString();
     const placeholders = toDelete.map(() => '?').join(',');
@@ -803,7 +810,7 @@ export class SQLiteSessionStore implements SessionStore {
         .prepare(`UPDATE messages SET deleted_at = ? WHERE id IN (${placeholders})`)
         .run(now, ...toDelete);
     })();
-    return pairs;
+    return turns;
   }
 
   /**

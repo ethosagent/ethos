@@ -53,21 +53,21 @@ function passesFilter(entry: ToolEntry, filterOpts: ToolFilterOpts | undefined):
   // expresses what the surface cannot render, not what the personality may use.
   if (excludeTools?.includes(toolName)) return false;
 
-  // MCP server gate: MCP tools only appear when their server is in the allowlist.
+  // MCP server gate (configured names resolve through `mcpServerSegment`, end of file).
   if (allowedMcpServers !== undefined) {
     const server = mcpServerName(toolName);
-    if (server !== undefined && !allowedMcpServers.includes(server)) return false;
+    if (server !== undefined && !listsServer(allowedMcpServers, server)) return false;
   }
 
   // Per-tool MCP gate: after the server-level gate passes, check tool-level allowlist.
   if (allowedMcpTools !== undefined) {
     const server = mcpServerName(toolName);
     if (server !== undefined) {
-      const allowed = allowedMcpTools[server];
-      if (allowed !== undefined) {
+      const entry = allowedToolsFor(allowedMcpTools, server);
+      if (entry !== undefined) {
         // Extract bare tool name: mcp__linear__list_issues -> list_issues
         const bareName = toolName.split('__').slice(2).join('__');
-        if (!allowed.includes(bareName)) return false;
+        if (!listsTool(entry, bareName, toolName)) return false;
       }
     }
   }
@@ -585,4 +585,118 @@ export class DefaultToolRegistry implements ToolRegistry {
       };
     });
   }
+
+  /** UBP-035 — the MCP naming convention this registry parses (see `mcpToolName`
+   *  below), on the class because the package barrel exports the class. */
+  static readonly mcpToolName = mcpToolName;
+  static readonly mcpToolPrefix = mcpToolPrefix;
+  static readonly mcpServerSegment = mcpServerSegment;
+}
+
+// ---------------------------------------------------------------------------
+// UBP-035 — provider-safe MCP tool names
+// ---------------------------------------------------------------------------
+//
+// OpenAI, Bedrock and Anthropic accept a function name only if it matches
+// `^[A-Za-z0-9_-]{1,64}$`; one non-conforming name makes every request that
+// carries it a 400. An MCP tool is registered as `mcp__<server>__<tool>`, and
+// both halves come from outside (the operator's server name, the server's own
+// tool names), so the name is made conforming here, once, for every caller:
+// `adaptMcpTool` (extensions/tools-mcp) registers under it, and the allowlist
+// gates in `passesFilter` above resolve configured names through it.
+//
+// A name that already conforms (for the server half, also: no `__`, no trailing
+// `_` — `isVerbatimServerSegment`) is returned unchanged, so no existing
+// deployment's tool names (or the allowlists and mcp.yaml keys that name them)
+// move. Otherwise each non-conforming half is rewritten — disallowed characters
+// become `_`, it is truncated to fit — and suffixed with `-` + an 8-hex FNV-1a
+// hash of the ORIGINAL half, so two different originals cannot land on the
+// same name by truncation or character folding. The server half depends on the
+// server name alone, so `mcpToolPrefix(server)` is stable for every tool of a
+// server. The original tool name is kept by the adapter's `execute` closure,
+// which is what dispatch calls the server with.
+
+const PROVIDER_TOOL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_PROVIDER_TOOL_NAME = 64;
+/** Longest server half kept verbatim; leaves a tool half of at least 17 chars. */
+const MAX_MCP_SERVER_SEGMENT = 40;
+
+function fnv1aHex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+function foldToCharset(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/g, '_');
+}
+
+/**
+ * True when `server` can be the `<server>` half verbatim. Besides the charset
+ * and length, the half is read back by splitting on `__` (`mcpServerName`
+ * above, `checkMcpEnabled`/`checkMcpRejectArgs` in agent-loop/mcp-policy.ts),
+ * so it may not contain `__` or end in `_` (`x_` + `__` reads as `x` + `__` +
+ * `_…`). A leading `_` splits back correctly and is kept (V-CP-4).
+ */
+function isVerbatimServerSegment(server: string): boolean {
+  return (
+    /^[A-Za-z0-9_-]+$/.test(server) &&
+    server.length <= MAX_MCP_SERVER_SEGMENT &&
+    !server.includes('__') &&
+    !server.endsWith('_')
+  );
+}
+
+/** The `<server>` half of an MCP tool name. Pure function of the server name. */
+export function mcpServerSegment(server: string): string {
+  if (isVerbatimServerSegment(server)) return server;
+  const suffix = `-${fnv1aHex(server)}`;
+  const folded = foldToCharset(server)
+    .replace(/_{2,}/g, '_')
+    .slice(0, MAX_MCP_SERVER_SEGMENT - suffix.length)
+    .replace(/^_+|_+$/g, '');
+  return `${folded || 's'}${suffix}`;
+}
+
+/** `mcp__<server half>__` — every tool of `server` starts with it. */
+export function mcpToolPrefix(server: string): string {
+  return `mcp__${mcpServerSegment(server)}__`;
+}
+
+/** The provider-safe registry name of MCP tool `tool` on server `server`. */
+export function mcpToolName(server: string, tool: string): string {
+  const prefix = mcpToolPrefix(server);
+  const raw = `${prefix}${tool}`;
+  if (PROVIDER_TOOL_NAME_RE.test(raw)) return raw;
+  const suffix = `-${fnv1aHex(tool)}`;
+  const budget = MAX_PROVIDER_TOOL_NAME - prefix.length - suffix.length;
+  return `${prefix}${foldToCharset(tool).slice(0, budget)}${suffix}`;
+}
+
+/** True when `configName` (an allowlist or mcp.yaml key) names the server half `segment`. */
+function namesServer(configName: string, segment: string): boolean {
+  return configName === segment || mcpServerSegment(configName) === segment;
+}
+
+/** True when the `allowedMcpServers` list names the server whose half is `segment`. */
+function listsServer(allowedMcpServers: string[], segment: string): boolean {
+  return allowedMcpServers.some((s) => namesServer(s, segment));
+}
+
+/** The `allowedMcpTools` entry keyed by the server whose half is `segment`. */
+function allowedToolsFor(
+  allowedMcpTools: Record<string, string[]>,
+  segment: string,
+): { key: string; tools: string[] } | undefined {
+  const key = Object.keys(allowedMcpTools).find((k) => namesServer(k, segment));
+  const tools = key !== undefined ? allowedMcpTools[key] : undefined;
+  return key !== undefined && tools !== undefined ? { key, tools } : undefined;
+}
+
+/** A listed tool matches by its bare name, or by its full name when `mcpToolName` rewrote it. */
+function listsTool(entry: { key: string; tools: string[] }, bareName: string, toolName: string) {
+  return entry.tools.some((t) => t === bareName || mcpToolName(entry.key, t) === toolName);
 }

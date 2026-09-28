@@ -84,7 +84,10 @@ describe('Gateway — gateway_message claiming hook', () => {
     expect(reply.text).toBe('pong');
   });
 
-  it('a second identical reply within the dedup TTL is suppressed', async () => {
+  // UBP-014 (ARCHITECTURE.md §V S3 as amended 2026-09-28): the claimed reply is
+  // deduped per inbound message, like a turn's reply. Before, the second
+  // `/ping` got no `pong` for 30s.
+  it('identical claimed replies to two different messages both send', async () => {
     const loop = stubLoop();
     loop.hooks.registerClaiming('gateway_message', async () => ({
       handled: true,
@@ -98,7 +101,7 @@ describe('Gateway — gateway_message claiming hook', () => {
     await gw.handleMessage(makeMessage('/ping', 'b'), adapter);
 
     expect(loop.run).not.toHaveBeenCalled();
-    expect(adapter.send).toHaveBeenCalledTimes(1);
+    expect(adapter.send).toHaveBeenCalledTimes(2);
   });
 
   it('handled without a reply sends nothing and starts no turn', async () => {

@@ -26,6 +26,7 @@ import { resolveToolLoading } from '../tool-loading';
 import type { LoopDeps, TurnSetup, TurnSetupResult } from '../turn-context';
 import type { TurnDecisions } from '../turn-decisions';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
+import { turnGateWindow } from '../turn-window';
 
 /**
  * Where a declaration that did not resolve lives, and the edit that fixes it —
@@ -587,6 +588,11 @@ export async function* setupTurn(
       ...(userMemoryOnly ? { userMemoryOnly } : {}),
       ...(toolLoading ? { toolLoading } : {}),
       ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
+      ...(() => {
+        const w = turnGateWindow(deps.llm, deps.compaction?.contextWindowFor, modelOverride);
+        return w !== undefined ? { gateWindowTokens: w } : {};
+      })(),
+      ...(ethosSession.metadata ? { sessionMetadata: ethosSession.metadata } : {}),
     },
   };
 }

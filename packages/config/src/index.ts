@@ -776,15 +776,17 @@ export interface TelegramBotConfig {
   webhookSecretToken?: string;
   /**
    * Discard updates Telegram queued while the process was down. Default
-   * `true`, preserving the literal that used to be hardcoded at the call site.
+   * `false` (UBP-002, owner decision D3): a message sent during a crash,
+   * upgrade or supervisor restart is answered after the restart, entering
+   * through the gateway's `acceptInbound` like any live message. The default
+   * is applied by the adapter (`TelegramAdapter` constructor,
+   * `config.dropPendingUpdates ?? false`), not here.
    *
    * Only affects POLL-mode bots: grammy's `bot.start()` calls
-   * `deleteWebhook({ drop_pending_updates })` on every invocation, so every
-   * restart drops the backlog. In webhook mode `bot.start()` is never called
-   * and this flag does nothing. A bot that stays on poll mode under a
-   * sleep/wake deployment should set this `false`, so a restart after a sleep
-   * window does not wipe the backlog Telegram queued while the process was
-   * paused (§6).
+   * `deleteWebhook({ drop_pending_updates })` on every invocation, so with
+   * `true` every restart drops the backlog. In webhook mode `bot.start()` is
+   * never called and this flag does nothing. Set it `true` only to have a
+   * restart deliberately skip everything queued while the bot was down.
    */
   dropPendingUpdates?: boolean;
   /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
@@ -1163,6 +1165,16 @@ export interface ProviderChainEntry {
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
   /**
+   * Azure-only (V-CP-5 / UBP-038): which output-cap parameter requests to this
+   * entry's deployment send. Absent → the model-id rule on the deployment name
+   * (`outputCapParam` in extensions/llm-openai-compat/src/transport.ts), which
+   * sends `max_tokens` to a reasoning deployment whose name is not a reasoning
+   * model id — and Azure refuses it. `max_completion_tokens` forces the
+   * reasoning spelling for such a deployment. Read by `azureFactory`
+   * (extensions/llm-azure); any other value is refused at parse with a notice.
+   */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
+  /**
    * Whether this entry is a failover hop for the default rung. Absent means
    * `true` — every entry that ever existed was one (D23b).
    *
@@ -1227,15 +1239,18 @@ const PROVIDER_CHAIN_FIELDS = [
   'apiVersion',
   'region',
   'awsProfile',
+  'outputCapParam',
   'failover',
   'serverCompaction',
   'serverCompactionTriggerTokens',
 ] as const;
 type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
-/** The modelled fields whose value is NOT a string — the booleans `failover`
- *  and `serverCompaction` and the integer `serverCompactionTriggerTokens`,
- *  which parse and render handle by hand. */
+/** The modelled fields whose value is NOT a free string — the booleans
+ *  `failover` and `serverCompaction`, the integer
+ *  `serverCompactionTriggerTokens` and the two-value `outputCapParam`, which
+ *  parse and render handle by hand. */
 const PROVIDER_CHAIN_TYPED_FIELDS = [
+  'outputCapParam',
   'failover',
   'serverCompaction',
   'serverCompactionTriggerTokens',
@@ -1377,6 +1392,18 @@ export function parseProviderChain(
         }
         continue;
       }
+      if (field === 'outputCapParam') {
+        if (value === 'max_tokens' || value === 'max_completion_tokens') {
+          entry.outputCapParam = value;
+        } else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.outputCapParam' must be max_tokens or ` +
+              `max_completion_tokens, so '${value}' was ignored — the parameter follows the ` +
+              'deployment name.',
+          );
+        }
+        continue;
+      }
       if (field === 'serverCompactionTriggerTokens') {
         const n = Number(value);
         if (/^\d+$/.test(value) && Number.isSafeInteger(n) && n > 0) {
@@ -1434,6 +1461,11 @@ export function renderProviderChain(
       if (field === 'serverCompactionTriggerTokens') {
         const n = entry.serverCompactionTriggerTokens;
         if (n !== undefined) out.push([`providers.${i}.${field}`, String(n)]);
+        continue;
+      }
+      if (field === 'outputCapParam') {
+        const param = entry.outputCapParam;
+        if (param !== undefined) out.push([`providers.${i}.${field}`, param]);
         continue;
       }
       const value = entry[field];
@@ -7065,7 +7097,10 @@ export function parseConfigYaml(src: string): EthosConfig {
   const config: EthosConfig = {
     schemaVersion: Number.isFinite(parsedSchemaVersion) ? parsedSchemaVersion : undefined,
     provider: kv.provider ?? 'anthropic',
-    model: kv.model ?? 'claude-sonnet-5',
+    // The catalog's Anthropic default (`getDefaultModel('anthropic')` in
+    // packages/wiring/src/model-catalog.ts); this package cannot import it, so
+    // packages/wiring/src/__tests__/config-default-model.test.ts pins the two equal.
+    model: kv.model ?? 'claude-opus-5-5',
     apiKey: kv.apiKey ?? '',
     personality: kv.personality ?? DEFAULT_PERSONALITY_ID,
     memory:

@@ -1,8 +1,12 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ENV_PATTERNS,
   ENV_TO_REF,
   EnvSecretsResolver,
+  loadDotEnv,
   REF_TO_ENV,
   resolveEnvKey,
 } from '../env-secrets';
@@ -276,5 +280,25 @@ describe('EnvSecretsResolver.list', () => {
     const refs = await resolver.list();
     expect(refs).not.toContain('env/MY_SPECIAL_KEY');
     delete process.env.MY_SPECIAL_KEY;
+  });
+});
+
+// V-ES-8 — the host-env allowlists refuse every name `loadDotEnv` set, so it
+// must record them.
+describe('loadDotEnv records the names it loaded', () => {
+  it('writes ETHOS_DOTENV_KEYS, merged across calls', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-dotenv-'));
+    try {
+      delete process.env.ETHOS_DOTENV_KEYS;
+      writeFileSync(join(dir, 'a.env'), 'VES8_A=1\n# comment\nHTTPS_PROXY="http://p:1"\n');
+      writeFileSync(join(dir, 'b.env'), 'VES8_B=2\n');
+      loadDotEnv(join(dir, 'a.env'));
+      loadDotEnv(join(dir, 'b.env'));
+      const recorded = (): string | undefined => process.env.ETHOS_DOTENV_KEYS;
+      expect(recorded()?.split(',').sort()).toEqual(['HTTPS_PROXY', 'VES8_A', 'VES8_B']);
+      expect(process.env.HTTPS_PROXY).toBe('http://p:1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

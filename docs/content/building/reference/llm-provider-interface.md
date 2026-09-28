@@ -170,6 +170,12 @@ Token accounting for the call. `TokenUsage` carries `inputTokens`, `outputTokens
 
 Final chunk. `finishReason` tells the loop whether to feed tool results back (`tool_use`) or end the turn (`end_turn`, `max_tokens`, `stop_sequence`).
 
+Report `max_tokens` whenever the output token cap stopped the call, because the loop acts on it (`packages/core/src/agent-loop/output-cap.ts`):
+
+- A reply cut off at the cap is kept as it is, and the user sees a `⚠ reply cut off` notice after its text (`MAX_TOKENS_REPLY_NOTICE`, yielded by `packages/core/src/agent-loop/stages/text-end.ts`).
+- A tool call whose arguments the cap cut off does not run. The model gets a rejection naming the cap and asking it to split the work (`rejectCutOffToolCalls`), not the generic "malformed tool arguments" text. A call whose JSON parsed strictly was complete and still runs.
+- A turn that ends with no reply text yields an `error` event with code `empty_completion` when the cap cut it off or when it ran no tool at all. Its message says whether the cap was the cause (`emptyCompletionError`). A turn that did its work through tools and then stopped without text ends with a normal, blank `done` (`settleTextEnd` in `packages/core/src/agent-loop/stages/text-end.ts`, pinned by `packages/core/src/__tests__/silent-tool-turn.test.ts`).
+
 #### warning {#warning}
 
 A non-fatal notice from the provider. The stream continues. `AnthropicProvider` emits `SERVER_COMPACTION_REJECTED_WARNING` when the API refused the compaction edit and the request was retried without it.

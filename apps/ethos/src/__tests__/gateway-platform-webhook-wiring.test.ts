@@ -161,9 +161,9 @@ describe('§9 default-preserving — no new config key set anywhere', () => {
     expect(telegram).not.toHaveProperty('useWebhook');
     expect(telegram).not.toHaveProperty('webhookUrl');
     expect(telegram).not.toHaveProperty('webhookSecretToken');
-    // Passed through as `undefined`, which the adapter resolves to `true` via
-    // its own `?? true`. Same effective long-poll behaviour as the hardcoded
-    // literal this replaced — see the `dropPendingUpdates` block below.
+    // Passed through as `undefined`, which the adapter resolves to `false` via
+    // its own `?? false` (D3 — queued updates survive a restart;
+    // `TelegramAdapter` constructor) — see the `dropPendingUpdates` block below.
     expect(telegram.dropPendingUpdates).toBeUndefined();
 
     const slack = capturedOf(adapters[1]);
@@ -281,7 +281,7 @@ describe('§2a Telegram webhook config reaches the adapter constructor', () => {
     expect(capturedOf(adapters[0]).dropPendingUpdates).toBe(false);
   });
 
-  it('does not double-default dropPendingUpdates — the adapter owns the `?? true`', async () => {
+  it('does not double-default dropPendingUpdates — the adapter owns the `?? false`', async () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
     expect(src).toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates,/);
     expect(src).not.toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates \?\?/);
@@ -486,7 +486,7 @@ describe('buildPlatformWebhookMounts', () => {
 describe('runGatewayStart wiring (source)', () => {
   it('builds the mounts AFTER every adapter has been started', async () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
-    const startedAt = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+    const startedAt = src.indexOf('await startAdaptersIsolated(adapters, {');
     const mountedAt = src.indexOf('buildPlatformWebhookMounts(config, adapters');
     expect(startedAt).toBeGreaterThan(-1);
     expect(mountedAt).toBeGreaterThan(-1);
@@ -497,8 +497,11 @@ describe('runGatewayStart wiring (source)', () => {
 
   it('starts the server only when at least one bot or app needs it', async () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
+    // The gate lives in `ensurePlatformWebhookServer`, as in boot.ts, so an
+    // adapter that starts on a background retry (V-CC-4) can bind the listener
+    // for the first route it mounts. Still: no mounted route, no bound port.
     expect(src).toContain(
-      'if (platformWebhookMounts.telegram.size > 0 || platformWebhookMounts.slack.size > 0) {',
+      'if (platformWebhookMounts.telegram.size === 0 && platformWebhookMounts.slack.size === 0) return;',
     );
   });
 
@@ -536,7 +539,7 @@ describe('runGatewayStart wiring (source)', () => {
 describe('runBoot wiring — parity with runGatewayStart (source)', () => {
   it('builds the mounts AFTER every adapter has been started', async () => {
     const src = await read('apps/ethos/src/commands/boot.ts');
-    const startedAt = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+    const startedAt = src.indexOf('await startAdaptersIsolated(adapters, {');
     const mountedAt = src.indexOf('buildPlatformWebhookMounts(cfg, gateway.listAdapters()');
     expect(startedAt).toBeGreaterThan(-1);
     expect(mountedAt).toBeGreaterThan(-1);

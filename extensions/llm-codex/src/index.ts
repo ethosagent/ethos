@@ -36,6 +36,9 @@ export interface CodexProviderConfig {
   /** Non-fatal diagnostics — today, the configured model not being on this
    *  account's roster. Absent → silent. */
   logger?: Logger;
+  /** UBP-030 — retries of a transient failure before the first byte. Absent → 2;
+   *  wiring passes 0 for a hop in a chain of two or more (failover is the retry). */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +75,7 @@ export class CodexProvider implements LLMProvider {
 
   private readonly getAccessToken: () => Promise<string>;
   private readonly logger: Logger | undefined;
+  private readonly maxRetries: number | undefined;
   private modelChecked = false;
 
   constructor(config: CodexProviderConfig) {
@@ -79,6 +83,7 @@ export class CodexProvider implements LLMProvider {
     this.maxContextTokens = config.maxContextTokens ?? 200_000;
     this.getAccessToken = config.getAccessToken;
     this.logger = config.logger;
+    this.maxRetries = config.maxRetries;
   }
 
   /**
@@ -150,6 +155,7 @@ export class CodexProvider implements LLMProvider {
         options.abortSignal,
         requestTokens,
         'Codex',
+        this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : undefined,
       );
     } catch (err) {
       // A model rejection reads as a bare 400 in the chat UI; append the
@@ -190,6 +196,7 @@ export const codexFactory: LLMProviderFactory = async ({ config: cfg, secrets, l
       return creds.accessToken;
     },
     logger,
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

@@ -417,7 +417,12 @@ describe('Orchestrator guardrails', () => {
       // Bumped 517 -> 520 (openclaw-9.5-adoption item 7, D32): the turn's
       // `serverCompaction` flag on TurnEndCtx (field + one-line doc), copied in
       // buildTurnEndCtx, and read on the existing auto-compaction condition.
-      if (lineCount > 520) {
+      // Bumped 520 -> 524 (V5-1): compaction.ts's evaluateGate reserves the
+      // provider's `capabilities.maxOutputTokens` when the turn sets no
+      // completion budget, and pressureGateTokens takes the same reserve (one
+      // parameter, one type alias, one line of lookup, one doc line); pinned by
+      // __tests__/output-reserve-cap.test.ts.
+      if (lineCount > 524) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

@@ -58,6 +58,35 @@ describe('terminal', () => {
     if (result.ok) expect(result.value).toContain('/tmp');
   });
 
+  // UBP-042: /stop aborts ctx.abortSignal; the host command must die with it.
+  it.skipIf(process.platform === 'win32')(
+    'kills the command and resolves promptly when ctx.abortSignal aborts',
+    async () => {
+      const ac = new AbortController();
+      const started = Date.now();
+      setTimeout(() => ac.abort(), 100);
+      const result = await terminalTool.execute(
+        { command: 'sleep 30; echo late' },
+        { ...ctx, abortSignal: ac.signal },
+      );
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/aborted/i);
+    },
+  );
+
+  // UBP-048: a host-posture `env` must not print a secret from process.env.
+  it('does not expose host secrets to the command env', async () => {
+    process.env.ETHOS_UBP048_ANTHROPIC_API_KEY = 'sk-ant-sentinel';
+    try {
+      const result = await terminalTool.execute({ command: 'env' }, ctx);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).not.toContain('sk-ant-sentinel');
+    } finally {
+      delete process.env.ETHOS_UBP048_ANTHROPIC_API_KEY;
+    }
+  });
+
   it('returns not_available when scopedProcess is absent', async () => {
     const ctxNoProcess = { ...ctx, scopedProcess: undefined };
     const result = await terminalTool.execute({ command: 'echo hi' }, ctxNoProcess);
@@ -133,6 +162,29 @@ describe('terminal routing', () => {
     expect(backend.lastOpts?.personality).toBe(personality);
     // The local path must NOT be used when routed.
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  // UBP-042: the turn's abort signal reaches both execution paths.
+  it('forwards ctx.abortSignal to backend.exec and to the host spawn', async () => {
+    const ac = new AbortController();
+    const backend = makeBackend('routed out');
+    const [routed] = createTerminalTools({ backend });
+    await routed.execute({ command: 'true' }, { ...ctx, abortSignal: ac.signal });
+    expect(backend.lastOpts?.signal).toBe(ac.signal);
+
+    const spawn = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+    const localCtx = {
+      ...ctx,
+      abortSignal: ac.signal,
+      scopedProcess: { spawn } as unknown as typeof ctx.scopedProcess,
+    };
+    const [local] = createTerminalTools();
+    await local.execute({ command: 'true' }, localCtx);
+    expect(spawn).toHaveBeenCalledWith(
+      'bash',
+      ['-c', 'true'],
+      expect.objectContaining({ signal: ac.signal }),
+    );
   });
 
   it('returns ok:true when the routed backend reports exit code 0', async () => {

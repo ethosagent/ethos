@@ -5,7 +5,7 @@ kind: tutorial
 audience: developer
 slug: add-a-channel-adapter
 time: "25 min"
-updated: 2026-08-14
+updated: 2026-09-28
 ---
 
 A [channel adapter](../../getting-started/glossary.md#channel-adapter) bridges a messaging platform — Telegram, Discord, Slack, a webhook, a terminal pipe — to the agent. Inbound, the adapter normalises platform events into `InboundMessage`. Outbound, the adapter calls `send()` and the [gateway](../../getting-started/glossary.md#gateway) handles every cross-cutting concern around it (session lanes, dedup, typing indicators, safety filters).
@@ -90,7 +90,7 @@ The `id` field is the discriminator the gateway routes on (`telegram`, `discord`
 
 The single most common mistake in writing a new adapter is rolling your own outbound deduplication. **Do not.** The gateway already does it.
 
-The gateway holds a `MessageDedupCache` in `extensions/gateway/src/dedup.ts` keyed by `(sessionId, sha256(content))` with a 30-second TTL. Every outbound send routes through `cache.shouldSend(sessionKey, content)` first. Same content within the TTL on the same session is silently dropped. This means:
+The gateway holds a `MessageDedupCache` in `extensions/gateway/src/dedup.ts` keyed by `(sessionId, sha256(content))` with a 30-second TTL; on a reply the key also carries the inbound message it answers (`cache.shouldSend(sessionKey, content, scope)`, `replyDedupScope`). Every outbound send routes through `cache.shouldSend` first. Same content within the TTL on the same session (and, for a reply, the same inbound message) is silently dropped. This means:
 
 - A poll-reconnect that delivers the same inbound twice produces two `loop.run()` invocations — the second one's identical streamed reply is dropped at the cache boundary.
 - An adapter that retries `send` on transient failure ends up double-sending the same content; the cache absorbs it.
@@ -505,7 +505,7 @@ The pattern this enforces: adapters are thin. Every cross-cutting concern (rate 
 ## What you learned
 
 - A channel adapter implements `PlatformAdapter` from `@ethosagent/types`: `id`, `displayName`, capability flags, `start`/`stop`/`send`/`onMessage`/`health`.
-- Adapters do not dedupe outbound sends — the gateway's `MessageDedupCache` keyed by `(sessionId, sha256(content))` with a 30-second TTL is the single dedup path; adapters that try to layer their own break the session-clear semantics.
+- Adapters do not dedupe outbound sends — the gateway's `MessageDedupCache` keyed by `(sessionId, sha256(content))` (plus the inbound message on a reply) with a 30-second TTL is the single dedup path; adapters that try to layer their own break the session-clear semantics.
 - Inbound dedup uses `InboundMessage.messageId` against the gateway's `(platform, chatId, messageId)` triple; set this whenever your platform exposes a stable native id.
 - `onMessage` registers a single handler — the gateway. You do not call `AgentLoop` from the adapter; the gateway owns routing, session lanes, and dispatch.
 - Capability booleans (`canSendTyping`, `canEditMessage`, etc.) are advertised, not negotiated. The gateway uses them to decide which surface affordances to invoke.

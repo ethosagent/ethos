@@ -87,8 +87,18 @@ export interface ScopedFs {
 
 export interface SpawnOpts {
   cwd?: string;
+  /** Extra vars layered over the minimal host env (explicit wins). */
   env?: Record<string, string>;
   timeout?: number;
+  /** Aborting kills the child's whole process group and rejects the spawn. */
+  signal?: AbortSignal;
+  /**
+   * Inherit the host's full `process.env` instead of the minimal passthrough
+   * allowlist (`minimalHostEnv` in packages/core/src/scoped/scoped-process.ts).
+   * The full env carries provider keys and bot tokens; opt in only when a
+   * caller genuinely needs it.
+   */
+  inheritEnv?: boolean;
 }
 
 export interface ProcessResult {

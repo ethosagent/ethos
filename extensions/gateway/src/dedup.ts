@@ -13,12 +13,40 @@ export interface DedupDropInfo {
 }
 
 /**
+ * Narrows a dedup key to one inbound message (UBP-014). `inboundId` is the
+ * inbound message the send answers — its spool row id when spooled, else the
+ * platform message id. Absent → the content-only key.
+ */
+export interface DedupScope {
+  inboundId?: string;
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/** The cache key. The scope hash is joined with `.`, never `:`, so
+ *  `clearSession`'s last-colon split still finds the session id. */
+function dedupKey(sessionId: string, contentHash: string, scope?: DedupScope): string {
+  const base = `${sessionId}:${contentHash}`;
+  return scope?.inboundId ? `${base}.${sha256(scope.inboundId)}` : base;
+}
+
+/**
  * Single dedup path for outbound channel messages. Adapter-specific dedup
  * gets pulled into here so a new adapter doesn't need to invent its own
  * idempotency layer. See plan/phases/30-robustness.md § 30.4.
  *
- * Key shape: `${sessionId}:${sha256(content)}`. Same content within `ttlMs`
- * for the same session is a duplicate. Empty content is never deduped.
+ * Key shape: `${sessionId}:${sha256(content)}`, or
+ * `${sessionId}:${sha256(content)}.${sha256(inboundId)}` when the caller scopes
+ * the check to one inbound message (`DedupScope.inboundId`). Same content
+ * within `ttlMs` for the same session — and, when scoped, the same inbound
+ * message — is a duplicate. Empty content is never deduped.
+ *
+ * Reply paths scope to the inbound message they answer (UBP-014, ARCHITECTURE.md
+ * §V S3 as amended 2026-09-28): two different messages whose correct replies are
+ * byte-identical ("Done.", "OK") both send, while a double send of ONE reply is
+ * still a silent drop. Notices and agent-initiated sends stay content-only.
  *
  * Single-process assumption: dedup state lives entirely in this in-memory
  * `Map`, so it only suppresses duplicates within ONE gateway process. A
@@ -34,6 +62,8 @@ export interface DedupDropInfo {
  */
 export class MessageDedupCache {
   private readonly entries = new Map<string, number>();
+  /** The token of the reservation that currently holds a key (V2-RT-4). */
+  private readonly owners = new Map<string, symbol>();
   private readonly ttlMs: number;
   private readonly disabled: boolean;
   private readonly maxEntries: number;
@@ -51,15 +81,34 @@ export class MessageDedupCache {
 
   /**
    * Returns `true` if the message is new (and records it). Returns `false`
-   * if the same content was sent on the same session within `ttlMs`.
+   * if the same content was sent on the same session (and `scope`) within
+   * `ttlMs`.
+   *
+   * Records at the CHECK, so it is for sends whose failure is owned elsewhere
+   * — the ledger-backed reply and notice paths, where a refused send stays a
+   * `pending` obligation the sweep redelivers. A send with no ledger behind it
+   * treats the check as a reservation: {@link record} commits it once the
+   * platform confirmed, {@link release} un-arms it on failure (UBP-003,
+   * V-GC-1), so a failed send never leaves the key armed.
    */
-  shouldSend(sessionId: string, content: string): boolean {
+  shouldSend(sessionId: string, content: string, scope?: DedupScope): boolean {
+    if (!this.wouldSend(sessionId, content, scope)) return false;
+    this.record(sessionId, content, scope);
+    return true;
+  }
+
+  /**
+   * The check half of {@link shouldSend}, without recording (UBP-003).
+   * `false` → a genuine duplicate within the TTL (and `onDrop` fires); `true`
+   * → send it, then call {@link record} once the send is confirmed.
+   */
+  wouldSend(sessionId: string, content: string, scope?: DedupScope): boolean {
     if (this.disabled) return true;
     if (!content) return true;
 
     const now = Date.now();
-    const hash = createHash('sha256').update(content).digest('hex');
-    const key = `${sessionId}:${hash}`;
+    const hash = sha256(content);
+    const key = dedupKey(sessionId, hash, scope);
 
     // Lazy eviction: only check the key we touched. The size cap handles
     // the global bound; a periodic O(N) sweep would dominate hot paths.
@@ -75,9 +124,31 @@ export class MessageDedupCache {
       }
       this.entries.delete(key); // expired — drop so re-insert refreshes order
     }
-
-    this.setEntry(key);
     return true;
+  }
+
+  /**
+   * {@link shouldSend} for a send that owns its outcome (V2-RT-4): arms the
+   * key and returns the reservation's token, or `undefined` for a duplicate.
+   * Pass the token to {@link record} or {@link release}: only the current
+   * holder may commit or un-arm the key, so a send that outlived the TTL
+   * cannot un-arm the reservation of the identical send that went out after
+   * it. Pinned by `__tests__/dedup.test.ts` ('owned reservations') and
+   * `__tests__/dedup-send-retry.test.ts` ('outlives the TTL').
+   */
+  reserve(sessionId: string, content: string, scope?: DedupScope): symbol | undefined {
+    if (!this.wouldSend(sessionId, content, scope)) return undefined;
+    const token = Symbol('dedup-reservation');
+    if (this.disabled || !content) return token;
+    const key = dedupKey(sessionId, sha256(content), scope);
+    this.setEntry(key);
+    this.owners.set(key, token);
+    return token;
+  }
+
+  /** Whether `token` may act on `key`: no token (an unowned caller) always may. */
+  private holds(key: string, token: symbol | undefined): boolean {
+    return token === undefined || this.owners.get(key) === token;
   }
 
   /**
@@ -91,7 +162,10 @@ export class MessageDedupCache {
     this.entries.set(key, Date.now() + this.ttlMs);
     if (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
-      if (oldest !== undefined) this.entries.delete(oldest);
+      if (oldest !== undefined) {
+        this.entries.delete(oldest);
+        this.owners.delete(oldest);
+      }
     }
   }
 
@@ -109,12 +183,36 @@ export class MessageDedupCache {
    *
    * No-op on the disabled (legacy) path and for empty content, mirroring
    * `shouldSend`. Never fires `onDrop` — recording is not a dropped send.
+   * With a `token` from {@link reserve}, a no-op unless that reservation still
+   * holds the key; the key is then committed and no longer owned.
    */
-  record(sessionId: string, content: string): void {
+  record(sessionId: string, content: string, scope?: DedupScope, token?: symbol): void {
     if (this.disabled) return;
     if (!content) return;
-    const hash = createHash('sha256').update(content).digest('hex');
-    this.setEntry(`${sessionId}:${hash}`);
+    const key = dedupKey(sessionId, sha256(content), scope);
+    if (!this.holds(key, token)) return;
+    this.setEntry(key);
+    this.owners.delete(key);
+  }
+
+  /**
+   * Un-arm a key armed by {@link shouldSend} whose send then failed (V-GC-1).
+   * A send with no ledger behind it (`Gateway.sendThrough`) RESERVES the key
+   * with `shouldSend` — so a second identical send while the first is still
+   * in flight is a duplicate, not a second platform call — then commits it
+   * with {@link record} once the platform confirmed, or releases it here so a
+   * retry inside the TTL goes out (UBP-003). With a `token` from
+   * {@link reserve}, a no-op unless that reservation still holds the key
+   * (V-GC-1's follow-up, V2-RT-4). Pinned by
+   * `__tests__/dedup-send-retry.test.ts`.
+   */
+  release(sessionId: string, content: string, scope?: DedupScope, token?: symbol): void {
+    if (this.disabled) return;
+    if (!content) return;
+    const key = dedupKey(sessionId, sha256(content), scope);
+    if (!this.holds(key, token)) return;
+    this.entries.delete(key);
+    this.owners.delete(key);
   }
 
   /** Forget every key associated with `sessionId` (called by `/new`). */
@@ -124,7 +222,10 @@ export class MessageDedupCache {
     // a root lane `a:b:c` is a colon-prefix of a threaded lane `a:b:c:thread`,
     // and a prefix match would wrongly evict the sibling thread's entries.
     for (const key of this.entries.keys()) {
-      if (key.slice(0, key.lastIndexOf(':')) === sessionId) this.entries.delete(key);
+      if (key.slice(0, key.lastIndexOf(':')) === sessionId) {
+        this.entries.delete(key);
+        this.owners.delete(key);
+      }
     }
   }
 

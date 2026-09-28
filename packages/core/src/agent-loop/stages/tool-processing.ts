@@ -31,11 +31,19 @@ import { recordMemoryWriteIfApplicable } from '../memory-telemetry';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
+import { drainSteerEntries, persistSteer, type SteerVision, steerContentBlocks } from '../steer';
 import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
-import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
+import {
+  advanceDowngrade,
+  consultWatcherHalt,
+  type DowngradeState,
+  enforceBeforeToolCall,
+  isDowngraded,
+  runToolsInTaintScope,
+} from './per-call-enforcement';
 import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
@@ -113,7 +121,7 @@ export interface ToolProcessingContext {
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
-  dgRemaining: { value: number };
+  dgRemaining: DowngradeState;
   dgTools: Set<string>;
   dgTurns: number;
 
@@ -126,6 +134,8 @@ export interface ToolProcessingContext {
 
   // Steer
   steerSink?: SteerSink;
+  /** UBP-012 — which steer attachment blocks the turn's model can read. */
+  steerVision?: SteerVision;
 
   /** Set when this turn's text is a transcript of speech — threaded onto every
    *  `before_tool_call` payload so the approval surface can tell a spoken
@@ -302,10 +312,8 @@ export async function* processTools(
       }
     }
 
-    // Ch.3d — refuse downgraded tools while `ctx.dgRemaining` > 0. It expires after `dgTurns`
-    // iterations with no further untrusted read (decrement-then-rearm at the end of processTools);
-    // a fresh run() resets it (`dgRemainingRef` in packages/core/src/agent-loop.ts).
-    if (ctx.dgEnabled && ctx.dgRemaining.value > 0 && ctx.dgTools.has(tc.toolName)) {
+    // Ch.3d — step window + run-scoped refusals (`isDowngraded`, ./per-call-enforcement.ts).
+    if (isDowngraded(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTools, tc.toolName, tc.args)) {
       deps.observability?.recordSafetyBlock({
         traceId: ctx.traceId,
         code: 'tool_downgraded_post_untrusted_read',
@@ -465,12 +473,14 @@ export async function* processTools(
   let toolsDone = false;
   const toolsPromise =
     execInputs.length > 0
-      ? deps.tools.executeParallel(
-          execInputs,
-          toolCtx,
-          ctx.allowedTools,
-          ctx.filterOpts,
-          ctx.opts.attachments,
+      ? runToolsInTaintScope(ctx, () =>
+          deps.tools.executeParallel(
+            execInputs,
+            toolCtx,
+            ctx.allowedTools,
+            ctx.filterOpts,
+            ctx.opts.attachments,
+          ),
         )
       : Promise.resolve([]);
   // Signal the drain loop when tools complete (success or error).
@@ -840,29 +850,19 @@ export async function* processTools(
     });
   }
 
-  // Ch.3d — decrement the prior iteration's counter, then arm a fresh
-  // window if we just read untrusted content. The decrement-then-set
-  // order means an untrusted read in iteration N protects iterations
-  // N+1 .. N+turns.
-  if (ctx.dgRemaining.value > 0) ctx.dgRemaining.value--;
-  if (ctx.dgEnabled && untrustedReadThisIteration) {
-    ctx.dgRemaining.value = ctx.dgTurns;
-  }
+  // Ch.3d — decrement the window, re-arm it (and the run taint) on an untrusted read.
+  advanceDowngrade(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTurns, untrustedReadThisIteration);
 
   // FW-9 — drain SteerSink at the iteration seam. Each entry becomes a
-  // `[USER STEER]: <text>` text block appended to the tool_results user
-  // message. Also persisted as a `user_steer` row for transcript fidelity
-  // so a future getMessages() call replays the steer cleanly.
+  // `[USER STEER]: <text>` text block (plus any UBP-012 attachment blocks the
+  // model can read) appended to the tool_results user message. Also persisted
+  // as a `user_steer` row for transcript fidelity. The text-end seam is
+  // `foldTextEndSteers` (../steer.ts), called from agent-loop.ts.
   if (ctx.steerSink) {
-    const steers = ctx.steerSink.drain();
-    for (const steerText of steers) {
-      toolResultContent.push({ type: 'text', text: `[USER STEER]: ${steerText}` });
-      await deps.session.appendMessage({
-        sessionId: ctx.sessionId,
-        role: 'user_steer',
-        content: steerText,
-        traceId: ctx.traceId,
-      });
+    for (const entry of drainSteerEntries(ctx.steerSink)) {
+      const built = steerContentBlocks(entry, ctx.steerVision);
+      toolResultContent.push(...built.content);
+      await persistSteer(deps.session, ctx.sessionId, ctx.traceId, entry, built.persisted);
     }
   }
 

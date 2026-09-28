@@ -25,6 +25,38 @@ import {
 } from './message-parser';
 import { resolveSessionDir } from './session-store';
 
+/** A WA Web client version, as Baileys' `makeWASocket({ version })` takes it. */
+type WaWebVersion = [number, number, number];
+
+/** Close status WhatsApp sends when it refuses the client's WA Web version. */
+const WA_VERSION_REJECTED = 405;
+/** Bound on the version lookup, so a dead network cannot hold `start()`. */
+const WA_VERSION_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * The current WA Web version from `fetch` (Baileys' `fetchLatestWaWebVersion`),
+ * or `undefined` — meaning "keep Baileys' bundled default" — when the lookup
+ * throws or reports that it fell back (`isLatest: false`). Never rejects.
+ * Pinned by `__tests__/wa-version.test.ts`.
+ */
+export async function resolveWaWebVersion(
+  fetch: () => Promise<{ version: number[]; isLatest: boolean }>,
+): Promise<WaWebVersion | undefined> {
+  try {
+    const { version, isLatest } = await fetch();
+    if (!isLatest || version.length !== 3) return undefined;
+    const [major, minor, patch] = version;
+    return [major, minor, patch];
+  } catch {
+    return undefined;
+  }
+}
+
+function versionRejectedMessage(version: WaWebVersion | undefined): string {
+  const used = version ? version.join('.') : "Baileys' bundled default";
+  return `[whatsapp] WhatsApp rejected the client version (405) — WA Web version ${used}. The version lookup at connect failed or is out of date; check this host can reach web.whatsapp.com, or upgrade @whiskeysockets/baileys.`;
+}
+
 /** How long `start()` waits for the socket to report `connection: 'open'`
  *  before it resolves anyway with `health()` reporting not ok (R5). Bounded so
  *  an unlinked device or a dead network cannot hold the gateway's boot. */
@@ -125,6 +157,8 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
   private appendWindowUntil: number | undefined;
 
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The WA Web version the current socket was built with; `undefined` = Baileys' bundled default. */
+  private waVersion: WaWebVersion | undefined;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
   private readonly config: WhatsAppAdapterConfig;
@@ -229,9 +263,19 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
+    // UBP-018: WhatsApp retires old WA Web versions and refuses them with a
+    // 405 before any QR or pairing code. Resolve the current one on every
+    // connect (a reconnect after a 405 retries with a fresh value); on any
+    // failure the socket keeps Baileys' bundled default.
+    const version = await resolveWaWebVersion(() =>
+      baileys.fetchLatestWaWebVersion({ signal: AbortSignal.timeout(WA_VERSION_FETCH_TIMEOUT_MS) }),
+    );
+    this.waVersion = version;
+
     const sock = makeWASocket({
       auth: state,
       getMessage: async () => undefined,
+      ...(version ? { version } : {}),
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -277,13 +321,19 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
         this.appendWindowUntil = undefined;
         const code = update.lastDisconnect?.error?.output?.statusCode;
         const registered = sock.authState.creds.registered;
+        if (code === WA_VERSION_REJECTED) {
+          this.logger?.error(versionRejectedMessage(this.waVersion));
+        }
         if (code !== DisconnectReason.loggedOut && !this.stopped) {
           this.reconnectAttempts += 1;
           if (!registered && this.reconnectAttempts > 4) {
-            // Pairing keeps failing across retries — almost certainly rate-limited.
-            // Stop the spiral instead of requesting yet another code.
+            // Pairing keeps failing across retries. Stop the spiral instead of
+            // requesting yet another code. A 405 is the client version being
+            // refused, not rate-limiting — say which one it was.
             this.logger?.error(
-              '[whatsapp] pairing failed repeatedly — WhatsApp is likely rate-limiting this number from too many attempts. Stop the gateway, wait several minutes, then restart to try once more.',
+              code === WA_VERSION_REJECTED
+                ? `${versionRejectedMessage(this.waVersion)} Giving up after repeated attempts.`
+                : '[whatsapp] pairing failed repeatedly — WhatsApp is likely rate-limiting this number from too many attempts. Stop the gateway, wait several minutes, then restart to try once more.',
             );
             this.config.onPairingCode?.(null);
             this.stopped = true;

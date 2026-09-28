@@ -1,4 +1,4 @@
-import { redactJson, redactString } from '@ethosagent/safety-redact';
+import { formatApprovalArgs } from '@ethosagent/surface-kit';
 import {
   actionRow,
   button,
@@ -52,48 +52,17 @@ export function approvalResolvedEmbed(input: ApprovalResolvedInput): DiscordEmbe
 }
 
 /**
- * Redact credentials, JSON-stringify args, neutralize any code-fence
- * breakout, then cap the length.
- *
- * Two independent threats, handled in this order:
- *
- * 1. **Credential disclosure.** This embed is the one place the adapter
- *    renders tool args in full rather than summarized, and it lands in a
- *    guild channel every member can read, with Discord's retention. A gated
- *    `terminal` or `web_fetch` call can carry a bearer token or a DSN, so
- *    args go through Tier 0 `@ethosagent/safety-redact` first. Redaction runs
- *    on the values *before* `JSON.stringify`, not on its output: the
- *    generic-secret pattern anchors on a string boundary, which JSON quoting
- *    would hide.
- * 2. **Code-fence breakout.** A literal ```` ``` ```` inside args would close
- *    the fence the caller wraps this in, letting the rest of the args render
- *    as live Discord markup on a privileged approval surface. Runs of three
- *    or more backticks are broken up with a zero-width space — the text reads
- *    the same, but no substring can be parsed as a fence delimiter.
- *
- * Redaction is a leak-reducer, not a boundary (G-RED): a credential in a
- * shape the pattern set does not know still reaches the channel.
+ * The shared approval-args formatter (`formatApprovalArgs`,
+ * @ethosagent/surface-kit — credential redaction, then the cap) with Discord's
+ * code-fence hardening. A literal ```` ``` ```` inside args would close the
+ * fence the caller wraps this in, letting the rest of the args render as live
+ * Discord markup on a privileged approval surface. Runs of three or more
+ * backticks are broken up with a zero-width space — the text reads the same,
+ * but no substring can be parsed as a fence delimiter.
  */
 function formatArgs(args: unknown): string {
-  let text: string;
-  if (args === null || args === undefined) {
-    text = '(no arguments)';
-  } else if (typeof args === 'string') {
-    text = redactString(args);
-  } else {
-    try {
-      // `args` is non-null here, so `typeof 'object'` means object or array —
-      // both of which `redactJson` walks. Inside the `try` because a circular
-      // arg would otherwise overflow the stack outside the stringify guard.
-      const safe = typeof args === 'object' ? redactJson(args as Record<string, unknown>) : args;
-      text = JSON.stringify(safe, null, 2);
-    } catch {
-      text = redactString(String(args));
-    }
-  }
-  text = text.replace(/`{3,}/g, (run) => run.split('').join('​'));
-  if (text.length > ARGS_PREVIEW_MAX) {
-    return `${text.slice(0, ARGS_PREVIEW_MAX)}\n… (truncated)`;
-  }
-  return text;
+  return formatApprovalArgs(args, {
+    maxChars: ARGS_PREVIEW_MAX,
+    neutralize: (text) => text.replace(/`{3,}/g, (run) => run.split('').join('​')),
+  });
 }

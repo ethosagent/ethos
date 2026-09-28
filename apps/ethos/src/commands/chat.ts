@@ -1423,10 +1423,12 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     eraseBlock();
     state.clearSpinner = undefined;
     state.abort = null;
-    // Codex P2 #2 — steers attach to an iteration seam (tool_results). A
-    // text-only turn (no tools) has no seam, so a steer typed during it
-    // would otherwise linger and fold into a later, unrelated turn. Drop
-    // anything still queued when this turn ends.
+    // Codex P2 #2 / UBP-001 — the loop drains the sink at every seam,
+    // including text-end (a steer there runs one more iteration;
+    // `packages/core/src/__tests__/steer-text-end.test.ts`). What is still
+    // queued here is a leftover the loop could not take: pushed after the
+    // final drain, left on the last allowed iteration, or behind an abort.
+    // Drop it so it cannot fold into a later, unrelated turn, and say so.
     const stranded = state.steerSink.drain();
     if (stranded.length > 0 && state.verbosity !== 'quiet') {
       // C6 — one line regardless of how many steers were stranded.

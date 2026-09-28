@@ -35,13 +35,13 @@ describe('config-only providers', () => {
       list: async () => [],
     };
     const provider = await factory({
-      config: { model: 'meta-llama/Llama-4-Scout-17B-16E-Instruct', apiKey: 'test-key' },
+      config: { model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', apiKey: 'test-key' },
       secrets: noop,
       logger: noopLogger,
     });
 
     expect(provider.name).toBe('together');
-    expect(provider.model).toBe('meta-llama/Llama-4-Scout-17B-16E-Instruct');
+    expect(provider.model).toBe('meta-llama/Llama-3.3-70B-Instruct-Turbo');
     expect(provider.capabilities).toBeDefined();
     expect(provider.capabilities?.streaming).toBe(true);
     expect(provider.capabilities?.toolCalling).toBe(true);

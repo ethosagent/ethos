@@ -28,23 +28,30 @@ import {
 } from './satellite';
 import { store } from './store';
 
-/** Model ids from the wiring catalog for one provider, catalog default first. */
+/** Model ids from the wiring catalog for one provider, catalog default first.
+ *  Read per call: `getModelsForProvider` drops a deprecated model on its
+ *  retirement day, and the desktop main process outlives that day. */
 function catalogModelIds(providerId: string): string[] {
   const defaultId = getDefaultModel(providerId)?.modelId;
   const ids = getModelsForProvider(providerId).map((m) => m.modelId);
   return defaultId ? [defaultId, ...ids.filter((id) => id !== defaultId)] : ids;
 }
 
-const OPENAI_MODELS = catalogModelIds('openai');
+function providerModels(): Record<string, string[]> {
+  return {
+    anthropic: catalogModelIds('anthropic'),
+    openai: catalogModelIds('openai'),
+    openrouter: [],
+    azure: [],
+    ollama: [],
+    codex: catalogModelIds('codex'),
+  };
+}
 
-const PROVIDER_MODELS: Record<string, string[]> = {
-  anthropic: catalogModelIds('anthropic'),
-  openai: OPENAI_MODELS,
-  openrouter: [],
-  azure: [],
-  ollama: [],
-  codex: catalogModelIds('codex'),
-};
+/** The stored-model fallback: the catalog's Anthropic default. */
+function defaultAnthropicModel(): string {
+  return getDefaultModel('anthropic')?.modelId ?? 'claude-opus-5-5';
+}
 
 function maskApiKey(value: string): string {
   if (value.length < 8) return '••••';
@@ -115,7 +122,8 @@ export function registerIpcHandlers(): void {
               'content-type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
+              // The cheapest current Claude model; the probe only needs a reply.
+              model: 'claude-haiku-4-5',
               max_tokens: 1,
               messages: [{ role: 'user', content: 'hi' }],
             }),
@@ -151,7 +159,7 @@ export function registerIpcHandlers(): void {
           return {
             valid: true,
             completionTested: true,
-            models: ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001'],
+            models: catalogModelIds('anthropic'),
           };
         }
 
@@ -175,9 +183,14 @@ export function registerIpcHandlers(): void {
               Authorization: `Bearer ${req.apiKey}`,
               'Content-Type': 'application/json',
             },
+            // UBP-038 — the default OpenAI model is a GPT reasoning model,
+            // which refuses `max_tokens` on Chat Completions; api.openai.com
+            // takes `max_completion_tokens` for every model. 16, not 1: a
+            // reasoning model spends tokens before it answers. Pinned by
+            // __tests__/onboarding-openai-probe.test.ts.
             body: JSON.stringify({
-              model: OPENAI_MODELS[0],
-              max_tokens: 1,
+              model: catalogModelIds('openai')[0],
+              max_completion_tokens: 16,
               messages: [{ role: 'user', content: 'hi' }],
             }),
             signal: AbortSignal.timeout(15000),
@@ -201,7 +214,7 @@ export function registerIpcHandlers(): void {
             };
           }
 
-          return { valid: true, completionTested: true, models: OPENAI_MODELS };
+          return { valid: true, completionTested: true, models: catalogModelIds('openai') };
         }
 
         if (req.provider === 'openrouter') {
@@ -548,7 +561,7 @@ export function registerIpcHandlers(): void {
     const apiKey = await getKeychainValue('api-key');
     return {
       provider: store.get('provider', 'anthropic'),
-      model: store.get('model', 'claude-sonnet-4-20250514'),
+      model: store.get('model', defaultAnthropicModel()),
       compressionModel: store.get('compressionModel'),
       visionModel: store.get('visionModel'),
       baseUrl: store.get('baseUrl'),
@@ -567,7 +580,7 @@ export function registerIpcHandlers(): void {
       autoUpdate: store.get('autoUpdate', true),
       launchAtLogin: store.get('launchAtLogin', false),
       hasShownLoginItemHint: store.get('hasShownLoginItemHint', false),
-      providers: PROVIDER_MODELS,
+      providers: providerModels(),
     };
   });
 

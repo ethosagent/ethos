@@ -1426,6 +1426,9 @@ importers:
       '@aws-sdk/types':
         specifier: ^3.800.0
         version: 3.974.5
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -1438,6 +1441,9 @@ importers:
 
   extensions/llm-codex:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/oauth-core':
         specifier: workspace:*
         version: link:../../packages/oauth-core
@@ -1460,6 +1466,9 @@ importers:
 
   extensions/llm-gemini:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -1728,9 +1737,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ethosagent/safety-redact':
+      '@ethosagent/surface-kit':
         specifier: workspace:*
-        version: link:../../packages/safety/redact
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1780,9 +1789,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@ethosagent/safety-redact':
+      '@ethosagent/surface-kit':
         specifier: workspace:*
-        version: link:../../packages/safety/redact
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1798,6 +1807,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/surface-kit':
         specifier: workspace:*
         version: link:../../packages/surface-kit
@@ -2704,6 +2716,9 @@ importers:
 
   packages/surface-kit:
     dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types

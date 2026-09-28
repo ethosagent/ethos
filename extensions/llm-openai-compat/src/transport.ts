@@ -8,7 +8,7 @@ import type {
 } from '@ethosagent/types';
 import { orderToolDefinitions } from '@ethosagent/types';
 import type OpenAI from 'openai';
-import { normalizeGeminiSchema, toOpenAIMessages } from './index';
+import { isGemini3Model, normalizeGeminiSchema, toOpenAIMessages } from './index';
 import type { LocalOpenAiRuntime } from './runtime-classify';
 import { sanitizeToolSchemaForGrammar } from './schema-sanitize';
 
@@ -28,6 +28,19 @@ export interface ChatCompletionsStreamParams {
   /** B2 — the loop's client-minted per-LLM-call id, sent outbound on the
    *  `X-Client-Request-Id` header. Absent → no header is sent. */
   clientRequestId?: string;
+  /** UBP-032 — receives a Gemini thought signature streamed on a tool call
+   *  (`extra_content.google.thought_signature`), so the provider can replay it
+   *  on the next request. Absent → signatures are not read. */
+  onThoughtSignature?: (toolCallId: string, signature: string) => void;
+}
+
+/** A Gemini thought signature on a streamed tool-call delta, if present. The
+ *  field is not in the SDK's delta type — narrow structural read, no `any`. */
+function geminiThoughtSignature(toolCallDelta: unknown): string | undefined {
+  const extra = (toolCallDelta as { extra_content?: { google?: { thought_signature?: unknown } } })
+    .extra_content;
+  const signature = extra?.google?.thought_signature;
+  return typeof signature === 'string' && signature !== '' ? signature : undefined;
 }
 
 /** B2 — outbound correlation header. OpenAI, OpenRouter and the local runtimes
@@ -36,6 +49,60 @@ export interface ChatCompletionsStreamParams {
 const CLIENT_REQUEST_ID_HEADER = 'X-Client-Request-Id';
 
 type StructuredOutputDialect = 'openai' | 'ollama' | 'vllm';
+
+/** OpenAI's own Chat Completions host. */
+export function isOpenAiFirstPartyUrl(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * UBP-038 — OpenAI's reasoning families (o1/o3/o4…, gpt-5.x) refuse
+ * `max_tokens` on Chat Completions ("Unsupported parameter") and take
+ * `max_completion_tokens`. The model catalog carries no reasoning flag, so the
+ * rule is the model id: a BARE id (no `vendor/` prefix, which is how an
+ * aggregator such as OpenRouter names models and normalizes the parameter
+ * itself) starting `o<digit>` or `gpt-5`. Copied in
+ * apps/web-api/src/services/onboarding.service.ts for the onboarding probe;
+ * change both together.
+ */
+export function isOpenAiReasoningModelId(model: string): boolean {
+  return /^(?:o\d+|gpt-5)(?:[-.]|$)/i.test(model);
+}
+
+/**
+ * Which output-cap parameter a request sends. `max_completion_tokens` for
+ * OpenAI's own host (where it is the current name for every model and
+ * `max_tokens` is deprecated) and for a reasoning-family model id on any
+ * hosted endpoint; `max_tokens` everywhere else, so local runtimes and the
+ * other hosted dialects keep byte-identical request bodies.
+ *
+ * Azure (this provider's `azure.com` branch, and @ethosagent/llm-azure, which
+ * builds its body with `buildChatCompletionsParamsAsync`) follows the model-id
+ * rule on the DEPLOYMENT name, because that is the only model id either sees:
+ * a deployment named for a reasoning family (the portal's default name is the
+ * model's) gets `max_completion_tokens`. A reasoning deployment under any other
+ * name would be sent `max_tokens` and refused, so @ethosagent/llm-azure takes
+ * `providers.<n>.outputCapParam` from config and passes it here as the
+ * `outputCapParam` override, which wins over this rule (pinned by
+ * extensions/llm-azure/src/__tests__/output-cap-param.test.ts). It is not sent
+ * to every Azure deployment because no one has verified that every Azure
+ * api-version (this branch pins 2024-08-01-preview) accepts it for the
+ * non-reasoning models. Pinned by __tests__/max-completion-tokens.test.ts.
+ */
+export function outputCapParam(
+  model: string,
+  opts?: { openAiFirstParty?: boolean; localRuntime?: LocalOpenAiRuntime },
+): 'max_tokens' | 'max_completion_tokens' {
+  if (opts?.openAiFirstParty === true) return 'max_completion_tokens';
+  if (opts?.localRuntime === undefined && isOpenAiReasoningModelId(model)) {
+    return 'max_completion_tokens';
+  }
+  return 'max_tokens';
+}
 
 /**
  * §3 — forward a grammar-constrained JSON request built by
@@ -132,9 +199,26 @@ export function buildChatCompletionsParams(
     /** Lane 3(a) — receives one line per sanitizer transformation, naming the
      *  tool and the change. A drop is never silent. */
     onSchemaChange?: (message: string) => void;
+    /** UBP-038 — the endpoint is api.openai.com (see `outputCapParam`). */
+    openAiFirstParty?: boolean;
+    /** V-CP-5 — an operator-forced output-cap parameter; wins over the
+     *  `outputCapParam` rule. Set by @ethosagent/llm-azure from config. */
+    outputCapParam?: 'max_tokens' | 'max_completion_tokens';
+    /** UBP-032 — Gemini thought signatures to replay, keyed by tool-call id
+     *  (see `toOpenAIMessages`). */
+    thoughtSignatures?: ReadonlyMap<string, string>;
   },
 ): ChatCompletionsStreamParams {
-  const oaiMessages = toOpenAIMessages(messages, options.system);
+  const oaiMessages = toOpenAIMessages(
+    messages,
+    options.system,
+    opts?.thoughtSignatures
+      ? {
+          thoughtSignatures: opts.thoughtSignatures,
+          signUnsigned: isGemini3Model(options.modelOverride ?? model),
+        }
+      : undefined,
+  );
 
   // Lane 2a — deterministic ASCII-stable tool ordering at the serialization
   // boundary. Tool definitions ship ahead of the messages and are part of the
@@ -171,12 +255,18 @@ export function buildChatCompletionsParams(
   });
 
   const effectiveModel = options.modelOverride ?? model;
+  const capParam =
+    opts?.outputCapParam ??
+    outputCapParam(effectiveModel, {
+      ...(opts?.openAiFirstParty !== undefined ? { openAiFirstParty: opts.openAiFirstParty } : {}),
+      ...(opts?.localRuntime !== undefined ? { localRuntime: opts.localRuntime } : {}),
+    });
   const oaiParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
     model: effectiveModel,
     messages: oaiMessages,
     stream: true,
     stream_options: { include_usage: true },
-    ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+    ...(options.maxTokens ? { [capParam]: options.maxTokens } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
@@ -216,6 +306,9 @@ export async function buildChatCompletionsParamsAsync(
     toolOrder?: ToolOrder;
     toolSchemaProfile?: 'llamacpp';
     onSchemaChange?: (message: string) => void;
+    openAiFirstParty?: boolean;
+    outputCapParam?: 'max_tokens' | 'max_completion_tokens';
+    thoughtSignatures?: ReadonlyMap<string, string>;
   },
 ): Promise<ChatCompletionsStreamParams> {
   const result = buildChatCompletionsParams(messages, tools, options, model, opts);
@@ -336,6 +429,10 @@ export async function* streamChatCompletions(
       }
 
       const pending = pendingTools.get(idx);
+      if (pending && params.onThoughtSignature) {
+        const signature = geminiThoughtSignature(tc);
+        if (signature !== undefined) params.onThoughtSignature(pending.id, signature);
+      }
       if (pending && tc.function?.arguments) {
         pending.args += tc.function.arguments;
         yield {

@@ -31,7 +31,7 @@ Toolset `kanban`. Thirteen tools backed by a STRICT-mode SQLite store with FTS5 
 | `kanban_assign` | Set or clear `assignee` (personality id or `human:<name>`). | coordinator only |
 | `kanban_link` | Add a `parent → child` edge. Cycles rejected. | coordinator only |
 | `kanban_archive` | Soft-delete a task. Preserves audit trail. | coordinator only |
-| `kanban_update_status` | Move a task to a new status (`todo`, `ready`, `running`, `blocked`, `done`, `archived`, `scheduled`, `failed`, `needs_revision`). | coordinator or current assignee |
+| `kanban_update_status` | Move a task to a new status (`todo`, `ready`, `running`, `blocked`, `archived`, `scheduled`, `failed`, `needs_revision`). It cannot set `done`: use `kanban_complete` (`SETTABLE_STATUS_VALUES`, `extensions/tools-kanban/src/index.ts`). | coordinator or current assignee |
 | `kanban_complete` | End the open run as `completed`, status → `done`. Fires the [`before_ticket_complete` hook](#before-ticket-complete). | assignee only |
 | `kanban_block` | End the open run as `blocked`, status → `blocked`. Reason is recorded as both run summary and a comment, atomically. | assignee only |
 | `kanban_unblock` | Flip a blocked task back to `ready` (parents all done) or `todo` (parents still pending). | assignee only |
@@ -71,6 +71,10 @@ Toolset `delegation`. Six tools — two for in-process sub-agent spawning, four 
 | `broadcast_to_agents` | Send the same prompt to every live mesh agent. Useful for parallel reviews or multi-perspective gathering. | any member |
 
 The delegation tools require the personality's `network` capability — without it they return `not_available`. Mesh tools also require at least one peer registered in the active mesh (`ethos serve --mesh <name>` from each peer).
+
+Each call sends the peer's bearer token, resolved from the `authTokenRef` the peer registered through the operator's secrets store (`meshAuthHeaders` in `extensions/tools-delegation/src/index.ts`). Only `ethos serve --team` peers register one; a solo `ethos serve` keeps a private token, so a mesh call to it fails with a 401 that says so. A peer on a loopback host (`localhost`, `127.0.0.1`, `::1`) is reached directly, because its address comes from the registry and not from the model; any other host goes through the personality's network policy and the private-range floor (`meshFetch`, pinned by `apps/acp-server/src/__tests__/mesh-transport-e2e.test.ts`).
+
+When the calling run has read untrusted content, the peer's run starts with the post-read downgrade armed (`untrustedOrigin: true` on the `prompt` call, `meshTaintParams`), and `route_to_agent(background: true)` is refused for the rest of the run.
 
 ## The `before_ticket_complete` hook {#before-ticket-complete}
 

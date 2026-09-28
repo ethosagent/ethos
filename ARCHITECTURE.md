@@ -408,12 +408,26 @@ classifier.
 
 **S3 — Outbound deduplication is centralised.**
 Outbound messages on every channel pass through a single deduplication
-chokepoint keyed on session identity and message content. Channel
-adapters do not implement their own deduplication. A duplicate is a
-silent drop.
+chokepoint keyed on session identity and message content; a reply is
+keyed on the inbound message it answers as well. Channel adapters do not
+implement their own deduplication. A duplicate is a silent drop.
 *Enforced by:* the chokepoint by
-`extensions/gateway/src/__tests__/dedup.test.ts`. The ban on
+`extensions/gateway/src/__tests__/dedup.test.ts`, and the reply key by
+`extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`. The ban on
 adapter-local deduplication is not mechanically enforced (known gap).
+
+*Amended 2026-09-28 (§VI class: Structural, as §V requires for any
+amendment to this section).* The reply key gained the inbound message.
+Rationale: keyed on session and content alone, a correct reply to a new
+message was dropped whenever its text equalled the previous reply in the
+same session inside the window (two requests both answered "Done."), and
+the turn still counted as answered. With the inbound message in the key,
+one reply is still never delivered twice, and two replies are never merged
+into one. Every other outbound message keeps the session-and-content key.
+The §IX `S3_outbound_dedup` rule changes in the same PR. No module becomes
+non-compliant: the chokepoint and the ban on adapter-local deduplication
+are unchanged, so no migration document is needed. Recorded in
+`CHANGELOG.md`.
 
 **S4 — Tool progress is internal by default.**
 Progress events emitted by tools are framework-internal unless the tool
@@ -771,6 +785,7 @@ safety:
   S3_outbound_dedup:
     chokepoint: single_gateway_module
     key: "(session_id, content_hash)"
+    reply_key: "(session_id, content_hash, inbound_message_id)"
     adapter_local_dedup: forbidden
 
   S4_progress_audience:

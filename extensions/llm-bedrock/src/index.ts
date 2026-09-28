@@ -1,6 +1,12 @@
+export { crc32, EventStreamDecoder, type EventStreamMessage } from './eventstream';
 export { BedrockProvider, type BedrockProviderConfig } from './provider';
 export { type SigV4Config, SigV4Signer, staticCredentials } from './sigv4';
-export { type BedrockTransportConfig, streamBedrockConverse } from './transport';
+export {
+  BedrockStreamError,
+  type BedrockTransportConfig,
+  parseBedrockEventStream,
+  streamBedrockConverse,
+} from './transport';
 
 // ---------------------------------------------------------------------------
 // First-party plugin activation
@@ -85,6 +91,7 @@ export const bedrockFactory: LLMProviderFactory = async ({ config: cfg, secrets 
     region,
     modelId: cfg.model as string,
     sigv4: { region, credentials },
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

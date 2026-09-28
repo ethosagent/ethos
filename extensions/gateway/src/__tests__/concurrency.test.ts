@@ -294,13 +294,21 @@ describe('Gateway — dedup drop observability (P5.4)', () => {
       recordChannelAllow: () => {},
       recordChannelDeny: () => {},
     };
-    const gw = makeGateway(g, { observability });
+    // `dedupWindow: 0` turns inbound dedup off, so the same message runs twice.
+    const gw = makeGateway(g, { observability, dedupWindow: 0 });
     const adapter = stubAdapter();
 
-    // Same lane, two turns → identical 'reply' response the second time is
-    // suppressed by the outbound dedup cache, emitting one drop event.
-    await drain(g, [gw.handleMessage(makeMessage({ chatId: 'A', text: 'one' }), adapter)]);
-    await drain(g, [gw.handleMessage(makeMessage({ chatId: 'A', text: 'two' }), adapter)]);
+    // Same lane, the SAME inbound message answered twice → the identical
+    // 'reply' is suppressed the second time by the outbound dedup cache,
+    // emitting one drop event. The reply key is scoped to the inbound message
+    // (`replyDedupScope`, UBP-014): two DIFFERENT messages would each get their
+    // reply (`dedup-reply-scope.test.ts`).
+    await drain(g, [
+      gw.handleMessage(makeMessage({ chatId: 'A', text: 'one', messageId: 'm-1' }), adapter),
+    ]);
+    await drain(g, [
+      gw.handleMessage(makeMessage({ chatId: 'A', text: 'one', messageId: 'm-1' }), adapter),
+    ]);
 
     const dropEvents = blocks.filter((b) => b.code === 'gateway.dedup_drop');
     expect(dropEvents).toHaveLength(1);

@@ -98,7 +98,7 @@ All tools live in the `kanban` toolset and cap output at 20 000 chars.
 | `kanban_create_goal` | `title, description?, priority?, idempotency_key?` | `{ task_id, status }` — creates a top-level GOAL (assignee=null). Sugar around `kanban_create`; child sub-tasks are created via `kanban_create` with `parents=[goal_id]`. |
 | `kanban_list` | `assignee?, status?, parent_id?, q?, limit?` | array of task summaries (default 100, max 1000). `q` is an FTS5 query over title + body + comments. |
 | `kanban_show` | `task_id` | task + comments + last 10 runs + last 20 events |
-| `kanban_update_status` | `task_id, status, reason?` | updated task (auto-opens/cancels runs on `running` transitions) |
+| `kanban_update_status` | `task_id, status, reason?` | updated task (auto-opens/cancels runs on `running` transitions). Refuses `status: done`; completion goes through `kanban_complete` (`SETTABLE_STATUS_VALUES`, `extensions/tools-kanban/src/index.ts`). |
 | `kanban_comment` | `task_id, body` | `{ comment_id }` |
 | `kanban_complete` | `task_id, summary` | updated task — ends current run, status=done |
 | `kanban_block` | `task_id, reason` | updated task — ends current run, status=blocked, reason recorded atomically as both run summary and comment |

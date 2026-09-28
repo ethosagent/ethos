@@ -8,6 +8,7 @@ import {
   type StoredMessage,
 } from '@ethosagent/types';
 import { ghostSkillMarker, skillCallsFromHistory } from './ghost-skills';
+import { steerText } from './steer';
 
 /**
  * What a blank assistant turn replays as. Anthropic rejects an assistant
@@ -119,6 +120,12 @@ function toolResultBatch(msg: Message | undefined): MessageContent[] | undefined
   return blocks[blocks.length - 1]?.type === 'tool_result' ? blocks : undefined;
 }
 
+/** A stored `user_steer` row as the blocks it was sent as: its attachment
+ *  blocks, then the `[USER STEER]:` text (`steerContentBlocks`, ./steer.ts). */
+function steerReplayBlocks(msg: StoredMessage): MessageContent[] {
+  return [...(msg.contentBlocks ?? []), { type: 'text', text: steerText(msg.content) }];
+}
+
 /** Options for {@link toLLMMessages}. */
 export interface ToLLMMessagesOptions {
   /**
@@ -154,6 +161,9 @@ export function toLLMMessages(stored: StoredMessage[], opts: ToLLMMessagesOption
   }
 
   const messages: Message[] = [];
+  // The message the latest text-end `user_steer` row replayed as, so a run of
+  // them folds into one user message (see the `user_steer` branch).
+  let steerMsg: Message | undefined;
 
   for (const msg of stored) {
     if (msg.role === 'system') continue;
@@ -208,10 +218,27 @@ export function toLLMMessages(stored: StoredMessage[], opts: ToLLMMessagesOption
       if (batch) batch.push(resultBlock);
       else messages.push({ role: 'user', content: [resultBlock] });
     } else if (msg.role === 'user_steer') {
-      // Steer text is already embedded as a [USER STEER]: <text> block inside
-      // the tool_result user message that was constructed live during the turn.
-      // The stored user_steer row exists for transcript fidelity / debugging
-      // only — it must NOT be replayed as a standalone LLM message.
+      // A tool-seam steer (its row follows the tool_result rows) was embedded
+      // as a [USER STEER]: <text> block inside the tool_result user message
+      // built live during the turn; that row is transcript fidelity only and
+      // is NOT replayed — a text block after the results would stop the batch
+      // ending in a tool_result (`toolResultBatch`).
+      //
+      // A text-end steer (UBP-001, `foldTextEndSteers` in ./steer.ts) follows
+      // an assistant reply with no tool call, and the turn's next reply
+      // answered it. Dropping it would replay two assistant messages back to
+      // back and lose what the second one answered, so it replays as the user
+      // message it was sent as — consecutive rows merge into one.
+      const prev = messages[messages.length - 1];
+      if (prev && prev === steerMsg && Array.isArray(prev.content)) {
+        prev.content.push(...steerReplayBlocks(msg));
+      } else if (
+        prev?.role === 'assistant' &&
+        !(Array.isArray(prev.content) && prev.content.some((b) => b.type === 'tool_use'))
+      ) {
+        steerMsg = { role: 'user', content: steerReplayBlocks(msg) };
+        messages.push(steerMsg);
+      }
     }
   }
 

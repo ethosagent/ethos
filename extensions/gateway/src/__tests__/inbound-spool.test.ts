@@ -277,15 +277,21 @@ describe('inbound spool — rows closed without a turn', () => {
     expect(rows(spool)).toHaveLength(0);
   });
 
-  it('a steer message absorbed into a running turn is done when that turn ends', async () => {
+  // UBP-001: this used to pin the loss — the fake loop never drains, and the
+  // steer row closed `done` with its turn (`cascadeAbsorbed`) although its text
+  // reached nothing. A steer no seam read now runs as its own turn, with its
+  // own row terminal (`Gateway.requeueUnreadSteers`). The real-loop case, where
+  // AgentLoop's text-end drain folds it into the answer, is in
+  // `steer-mid-turn.test.ts`.
+  it('a steer the running turn never read runs as its own turn before its row is done', async () => {
     const spool = new SQLiteInboundSpool(':memory:');
     const out = recordingAdapter();
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const s = scriptedLoop(async function* () {
-      await gate;
+    const s = scriptedLoop(async function* (text) {
+      if (text.includes('first')) await gate;
       yield { type: 'done', text: 'reply', turnCount: 1 };
     });
     const gw = gateway(s.loop, out.adapter, spool);
@@ -298,8 +304,10 @@ describe('inbound spool — rows closed without a turn', () => {
 
     release();
     await turn;
-    expect(rows(spool).map((r) => r.status)).toEqual(['done', 'done']);
-    expect(s.texts).toHaveLength(1);
+    await waitUntil(() => s.texts.length === 2);
+    expect(s.texts[1]).toContain('and also this');
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    expect(rows(spool)[1]?.absorbedInto).toBeUndefined();
   });
 });
 
@@ -532,6 +540,73 @@ describe('inbound spool — poison message', () => {
     expect((await ledger.findBySession('telegram:bot-a:chat-1')).map((o) => o.content)).toContain(
       deadLetteredNotice(id),
     );
+  });
+});
+
+// UBP-022 (plan/phases/upstream-bug-parity.md): a message whose turn KILLS the
+// process (an OOM, a native abort) before any tool started never reaches
+// `markFailed`, so the attempt cap there never applied. Every boot's
+// `recoverOrphans` put the row back and the replay ran it again — a crash loop
+// until the 24h stale cutoff. The replay now reads the attempts
+// `markProcessing` counted and dead-letters the row at the cap.
+describe('inbound spool — a message that kills the process', () => {
+  /** One boot of a process whose turn on this row dies mid-flight (kill -9). */
+  async function crashingBoot(spool: SQLiteInboundSpool, out: ReturnType<typeof recordingAdapter>) {
+    const loop = scriptedLoop(async function* () {
+      await new Promise(() => {});
+    });
+    const gw = gateway(loop.loop, out.adapter, spool);
+    // A new process: its own claim owner, so the previous one's claim is orphaned.
+    spool.recoverOrphans(`boot-${Math.random()}`);
+    const result = await gw.replayInboundSpool();
+    return { loop, result };
+  }
+
+  it('is dead-lettered on the boot after its maxAttempts-th crash, with one lane notice', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    // Boot 1: the live message crashes the process (attempt 1).
+    const first = scriptedLoop(async function* () {
+      await new Promise(() => {});
+    });
+    void gateway(first.loop, out.adapter, spool).handleMessage(msg('poison'), out.adapter);
+    await waitUntil(() => first.texts.length === 1);
+    const id = rows(spool)[0]?.id ?? '';
+
+    // Boots 2 and 3 replay it and crash again (attempts 2 and 3).
+    for (const attempts of [2, 3]) {
+      const { loop } = await crashingBoot(spool, out);
+      await waitUntil(() => loop.texts.length === 1);
+      expect(rows(spool)[0]).toMatchObject({ status: 'processing', attempts });
+    }
+
+    // Boot 4: the cap (default 3) is reached — no turn, a dead letter, one notice.
+    spool.recoverOrphans('boot-4');
+    const last = scriptedLoop();
+    const gw = gateway(last.loop, out.adapter, spool, { deliveryLedger: ledger });
+    expect(await gw.replayInboundSpool()).toEqual({ replayed: 0, deferred: 0, dead: 1 });
+    await settle();
+    expect(last.texts).toHaveLength(0);
+    expect(rows(spool)[0]?.status).toBe('dead');
+    expect(out.sends.map((s) => s.text)).toEqual([deadLetteredNotice(id)]);
+
+    // …and a fifth boot has nothing to replay.
+    const fifth = scriptedLoop();
+    await gateway(fifth.loop, out.adapter, spool).replayInboundSpool();
+    expect(fifth.texts).toHaveLength(0);
+  });
+
+  it('a row under the cap is still replayed', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const id = seed(spool, msg('hello'));
+    spool.markProcessing(id, 'dead-process');
+    spool.recoverOrphans('boot-2');
+    const next = scriptedLoop();
+    await gateway(next.loop, out.adapter, spool).replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(next.texts).toHaveLength(1);
   });
 });
 

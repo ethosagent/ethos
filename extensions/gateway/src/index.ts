@@ -12,6 +12,7 @@ import {
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
+  MAX_TOKENS_REPLY_NOTICE,
   type PrivateChatSet,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
@@ -63,7 +64,7 @@ import type {
   PlatformAdapter,
   PlatformAdapterFactory,
   SessionStore,
-  SteerSink,
+  SteerEntry,
   Storage,
   SttProvider,
   SttProviderEntry,
@@ -100,7 +101,7 @@ import {
   runChannelDigest,
 } from './channel-digest';
 import { credentialRequiredReply } from './credential-reply';
-import { MessageDedupCache } from './dedup';
+import { type DedupScope, MessageDedupCache } from './dedup';
 import {
   beginDelivery,
   confirmDelivery,
@@ -120,6 +121,7 @@ import {
   parseMuteDuration,
   quietWindowFor,
 } from './quiet-hours';
+import { createSteerSink, type GatewaySteerSink, steerAttachmentBlocks } from './steer-sink';
 import { DraftStreamer } from './streaming';
 import type { TranscodeResult, Transcoder } from './transcode';
 import { TurnFeedback } from './turn-feedback';
@@ -442,6 +444,13 @@ export interface HandleMessageOptions {
   onQueued?: () => void;
 }
 
+/** What {@link Gateway.onLaneStop} listeners are told about a `/stop` (UBP-046). */
+export interface LaneStop {
+  /** The stopped turn's session id — the one its hook payloads carry. */
+  sessionId: string;
+  sessionKey: string;
+}
+
 /** Per-turn spool bookkeeping, carried from `enqueueTurn` into `runTurn`. */
 interface SpoolTurnState {
   /** The row this turn owns, or `undefined` when it runs without one. */
@@ -465,6 +474,19 @@ interface SpoolTurnState {
 }
 
 /**
+ * What a steer carries beside its text (UBP-001): enough to run it as its own
+ * turn when no seam of the running turn read it (`Gateway.requeueUnreadSteers`).
+ */
+interface SteerOrigin {
+  message: InboundMessage;
+  adapter: PlatformAdapter;
+  /** The text the message would have run with as a turn of its own. */
+  text: string;
+  threadId: string | undefined;
+  spoolId: string | undefined;
+}
+
+/**
  * A parent-review turn for a finished `deliver: 'parent'` background job. The
  * `fallbackText` is `buildWakeNotice(job)` — what the user gets instead when
  * the review cannot answer (error, empty answer, tool-started crash, stale,
@@ -479,6 +501,14 @@ interface WakeReview {
    * never the synthetic message's `isDm`. See {@link Gateway.reviewAudience}.
    */
   roomAudience: TurnAudience;
+  /**
+   * The job's run read untrusted content (`BackgroundJob.tainted`, V2-SEC-2):
+   * the review turn starts with the post-read downgrade armed
+   * (`RunOptions.untrustedOrigin`), so the summary it is fed cannot be
+   * persisted by it. Pinned by 'parent review — a tainted job' in
+   * `__tests__/parent-review.test.ts`.
+   */
+  tainted?: boolean;
 }
 
 /**
@@ -530,6 +560,24 @@ function laneKeyOf(
 }
 
 /**
+ * The dedup scope of a reply (UBP-014, ARCHITECTURE.md §V S3 as amended
+ * 2026-09-28): the inbound message it answers — its spool row id when spooled
+ * (the same id the ledger stamps as `inboundRef`, so a redelivery re-arms the
+ * same key), else the platform message id, else `localId`: the id the gateway
+ * assigned this message object (`Gateway.localInboundId`), so a message with
+ * neither still gets its own key instead of the content-only one. Pinned by
+ * 'a message with no spool row and no platform id' in
+ * __tests__/dedup-reply-scope.test.ts.
+ */
+function replyDedupScope(
+  spoolId: string | undefined,
+  message: InboundMessage,
+  localId: string,
+): DedupScope {
+  return { inboundId: spoolId ?? message.messageId ?? localId };
+}
+
+/**
  * The trusted notice a lane gets when its message was cut after a tool had
  * started (plan openclaw-9.5-adoption D5): nothing re-runs on the user's behalf,
  * and only their `retry` (see `isRetryText`) runs it again.
@@ -550,6 +598,24 @@ export const LEARN_SHARED_ROOM_REPLY =
   'Memory learning works in a private chat with me — send /learn there.';
 
 export const ABSORBED_STEER_ACK = "↩ noted — I'll fold this into the answer I'm writing.";
+
+/**
+ * UBP-020 — what the user gets when a turn ends with no reply text at all (a
+ * blank `done`), instead of silence. Sent on the tracked reply path and paired
+ * with a `gateway.empty_reply` event. The loop's own `empty_completion` error
+ * gets {@link emptyCompletionNotice} instead, which carries its cause.
+ */
+export const EMPTY_REPLY_NOTICE =
+  '⚠ I finished without writing a reply. Send it again or rephrase.';
+
+/** UBP-020 — the reply for an `error` coded `empty_completion`
+ *  (`emptyCompletionError`, packages/core/src/agent-loop/output-cap.ts). */
+function emptyCompletionNotice(cause: string): string {
+  return `⚠ ${cause.trim() || 'The model finished without writing a reply.'} Send it again or rephrase.`;
+}
+
+/** The `error` code core yields for a turn with no reply text (UBP-020). */
+const EMPTY_COMPLETION_CODE = 'empty_completion';
 
 /**
  * H3 — the ack for a second message that was queued behind the running turn
@@ -1544,6 +1610,16 @@ export interface GatewayConfig {
    * `__tests__/slow-turn-notice.test.ts`.
    */
   slowTurnNoticeMs?: number;
+  /**
+   * V2-RT-3 — ms a mid-turn voice note's transcription may take while it is
+   * being built into a steer. Every later message on the lane waits behind it
+   * in the steer order (`steerOrder`), and STT is called without a deadline,
+   * so a hung provider would hold the whole lane. On expiry the voice note is
+   * steered as its placeholder text, and the transcription is recorded as
+   * `gateway.steer_transcription_timeout`. Absent → 60000. Pinned by
+   * `__tests__/steer-mid-turn.test.ts` ('a hung STT').
+   */
+  steerTranscribeTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,6 +1807,18 @@ export class Gateway {
   private readonly interruptedLanes = new Set<string>();
   /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
   private readonly outboundDedup: MessageDedupCache;
+  /**
+   * UBP-014 — the gateway-assigned inbound id of a message that has neither a
+   * spool row nor a platform `messageId` (`replyDedupScope`). Keyed on the
+   * message object, so the hook-claim path and the turn path of one message
+   * read the same id; a new message object is a new inbound message.
+   */
+  private readonly localInboundIds = new WeakMap<InboundMessage, string>();
+  private localInboundSeq = 0;
+  /** `sendThrough` sends in flight, by target + body: a concurrent identical
+   *  send awaits the first one's outcome instead of reporting success for a
+   *  send that may yet fail (V-GC-1). */
+  private readonly inFlightSends = new Map<string, Promise<{ ok: boolean; error?: string }>>();
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
   private readonly deliveryLedger: DeliveryLedger | undefined;
   /** See `GatewayConfig.quietHours` / `heldNotices` (U11). */
@@ -1760,6 +1848,8 @@ export class Gateway {
   private readonly streamingEditIntervalMs: number;
   /** See `GatewayConfig.slowTurnNoticeMs` (H1). 0 = disabled. */
   private readonly slowTurnNoticeMs: number;
+  /** See `GatewayConfig.steerTranscribeTimeoutMs` (V2-RT-3). */
+  private readonly steerTranscribeTimeoutMs: number;
   /** Chats (`${platform}:${chatId}`) where streaming was disabled after
    *  repeated flood-waits — future turns there fall back to non-streaming. */
   private readonly streamingDisabledChats = new Set<string>();
@@ -1772,7 +1862,27 @@ export class Gateway {
     { adapter: PlatformAdapter; chatId: string; threadId?: string; answered?: boolean }
   >();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
-  private readonly activeSinks = new Map<string, SteerSink>();
+  private readonly activeSinks = new Map<string, GatewaySteerSink<SteerOrigin>>();
+  /**
+   * V-GC-4 — per lane, the settle of the last mid-turn message still building
+   * its steer (a voice note's STT, attachment reads). A later message on the
+   * lane waits for it before it pushes or enqueues, so a quick text never
+   * overtakes a voice note sent before it. A voice note's STT is bounded by
+   * `steerTranscribeTimeoutMs`, so a hung provider cannot hold the lane
+   * (V2-RT-3). Pinned by `__tests__/steer-mid-turn.test.ts` ('arrival order',
+   * 'a hung STT').
+   */
+  private readonly steerOrder = new Map<string, Promise<void>>();
+  /**
+   * V-GC-4 — one transcription per inbound voice note, by message and text. A
+   * mid-turn voice note is transcribed to become a steer; if the turn ended
+   * meanwhile it runs as its own turn, and `runTurn` reuses this result
+   * instead of paying for STT twice. Weak, so it lives as long as the message.
+   */
+  private readonly voiceTranscripts = new WeakMap<
+    InboundMessage,
+    Map<string, Promise<{ text: string; providerId: string | undefined }>>
+  >();
   /** Buffered notifications for sessions whose turn has ended. */
   private readonly unreadNotifications = new Map<string, string[]>();
   /**
@@ -1798,6 +1908,8 @@ export class Gateway {
    * `approvalRoutes` entry to evict.
    */
   private readonly sessionIdByKey = new Map<string, string>();
+  /** Told when a user's `/stop` aborts a lane (UBP-046, see `onLaneStop`). */
+  private readonly laneStopListeners = new Set<(stop: LaneStop) => void>();
   private readonly maxChats: number;
   /** Optional clarify correlator — see GatewayConfig.clarifyMessageCorrelator. */
   private readonly clarifyCorrelator:
@@ -2053,6 +2165,7 @@ export class Gateway {
     this.streamingGroup = config.streamingEdits?.group ?? false;
     this.streamingEditIntervalMs = config.streamingEditIntervalMs ?? 2500;
     this.slowTurnNoticeMs = config.slowTurnNoticeMs ?? 8000;
+    this.steerTranscribeTimeoutMs = config.steerTranscribeTimeoutMs ?? 60_000;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.clarifyEscalationDelayMs = config.clarifyEscalationDelayMs ?? DEFAULT_ESCALATION_DELAY_MS;
@@ -3343,6 +3456,9 @@ export class Gateway {
         lane.length > 0 || this.activeSinks.has(laneKey) || this.activeTurns.has(laneKey);
       if (running) {
         lane.abort();
+        // UBP-046 — a turn parked on an approval card does not see the abort
+        // until the card settles; tell the approval surface so it settles now.
+        this.notifyLaneStop(this.sessionKeys.get(laneKey) ?? laneKey);
         await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
       } else {
         await adapter
@@ -4062,7 +4178,13 @@ export class Gateway {
           // Same outbound path as normal turn replies: session-keyed dedup
           // gate, then the ledger-wrapped adapter send.
           const claimSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
-          if (this.outboundDedup.shouldSend(claimSessionKey, reply)) {
+          if (
+            this.outboundDedup.shouldSend(
+              claimSessionKey,
+              reply,
+              replyDedupScope(spoolId, message, this.localInboundId(message)),
+            )
+          ) {
             const claimDelivered = await this.sendTracked(
               {
                 adapter,
@@ -4107,9 +4229,47 @@ export class Gateway {
     }
 
     // --- Auto-steer: if a turn is already running, push into its steer sink ---
-    const activeSink = this.activeSinks.get(laneKey);
-    if (activeSink) {
-      const accepted = activeSink.push(text);
+    const runningSink = this.activeSinks.get(laneKey);
+    // UBP-012 — the steer carries the message's attachments: image/PDF bytes as
+    // blocks, a voice note transcribed into its text (`steerEntryFor`). Built
+    // before the push, so the turn may have ended meanwhile; the message then
+    // takes the ordinary enqueue path below.
+    //
+    // V-GC-4 — building is async and a text-only steer is not, so the message
+    // takes its place in the lane's steer order (`steerOrder`) at arrival and
+    // waits for the one before it after building. The slot is released as soon
+    // as the wait is over: what follows — the push, or the overflow / plain
+    // `enqueueTurn` below — is synchronous up to its first await, and a waiter
+    // resumes only on a later microtask, so push order is arrival order.
+    const priorSteer = this.steerOrder.get(laneKey);
+    let releaseSteerSlot = (): void => {};
+    if (runningSink || priorSteer) {
+      const slot = new Promise<void>((resolve) => {
+        releaseSteerSlot = resolve;
+      });
+      const settled = priorSteer ? priorSteer.then(() => slot) : slot;
+      this.steerOrder.set(laneKey, settled);
+      void settled.then(() => {
+        if (this.steerOrder.get(laneKey) === settled) this.steerOrder.delete(laneKey);
+      });
+    }
+    let steer: SteerEntry | undefined;
+    try {
+      steer = runningSink ? await this.steerEntryFor(message, text, laneKey, bot) : undefined;
+      if (priorSteer) await priorSteer;
+    } finally {
+      releaseSteerSlot();
+    }
+    const activeSink =
+      runningSink && this.activeSinks.get(laneKey) === runningSink ? runningSink : undefined;
+    if (activeSink && steer) {
+      const accepted = activeSink.pushEntry(steer, {
+        message,
+        adapter,
+        text,
+        threadId,
+        spoolId,
+      });
       if (accepted) {
         // Folded into the running turn: its row shares THAT turn's fate.
         const absorbing = spoolId ? this.spoolTurns.get(laneKey) : undefined;
@@ -4432,9 +4592,9 @@ export class Gateway {
    * still absorbed into it appended, in arrival order: the turn as the user
    * actually shaped it, primary plus steers. Used where a primary is re-run
    * from its row: the replay (`replaySpoolRow`) and `retry`
-   * (`settleInterrupted`). Only text is folded, which is all a live steer ever
-   * carried (`SteerSink.push(text)`). An unreadable absorbed row contributes
-   * nothing.
+   * (`settleInterrupted`). The text is folded, and the steer's attachments are
+   * appended to the primary's — a live steer carries them too (UBP-012,
+   * `steerEntryFor`). An unreadable absorbed row contributes nothing.
    */
   private async foldAbsorbed(
     spool: InboundSpool,
@@ -4444,11 +4604,17 @@ export class Gateway {
     const absorbed = spool.listAbsorbed(row.id);
     if (absorbed.length === 0) return message;
     const texts = [message.text];
+    const attachments = [...(message.attachments ?? [])];
     for (const child of absorbed) {
       const steer = await this.reviveSpooledMessage(child);
       if (steer?.text.trim()) texts.push(steer.text);
+      if (steer?.attachments) attachments.push(...steer.attachments);
     }
-    return { ...message, text: texts.filter((t) => t.trim()).join('\n\n') };
+    return {
+      ...message,
+      text: texts.filter((t) => t.trim()).join('\n\n'),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    };
   }
 
   /**
@@ -4955,6 +5121,28 @@ export class Gateway {
         }
         return;
       }
+      // UBP-022: a turn that killed the process never reached `markFailed`, so
+      // its cap was never read there. `markProcessing` counted each attempt and
+      // `recoverOrphans` kept the count: at the cap the row is dead-lettered
+      // here instead of crash-looping every boot until the stale cutoff. The
+      // extra `markProcessing` lets `markFailed` (which only moves a
+      // `processing` row) write `dead`. Pinned by `__tests__/inbound-spool.test.ts`
+      // ('a message that kills the process').
+      if (row.attempts >= this.spoolMaxAttempts) {
+        const reason = `the turn ended the process ${row.attempts} time(s) without finishing`;
+        spool.markProcessing(row.id, this.spoolOwner);
+        if (spool.markFailed(row.id, reason, this.spoolMaxAttempts) === 'dead') {
+          counts.dead++;
+          await this.notifyDeadLettered(row.id, reason, {
+            botKey: row.botKey,
+            platform: row.platform,
+            chatId: row.chatId,
+            threadId: row.threadId,
+            laneKey: row.laneKey,
+          });
+        }
+        return;
+      }
       const revived = await this.reviveSpooledMessage(row);
       // Its absorbed steer rows ride in it (they are never listed on their own).
       const message = revived ? await this.foldAbsorbed(spool, row, revived) : null;
@@ -5036,12 +5224,14 @@ export class Gateway {
     }
     counts.replayed++;
     const roomAudience = await this.replayedReviewAudience(bot, row, message);
+    const jobId = row.reviewJobId ?? '';
+    const tainted = await this.reviewJobTainted(bot, jobId);
     this.enqueueReview(
       bot,
       adapter,
       message,
       row.id,
-      { jobId: row.reviewJobId ?? '', fallbackText, roomAudience },
+      { jobId, fallbackText, roomAudience, ...(tainted ? { tainted: true } : {}) },
       row.laneKey,
     );
   }
@@ -5061,6 +5251,22 @@ export class Gateway {
     if (message.audienceHint === 'shared' || !row.reviewJobId || !bot.jobStore) return 'shared';
     const job = await bot.jobStore.get(row.reviewJobId).catch(() => null);
     return job ? this.reviewAudience(job) : 'shared';
+  }
+
+  /**
+   * Whether a replayed review's job is tainted (`WakeReview.tainted`). The
+   * spool row does not carry it, so it is read back from the job store — and
+   * when that read cannot answer (no store, no row, a throw) the review is
+   * treated as tainted: a missed downgrade can persist an injection, a spurious
+   * one only refuses memory writes for one review turn.
+   */
+  private async reviewJobTainted(bot: GatewayBotConfig, jobId: string): Promise<boolean> {
+    try {
+      const job = bot.jobStore ? await bot.jobStore.get(jobId) : null;
+      return job ? job.tainted === true : true;
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -5124,6 +5330,179 @@ export class Gateway {
   }
 
   /**
+   * The STT half of the voice pipeline: `text` with the transcript of every
+   * audio attachment on `message` folded in (`buildTranscriptText`). Resolved
+   * for THIS personality: a personality naming `voice.stt_provider` is
+   * transcribed by that provider on a channel voice note, not only in browser
+   * talk mode. Shared by `runTurn` and a mid-turn steer (`steerEntryFor`), so
+   * a voice note is transcribed the same way on both — and only once: the
+   * result is kept per message and text (`voiceTranscripts`, V-GC-4).
+   */
+  private async transcribeVoiceNote(
+    message: InboundMessage,
+    text: string,
+    personalityId: string | undefined,
+    io: { attachmentCache: AttachmentCache; storage: Storage },
+  ): Promise<{ text: string; providerId: string | undefined }> {
+    const byText = this.voiceTranscripts.get(message) ?? new Map();
+    this.voiceTranscripts.set(message, byText);
+    const cached = byText.get(text);
+    if (cached) return cached;
+    const pending = this.transcribeVoiceNoteOnce(message, text, personalityId, io);
+    byText.set(text, pending);
+    // A failed transcription is not remembered: the next caller tries again.
+    pending.catch(() => byText.delete(text));
+    return pending;
+  }
+
+  private async transcribeVoiceNoteOnce(
+    message: InboundMessage,
+    text: string,
+    personalityId: string | undefined,
+    io: { attachmentCache: AttachmentCache; storage: Storage },
+  ): Promise<{ text: string; providerId: string | undefined }> {
+    const stt = await this.resolveSttProvider(personalityId);
+    const results = await transcribeAudioAttachments(
+      message.attachments ?? [],
+      stt.provider,
+      (url) => io.storage.readBytes(io.attachmentCache.resolveLocalPath(url)),
+      {
+        // Normalize before STT and retry once as wav. Absent transcoder →
+        // the provider gets the platform's raw bytes, as it always did.
+        ...(this.transcoder ? { transcoder: this.transcoder } : {}),
+        onStage: (event) => {
+          if (event.ok) return;
+          this.observability?.recordSafetyBlock({
+            code: `gateway.voice_stt_${event.stage}_failed`,
+            cause: event.error,
+            details: { platform: message.platform, chatId: message.chatId },
+          });
+        },
+      },
+    );
+    return { text: buildTranscriptText(text, results), providerId: stt.providerId };
+  }
+
+  /**
+   * UBP-012 — the steer a mid-turn message becomes: its text, with a voice note
+   * transcribed into it, plus its images and PDFs as native blocks within the
+   * shared vision caps (`steerAttachmentBlocks`, ./steer-sink.ts). A message
+   * with no attachments is its text alone. Pinned by
+   * `__tests__/steer-mid-turn.test.ts`.
+   */
+  private async steerEntryFor(
+    message: InboundMessage,
+    text: string,
+    laneKey: string,
+    bot: GatewayBotConfig,
+  ): Promise<SteerEntry> {
+    const attachments = message.attachments;
+    if (!attachments || attachments.length === 0) return { text };
+    const attachmentCache = this.attachmentCache;
+    const storage = this.storage;
+    let steerText = text;
+    if (hasAudioAttachments(attachments) && attachmentCache && storage) {
+      const personalityId =
+        bot.binding.type === 'team'
+          ? undefined
+          : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+      // Bounded (V2-RT-3): the lane's later messages wait on this build.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<undefined>((resolve) => {
+        const t = setTimeout(() => resolve(undefined), this.steerTranscribeTimeoutMs);
+        t.unref?.();
+        timer = t;
+      });
+      try {
+        const transcribed = await Promise.race([
+          this.transcribeVoiceNote(message, text, personalityId, { attachmentCache, storage }),
+          deadline,
+        ]);
+        if (transcribed) {
+          steerText = transcribed.text;
+        } else {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.steer_transcription_timeout',
+            cause: `voice note not transcribed within ${this.steerTranscribeTimeoutMs}ms; steered as its placeholder text`,
+            details: { platform: message.platform, chatId: message.chatId },
+          });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    const blocks = await steerAttachmentBlocks(attachments, {
+      ...(storage ? { storage } : {}),
+      ...(attachmentCache ? { attachmentCache } : {}),
+    });
+    return blocks.length > 0 ? { text: steerText, blocks } : { text: steerText };
+  }
+
+  /**
+   * UBP-001 — the steers still queued when a turn ends were read by no seam
+   * (pushed after the loop's last drain, or left on its last allowed
+   * iteration). Each runs as its own turn on the lane, queued behind the one
+   * ending, with its spool row unlinked (`InboundSpool.unlinkAbsorbed`) so it
+   * gets its own terminal instead of closing unread with the turn's
+   * (`cascadeAbsorbed`). Pinned by `__tests__/steer-mid-turn.test.ts`.
+   */
+  private requeueUnreadSteers(
+    laneKey: string,
+    lane: SessionLane,
+    bot: GatewayBotConfig,
+    sink: GatewaySteerSink<SteerOrigin>,
+    spoolTurn: SpoolTurnState | undefined,
+  ): void {
+    for (const { origin } of sink.takeLeftovers()) {
+      if (!origin) continue;
+      if (origin.spoolId) this.unlinkSteer(origin.spoolId, spoolTurn);
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.steer_requeued',
+        cause: 'a steer no seam of the running turn read runs as its own turn',
+        details: { platform: origin.message.platform, botKey: bot.botKey },
+      });
+      void this.enqueueTurn(
+        laneKey,
+        lane,
+        bot,
+        origin.message,
+        origin.adapter,
+        origin.text,
+        origin.threadId,
+        origin.spoolId,
+      ).catch(() => {});
+    }
+  }
+
+  /**
+   * The turn is ending and cannot run its unread steers now. Shutdown after
+   * the turn answered: each steer's row is unlinked, so it stays `received`
+   * and the next boot replays it as its own message. Otherwise the rows stay
+   * linked and follow the turn's row: a shutdown or failure before the answer
+   * replays (or `retry`s) them folded into it; `/stop` or `/new` closes them
+   * with it, as the user's own abort closes every message queued behind it.
+   */
+  private settleUnreadSteers(
+    sink: GatewaySteerSink<SteerOrigin>,
+    spoolTurn: SpoolTurnState | undefined,
+    answered: boolean,
+  ): void {
+    for (const { origin } of sink.takeLeftovers()) {
+      if (this.closing && answered && origin?.spoolId) this.unlinkSteer(origin.spoolId, spoolTurn);
+    }
+  }
+
+  /** Undo a steer's link to the turn it was folded into (UBP-001). Fail-open. */
+  private unlinkSteer(spoolId: string, spoolTurn: SpoolTurnState | undefined): void {
+    if (spoolTurn) spoolTurn.absorbed = spoolTurn.absorbed.filter((id) => id !== spoolId);
+    try {
+      this.inboundSpool?.unlinkAbsorbed(spoolId);
+    } catch (err) {
+      this.recordSpoolUpdateFailed('unlinkAbsorbed', err);
+    }
+  }
+
+  /**
    * Whether this turn's reply should stream as live draft edits. Requires the
    * chat class (DM/group) to be enabled, the adapter to support editing, and
    * the chat not to have been flood-disabled earlier this run.
@@ -5167,6 +5546,10 @@ export class Gateway {
     // Stamped on this turn's reply obligations: the replay's double-reply
     // guard (`DeliveryLedger.hasObligationFor`) reads it back.
     const inboundRef = spoolTurn?.id;
+    // UBP-014 — the reply paths below dedup per inbound message (ARCHITECTURE.md
+    // §V S3 as amended 2026-09-28): an identical answer to a DIFFERENT message
+    // still sends. See `replyDedupScope`.
+    const replyScope = replyDedupScope(inboundRef, message, this.localInboundId(message));
     this.lastInboundHadAudio.set(laneKey, hasAudioAttachments(message.attachments));
     // Refresh every loop registry from disk before resolving which personality
     // this turn runs as, so a hot-dropped or edited directory takes effect on
@@ -5220,8 +5603,11 @@ export class Gateway {
       });
     }
 
-    const steerSink = createSteerSink();
+    const steerSink = createSteerSink<SteerOrigin>();
     this.activeSinks.set(laneKey, steerSink);
+    // Set once the answer has been delivered and the iterator drained: the
+    // `finally` then runs any steer no seam read as its own turn (UBP-001).
+    let completed = false;
 
     this.sessionRouting.set(sessionKey, {
       adapter,
@@ -5232,9 +5618,12 @@ export class Gateway {
       platform: message.platform,
     });
 
-    await adapter.sendTyping?.(message.chatId).catch(() => {});
+    // The thread too (UBP-017): typing, and Discord's "Thinking…" placeholder,
+    // land in the thread or forum topic the turn is in, not its parent chat.
+    const typingOpts = message.threadId ? { threadId: message.threadId } : undefined;
+    await adapter.sendTyping?.(message.chatId, typingOpts).catch(() => {});
     const typingTimer = setInterval(() => {
-      void adapter.sendTyping?.(message.chatId).catch(() => {});
+      void adapter.sendTyping?.(message.chatId, typingOpts).catch(() => {});
     }, 4_000);
 
     // H1/H2 timers — declared out here so the `finally` can always clear them.
@@ -5257,29 +5646,11 @@ export class Gateway {
       // in the Spanish voice.
       let voiceLanguage: string | undefined;
       if (hasAudioAttachments(message.attachments) && attachmentCache && storage) {
-        // Resolved for THIS personality: a personality naming `voice.stt_provider`
-        // is transcribed by that provider on a channel voice note, not only in
-        // browser talk mode.
-        const stt = await this.resolveSttProvider(personalityId);
-        const results = await transcribeAudioAttachments(
-          message.attachments ?? [],
-          stt.provider,
-          (url) => storage.readBytes(attachmentCache.resolveLocalPath(url)),
-          {
-            // Normalize before STT and retry once as wav. Absent transcoder →
-            // the provider gets the platform's raw bytes, as it always did.
-            ...(this.transcoder ? { transcoder: this.transcoder } : {}),
-            onStage: (event) => {
-              if (event.ok) return;
-              this.observability?.recordSafetyBlock({
-                code: `gateway.voice_stt_${event.stage}_failed`,
-                cause: event.error,
-                details: { platform: message.platform, chatId: message.chatId },
-              });
-            },
-          },
-        );
-        text = buildTranscriptText(text, results);
+        const stt = await this.transcribeVoiceNote(message, text, personalityId, {
+          attachmentCache,
+          storage,
+        });
+        text = stt.text;
         // Detected against the personality's OWN language keys, never against
         // the world: `detectLanguage` only ever decides between candidates, so
         // a personality with no language map produces no guess and the default
@@ -5352,6 +5723,7 @@ export class Gateway {
               threadId,
               sessionKey,
               dedup: this.outboundDedup,
+              inboundId: replyScope.inboundId,
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
               minEditIntervalMs: this.streamingEditIntervalMs,
               onFloodDisable: () => {
@@ -5426,6 +5798,10 @@ export class Gateway {
         if (spoolTurn) spoolTurn.answered = true;
       };
 
+      // Set when core reports the output cap cut the reply off; cleared by
+      // any later text (a folded steer's next iteration wrote the ending).
+      let cutOffAtCap = false;
+
       // Deliver the reply exactly once. Called at the turn's terminal event,
       // or after the loop when the iterator ends without one.
       const deliverAnswer = async (): Promise<void> => {
@@ -5435,7 +5811,14 @@ export class Gateway {
         // in @ethosagent/types) — delivered as ONE final: the streamed draft is
         // finalized in place with it, or it is the one send. Pinned by
         // `__tests__/turn-tail.test.ts` ('returnDirect').
-        const answerText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        const fullAnswer = translator.text + answerSuffix(translator.text, translator.done?.text);
+        // V-CP-2 / UBP-033 — a reply the output cap cut off ends with core's
+        // `MAX_TOKENS_REPLY_NOTICE` (packages/core/src/agent-loop/output-cap.ts), on
+        // the streamed final and the plain send alike (`cutOffAtCap` below).
+        const answerText =
+          cutOffAtCap && fullAnswer.trim().length > 0
+            ? `${fullAnswer}\n\n${MAX_TOKENS_REPLY_NOTICE}`
+            : fullAnswer;
         // S4/U1 — a budget halt reaches the lane folded into the reply, so the
         // answer and the reason it stopped are ONE message (`haltNotice` in
         // @ethosagent/core owns the wording and the reset command). Not for a
@@ -5482,7 +5865,7 @@ export class Gateway {
           // and its spool row closes like any other; the user's resend is a
           // fresh turn (plan openclaw-9.5-adoption item 1 §5).
           const reply = credentialRequiredReply(translator.credentialRequired, this.webBaseUrl);
-          if (this.outboundDedup.shouldSend(sessionKey, reply)) {
+          if (this.outboundDedup.shouldSend(sessionKey, reply, replyScope)) {
             const sent = await this.sendTracked(
               {
                 adapter,
@@ -5501,8 +5884,12 @@ export class Gateway {
         } else if (errored) {
           // A3 — the fold uses the shared chat-error map's title, never the
           // raw provider string (`describeChatError`, @ethosagent/surface-kit).
-          const note =
-            responseText.trim().length > 0
+          // UBP-020 — a turn that wrote no reply at all says so, with its cause.
+          const empty = errored.code === EMPTY_COMPLETION_CODE && responseText.trim().length === 0;
+          if (empty) this.recordEmptyReply(message, bot, errored.error);
+          const note = empty
+            ? emptyCompletionNotice(errored.error)
+            : responseText.trim().length > 0
               ? `${responseText}\n\n⚠ Response interrupted: ${describeChatError(errored.code, errored.error).title}`
               : `⚠ Error: ${errored.error}`;
           const sanitizedNote = stripAnsiEscapes(note);
@@ -5511,7 +5898,7 @@ export class Gateway {
             // a second message that duplicates the streamed text.
             await streamer.finalize(sanitizedNote);
             markAnswered();
-          } else if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+          } else if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote, replyScope)) {
             const noted = await this.sendTracked(
               {
                 adapter,
@@ -5525,8 +5912,10 @@ export class Gateway {
             );
             if (noted) markAnswered();
           } else {
-            // Suppressed by the dedup cache: this exact note already reached
-            // the lane inside the TTL. See the same branch on the answer path.
+            // Suppressed by the dedup cache: this exact note already answered
+            // THIS inbound message inside the TTL (the key is scoped to it,
+            // UBP-014), so the chat has it. See the same branch on the answer
+            // path.
             markAnswered();
           }
         } else if (responseText) {
@@ -5538,7 +5927,7 @@ export class Gateway {
           if (streamer && streamed) {
             await streamer.finalize(sanitized);
             delivered = true;
-          } else if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
+          } else if (this.outboundDedup.shouldSend(sessionKey, sanitized, replyScope)) {
             // `delivered` is now the adapter's own verdict, not "we called
             // send()". An unconfirmed reply leaves a pending obligation AND
             // skips the voice pipeline — synthesising audio for a message the
@@ -5555,8 +5944,9 @@ export class Gateway {
               { text: sanitized, parseMode: 'markdown', threadId },
             );
           } else {
-            // Suppressed by the dedup cache: this exact text already reached
-            // the lane inside the TTL, so the chat HAS the answer and needs no
+            // Suppressed by the dedup cache: this exact text already answered
+            // THIS inbound message inside the TTL (the key is scoped to it,
+            // UBP-014), so the chat HAS the answer and needs no
             // "please resend" notice. NOT `delivered`: this turn sent nothing,
             // so it records no obligation and synthesizes no voice note.
             markAnswered();
@@ -5585,6 +5975,26 @@ export class Gateway {
                 language: voiceLanguage,
               });
             }
+          }
+        } else if (translator.done) {
+          // UBP-020 — the turn ended (`done`) with no reply text and no error:
+          // the user gets one tracked notice instead of silence.
+          this.recordEmptyReply(message, bot, 'blank done');
+          if (
+            this.outboundDedup.shouldSend(sessionKey, EMPTY_REPLY_NOTICE, replyScope) &&
+            (await this.sendTracked(
+              {
+                adapter,
+                botKey: bot.botKey,
+                platform: message.platform,
+                chatId: message.chatId,
+                sessionKey,
+                inboundRef,
+              },
+              { text: EMPTY_REPLY_NOTICE, threadId },
+            ))
+          ) {
+            markAnswered();
           }
         }
 
@@ -5636,6 +6046,8 @@ export class Gateway {
           // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
           // from inside a review turn by reading this off its ToolContext.
           ...(review ? { reviewOfJobId: review.jobId } : {}),
+          // V2-SEC-2 — a tainted job's review starts downgraded (`WakeReview.tainted`).
+          ...(review?.tainted ? { untrustedOrigin: true } : {}),
           // openclaw-9.5 item 1 — a user turn answers `credential_required`
           // with a link, never by taking the secret in chat (`deliverAnswer`).
           // A review turn does not opt in: its refusal would reach the user as
@@ -5671,6 +6083,14 @@ export class Gateway {
           // disposes them, so a tool_end always cancels its own timer.
           feedback?.onEvent(event);
           translator.push(event);
+          if (event.type === 'text_delta') cutOffAtCap = false;
+          else if (
+            event.type === 'tool_progress' &&
+            event.toolName === '_loop' &&
+            event.message === MAX_TOKENS_REPLY_NOTICE
+          ) {
+            cutOffAtCap = true;
+          }
           // Feed the live draft. Progress folds in only for `audience:'user'`
           // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
           // streamer serializes internally and finalize() awaits it.
@@ -5687,11 +6107,17 @@ export class Gateway {
             clearInterval(typingTimer);
             // …and no "working on it" either: nothing may fire after the final.
             feedback?.dispose();
-            // The loop reads its steer sink only between LLM iterations and
-            // has none left, so a message pushed now would be acknowledged
-            // ("↩ noted") and then read by nobody. Unhooked, the next message
-            // queues on the lane instead — which the tail still holds.
+            // The loop reads its steer sink only at its tool seam and at
+            // text-end, and has passed its last one, so a message pushed now
+            // would be acknowledged ("↩ noted") and then read by nobody.
+            // Unhooked, the next message queues on the lane instead — which the
+            // tail still holds. A steer already queued that no seam read runs
+            // as its own turn, enqueued now so it keeps its place ahead of
+            // anything that arrives during the tail (UBP-001).
             this.activeSinks.delete(laneKey);
+            if (!signal.aborted && !this.closing) {
+              this.requeueUnreadSteers(laneKey, _lane, bot, steerSink, spoolTurn);
+            }
             answer = deliverAnswer();
             // Observed by the join below; this only stops a rejection that
             // settles while the tail is still draining from being reported
@@ -5723,11 +6149,21 @@ export class Gateway {
       // An iterator that ends without `done` or `error` — AgentLoop always
       // yields one, test fakes need not: deliver what accumulated.
       else await deliverAnswer();
+      completed = true;
     } finally {
       clearInterval(typingTimer);
       feedback?.dispose();
+      const answered =
+        this.activeTurns.get(laneKey)?.answered === true || spoolTurn?.answered === true;
       this.activeTurns.delete(laneKey);
       this.activeSinks.delete(laneKey);
+      // Steers no seam read that the terminal event did not already re-queue
+      // (the turn threw, was stopped, or is being shut down) — UBP-001.
+      if (!signal.aborted && !this.closing && (completed || answered)) {
+        this.requeueUnreadSteers(laneKey, _lane, bot, steerSink, spoolTurn);
+      } else {
+        this.settleUnreadSteers(steerSink, spoolTurn, answered);
+      }
       // A `removeAdapter` may be parked waiting for exactly this turn.
       this.notifyDrainWaiters();
 
@@ -6180,14 +6616,13 @@ export class Gateway {
       this.closeSpool(row.id);
       return false;
     }
-    this.enqueueReview(
-      bot,
-      adapter,
-      message,
-      row.id,
-      { jobId: job.id, fallbackText, roomAudience },
-      laneKey,
-    );
+    const review = {
+      jobId: job.id,
+      fallbackText,
+      roomAudience,
+      ...(job.tainted ? { tainted: true } : {}),
+    };
+    this.enqueueReview(bot, adapter, message, row.id, review, laneKey);
     return true;
   }
 
@@ -6355,6 +6790,40 @@ export class Gateway {
    * agnostic by design: the gateway returns a generic `PlatformAdapter` and
    * never learns which concrete platform is in play.
    */
+  /**
+   * UBP-046 — subscribe to a user's `/stop`. The listener gets the stopped
+   * turn's `sessionId` — the id its `before_tool_call` payloads carry, bridged
+   * from `session_start` (`wireBotLoop`) — so an approval surface can settle
+   * whatever the turn is parked on: `wireApprovalFlow` passes
+   * `ApprovalCoordinator.cancelForSession`, which denies the pending approval,
+   * updates its card and lets the aborted turn end, releasing the lane now
+   * rather than at the approval timeout. Fired only when a turn on the lane
+   * has reached `session_start`. Returns the unsubscribe. Pinned by
+   * `__tests__/stop-settles-approval.test.ts`.
+   */
+  onLaneStop(listener: (stop: LaneStop) => void): () => void {
+    this.laneStopListeners.add(listener);
+    return () => {
+      this.laneStopListeners.delete(listener);
+    };
+  }
+
+  private notifyLaneStop(sessionKey: string): void {
+    const sessionId = this.sessionIdByKey.get(sessionKey);
+    if (sessionId === undefined) return;
+    for (const listener of this.laneStopListeners) {
+      try {
+        listener({ sessionId, sessionKey });
+      } catch (err) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.lane_stop_listener_failed',
+          cause: err instanceof Error ? err.message : String(err),
+          details: { sessionKey },
+        });
+      }
+    }
+  }
+
   resolveApprovalRoute(sessionId: string): SessionRouting | undefined {
     return this.approvalRoutes.get(sessionId);
   }
@@ -7126,6 +7595,39 @@ export class Gateway {
     return this.runDeliverySweep(0);
   }
 
+  /** The id `replyDedupScope` falls back to for a message with no spool row
+   *  and no platform id: `gw-local:<n>`, assigned once per message object. */
+  private localInboundId(message: InboundMessage): string {
+    let id = this.localInboundIds.get(message);
+    if (id === undefined) {
+      this.localInboundSeq += 1;
+      id = `gw-local:${this.localInboundSeq}`;
+      this.localInboundIds.set(message, id);
+    }
+    return id;
+  }
+
+  /** UBP-020 — a turn ended with no reply text; the user got a notice instead. */
+  private recordEmptyReply(message: InboundMessage, bot: GatewayBotConfig, cause: string): void {
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.empty_reply',
+      cause: `turn ended with no reply text: ${cause}`,
+      details: { platform: message.platform, chatId: message.chatId, botKey: bot.botKey },
+    });
+  }
+
+  /**
+   * Re-arm dedup for a redelivered obligation. Both keys: the content-only one
+   * the notice paths check, and — for a row that answered a spooled inbound
+   * message — the scoped one its reply path checks (`replyDedupScope`, UBP-014).
+   */
+  private recordRedelivered(row: DeliveryObligation): void {
+    this.outboundDedup.record(row.sessionId, row.content);
+    if (row.inboundRef) {
+      this.outboundDedup.record(row.sessionId, row.content, { inboundId: row.inboundRef });
+    }
+  }
+
   /**
    * Arm the periodic delivery sweep (plan openclaw-2026.9.6-gaps R1): every
    * `deliverySweepIntervalMs` (default 60s, 0 = never), unref'd. Call AFTER
@@ -7250,7 +7752,7 @@ export class Gateway {
           );
         if (result?.ok === true) {
           await ledger.markDelivered(row.id);
-          this.outboundDedup.record(row.sessionId, row.content);
+          this.recordRedelivered(row);
           redelivered++;
           this.observability?.recordSafetyBlock({
             code: 'gateway.delivery_redelivered',
@@ -7408,7 +7910,7 @@ export class Gateway {
     // Redelivery bypassed `shouldSend()` — a warm cache must not swallow what
     // the user never received — so record the key afterwards, exactly as the
     // text path does, and release the artifact now that it is discharged.
-    this.outboundDedup.record(row.sessionId, row.content);
+    this.recordRedelivered(row);
     if (ref) await this.voiceArtifacts?.remove(ref);
     this.observability?.recordSafetyBlock({
       code: 'gateway.delivery_redelivered',
@@ -8046,11 +8548,57 @@ export class Gateway {
     try {
       // Route through outbound dedup — same path as normal responses.
       // Use target as the session key for dedup so repeated sends to the
-      // same target with same content are suppressed within TTL.
+      // same target with same content are suppressed within TTL. No ledger
+      // stands behind this send, so the check is a RESERVATION: `reserve`
+      // arms the key now (a second identical send while this one is in
+      // flight is a duplicate — V-GC-1), `record` commits it once the
+      // platform confirms, and `release` un-arms it on failure so a retry
+      // inside the TTL goes out instead of being reported as sent (UBP-003).
+      // A duplicate that arrives while the first is in flight shares that
+      // send's outcome (`inFlightSends`). Both are owned (V2-RT-4): a send
+      // that outlived the TTL commits, releases and clears only its own
+      // reservation and flight, never those of the identical send that went
+      // out after the TTL. Pinned by `__tests__/dedup-send-retry.test.ts`.
       const dedupKey = `outbound:${platform}:${target}`;
-      if (!this.outboundDedup.shouldSend(dedupKey, body)) {
-        return { ok: true }; // silently deduplicated
+      const flightKey = `${dedupKey}\u0000${body}`;
+      const reservation = this.outboundDedup.reserve(dedupKey, body);
+      if (!reservation) {
+        // Silently deduplicated — against a send still in flight, its outcome.
+        return (await this.inFlightSends.get(flightKey)) ?? { ok: true };
       }
+      const flight = this.sendReserved(
+        adapter,
+        platform,
+        target,
+        body,
+        media,
+        dedupKey,
+        reservation,
+      );
+      this.inFlightSends.set(flightKey, flight);
+      try {
+        return await flight;
+      } finally {
+        if (this.inFlightSends.get(flightKey) === flight) this.inFlightSends.delete(flightKey);
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** `sendThrough`'s platform call, holding a dedup reservation it commits on
+   *  a confirmed send and releases otherwise (V-GC-1). */
+  private async sendReserved(
+    adapter: PlatformAdapter,
+    platform: string,
+    target: string,
+    body: string,
+    media: unknown,
+    dedupKey: string,
+    reservation: symbol,
+  ): Promise<{ ok: boolean; error?: string }> {
+    let confirmed = false;
+    try {
       // W3.2 — outbound media convention. Map a recognized `structured`
       // payload to native attachments when the adapter's caps allow;
       // otherwise degrade to the text body (nothing attached).
@@ -8075,9 +8623,13 @@ export class Gateway {
       if (!result.ok) {
         return { ok: false, error: result.error ?? 'Adapter send failed' };
       }
+      confirmed = true;
+      this.outboundDedup.record(dedupKey, body, undefined, reservation);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      if (!confirmed) this.outboundDedup.release(dedupKey, body, undefined, reservation);
     }
   }
 
@@ -8429,23 +8981,4 @@ export class Gateway {
 function isAnnounceableJob(job: BackgroundJob): boolean {
   if (job.status === 'done' || job.status === 'failed') return true;
   return job.status === 'aborted' && job.error === JOB_ABORTED_BY_SHUTDOWN;
-}
-
-function createSteerSink(cap = 32): SteerSink {
-  const queue: string[] = [];
-  return {
-    push(text: string): boolean {
-      if (queue.length >= cap) return false;
-      queue.push(text);
-      return true;
-    },
-    drain(): string[] {
-      if (queue.length === 0) return [];
-      const out = queue.splice(0);
-      return out;
-    },
-    depth(): number {
-      return queue.length;
-    },
-  };
 }

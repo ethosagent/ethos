@@ -93,6 +93,9 @@ export interface TurnEndCtx {
   toolScope: Pick<TurnSetup, 'toolLoading' | 'allowedTools' | 'filterOpts'>;
   /** Output reserve for the pressure gate (from RunOptions.maxCompletionTokens). */
   maxCompletionTokens?: number;
+  /** `TurnSetup.gateWindowTokens` — the turn's gate window when an override
+   *  routed it to a smaller-window model. */
+  gateWindowTokens?: number;
   /** THIS run's plugin context store — the flush dispatches tools, and a tool
    *  gets the same contract here as in a batch (`__tests__/tool-context-parity.test.ts`). */
   contextStore: ContextStore;
@@ -103,6 +106,15 @@ export interface TurnEndCtx {
   roomAudience?: TurnAudience;
   /** `RunOptions.initiator`, handed to flush-dispatched tools as the batch path does. */
   initiator?: TurnInitiator;
+  /**
+   * The run read untrusted content (`DowngradeState.untrustedSeen`,
+   * ./stages/per-call-enforcement.ts). `runMemoryFlush` then writes nothing:
+   * the flush drives `memory_write` over the whole conversation, so it would
+   * persist exactly what the run-scoped downgrade refused (V2-SEC-2). Pinned
+   * by 'memory flush skips a run that read untrusted content' in
+   * `../__tests__/turn-end-consolidation.test.ts`.
+   */
+  untrustedSeen?: boolean;
 }
 
 /** Extra loop-local fields the turn-end stage needs beyond `TurnSetup`. */
@@ -111,10 +123,12 @@ export interface TurnEndExtras {
   compactedThisTurn: boolean;
   abortSignal: AbortSignal;
   systemPrompt: string;
-  maxCompletionTokens?: number;
+  /** Undefined is accepted and dropped: `buildTurnEndCtx` omits the key. */
+  maxCompletionTokens?: number | undefined;
   contextStore: ContextStore;
   rootSessionKey: string;
   initiator?: TurnInitiator;
+  untrustedSeen?: boolean;
 }
 
 /** Build a {@link TurnEndCtx} from the shared `TurnSetup` plus loop-locals so
@@ -138,6 +152,8 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     rootSessionKey: extras.rootSessionKey,
     roomAudience: setup.roomAudience,
     ...(extras.initiator !== undefined ? { initiator: extras.initiator } : {}),
+    ...(extras.untrustedSeen === true ? { untrustedSeen: true } : {}),
+    ...(setup.gateWindowTokens !== undefined ? { gateWindowTokens: setup.gateWindowTokens } : {}),
     ...(extras.maxCompletionTokens !== undefined
       ? { maxCompletionTokens: extras.maxCompletionTokens }
       : {}),
@@ -330,6 +346,9 @@ export async function runMemoryFlush(
     return { flushed: false, deltaChars: 0 };
   }
 
+  // A tainted run never flushes — see `TurnEndCtx.untrustedSeen`. The flush
+  // state is not advanced, so the next (clean) run's flush still sees the delta.
+  if (ctx.untrustedSeen === true) return { flushed: false, deltaChars: 0 };
   const mc = deps.memoryConsolidation ?? {};
 
   // Trivial-delta skip: only flush when enough NEW messages accumulated since

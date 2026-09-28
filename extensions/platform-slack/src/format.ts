@@ -30,11 +30,25 @@ You are replying inside a Slack workspace. Follow these rules:
  * Escaping first also fixes the legitimate-link breakage the old lookbehind
  * caused, because the link rule now runs against text with no ambient `<`/`>`
  * to trip over.
+ *
+ * UBP-051 — fenced blocks and inline code are pulled out into placeholders
+ * after escaping and before the header/bold/link rewrites, then restored, so
+ * `a**2` or a `# comment` line inside code reaches Slack as written (still
+ * entity-escaped: Slack parses control sequences in code too). Pinned by
+ * `__tests__/format-code.test.ts`.
  */
 export function toNativeMarkdown(text: string): string {
   // Slack's documented escape set. Order matters: `&` first, or the entities
-  // written by the next two rules get double-escaped.
-  let out = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // written by the next two rules get double-escaped. A private-use U+E000 the model wrote
+  // would be read back as a code placeholder, so it is dropped here.
+  let out = text
+    .replace(/\uE000/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  const code: string[] = [];
+  out = out.replace(/```[\s\S]*?```|`[^`\n]+`/g, (span) => `\uE000${code.push(span) - 1}\uE000`);
 
   // Headers → bold (Slack has no native headers)
   out = out.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
@@ -48,5 +62,5 @@ export function toNativeMarkdown(text: string): string {
   // the only unescaped `<`/`>` in the output.
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
 
-  return out;
+  return out.replace(/\uE000(\d+)\uE000/g, (_m, i: string) => code[Number(i)] ?? '');
 }

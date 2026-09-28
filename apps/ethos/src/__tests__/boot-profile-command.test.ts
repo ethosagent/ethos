@@ -74,7 +74,7 @@ describe('ethos boot — §3b construction order', () => {
 
   it('runs reconciliation after the adapters start and before any server binds', async () => {
     const src = await read('apps/ethos/src/commands/boot.ts');
-    const adaptersStarted = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+    const adaptersStarted = src.indexOf('await startAdaptersIsolated(adapters, {');
     const reconcile = src.indexOf('await runBootReconciliation({');
     const health = src.indexOf('const healthServer = createHealthServer(');
     const acpBind = src.indexOf('acpServer.startHttp(acpPort);');

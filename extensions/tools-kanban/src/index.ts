@@ -1016,11 +1016,22 @@ function createKanbanShow(store: KanbanStore): Tool {
 // kanban_update_status
 // ---------------------------------------------------------------------------
 
+/**
+ * Statuses `kanban_update_status` may set: every status except `done`. The only
+ * agent road to `done` is `kanban_complete`, which runs the fail-closed
+ * `before_ticket_complete` verifier and fires `ticket_completed` (UBP-028);
+ * letting this tool write `done` bypassed both — for a running ticket, and for
+ * a `needs_revision` one the verifier had just rejected. Pinned by the
+ * "kanban_update_status refuses done" cases in `__tests__/tools.test.ts`.
+ */
+const SETTABLE_STATUS_VALUES: TaskStatus[] = STATUS_VALUES.filter((s) => s !== 'done');
+
 function createKanbanUpdateStatus(store: KanbanStore): Tool {
   return {
     name: 'kanban_update_status',
     description:
-      'Set a task to a new status. Setting status="running" auto-opens a task run; use kanban_complete / kanban_block to close it.\n' +
+      'Set a task to a new status. Setting status="running" auto-opens a task run; use kanban_complete / kanban_block to close it. ' +
+      'It cannot set "done": finish a task with kanban_complete.\n' +
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
@@ -1030,7 +1041,7 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
       required: ['task_id', 'status'],
       properties: {
         task_id: { type: 'string' },
-        status: { type: 'string', enum: STATUS_VALUES },
+        status: { type: 'string', enum: SETTABLE_STATUS_VALUES },
         reason: { type: 'string' },
       },
     },
@@ -1039,8 +1050,19 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
       if (typeof args.task_id !== 'string') {
         return errorResult('task_id must be a string', 'input_invalid');
       }
+      if (args.status === 'done') {
+        return errorResult(
+          'kanban_update_status cannot set status "done". Call kanban_complete(task_id, summary): ' +
+            'completion is checked by the before_ticket_complete verifier. A needs_revision task ' +
+            'must be re-claimed (status "running") and then completed.',
+          'input_invalid',
+        );
+      }
       if (!isStatus(args.status)) {
-        return errorResult(`status must be one of ${STATUS_VALUES.join(', ')}`, 'input_invalid');
+        return errorResult(
+          `status must be one of ${SETTABLE_STATUS_VALUES.join(', ')}`,
+          'input_invalid',
+        );
       }
       if (hiddenFrom(store, ctx, args.task_id)) {
         return errorResult(`updateStatus: task ${args.task_id} not found`, 'input_invalid');

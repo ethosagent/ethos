@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: schedule-tasks-with-cron
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-09-28
 ---
 
 ## Task
@@ -109,6 +109,12 @@ From the CLI:
 ethos cron run morning-briefing
 ```
 
+If the job is already running (its scheduled run, or another "Run now"), the manual run is refused instead of running it a second time:
+
+```text
+Job "morning-briefing" is already running (started 2026-09-28T08:00:00.000Z) — wait for that run to finish
+```
+
 ### 6. Manage jobs
 
 **Pause** a job (reversible — the row stays in the store):
@@ -178,14 +184,37 @@ Cron-spawned sessions cannot create further cron jobs. The scheduler removes the
 
 ### Delivery
 
-Cron job output is delivered to the channels configured for the personality. For a gateway-connected bot, that means Telegram, Slack, Discord, or whichever platform the personality serves. For `ethos serve` without a gateway, output is stored in the cron run history and viewable from the web Cron tab or `ethos cron read-run <id> --at <timestamp>`.
+Cron job output is delivered to the chat the job was created from, by the bot it was created with, and into the same thread when it was created in one. For `ethos serve` without a gateway, output is stored in the cron run history and viewable from the web Cron tab or `ethos cron read-run <id> --at <timestamp>`.
+
+Delivery to a chat follows the same rules as any tracked notice:
+
+| Situation | What happens |
+|---|---|
+| Quiet hours, or the chat is muted with `/mute` | Output is held and sent when the hold ends. |
+| The platform refuses the send | The delivery sweep retries it. |
+| The run fails (a provider error, a turn with no answer) | Nothing is delivered. The chat gets one failure notice, at most once every 6 hours per job. `lastError` records every failure. |
+| A job created before jobs recorded their bot, on a platform with several bots | Delivery is refused with `CRON_TARGET_NOT_ALLOWED` rather than sent by the wrong bot. Recreate the job from the chat it should reply to. |
+
+### Overlapping runs
+
+A job never runs twice at once. If an occurrence falls due while the previous run is still executing, that occurrence is skipped and a `[skipped: overlap]` entry appears in the run history. "Run now" is refused while a run is executing. A run left behind by a process that crashed or was restarted does not block the job: it runs at the next tick.
+
+### Failed one-shot jobs
+
+A one-shot job (a single date or "in 2 hours") whose run fails is **paused**, not retired, so it can be retried. Resume it once the cause is fixed:
+
+```bash
+ethos cron resume <id>
+```
 
 ### Missed runs
 
 If the scheduler was down when a job's scheduled time passed, the `missed_run_policy` controls what happens on next start:
 
-- `skip` (default) — wait for the next normal occurrence.
+- `skip` (default) — wait for the next normal occurrence. The skipped slot is recorded as a `[skipped: missed]` entry in the run history.
 - `run-once` — fire the missed slot once, then resume the normal schedule.
+
+A slot counts as missed only when it fell due before the scheduler's previous tick, or before the process started. A slot that fell due between two ticks always runs, however far apart the ticks are. That covers an external `POST /cron/fire` every 5 minutes, and a laptop that slept while `ethos` kept running. A missed one-shot job is retired, with `lastError` set and a notice sent to its chat.
 
 Set the policy at creation time by telling the agent, or pass it directly:
 

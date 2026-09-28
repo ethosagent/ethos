@@ -60,6 +60,7 @@ function wire(route: { isDm: boolean; platform: string }, owner: string | undefi
     { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
   ] as unknown as GatewayBotConfig[];
   const gateway = {
+    onLaneStop: () => () => {},
     resolveApprovalRoute: () => ({
       adapter,
       chatId: 'C1',

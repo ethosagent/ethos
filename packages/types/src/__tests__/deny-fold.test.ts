@@ -22,6 +22,11 @@ describe('foldForDeny', () => {
     expect(foldForDeny('ſoul.md')).toBe('soul.md');
   });
 
+  // V-ES-1 (main, merged) — lower FIRST: U+1E9E upper-cases to itself.
+  it('folds U+1E9E CAPITAL SHARP S the way APFS opens it', () => {
+    expect(foldForDeny('/Users/u/.\u1E9Eh')).toBe(foldForDeny('/Users/u/.ssh'));
+  });
+
   // verification round E3 — `/System/Volumes/Data` is a firmlink on macOS.
   it('drops a leading /System/Volumes/Data firmlink root, in any case', () => {
     expect(foldForDeny('/System/Volumes/Data/Users/u/.ethos/MEMORY.md')).toBe(
@@ -57,6 +62,7 @@ describe('isUnmappablePathAlias', () => {
       '/.nofollow/.nofollow/Users/u',
       '/.nofollow/.vol/1/2',
       '/System/Volumes/Data/.vol/1/2',
+      '/System/Volumes/Data/System/Volumes/Data/Users/u/.ssh',
     ]) {
       expect([p, isUnmappablePathAlias(p)]).toEqual([p, true]);
     }

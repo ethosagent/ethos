@@ -205,6 +205,16 @@ export class MergedSecretsResolver implements SecretsResolver {
 // loadDotEnv — inline .env parser (no dotenv dep)
 // ---------------------------------------------------------------------------
 
+/**
+ * Copies `path`'s `KEY=value` lines into `process.env`, and records every
+ * name it set in `ETHOS_DOTENV_KEYS` (comma-separated, merged with any names
+ * already recorded). The host-env allowlists read that list and never forward
+ * a name on it to a child process, whatever the name is (V-ES-8):
+ * `minimalHostEnv` in packages/core/src/scoped/scoped-process.ts,
+ * extensions/tools-process/src/spawn.ts, extensions/execution-local/src/index.ts
+ * and extensions/execution-process-backend/src/index.ts. Pinned by
+ * `__tests__/env-secrets.test.ts`.
+ */
 export function loadDotEnv(path: string): void {
   let content: string;
   try {
@@ -212,6 +222,7 @@ export function loadDotEnv(path: string): void {
   } catch {
     return;
   }
+  const loaded = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -227,5 +238,7 @@ export function loadDotEnv(path: string): void {
       value = value.slice(1, -1);
     }
     process.env[key] = value;
+    loaded.add(key);
   }
+  if (loaded.size > 0) process.env.ETHOS_DOTENV_KEYS = [...loaded].join(',');
 }

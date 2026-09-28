@@ -83,7 +83,9 @@ export interface ChildSpec {
    * another gateway already holds this state dir's lock (plan
    * reach-and-containment D2-14) — restarting it forever would spam the log
    * and never succeed. It exits 78 (`CONFIG_INVALID_EXIT_CODE`) when its
-   * config cannot be started from, for the same reason.
+   * config cannot be started from, or when the platform refused every
+   * adapter's credentials (`adapterStartFailureExitCode`, commands/gateway.ts),
+   * for the same reason.
    */
   terminalExitCodes?: readonly number[];
 }
@@ -236,27 +238,37 @@ export interface ShutdownDeps {
  *
  * Exported so tests can drive shutdown without spawning real children.
  */
-export function createShutdownHandler(deps: ShutdownDeps): (signal: NodeJS.Signals) => void {
+export function createShutdownHandler(
+  deps: ShutdownDeps,
+): (reason: NodeJS.Signals | string, exitCode?: number) => void {
   const { children, log, beforeStop, graceMs = SHUTDOWN_GRACE_MS } = deps;
   const exit = deps.exit ?? ((code: number) => process.exit(code));
 
   let shuttingDown = false;
   let exited = false;
   let graceTimer: NodeJS.Timeout | null = null;
+  let finalCode = 0;
 
   // Idempotent: a child that exits after the SIGKILL sweep must not re-exit.
   const finish = (): void => {
     if (exited) return;
     exited = true;
     if (graceTimer) clearTimeout(graceTimer);
-    exit(0);
+    exit(finalCode);
   };
 
-  return (signal: NodeJS.Signals): void => {
+  // `exitCode` is 0 for a signal (a clean stop) and 1 for the give-up path in
+  // `runAll` (UBP-011): a supervisor that restarts on failure must see one.
+  return (reason: NodeJS.Signals | string, exitCode = 0): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    finalCode = exitCode;
     beforeStop?.();
-    log(`\n${c.dim}run-all: ${signal} received, stopping children…${c.reset}`);
+    log(
+      exitCode === 0
+        ? `\n${c.dim}run-all: ${reason} received, stopping children…${c.reset}`
+        : `\n${c.red}run-all: ${reason} — stopping children and exiting ${exitCode}${c.reset}`,
+    );
 
     // Liveness is tracked here rather than read back off `child.killed`:
     // Node sets `killed` once a signal has been *delivered*, not once the
@@ -362,8 +374,17 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+  // UBP-011 — a child that exhausted its restart budget is dead for good here,
+  // and staying up with it dead (watchdog still pinging, `/healthz` only
+  // `degraded`) means nothing ever restarts it. Stop the watchdog and the
+  // siblings and exit 1, so systemd (`Restart=on-failure`) or PM2 restarts the
+  // whole supervisor with a fresh budget.
+  const onGiveUp = (name: string): void => {
+    shutdown(`${name} exhausted its restart budget`, 1);
+  };
+
   for (const sc of children) {
-    startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation);
+    startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation, onGiveUp);
   }
 
   const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || DEFAULT_HEALTH_PORT;
@@ -396,6 +417,7 @@ function startChild(
   log: { log: (msg: string) => void; error: (msg: string) => void },
   onChildReady: (name: string) => void,
   rotation: LogRotationConfig,
+  onGiveUp?: (name: string) => void,
 ): void {
   if (sc.shuttingDown) return;
 
@@ -509,15 +531,17 @@ function startChild(
         }s — giving up. Inspect ${logPath}.${c.reset}`,
       );
       process.exitCode = 1;
-      // Leave sibling children running; the operator (or PM2/systemd) can
-      // restart the whole supervisor once they've fixed the underlying issue.
+      // The supervisor stops everything and exits non-zero (`onGiveUp` in
+      // `runAll`), so PM2/systemd restarts it — staying alive here would keep
+      // the watchdog pinging over a dead gateway (UBP-011).
+      onGiveUp?.(sc.spec.name);
       return;
     }
 
     const delay = sc.backoffMs;
     log.log(`${c.dim}run-all: restarting ${sc.spec.name} in ${delay}ms${c.reset}`);
     setTimeout(
-      () => startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation),
+      () => startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation, onGiveUp),
       delay,
     ).unref();
     sc.backoffMs = nextBackoff(sc.backoffMs);

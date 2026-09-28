@@ -110,7 +110,12 @@ export async function resolveByVision(
       const client = new OpenAI({ apiKey: opts.apiKey });
       const response = await client.chat.completions.create({
         model: opts.model ?? 'gpt-4o',
-        max_tokens: 64,
+        // api.openai.com (the SDK default): `max_completion_tokens` for every
+        // model — the reasoning families refuse `max_tokens`. The same rule as
+        // `outputCapParam` (extensions/llm-openai-compat/src/transport.ts) for
+        // a first-party endpoint; pinned by
+        // __tests__/vision-resolver-output-cap.test.ts.
+        max_completion_tokens: 64,
         messages: [
           {
             role: 'user',

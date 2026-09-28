@@ -35,7 +35,19 @@ type CronAction =
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createCronTool(scheduler: CronScheduler): Tool[] {
+/** Optional seams for {@link createCronTool}. */
+export interface CronToolOptions {
+  /**
+   * The thread or forum topic of the live turn on `sessionKey`
+   * (`Gateway.originThreadIdFor`), recorded as `JobOrigin.threadId` so the
+   * job's output returns to that thread rather than the chat root (UBP-024).
+   * The lane key cannot answer it: its fourth segment is a thread id OR a
+   * `/new` timestamp. Absent (CLI, web, tests) → no thread is recorded.
+   */
+  resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+}
+
+export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions = {}): Tool[] {
   return [
     {
       name: 'cron',
@@ -168,7 +180,7 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
 
         switch (action) {
           case 'create':
-            return handleCreate(scheduler, ctx, {
+            return handleCreate(scheduler, ctx, opts, {
               name,
               schedule,
               prompt,
@@ -294,9 +306,20 @@ function systemJobRefusal(job: CronJob, verb: string): ToolResult | null {
 /**
  * Extract a JobOrigin from the tool context when the call originates
  * from a channel adapter. CLI and web contexts return undefined (file-only).
- * Gateway session keys follow `${platform}:${botKey}:${chatId}`.
+ * Gateway session keys are lane keys, `buildLaneKey(platform, botKey, chatId
+ * [, threadId])` (packages/core/src/lane-key.ts) — each segment URL-encoded —
+ * optionally followed by a `/new` suffix. The botKey is kept (UBP-024) so the
+ * job's output is delivered by the bot it was created through
+ * (`createCronDeliver`, apps/ethos/src/lib/cron-deliver.ts). The thread is NOT
+ * recoverable from the key — segment 3 is a thread id or a `/new` timestamp,
+ * and `ToolContext` carries no thread — so it comes from the gateway's live
+ * turn (`resolveOriginThreadId`, `Gateway.originThreadIdFor`); without that
+ * seam a job delivers to the chat root.
  */
-function extractOrigin(ctx: { platform: string; sessionKey: string }): JobOrigin | undefined {
+function extractOrigin(
+  ctx: { platform: string; sessionKey: string },
+  resolveThreadId?: (sessionKey: string) => string | undefined,
+): JobOrigin | undefined {
   if (!ctx.platform || ctx.platform === 'cli') return undefined;
   // Web chat: store the full sessionKey so the cron runner can replay output
   // into the originating chat session.
@@ -306,10 +329,30 @@ function extractOrigin(ctx: { platform: string; sessionKey: string }): JobOrigin
   // Channel adapters: gateway session keys follow `${platform}:${botKey}:${chatId}`.
   const parts = ctx.sessionKey.split(':');
   if (parts.length >= 3) {
-    const chatId = parts[2];
-    if (chatId) return { platform: ctx.platform, chatId };
+    const botKey = decodeSegment(parts[1]);
+    const chatId = decodeSegment(parts[2]);
+    if (chatId) {
+      const threadId = resolveThreadId?.(ctx.sessionKey);
+      return {
+        platform: ctx.platform,
+        chatId,
+        ...(botKey ? { botKey } : {}),
+        ...(threadId ? { threadId } : {}),
+      };
+    }
   }
   return undefined;
+}
+
+/** Undo `buildLaneKey`'s per-segment `encodeURIComponent`; a malformed escape
+ *  reads as absent, the same rule as `laneKeyBotKey` in packages/core. */
+function decodeSegment(segment: string | undefined): string | undefined {
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Build a ScriptRef from tool params; undefined when no file was given. */
@@ -321,6 +364,7 @@ function toScriptRef(file?: string, timeoutSeconds?: number): ScriptRef | undefi
 async function handleCreate(
   scheduler: CronScheduler,
   ctx: ToolContext,
+  opts: CronToolOptions,
   args: {
     name?: string;
     schedule?: string;
@@ -382,7 +426,7 @@ async function handleCreate(
     }
   }
 
-  const origin = extractOrigin(ctx);
+  const origin = extractOrigin(ctx, opts.resolveOriginThreadId);
 
   // A shared turn may chain only from jobs it could read (`readableFrom`,
   // verification round E1): a private job's output would otherwise be read

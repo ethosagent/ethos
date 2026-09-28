@@ -1,0 +1,28 @@
+#!/bin/bash
+# A stand-in `docker` for the persistent-session recovery test. It never
+# touches a real daemon: `run`/`rm`/`inspect` succeed, `exec -i <name> bash` is
+# a host bash whose pid is recorded, and any other `exec` (the session's
+# `stop()` broadcast) kills every recorded shell and its children — the host
+# equivalent of the in-container `kill -KILL -1`, scoped to this test's shells.
+state="${FAKE_DOCKER_STATE:?}"
+case "$1" in
+  exec)
+    if [ "$2" = "-i" ]; then
+      echo $$ >> "$state/shells"
+      exec bash
+    fi
+    for p in $(cat "$state/shells" 2>/dev/null); do
+      pkill -KILL -P "$p" 2>/dev/null
+      kill -KILL "$p" 2>/dev/null
+    done
+    : > "$state/shells"
+    exit 0
+    ;;
+  inspect)
+    echo '[]'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

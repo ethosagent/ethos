@@ -23,6 +23,7 @@ import { compactionFailureCode, withCompactionDeadline } from './compaction-time
 
 export interface CompactionDeps {
   llm: LLMProvider;
+  windowTokens?: number; // `TurnSetup.gateWindowTokens` (./turn-window); absent → llm's window
   contextEngines: ContextEngineRegistry;
   session: SessionStore;
   observability?: AgentLoopObservability;
@@ -36,8 +37,9 @@ export interface CompactionDeps {
   /**
    * T3 — max output tokens the pending completion may generate. Reserved from
    * the window before computing pressure so the *response* can't push the
-   * request past the context limit. Defaults to `DEFAULT_OUTPUT_RESERVE_TOKENS`
-   * when the caller didn't set a completion budget.
+   * request past the context limit. Unset → the provider's
+   * `capabilities.maxOutputTokens`, else `DEFAULT_OUTPUT_RESERVE_TOKENS`
+   * (`__tests__/output-reserve-cap.test.ts`).
    */
   reservedOutputTokens?: number;
   /**
@@ -146,8 +148,9 @@ export interface GateEval {
   staticTokens: number;
 }
 
+type GateLLM = Pick<LLMProvider, 'maxContextTokens' | 'capabilities'>;
 export function evaluateGate(
-  deps: { llm: Pick<LLMProvider, 'maxContextTokens'> } & Pick<
+  deps: { llm: GateLLM; windowTokens?: number } & Pick<
     CompactionDeps,
     | 'reservedOutputTokens'
     | 'staticTokens'
@@ -160,8 +163,9 @@ export function evaluateGate(
   messages: Message[],
   systemPrompt: string,
 ): GateEval {
-  const rawWindow = deps.llm.maxContextTokens || 200_000;
-  const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const rawWindow = deps.windowTokens ?? (deps.llm.maxContextTokens || 200_000);
+  const cap = deps.llm.capabilities?.maxOutputTokens;
+  const requestedOutput = deps.reservedOutputTokens ?? cap ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
 
@@ -237,12 +241,12 @@ export function currentTurnFitError(
   deps: { llm: Pick<LLMProvider, 'maxContextTokens' | 'model'> } & Pick<
     CompactionDeps,
     'reservedOutputTokens'
-  >,
+  > & { windowTokens?: number },
   input: { systemPrompt: string; toolSchemas: string; currentTurn: Message[] },
 ): string | undefined {
   const g = evaluateGate(deps, input.currentTurn, `${input.systemPrompt}${input.toolSchemas}`);
   if (g.current <= g.window) return undefined;
-  const rawWindow = deps.llm.maxContextTokens || 200_000;
+  const rawWindow = deps.windowTokens ?? (deps.llm.maxContextTokens || 200_000);
   const staticOnly = evaluateGate(deps, [], `${input.systemPrompt}${input.toolSchemas}`).current;
   return (
     `context window too small: the system prompt and tool schemas (~${staticOnly} tokens) plus ` +
@@ -301,7 +305,7 @@ export function compactionTarget(
  * pre-LLM gate would compact a history in a `windowTokens` window, before any
  * request has measured a static slice: `evaluateGate` with no messages, then
  * `effectiveGate` with the resolved pressure (0.8 when unset, as in
- * `maybeCompact`) and the optional absolute ceiling. Wiring uses it as the
+ * `maybeCompact`), the optional ceiling and output reserve. Wiring uses it as the
  * default `serverCompactionTriggerTokens`, so switching a provider to
  * server-side compaction does not move WHEN compaction happens.
  */
@@ -309,8 +313,9 @@ export function pressureGateTokens(
   windowTokens: number,
   pressure?: number,
   maxContextTokens?: number,
+  reservedOutputTokens?: number,
 ): number {
-  const g = evaluateGate({ llm: { maxContextTokens: windowTokens } }, [], '');
+  const g = evaluateGate({ llm: { maxContextTokens: windowTokens }, reservedOutputTokens }, [], '');
   return effectiveGate(g, pressure ?? 0.8, maxContextTokens);
 }
 

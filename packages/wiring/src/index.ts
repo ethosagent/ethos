@@ -13,7 +13,11 @@ import {
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
-import { AuthRotatingProvider, anthropicContextTokens } from '@ethosagent/llm-anthropic';
+import {
+  AuthRotatingProvider,
+  anthropicContextTokens,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+} from '@ethosagent/llm-anthropic';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
@@ -128,6 +132,10 @@ export interface WiringProviderConfig {
    *  otherwise. Named `awsProfile`, not `profile`, because `profile` already
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
+  /** Azure-only: force the output-cap parameter this entry's deployment is
+   *  sent (`providers.<n>.outputCapParam`, `ProviderChainEntry` in
+   *  packages/config). Read by `azureFactory`; a warning on any other provider. */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
   /** Item 7 (D32) — `providers.<n>.serverCompaction`; honoured on `anthropic` only. */
   serverCompaction?: boolean;
   /** `providers.<n>.serverCompactionTriggerTokens`; absent → `pressureGateTokens`. */
@@ -1145,7 +1153,9 @@ export function isProviderAllowed(providerName: string, allowedPlugins?: string[
  * trigger defaults to the local gate's own threshold for the model
  * (`pressureGateTokens` over the provider's reported window, with the resolved
  * `compaction.pressure` and `compaction.maxContextTokens`), so the switch
- * changes WHO compacts, not WHEN.
+ * changes WHO compacts, not WHEN. `windowTokens` is the window the provider
+ * reports (the resolved `contextWindow`-config-or-catalog window); absent →
+ * `anthropicContextTokens`, the 200K fallback.
  */
 function serverCompactionFor(
   cfg: {
@@ -1156,7 +1166,8 @@ function serverCompactionFor(
   },
   config: WiringConfig,
   log: Logger,
-): { triggerTokens: number } | undefined {
+  windowTokens: number | undefined,
+): ServerCompactionSetting | undefined {
   if (cfg.serverCompaction !== true) return undefined;
   if (cfg.provider !== 'anthropic') {
     log.warn(
@@ -1172,11 +1183,75 @@ function serverCompactionFor(
   const triggerTokens =
     cfg.serverCompactionTriggerTokens ??
     pressureGateTokens(
-      anthropicContextTokens(cfg.model),
+      windowTokens ?? anthropicContextTokens(cfg.model),
       resolveCompactionGate(profile, config.compaction)?.pressure,
       config.compaction?.maxContextTokens,
+      profile?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     );
-  return { triggerTokens };
+  return { triggerTokens, triggerCapFor: anthropicTriggerCapFor(config) };
+}
+
+/** What `serverCompactionFor` hands the provider: the trigger for the entry's
+ *  own model, and the bound a `modelOverride` to another model clamps it to. */
+interface ServerCompactionSetting {
+  triggerTokens: number;
+  triggerCapFor: (model: string) => number;
+}
+
+/**
+ * V5-6 — the most a server-compaction trigger may be for a `modelOverride`:
+ * the local gate's threshold for THAT model (`pressureGateTokens` over its
+ * catalog window, its resolved pressure, the global ceiling and its output
+ * cap — the reserve `evaluateGate` takes). `AnthropicProvider.triggerFor`
+ * sends `min(trigger, cap)`, so an explicit trigger that already fits the
+ * override is kept and only a larger one is lowered. Pinned by
+ * __tests__/anthropic-context-window-catalog.test.ts.
+ */
+function anthropicTriggerCapFor(config: WiringConfig): (model: string) => number {
+  return (model) => {
+    const profile = mergeModelProfile(
+      lookupProfile('anthropic', model),
+      config.models?.[`anthropic/${model}`],
+    );
+    return pressureGateTokens(
+      anthropicContextWindowFor(model) ?? anthropicContextTokens(model),
+      resolveCompactionGate(profile, config.compaction)?.pressure,
+      config.compaction?.maxContextTokens,
+      profile?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    );
+  };
+}
+
+/**
+ * The output cap `AnthropicProvider` sends for a `CompletionOptions.modelOverride`
+ * naming another Claude model: the same catalog-then-config merge the entry's
+ * own `maxOutputTokens` gets, keyed on the overriding model. Without it an
+ * override inherited the configured model's cap (Opus 128000 → Haiku 4.5,
+ * whose cap is 64000). Pinned by __tests__/anthropic-output-cap-catalog.test.ts.
+ */
+function anthropicOutputCapFor(config: WiringConfig): (model: string) => number | undefined {
+  return (model) =>
+    mergeModelProfile(lookupProfile('anthropic', model), config.models?.[`anthropic/${model}`])
+      ?.maxOutputTokens;
+}
+
+/**
+ * The context window `AnthropicProvider` scales the server-compaction trigger
+ * by for a `CompletionOptions.modelOverride` naming another Claude model: the
+ * model catalog's window for it. Pinned by
+ * __tests__/anthropic-context-window-catalog.test.ts.
+ */
+function anthropicContextWindowFor(model: string): number | undefined {
+  return lookupContextWindow('anthropic', model);
+}
+
+/**
+ * The window the rotation pool reports: the same `contextWindow` config >
+ * catalog precedence `resolveOne` applies through `resolveContextWindow`
+ * (hosted Anthropic is never probed). Absent → the provider's 200K fallback.
+ */
+function anthropicPoolWindow(config: WiringConfig): number | undefined {
+  return config.contextWindow ?? lookupContextWindow('anthropic', config.model);
 }
 
 /**
@@ -1208,11 +1283,20 @@ async function createLLMFromRegistry(
       apiVersion?: string;
       region?: string;
       awsProfile?: string;
+      outputCapParam?: 'max_tokens' | 'max_completion_tokens';
       serverCompaction?: boolean;
       serverCompactionTriggerTokens?: number;
     },
     opts: { chainHop?: boolean } = {},
   ): Promise<LLMProvider> => {
+    // V-CP-5 — only the azure factory reads `outputCapParam`; say so rather
+    // than let it do nothing silently.
+    if (cfg.outputCapParam !== undefined && cfg.provider !== 'azure') {
+      log.warn(
+        `providers: outputCapParam is honoured only on an azure entry; the "${cfg.provider}" ` +
+          'entry ignores it.',
+      );
+    }
     // §4.B trust gate: plugin-contributed providers (pluginId/name) require
     // the plugin to be in the personality's allowed-plugins list.
     if (!isProviderAllowed(cfg.provider, allowedPlugins)) {
@@ -1277,7 +1361,7 @@ async function createLLMFromRegistry(
       lookupProfile(cfg.provider, cfg.model),
       config.models?.[`${cfg.provider}/${cfg.model}`],
     );
-    const serverCompaction = serverCompactionFor(cfg, config, log);
+    const serverCompaction = serverCompactionFor(cfg, config, log, contextWindow);
     const provider = await factory({
       config: {
         ...(cfg as unknown as Record<string, unknown>),
@@ -1285,7 +1369,10 @@ async function createLLMFromRegistry(
         // `anthropicFactory` sends the edit only when both are present.
         serverCompaction: serverCompaction !== undefined,
         ...(serverCompaction
-          ? { serverCompactionTriggerTokens: serverCompaction.triggerTokens }
+          ? {
+              serverCompactionTriggerTokens: serverCompaction.triggerTokens,
+              serverCompactionTriggerCapFor: serverCompaction.triggerCapFor,
+            }
           : {}),
         ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
         ...(profile?.toolCallFormat !== undefined
@@ -1293,6 +1380,12 @@ async function createLLMFromRegistry(
           : {}),
         ...(profile?.maxOutputTokens !== undefined
           ? { maxOutputTokens: profile.maxOutputTokens }
+          : {}),
+        ...(cfg.provider === 'anthropic'
+          ? {
+              maxOutputTokensFor: anthropicOutputCapFor(config),
+              maxContextTokensFor: anthropicContextWindowFor,
+            }
           : {}),
         // §3 — a profile that declares structured-output support turns on the
         // provider's `capabilities.structuredOutput`, which internal JSON
@@ -1389,6 +1482,9 @@ async function createLLMFromRegistry(
             ...(hop.entry.apiVersion !== undefined ? { apiVersion: hop.entry.apiVersion } : {}),
             ...(hop.entry.region !== undefined ? { region: hop.entry.region } : {}),
             ...(hop.entry.awsProfile !== undefined ? { awsProfile: hop.entry.awsProfile } : {}),
+            ...(hop.entry.outputCapParam !== undefined
+              ? { outputCapParam: hop.entry.outputCapParam }
+              : {}),
             ...(hop.entry.serverCompaction !== undefined
               ? { serverCompaction: hop.entry.serverCompaction }
               : {}),
@@ -1414,10 +1510,11 @@ async function createLLMFromRegistry(
   const topKey =
     head && head.provider === config.provider ? deriveProviderKey(head, 0) : config.provider;
   // Item 7 — the same rule gives the top-level spelling entry 0's
-  // server-compaction switch.
-  const topCompaction =
+  // server-compaction switch, and (V-CP-5) its Azure output-cap parameter.
+  const topEntryFields =
     head && head.provider === config.provider
       ? {
+          ...(head.outputCapParam !== undefined ? { outputCapParam: head.outputCapParam } : {}),
           ...(head.serverCompaction !== undefined
             ? { serverCompaction: head.serverCompaction }
             : {}),
@@ -1433,11 +1530,20 @@ async function createLLMFromRegistry(
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
+      const poolWindow = anthropicPoolWindow(config);
       const serverCompaction = serverCompactionFor(
-        { provider: config.provider, model: config.model, ...topCompaction },
+        { provider: config.provider, model: config.model, ...topEntryFields },
         config,
         log,
+        poolWindow,
       );
+      // UBP-033 — the model profile's output cap, the same merge `resolveOne`
+      // applies on the factory path; pinned by
+      // __tests__/rotation-max-output-tokens.test.ts.
+      const maxOutputTokens = mergeModelProfile(
+        lookupProfile(config.provider, config.model),
+        config.models?.[`${config.provider}/${config.model}`],
+      )?.maxOutputTokens;
       const pool = new AuthRotatingProvider(
         [
           { id: 'primary', apiKey: config.apiKey, priority: 100 },
@@ -1452,17 +1558,17 @@ async function createLLMFromRegistry(
         // too, and so does the per-request deadline: every pooled key builds
         // its own client, so a deadline set only on the non-rotating path
         // would silently not apply to a rotation deployment.
-        config.toolOrder !== undefined ||
-          config.requestTimeoutMs !== undefined ||
-          serverCompaction !== undefined
-          ? {
-              ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
-              ...(config.requestTimeoutMs !== undefined
-                ? { requestTimeoutMs: config.requestTimeoutMs }
-                : {}),
-              ...(serverCompaction ? { serverCompaction } : {}),
-            }
-          : undefined,
+        {
+          ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
+          ...(config.requestTimeoutMs !== undefined
+            ? { requestTimeoutMs: config.requestTimeoutMs }
+            : {}),
+          ...(serverCompaction ? { serverCompaction } : {}),
+          ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+          maxOutputTokensFor: anthropicOutputCapFor(config),
+          ...(poolWindow !== undefined ? { maxContextTokens: poolWindow } : {}),
+          maxContextTokensFor: anthropicContextWindowFor,
+        },
       );
       if (serverCompaction) markServerCompaction(pool);
       return tagProviderEntry(pool, topKey);
@@ -1477,7 +1583,7 @@ async function createLLMFromRegistry(
     ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { awsProfile: config.awsProfile } : {}),
-    ...topCompaction,
+    ...topEntryFields,
   });
   return tagProviderEntry(primary, topKey);
 }

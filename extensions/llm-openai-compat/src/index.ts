@@ -17,7 +17,11 @@ import { parseThinkBlocks, withReasoningOnlyRetry } from './reasoning';
 import { classifyLocalRuntime, type LocalOpenAiRuntime } from './runtime-classify';
 import { detectTextToolCalls } from './text-tool-call-detect';
 import { streamTextToolCalls } from './text-tool-call-transport';
-import { buildChatCompletionsParamsAsync, streamChatCompletions } from './transport';
+import {
+  buildChatCompletionsParamsAsync,
+  isOpenAiFirstPartyUrl,
+  streamChatCompletions,
+} from './transport';
 
 export { parseThinkBlocks, withReasoningOnlyRetry } from './reasoning';
 export type { LocalOpenAiRuntime } from './runtime-classify';
@@ -30,6 +34,9 @@ export type { ChatCompletionsStreamParams } from './transport';
 export {
   buildChatCompletionsParams,
   buildChatCompletionsParamsAsync,
+  isOpenAiFirstPartyUrl,
+  isOpenAiReasoningModelId,
+  outputCapParam,
   streamChatCompletions,
 } from './transport';
 
@@ -102,6 +109,9 @@ export interface OpenAICompatProviderConfig {
 // silently. Surfaced as a loud constructor error instead.
 const LOCAL_CONTEXT_FLOOR_TOKENS = 16_000;
 
+/** UBP-032 — bound on remembered Gemini thought signatures per provider. */
+export const MAX_THOUGHT_SIGNATURES = 2000;
+
 function detectStructuredOutputDialect(
   name: string,
   baseUrl: string,
@@ -170,10 +180,39 @@ function isGeminiEndpoint(baseUrl: string): boolean {
 // Message conversion: our Message[] → OpenAI ChatCompletionMessageParam[]
 // ---------------------------------------------------------------------------
 
+/**
+ * Google's documented dummy signature for a tool call Gemini never signed (a
+ * call from another provider after a failover, or from before a restart), sent
+ * as `extra_content.google.thought_signature` on the OpenAI-compat endpoint:
+ * "you can set the following dummy signatures of either
+ * `context_engineering_is_the_way_to_go` or `skip_thought_signature_validator`"
+ * (ai.google.dev/gemini-api/docs/generate-content/thought-signatures, fetched
+ * 2026-09-28). Pinned by __tests__/gemini-thought-signature-spec.test.ts.
+ */
+export const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
+
+/** Gemini 3 is the generation that answers 400 to a missing signature; the
+ *  dummy is sent to no other model. */
+export function isGemini3Model(model: string): boolean {
+  return /(^|[/:])gemini-3/i.test(model);
+}
+
 // Exported for adapter tests — pure function over Message[] with no side effects.
+//
+// UBP-032 — `opts.thoughtSignatures` (Gemini's OpenAI-compat endpoint only):
+// a tool call Gemini signed is sent back with its
+// `extra_content.google.thought_signature`, byte for byte. Absent or empty →
+// the output is unchanged.
 export function toOpenAIMessages(
   messages: Message[],
   system?: string,
+  opts?: {
+    thoughtSignatures?: ReadonlyMap<string, string>;
+    /** The first tool call of an assistant message with no remembered
+     *  signature gets {@link SKIP_THOUGHT_SIGNATURE} — set only for a Gemini 3
+     *  model (`isGemini3Model`). */
+    signUnsigned?: boolean;
+  },
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
@@ -247,11 +286,21 @@ export function toOpenAIMessages(
         if (block.type === 'text') {
           textParts.push(block.text);
         } else if (block.type === 'tool_use') {
-          toolCalls.push({
+          const call: OpenAI.Chat.ChatCompletionMessageToolCall = {
             id: block.id,
             type: 'function',
             function: { name: block.name, arguments: JSON.stringify(block.input) },
-          });
+          };
+          // Only the first call of the message: with parallel calls Gemini
+          // signs the first alone, and the rest are sent as they came.
+          const signature =
+            opts?.thoughtSignatures?.get(block.id) ??
+            (opts?.signUnsigned && toolCalls.length === 0 ? SKIP_THOUGHT_SIGNATURE : undefined);
+          if (signature !== undefined) {
+            // Not in the SDK's type; the SDK serializes the object as given.
+            Object.assign(call, { extra_content: { google: { thought_signature: signature } } });
+          }
+          toolCalls.push(call);
         }
       }
 
@@ -352,6 +401,16 @@ export class OpenAICompatProvider implements LLMProvider {
    *  colliding with ids persisted by an earlier process in the same session. */
   private readonly textToolCallIdSeed = Math.random().toString(36).slice(2, 8);
   private textToolCallCounter = 0;
+  /** UBP-038 — the endpoint is api.openai.com, where `max_completion_tokens`
+   *  replaces `max_tokens` (`outputCapParam` in ./transport). */
+  private readonly openAiFirstParty: boolean;
+  /** UBP-032 (D5) — Gemini thought signatures seen on streamed tool calls,
+   *  keyed by tool-call id, replayed on the next request by
+   *  `toOpenAIMessages`. The frozen `MessageContent` contract has no slot for
+   *  them, so the provider holds them: process-lifetime only, bounded to
+   *  `MAX_THOUGHT_SIGNATURES` (oldest dropped first). Used only when the
+   *  endpoint is Gemini's. */
+  private readonly thoughtSignatures = new Map<string, string>();
 
   constructor(config: OpenAICompatProviderConfig) {
     this.name = config.name;
@@ -359,6 +418,7 @@ export class OpenAICompatProvider implements LLMProvider {
     this.maxContextTokens = config.maxContextTokens ?? 128_000;
     this.gemini = isGeminiEndpoint(config.baseUrl);
     this.azure = config.baseUrl.includes('azure.com');
+    this.openAiFirstParty = isOpenAiFirstPartyUrl(config.baseUrl);
     this.toolCallFormat = config.toolCallFormat ?? 'openai';
     this.maxOutputTokens = config.maxOutputTokens;
     this.structuredOutput = config.structuredOutput;
@@ -440,6 +500,8 @@ export class OpenAICompatProvider implements LLMProvider {
       this.model,
       {
         gemini: this.gemini,
+        openAiFirstParty: this.openAiFirstParty,
+        ...(this.gemini ? { thoughtSignatures: this.thoughtSignatures } : {}),
         countTokens: (msgs) => this.countTokens(msgs),
         structuredOutputDialect: this.structuredOutputDialect,
         // FIX 6 — hardened local classification for the sampling extras
@@ -461,6 +523,11 @@ export class OpenAICompatProvider implements LLMProvider {
           : {}),
       },
     );
+
+    if (this.gemini) {
+      params.onThoughtSignature = (toolCallId, signature) =>
+        this.rememberThoughtSignature(toolCallId, signature);
+    }
 
     // Lane 4b(f) — settle a pending latch from a previous call: the parsed
     // text tool call's result is now in the history if the loop dispatched it.
@@ -540,6 +607,16 @@ export class OpenAICompatProvider implements LLMProvider {
         });
       };
       yield* withReasoningOnlyRetry(makeAttempt, params.effectiveModel, this.onDiagnostic);
+    }
+  }
+
+  private rememberThoughtSignature(toolCallId: string, signature: string): void {
+    this.thoughtSignatures.delete(toolCallId);
+    this.thoughtSignatures.set(toolCallId, signature);
+    while (this.thoughtSignatures.size > MAX_THOUGHT_SIGNATURES) {
+      const oldest = this.thoughtSignatures.keys().next().value;
+      if (oldest === undefined) break;
+      this.thoughtSignatures.delete(oldest);
     }
   }
 

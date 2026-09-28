@@ -159,6 +159,16 @@ export class AcpJobRunner implements JobRunner {
       mounts: mounts.length,
     });
 
+    // Everything this run hands back — its summary above all, which the
+    // gateway's parent-review turn reads — is text an external ACP agent wrote
+    // after reading whatever it read, and nothing reports what that was. So
+    // the job is marked tainted (`JobRunnerContext.markTainted` →
+    // `BackgroundJob.tainted`) conservatively, before the agent starts, and
+    // that review turn begins with the post-read downgrade armed
+    // (`resolveRunDowngrade`, packages/core/src/agent-loop/stages/per-call-enforcement.ts).
+    // Pinned by 'AcpJobRunner.run — the job is marked tainted' in __tests__/runner.test.ts.
+    ctx.markTainted?.();
+
     try {
       yield* runAcpHost({
         jobId: job.id,

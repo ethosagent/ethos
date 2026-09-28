@@ -7,23 +7,36 @@ export const OPENROUTER_ALLOWLIST_PREFIXES = [
   'moonshotai/kimi',
   'deepseek/',
   'x-ai/grok',
+  // The static catalog carries qwen rows; without this prefix a live fetch
+  // (CATALOG_LIVE_FETCH=1) dropped them.
+  'qwen/',
 ];
 
 export interface OpenRouterModelEntry {
   id: string;
   name: string;
   context_length: number;
+  /** Date OpenRouter stops serving the model (`YYYY-MM-DD`), or null. */
+  expiration_date?: string | null;
 }
 
 export function transformOpenRouterEntry(entry: OpenRouterModelEntry): {
   id: string;
   label: string;
   contextWindow: number;
+  retiresOn?: string;
 } {
+  // `expiration_date` becomes `retiresOn`, so a live-built catalog hides the row
+  // on the same day the static one does (`isModelRetired`). Only a leading ISO
+  // date is taken; anything else is ignored rather than guessed at.
+  const retiresOn = /^\d{4}-\d{2}-\d{2}/.exec(entry.expiration_date ?? '')?.[0];
   return {
     id: entry.id,
-    label: `${entry.name} (OR)`,
+    label: retiresOn
+      ? `${entry.name}, deprecated — retires ${retiresOn} (OR)`
+      : `${entry.name} (OR)`,
     contextWindow: entry.context_length,
+    ...(retiresOn ? { retiresOn } : {}),
   };
 }
 

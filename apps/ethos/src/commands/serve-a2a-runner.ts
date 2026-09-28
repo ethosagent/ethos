@@ -98,6 +98,12 @@ export function createA2aRunner(deps: CreateA2aRunnerDeps): A2aTaskRunner {
         // D13): no private memory.
         roomAudience: 'shared',
         initiator: 'system',
+        // MESH-TAINT: a peer's message is another operator's agent's text, and
+        // rpc.ts already fences it as untrusted (`wrapUntrusted`). Start the turn
+        // with the post-read downgrade armed (`resolveRunDowngrade`) so it cannot
+        // persist or schedule what the peer said. No wire marker is read: a peer
+        // cannot opt its run out. Pinned by './__tests__/serve-a2a-runner.test.ts'.
+        untrustedOrigin: true,
         ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
         ...(toolsetNarrow ? { toolsetNarrow } : {}),
         ...(toolsetExclude ? { toolsetExclude } : {}),

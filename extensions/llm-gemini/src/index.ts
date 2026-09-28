@@ -6,14 +6,23 @@ import type {
   ProviderCapabilities,
   ToolDefinitionLite,
 } from '@ethosagent/types';
-import { type GeminiTransportConfig, streamGeminiGenerate } from './transport';
+import {
+  createGeminiStreamState,
+  type GeminiStreamState,
+  type GeminiTransportConfig,
+  streamGeminiGenerate,
+} from './transport';
 
-export type { GeminiTransportConfig };
+export { buildGeminiBody, createGeminiStreamState, streamGeminiGenerate } from './transport';
+export type { GeminiStreamState, GeminiTransportConfig };
 
 export interface GeminiNativeProviderConfig {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  /** UBP-030 — retries of a transient failure before the first byte. Absent → 2;
+   *  wiring passes 0 for a hop in a chain of two or more (failover is the retry). */
+  maxRetries?: number;
 }
 
 export class GeminiNativeProvider implements LLMProvider {
@@ -27,6 +36,9 @@ export class GeminiNativeProvider implements LLMProvider {
   readonly supportsTokenCounting: 'real' | 'estimated' = 'estimated';
 
   private readonly config: GeminiNativeProviderConfig;
+  /** UBP-031/032 — tool-call id minting and remembered thought signatures,
+   *  kept for the provider's lifetime (see `GeminiStreamState`). */
+  private readonly streamState: GeminiStreamState = createGeminiStreamState();
 
   constructor(config: GeminiNativeProviderConfig) {
     this.config = config;
@@ -59,11 +71,15 @@ export class GeminiNativeProvider implements LLMProvider {
         apiKey: this.config.apiKey,
         model: this.model,
         baseUrl: this.config.baseUrl,
+        ...(this.config.maxRetries !== undefined
+          ? { retry: { maxRetries: this.config.maxRetries } }
+          : {}),
       },
       messages,
       tools,
       options,
       options.abortSignal,
+      this.streamState,
     );
   }
 
@@ -95,6 +111,7 @@ export const geminiNativeFactory: LLMProviderFactory = async ({ config: cfg, sec
     apiKey,
     model: cfg.model as string,
     baseUrl: cfg.baseUrl as string | undefined,
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

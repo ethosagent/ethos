@@ -4,7 +4,7 @@ description: "Dreaming is autonomous memory consolidation that runs after a quie
 kind: explanation
 audience: user
 slug: dreaming
-updated: 2026-05-22
+updated: 2026-09-28
 ---
 
 ## Context
@@ -95,7 +95,7 @@ Dream turns are memory housekeeping, not complex reasoning. They benefit from a 
 ```yaml
 model:
   default: claude-sonnet-4-6
-  dreaming: claude-haiku-3
+  dreaming: claude-haiku-4-5
 ```
 
 When `model.dreaming` is set, dream sessions use that model instead of the personality's default. This keeps costs bounded — a dream run on Haiku costs a fraction of a run on Sonnet, and the consolidation task does not require Sonnet-level reasoning.

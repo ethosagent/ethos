@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Shared surface primitives: a typed AgentEvent translator (common fold + audience gate) and the reconciled slash-command definitions. Depends only on @ethosagent/types so any surface (app or extension) can consume it without a layer cycle.",
+  "description": "Shared surface primitives: a typed AgentEvent translator (common fold + audience gate) and the reconciled slash-command definitions. Also the shared approval-card args formatter. Depends only on @ethosagent/types and the dependency-free @ethosagent/safety-redact, so any surface (app or extension) can consume it without a layer cycle.",
   "exports": {
     ".": {
       "import": "./src/index.ts",
@@ -15,6 +15,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

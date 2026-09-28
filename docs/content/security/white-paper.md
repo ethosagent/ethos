@@ -4,7 +4,7 @@ description: Ethos's customer-facing security narrative — shared responsibilit
 kind: explanation
 audience: shared
 slug: white-paper
-updated: 2026-09-24
+updated: 2026-09-28
 ---
 
 # Ethos Security White Paper
@@ -119,7 +119,7 @@ Every inbound message — whether from Slack, Telegram, Discord, WhatsApp, email
 
 **Result budget enforcement.** Each tool result is truncated to a per-call character budget split from a turn-level budget cap. Oversized results carry a clearly-marked truncation suffix. The model cannot be flooded into ignoring the user's request by a tool that returns a megabyte of content.
 
-**Outbound deduplication.** When the model produces a final response, it passes through a centralized outbound dedup chokepoint keyed on `(sessionId, sha256(content))` with a configurable TTL. Streaming-finalization races, retries, and adapter quirks cannot produce double-sends. This is the single dedup chokepoint — adapters do not roll their own.
+**Outbound deduplication.** When the model produces a final response, it passes through a centralized outbound dedup chokepoint keyed on `(sessionId, sha256(content))` and the inbound message it answers, with a configurable TTL — so a correct identical answer to a new message still sends (ARCHITECTURE.md §V S3 as amended; `replyDedupScope`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). Notices and agent-initiated sends are keyed on `(sessionId, sha256(content))`. Streaming-finalization races, retries, and adapter quirks cannot produce double-sends. This is the single dedup chokepoint — adapters do not roll their own.
 
 **Adapter dispatch.** The adapter sends the response. Tool-progress events default to internal audience (logs and telemetry only); promotion to user-facing requires explicit per-event opt-in by the tool author. Intermediate state cannot leak to user-facing channels by default.
 

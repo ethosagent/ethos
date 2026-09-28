@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { personalityDefinitionFloor, sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import {
+  foldDenyKey,
+  personalityDefinitionFloor,
+  sensitiveDenyPaths,
+} from '@ethosagent/storage-fs';
 import {
   foldForDeny,
+  isUnmappablePathAlias,
   type ScopedFs,
   type Tool,
   type ToolContext,
@@ -73,6 +78,9 @@ function writeEvidence(
 
 /** Case-folded like every deny (`foldForDeny`, @ethosagent/types): `~/.SSH` is `~/.ssh` on macOS. */
 export function isWriteBlocked(abs: string): boolean {
+  // `/.vol/<dev>/<inode>` and `/.resolve/…` name a file no string compare can
+  // see (V2-SEC-1, verification round G3).
+  if (isUnmappablePathAlias(resolve(abs))) return true;
   const normalized = foldForDeny(resolve(abs));
   if (BLOCKED_WRITE_PATHS.some((p) => foldForDeny(resolve(p)) === normalized)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => {
@@ -92,9 +100,15 @@ export function isWriteBlocked(abs: string): boolean {
  * (`packages/core/src/scoped/scoped-fs.ts`) — `writeDenyPaths` for the
  * calling personality and the injected `definitionWriteFloor` for every
  * personality directory (plan personality-memory-boundary G2-pre B).
+ *
+ * Judged on the path and on its `foldDenyKey` form (`@ethosagent/storage-fs`,
+ * UBP-008 / V2-SEC-1), which on macOS maps the `/.nofollow` and
+ * `/.resolve/<n>` alias spellings onto the plain path the floor knows.
  */
-function isDefinitionWrite(abs: string): boolean {
-  return personalityDefinitionFloor()(resolve(abs), 'access');
+export function isPersonalityDefinitionPath(abs: string): boolean {
+  const path = resolve(abs);
+  const floor = personalityDefinitionFloor();
+  return floor(path, 'access') || floor(foldDenyKey(path), 'access');
 }
 
 function definitionWriteRefused(abs: string): ToolResult {
@@ -183,6 +197,14 @@ function reachFailure(kind: 'read' | 'write', path: string, err?: Error): ToolRe
   // `ScopedFsImpl`'s write-deny refusal is not an out-of-reach path — name it.
   if (err?.message.includes('personality definition is operator-owned')) {
     return definitionWriteRefused(path);
+  }
+  // V2-SEC-2 — the state-dir refusal after an untrusted read (`ScopedFsImpl.checkReach`).
+  if (err?.message.includes('this run read untrusted content')) {
+    return {
+      ok: false,
+      error: `Refused: this run read untrusted content, so "${path}" (Ethos state — memory, skills, personalities, schedules) cannot be written for the rest of the run. Tell the user what you would have written instead.`,
+      code: 'execution_failed',
+    };
   }
   return {
     ok: false,
@@ -392,7 +414,7 @@ export const writeFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
-    if (isDefinitionWrite(abs)) return definitionWriteRefused(abs);
+    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return {
         ok: false,
@@ -491,7 +513,7 @@ export const patchFileTool: Tool = {
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;
 
-    if (isDefinitionWrite(abs)) return definitionWriteRefused(abs);
+    if (isPersonalityDefinitionPath(abs)) return definitionWriteRefused(abs);
     if (isWriteBlocked(abs)) {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
@@ -550,7 +572,13 @@ export const patchFileTool: Tool = {
         };
       }
 
-      const patched = content.replace(old_text, new_text);
+      // A literal splice, never `content.replace(old_text, new_text)`: a string
+      // replacement expands `$$`, `$&`, `` $` `` and `$'`, so bash `$'\n'` or JS
+      // `'$' + n` would splice the file's tail into the middle, and the
+      // read-back below would compare against the already-corrupted string.
+      // Pinned by 'writes new_text literally' in __tests__/tools-file.test.ts.
+      const at = content.indexOf(old_text);
+      const patched = content.slice(0, at) + new_text + content.slice(at + old_text.length);
       await fs.write(abs, patched);
 
       // Self-recovery — same read-back-and-compare write_file does, for the

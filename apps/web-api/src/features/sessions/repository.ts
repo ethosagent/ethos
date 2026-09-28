@@ -206,6 +206,11 @@ export class SessionsRepository {
     return this.store.deleteSession(id);
   }
 
+  /** Soft-delete the last `n` whole turns (`SessionStore.undoTurns`). */
+  async undoTurns(id: string, n: number): Promise<number> {
+    return this.store.undoTurns(id, n);
+  }
+
   async update(id: string, patch: { title?: string | null; pinned?: boolean }): Promise<void> {
     const exists = await this.store.getSession(id);
     if (!exists) throw new Error(`session not found: ${id}`);

@@ -203,6 +203,8 @@ function makeTerminalTool(route: ExecutionRouter): Tool {
               env: {},
               personality,
               sessionId: ctx.sessionId,
+              // UBP-042 — /stop or a steer aborts the turn; the command dies with it.
+              signal: ctx.abortSignal,
             }),
           );
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();
@@ -279,6 +281,9 @@ function makeTerminalTool(route: ExecutionRouter): Tool {
             // The self-amendment CLI tripwire (`TOOL_PROCESS_ENV_VAR`, D32) —
             // a tripwire, not a boundary (`env -u` defeats it).
             env: { [TOOL_PROCESS_ENV_VAR]: '1' },
+            // UBP-042 — aborting kills the command's whole process group
+            // (`ScopedProcessImpl` in packages/core/src/scoped/scoped-process.ts).
+            signal: ctx.abortSignal,
           },
         );
 

@@ -157,3 +157,23 @@ describe('MeshProxyReconciler.sweepOnce', () => {
     });
   });
 });
+
+describe('MeshProxyReconciler — the job_status poll carries the peer bearer', () => {
+  it('sends the headers authHeadersFor resolves for the peer coordinates', async () => {
+    const { store } = makeStore([makeRow()]);
+    const seen: Array<Record<string, string>> = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>);
+      return Response.json({ result: { found: true, status: 'running', spendUsd: 0 } });
+    });
+    const authHeadersFor = vi.fn(async () => ({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer peer-token',
+    }));
+
+    await new MeshProxyReconciler({ store, fetchImpl, authHeadersFor }).sweepOnce();
+
+    expect(authHeadersFor).toHaveBeenCalledWith('127.0.0.1', '7201');
+    expect(seen[0]?.Authorization).toBe('Bearer peer-token');
+  });
+});

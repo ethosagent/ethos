@@ -4,8 +4,10 @@
 // not). Threading ctx through the shared API is deferred.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { matchesIdentity } from './process-identity';
 import {
   isAlive,
+  isEntryAlive,
   loadRegistry,
   type ProcessStatus,
   type Registry,
@@ -45,25 +47,25 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Liveness pass: flip every entry still marked `running` whose `pid` is no
- * longer alive to `orphan` (with a fresh `lastTouchedAt`). Mutates `reg` in
+ * Liveness pass: flip every entry still marked `running` whose process is no
+ * longer alive (`isEntryAlive` — a reused pid counts as gone) to `orphan` (with a fresh `lastTouchedAt`). Mutates `reg` in
  * place; returns true if anything changed so the caller can skip a needless
  * save. Shared by `listProcesses` (per-call liveness) and `reconcileRegistry`
  * (startup crash recovery) so the rule lives in exactly one place.
  */
-export function markDeadRunningAsOrphan(reg: Registry): boolean {
+export async function markDeadRunningAsOrphan(reg: Registry): Promise<boolean> {
+  const running = Object.values(reg).filter((entry) => entry.status === 'running');
+  const alive = await Promise.all(running.map((entry) => isEntryAlive(entry)));
   let dirty = false;
-  for (const entry of Object.values(reg)) {
-    if (entry.status !== 'running') continue;
-    if (!isAlive(entry.pid)) {
-      reg[entry.id] = {
-        ...entry,
-        status: 'orphan',
-        lastTouchedAt: new Date().toISOString(),
-      };
-      dirty = true;
-    }
-  }
+  running.forEach((entry, i) => {
+    if (alive[i]) return;
+    reg[entry.id] = {
+      ...entry,
+      status: 'orphan',
+      lastTouchedAt: new Date().toISOString(),
+    };
+    dirty = true;
+  });
   return dirty;
 }
 
@@ -88,10 +90,10 @@ export interface ProcessListItem {
  * tool.
  */
 export async function listProcesses(dataDir: string): Promise<ProcessListItem[]> {
-  const registry = await withRegistryLock(dataDir, () => {
+  const registry = await withRegistryLock(dataDir, async () => {
     let reg = loadRegistry(dataDir);
 
-    const dirty = markDeadRunningAsOrphan(reg);
+    const dirty = await markDeadRunningAsOrphan(reg);
 
     reg = reapStale(reg);
 
@@ -138,9 +140,9 @@ export async function listProcesses(dataDir: string): Promise<ProcessListItem[]>
  */
 export async function reconcileRegistry(dataDir: string): Promise<void> {
   try {
-    await withRegistryLock(dataDir, () => {
+    await withRegistryLock(dataDir, async () => {
       const reg = loadRegistry(dataDir);
-      if (markDeadRunningAsOrphan(reg)) saveRegistry(dataDir, reg);
+      if (await markDeadRunningAsOrphan(reg)) saveRegistry(dataDir, reg);
     });
   } catch {
     // best-effort: startup must not fail because of registry state.
@@ -204,6 +206,45 @@ export type StopResult =
   | { ok: false; error: string };
 
 /**
+ * Signal the process group a host process leads (`spawnDetached` spawns
+ * `detached`, so the shell's pid is the group id) — a compound command like
+ * `cd web && npm run dev` runs the server as the shell's CHILD, and signalling
+ * the shell alone left it holding the port while the entry read `killed`
+ * (UBP-041). Falls back to the pid when there is no such group (an entry from
+ * before detached spawn, or a leader that already exited alone); throws ESRCH
+ * when neither exists. Never negates a pid <= 1: `kill(-1)` is every process
+ * the user owns and `kill(-0)` is our own group. POSIX only; Windows signals
+ * the pid. Pinned by 'stopProcess process group' in
+ * `__tests__/operations.test.ts`.
+ */
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  if (pid > 1 && process.platform !== 'win32') {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+    }
+  }
+  process.kill(pid, signal);
+}
+
+/** Liveness by group: any member of `pid`'s process group, or `pid` itself. */
+function isGroupAlive(pid: number): boolean {
+  if (pid > 1 && process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (err) {
+      // EPERM: a member exists that we may not signal — still alive. ESRCH
+      // (no such group) falls through to the single-pid probe.
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') return true;
+    }
+  }
+  return isAlive(pid);
+}
+
+/**
  * Send a signal to stop a running process. SIGTERM waits up to 5s for a
  * graceful exit then escalates to SIGKILL — identical behaviour to the
  * `process_stop` tool.
@@ -264,8 +305,28 @@ export async function stopProcess(
     return { ok: true, stopped: true, ...(exitCode !== undefined && { exit_code: exitCode }) };
   }
 
+  // V-ES-5 — the entry may outlive the process (a host restart, a reboot) and
+  // the OS may have handed its pid to something unrelated. Never signal a pid
+  // that is provably not the process we started; signal its GROUP only when
+  // it provably is (./process-identity.ts). An entry with no recorded identity,
+  // or whose start time cannot be read right now (a failed or timed-out `ps`,
+  // V3-4), gets the single-pid signal it got before process groups; a dead pid
+  // then answers ESRCH and the entry is marked orphan below. Always a fresh
+  // read, never the liveness cache.
+  const identity = await matchesIdentity(entry.pid, entry);
+  if (identity === 'different') {
+    await updateEntry(dataDir, id, { status: 'orphan' });
+    return { ok: true, stopped: false };
+  }
+  const group = identity === 'same';
+  const send = (sig: NodeJS.Signals): void => {
+    if (group) signalProcessGroup(entry.pid, sig);
+    else process.kill(entry.pid, sig);
+  };
+  const running = (): boolean => (group ? isGroupAlive(entry.pid) : isAlive(entry.pid));
+
   try {
-    process.kill(entry.pid, signal);
+    send(signal);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ESRCH') {
@@ -285,11 +346,11 @@ export async function stopProcess(
     const deadline = Date.now() + SIGTERM_GRACE_MS;
     while (Date.now() < deadline) {
       await sleep(WAIT_POLL_MS);
-      if (!isAlive(entry.pid)) break;
+      if (!running()) break;
     }
-    if (isAlive(entry.pid)) {
+    if (running()) {
       try {
-        process.kill(entry.pid, 'SIGKILL');
+        send('SIGKILL');
       } catch {
         // ESRCH means it exited just before SIGKILL — fine
       }

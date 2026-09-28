@@ -18,8 +18,11 @@ import type { checkTurnBudgets } from '../budgets';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
 import {
+  armDowngrade,
   consultWatcherHalt,
+  type DowngradeState,
   enforceBeforeToolCall,
+  isDowngraded,
   recordToolCallForBudgets,
   type TurnBudgetCounters,
 } from './per-call-enforcement';
@@ -80,6 +83,23 @@ export interface ScriptToolBridgeDeps {
    */
   redaction: RedactionKit;
   personality: PersonalityConfig;
+  /**
+   * V-ES-9 / UBP-049 — the run's post-untrusted-read downgrade: the SAME
+   * mutable state the batch path reads and advances (`dgRemainingRef` in
+   * ../../agent-loop.ts, never a copy), with the personality's resolved
+   * settings. Every inner call is checked with `isDowngraded` before it
+   * dispatches, and an inner `outputIsUntrusted` result arms it
+   * (`armDowngrade`). Required for the same reason `redaction` is: an
+   * optional seam would let a script reach `memory_write` after an untrusted
+   * read. Pinned by `../../__tests__/downgrade-memory-writes.test.ts`.
+   */
+  downgrade: {
+    state: DowngradeState;
+    enabled: boolean;
+    tools: ReadonlySet<string>;
+    turns: number;
+    rejectionMessage: string;
+  };
   /** The turn's inbound attachments, forwarded so the registry's live ctx stays stable. */
   turnAttachments?: Attachment[];
   /**
@@ -240,6 +260,29 @@ export class ScriptToolBridge {
       return { ok: false, error: ABORTED_TOOL_RESULT, code: 'execution_aborted' };
     }
 
+    // Ch.3d — the post-untrusted-read downgrade, checked where the batch path
+    // checks it (before `before_tool_call`, `processTools` in
+    // ./tool-processing.ts) and against the same run state, so a script cannot
+    // persist text the model read from an untrusted source.
+    const dg = d.downgrade;
+    if (isDowngraded(dg.state, dg.enabled, dg.tools, name)) {
+      d.observability?.recordSafetyBlock({
+        traceId: d.traceId,
+        code: 'tool_downgraded_post_untrusted_read',
+        cause: name,
+      });
+      emitEvent?.({
+        type: 'tool_end',
+        toolCallId,
+        toolName: name,
+        ok: false,
+        durationMs: 0,
+        audience: 'internal',
+        error: dg.rejectionMessage,
+      });
+      return { ok: false, error: dg.rejectionMessage, code: 'tool_downgraded' };
+    }
+
     // Step 2 — the single production `before_tool_call` fire site. A rejection
     // returns {ok:false} to the script; NO tool_result persistence — inner
     // calls never appear as tool_use blocks, so the Anthropic contract binds
@@ -338,6 +381,9 @@ export class ScriptToolBridge {
       { personality: d.personality, traceId: d.traceId },
     );
     const durationMs = Date.now() - startedAt;
+    // Ch.3d — an untrusted inner result arms the downgrade on the error path
+    // too, as the batch path does.
+    if (d.tools.get(name)?.outputIsUntrusted) armDowngrade(dg.state, dg.enabled, dg.turns);
     emitEvent?.({
       type: 'tool_end',
       toolCallId,

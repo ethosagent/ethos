@@ -312,8 +312,13 @@ describe('Gateway — redelivery vs. the outbound dedup cache', () => {
     const store = ledger();
     const failing = stubAdapter({ ok: false });
     const gw1 = gatewayWith(loopYielding(plainTurn), store, { outboundDedupTtlMs: 600_000 });
+    // No spool, so the obligation carries no `inboundRef`: a redelivery re-arms
+    // the content-only key (`Gateway.recordRedelivered`), the one a notice or
+    // an agent-initiated send checks. Reply paths key on the inbound message
+    // (`replyDedupScope`); their re-arm is pinned in dedup-reply-scope.test.ts.
     await gw1.handleMessage(msg(), failing);
-    expect(await store.listPending(['bot-a'])).toHaveLength(1);
+    const [row] = await store.listPending(['bot-a']);
+    expect(row).toBeDefined();
 
     // A fresh process with a COLD cache redelivers, then record()s.
     const adapter = stubAdapter();
@@ -326,8 +331,8 @@ describe('Gateway — redelivery vs. the outbound dedup cache', () => {
 
     // A genuine duplicate of the same content on the same session is now
     // suppressed before it reaches the adapter — proof record() ran.
-    await gw2.handleMessage(msg(), adapter);
-    expect(adapter.sent).toHaveLength(1);
+    // biome-ignore lint/complexity/useLiteralKeys: private field, read for the assertion
+    expect(gw2['outboundDedup'].wouldSend(row?.sessionId ?? '', 'the answer')).toBe(false);
   });
 });
 

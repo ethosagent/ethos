@@ -290,8 +290,14 @@ describe('TelegramAdapter webhook lifecycle', () => {
 });
 
 describe('TelegramAdapter dropPendingUpdates', () => {
-  it('defaults to true on the long-poll branch', async () => {
+  // UBP-002 / D3: the backlog queued while a poll-mode bot was down is kept.
+  it('defaults to false on the long-poll branch', async () => {
     await mk().start();
+    expect(startCalls).toEqual([{ drop_pending_updates: false }]);
+  });
+
+  it('threads an explicit true through to bot.start()', async () => {
+    await mk({ dropPendingUpdates: true }).start();
     expect(startCalls).toEqual([{ drop_pending_updates: true }]);
   });
 

@@ -178,7 +178,7 @@ describe('§7 profile fields reach the provider config', () => {
 
     const provider = await factory({
       config: {
-        model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+        model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
         apiKey: 'k',
         toolCallFormat: 'text-xml',
         maxOutputTokens: 2048,
