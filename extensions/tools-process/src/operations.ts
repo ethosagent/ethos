@@ -53,19 +53,19 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
  * save. Shared by `listProcesses` (per-call liveness) and `reconcileRegistry`
  * (startup crash recovery) so the rule lives in exactly one place.
  */
-export function markDeadRunningAsOrphan(reg: Registry): boolean {
+export async function markDeadRunningAsOrphan(reg: Registry): Promise<boolean> {
+  const running = Object.values(reg).filter((entry) => entry.status === 'running');
+  const alive = await Promise.all(running.map((entry) => isEntryAlive(entry)));
   let dirty = false;
-  for (const entry of Object.values(reg)) {
-    if (entry.status !== 'running') continue;
-    if (!isEntryAlive(entry)) {
-      reg[entry.id] = {
-        ...entry,
-        status: 'orphan',
-        lastTouchedAt: new Date().toISOString(),
-      };
-      dirty = true;
-    }
-  }
+  running.forEach((entry, i) => {
+    if (alive[i]) return;
+    reg[entry.id] = {
+      ...entry,
+      status: 'orphan',
+      lastTouchedAt: new Date().toISOString(),
+    };
+    dirty = true;
+  });
   return dirty;
 }
 
@@ -90,10 +90,10 @@ export interface ProcessListItem {
  * tool.
  */
 export async function listProcesses(dataDir: string): Promise<ProcessListItem[]> {
-  const registry = await withRegistryLock(dataDir, () => {
+  const registry = await withRegistryLock(dataDir, async () => {
     let reg = loadRegistry(dataDir);
 
-    const dirty = markDeadRunningAsOrphan(reg);
+    const dirty = await markDeadRunningAsOrphan(reg);
 
     reg = reapStale(reg);
 
@@ -140,9 +140,9 @@ export async function listProcesses(dataDir: string): Promise<ProcessListItem[]>
  */
 export async function reconcileRegistry(dataDir: string): Promise<void> {
   try {
-    await withRegistryLock(dataDir, () => {
+    await withRegistryLock(dataDir, async () => {
       const reg = loadRegistry(dataDir);
-      if (markDeadRunningAsOrphan(reg)) saveRegistry(dataDir, reg);
+      if (await markDeadRunningAsOrphan(reg)) saveRegistry(dataDir, reg);
     });
   } catch {
     // best-effort: startup must not fail because of registry state.
@@ -308,9 +308,12 @@ export async function stopProcess(
   // V-ES-5 — the entry may outlive the process (a host restart, a reboot) and
   // the OS may have handed its pid to something unrelated. Never signal a pid
   // that is provably not the process we started; signal its GROUP only when
-  // it provably is (./process-identity.ts). An entry with no recorded identity
-  // gets the single-pid signal it got before process groups.
-  const identity = matchesIdentity(entry.pid, entry);
+  // it provably is (./process-identity.ts). An entry with no recorded identity,
+  // or whose start time cannot be read right now (a failed or timed-out `ps`,
+  // V3-4), gets the single-pid signal it got before process groups; a dead pid
+  // then answers ESRCH and the entry is marked orphan below. Always a fresh
+  // read, never the liveness cache.
+  const identity = await matchesIdentity(entry.pid, entry);
   if (identity === 'different') {
     await updateEntry(dataDir, id, { status: 'orphan' });
     return { ok: true, stopped: false };

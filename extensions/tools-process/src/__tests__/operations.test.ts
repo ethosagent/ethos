@@ -143,7 +143,7 @@ describe.skipIf(process.platform === 'win32')('stopProcess process group', () =>
     const s = `7.${Math.floor(Math.random() * 1e6)
       .toString()
       .padStart(6, '0')}`;
-    const { pid, identity } = spawnDetached(
+    const { pid, identity } = await spawnDetached(
       'grp',
       `cd /tmp && sleep ${s}; true`,
       dataDir,
@@ -196,8 +196,8 @@ describe.skipIf(process.platform === 'win32')('stopProcess after pid reuse (V-ES
     }
   });
 
-  it('records a start-time identity at spawn', () => {
-    const { pid, identity } = spawnDetached(
+  it('records a start-time identity at spawn', async () => {
+    const { pid, identity } = await spawnDetached(
       'idn',
       `sleep ${unique()}`,
       dataDir,
@@ -214,7 +214,7 @@ describe.skipIf(process.platform === 'win32')('stopProcess after pid reuse (V-ES
   it('refuses to signal a group whose leader is no longer the process it started', async () => {
     // The "reused" pid: an unrelated group leader with a child of its own.
     const s = unique();
-    const { pid } = spawnDetached(
+    const { pid } = await spawnDetached(
       'other',
       `sleep ${s} & sleep ${s}; wait`,
       dataDir,
@@ -245,7 +245,13 @@ describe.skipIf(process.platform === 'win32')('stopProcess after pid reuse (V-ES
     'refuses an entry recorded under another boot',
     async () => {
       const s = unique();
-      const { pid, identity } = spawnDetached('boot', `sleep ${s}`, dataDir, undefined, dataDir);
+      const { pid, identity } = await spawnDetached(
+        'boot',
+        `sleep ${s}`,
+        dataDir,
+        undefined,
+        dataDir,
+      );
       cleanup.push(pid);
       saveRegistry(dataDir, {
         boot: makeEntry('boot', {
@@ -263,7 +269,7 @@ describe.skipIf(process.platform === 'win32')('stopProcess after pid reuse (V-ES
 
   it('an entry with no identity (written before it existed) signals only the pid', async () => {
     const s = unique();
-    const { pid } = spawnDetached(
+    const { pid } = await spawnDetached(
       'legacy',
       `sleep ${s} & sleep ${s}; wait`,
       dataDir,

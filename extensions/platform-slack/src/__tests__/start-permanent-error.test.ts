@@ -119,3 +119,58 @@ describe('SlackAdapter.start — permanent start errors', () => {
     expect(registrations()).toBe(afterFirst);
   });
 });
+
+// V3-6 — `registerHandlers` runs once (V2-RT-1), and it used to hand the
+// member-join greeting and the App Home header `selfUserId` and
+// `selfDisplayName` BY VALUE. When the first start's `auth.test` failed
+// transiently and `app.start()` then failed too, the retry's successful
+// `auth.test` never reached them: the join greeting was skipped for the life
+// of the process and App Home showed the fallback name. The handlers now read
+// both from the adapter at call time.
+describe('SlackAdapter.start — a retried start reaches the handlers', () => {
+  it("the join greeting and App Home header use the retry's auth.test", async () => {
+    const adapter = new SlackAdapter(
+      config({
+        binding: { type: 'personality', name: 'researcher' },
+        defaultChannelMode: 'mention_only',
+      }),
+    );
+    const auth = vi
+      .fn()
+      .mockRejectedValueOnce(platformError('ratelimited'))
+      .mockResolvedValue({ ok: true, user_id: 'UBOT', user: 'ethos-bot' });
+    withAuthTest(adapter, auth);
+    const app = (adapter as unknown as { app: Record<string, unknown> }).app;
+    const handlers = new Map<string, (args: unknown) => Promise<void>>();
+    vi.spyOn(app as { event: (...a: unknown[]) => unknown }, 'event').mockImplementation(
+      (name: unknown, handler: unknown) => {
+        handlers.set(String(name), handler as (args: unknown) => Promise<void>);
+        return undefined;
+      },
+    );
+    app.start = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND slack.com'))
+      .mockResolvedValue(undefined);
+
+    expect(await startError(adapter)).toBeInstanceOf(Error);
+    await expect(adapter.start()).resolves.toBeUndefined();
+    expect(auth).toHaveBeenCalledTimes(2);
+
+    const postMessage = vi.fn().mockResolvedValue({ ok: true });
+    const joined = handlers.get('member_joined_channel');
+    expect(joined).toBeDefined();
+    await joined?.({
+      event: { user: 'UBOT', channel: 'C1' },
+      client: { chat: { postMessage } },
+    });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+
+    const publish = vi.fn().mockResolvedValue({ ok: true });
+    const homeOpened = handlers.get('app_home_opened');
+    expect(homeOpened).toBeDefined();
+    await homeOpened?.({ event: { user: 'U1', tab: 'home' }, client: { views: { publish } } });
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(publish.mock.calls[0]?.[0])).toContain('ethos-bot');
+  });
+});

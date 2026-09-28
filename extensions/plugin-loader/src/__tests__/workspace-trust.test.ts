@@ -323,6 +323,57 @@ describe('workspace plugin trust over symlinks', () => {
     ).rejects.toThrow(/symlink .*lib.* outside the plugin folder/);
   });
 
+  // V3-7 — `.git/` is not hashed, and a link is hashed as its text, so a
+  // link into `.git/` let the code it named change under the grant.
+  it('refuses to trust a plugin with a symlink into its skipped .git/ directory', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `git-${tag}`, 't');
+    await mkdir(join(dir, '.git'), { recursive: true });
+    await writeFile(join(dir, '.git', 'payload.js'), 'export const v = 1;');
+    await symlink(join('.git', 'payload.js'), join(dir, 'lib.js'));
+    await expect(
+      trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir),
+    ).rejects.toThrow(/symlink .*lib\.js.*\.git/);
+  });
+
+  it('refuses a directory symlink into .git/ and a link chained through one', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `gd-${tag}`, 't');
+    await mkdir(join(dir, '.git', 'hooks'), { recursive: true });
+    await writeFile(join(dir, '.git', 'hooks', 'x.js'), 'export const v = 1;');
+    await symlink(join('.git', 'hooks'), join(dir, 'vendor'));
+    await expect(
+      trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir),
+    ).rejects.toThrow(/\.git/);
+
+    const chained = await writeDirPlugin(
+      join(cwd, '.ethos', 'plugins'),
+      'helper2',
+      `gc-${tag}`,
+      't',
+    );
+    await mkdir(join(chained, '.git'), { recursive: true });
+    await writeFile(join(chained, '.git', 'payload.js'), 'export const v = 1;');
+    await symlink(join('.git', 'payload.js'), join(chained, 'hop.js'));
+    await symlink('hop.js', join(chained, 'lib.js'));
+    await expect(
+      trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), chained),
+    ).rejects.toThrow(/\.git/);
+  });
+
+  it('a trusted plugin whose link is retargeted into .git/ can no longer be hashed', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `gl-${tag}`, 't');
+    await writeFile(join(dir, 'real.js'), 'export const v = 1;');
+    await symlink('real.js', join(dir, 'lib.js'));
+    await mkdir(join(dir, '.git'), { recursive: true });
+    await writeFile(join(dir, '.git', 'payload.js'), 'export const v = 1;');
+    const storage = new FsStorage();
+    const pluginsDir = join(dataDir, 'plugins');
+    await trustWorkspacePlugin(storage, pluginsDir, dir);
+    expect(await workspaceTrustState(storage, pluginsDir, dir)).toBe('trusted');
+    await unlink(join(dir, 'lib.js'));
+    await symlink(join('.git', 'payload.js'), join(dir, 'lib.js'));
+    await expect(workspaceTrustState(storage, pluginsDir, dir)).rejects.toThrow(/\.git/);
+  });
+
   it('warns, naming the reason, when a trusted plugin can no longer be hashed', async () => {
     const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `w-${tag}`, 't');
     await trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir);

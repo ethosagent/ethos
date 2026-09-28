@@ -26,27 +26,27 @@ describe.skipIf(process.platform !== 'darwin')('darwin start token (V2-SEC-3)', 
     }
   });
 
-  it('is the same token under any locale and time zone of the Ethos process', () => {
+  it('is the same token under any locale and time zone of the Ethos process', async () => {
     const pid = child.pid ?? 0;
     process.env.TZ = 'America/Los_Angeles';
     process.env.LC_ALL = 'C';
-    const recorded = processStartToken(pid);
+    const recorded = await processStartToken(pid);
     expect(recorded).toMatch(
       /^darwin-utc:[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d\d:\d\d:\d\d \d{4}$/,
     );
     process.env.TZ = 'Asia/Kolkata';
     process.env.LC_ALL = 'de_DE.UTF-8';
     process.env.LANG = 'de_DE.UTF-8';
-    expect(processStartToken(pid)).toBe(recorded);
-    expect(matchesIdentity(pid, { pidStartToken: recorded ?? '' })).toBe('same');
+    expect(await processStartToken(pid)).toBe(recorded);
+    expect(await matchesIdentity(pid, { pidStartToken: recorded ?? '' })).toBe('same');
   });
 
-  it('does not find ps on the host PATH', () => {
+  it('does not find ps on the host PATH', async () => {
     const pid = child.pid ?? 0;
     const path = process.env.PATH;
     process.env.PATH = '/nonexistent';
     try {
-      expect(processStartToken(pid)).toMatch(/^darwin-utc:/);
+      expect(await processStartToken(pid)).toMatch(/^darwin-utc:/);
     } finally {
       process.env.PATH = path;
     }
@@ -55,13 +55,13 @@ describe.skipIf(process.platform !== 'darwin')('darwin start token (V2-SEC-3)', 
   // A token recorded before this change is `darwin:<lstart under the process
   // env>`; it is still compared the way it was written, so an upgrade does not
   // orphan every process the registry already tracks.
-  it('a pre-upgrade token still matches the process it was recorded for', () => {
+  it('a pre-upgrade token still matches the process it was recorded for', async () => {
     const pid = child.pid ?? 0;
     const legacy = `darwin:${execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
     }).trim()}`;
-    expect(matchesIdentity(pid, { pidStartToken: legacy })).toBe('same');
-    expect(matchesIdentity(pid, { pidStartToken: 'darwin:Mon Jan  1 00:00:00 2001' })).toBe(
+    expect(await matchesIdentity(pid, { pidStartToken: legacy })).toBe('same');
+    expect(await matchesIdentity(pid, { pidStartToken: 'darwin:Mon Jan  1 00:00:00 2001' })).toBe(
       'different',
     );
   });

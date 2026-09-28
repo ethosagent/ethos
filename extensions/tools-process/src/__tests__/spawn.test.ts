@@ -47,14 +47,14 @@ afterEach(() => {
 
 describe('spawnDetached', () => {
   it('returns a pid and the process is alive', async () => {
-    const result = spawnDetached('p1', 'sleep 30', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p1', 'sleep 30', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     expect(result.pid).toBeGreaterThan(0);
     expect(isAlive(result.pid)).toBe(true);
   });
 
   it('creates and writes the log files', async () => {
-    const result = spawnDetached('p2', 'echo hello-stdout', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p2', 'echo hello-stdout', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     await waitFor(
       () =>
@@ -77,8 +77,7 @@ describe('spawnDetached', () => {
       [
         `import { writeFileSync } from 'node:fs';`,
         `import { spawnDetached } from ${JSON.stringify(spawnModule)};`,
-        `const r = spawnDetached('gc', 'sleep 10', ${JSON.stringify(dataDir)}, undefined, ${JSON.stringify(dataDir)});`,
-        `writeFileSync(${JSON.stringify(pidFile)}, String(r.pid), 'utf8');`,
+        `spawnDetached('gc', 'sleep 10', ${JSON.stringify(dataDir)}, undefined, ${JSON.stringify(dataDir)}).then((r) => writeFileSync(${JSON.stringify(pidFile)}, String(r.pid), 'utf8'));`,
       ].join('\n'),
       'utf8',
     );
@@ -94,7 +93,7 @@ describe('spawnDetached', () => {
   });
 
   it('detached child is in its own process group (survives parent group signals)', async () => {
-    const result = spawnDetached('p4', 'sleep 10', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p4', 'sleep 10', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     // detached:true puts the child in a new process group whose pgid === child pid.
     const pgid = Number(
@@ -131,7 +130,7 @@ describe('spawnDetached env (F3)', () => {
     try {
       const out = join(dataDir, 'env-out.txt');
       // The child prints the probe var; with the clean env it must be empty.
-      const result = spawnDetached(
+      const result = await spawnDetached(
         'envtest',
         `printf '%s' "$ETHOS_LEAK_PROBE" > ${JSON.stringify(out)}`,
         dataDir,
@@ -150,7 +149,7 @@ describe('spawnDetached env (F3)', () => {
 
   it('forwards an explicitly-opted env var to the spawned child', async () => {
     const out = join(dataDir, 'env-explicit.txt');
-    const result = spawnDetached(
+    const result = await spawnDetached(
       'envexplicit',
       `printf '%s' "$EXPLICIT_VAR" > ${JSON.stringify(out)}`,
       dataDir,
@@ -226,7 +225,7 @@ describe('rotateLogIfNeeded', () => {
     const log = join(dir, 'stdout.log');
     writeFileSync(log, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
     // spawnDetached should rotate the oversized log before re-opening it for append
-    const result = spawnDetached('p5', 'echo after-rotate', dataDir, undefined, dataDir);
+    const result = await spawnDetached('p5', 'echo after-rotate', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     expect(existsSync(`${log}.1`)).toBe(true);
     await waitFor(() => readFileSync(log, 'utf8').includes('after-rotate'));

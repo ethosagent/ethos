@@ -27,7 +27,8 @@
 //   - skills: a `skills_dir` that resolves outside the folder refuses the
 //     plugin (`PluginLoader.workspaceSkillsDirEscapes`, ./index.ts).
 // A symlink inside the folder is hashed as its link text, and one that points
-// outside the folder refuses the grant (`hashPluginTree`). Not covered: `node:` builtins and the Ethos
+// outside the folder, or into the unhashed `.git/` (V3-7), refuses the grant
+// (`hashPluginTree`). Not covered: `node:` builtins and the Ethos
 // process itself — what the plugin is handed through `activate(api)`.
 //
 // Like the capability grant in ./grants.ts this is a consent record, not a
@@ -103,8 +104,10 @@ async function writeWorkspaceTrust(
  * change the hash. A link whose target resolves outside the folder throws —
  * the grant could not cover what it names, and the import guard
  * (`guardWorkspacePluginImports`, ./workspace-import-guard.ts) would refuse
- * it at load anyway. Pinned by `__tests__/workspace-trust.test.ts`
- * ('workspace plugin trust over symlinks').
+ * it at load anyway. So does one whose target resolves into `.git/` (V3-7):
+ * that subtree is not hashed, so the file it names could change under the
+ * grant. Pinned by `__tests__/workspace-trust.test.ts` ('workspace plugin
+ * trust over symlinks').
  */
 export async function hashPluginTree(storage: Storage, dir: string): Promise<string> {
   const root = resolve(dir);
@@ -168,12 +171,21 @@ async function assertLinkContained(
   // The resolved target decides when it exists (the import guard compares
   // realpaths too); a dangling link is judged by where its text points.
   const real = await realpath(link).catch(() => undefined);
-  const inside =
-    real !== undefined ? isInside(realRoot, real) : isInside(root, resolve(dirname(link), target));
-  if (inside) return;
-  throw new Error(
-    `symlink ${relative(root, link)} -> ${target} points outside the plugin folder ${root}; a workspace plugin trust grant covers only files inside its folder. Vendor the target into the folder (or remove the link), then run: ethos plugin trust`,
-  );
+  const [base, resolved] =
+    real !== undefined ? [realRoot, real] : [root, resolve(dirname(link), target)];
+  if (!isInside(base, resolved)) {
+    throw new Error(
+      `symlink ${relative(root, link)} -> ${target} points outside the plugin folder ${root}; a workspace plugin trust grant covers only files inside its folder. Vendor the target into the folder (or remove the link), then run: ethos plugin trust`,
+    );
+  }
+  // V3-7: `.git/` is the one subtree the hash skips, and a link is hashed as
+  // its text, so a link into it would let the code it names change under the
+  // grant. Checked on the RESOLVED path, so a chain of links is caught too.
+  if (relative(base, resolved).split(sep).includes('.git')) {
+    throw new Error(
+      `symlink ${relative(root, link)} -> ${target} points into .git/, which a workspace plugin trust grant does not cover. Vendor the target outside .git/ (or remove the link), then run: ethos plugin trust`,
+    );
+  }
 }
 
 /** Whether `dir` is trusted at its CURRENT content. */

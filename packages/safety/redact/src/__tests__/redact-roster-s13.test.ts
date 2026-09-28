@@ -302,8 +302,10 @@ describe('redactString — V-ES-4 lowercase and embedded secret forms', () => {
 // V2-SEC-4 (verify2-sec/shapes.mts): column-aligned assignments (terraform
 // fmt, INI), standard credential names the lowercase list omitted, the
 // `x-api-key` and `Authorization: Basic` headers, and a password in a URL's
-// userinfo all passed through. And the UPPER rule redacted English prose
-// (`PASSWORD: required`, `The SECRET: congratulations`).
+// userinfo all passed through. And the UPPER rule redacted placeholder prose
+// (`PASSWORD: required`). V3-5 narrowed that exemption to a closed set, so
+// `The SECRET: congratulations` — indistinguishable from a letters-only
+// secret — now redacts (pinned in the 'V3-5' block below).
 describe('redactString — V2-SEC-4 shapes', () => {
   it.each([
     ['db_password     = "', 'SuperSecretValue123'],
@@ -335,7 +337,6 @@ describe('redactString — V2-SEC-4 shapes', () => {
 
   it.each([
     'PASSWORD: required',
-    'The SECRET: congratulations',
     'API_KEY: Optional',
     'DB_PASSWORD: <your-password>',
     'API_TOKEN: ********',
@@ -350,5 +351,83 @@ describe('redactString — V2-SEC-4 shapes', () => {
 
   it('still redacts a letters-only value assigned with `=`', () => {
     expect(redactString('DB_PASSWORD=supersecretpass')).toBe('DB_PASSWORD=[REDACTED:secret-value]');
+  });
+});
+
+// V3-5. The "one English word after `:`" exemption was `[A-Za-z][a-z]{0,14}`
+// under the lowercase rule's `i` flag, so it exempted ANY 1-15 letters: a
+// letters-only secret (`db_password: SecretPassWord`) passed through, and so
+// did a Basic credential with no digit or symbol. The exemption is now a
+// closed set of placeholder words and shapes (the 'Secret-named value' rules in
+// ../index.ts), and the Basic rule has no word exemption at all.
+describe('redactString — V3-5 letters-only secrets', () => {
+  it.each([
+    ['db_password: ', 'SecretPassWord'],
+    ['api_key: ', 'abcdefghijklmn'],
+    ['password: ', 'CorrectHorseBat'],
+    ['client_secret: ', 'Abcdefghijklmn'],
+    ['DB_PASSWORD: ', 'Hunterhunter'],
+    ['The SECRET: ', 'congratulations'],
+    ['Authorization: Basic ', 'dXNlcjpwYXNz'],
+    ['authorization: basic ', 'dXNlcjpwYXNz'],
+    ['Authorization: Basic ', 'YWxhZGRpbjpvcGVuc2VzYW1l'],
+  ])('redacts the value of %s%s', (prefix, value) => {
+    const text = `${prefix}${value}`;
+    const result = redactString(text);
+    expect(result).not.toContain(value);
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(result).toContain('[REDACTED:');
+    expect(detectSecrets(text).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'PASSWORD: required',
+    'PASSWORD: Required',
+    'password: REQUIRED',
+    'API_KEY: Optional',
+    'api_key: optional.',
+    'SECRET_KEY: none',
+    'client_secret: null',
+    'DB_PASSWORD: <your-password>',
+    'API_TOKEN: ********',
+    'API_TOKEN: xxxxxxxxxxxx',
+    'OPENAI_API_KEY: your_openai_api_key_here',
+    'openai_api_key: YOUR-API-KEY-HERE',
+    `DB_PASSWORD: ${'$'}{DB_PASSWORD}`,
+    'Authorization: Basic authentication is disabled',
+    'Authorization: Basic auth',
+  ])('leaves %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
+  });
+});
+
+// V3-9. The URL userinfo rule rewrote a templated connection string (a
+// patch_file or write_file of that config then no longer matched, or wrote the
+// tag back into it), and missed the empty-user form `redis://:pass@host`.
+describe('redactString — V3-9 URL credentials', () => {
+  it.each([
+    ['redis://:', 's3cretpw', '@redis:6379'],
+    ['rediss://:', 'An0therPw', '@cache.example.com:6380/0'],
+    [`postgres://${'$'}{DB_USER}:`, 'literalPassw0rd', '@db:5432/app'],
+    ['amqp://guest:', 'guestpw', '@mq:5672'],
+  ])('redacts %s…', (prefix, value, suffix) => {
+    const text = `DATABASE_URL=${prefix}${value}${suffix}`;
+    const result = redactString(text);
+    expect(result).toBe(`DATABASE_URL=${prefix}[REDACTED:url-credential]${suffix}`);
+    expect(detectSecrets(text).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    `DATABASE_URL=postgres://${'$'}{DB_USER}:${'$'}{DB_PASS}@db:5432/app`,
+    'url: postgres://{{ db_user }}:{{db_pass}}@db/app',
+    'url: postgres://app:{{db_pass}}@db/app',
+    'REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379',
+    'MYSQL=mysql://root:%(password)s@db/app',
+    'mysql://root:%DB_PASS%@db/app',
+    'postgres://user:<password>@host/db',
+    'postgres://user:****@host/db',
+    'postgres://user:xxxxxxxx@host/db',
+  ])('leaves the template %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
   });
 });

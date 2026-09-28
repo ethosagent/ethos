@@ -93,24 +93,34 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   },
   // V2-SEC-4. `Authorization: Basic <base64 user:pass>` (and
   // `Proxy-Authorization:`). Anchored on the header name, not on `Basic`
-  // alone, and a single English word after it is prose, so "Authorization:
-  // Basic authentication is disabled" stays. Bounded quantifiers (V-ES-2).
+  // alone. V3-5: the value must have base64's shape — whole 4-char groups,
+  // `=` padding only at the end, at least 8 chars, and nothing base64 after it
+  // — rather than "not one English word", which let a letters-only credential
+  // (`dXNlcjpwYXNz`) through. Prose ("Authorization: Basic authentication is
+  // disabled", "Basic auth") is not a whole number of groups. Bounded
+  // quantifiers (V-ES-2). Pinned by the 'V3-5' cases in
+  // __tests__/redact-roster-s13.test.ts.
   {
     label: 'Basic auth credentials',
     tag: '$<pre>[REDACTED:basic-auth]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<pre>\bAuthorization:[ \t]{0,32}Basic[ \t]{1,32})(?![A-Za-z][a-z]{0,14}(?:[\s.,;]|$))[A-Za-z0-9+/]{4,}={0,2}/gi,
+    regex: /(?<pre>\bAuthorization:[ \t]{0,32}Basic[ \t]{1,32})(?:[A-Za-z0-9+/]{4}){1,1024}(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)(?![A-Za-z0-9+/=])/gi,
   },
   // V2-SEC-4. The password in a URL's userinfo, `scheme://user:pass@host`
   // (`mysql://root:pw@db`, an authenticated proxy URL). Only the password is
   // replaced. The user part cannot contain `:`, `@` or `/`, so the match
   // commits at the first `:` and fails at the first `/` — linear, and
   // `https://host:8080/…` and `ssh://git@host/…` do not match.
+  // V3-9: the user part may be empty (`redis://:pass@host`), and a templated
+  // or placeholder password is left alone — one starting `$` (`${DB_PASS}`,
+  // `$VAR`), `%` (`%(pw)s`, `%PW%`), `<`, `{` (`{{ pw }}`) or `*`, or one that
+  // is all `*` or all `x` — so a patch to a config file still matches its text.
+  // Pinned by the 'V3-9' cases in __tests__/redact-roster-s13.test.ts.
   {
     label: 'URL credentials',
     tag: '$<pre>[REDACTED:url-credential]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<pre>\b[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s/@:]{1,256}:)(?!\[REDACTED:)[^\s/@]{1,256}(?=@)/g,
+    regex: /(?<pre>\b[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s/@:]{0,256}:)(?!\[REDACTED:)(?![$%<*{])(?![xX]{1,256}@)[^\s/@]{1,256}(?=@)/g,
   },
   {
     label: 'Slack token',
@@ -175,16 +185,25 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   // recognised; neither is a shape `env` or a config file prints.
   // Pinned by __tests__/redact-perf.test.ts.
   //
-  // V2-SEC-4: after a `:` (prose, YAML), a value that is one English word — a
-  // lowercase or Capitalised word of up to 15 letters, optionally followed by
-  // punctuation — or a placeholder (`<your-password>`, `********`, `xxxx`) is
-  // not a secret: `PASSWORD: required`, `The SECRET: congratulations`. After
-  // `=` (env, .env, INI, terraform) every value still redacts.
+  // V2-SEC-4 / V3-5: after a `:` (prose, YAML, a README's config table), a
+  // PLACEHOLDER is not a secret. The set is closed, case-insensitive, and only
+  // ever a whole value (optionally followed by `.,;!?)`):
+  //   - the words required, optional, none, null, nil, true, false, empty,
+  //     unset — what a docs table or schema prints where a value goes;
+  //   - `your_…_here` / `YOUR-…-HERE` — the `.env.example` spelling;
+  //   - `<…>` (`<your-password>`), `***…` (3+), `xxx…` (3+).
+  // `${…}` and `$VAR` are handled by the `(?![$[])` guard. Anything else —
+  // including a letters-only word such as `SecretPassWord` or
+  // `congratulations`, and `changeme`, which IS the password wherever it is
+  // left in place — redacts. The first version exempted any 1-15 letters,
+  // and under the lowercase rule's `i` flag that meant letters-only secrets.
+  // After `=` (env, .env, INI, terraform) every value still redacts. Pinned by
+  // the 'V2-SEC-4' and 'V3-5' cases in __tests__/redact-roster-s13.test.ts.
   {
     label: 'Secret-named value',
     tag: '$<pre>[REDACTED:secret-value]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<pre>\b[A-Z0-9_]{0,64}(?:API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_KEY|TOKEN|SECRET|PASSWORD|PASSWD)[ \t]{0,32}[=:][ \t]{0,32}["']?)(?![$[])(?!(?<=:[ \t]{0,32}["']?)(?:[A-Za-z][a-z]{0,14}|<[^\s>]{1,64}>|\*{3,64}|[xX]{3,64})[.,;!?)]{0,4}(?:[\s"'`]|$))[^\s"'`]{8,}/g,
+    regex: /(?<pre>\b[A-Z0-9_]{0,64}(?:API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_KEY|TOKEN|SECRET|PASSWORD|PASSWD)[ \t]{0,32}[=:][ \t]{0,32}["']?)(?![$[])(?!(?<=:[ \t]{0,32}["']?)(?i:required|optional|none|null|nil|true|false|empty|unset|your[_-][a-z0-9_-]{0,48}[_-]here|<[^\s>]{1,64}>|\*{3,64}|x{3,64})[.,;!?)]{0,4}(?:[\s"'`]|$))[^\s"'`]{8,}/g,
   },
   // V-ES-4. The lowercase and camelCase assignment forms UPPER_SNAKE misses: an
   // AWS credentials-file line (`aws_secret_access_key = …`), `.npmrc`'s
@@ -196,13 +215,14 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   // V-ES-2 reason. Pinned by the 'V-ES-4' cases in this file's roster test.
   // V2-SEC-4: up to 32 blanks around the separator (column-aligned files),
   // `session_token` (the AWS credentials-file STS line), `api_token`,
-  // `bearer_token` and the `x-api-key` header, and the same one-English-word
-  // exemption after `:` as the rule above. Pinned by the 'V2-SEC-4' cases.
+  // `bearer_token` and the `x-api-key` header, and the same closed placeholder
+  // set after `:` as the rule above (V3-5). Pinned by the 'V2-SEC-4' and
+  // 'V3-5' cases.
   {
     label: 'Secret-named value',
     tag: '$<pre>[REDACTED:secret-value]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<pre>\b[A-Za-z0-9_]{0,48}(?:api[_-]?key|api_?token|access_?token|auth_?token|refresh_?token|session_?token|bearer_?token|client_?secret|secret(?:_access)?_key(?:_base)?|access_key(?:_id)?|password|passwd)[ \t]{0,32}[=:][ \t]{0,32}["']?)(?![$[])(?!(?<=:[ \t]{0,32}["']?)(?:[A-Za-z][a-z]{0,14}|<[^\s>]{1,64}>|\*{3,64}|[xX]{3,64})[.,;!?)]{0,4}(?:[\s"'`]|$))[^\s"'`&]{12,}/gi,
+    regex: /(?<pre>\b[A-Za-z0-9_]{0,48}(?:api[_-]?key|api_?token|access_?token|auth_?token|refresh_?token|session_?token|bearer_?token|client_?secret|secret(?:_access)?_key(?:_base)?|access_key(?:_id)?|password|passwd)[ \t]{0,32}[=:][ \t]{0,32}["']?)(?![$[])(?!(?<=:[ \t]{0,32}["']?)(?:required|optional|none|null|nil|true|false|empty|unset|your[_-][a-z0-9_-]{0,48}[_-]here|<[^\s>]{1,64}>|\*{3,64}|x{3,64})[.,;!?)]{0,4}(?:[\s"'`]|$))[^\s"'`&]{12,}/gi,
   },
   // V-ES-4. A credential in a URL query (`?access_token=`, `&api_key=`,
   // `?token=`, a maps `?key=`). A pagination cursor (`page_token`,

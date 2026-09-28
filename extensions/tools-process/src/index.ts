@@ -225,7 +225,7 @@ function makeProcessStart(
 
       // Cap-check + spawn + add run under ONE lock acquisition so two parallel
       // process_start calls can't both pass the cap-check and over-commit.
-      return withRegistryLock(dataDir, (): ToolResult => {
+      return withRegistryLock(dataDir, async (): Promise<ToolResult> => {
         const registry = loadRegistry(dataDir);
 
         // Liveness sweep before the cap-check: entries still marked `running`
@@ -233,7 +233,7 @@ function makeProcessStart(
         // principle #5 — liveness is observed, not trusted). Reuse the shared
         // dead->orphan rule; the swept registry is the one we keep mutating,
         // so the single saveRegistry below persists the orphan flips too.
-        markDeadRunningAsOrphan(registry);
+        await markDeadRunningAsOrphan(registry);
         const entries = Object.values(registry);
 
         if (runningCountFor(entries, startedBy) >= capMax) {
@@ -265,7 +265,7 @@ function makeProcessStart(
           // used unchanged. Both write the same log files and fire onExit.
           const result = backend
             ? spawnViaBackend(id, command, effectiveCwd, env, dataDir, backend, personality, onExit)
-            : spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
+            : await spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
           pid = result.pid;
           identity = result.identity;
         } catch (err) {
@@ -508,7 +508,7 @@ function makeProcessWait(dataDir: string, notifier?: CompletionNotifier): Tool {
             value: JSON.stringify({ exited: true, exit_code: current.exitCode }),
           };
         }
-        if (!isEntryAlive(current)) {
+        if (!(await isEntryAlive(current))) {
           await updateEntry(dataDir, id, { status: 'orphan' });
           notifier?.fire(current, ctx.sessionId, ctx.sessionKey);
           return { ok: true, value: JSON.stringify({ exited: true }) };

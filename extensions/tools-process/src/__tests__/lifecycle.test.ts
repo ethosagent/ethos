@@ -129,8 +129,8 @@ describe('reconcileRegistry', () => {
   it('crash-then-restart: a process that died during the crash becomes orphan, a survivor stays running', async () => {
     // Two real detached children: one we kill (simulating it dying while
     // `ethos chat` was crashed), one we leave alive (it outlived the crash).
-    const dead = spawnDetached('crashed', 'sleep 30', dataDir, undefined, dataDir);
-    const alive = spawnDetached('survivor', 'sleep 30', dataDir, undefined, dataDir);
+    const dead = await spawnDetached('crashed', 'sleep 30', dataDir, undefined, dataDir);
+    const alive = await spawnDetached('survivor', 'sleep 30', dataDir, undefined, dataDir);
 
     const now = new Date().toISOString();
     saveRegistry(dataDir, {

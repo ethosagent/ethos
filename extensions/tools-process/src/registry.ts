@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { matchesIdentity } from './process-identity';
+import { IDENTITY_CACHE_MS, matchesIdentity } from './process-identity';
 
 export type ProcessStatus = 'running' | 'exited' | 'killed' | 'orphan';
 
@@ -175,15 +175,19 @@ export function isAlive(pid: number): boolean {
  * ./process-identity.ts). `kill(pid, 0)` alone answers "is SOME process wearing
  * this number", so an entry whose pid was reused after a restart stayed
  * `running` for good and held a PROCESS_CAP slot. `'unknown'` (no recorded
- * identity, or a platform with none) keeps the pid-only answer. Used by
- * `markDeadRunningAsOrphan` (./operations.ts: process_list, process_start's
- * cap sweep, startup reconcile), process_wait (./index.ts) and the watcher
- * (./watcher.ts). Pinned by `__tests__/pid-reuse-liveness.test.ts`.
+ * identity, a platform with none, or a start-time read that failed or timed
+ * out — V3-4) keeps the pid-only answer, so a transient `ps` failure never
+ * orphans a live process. Used by `markDeadRunningAsOrphan` (./operations.ts:
+ * process_list, process_start's cap sweep, startup reconcile), process_wait
+ * (./index.ts) and the watcher (./watcher.ts). Pinned by
+ * `__tests__/pid-reuse-liveness.test.ts` and `__tests__/identity-unknown.test.ts`.
  */
-export function isEntryAlive(
+export async function isEntryAlive(
   entry: Pick<ProcessEntry, 'pid' | 'pidStartToken' | 'bootId'>,
-): boolean {
-  return isAlive(entry.pid) && matchesIdentity(entry.pid, entry) !== 'different';
+): Promise<boolean> {
+  if (!isAlive(entry.pid)) return false;
+  const identity = await matchesIdentity(entry.pid, entry, { cacheMs: IDENTITY_CACHE_MS });
+  return identity !== 'different';
 }
 
 const REAP_AGE_MS = 24 * 60 * 60 * 1000;

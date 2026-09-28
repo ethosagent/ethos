@@ -154,16 +154,27 @@ export function watchLogs(config: WatchConfig): Promise<WatchResult> {
     // registry status, flipped to terminal by the spawnViaBackend drain loop
     // when the exec stream ends. Host-pid processes use `isEntryAlive` (the pid
     // is alive AND still wears the identity recorded at spawn).
-    function isProcessDead(): boolean {
+    async function isProcessDead(): Promise<boolean> {
       if (pid === BACKEND_ROUTED_PID) {
         return loadRegistry(dataDir)[id]?.status !== 'running';
       }
-      return !isEntryAlive({ ...identity, pid });
+      return !(await isEntryAlive({ ...identity, pid }));
     }
 
-    function checkLiveness() {
+    // The identity read is async (a `ps` run on macOS), so a slow read must
+    // not stack a second one on the next tick.
+    let livenessInFlight = false;
+    async function checkLiveness() {
+      if (resolved || livenessInFlight) return;
+      livenessInFlight = true;
+      let dead: boolean;
+      try {
+        dead = await isProcessDead();
+      } finally {
+        livenessInFlight = false;
+      }
       if (resolved) return;
-      if (isProcessDead()) {
+      if (dead) {
         for (const lf of logFiles) {
           readNewLines(lf.path, lf.label);
           if (resolved) return;
@@ -266,7 +277,7 @@ export function watchLogs(config: WatchConfig): Promise<WatchResult> {
         readNewLines(lf.path, lf.label);
         if (resolved) return;
       }
-      checkLiveness();
+      void checkLiveness();
     }, WAIT_POLL_MS);
 
     timer = setTimeout(() => {

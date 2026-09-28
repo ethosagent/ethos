@@ -182,14 +182,14 @@ export function rotateLogIfNeeded(logPath: string): void {
   closeSync(openSync(logPath, 'a'));
 }
 
-export function spawnDetached(
+export async function spawnDetached(
   id: string,
   command: string,
   cwd: string,
   env: Record<string, string> | undefined,
   dataDir: string,
   onExit?: (result: { exitCode: number | null; signal: NodeJS.Signals | null }) => void,
-): SpawnResult {
+): Promise<SpawnResult> {
   const dir = join(dataDir, 'processes', id);
   mkdirSync(dir, { recursive: true });
 
@@ -247,7 +247,7 @@ export function spawnDetached(
     throw new Error('Failed to spawn process: pid is undefined');
   }
 
-  return { pid: child.pid, stdoutLog, stderrLog, identity: identityOf(child.pid) };
+  return { pid: child.pid, stdoutLog, stderrLog, identity: await identityOf(child.pid) };
 }
 
 /** Sentinel pid for backend-routed (containerized) processes — they have no

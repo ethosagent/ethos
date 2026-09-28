@@ -678,7 +678,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
    * so a second registration would dispatch each message, slash command and
    * button click twice. Pinned by `__tests__/start-permanent-error.test.ts`
    * ('registers each listener once across a retried start'). The member
-   * greeting reads `selfUserId` as it was on the start that registered it.
+   * greeting and the App Home header read `selfUserId` / `selfDisplayName`
+   * from this instance when they run, so the latest `auth.test` wins (V3-6,
+   * pinned by 'a retried start reaches the handlers' in the same file).
    */
   private registerHandlers(): void {
     registerMessageEvents(
@@ -723,9 +725,15 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         channelOverrides: this.channelOverrides,
       });
 
+    // `selfUserId` and `selfDisplayName` are read at CALL time through getters
+    // (V3-6): these handlers are registered once, on the first `start()`, and
+    // a retried start is the one whose `auth.test` may have succeeded.
+    const adapter = this;
     if (this.binding) {
       registerMemberEvents(this.app, {
-        selfUserId: this.selfUserId,
+        get selfUserId() {
+          return adapter.selfUserId;
+        },
         binding: this.binding,
         resolveChannelMode: resolveMode,
       });
@@ -919,7 +927,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // unset the header still renders with the default identity.
     registerHomeEvents(this.app, {
       binding: this.binding ?? { type: 'personality', name: 'unbound' },
-      displayName: this.selfDisplayName ?? this.displayName,
+      get displayName() {
+        return adapter.selfDisplayName ?? adapter.displayName;
+      },
       channelOverrides: this.channelOverrides,
       session: this.session,
       memory: this.memory,

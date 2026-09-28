@@ -166,4 +166,33 @@ describe('Gateway.sendAsBot — concurrent identical sends (V-GC-1)', () => {
     expect(await third).toEqual({ ok: true });
     expect(sent).toHaveLength(2);
   });
+  // V3-8 — the flight half of V2-RT-4. A duplicate that arrives while a send is
+  // in flight reports THAT send's outcome (`inFlightSends`). The late first
+  // send may remove the in-flight entry only if it is still its own
+  // (`this.inFlightSends.get(flightKey) === flight` in `sendThrough`);
+  // otherwise it deletes the second send's entry, and a third identical send
+  // made during the second's flight finds no flight to share and reports
+  // `{ok:true}` for a send that then fails.
+  it('a send that outlives the TTL does not clear the next send’s in-flight outcome', async () => {
+    const { adapter, sent, gates } = gatedAdapter();
+    const gw = gatewayWith(adapter, 20);
+
+    const first = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setTimeout(r, 40)); // past the 20ms TTL
+    const second = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(2);
+
+    gates[0]?.({ ok: false, error: 'flood wait' });
+    expect((await first).ok).toBe(false);
+
+    // Made while the second send is still in flight: it shares that outcome.
+    const third = gw.sendAsBot('telegram', '12345', 'Deploy finished', 'bot-a');
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(2);
+    gates[1]?.({ ok: false, error: 'chat not found' });
+    expect(await second).toEqual({ ok: false, error: 'chat not found' });
+    expect(await third).toEqual({ ok: false, error: 'chat not found' });
+    expect(sent).toHaveLength(2);
+  });
 });
