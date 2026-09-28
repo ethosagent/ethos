@@ -63,6 +63,22 @@ interface RunOptions {
   abortSignal?: AbortSignal;
   /** openclaw-9.5 item 1 — always true here: see `credentialRefusalText`. */
   credentialPrompt?: boolean;
+  /**
+   * MESH-TAINT — set when the `prompt` params carry `untrustedOrigin: true`,
+   * sent by a mesh tool whose run had read untrusted content (`meshTaintParams`,
+   * extensions/tools-delegation/src/index.ts). AgentLoop then starts armed
+   * (`resolveRunDowngrade`). Pinned by `__tests__/mesh-taint-e2e.test.ts`.
+   */
+  untrustedOrigin?: boolean;
+}
+
+/** `prompt` JSON-RPC params, on every transport. */
+interface PromptParams {
+  sessionKey: string;
+  text: string;
+  personalityId?: string;
+  /** MESH-TAINT — see `RunOptions.untrustedOrigin`. */
+  untrustedOrigin?: boolean;
 }
 
 export interface AgentRunner {
@@ -464,7 +480,7 @@ export class AcpServer {
           };
 
         case 'prompt': {
-          const p = req.params as { sessionKey: string; text: string; personalityId?: string };
+          const p = req.params as PromptParams;
           // A streamed prompt that already answered may still be draining its
           // turn — wait for it rather than refuse (see `sessionTails`).
           const tail = this.sessionTails.get(p.sessionKey);
@@ -482,6 +498,7 @@ export class AcpServer {
               p.text,
               p.sessionKey,
               p.personalityId,
+              p.untrustedOrigin === true,
             );
             this.lastTurnAt = Date.now();
             return { jsonrpc: '2.0', id, result: { text, turnCount } };
@@ -681,7 +698,7 @@ export class AcpServer {
           break;
 
         case 'prompt': {
-          const p = req.params as { sessionKey: string; text: string; personalityId?: string };
+          const p = req.params as PromptParams;
           // A prompt that already answered may still be draining its turn —
           // wait for it rather than refuse (see `sessionTails`).
           const tail = this.sessionTails.get(p.sessionKey);
@@ -712,6 +729,7 @@ export class AcpServer {
               personalityId: p.personalityId,
               abortSignal: ac.signal,
               credentialPrompt: true,
+              ...(p.untrustedOrigin === true ? { untrustedOrigin: true } : {}),
             })) {
               if (answered) continue;
               const refusal = credentialRefusalText(event);
@@ -1015,6 +1033,7 @@ export class AcpServer {
     text: string,
     sessionKey: string,
     personalityId?: string,
+    untrustedOrigin = false,
   ): Promise<{ text: string; turnCount: number }> {
     let fullText = '';
     let turnCount = 0;
@@ -1023,6 +1042,7 @@ export class AcpServer {
       sessionKey,
       personalityId,
       credentialPrompt: true,
+      ...(untrustedOrigin ? { untrustedOrigin: true } : {}),
     })) {
       const refusal = credentialRefusalText(event);
       if (refusal !== null) fullText = refusal;

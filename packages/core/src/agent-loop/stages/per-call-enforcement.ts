@@ -305,7 +305,8 @@ export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
 
 /**
  * Tools that schedule a LATER run whose prompt this run writes (V2-SEC-2): a
- * cron job, a goal, a kanban ticket, a background sub-agent, a watcher that
+ * cron job, a goal, a kanban ticket, a background sub-agent (local, or on a
+ * mesh peer via `route_to_agent`), a watcher that
  * wakes the personality (V3-2 — `wake.prompt_prefix` is prepended, unwrapped,
  * to every wake prompt, and the woken run starts fresh), and a kanban block
  * reason (carried into the ticket's next dispatch prompt). That text is
@@ -340,6 +341,10 @@ const RUN_SCOPED_SCHEDULERS: ReadonlyMap<string, SchedulerRule> = new Map<string
   // Pinned by extensions/tools-kanban/src/__tests__/untrusted-taint.test.ts.
   ['kanban_block', () => true],
   ['delegate_task', (a) => a.background === true],
+  // MESH-TAINT: a detached job on a mesh peer, run by that peer's
+  // BackgroundExecutor, which reads no taint. The foreground mesh tools carry
+  // the taint instead (`meshTaintParams`, extensions/tools-delegation/src/index.ts).
+  ['route_to_agent', (a) => a.background === true],
   // A deliver-only watcher seeds no run; any wake does (V3-2).
   ['watcher_create', (a) => a.wake !== undefined],
 ]);

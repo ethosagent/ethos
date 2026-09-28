@@ -271,6 +271,9 @@ export {
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
+// MESH-TAINT: a tool that hands text to another process's run (the mesh tools,
+// extensions/tools-delegation) reads its call's taint here to send it along.
+export { runIsTainted } from './scoped/run-taint';
 export type { ScriptExclusionCategory, ScriptSafeToolMeta } from './script-safe';
 export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './script-safe';
 export {
