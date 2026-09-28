@@ -35,6 +35,7 @@ import {
   runDcrAuthorization,
   runPkceLogin,
   storeEnvSecrets,
+  validateMcpServerName,
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
 import {
@@ -711,6 +712,15 @@ async function runAdd(argv: string[]): Promise<void> {
 
   if (!parsed.name) {
     console.log(ADD_USAGE);
+    return;
+  }
+
+  // UBP-035 — the server name becomes part of every tool name the providers
+  // see (mcp__<server>__<tool>), so refuse one they would reject.
+  const nameError = validateMcpServerName(parsed.name);
+  if (nameError) {
+    console.error(nameError);
+    process.exitCode = 1;
     return;
   }
 

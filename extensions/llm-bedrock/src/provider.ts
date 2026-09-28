@@ -13,6 +13,9 @@ export interface BedrockProviderConfig {
   region: string;
   modelId: string;
   sigv4: SigV4Config;
+  /** UBP-030 — retries of a transient failure before the first byte. Absent → 2;
+   *  wiring passes 0 for a hop in a chain of two or more (failover is the retry). */
+  maxRetries?: number;
 }
 
 export class BedrockProvider implements LLMProvider {
@@ -51,7 +54,14 @@ export class BedrockProvider implements LLMProvider {
     options: CompletionOptions,
   ): AsyncIterable<CompletionChunk> {
     yield* streamBedrockConverse(
-      { region: this.config.region, sigv4: this.config.sigv4, modelId: this.model },
+      {
+        region: this.config.region,
+        sigv4: this.config.sigv4,
+        modelId: this.model,
+        ...(this.config.maxRetries !== undefined
+          ? { retry: { maxRetries: this.config.maxRetries } }
+          : {}),
+      },
       messages,
       tools,
       options,

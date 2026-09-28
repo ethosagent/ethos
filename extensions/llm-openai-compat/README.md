@@ -30,6 +30,8 @@ If the `baseUrl` host is `generativelanguage.googleapis.com`, `normalizeGeminiSc
 - The Gemini detection is host-substring-based. If a future Gemini compat URL changes, update `isGeminiEndpoint` (`src/index.ts:66`).
 - `supportsCaching` and `supportsThinking` are hard-coded `false` — neither concept maps cleanly across this many backends.
 - `countTokens` is an estimate, not authoritative. Don't use it for billing.
+- The output cap goes on the wire as `max_completion_tokens` for `api.openai.com` and for a bare OpenAI reasoning-family model id (`o<digit>…`, `gpt-5…`) on any hosted endpoint — those models refuse `max_tokens`. Everything else, local runtimes included, keeps `max_tokens` (`outputCapParam` in `src/transport.ts`, pinned by `src/__tests__/max-completion-tokens.test.ts`).
+- On the Gemini endpoint a tool call's `extra_content.google.thought_signature` is remembered by the provider instance, keyed by tool-call id, and sent back on that tool call in the next request (Gemini 3 refuses the follow-up without it). Process-lifetime only: a restart mid tool loop loses it (`OpenAICompatProvider.thoughtSignatures`, pinned by `src/__tests__/gemini-thought-signature.test.ts`).
 
 ## Files
 

@@ -2,7 +2,7 @@ import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { InMemorySecretsResolver } from '@ethosagent/storage-fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConfigRepository } from '../../repositories/config.repository';
-import { OnboardingService } from '../onboarding.service';
+import { OnboardingService, probeOutputCap } from '../onboarding.service';
 
 function mockFetch(responses: Array<{ status: number; body: unknown }>) {
   let callIndex = 0;
@@ -127,5 +127,43 @@ describe('validateProvider completion test', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('no credits');
     expect(result.completionTested).toBe(false);
+  });
+
+  // UBP-038 — OpenAI reasoning models refuse max_tokens; the default OpenAI
+  // model is a gpt-5.x id, so the probe must use max_completion_tokens.
+  it('probes api.openai.com with max_completion_tokens, never max_tokens', async () => {
+    const fetchFn = mockFetch([
+      { status: 200, body: { data: [{ id: 'gpt-5.6-sol' }] } },
+      { status: 200, body: { choices: [{ message: { content: '' } }] } },
+    ]);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
+    const result = await svc.validateProvider({ provider: 'openai', apiKey: 'sk-test' });
+    expect(result.completionTested).toBe(true);
+    const completionCall = fetchFn.mock.calls[1] as unknown as [string, RequestInit];
+    const body = JSON.parse(completionCall[1].body as string);
+    expect(body.max_completion_tokens).toBe(16);
+    expect('max_tokens' in body).toBe(false);
+  });
+
+  it('keeps max_tokens: 1 for another OpenAI-compatible host and model', async () => {
+    const fetchFn = mockFetch([
+      { status: 200, body: { data: [{ id: 'meta-llama/llama-3.1-8b-instruct' }] } },
+      { status: 200, body: { choices: [{ message: { content: 'h' } }] } },
+    ]);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
+    await svc.validateProvider({ provider: 'openrouter', apiKey: 'sk-test' });
+    const completionCall = fetchFn.mock.calls[1] as unknown as [string, RequestInit];
+    const body = JSON.parse(completionCall[1].body as string);
+    expect(body.max_tokens).toBe(1);
+    expect('max_completion_tokens' in body).toBe(false);
+  });
+});
+
+describe('probeOutputCap', () => {
+  it('uses max_completion_tokens for a bare reasoning-family id on any host', () => {
+    expect(probeOutputCap('https://example.com/v1', 'o3-mini')).toEqual({
+      max_completion_tokens: 16,
+    });
+    expect(probeOutputCap('https://example.com/v1', 'gpt-4o')).toEqual({ max_tokens: 1 });
   });
 });

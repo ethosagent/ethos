@@ -68,6 +68,33 @@ const XAI_BASE_URL = 'https://api.x.ai/v1';
 const MODELS_TIMEOUT_MS = 8_000;
 const COMPLETION_TIMEOUT_MS = 10_000;
 
+/**
+ * UBP-038 — the output cap the completion probe sends. OpenAI's reasoning
+ * models (o-series, gpt-5.x — the catalog default) refuse `max_tokens` on Chat
+ * Completions, and a cap of 1 would starve one that spends tokens reasoning
+ * before it answers, so api.openai.com and a bare reasoning-family model id get
+ * `max_completion_tokens: 16`. Everything else keeps `max_tokens: 1`. The rule
+ * is copied from `outputCapParam` / `isOpenAiReasoningModelId` in
+ * extensions/llm-openai-compat/src/transport.ts (an app does not import a
+ * provider extension); change both together. Pinned by
+ * `onboarding-completion.test.ts`.
+ */
+export function probeOutputCap(
+  baseUrl: string,
+  model: string,
+): { max_tokens: number } | { max_completion_tokens: number } {
+  let host = '';
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    // Not a URL: fall through to the model-id rule.
+  }
+  const reasoningId = /^(?:o\d+|gpt-5)(?:[-.]|$)/i.test(model);
+  return host === 'api.openai.com' || reasoningId
+    ? { max_completion_tokens: 16 }
+    : { max_tokens: 1 };
+}
+
 export class OnboardingService {
   private readonly fetchFn: typeof fetch;
 
@@ -406,7 +433,7 @@ export class OnboardingService {
       headers,
       body: JSON.stringify({
         model,
-        max_tokens: 1,
+        ...probeOutputCap(base, model),
         messages: [{ role: 'user', content: 'hi' }],
       }),
       signal,

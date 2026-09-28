@@ -9,6 +9,7 @@ import { encodeCompactionEnvelope, type Message } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { staticCredentials } from '../sigv4';
 import { streamBedrockConverse } from '../transport';
+import { concat, MINIMAL_FRAMES } from './eventstream-fixtures';
 
 const envelope = (content: string | null): Message => ({
   role: 'assistant',
@@ -22,8 +23,9 @@ async function converseBody(messages: Message[]): Promise<{ messages: unknown[] 
     'fetch',
     vi.fn(async (_url: string, init: RequestInit) => {
       captured = JSON.parse(String(init.body));
-      // An empty event stream: the generator ends without a chunk.
-      return new Response(new Uint8Array(), { status: 200 });
+      // The smallest complete event stream (an empty body is now refused as a
+      // cut-off stream — UBP-005).
+      return new Response(concat(MINIMAL_FRAMES), { status: 200 });
     }),
   );
   for await (const _ of streamBedrockConverse(

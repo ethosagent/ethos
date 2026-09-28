@@ -78,6 +78,10 @@ export interface XaiProviderConfig {
    *  (`grok-build-0.1`) to 1M (`grok-4.3`), so an operator on another model
    *  sets this. */
   maxContextTokens?: number;
+  /** UBP-030 — retries of a transient failure before the first byte, applied by
+   *  the shared transport (`fetchWithTransientRetry`, llm-codex). Absent → 2;
+   *  wiring passes 0 for a hop in a chain of two or more. */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +155,13 @@ export class XaiProvider implements LLMProvider {
   }
 
   private readonly apiKey: string;
+  private readonly maxRetries: number | undefined;
 
   constructor(config: XaiProviderConfig) {
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.maxContextTokens = config.maxContextTokens ?? 500_000;
+    this.maxRetries = config.maxRetries;
   }
 
   async *complete(
@@ -234,6 +240,7 @@ export class XaiProvider implements LLMProvider {
         options.abortSignal,
         requestTokens,
         'xAI',
+        this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : undefined,
       );
     } catch (err) {
       throw decorateModelError(err, effectiveModel);
@@ -284,6 +291,7 @@ export const xaiFactory: LLMProviderFactory = async ({ config: cfg, secrets, log
     model: (cfg.model as string | undefined) ?? XAI_DEFAULT_MODEL,
     apiKey,
     ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

@@ -128,7 +128,18 @@ describe('streamResponsesApi error labelling', () => {
 
     await withFetch(mockFetch, async () => {
       await expect(
-        drain(streamResponsesApi('https://api.x.ai/v1/responses', 'tok', MINIMAL_BODY)),
+        drain(
+          // A 500 is retried (UBP-030); no retries keeps this label test instant.
+          streamResponsesApi(
+            'https://api.x.ai/v1/responses',
+            'tok',
+            MINIMAL_BODY,
+            undefined,
+            undefined,
+            undefined,
+            { maxRetries: 0 },
+          ),
+        ),
       ).rejects.toThrow('Responses API error 500: Internal Server Error');
     });
   });

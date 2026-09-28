@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { validateUrl } from '@ethosagent/core';
+import { DefaultToolRegistry, validateUrl } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
@@ -780,6 +780,34 @@ export class McpClient {
 // Tool adapter
 // ---------------------------------------------------------------------------
 
+/**
+ * UBP-035 — the server names `ethos mcp add` accepts: letters, digits, `-` and
+ * `_`, starting with a letter or digit, no `__` and no trailing `_` (either
+ * would blur where `<server>` ends in `mcp__<server>__<tool>`), and short
+ * enough that `mcpServerSegment` (packages/core/src/tool-registry.ts) keeps it
+ * verbatim. Returns the reason a name is refused, or undefined when it is
+ * accepted. A name already in mcp.json that fails this still works — its tool
+ * names are rewritten by `mcpToolName` instead.
+ */
+export function validateMcpServerName(name: string): string | undefined {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
+    return (
+      `MCP server name '${name}' may contain only letters, digits, '-' and '_', ` +
+      'and must start with a letter or digit'
+    );
+  }
+  if (name.includes('__') || name.endsWith('_')) {
+    return (
+      `MCP server name '${name}' must not contain '__' or end with '_' — ` +
+      "tools are named mcp__<server>__<tool>, and '__' separates the parts"
+    );
+  }
+  if (DefaultToolRegistry.mcpServerSegment(name) !== name) {
+    return `MCP server name '${name}' is too long (at most 40 characters)`;
+  }
+  return undefined;
+}
+
 function adaptMcpTool(
   mcpTool: McpToolDef,
   serverName: string,
@@ -787,7 +815,10 @@ function adaptMcpTool(
   resultLimitChars?: number,
 ): Tool {
   return {
-    name: `mcp__${serverName}__${mcpTool.name}`,
+    // UBP-035 — provider-safe (`^[A-Za-z0-9_-]{1,64}$`); unchanged when the raw
+    // name already conforms. `execute` below still calls the server with the
+    // ORIGINAL tool name — the closure is the reverse map for dispatch.
+    name: DefaultToolRegistry.mcpToolName(serverName, mcpTool.name),
     description: mcpTool.description ?? mcpTool.name,
     schema: mcpTool.inputSchema,
     toolset: 'mcp',
@@ -873,7 +904,7 @@ export class McpManager {
     // Phase 2.3 — wire dynamic tool discovery callback. Build an immutable
     // snapshot so concurrent getTools() readers never see a half-built array.
     client.onToolsChanged = (newTools) => {
-      const prefix = `mcp__${client.name}__`;
+      const prefix = DefaultToolRegistry.mcpToolPrefix(client.name);
       const next = this._tools.filter((t) => !t.name.startsWith(prefix));
       for (const t of newTools) {
         next.push(adaptMcpTool(t, client.name, client, config.mcpResultLimitChars));
@@ -915,7 +946,7 @@ export class McpManager {
     const client = new McpClient(config, { logger: this.logger, secrets });
     client.enableScopeProbe = this._enableScopeProbe;
     client.onToolsChanged = (newTools) => {
-      const prefix = `mcp__${client.name}__`;
+      const prefix = DefaultToolRegistry.mcpToolPrefix(client.name);
       const next = this._tools.filter((t) => !t.name.startsWith(prefix));
       for (const t of newTools) {
         next.push(adaptMcpTool(t, client.name, client, config.mcpResultLimitChars));
@@ -1145,6 +1176,26 @@ export class McpManager {
         servers,
       });
     }
+
+    // UBP-035 — two different (server, tool) pairs must never share a
+    // provider-safe registry name. `mcpToolName` hashes every rewritten half,
+    // so this fires only on a hash collision; it is still refused or warned
+    // under the same policy rather than letting one tool shadow the other.
+    const safeNames = new Map<string, string[]>();
+    for (const [serverName, tools] of toolsByServer) {
+      for (const tool of tools) {
+        const safe = DefaultToolRegistry.mcpToolName(serverName, tool.name);
+        const owners = safeNames.get(safe) ?? [];
+        owners.push(`${serverName}/${tool.name}`);
+        safeNames.set(safe, owners);
+      }
+    }
+    for (const [safe, owners] of safeNames) {
+      if (owners.length < 2) continue;
+      const msg = `[ethos] Tool name collision: '${safe}' is the registry name of ${owners.join(', ')}`;
+      if (this._collisionPolicy === 'error') throw new Error(msg);
+      this.logger.warn(msg, { component: 'tools-mcp', toolName: safe, servers: owners });
+    }
   }
 
   getTools(): Tool[] {
@@ -1241,7 +1292,7 @@ export class McpManager {
           details: { name },
         });
       }
-      const prefix = `mcp__${name}__`;
+      const prefix = DefaultToolRegistry.mcpToolPrefix(name);
       const removedNames = this._tools.filter((t) => t.name.startsWith(prefix)).map((t) => t.name);
       try {
         await client.disconnect();
@@ -1299,7 +1350,7 @@ export class McpManager {
         throw new Error(`MCP server '${newName}' is already registered`);
       }
 
-      const oldPrefix = `mcp__${oldName}__`;
+      const oldPrefix = DefaultToolRegistry.mcpToolPrefix(oldName);
       const removedNames = this._tools
         .filter((t) => t.name.startsWith(oldPrefix))
         .map((t) => t.name);
@@ -1392,7 +1443,7 @@ export class McpManager {
       try {
         await newClient.connect();
         const mcpTools = await newClient.listTools();
-        const prefix = `mcp__${serverName}__`;
+        const prefix = DefaultToolRegistry.mcpToolPrefix(serverName);
         const adapted = mcpTools.map((t) =>
           adaptMcpTool(t, serverName, newClient, config.mcpResultLimitChars),
         );
@@ -1428,7 +1479,7 @@ export class McpManager {
    * silently de-register working tools.
    */
   async reconnectPersonality(serverName: string, personalityId: string): Promise<void> {
-    const prefix = `mcp__${serverName}__`;
+    const prefix = DefaultToolRegistry.mcpToolPrefix(serverName);
     const oldNames = this._tools.filter((t) => t.name.startsWith(prefix)).map((t) => t.name);
     const key = `${personalityId}::${serverName}`;
 

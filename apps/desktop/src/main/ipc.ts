@@ -175,9 +175,14 @@ export function registerIpcHandlers(): void {
               Authorization: `Bearer ${req.apiKey}`,
               'Content-Type': 'application/json',
             },
+            // UBP-038 — the default OpenAI model is a gpt-5.x reasoning model,
+            // which refuses `max_tokens` on Chat Completions; api.openai.com
+            // takes `max_completion_tokens` for every model. 16, not 1: a
+            // reasoning model spends tokens before it answers. Pinned by
+            // __tests__/onboarding-openai-probe.test.ts.
             body: JSON.stringify({
               model: OPENAI_MODELS[0],
-              max_tokens: 1,
+              max_completion_tokens: 16,
               messages: [{ role: 'user', content: 'hi' }],
             }),
             signal: AbortSignal.timeout(15000),
