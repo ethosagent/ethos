@@ -83,6 +83,13 @@ function makeBridge(opts: {
     filterOpts: {},
     redaction: createTestSafety().redaction,
     personality: { id: 'default', name: 'Default' },
+    downgrade: {
+      state: { value: 0 },
+      enabled: false,
+      tools: new Set(),
+      turns: 0,
+      rejectionMessage: '',
+    },
     watcherTap: opts.watcherTap ?? NO_HALT_TAP,
     counters,
     checkBudgets: () =>
@@ -545,6 +552,13 @@ describe('ScriptToolBridge — Lane E inner-call events', () => {
       filterOpts: {},
       redaction: createTestSafety().redaction,
       personality: { id: 'default', name: 'Default' },
+      downgrade: {
+        state: { value: 0 },
+        enabled: false,
+        tools: new Set(),
+        turns: 0,
+        rejectionMessage: '',
+      },
       watcherTap: NO_HALT_TAP,
       counters,
       checkBudgets: () =>

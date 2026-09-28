@@ -272,3 +272,75 @@ export function recordToolCallForBudgets(
   counters.toolNameCounts.set(toolName, (counters.toolNameCounts.get(toolName) ?? 0) + 1);
   counters.identicalStreak = updateIdenticalStreak(counters.identicalStreak, toolName, args);
 }
+
+// ---------------------------------------------------------------------------
+// Ch.3d post-untrusted-read downgrade — the rule, kept here beside the other
+// per-call gates; `processTools` (./tool-processing.ts) is the one caller.
+// ---------------------------------------------------------------------------
+
+/**
+ * Downgraded tools whose output a FUTURE system prompt carries: memory, team
+ * memory and proposed skills. For these the step window is not enough
+ * (V-ES-9): the untrusted text stays in context after the window lifts, so a
+ * page saying "remember: …" reached MEMORY.md two steps later in the same
+ * run. Once this run has seen any `outputIsUntrusted` result they stay
+ * refused until the run ends — the next user message starts a fresh run
+ * (`dgRemainingRef` in ../../agent-loop.ts). Applies only to tools that are
+ * ALSO in the personality's downgrade list, so an operator who removes one
+ * from `postReadDowngrade.tools` removes it here too. Pinned by
+ * `../../__tests__/downgrade-memory-writes.test.ts`.
+ */
+export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
+  'memory_write',
+  'team_memory_write',
+  'skill_propose',
+]);
+
+/** One run's downgrade state: the step window, and whether any untrusted result was seen. */
+export interface DowngradeState {
+  value: number;
+  untrustedSeen?: boolean;
+}
+
+/** True when the downgrade refuses `toolName` right now. */
+export function isDowngraded(
+  state: DowngradeState,
+  enabled: boolean,
+  tools: ReadonlySet<string>,
+  toolName: string,
+): boolean {
+  if (!enabled || !tools.has(toolName)) return false;
+  if (state.value > 0) return true;
+  return state.untrustedSeen === true && RUN_SCOPED_DOWNGRADE_TOOLS.has(toolName);
+}
+
+/**
+ * An untrusted result seen INSIDE an iteration — an in-script call through the
+ * `ScriptToolBridge` (./script-tool-bridge.ts) — arms the window and the
+ * run-scoped taint at once, so a later call in the same script is refused
+ * too. The iteration-end `advanceDowngrade` then runs as usual.
+ */
+export function armDowngrade(state: DowngradeState, enabled: boolean, turns: number): void {
+  if (!enabled) return;
+  state.value = Math.max(state.value, turns);
+  state.untrustedSeen = true;
+}
+
+/**
+ * End of one iteration: decrement the prior window, then arm a fresh one (and
+ * the run-scoped taint) if this iteration read untrusted content. The
+ * decrement-then-set order means an untrusted read in iteration N protects
+ * iterations N+1 .. N+turns.
+ */
+export function advanceDowngrade(
+  state: DowngradeState,
+  enabled: boolean,
+  turns: number,
+  untrustedRead: boolean,
+): void {
+  if (state.value > 0) state.value--;
+  if (enabled && untrustedRead) {
+    state.value = turns;
+    state.untrustedSeen = true;
+  }
+}

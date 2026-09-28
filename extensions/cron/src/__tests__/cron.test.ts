@@ -2171,6 +2171,9 @@ describe('CronScheduler mid-execution signal', () => {
     // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await (scheduler as any).patchJob(job.id, {
       runningSince: Date.now() - CRON_RUNNING_STALE_MS - 1_000,
+      // A live owner, so only the age decides (owner liveness is pinned in
+      // run-integrity.test.ts).
+      runningOwner: { pid: process.ppid, boot: null, token: 'peer' },
     });
 
     expect(await scheduler.hasRunningJobs()).toBe(false);

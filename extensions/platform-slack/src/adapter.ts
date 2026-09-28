@@ -348,6 +348,38 @@ function isPermanentSlackError(err: unknown): boolean {
   return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
 }
 
+/**
+ * Web API error codes that mean Slack refused the TOKEN — a mistyped, revoked
+ * or expired bot or app token, or a deactivated workspace account. No retry
+ * fixes these; an operator has to.
+ */
+const REJECTED_SLACK_TOKEN_ERRORS = new Set([
+  'invalid_auth',
+  'not_authed',
+  'token_revoked',
+  'token_expired',
+  'account_inactive',
+]);
+
+/**
+ * `err` re-thrown carrying `permanent: true` when it is a
+ * {@link REJECTED_SLACK_TOKEN_ERRORS} refusal (read by the Web API error shape,
+ * `data.error`), so the gateway's adapter-start retry
+ * (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) gives up
+ * instead of retrying a dead token for ever. Anything else — a network error,
+ * `ratelimited`, a 5xx — is returned unchanged.
+ */
+function classifySlackStartError(err: unknown): unknown {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return err;
+  const data = err.data;
+  if (typeof data !== 'object' || data === null || !('error' in data)) return err;
+  const code = data.error;
+  if (typeof code !== 'string' || !REJECTED_SLACK_TOKEN_ERRORS.has(code)) return err;
+  return Object.assign(new Error(`Slack refused the token: ${code}`, { cause: err }), {
+    permanent: true,
+  });
+}
+
 /** `{ ok: false }` for a failed Web API call, marked `permanent` when it is. */
 function slackFailure(err: unknown): DeliveryResult {
   const error = err instanceof Error ? err.message : String(err);
@@ -593,7 +625,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // Resolve the bot's own user id so member-joined can distinguish
     // self-join from third-party joins. We tolerate failure (missing
     // scope, network blip) by leaving selfUserId null and skipping the
-    // greeting — the rest of the adapter still works.
+    // greeting — the rest of the adapter still works. A refused token is
+    // not tolerated: nothing else can work either, so start fails with a
+    // `permanent` error (`classifySlackStartError`) the gateway does not retry.
     try {
       const auth = await this.client.auth.test();
       const { user_id: userId, user: userName } = auth as { user_id?: string; user?: string };
@@ -602,7 +636,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
 
       const botName = userName ?? userId ?? 'unknown';
       this.logger.info(`Slack bot authenticated as @${botName}`);
-    } catch {
+    } catch (err) {
+      const classified = classifySlackStartError(err);
+      if (classified !== err) throw classified;
       this.selfUserId = null;
       this.selfDisplayName = null;
     }
@@ -879,7 +915,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // it: `App`'s constructor already called `receiver.init(this)`
     // (`App.js:177`), so the handlers registered above are wired.
     if (!this.httpMode) {
-      await this.app.start();
+      try {
+        await this.app.start();
+      } catch (err) {
+        throw classifySlackStartError(err);
+      }
     }
   }
 

@@ -4,7 +4,7 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-09-26
+updated: 2026-09-28
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
@@ -212,21 +212,29 @@ Fix · Re-run interactively and answer the prompt, or pass `--yes` to record the
 
 Prevent · On CI and managed hosts, pass `--yes` in the install command rather than relying on a prompt that will never render.
 
+### Workspace plugin "may not import … outside the plugin folder" {#workspace-plugin-import-outside}
+
+Cause · A trusted plugin under `<cwd>/.ethos/plugins` or `<cwd>/node_modules` imports a file outside its own folder: a relative `../lib/x.js`, or a dependency hoisted to the project's `node_modules`. Its trust grant hashes only its folder, so the import is refused before any of that code runs (`guardWorkspacePluginImports` in `extensions/plugin-loader/src/workspace-import-guard.ts`). A `skills_dir` outside the folder is refused the same way.
+
+Fix ·
+1. Copy the imported files, or install the dependency, inside the plugin's folder (a nested `node_modules/` is part of the hash).
+2. Review the plugin, then run `ethos plugin trust` in the project directory.
+
 ## Channels and gateway {#channels-and-gateway}
 
 ### Duplicate outbound message on a channel adapter {#duplicate-outbound}
 
-Cause · The [gateway](getting-started/glossary.md#gateway) dedupes outbound messages with a 30-second TTL, keyed by `(sessionId, sha256(content))`. The same text within the window is silently dropped.
+Cause · The [gateway](getting-started/glossary.md#gateway) dedupes outbound messages with a 30-second TTL. A reply is keyed by `(sessionId, sha256(content), inbound message)`, so one reply sent twice is dropped while identical replies to two different messages both send (`replyDedupScope` in `extensions/gateway/src/index.ts`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). Notices and agent-initiated sends (`send_message`) are keyed by `(sessionId, sha256(content))`: the same text to the same session within the window is silently dropped.
 
-Fix · For intentional retransmission, vary the text or wait the TTL. To disable, set `GatewayConfig.outboundDedupTtlMs: 0` or `ETHOS_DEDUP_LEGACY=1` (one-release rollback hatch).
+Fix · For an intentional retransmission of a notice or `send_message`, vary the text or wait the TTL. To disable, set `GatewayConfig.outboundDedupTtlMs: 0` or `ETHOS_DEDUP_LEGACY=1` (one-release rollback hatch).
 
 Prevent · Do not roll adapter-local dedup. The gateway is the single dedup path; adapter dedup is a bug.
 
 ### Telegram or Discord bot does not respond {#bot-not-responding}
 
-Cause · The bot's token is invalid or the bot is not added to the channel. Bad tokens used to crash the gateway; the current build catches `Bot.start` rejections and logs them.
+Cause · The bot's token is invalid or the bot is not added to the channel. An adapter that fails to start does not stop the other bots. A transient failure (a network error) is retried in the background, from 5 seconds up to every 5 minutes, until the adapter starts. A refused credential (`401`, `TokenInvalid`, `invalid_auth`) is logged as permanent and not retried (`startAdaptersIsolated` in `apps/ethos/src/commands/gateway.ts`).
 
-Fix · Re-run `ethos setup messaging` and paste a fresh token. Check `~/.ethos/logs/gateway.log`. Confirm the bot is in the target chat with the required permissions.
+Fix · Look in `~/.ethos/logs/gateway.log` for `adapter <id> failed to start` or `failed permanently`. For a permanent failure, re-run `ethos setup messaging`, paste a fresh token, and restart the gateway. Confirm the bot is in the target chat with the required permissions.
 
 ### `TEAM_MANIFEST_INVALID` {#team-manifest-invalid}
 
@@ -296,6 +304,18 @@ Fix · Wait and re-run. If it repeats, check for a stuck `ethos cron` process an
 Cause · The cron expression failed validation.
 
 Fix · Use a valid 5-field cron expression. Test on `https://crontab.guru` before re-running.
+
+### `Job "<id>" is already running` {#cron-already-running}
+
+Cause · `ethos cron run` or "Run now" was refused because a run of that job is still executing. A job never runs twice at once (`CronScheduler.runJobNow` in `extensions/cron/src/index.ts`). A run left behind by a crashed process does not cause this; that marker is ignored.
+
+Fix · Wait for the run to finish, then run the job again. `ethos cron list` shows the job's last run.
+
+### `CRON_TARGET_NOT_ALLOWED` {#cron-target-not-allowed}
+
+Cause · A cron job's output had no bot to deliver it. Either no bot on that platform is bound to the job's personality, or the job predates recorded bots and the platform now has several (`createCronDeliver` in `apps/ethos/src/lib/cron-deliver.ts`).
+
+Fix · Recreate the job from the chat it should reply to, so it records which bot to use.
 
 ## Error reference {#error-reference}
 

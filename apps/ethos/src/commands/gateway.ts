@@ -1670,10 +1670,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       console.error('[cron] system job reconciliation failed:', err);
     });
 
-  // Start all adapters — one failing adapter must not stop the rest (UBP-010).
+  // Start all adapters — one failing adapter must not stop the rest (UBP-010),
+  // and a failed one is retried in the background until it starts, fails
+  // permanently, or `shutdown` aborts `adapterStartRetry` (V-CC-4). One that
+  // recovers after the platform-webhook mounts below were built is mounted by
+  // `onAdapterRecovered`, assigned there.
+  const adapterStartRetry = new AbortController();
+  let onAdapterRecovered: (adapter: PlatformAdapter) => void = () => {};
   await startAdaptersIsolated(adapters, {
     observability: gatewayObservability(),
     warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+    retry: {
+      signal: adapterStartRetry.signal,
+      onStarted: (a) => onAdapterRecovered(a),
+      isRetired: (a) => gateway.hasStopped(a),
+    },
   });
 
   // Durable delivery sweep (item 9). Deliberately AFTER adapter.start(): a
@@ -2117,7 +2128,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const platformWebhookPort = Number(process.env.ETHOS_PLATFORM_WEBHOOK_PORT) || 3006;
   const platformWebhookHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
   let platformWebhookServer: import('node:http').Server | undefined;
-  if (platformWebhookMounts.telegram.size > 0 || platformWebhookMounts.slack.size > 0) {
+  const ensurePlatformWebhookServer = (): void => {
+    if (platformWebhookServer) return;
+    if (platformWebhookMounts.telegram.size === 0 && platformWebhookMounts.slack.size === 0) return;
     // The non-loopback cleartext warning lives inside `createPlatformWebhookServer`
     // (unlike the `config.webhooks` block, which warns at its call site) — it is
     // the server that knows what host it bound.
@@ -2135,7 +2148,20 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     for (const route of platformWebhookMounts.slack.keys()) {
       console.log(`  slack: http://${platformWebhookHost}:${platformWebhookPort}${route}`);
     }
-  }
+  };
+  ensurePlatformWebhookServer();
+  // An adapter whose start succeeded on a background retry (V-CC-4) has only
+  // now built its webhook handler: mount it in the live table the server reads
+  // per request, binding the listener if this is the first route.
+  onAdapterRecovered = (adapter) => {
+    const mounts = buildPlatformWebhookMounts(config, [adapter], (message) =>
+      new ConsoleLogger({}, logLevel).warn(message),
+    );
+    for (const [botKey, handler] of mounts.telegram)
+      platformWebhookMounts.telegram.set(botKey, handler);
+    for (const [route, handler] of mounts.slack) platformWebhookMounts.slack.set(route, handler);
+    ensurePlatformWebhookServer();
+  };
 
   // Call-capture daemon (plan/phases/call-capture-extension.md, "Phase 4 —
   // Integration"; Architecture Issue B — `ethos gateway` previously had no
@@ -2326,6 +2352,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const shutdown = async (exitCode = 0): Promise<void> => {
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
+      adapterStartRetry.abort();
       if (stopWatchdog) stopWatchdog();
       // Deny + audit any suspended approval FIRST — the coordinator's auto-deny
       // timers are unref'd and never fire on the way out, and a later await
@@ -5014,6 +5041,156 @@ export function everyStartedAdapter(
   );
 }
 
+/** First background retry of a failed adapter start (V-CC-4). */
+export const ADAPTER_START_RETRY_BASE_MS = 5_000;
+/** Cap on the gap between two retries of a failed adapter start. */
+export const ADAPTER_START_RETRY_MAX_MS = 5 * 60_000;
+
+/**
+ * Delay before retry `attempt` (1-based) of a failed adapter start: 5s doubling
+ * to a 5min cap, ±20% jitter so several bots that failed on one network blip do
+ * not retry in lockstep. `random` is `Math.random`-shaped.
+ */
+export function adapterStartRetryDelayMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(
+    ADAPTER_START_RETRY_MAX_MS,
+    ADAPTER_START_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
+  );
+  return Math.round(base * (0.8 + 0.4 * random()));
+}
+
+/**
+ * Whether an adapter `start()` rejection is a credential the platform refused —
+ * a revoked or invalid token — which no retry can fix. The adapter's own
+ * verdict wins: Discord, Telegram and Slack classify their start failures and
+ * throw an error carrying a boolean `permanent` (`classifyDiscordStartError`,
+ * `telegramTokenRejected`, `classifySlackStartError`; pinned by each adapter's
+ * `start-permanent-error.test.ts`), and a boolean `permanent` is returned
+ * as-is. Only an error without one — an adapter that does not classify, or a
+ * failure it did not recognise — falls back to the SDK shapes: discord.js
+ * `code: 'TokenInvalid'` / "An invalid token was provided"; grammy's Bot API
+ * `error_code: 401` / "401: Unauthorized"; Slack Web API `invalid_auth`,
+ * `not_authed`, `token_revoked`, `account_inactive`. Anything else — DNS, a
+ * reset socket, a 5xx — is transient.
+ */
+export function isPermanentAdapterStartError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    if ('permanent' in err && typeof err.permanent === 'boolean') return err.permanent;
+    if ('code' in err && err.code === 'TokenInvalid') return true;
+    if ('error_code' in err && err.error_code === 401) return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /invalid token|TokenInvalid|\b401\b|unauthorized|invalid_auth|not_authed|token_revoked|account_inactive/i.test(
+    message,
+  );
+}
+
+/** Background retry of a failed adapter start — see `startAdaptersIsolated`. */
+export interface AdapterStartRetryOptions<A extends AdapterStartable = AdapterStartable> {
+  /** Aborted by the host's shutdown; no attempt starts after it. */
+  signal: AbortSignal;
+  /** Called once an adapter starts on a retry (the host mounts its webhook). */
+  onStarted?: (adapter: A) => void;
+  /** An adapter a live config reload has retired (`Gateway.hasStopped`) is not
+   *  retried, and is stopped again if a retry started it. */
+  isRetired?: (adapter: A) => boolean;
+  /** Tests. Default `Math.random`. */
+  random?: () => number;
+  /** Tests. Resolves `false` when `signal` aborted during the wait. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<boolean>;
+}
+
+type AdapterStartable = { id: string; start(): Promise<void>; stop?(): Promise<void> };
+
+function abortableSleep(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    timer.unref?.();
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Retry one failed adapter start until it starts, fails permanently
+ * (`isPermanentAdapterStartError`) or `retry.signal` aborts. Every attempt is
+ * warned about and recorded: `gateway.adapter_start_retry_failed` per failed
+ * retry, `gateway.adapter_start_recovered` on success,
+ * `gateway.adapter_start_abandoned` on a permanent failure. An adapter whose
+ * start resolves after shutdown began is stopped again.
+ */
+async function retryAdapterStart<A extends AdapterStartable>(
+  adapter: A,
+  firstError: unknown,
+  deps: {
+    observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
+    warn: (message: string) => void;
+  },
+  retry: AdapterStartRetryOptions<A>,
+): Promise<void> {
+  const sleep = retry.sleep ?? abortableSleep;
+  const abandon = (error: string, attempt: number) => {
+    deps.warn(
+      `adapter ${adapter.id} failed permanently (${error}) — not retrying; fix its credentials and restart the gateway`,
+    );
+    deps.observability.recordSafetyBlock({
+      code: 'gateway.adapter_start_abandoned',
+      cause: error,
+      details: { adapterId: adapter.id, attempt },
+    });
+  };
+  if (isPermanentAdapterStartError(firstError)) {
+    abandon(firstError instanceof Error ? firstError.message : String(firstError), 0);
+    return;
+  }
+  for (let attempt = 1; ; attempt++) {
+    const delayMs = adapterStartRetryDelayMs(attempt, retry.random);
+    if (!(await sleep(delayMs, retry.signal)) || retry.signal.aborted) return;
+    if (retry.isRetired?.(adapter)) return;
+    try {
+      await adapter.start();
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (isPermanentAdapterStartError(err)) {
+        abandon(error, attempt);
+        return;
+      }
+      deps.warn(`adapter ${adapter.id} retry ${attempt} failed: ${error} — retrying with backoff`);
+      deps.observability.recordSafetyBlock({
+        code: 'gateway.adapter_start_retry_failed',
+        cause: error,
+        details: { adapterId: adapter.id, attempt, delayMs },
+      });
+      continue;
+    }
+    if (retry.signal.aborted || retry.isRetired?.(adapter)) {
+      await adapter.stop?.().catch(() => {});
+      return;
+    }
+    deps.warn(`adapter ${adapter.id} started on retry ${attempt}`);
+    deps.observability.recordSafetyBlock({
+      code: 'gateway.adapter_start_recovered',
+      cause: `started on retry ${attempt}`,
+      details: { adapterId: adapter.id, attempt },
+    });
+    retry.onStarted?.(adapter);
+    return;
+  }
+}
+
 /**
  * Start every platform adapter with per-adapter isolation (UBP-010).
  *
@@ -5022,24 +5199,34 @@ export function everyStartedAdapter(
  * had already started polling, and burn the supervisor's restart budget with
  * every healthy bot offline. Here each rejection is warned about and recorded
  * as a `gateway.adapter_start_failed` observability event, and the others keep
- * serving. The failed adapter is not retried in-process; a restart retries it.
- * Rejects (with the first failure) only when EVERY adapter failed, so a
- * gateway with nothing to serve still exits. Used by `ethos gateway start` and
- * `ethos boot`; pinned by `__tests__/gateway-adapter-start.test.ts`.
+ * serving. With `deps.retry`, each failed adapter is retried in the background
+ * (`retryAdapterStart`: 5s doubling to 5min, jittered; stops on a permanent
+ * credential error or when `retry.signal` aborts); `retrying` settles when
+ * every retry loop has ended. Rejects (with the first failure, and no retries)
+ * only when EVERY adapter failed, so a gateway with nothing to serve still
+ * exits. Used by `ethos gateway start` and `ethos boot`; pinned by
+ * `__tests__/gateway-adapter-start.test.ts`.
  */
-export async function startAdaptersIsolated(
-  adapters: ReadonlyArray<{ id: string; start(): Promise<void> }>,
+export async function startAdaptersIsolated<A extends AdapterStartable>(
+  adapters: ReadonlyArray<A>,
   deps: {
     observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
     warn: (message: string) => void;
+    retry?: AdapterStartRetryOptions<A>;
   },
-): Promise<{ started: string[]; failed: { id: string; error: string }[] }> {
+): Promise<{
+  started: string[];
+  failed: { id: string; error: string }[];
+  retrying: Promise<void>;
+}> {
   const results = await Promise.allSettled(adapters.map((a) => a.start()));
   const started: string[] = [];
   const failed: { id: string; error: string }[] = [];
+  const toRetry: { adapter: A; reason: unknown }[] = [];
   let firstReason: unknown;
   results.forEach((result, i) => {
-    const id = adapters[i]?.id ?? `adapter#${i}`;
+    const adapter = adapters[i];
+    const id = adapter?.id ?? `adapter#${i}`;
     if (result.status === 'fulfilled') {
       started.push(id);
       return;
@@ -5047,8 +5234,11 @@ export async function startAdaptersIsolated(
     if (failed.length === 0) firstReason = result.reason;
     const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
     failed.push({ id, error });
+    if (adapter) toRetry.push({ adapter, reason: result.reason });
     deps.warn(
-      `adapter ${id} failed to start: ${error} — the other adapters keep running; restart the gateway once it is fixed`,
+      deps.retry
+        ? `adapter ${id} failed to start: ${error} — the other adapters keep running; retrying in the background`
+        : `adapter ${id} failed to start: ${error} — the other adapters keep running; restart the gateway once it is fixed`,
     );
     deps.observability.recordSafetyBlock({
       code: 'gateway.adapter_start_failed',
@@ -5057,7 +5247,15 @@ export async function startAdaptersIsolated(
     });
   });
   if (adapters.length > 0 && failed.length === adapters.length) throw firstReason;
-  return { started, failed };
+  const retry = deps.retry;
+  const retrying = retry
+    ? Promise.all(
+        toRetry.map(({ adapter, reason }) =>
+          retryAdapterStart(adapter, reason, deps, retry).catch(() => {}),
+        ),
+      ).then(() => {})
+    : Promise.resolve();
+  return { started, failed, retrying };
 }
 
 /**

@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-providers
 time: "5 min"
-updated: 2026-09-04
+updated: 2026-09-28
 ---
 
 ## Task
@@ -77,6 +77,15 @@ baseUrl: https://<your-resource>.openai.azure.com
 apiVersion: 2024-10-21
 personality: researcher
 ```
+
+A reasoning model (the o-series or `gpt-5.x`) needs `max_completion_tokens` instead of `max_tokens`. Ethos picks the parameter from the deployment name, so a deployment named after its model (`o4-mini`, the portal's default) works as is. If you named the deployment something else, set the parameter yourself on entry `0`:
+
+```yaml
+providers.0.provider: azure
+providers.0.outputCapParam: max_completion_tokens
+```
+
+Without it, Azure refuses the request because it was sent `max_tokens`.
 
 ### Provider matrix
 

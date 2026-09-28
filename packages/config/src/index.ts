@@ -1165,6 +1165,16 @@ export interface ProviderChainEntry {
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
   /**
+   * Azure-only (V-CP-5 / UBP-038): which output-cap parameter requests to this
+   * entry's deployment send. Absent → the model-id rule on the deployment name
+   * (`outputCapParam` in extensions/llm-openai-compat/src/transport.ts), which
+   * sends `max_tokens` to a reasoning deployment whose name is not a reasoning
+   * model id — and Azure refuses it. `max_completion_tokens` forces the
+   * reasoning spelling for such a deployment. Read by `azureFactory`
+   * (extensions/llm-azure); any other value is refused at parse with a notice.
+   */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
+  /**
    * Whether this entry is a failover hop for the default rung. Absent means
    * `true` — every entry that ever existed was one (D23b).
    *
@@ -1229,15 +1239,18 @@ const PROVIDER_CHAIN_FIELDS = [
   'apiVersion',
   'region',
   'awsProfile',
+  'outputCapParam',
   'failover',
   'serverCompaction',
   'serverCompactionTriggerTokens',
 ] as const;
 type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
-/** The modelled fields whose value is NOT a string — the booleans `failover`
- *  and `serverCompaction` and the integer `serverCompactionTriggerTokens`,
- *  which parse and render handle by hand. */
+/** The modelled fields whose value is NOT a free string — the booleans
+ *  `failover` and `serverCompaction`, the integer
+ *  `serverCompactionTriggerTokens` and the two-value `outputCapParam`, which
+ *  parse and render handle by hand. */
 const PROVIDER_CHAIN_TYPED_FIELDS = [
+  'outputCapParam',
   'failover',
   'serverCompaction',
   'serverCompactionTriggerTokens',
@@ -1379,6 +1392,18 @@ export function parseProviderChain(
         }
         continue;
       }
+      if (field === 'outputCapParam') {
+        if (value === 'max_tokens' || value === 'max_completion_tokens') {
+          entry.outputCapParam = value;
+        } else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.outputCapParam' must be max_tokens or ` +
+              `max_completion_tokens, so '${value}' was ignored — the parameter follows the ` +
+              'deployment name.',
+          );
+        }
+        continue;
+      }
       if (field === 'serverCompactionTriggerTokens') {
         const n = Number(value);
         if (/^\d+$/.test(value) && Number.isSafeInteger(n) && n > 0) {
@@ -1436,6 +1461,11 @@ export function renderProviderChain(
       if (field === 'serverCompactionTriggerTokens') {
         const n = entry.serverCompactionTriggerTokens;
         if (n !== undefined) out.push([`providers.${i}.${field}`, String(n)]);
+        continue;
+      }
+      if (field === 'outputCapParam') {
+        const param = entry.outputCapParam;
+        if (param !== undefined) out.push([`providers.${i}.${field}`, param]);
         continue;
       }
       const value = entry[field];

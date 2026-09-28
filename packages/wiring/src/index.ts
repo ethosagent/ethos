@@ -128,6 +128,10 @@ export interface WiringProviderConfig {
    *  otherwise. Named `awsProfile`, not `profile`, because `profile` already
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
+  /** Azure-only: force the output-cap parameter this entry's deployment is
+   *  sent (`providers.<n>.outputCapParam`, `ProviderChainEntry` in
+   *  packages/config). Read by `azureFactory`; a warning on any other provider. */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
   /** Item 7 (D32) — `providers.<n>.serverCompaction`; honoured on `anthropic` only. */
   serverCompaction?: boolean;
   /** `providers.<n>.serverCompactionTriggerTokens`; absent → `pressureGateTokens`. */
@@ -1174,11 +1178,20 @@ async function createLLMFromRegistry(
       apiVersion?: string;
       region?: string;
       awsProfile?: string;
+      outputCapParam?: 'max_tokens' | 'max_completion_tokens';
       serverCompaction?: boolean;
       serverCompactionTriggerTokens?: number;
     },
     opts: { chainHop?: boolean } = {},
   ): Promise<LLMProvider> => {
+    // V-CP-5 — only the azure factory reads `outputCapParam`; say so rather
+    // than let it do nothing silently.
+    if (cfg.outputCapParam !== undefined && cfg.provider !== 'azure') {
+      log.warn(
+        `providers: outputCapParam is honoured only on an azure entry; the "${cfg.provider}" ` +
+          'entry ignores it.',
+      );
+    }
     // §4.B trust gate: plugin-contributed providers (pluginId/name) require
     // the plugin to be in the personality's allowed-plugins list.
     if (!isProviderAllowed(cfg.provider, allowedPlugins)) {
@@ -1355,6 +1368,9 @@ async function createLLMFromRegistry(
             ...(hop.entry.apiVersion !== undefined ? { apiVersion: hop.entry.apiVersion } : {}),
             ...(hop.entry.region !== undefined ? { region: hop.entry.region } : {}),
             ...(hop.entry.awsProfile !== undefined ? { awsProfile: hop.entry.awsProfile } : {}),
+            ...(hop.entry.outputCapParam !== undefined
+              ? { outputCapParam: hop.entry.outputCapParam }
+              : {}),
             ...(hop.entry.serverCompaction !== undefined
               ? { serverCompaction: hop.entry.serverCompaction }
               : {}),
@@ -1380,10 +1396,11 @@ async function createLLMFromRegistry(
   const topKey =
     head && head.provider === config.provider ? deriveProviderKey(head, 0) : config.provider;
   // Item 7 — the same rule gives the top-level spelling entry 0's
-  // server-compaction switch.
-  const topCompaction =
+  // server-compaction switch, and (V-CP-5) its Azure output-cap parameter.
+  const topEntryFields =
     head && head.provider === config.provider
       ? {
+          ...(head.outputCapParam !== undefined ? { outputCapParam: head.outputCapParam } : {}),
           ...(head.serverCompaction !== undefined
             ? { serverCompaction: head.serverCompaction }
             : {}),
@@ -1400,7 +1417,7 @@ async function createLLMFromRegistry(
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
       const serverCompaction = serverCompactionFor(
-        { provider: config.provider, model: config.model, ...topCompaction },
+        { provider: config.provider, model: config.model, ...topEntryFields },
         config,
         log,
       );
@@ -1452,7 +1469,7 @@ async function createLLMFromRegistry(
     ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { awsProfile: config.awsProfile } : {}),
-    ...topCompaction,
+    ...topEntryFields,
   });
   return tagProviderEntry(primary, topKey);
 }

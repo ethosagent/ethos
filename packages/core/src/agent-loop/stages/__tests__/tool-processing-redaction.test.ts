@@ -391,6 +391,13 @@ describe('Item 7 — tool-result secret redaction', () => {
         checkTurnBudgets(counters.totalToolCalls, 1000, counters.toolNameCounts, 1000, null, 1000),
       redaction: createTestSafety().redaction,
       personality: { id: 'default', name: 'Default' },
+      downgrade: {
+        state: { value: 0 },
+        enabled: false,
+        tools: new Set(),
+        turns: 0,
+        rejectionMessage: '',
+      },
     });
     const events: AgentEvent[] = [];
     const ctx = makeTestToolContext();

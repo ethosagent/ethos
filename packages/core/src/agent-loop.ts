@@ -773,6 +773,13 @@ export class AgentLoop {
       checkBudgets,
       redaction: this.safety.redaction,
       personality,
+      downgrade: {
+        state: dgRemainingRef,
+        enabled: dgEnabled,
+        tools: dgTools,
+        turns: dgTurns,
+        rejectionMessage: this.safety.injection.downgradeRejectionMessage,
+      },
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
       denyRules: personality.safety?.denyRules,
@@ -916,7 +923,7 @@ export class AgentLoop {
         const end = yield* settleTextEnd(
           streamDeps,
           stepResult,
-          { ...endCtx, llmMessages, fullText },
+          { ...endCtx, llmMessages, fullText, toolCalls: budgetCounters.totalToolCalls },
           last,
         );
         if (end.next === 'return') return;

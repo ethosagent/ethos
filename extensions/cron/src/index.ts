@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
@@ -5,7 +6,7 @@ import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
 import type { ExecutionBackend, Logger, SecretsResolver, Storage } from '@ethosagent/types';
 import { decideEscalation, type HeartbeatAction } from './heartbeat';
-import { withJobsFileLock } from './jobs-lock';
+import { currentBootId, isPidAlive, withJobsFileLock } from './jobs-lock';
 import {
   type CronRunProgress,
   PROGRESS_SUFFIX,
@@ -125,16 +126,42 @@ export interface CronJob {
    * claimant ever sets it — and cleared in `executeJob`'s `finally`, including
    * when the job throws. A turn abandoned at its `maxRunMs` keeps the stamp
    * until that turn's promise settles. A fresh stamp blocks a second claim and
-   * `runJobNow` (`CronScheduler.isRunning`, UBP-026). `null` or absent means "not running": records written
+   * `runJobNow` (`CronScheduler.isRunning`, UBP-026) — but only while its
+   * `runningOwner` is this process or a live one. `null` or absent means "not running": records written
    * before this field existed simply have no key, which reads the same as
    * cleared. Read through `hasRunningJobs()`, never directly.
    */
   runningSince?: number | null;
+  /**
+   * The process that wrote `runningSince`, stamped and cleared with it. A stamp
+   * whose owner is dead, from an earlier boot, or an earlier process that wore
+   * this pid is a crash orphan and blocks nothing (`CronScheduler.isRunning`,
+   * pinned by the 'crash-orphaned running stamp' cases in
+   * `__tests__/run-integrity.test.ts`). A stamp with no owner was written
+   * before owners were recorded and blocks nothing either.
+   */
+  runningOwner?: CronRunOwner | null;
   /** When the last failure notice for this job was delivered (ISO-8601). Rate-
    *  limits the notice a failed prompt run sends its origin to one per
    *  `CRON_FAILURE_NOTICE_INTERVAL_MS` (`CronScheduler.recordRunFailure`). */
   failureNoticeAt?: string;
 }
+
+/** Who holds a `CronJob.runningSince` stamp — the same identity the jobs lock
+ *  records (`jobs-lock.ts`), plus a per-process token so a restarted process
+ *  that is handed its predecessor's pid does not mistake that stamp for its
+ *  own. */
+export interface CronRunOwner {
+  pid: number;
+  /** `currentBootId()` — Linux only; `null` never proves a different boot. */
+  boot: string | null;
+  /** `PROCESS_RUN_TOKEN` of the writing process. */
+  token: string;
+}
+
+/** One per process (not per scheduler), so every `CronScheduler` in this
+ *  process recognises the others' stamps as live. */
+const PROCESS_RUN_TOKEN = randomUUID();
 
 export interface CronJobUpdate {
   name?: string;
@@ -521,10 +548,12 @@ export class CronScheduler {
    *  deferral is not a miss, so these are exempt from the skip policy until
    *  they are claimed (UBP-027). */
   private readonly deferred = new Set<string>();
-  /** When the previous `tick()` started, and the gap before that one — the
-   *  observed fire cadence the missed-run grace is measured against. */
+  /** When the previous `tick()` started — an occurrence due after it could
+   *  not have run earlier, so it is never a miss (UBP-027, V-CC-3). */
   private lastTickAtMs: number | null = null;
-  private observedCadenceMs: number | null = null;
+  /** When this scheduler was constructed — the "process start" a first tick
+   *  measures downtime against. */
+  private readonly startedAtMs = Date.now();
   private readonly storage: Storage;
   private readonly logger: Logger;
   private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
@@ -832,6 +861,8 @@ export class CronScheduler {
     // jobs-lock critical section, like `claimDueJob`.
     const runningStamp = Date.now();
     const busy: { since: number | null } = { since: null };
+    // A lock that cannot be taken fails the run closed: running without the
+    // overlap check is the double execution this exists to prevent (V-CC-6).
     await this.withJobsLock(async (jobs) => {
       const idx = jobs.findIndex((j) => j.id === id);
       const existing = idx >= 0 ? jobs[idx] : undefined;
@@ -840,9 +871,13 @@ export class CronScheduler {
         busy.since = existing.runningSince ?? null;
         return jobs;
       }
-      jobs[idx] = { ...existing, runningSince: runningStamp };
+      jobs[idx] = { ...existing, runningSince: runningStamp, runningOwner: runOwner() };
       return jobs;
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      throw new Error(
+        `Could not check whether job "${id}" is already running, so it was not run: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
     if (busy.since !== null) {
       throw new Error(
         `Job "${id}" is already running (started ${new Date(busy.since).toISOString()}) — wait for that run to finish`,
@@ -867,9 +902,15 @@ export class CronScheduler {
    * cap, so a legitimately long run is never mistaken for a ghost stamp left
    * by a killed process. The one overlap test for `claimDueJob` and
    * `runJobNow`.
+   *
+   * A stamp counts only while its owner can still be running it
+   * (`runOwnerAlive`): a process killed mid-run leaves a stamp nobody will
+   * clear, and blocking on it would hold the job off for up to `maxRunMs`
+   * after a restart (V-CC-2).
    */
   private isRunning(job: CronJob, nowMs: number): boolean {
     if (typeof job.runningSince !== 'number') return false;
+    if (!runOwnerAlive(job.runningOwner)) return false;
     const staleMs = Math.max(CRON_RUNNING_STALE_MS, job.maxRunMs ?? this.defaultMaxRunMs);
     return job.runningSince > nowMs - staleMs;
   }
@@ -882,12 +923,20 @@ export class CronScheduler {
    * purpose: in a hybrid deployment several processes share one cron dir, and
    * a run started by a peer is still work this VM must not be suspended
    * through. Stamps older than `staleMs` are ignored — see
-   * `CRON_RUNNING_STALE_MS`.
+   * `CRON_RUNNING_STALE_MS` — and so is a stamp whose owner cannot still be
+   * running it (`runOwnerAlive`, the same rule `isRunning` applies): a crash
+   * orphan must not keep the machine awake any more than it blocks a claim.
+   * Pinned by the 'owner liveness' cases in `__tests__/run-integrity.test.ts`.
    */
   async hasRunningJobs(staleMs: number = CRON_RUNNING_STALE_MS): Promise<boolean> {
     const cutoff = Date.now() - staleMs;
     const jobs = await this.readJobs();
-    return jobs.some((j) => typeof j.runningSince === 'number' && j.runningSince > cutoff);
+    return jobs.some(
+      (j) =>
+        typeof j.runningSince === 'number' &&
+        j.runningSince > cutoff &&
+        runOwnerAlive(j.runningOwner),
+    );
   }
 
   /**
@@ -1078,16 +1127,17 @@ export class CronScheduler {
   private async tick(): Promise<void> {
     const now = new Date();
     const nowMs = now.getTime();
-    // UBP-027 — the grace before a due occurrence counts as MISSED is measured
-    // against how often this engine is actually fired, not the configured
-    // interval alone: an external `POST /cron/fire` every 5 minutes reaches
-    // every due job more than 60s late. The cadence is the gap BEFORE the
-    // previous fire, so one long gap (a laptop sleep, downtime) still reads as
-    // downtime and is skipped as the policy intends. Plus one interval of slack,
-    // so a tick a few hundred ms late is never a miss.
-    const cadenceMs = Math.max(this.tickIntervalMs, this.observedCadenceMs ?? 0);
-    const missedGraceMs = cadenceMs + this.tickIntervalMs;
-    if (this.lastTickAtMs !== null) this.observedCadenceMs = nowMs - this.lastTickAtMs;
+    // UBP-027 — an occurrence is MISSED only when an earlier chance to run it
+    // existed: it fell due before the previous tick, or — on this process's
+    // first tick — before the process started (downtime). One due since the
+    // previous fire could not have run sooner, however far apart the fires are
+    // (an external `POST /cron/fire` every 5 minutes; V-CC-3). Both also need
+    // to be more than two intervals late, so a tick a few hundred ms late is
+    // never a miss. Consequence: a laptop that sleeps through an occurrence
+    // runs it once on wake — the process was up, and nothing distinguishes a
+    // sleep from a sparse external fire before a cadence is known.
+    const missedBeforeMs = this.lastTickAtMs ?? this.startedAtMs;
+    const missedGraceMs = 2 * this.tickIntervalMs;
     this.lastTickAtMs = nowMs;
     const jobs = await this.readJobs();
 
@@ -1096,6 +1146,9 @@ export class CronScheduler {
 
       // Bug 3 fix: active job with no nextRunAt — try to recompute it.
       if (!job.nextRunAt) {
+        // A claimed one-shot has no `nextRunAt` while its turn runs; it is not
+        // elapsed, it is executing (V-CC-5).
+        if (this.isRunning(job, nowMs)) continue;
         const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
         if (upcoming) {
           await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
@@ -1138,6 +1191,7 @@ export class CronScheduler {
       const missedByMs = nowMs - due.getTime();
       if (
         job.missedRunPolicy === 'skip' &&
+        due.getTime() < missedBeforeMs &&
         missedByMs > missedGraceMs &&
         !this.deferred.has(job.id)
       ) {
@@ -1161,6 +1215,7 @@ export class CronScheduler {
           lastRunAt: now.toISOString(),
           nextRunAt: upcoming?.toISOString(),
           runningSince: runningStamp,
+          runningOwner: runOwner(),
         });
       } catch (err) {
         this.logger.error(`[cron] Could not claim job "${job.id}", skipping tick`, {
@@ -1747,10 +1802,34 @@ export class CronScheduler {
       const idx = jobs.findIndex((j) => j.id === jobId);
       const existing = idx >= 0 ? jobs[idx] : undefined;
       if (!existing || existing.runningSince !== stamp) return jobs;
-      jobs[idx] = { ...existing, runningSince: null };
+      jobs[idx] = { ...existing, runningSince: null, runningOwner: null };
       return jobs;
     });
   }
+}
+
+/** This process, as the owner of a `runningSince` stamp. */
+function runOwner(): CronRunOwner {
+  return { pid: process.pid, boot: currentBootId(), token: PROCESS_RUN_TOKEN };
+}
+
+/**
+ * Whether the owner of a `runningSince` stamp can still be running it. The
+ * same liveness rule as the jobs lock (`jobs-lock.ts` `staleReason`, itself a
+ * copy of `packages/wiring/src/backup/holder-identity.ts` `classifyHolder`,
+ * which `extensions/` cannot import): a dead pid, or a pid from an earlier boot,
+ * is gone. Added here: this pid under another process token is an earlier
+ * process the pid was recycled to — typically this process's own predecessor
+ * after a restart — so that is gone too. No owner: the stamp predates owners,
+ * and such stamps never blocked a claim.
+ */
+function runOwnerAlive(owner: CronRunOwner | null | undefined): boolean {
+  if (!owner) return false;
+  if (owner.token === PROCESS_RUN_TOKEN) return true;
+  if (owner.pid === process.pid) return false;
+  const boot = currentBootId();
+  if (owner.boot !== null && boot !== null && owner.boot !== boot) return false;
+  return isPidAlive(owner.pid);
 }
 
 /** What `claimDueJob`'s compare-and-swap decided. */

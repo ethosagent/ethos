@@ -533,3 +533,66 @@ describe('providers.<n>.serverCompaction', () => {
     });
   });
 });
+
+// V-CP-5 / UBP-038 — `providers.<n>.outputCapParam` is a modelled chain field
+// (read by `azureFactory`), so both writers keep it through unrelated saves,
+// and a value outside the two parameter names is refused out loud.
+describe('providers.<n>.outputCapParam', () => {
+  it('parses both values and renders them back', () => {
+    const lines = [
+      'providers.0.provider: azure',
+      'providers.0.apiVersion: 2024-12-01-preview',
+      'providers.0.outputCapParam: max_completion_tokens',
+      'providers.1.provider: azure',
+      'providers.1.outputCapParam: max_tokens',
+    ];
+    const entries = parseProviderChain(lines);
+    expect(entries).toEqual([
+      {
+        provider: 'azure',
+        apiVersion: '2024-12-01-preview',
+        outputCapParam: 'max_completion_tokens',
+      },
+      { provider: 'azure', outputCapParam: 'max_tokens' },
+    ]);
+    expect(renderProviderChain(entries).map(([k, v]) => `${k}: ${v}`)).toEqual(lines);
+  });
+
+  it('refuses any other value with a notice', () => {
+    const notices: string[] = [];
+    const entries = parseProviderChain(
+      ['providers.0.provider: azure', 'providers.0.outputCapParam: max_output_tokens'],
+      notices,
+    );
+    expect(entries).toEqual([{ provider: 'azure' }]);
+    expect(notices).toEqual([
+      expect.stringContaining(
+        "'providers.0.outputCapParam' must be max_tokens or max_completion_tokens",
+      ),
+    ]);
+  });
+
+  it('survives an unrelated CLI write', async () => {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    const path = join(ethosDir(), 'config.yaml');
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      path,
+      `${[
+        'provider: azure',
+        'model: prod-chat',
+        'personality: researcher',
+        'providers.0.provider: azure',
+        'providers.0.outputCapParam: max_completion_tokens',
+      ].join('\n')}\n`,
+    );
+    const cfg = await readRawConfig(storage);
+    if (!cfg) throw new Error('config did not parse');
+    await writeConfig(storage, { ...cfg, personality: 'engineer' }, secrets);
+    expect(await storage.read(path)).toContain('providers.0.outputCapParam: max_completion_tokens');
+    expect((await readRawConfig(storage))?.providers?.[0]?.outputCapParam).toBe(
+      'max_completion_tokens',
+    );
+  });
+});

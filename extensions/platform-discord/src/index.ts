@@ -138,6 +138,38 @@ function isPermanentDiscordError(err: unknown): boolean {
   return typeof code === 'number' && PERMANENT_DISCORD_CODES.has(code);
 }
 
+/**
+ * discord.js error codes `client.login()` raises when the credentials or the
+ * application settings are wrong — a revoked or mistyped token, or a
+ * privileged intent the Developer Portal has not enabled. No retry fixes
+ * either; an operator has to.
+ */
+const PERMANENT_DISCORD_LOGIN_CODES = new Set([
+  'TokenInvalid',
+  'TokenMissing',
+  'DisallowedIntents',
+]);
+
+/**
+ * `err` re-thrown carrying `permanent: true` when it is a login failure no
+ * retry can fix (a {@link PERMANENT_DISCORD_LOGIN_CODES} code, or an HTTP 401),
+ * so the gateway's adapter-start retry (`isPermanentAdapterStartError`,
+ * apps/ethos/src/commands/gateway.ts) gives up instead of retrying a dead
+ * token for ever. Anything else is returned unchanged.
+ */
+function classifyDiscordStartError(err: unknown): unknown {
+  if (typeof err !== 'object' || err === null) return err;
+  const code = 'code' in err ? err.code : undefined;
+  const status = 'status' in err ? err.status : undefined;
+  const permanent =
+    (typeof code === 'string' && PERMANENT_DISCORD_LOGIN_CODES.has(code)) || status === 401;
+  if (!permanent) return err;
+  const detail = err instanceof Error ? err.message : String(code ?? status);
+  return Object.assign(new Error(`Discord refused the bot login: ${detail}`, { cause: err }), {
+    permanent: true,
+  });
+}
+
 export class DiscordAdapter
   implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
 {
@@ -289,6 +321,12 @@ export class DiscordAdapter
         GatewayIntentBits.GuildMessageReactions,
       ],
       partials: [Partials.Channel, Partials.Message, Partials.Reaction],
+      // V-GC-3 — no ping by default, on every send and edit; the explicit
+      // `allowedMentions: { parse: [] }` at each call site stays as well.
+      // `toNativeMarkdown` keeps `<@id>` / `<@&role>` text (UBP-013), so this
+      // is the only thing between a model's reply and a mass mention. Pinned
+      // by `__tests__/thread-typing.test.ts` ('never lets a reply ping').
+      allowedMentions: { parse: [] },
     });
   }
 
@@ -334,7 +372,11 @@ export class DiscordAdapter
       await this.registerSlashCommands();
     }
 
-    await this.client.login(this.token);
+    try {
+      await this.client.login(this.token);
+    } catch (err) {
+      throw classifyDiscordStartError(err);
+    }
   }
 
   async stop(): Promise<void> {
@@ -514,7 +556,7 @@ export class DiscordAdapter
         edit: async (id, chunk) => {
           // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const msg = await (channel as any).messages.fetch(id);
-          const edited = await msg.edit(chunk);
+          const edited = await msg.edit({ content: chunk, allowedMentions: { parse: [] } });
           return String(edited.id);
         },
         append: async (chunk) => {
@@ -585,6 +627,7 @@ export class DiscordAdapter
       await msg.edit({
         content: input.content,
         components: input.components.map(toActionRowBuilder),
+        allowedMentions: { parse: [] },
       });
       return { ok: true };
     } catch (err) {

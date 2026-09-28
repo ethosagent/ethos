@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-09-25
+updated: 2026-09-28
 ---
 
 Most controls on this page are shipped: code in `packages/` and `extensions/`, tests next to it, and an audit event in `observability.db` where the entry names an audit category. Some are **partial** or **not shipped**, and each entry says so in its status line. Where a control has no enforcer, the entry states that as a limitation rather than as a guarantee.
@@ -383,7 +383,7 @@ A Tier-2 failure is fail-open: the turn continues on the Tier-1 verdict and reco
 
 *Status: Shipped.*
 
-Any result from an `outputIsUntrusted` tool — flagged or not, success or error — arms the downgrade (`untrustedReadThisIteration` in `tool-processing.ts`). While it is armed, calls to the downgraded tools are refused with `DOWNGRADE_REJECTION_MESSAGE`. It stays armed for the next `turns` loop **iterations** (default 2) within the same run, and clears when the user sends a new message, because each run starts the counter at zero.
+Any result from an `outputIsUntrusted` tool — flagged or not, success or error — arms the downgrade (`untrustedReadThisIteration` in `tool-processing.ts`, then `advanceDowngrade` in `packages/core/src/agent-loop/stages/per-call-enforcement.ts`). While it is armed, calls to the downgraded tools are refused with `DOWNGRADE_REJECTION_MESSAGE` (`isDowngraded`, same file). It stays armed for the next `turns` loop **iterations** (default 2) within the same run, and clears when the user sends a new message, because each run starts the counter at zero. The three persistence tools — `memory_write`, `team_memory_write`, `skill_propose` (`RUN_SCOPED_DOWNGRADE_TOOLS`) — are the exception: once the run has seen any untrusted result they stay refused until the run ends, because the untrusted text is still in context after the window lifts. The refusal names no retry. Tool calls a `run_code` script makes follow the same rule against the same run state: `ScriptToolBridge` (`packages/core/src/agent-loop/stages/script-tool-bridge.ts`) checks `isDowngraded` before each call, and an untrusted result inside the script arms the downgrade at once (`armDowngrade`), so a later call in the same script is refused too (pinned by `packages/core/src/__tests__/downgrade-memory-writes.test.ts`).
 
 The default tool list is `DEFAULT_DOWNGRADED_TOOLS` in `packages/safety/injection/src/downgrade.ts`: `terminal`, `run_code`, `run_tests`, `write_file`, `patch_file`, `web_extract`, `browse_url`, `browser_click`, `browser_type`, `process_start`, `process_stop`, `memory_write`, `team_memory_write`, `skill_propose`. A hijacked agent that has just read a poisoned page cannot immediately open a shell or type into a form, and it cannot persist the page's instructions into `MEMORY.md`, team memory or a skill proposal — text that every later system prompt would carry (pinned by `packages/core/src/__tests__/downgrade-memory-writes.test.ts`).
 

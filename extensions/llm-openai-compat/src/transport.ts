@@ -79,6 +79,19 @@ export function isOpenAiReasoningModelId(model: string): boolean {
  * `max_tokens` is deprecated) and for a reasoning-family model id on any
  * hosted endpoint; `max_tokens` everywhere else, so local runtimes and the
  * other hosted dialects keep byte-identical request bodies.
+ *
+ * Azure (this provider's `azure.com` branch, and @ethosagent/llm-azure, which
+ * builds its body with `buildChatCompletionsParamsAsync`) follows the model-id
+ * rule on the DEPLOYMENT name, because that is the only model id either sees:
+ * a deployment named for a reasoning family (the portal's default name is the
+ * model's) gets `max_completion_tokens`. A reasoning deployment under any other
+ * name would be sent `max_tokens` and refused, so @ethosagent/llm-azure takes
+ * `providers.<n>.outputCapParam` from config and passes it here as the
+ * `outputCapParam` override, which wins over this rule (pinned by
+ * extensions/llm-azure/src/__tests__/output-cap-param.test.ts). It is not sent
+ * to every Azure deployment because no one has verified that every Azure
+ * api-version (this branch pins 2024-08-01-preview) accepts it for the
+ * non-reasoning models. Pinned by __tests__/max-completion-tokens.test.ts.
  */
 export function outputCapParam(
   model: string,
@@ -188,6 +201,9 @@ export function buildChatCompletionsParams(
     onSchemaChange?: (message: string) => void;
     /** UBP-038 — the endpoint is api.openai.com (see `outputCapParam`). */
     openAiFirstParty?: boolean;
+    /** V-CP-5 — an operator-forced output-cap parameter; wins over the
+     *  `outputCapParam` rule. Set by @ethosagent/llm-azure from config. */
+    outputCapParam?: 'max_tokens' | 'max_completion_tokens';
     /** UBP-032 — Gemini thought signatures to replay, keyed by tool-call id
      *  (see `toOpenAIMessages`). */
     thoughtSignatures?: ReadonlyMap<string, string>;
@@ -234,10 +250,12 @@ export function buildChatCompletionsParams(
   });
 
   const effectiveModel = options.modelOverride ?? model;
-  const capParam = outputCapParam(effectiveModel, {
-    ...(opts?.openAiFirstParty !== undefined ? { openAiFirstParty: opts.openAiFirstParty } : {}),
-    ...(opts?.localRuntime !== undefined ? { localRuntime: opts.localRuntime } : {}),
-  });
+  const capParam =
+    opts?.outputCapParam ??
+    outputCapParam(effectiveModel, {
+      ...(opts?.openAiFirstParty !== undefined ? { openAiFirstParty: opts.openAiFirstParty } : {}),
+      ...(opts?.localRuntime !== undefined ? { localRuntime: opts.localRuntime } : {}),
+    });
   const oaiParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
     model: effectiveModel,
     messages: oaiMessages,
@@ -284,6 +302,7 @@ export async function buildChatCompletionsParamsAsync(
     toolSchemaProfile?: 'llamacpp';
     onSchemaChange?: (message: string) => void;
     openAiFirstParty?: boolean;
+    outputCapParam?: 'max_tokens' | 'max_completion_tokens';
     thoughtSignatures?: ReadonlyMap<string, string>;
   },
 ): Promise<ChatCompletionsStreamParams> {

@@ -493,16 +493,43 @@ function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
 }
 
 /**
+ * V-GC-2 — the deadline for ONE file: its `getFile` round-trip, the fetch and
+ * the whole body. The message handler awaits the download before grammY acks
+ * the update (UBP-016), and grammY's built-in polling handles updates one at a
+ * time, so without a bound one stalled download held up every chat on the bot.
+ * 30s moves the Bot API's 20 MB download ceiling at ~700 KB/s, from Telegram's
+ * own file servers. Past it the download counts as failed and the message goes
+ * on without the file.
+ * Pinned by `__tests__/inbound-mention-media.test.ts` ('download deadline').
+ */
+export const MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/**
  * Download a single file from the Telegram Bot API. Returns a Buffer on
- * success, null on failure. Best-effort — callers handle the null case.
+ * success, null on failure — including a download still unfinished at
+ * `timeoutMs` ({@link MEDIA_DOWNLOAD_TIMEOUT_MS}). Best-effort — callers handle
+ * the null case.
  */
 export async function downloadTelegramFile(
   botApi: { getFile: (fileId: string) => Promise<{ file_path?: string; file_size?: number }> },
   token: string,
   descriptor: MediaDescriptor,
   maxBytes: number = MAX_FILE_SIZE,
+  timeoutMs: number = MEDIA_DOWNLOAD_TIMEOUT_MS,
 ): Promise<{ data: Buffer; fileSize: number } | null> {
-  try {
+  const controller = new AbortController();
+  // The race ends the wait for both calls. The signal also cancels the file
+  // fetch itself; `getFile` goes through grammY, whose AbortSignal type is the
+  // `abort-controller` polyfill's, so it is bounded by the race alone.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort(new Error(`telegram media download timed out after ${timeoutMs}ms`));
+      resolve(null);
+    }, timeoutMs);
+  });
+  const download = async (): Promise<{ data: Buffer; fileSize: number } | null> => {
+    const signal = controller.signal;
     const fileInfo = await botApi.getFile(descriptor.fileId);
     const fileSize = fileInfo.file_size ?? descriptor.fileSize ?? 0;
 
@@ -511,7 +538,7 @@ export async function downloadTelegramFile(
     if (!fileInfo.file_path) return null;
 
     const url = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal });
     if (!resp.ok) return null;
 
     const arrayBuf = await resp.arrayBuffer();
@@ -520,8 +547,11 @@ export async function downloadTelegramFile(
     // actual byte length so an undeclared-size file can't bypass the cap.
     if (arrayBuf.byteLength > maxBytes) return null;
     return { data: Buffer.from(arrayBuf), fileSize };
-  } catch {
-    return null;
+  };
+  try {
+    return await Promise.race([download().catch(() => null), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -681,6 +711,30 @@ function isPermanentTelegramError(err: unknown): boolean {
   return (
     code === 400 && typeof description === 'string' && PERMANENT_TELEGRAM_400.test(description)
   );
+}
+
+/**
+ * Did the Bot API refuse the bot TOKEN itself? It answers a wrong or revoked
+ * token with 401 Unauthorized and a malformed one with 404 Not Found, on every
+ * method. Read by grammy's `GrammyError` shape (`error_code`); a network
+ * failure has no `error_code` and is never this.
+ */
+function isRejectedTelegramToken(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = 'error_code' in err ? err.error_code : undefined;
+  return code === 401 || code === 404;
+}
+
+/**
+ * The error `start()` throws for a refused token: carries `permanent: true`,
+ * so the gateway's adapter-start retry (`isPermanentAdapterStartError`,
+ * apps/ethos/src/commands/gateway.ts) gives up instead of retrying for ever.
+ */
+function telegramTokenRejected(err: unknown): Error & { permanent: true } {
+  const detail = err instanceof Error ? err.message : String(err);
+  return Object.assign(new Error(`Telegram refused the bot token: ${detail}`, { cause: err }), {
+    permanent: true as const,
+  });
 }
 
 /** `{ ok: false }` for a failed Bot API call, marked `permanent` when it is. */
@@ -964,10 +1018,14 @@ export class TelegramAdapter
     // --- Bot identity from Telegram (best-effort, once per adapter) ---
     // One `getMe` for the adapter's life, with two readers: the observe-mode
     // privacy warning below, and `senderHandle`, which is how an outbox
-    // approval card names the account that will actually post. A failure here
-    // is never fatal — start continues, the card falls back to the botKey, and
-    // a bad token surfaces from the polling loop with a real error.
-    this.me = await this.bot.api.getMe().catch(() => undefined);
+    // approval card names the account that will actually post. A transient
+    // failure here is not fatal — start continues and the card falls back to
+    // the botKey. A refused token is: no later call can succeed, so start
+    // fails with a `permanent` error the gateway does not retry.
+    this.me = await this.bot.api.getMe().catch((err: unknown) => {
+      if (isRejectedTelegramToken(err)) throw telegramTokenRejected(err);
+      return undefined;
+    });
 
     // --- Bot identity from personality (best-effort) ---
     if (this.identity) {
@@ -1302,9 +1360,13 @@ export class TelegramAdapter
       );
     }
     if (this.config.useWebhook && this.config.webhookUrl) {
-      await this.bot.api.setWebhook(this.config.webhookUrl, {
-        secret_token: this.config.webhookSecretToken,
-      });
+      await this.bot.api
+        .setWebhook(this.config.webhookUrl, {
+          secret_token: this.config.webhookSecretToken,
+        })
+        .catch((err: unknown) => {
+          throw isRejectedTelegramToken(err) ? telegramTokenRejected(err) : err;
+        });
       this.webhookCb = grammy().webhookCallback(this.bot, 'http', {
         secretToken: this.config.webhookSecretToken,
       });

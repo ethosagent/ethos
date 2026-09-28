@@ -119,6 +119,13 @@ function makeHarness(
     // Item 7 seam — these tests exercise no secrets, so a kit that detects none.
     redaction: { redactPii: (t) => t, redactString: (t) => t, detectSecrets: () => [] },
     personality: { id: 'default', name: 'Default' },
+    downgrade: {
+      state: { value: 0 },
+      enabled: false,
+      tools: new Set(),
+      turns: 0,
+      rejectionMessage: '',
+    },
     watcherTap: { observe: () => {}, getHalt: opts?.getHalt ?? (() => null) },
     counters,
     checkBudgets: () =>

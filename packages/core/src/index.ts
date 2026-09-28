@@ -38,6 +38,9 @@ export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/de
 // serializer here would prove nothing (Hermes #4555 failure class).
 export { dedupHistory, toLLMMessages } from './agent-loop/history';
 export { reconstructFromWatermark, selectActiveWatermark } from './agent-loop/manual-compact';
+// V-CP-2 — the cut-off line core yields when the output cap ends a reply; the
+// gateway appends exactly this text to the delivered answer (`Gateway.runTurn`).
+export { MAX_TOKENS_REPLY_NOTICE } from './agent-loop/output-cap';
 // The app-layer half of fs_reach enforcement. Exported so the docker/ScopedStorage
 // parity test drives EXACTLY the scope the loop builds, not a re-statement of it.
 export { buildScopedStorage } from './agent-loop/scoped-storage';

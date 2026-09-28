@@ -11,6 +11,7 @@ import {
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
+  MAX_TOKENS_REPLY_NOTICE,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
   resolveVoicePreferences,
@@ -1725,6 +1726,10 @@ export class Gateway {
   private readonly interruptedLanes = new Set<string>();
   /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
   private readonly outboundDedup: MessageDedupCache;
+  /** `sendThrough` sends in flight, by target + body: a concurrent identical
+   *  send awaits the first one's outcome instead of reporting success for a
+   *  send that may yet fail (V-GC-1). */
+  private readonly inFlightSends = new Map<string, Promise<{ ok: boolean; error?: string }>>();
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
   private readonly deliveryLedger: DeliveryLedger | undefined;
   /** See `GatewayConfig.quietHours` / `heldNotices` (U11). */
@@ -1767,6 +1772,24 @@ export class Gateway {
   >();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, GatewaySteerSink<SteerOrigin>>();
+  /**
+   * V-GC-4 — per lane, the settle of the last mid-turn message still building
+   * its steer (a voice note's STT, attachment reads). A later message on the
+   * lane waits for it before it pushes or enqueues, so a quick text never
+   * overtakes a voice note sent before it. Pinned by
+   * `__tests__/steer-mid-turn.test.ts` ('arrival order').
+   */
+  private readonly steerOrder = new Map<string, Promise<void>>();
+  /**
+   * V-GC-4 — one transcription per inbound voice note, by message and text. A
+   * mid-turn voice note is transcribed to become a steer; if the turn ended
+   * meanwhile it runs as its own turn, and `runTurn` reuses this result
+   * instead of paying for STT twice. Weak, so it lives as long as the message.
+   */
+  private readonly voiceTranscripts = new WeakMap<
+    InboundMessage,
+    Map<string, Promise<{ text: string; providerId: string | undefined }>>
+  >();
   /** Buffered notifications for sessions whose turn has ended. */
   private readonly unreadNotifications = new Map<string, string[]>();
   /**
@@ -4098,7 +4121,32 @@ export class Gateway {
     // blocks, a voice note transcribed into its text (`steerEntryFor`). Built
     // before the push, so the turn may have ended meanwhile; the message then
     // takes the ordinary enqueue path below.
-    const steer = runningSink ? await this.steerEntryFor(message, text, laneKey, bot) : undefined;
+    //
+    // V-GC-4 — building is async and a text-only steer is not, so the message
+    // takes its place in the lane's steer order (`steerOrder`) at arrival and
+    // waits for the one before it after building. The slot is released as soon
+    // as the wait is over: what follows — the push, or the overflow / plain
+    // `enqueueTurn` below — is synchronous up to its first await, and a waiter
+    // resumes only on a later microtask, so push order is arrival order.
+    const priorSteer = this.steerOrder.get(laneKey);
+    let releaseSteerSlot = (): void => {};
+    if (runningSink || priorSteer) {
+      const slot = new Promise<void>((resolve) => {
+        releaseSteerSlot = resolve;
+      });
+      const settled = priorSteer ? priorSteer.then(() => slot) : slot;
+      this.steerOrder.set(laneKey, settled);
+      void settled.then(() => {
+        if (this.steerOrder.get(laneKey) === settled) this.steerOrder.delete(laneKey);
+      });
+    }
+    let steer: SteerEntry | undefined;
+    try {
+      steer = runningSink ? await this.steerEntryFor(message, text, laneKey, bot) : undefined;
+      if (priorSteer) await priorSteer;
+    } finally {
+      releaseSteerSlot();
+    }
     const activeSink =
       runningSink && this.activeSinks.get(laneKey) === runningSink ? runningSink : undefined;
     if (activeSink && steer) {
@@ -5127,9 +5175,27 @@ export class Gateway {
    * for THIS personality: a personality naming `voice.stt_provider` is
    * transcribed by that provider on a channel voice note, not only in browser
    * talk mode. Shared by `runTurn` and a mid-turn steer (`steerEntryFor`), so
-   * a voice note is transcribed the same way on both.
+   * a voice note is transcribed the same way on both — and only once: the
+   * result is kept per message and text (`voiceTranscripts`, V-GC-4).
    */
   private async transcribeVoiceNote(
+    message: InboundMessage,
+    text: string,
+    personalityId: string | undefined,
+    io: { attachmentCache: AttachmentCache; storage: Storage },
+  ): Promise<{ text: string; providerId: string | undefined }> {
+    const byText = this.voiceTranscripts.get(message) ?? new Map();
+    this.voiceTranscripts.set(message, byText);
+    const cached = byText.get(text);
+    if (cached) return cached;
+    const pending = this.transcribeVoiceNoteOnce(message, text, personalityId, io);
+    byText.set(text, pending);
+    // A failed transcription is not remembered: the next caller tries again.
+    pending.catch(() => byText.delete(text));
+    return pending;
+  }
+
+  private async transcribeVoiceNoteOnce(
     message: InboundMessage,
     text: string,
     personalityId: string | undefined,
@@ -5539,6 +5605,10 @@ export class Gateway {
         if (spoolTurn) spoolTurn.answered = true;
       };
 
+      // Set when core reports the output cap cut the reply off; cleared by
+      // any later text (a folded steer's next iteration wrote the ending).
+      let cutOffAtCap = false;
+
       // Deliver the reply exactly once. Called at the turn's terminal event,
       // or after the loop when the iterator ends without one.
       const deliverAnswer = async (): Promise<void> => {
@@ -5548,7 +5618,14 @@ export class Gateway {
         // in @ethosagent/types) — delivered as ONE final: the streamed draft is
         // finalized in place with it, or it is the one send. Pinned by
         // `__tests__/turn-tail.test.ts` ('returnDirect').
-        const answerText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        const fullAnswer = translator.text + answerSuffix(translator.text, translator.done?.text);
+        // V-CP-2 / UBP-033 — a reply the output cap cut off ends with core's
+        // `MAX_TOKENS_REPLY_NOTICE` (packages/core/src/agent-loop/output-cap.ts), on
+        // the streamed final and the plain send alike (`cutOffAtCap` below).
+        const answerText =
+          cutOffAtCap && fullAnswer.trim().length > 0
+            ? `${fullAnswer}\n\n${MAX_TOKENS_REPLY_NOTICE}`
+            : fullAnswer;
         // S4/U1 — a budget halt reaches the lane folded into the reply, so the
         // answer and the reason it stopped are ONE message (`haltNotice` in
         // @ethosagent/core owns the wording and the reset command). Not for a
@@ -5799,6 +5876,14 @@ export class Gateway {
           // disposes them, so a tool_end always cancels its own timer.
           feedback?.onEvent(event);
           translator.push(event);
+          if (event.type === 'text_delta') cutOffAtCap = false;
+          else if (
+            event.type === 'tool_progress' &&
+            event.toolName === '_loop' &&
+            event.message === MAX_TOKENS_REPLY_NOTICE
+          ) {
+            cutOffAtCap = true;
+          }
           // Feed the live draft. Progress folds in only for `audience:'user'`
           // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
           // streamer serializes internally and finalize() awaits it.
@@ -8163,15 +8248,45 @@ export class Gateway {
     try {
       // Route through outbound dedup — same path as normal responses.
       // Use target as the session key for dedup so repeated sends to the
-      // same target with same content are suppressed within TTL. Checked
-      // WITHOUT recording: no ledger stands behind this send, so the key is
-      // armed only once the platform confirms it (`record` below) — a failed
-      // send retried inside the TTL goes out instead of being reported as
-      // sent (UBP-003, pinned by `__tests__/dedup-send-retry.test.ts`).
+      // same target with same content are suppressed within TTL. No ledger
+      // stands behind this send, so the check is a RESERVATION: `shouldSend`
+      // arms the key now (a second identical send while this one is in
+      // flight is a duplicate — V-GC-1), `record` commits it once the
+      // platform confirms, and `release` un-arms it on failure so a retry
+      // inside the TTL goes out instead of being reported as sent (UBP-003).
+      // A duplicate that arrives while the first is in flight shares that
+      // send's outcome (`inFlightSends`). Pinned by
+      // `__tests__/dedup-send-retry.test.ts`.
       const dedupKey = `outbound:${platform}:${target}`;
-      if (!this.outboundDedup.wouldSend(dedupKey, body)) {
-        return { ok: true }; // silently deduplicated
+      const flightKey = `${dedupKey}\u0000${body}`;
+      if (!this.outboundDedup.shouldSend(dedupKey, body)) {
+        // Silently deduplicated — against a send still in flight, its outcome.
+        return (await this.inFlightSends.get(flightKey)) ?? { ok: true };
       }
+      const flight = this.sendReserved(adapter, platform, target, body, media, dedupKey);
+      this.inFlightSends.set(flightKey, flight);
+      try {
+        return await flight;
+      } finally {
+        this.inFlightSends.delete(flightKey);
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** `sendThrough`'s platform call, holding a dedup reservation it commits on
+   *  a confirmed send and releases otherwise (V-GC-1). */
+  private async sendReserved(
+    adapter: PlatformAdapter,
+    platform: string,
+    target: string,
+    body: string,
+    media: unknown,
+    dedupKey: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    let confirmed = false;
+    try {
       // W3.2 — outbound media convention. Map a recognized `structured`
       // payload to native attachments when the adapter's caps allow;
       // otherwise degrade to the text body (nothing attached).
@@ -8196,10 +8311,13 @@ export class Gateway {
       if (!result.ok) {
         return { ok: false, error: result.error ?? 'Adapter send failed' };
       }
+      confirmed = true;
       this.outboundDedup.record(dedupKey, body);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      if (!confirmed) this.outboundDedup.release(dedupKey, body);
     }
   }
 
