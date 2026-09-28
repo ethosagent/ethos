@@ -105,6 +105,18 @@ Provider strings are validated against [`packages/wiring/src/provider-catalog.ts
 
 `bedrock` is the one entry with no key step: the wizard skips the API-key prompt and asks for the model id as free text, because Bedrock signs each request with AWS SigV4 off the ambient credential chain. [Run Ethos on AWS Bedrock](use-aws-bedrock.md) covers the model id, the IAM permission, and how credentials resolve.
 
+### Output cap for Claude models
+
+With `provider: anthropic`, each request's `max_tokens` is the model's documented maximum output, taken from the bundled [model catalog](../../building/reference/model-catalog.md): 128,000 for Claude Fable 5.1, Fable 5, Mythos 5.1, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7 and 4.6, Sonnet 5 and Sonnet 4.6; 64,000 for Claude Haiku 4.5. A Claude model the catalog does not list gets 8,096. The request always streams, so a large cap does not hit the SDK's request timeout.
+
+To send a different cap for one model, set it in `~/.ethos/config.yaml`. The config value beats the catalog:
+
+```yaml
+models.anthropic/claude-opus-5.maxOutputTokens: 32000
+```
+
+The cap follows the model that answers. When a personality role routes a turn to another Claude model, that model's cap is sent, not the configured model's. The catalog cap applies only to `provider: anthropic`, because catalog rows are keyed by provider. The same Claude model through `openrouter`, `azure` or `bedrock` gets no catalog cap. `openrouter` honours `models.openrouter/<model>.maxOutputTokens`. `azure` and `bedrock` do not read that key.
+
 ### Local endpoints (Ollama and vLLM)
 
 Pull and run the model before pointing Ethos at it:

@@ -149,6 +149,77 @@ describe('UBP-033 — max_tokens comes from the model profile', () => {
   });
 });
 
+// The profile cap belongs to the configured model. A `modelOverride` to a
+// different model (a personality role, think_deeper) must not inherit it:
+// Opus's 128000 sent to Haiku 4.5 (64000) is refused by the API.
+describe('max_tokens follows the model a modelOverride requests', () => {
+  const capFor = (model: string) => (model === 'claude-haiku-4-5' ? 64_000 : undefined);
+  const sent = (captured: string[]) => JSON.parse(captured[0] ?? '{}').max_tokens;
+
+  it('uses maxOutputTokensFor(override) for a different model', async () => {
+    const captured: string[] = [];
+    const p = provider([], captured, { maxOutputTokens: 128_000, maxOutputTokensFor: capFor });
+    await drain(p.complete(hello, [], { modelOverride: 'claude-haiku-4-5' }));
+    expect(sent(captured)).toBe(64_000);
+  });
+
+  it('an override the resolver does not know falls back to 8096, not the configured cap', async () => {
+    const captured: string[] = [];
+    const p = provider([], captured, { maxOutputTokens: 128_000, maxOutputTokensFor: capFor });
+    await drain(p.complete(hello, [], { modelOverride: 'claude-unknown-9' }));
+    expect(sent(captured)).toBe(8096);
+  });
+
+  it('an override without a resolver falls back to 8096', async () => {
+    const captured: string[] = [];
+    const p = provider([], captured, { maxOutputTokens: 128_000 });
+    await drain(p.complete(hello, [], { modelOverride: 'claude-haiku-4-5' }));
+    expect(sent(captured)).toBe(8096);
+  });
+
+  it('an override naming the configured model keeps the configured cap', async () => {
+    const captured: string[] = [];
+    const p = provider([], captured, { maxOutputTokens: 128_000, maxOutputTokensFor: capFor });
+    await drain(p.complete(hello, [], { modelOverride: MODEL }));
+    expect(sent(captured)).toBe(128_000);
+  });
+
+  it('a per-call maxTokens still wins over the override cap', async () => {
+    const captured: string[] = [];
+    const p = provider([], captured, { maxOutputTokensFor: capFor });
+    await drain(p.complete(hello, [], { modelOverride: 'claude-haiku-4-5', maxTokens: 300 }));
+    expect(sent(captured)).toBe(300);
+  });
+
+  it('the factory passes the resolver through', async () => {
+    const p = await anthropicFactory({
+      config: { model: MODEL, apiKey: 'k', maxOutputTokensFor: capFor },
+      secrets: { get: async () => null },
+      logger: { warn: () => {} },
+    } as unknown as Parameters<typeof anthropicFactory>[0]);
+    const resolver = (p as unknown as { maxOutputTokensFor?: (m: string) => number | undefined })
+      .maxOutputTokensFor;
+    expect(resolver?.('claude-haiku-4-5')).toBe(64_000);
+  });
+
+  it('AuthRotatingProvider hands the resolver to every pooled key', async () => {
+    const pool = new AuthRotatingProvider(
+      [
+        { id: 'a', apiKey: 'k', priority: 2 },
+        { id: 'b', apiKey: 'k2', priority: 1 },
+      ],
+      MODEL,
+      { maxOutputTokensFor: capFor },
+    );
+    const slots = (
+      pool as unknown as {
+        providers: Array<{ maxOutputTokensFor?: (m: string) => number | undefined }>;
+      }
+    ).providers;
+    expect(slots.map((s) => s.maxOutputTokensFor?.('claude-haiku-4-5'))).toEqual([64_000, 64_000]);
+  });
+});
+
 describe('UBP-037 — an in-stream overloaded/rate-limit error before any chunk is retried', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

@@ -1,54 +1,113 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-26T17:53:47.178Z",
+  "updatedAt": "2026-09-28T08:41:11.160Z",
   "providers": {
     "anthropic": {
       "models": [
         {
           "id": "claude-fable-5-1",
           "label": "most capable",
-          "contextWindow": 1000000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-opus-5",
           "label": "frontier, complex work",
-          "contextWindow": 1000000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-sonnet-5",
           "label": "fast, balanced",
           "contextWindow": 1000000,
-          "default": true
+          "default": true,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-haiku-4-5",
           "label": "cheapest, fast",
-          "contextWindow": 200000
+          "contextWindow": 200000,
+          "profile": {
+            "maxOutputTokens": 64000
+          }
         },
         {
           "id": "claude-fable-5",
           "label": "prior gen",
-          "contextWindow": 1000000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-opus-4-8",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-opus-4-7",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-opus-4-6",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
         },
         {
           "id": "claude-sonnet-4-6",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
+        },
+        {
+          "id": "claude-opus-5-5",
+          "label": "next Opus, launching",
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
+        },
+        {
+          "id": "claude-mythos-5-1",
+          "label": "Project Glasswing access only",
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
+        },
+        {
+          "id": "claude-mythos-5",
+          "label": "Project Glasswing access only, prior gen",
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
+          }
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "label": "dated snapshot of claude-haiku-4-5",
+          "contextWindow": 200000,
+          "profile": {
+            "maxOutputTokens": 64000
+          }
         },
         {
           "id": "claude-sonnet-4-5-20250929",

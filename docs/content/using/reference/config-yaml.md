@@ -188,6 +188,16 @@ modelRouting.researcher: claude-opus-4-7
 modelRouting.engineer: moonshotai/kimi-k2.6
 ```
 
+## models.\<provider\>/\<model\>.maxOutputTokens {#models-max-output-tokens}
+
+Type: integer · Default: the model catalog's cap for that model, else the provider's default
+
+The output-token cap sent with each request to that model. It beats the bundled [model catalog](../../building/reference/model-catalog.md) (`mergeModelProfile`, `packages/wiring/src/model-catalog.ts`). The catalog records the documented cap for each Claude model on `provider: anthropic`: 128,000, or 64,000 for Claude Haiku 4.5. A Claude model the catalog does not list gets 8,096. The `anthropic` provider and OpenAI-compatible providers such as `openrouter` read this key. `azure` and `bedrock` do not.
+
+```yaml
+models.anthropic/claude-opus-5.maxOutputTokens: 32000
+```
+
 ## providers.\<i\>.\* {#providers-chain}
 
 Provider fallback chain. When two or more entries are present, the runtime wraps them in a `ChainedProvider` with cooldown-based failover. Index `0` is primary; higher indices fall back in order. With fewer than two entries, the top-level `provider` / `apiKey` / `model` fields are used instead. When Settings or `ethos fallback add` grows a chain from the top-level fields, entry `0` becomes the top-level provider, with the same key reference.

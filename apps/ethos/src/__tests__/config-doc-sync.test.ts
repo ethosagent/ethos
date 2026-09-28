@@ -124,7 +124,6 @@ const UNDOCUMENTED_ETHOS_FIELDS = new Set([
   'memoryConsolidation',
   'modelCatalog',
   'modelRegistry',
-  'models',
   'pauseClockCorrection',
   'pauseLifecycle',
   'personalitiesConfig',

@@ -18,24 +18,32 @@ export interface ModelCatalogEntry {
 export const MIN_CONTEXT_WINDOW = 64_000;
 
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-  // Anthropic — source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
-  // No Anthropic row carries `profile.maxOutputTokens`: this catalog records
-  // context windows only, and nothing in the repo sources each model's output
-  // limit. With no profile and no per-call cap the provider sends
-  // `DEFAULT_MAX_OUTPUT_TOKENS` (8096, extensions/llm-anthropic/src/index.ts).
-  // Raise it per model with `models.anthropic/<id>.maxOutputTokens` in
-  // ~/.ethos/config.yaml (`mergeModelProfile` below: the config beats the catalog).
+  // Anthropic — source: Anthropic's model reference (models overview, cached
+  // 2026-06-24): https://platform.claude.com/docs/en/docs/about-claude/models/overview
+  // `contextWindow` and `profile.maxOutputTokens` are the documented context
+  // window and max output per model. The live source is the Models API:
+  // `GET /v1/models/{id}` → `max_input_tokens` / `max_tokens`. Wiring threads
+  // the cap to `AnthropicProvider` as `max_tokens` (`createLLMFromRegistry` and
+  // the rotation pool in packages/wiring/src/index.ts, pinned by
+  // __tests__/anthropic-output-cap-catalog.test.ts); `models.anthropic/<id>.
+  // maxOutputTokens` in ~/.ethos/config.yaml still wins (`mergeModelProfile`
+  // below). A row without a cap sends `DEFAULT_MAX_OUTPUT_TOKENS` (8096,
+  // extensions/llm-anthropic/src/index.ts). The provider always streams, so a
+  // 128K `max_tokens` never meets the SDK's non-streaming timeout guard.
+  // Provider-keyed: the OpenRouter and Azure Claude rows below carry no cap.
   {
     providerId: 'anthropic',
     modelId: 'claude-fable-5-1',
     label: 'most capable',
     contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-5',
     label: 'frontier, complex work',
     contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
@@ -43,42 +51,77 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'fast, balanced',
     contextWindow: 1_000_000,
     default: true,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-haiku-4-5',
     label: 'cheapest, fast',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-fable-5',
     label: 'prior gen',
     contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-8',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-7',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-opus-4-6',
     label: 'prior gen',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
   },
   {
     providerId: 'anthropic',
     modelId: 'claude-sonnet-4-6',
     label: 'prior gen',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5-5',
+    label: 'next Opus, launching',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-mythos-5-1',
+    label: 'Project Glasswing access only',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-mythos-5',
+    label: 'Project Glasswing access only, prior gen',
+    contextWindow: 1_000_000,
+    profile: { maxOutputTokens: 128_000 },
+  },
+  {
+    providerId: 'anthropic',
+    modelId: 'claude-haiku-4-5-20251001',
+    label: 'dated snapshot of claude-haiku-4-5',
     contextWindow: 200_000,
+    profile: { maxOutputTokens: 64_000 },
   },
   {
     providerId: 'anthropic',

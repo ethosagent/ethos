@@ -18,6 +18,9 @@ function catalogToEntries(providerId: string): ModelEntry[] {
       contextWindow: e.contextWindow,
     };
     if (e.default) entry.default = true;
+    // The per-model profile (e.g. Anthropic's documented `maxOutputTokens`)
+    // travels with the row, the same way `bundledToManifest` carries it.
+    if (e.profile) entry.profile = e.profile;
     return entry;
   });
 }
