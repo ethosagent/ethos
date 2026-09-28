@@ -23,7 +23,8 @@ const basePromptCtx: PromptContext = {
   platform: 'cli',
   model: 'claude-sonnet-4-6',
   history: [],
-  isDm: false,
+  // A private turn — the shared-turn case (`isDm: false`) has its own block below.
+  isDm: true,
   turnNumber: 1,
 };
 
@@ -288,5 +289,36 @@ describe('translateBeforePromptBuildHook', () => {
     await injector.inject(ctx);
     const [, hookCtx] = handler.mock.calls[0] as [unknown, { sessionId: string }];
     expect(hookCtx.sessionId).toBe('test-session');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared turns (plan personality-memory-boundary G1-4) — every memory injector
+// emits nothing, and makes no call into the plugin, when `isDm` is false.
+// ---------------------------------------------------------------------------
+
+describe('memory injectors on a shared turn (isDm: false)', () => {
+  const shared: PromptContext = { ...basePromptCtx, isDm: false };
+
+  it('translatePromptSectionBuilder emits nothing and never calls the builder', async () => {
+    const builder = vi.fn(() => ['private memory line']);
+    const injector = translatePromptSectionBuilder('p', builder, 0);
+    expect(await injector.inject(shared)).toBeNull();
+    expect(builder).not.toHaveBeenCalled();
+  });
+
+  it('translateCorpusSupplement emits nothing and never searches', async () => {
+    const search = vi.fn(async () => [{ id: '1', content: 'private hit', score: 1 }]);
+    const injector = translateCorpusSupplement('p', { search, get: async () => null }, 0);
+    const ctx = { ...shared, query: 'anything' } as PromptContext & { query: string };
+    expect(await injector.inject(ctx)).toBeNull();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('translateBeforePromptBuildHook emits nothing and never calls the handler', async () => {
+    const handler = vi.fn().mockResolvedValue({ prependContext: 'recalled memory' });
+    const injector = translateBeforePromptBuildHook('p', handler, 0);
+    expect(await injector.inject(shared)).toBeNull();
+    expect(handler).not.toHaveBeenCalled();
   });
 });

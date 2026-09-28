@@ -8,9 +8,11 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   ToolFilterOpts,
+  TurnAudience,
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
+import { resolveTurnAudience, sharedStampFor, withSharedAudienceExclusions } from '../audience';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import { routeTurnTier } from '../tier-router';
@@ -82,6 +84,7 @@ export async function* setupTurn(
     toolsetNarrow?: string[];
     toolsetExclude?: string[];
     credentialPrompt?: boolean;
+    roomAudience?: TurnAudience;
   },
   /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
   decisions?: TurnDecisions,
@@ -111,6 +114,16 @@ export async function* setupTurn(
     }));
 
   const sessionId = ethosSession.id;
+
+  // plan personality-memory-boundary G1 — the turn's audience: the caller's
+  // `roomAudience` narrowed by the session's sticky stamp (`resolveTurnAudience`,
+  // ../audience.ts). A shared turn stamps an unstamped session so every later
+  // turn in it is shared too, whoever the caller is; the stamp MERGES into
+  // metadata (`updateSession` replaces it wholesale) and `'private'` is never
+  // written. Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
+  const roomAudience = resolveTurnAudience(opts.roomAudience, ethosSession.metadata);
+  const stamped = sharedStampFor(roomAudience, ethosSession.metadata);
+  if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
 
   // A session's personality is bound at creation and never changes. The
   // effective personality therefore comes from the SESSION, not from the
@@ -406,11 +419,18 @@ export async function* setupTurn(
   // The wiring's per-personality exclusion (plan decision-tool D13) is UNIONED
   // with it, never replaces it; it depends only on the personality, so the
   // same stability holds.
+  //
+  // A shared turn additionally unions `SHARED_AUDIENCE_EXCLUDED_TOOLS`
+  // (`withSharedAudienceExclusions`, ../audience.ts) — the same outranking
+  // path, so memory tools stay out even when `alwaysInclude`d or reached via
+  // MCP/plugins. Sticky per session, so definitions stay stable within one.
   const personalityExclude = deps.personalityToolExclude?.(personality) ?? [];
-  const excludeTools =
+  const excludeTools = withSharedAudienceExclusions(
+    roomAudience,
     personalityExclude.length > 0
       ? [...new Set([...(opts.toolsetExclude ?? []), ...personalityExclude])]
-      : opts.toolsetExclude;
+      : opts.toolsetExclude,
+  );
   const filterOpts: ToolFilterOpts = {
     allowedMcpServers: personality.mcp_servers ?? [],
     allowedPlugins,
@@ -498,6 +518,7 @@ export async function* setupTurn(
       allowedPlugins,
       filterOpts,
       memScopeId,
+      roomAudience,
       ...(toolLoading ? { toolLoading } : {}),
       ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
     },

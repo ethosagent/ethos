@@ -246,6 +246,10 @@ export function createTeamMemoryIndexInjector(
     priority: 70,
 
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+      // A shared turn (`isDm: false`) makes no `team:` call at all — a group
+      // chat's members are not the team (plan personality-memory-boundary
+      // G1-1/D4). Pinned by `__tests__/team-memory-index.test.ts`.
+      if (!ctx.isDm) return null;
       const memCtx: MemoryContext = {
         scopeId: `team:${teamName}`,
         sessionId: ctx.sessionId,
@@ -300,6 +304,11 @@ export function createPendingNotifyInjector(
 
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
       if (!ctx.personalityId) return null;
+      // A shared turn (`isDm: false`) neither shows nor CONSUMES board notices;
+      // they stay queued for the next private turn (plan
+      // personality-memory-boundary D4). Pinned by
+      // `__tests__/pending-notify-injector.test.ts`.
+      if (!ctx.isDm) return null;
 
       let rows: PendingNotify[];
       try {

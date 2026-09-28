@@ -143,6 +143,7 @@ export async function* assembleContext(
     allowedPlugins,
     memScopeId,
     traceId,
+    roomAudience,
   } = setup;
 
   // Step 3: Persist the user message.
@@ -357,10 +358,16 @@ export async function* assembleContext(
   // is a string, not a provider call, and turn-end writes are a separate
   // concern from this read. Pinned by
   // `packages/core/src/__tests__/skip-memory-prefetch.test.ts`.
+  //
+  // A shared turn (`TurnSetup.roomAudience`, resolved by `resolveTurnAudience`
+  // in ../audience.ts) skips the same three reads: private memory never enters
+  // a conversation more than one person can see (plan
+  // personality-memory-boundary G1-1). Pinned by
+  // `packages/core/src/__tests__/shared-audience.test.ts`.
   const userScopeId = opts.userId ? `user:${opts.userId}` : undefined;
   let memSnapshot: MemorySnapshot | null = null;
 
-  if (!opts.skipMemoryPrefetch) {
+  if (!opts.skipMemoryPrefetch && roomAudience !== 'shared') {
     // Per-personality memory backend: if the personality declares a `memory.provider`,
     // resolve it from the registry. Otherwise fall back to the global provider.
     const activeMemory = personality.memory?.provider
@@ -437,7 +444,10 @@ export async function* assembleContext(
     model: deps.llm.model,
     history,
     workingDir,
-    isDm: true,
+    // G1-4 — false on a shared turn, so memory injectors (memory guidance,
+    // team-memory index, pending-notify, OpenClaw memory sections) emit
+    // nothing. Not routing: admission and engagement read `InboundMessage.isDm`.
+    isDm: roomAudience !== 'shared',
     turnNumber: allMessages.length,
     personalityId: personality.id,
     // Phase 4 — small-window mode forces skills into index form. Derived from

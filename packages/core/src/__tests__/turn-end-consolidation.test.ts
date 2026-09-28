@@ -447,6 +447,177 @@ describe('Phase 3 — silent memory flush through run()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// plan personality-memory-boundary G1-3 — the flush never runs on a shared
+// turn, nor on any turn whose surface excluded `memory_write`. The flush calls
+// `memory_write` directly (not through `executeParallel`), so this is the only
+// thing between a group chat and MEMORY.md at turn end
+// (`memoryFlushForbidden`, agent-loop/audience.ts, checked in runMemoryFlush).
+// ---------------------------------------------------------------------------
+
+describe('G1-3 — turn-end flush guard', () => {
+  /** An LLM that writes memory on every flush call it is ever given. */
+  function eagerWriter(log: CompleteCall[]) {
+    return makeLLM((call) => {
+      if (isFlushCall(call)) {
+        const json = '{"store":"memory","action":"add","content":"room secret"}';
+        return {
+          chunks: [
+            { type: 'tool_use_start', toolCallId: 'w1', toolName: 'memory_write' },
+            { type: 'tool_use_end', toolCallId: 'w1', inputJson: json },
+            { type: 'done', finishReason: 'tool_use' },
+          ],
+        };
+      }
+      return {
+        chunks: [
+          { type: 'text_delta', text: 'ok' },
+          usageChunk(1_000),
+          { type: 'done', finishReason: 'end_turn' },
+        ],
+      };
+    }, log);
+  }
+
+  function eagerLoop(session: InMemorySessionStore, log: CompleteCall[], reg: DefaultToolRegistry) {
+    return new AgentLoop({
+      llm: eagerWriter(log),
+      session,
+      tools: reg,
+      safety: createTestSafety(),
+      memoryConsolidation: { enabled: true, flushThreshold: 0.001, minMessagesSinceFlush: 0 },
+    });
+  }
+
+  it('a shared turn never flushes, even when memory_write declares alwaysInclude', async () => {
+    const session = new InMemorySessionStore();
+    await seedShortSession(session, 'telegram:bot:-100', 3);
+    const writes: Array<Record<string, unknown>> = [];
+    const reg = new DefaultToolRegistry();
+    reg.register({
+      name: 'memory_write',
+      description: 'write memory',
+      toolset: 'memory',
+      capabilities: {},
+      alwaysInclude: true,
+      schema: { type: 'object', properties: {} },
+      async execute(args) {
+        writes.push(args as Record<string, unknown>);
+        return { ok: true, value: 'ok' };
+      },
+    });
+    const log: CompleteCall[] = [];
+
+    await collect(
+      eagerLoop(session, log, reg).run('hi', {
+        sessionKey: 'telegram:bot:-100',
+        roomAudience: 'shared',
+      }),
+    );
+
+    expect(log.some(isFlushCall)).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it('a shared turn never flushes a plugin-registered memory_write either', async () => {
+    const session = new InMemorySessionStore();
+    await seedShortSession(session, 'cli:shared-plugin', 3);
+    const writes: Array<Record<string, unknown>> = [];
+    const reg = new DefaultToolRegistry();
+    reg.register(
+      {
+        name: 'memory_write',
+        description: 'write memory',
+        toolset: 'memory',
+        capabilities: {},
+        schema: { type: 'object', properties: {} },
+        async execute(args) {
+          writes.push(args as Record<string, unknown>);
+          return { ok: true, value: 'ok' };
+        },
+      },
+      { pluginId: 'memory-plugin' },
+    );
+    const log: CompleteCall[] = [];
+
+    await collect(
+      eagerLoop(session, log, reg).run('hi', {
+        sessionKey: 'cli:shared-plugin',
+        roomAudience: 'shared',
+      }),
+    );
+
+    expect(log.some(isFlushCall)).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it('a private turn whose surface excludes memory_write never flushes (behaviour change)', async () => {
+    const session = new InMemorySessionStore();
+    await seedShortSession(session, 'cli:narrowed', 3);
+    const writes: Array<Record<string, unknown>> = [];
+    const log: CompleteCall[] = [];
+
+    await collect(
+      eagerLoop(session, log, memoryRegistry(writes)).run('hi', {
+        sessionKey: 'cli:narrowed',
+        toolsetExclude: ['memory_write'],
+      }),
+    );
+
+    expect(log.some(isFlushCall)).toBe(false);
+    expect(writes).toHaveLength(0);
+  });
+
+  it('control: the same private turn without the exclusion does flush', async () => {
+    const session = new InMemorySessionStore();
+    await seedShortSession(session, 'cli:control', 3);
+    const writes: Array<Record<string, unknown>> = [];
+    const log: CompleteCall[] = [];
+
+    await collect(
+      eagerLoop(session, log, memoryRegistry(writes)).run('hi', { sessionKey: 'cli:control' }),
+    );
+
+    expect(log.some(isFlushCall)).toBe(true);
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it('runMemoryFlush itself refuses a shared ctx before any LLM call', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const log: CompleteCall[] = [];
+    const deps = {
+      llm: eagerWriter(log),
+      tools: memoryRegistry(writes),
+      session: new InMemorySessionStore(),
+      historyLimit: 200,
+      platform: 'cli',
+      workingDir: '/tmp',
+      memoryConsolidation: { enabled: true, minMessagesSinceFlush: 0 },
+    } as unknown as Parameters<typeof runMemoryFlush>[0];
+    const ctx = {
+      sessionId: 's1',
+      sessionKey: 'telegram:bot:-100',
+      personality: { id: 'p', name: 'P' },
+      turnNumber: 1,
+      lastCompactionTurn: 0,
+      memScopeId: 'personality:p',
+      userScopeId: undefined,
+      filterOpts: {},
+      compactedThisTurn: false,
+      abortSignal: new AbortController().signal,
+      rootSessionKey: 'telegram:bot:-100',
+      contextStore: new ContextStore(),
+      roomAudience: 'shared',
+    } as unknown as Parameters<typeof runMemoryFlush>[1];
+
+    const res = await runMemoryFlush(deps, ctx, [{ role: 'user', content: 'hi' }], 20);
+
+    expect(res.flushed).toBe(false);
+    expect(log).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runMemoryFlush unit — abort, delta cap, non-persistence, trivial-delta
 // ---------------------------------------------------------------------------
 

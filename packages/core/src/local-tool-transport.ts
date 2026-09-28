@@ -100,6 +100,8 @@ export class LocalToolTransport implements ToolTransport {
       rootSessionKey: request.rootSessionKey,
       jobId: request.jobId,
       ...(request.reviewOfJobId !== undefined ? { reviewOfJobId: request.reviewOfJobId } : {}),
+      ...(request.roomAudience !== undefined ? { roomAudience: request.roomAudience } : {}),
+      ...(request.initiator !== undefined ? { initiator: request.initiator } : {}),
       ...(request.toolsetNarrowing ? { toolsetNarrowing: request.toolsetNarrowing } : {}),
       origin: request.origin,
       memoryScopeId: request.memoryScopeId,

@@ -174,6 +174,31 @@ describe('§6 — prefix-cache-friendly prompt ordering', () => {
   });
 });
 
+// plan personality-memory-boundary G1 — a shared lane. The audience is sticky
+// per session and derives `isDm` from it, so a shared lane's prompt is as
+// stable as a private one: two consecutive shared turns (the second relying on
+// the session stamp alone) send byte-identical system prompts, with no memory.
+describe('§6 — prefix stability on a shared lane', () => {
+  it('two shared turns produce a byte-identical prompt with no memory section', async () => {
+    const captured: CompletionOptions[] = [];
+    const loop = new AgentLoop({
+      llm: capturingLLM(captured),
+      personalities: makePersonalities(),
+      safety: createTestSafety(),
+      injectors: [staticInjector],
+      memory: constantMemory(MEMORY_CONTENT),
+    });
+    await collect(loop.run('hello', { sessionKey: 'telegram:bot:-100', roomAudience: 'shared' }));
+    await collect(loop.run('hello', { sessionKey: 'telegram:bot:-100' }));
+
+    const first = captured[0]?.system ?? '';
+    const second = captured[1]?.system ?? '';
+    expect(first).toBe(second);
+    expect(first).toContain('## Skills');
+    expect(first).not.toContain(MEMORY_CONTENT);
+  });
+});
+
 // reach-and-containment Part 1 — with on-demand tool loading active, a tool
 // loaded in turn 1 stays at the tail of the tools array, and turn 2 (no search)
 // sends the array byte-identically to turn 1's final step (D1-2/D1-11: one

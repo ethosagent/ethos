@@ -290,6 +290,10 @@ export interface RunOptions extends MemoryPrefetchGate {
   jobId?: string;
   /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
   reviewOfJobId?: string;
+  /** plan personality-memory-boundary G1 — `'shared'` withholds private memory; absent = private. Narrowed by the session's sticky stamp (`resolveTurnAudience`, ./agent-loop/audience.ts) → `ToolContext.roomAudience`. */
+  roomAudience?: import('@ethosagent/types').TurnAudience;
+  /** Who started this turn → `ToolContext.initiator`, verbatim. Children never inherit it. */
+  initiator?: import('@ethosagent/types').TurnInitiator;
   /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
   credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
@@ -1013,6 +1017,8 @@ export class AgentLoop {
             rootSessionKey: opts.rootSessionKey,
             jobId: opts.jobId,
             ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
+            roomAudience: setup.roomAudience,
+            ...(opts.initiator !== undefined ? { initiator: opts.initiator } : {}),
             origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,
@@ -1062,6 +1068,7 @@ export class AgentLoop {
       abortSignal,
       contextStore,
       rootSessionKey: opts.rootSessionKey ?? sessionKey,
+      ...(opts.initiator !== undefined ? { initiator: opts.initiator } : {}),
       systemPrompt: systemPrompt ?? '',
       ...(opts.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: opts.maxCompletionTokens }

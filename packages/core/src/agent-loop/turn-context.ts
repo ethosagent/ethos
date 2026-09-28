@@ -19,6 +19,7 @@ import type {
   Storage,
   ToolFilterOpts,
   ToolRegistry,
+  TurnAudience,
   WatcherDecision,
   WatcherEvent,
 } from '@ethosagent/types';
@@ -231,6 +232,13 @@ export interface TurnSetup {
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
   memScopeId: string;
+  /**
+   * The turn's resolved audience (`resolveTurnAudience`, ./audience.ts): the
+   * caller's `RunOptions.roomAudience` narrowed by the session's sticky stamp.
+   * Read by context assembly (memory read, `isDm`), tool processing
+   * (`ToolContext.roomAudience`) and turn-end (flush guard).
+   */
+  roomAudience: TurnAudience;
   /** Set only when on-demand tool loading is active for this turn
    *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
   toolLoading?: ToolLoadingState;

@@ -12,6 +12,16 @@ export type {
 export { AgentLoop, isKnownAgentEvent, KNOWN_AGENT_EVENT_TYPES } from './agent-loop';
 // plan decision-provider-personality §15.3 — the approver's private sink channel.
 export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
+// plan personality-memory-boundary G1 — the shared-audience rules for a running
+// turn, and the chat-level audience questions asked outside one.
+export {
+  memoryFlushForbidden,
+  ROOM_AUDIENCE_METADATA_KEY,
+  resolveTurnAudience,
+  SHARED_AUDIENCE_EXCLUDED_TOOLS,
+  sharedStampFor,
+  withSharedAudienceExclusions,
+} from './agent-loop/audience';
 // tools-as-code-api Lane B — the per-turn bridge (and its budget-counter
 // companions) are exported so integration tests and non-loop surfaces can
 // drive the EXACT enforcement path the loop wires, not a re-statement of it.
@@ -99,6 +109,7 @@ export type { ChannelModeDecision, ChannelModeInputs } from './channel-mode';
 export { evaluateChannelMode } from './channel-mode';
 export type { ChannelModeParser, ChannelOverrideEntry } from './channel-overrides';
 export { ChannelOverrideStore } from './channel-overrides';
+export { isSharedSession, type PrivateChatSet, targetAudience } from './chat-audience';
 export {
   ClarifyBridge,
   type ClarifyBridgeOptions,

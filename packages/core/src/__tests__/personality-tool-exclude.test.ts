@@ -107,4 +107,45 @@ describe('personalityToolExclude (decision-tool D13)', () => {
     expect(toolEnd(events)).toMatchObject({ toolName: 'decide', ok: true });
     expect(executed).toHaveBeenCalledTimes(1);
   });
+
+  it('a shared turn unions its exclusion list beside the personality and surface ones', async () => {
+    // plan personality-memory-boundary G1-2 — all three exclusions compose in
+    // turn setup; none replaces another, and the shared list outranks
+    // alwaysInclude exactly like the other two.
+    const executed = vi.fn(async () => ({ ok: true as const, value: 'ran' }));
+    const tools = new DefaultToolRegistry();
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      tools.register({ name, description: name, schema: {}, capabilities: {}, execute: executed });
+    }
+    tools.register({
+      name: 'memory_read',
+      description: 'memory_read',
+      schema: {},
+      capabilities: {},
+      alwaysInclude: true,
+      execute: executed,
+    });
+    const personalities = new DefaultPersonalityRegistry();
+    vi.spyOn(personalities, 'getDefault').mockReturnValue({
+      id: 'plain',
+      name: 'Plain',
+      toolset: ['alpha', 'beta', 'gamma'],
+    });
+    const captured: ToolDefinitionLite[][] = [];
+    const loop = new AgentLoop({
+      llm: forcingLLM('memory_read', captured),
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      personalityToolExclude: () => ['beta'],
+    });
+
+    const events = await collect(
+      loop.run('go', { toolsetExclude: ['gamma'], roomAudience: 'shared' }),
+    );
+
+    expect(captured[0]?.map((d) => d.name)).toEqual(['alpha']);
+    expect(toolEnd(events)).toMatchObject({ toolName: 'memory_read', ok: false });
+    expect(executed).not.toHaveBeenCalled();
+  });
 });

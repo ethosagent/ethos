@@ -3,6 +3,7 @@
 
 export * from './a2a';
 export * from './agent-event';
+export * from './audience';
 export * from './background-job';
 export * from './call-capture';
 export * from './channel-conformance';

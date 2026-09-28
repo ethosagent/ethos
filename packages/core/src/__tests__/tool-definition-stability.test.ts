@@ -152,6 +152,27 @@ describe('§3.5 — tool-definition stability across turns', () => {
     expect(first.map((d) => d.name).sort()).toEqual(['alpha', 'decide', 'gamma']);
   });
 
+  it('a shared lane: two shared turns send byte-identical definitions (plan personality-memory-boundary G1)', async () => {
+    // The shared exclusion list is static and the audience is sticky per
+    // session, so the tool payload cannot drift turn to turn — including on the
+    // second turn, where the caller does not repeat `roomAudience` and the
+    // session stamp alone keeps it shared.
+    const capturedTools: ToolDefinitionLite[][] = [];
+    const registry = makeRegistry();
+    registry.register({ ...makeTool('memory_read'), alwaysInclude: true });
+    const loop = new AgentLoop({
+      llm: capturingLLM(capturedTools),
+      tools: registry,
+      personalities: makePersonalities(),
+      safety: createTestSafety(),
+    });
+    await collect(loop.run('hello', { sessionKey: 'telegram:bot:-100', roomAudience: 'shared' }));
+    await collect(loop.run('hello', { sessionKey: 'telegram:bot:-100' }));
+    const [first = [], second = []] = capturedTools;
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(first.map((d) => d.name).sort()).toEqual(['alpha', 'beta', 'gamma']);
+  });
+
   it('toolsetNarrow and toolsetExclude compose without per-turn drift', async () => {
     const { first, second } = await runTwoTurns(['beta', 'gamma', 'delta'], ['gamma']);
 

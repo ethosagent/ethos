@@ -240,7 +240,12 @@ describe('Orchestrator guardrails', () => {
     // Bumped 1083 -> 1092 (ux A4 overflow-retry notice): the one `_loop`
     // tool_progress yield (6 lines) and its 3-line comment at the
     // compact-and-retry point. Pinned by __tests__/overflow-retry-notice.test.ts.
-    expect(lineCount).toBeLessThanOrEqual(1092);
+    // Bumped 1092 -> 1099 (personality-memory-boundary step 1a): the
+    // `roomAudience`/`initiator` RunOptions fields (a one-line doc and a
+    // declaration each), the resolved audience and `initiator` into the
+    // `processTools` opts (two lines) and `initiator` into the turn-end extras
+    // (one line). Pass-through only; the rules live in agent-loop/audience.ts.
+    expect(lineCount).toBeLessThanOrEqual(1099);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -369,7 +374,11 @@ describe('Orchestrator guardrails', () => {
       // the stage deps (one line), its type import and the helper's import (one
       // line each), and one spread onto the tool_result row. The logic lives
       // in agent-loop/tool-cost.ts.
-      if (lineCount > 870) {
+      // Bumped 870 -> 874 (personality-memory-boundary step 1a): tool-processing.ts
+      // types `roomAudience`/`initiator` on its opts (two lines) and spreads
+      // them into the ToolContext (two lines). No
+      // logic — the audience is resolved in agent-loop/audience.ts.
+      if (lineCount > 874) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

@@ -144,7 +144,10 @@ export function translatePromptSectionBuilder(
   return {
     id: `openclaw-${pluginId}-prompt-section-${idx}`,
     priority,
-    async inject(_ctx: PromptContext): Promise<InjectionResult | null> {
+    async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+      // Memory sections stay out of shared turns (`isDm: false`; plan
+      // personality-memory-boundary G1-4). Same guard on every injector below.
+      if (!ctx.isDm) return null;
       const lines = builder({ availableTools: new Set() });
       if (lines.length === 0) return null;
       return { content: lines.join('\n'), position: 'prepend' };
@@ -172,6 +175,7 @@ export function translateCorpusSupplement(
     id: `openclaw-${pluginId}-corpus-${idx}`,
     priority: 85,
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+      if (!ctx.isDm) return null;
       const query = (ctx as PromptContext & { query?: string }).query;
       if (!query) return null;
       try {
@@ -209,6 +213,7 @@ export function translateBeforePromptBuildHook(
     id: `openclaw-${pluginId}-before-prompt-build-${idx}`,
     priority,
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+      if (!ctx.isDm) return null;
       const event = { availableTools: new Set<string>() };
       const hookCtx = { sessionId: ctx.sessionId, platform: ctx.platform };
       let result: unknown;

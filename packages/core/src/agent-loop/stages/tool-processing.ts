@@ -138,6 +138,8 @@ export interface ToolProcessingContext {
     rootSessionKey?: string;
     jobId?: string;
     reviewOfJobId?: string;
+    roomAudience?: import('@ethosagent/types').TurnAudience; // RESOLVED (`TurnSetup.roomAudience`)
+    initiator?: import('@ethosagent/types').TurnInitiator;
     origin?: string;
     attachments?: Attachment[];
     dryRun?: boolean;
@@ -190,6 +192,8 @@ export async function* processTools(
     // undefined for a foreground turn (D22).
     ...(ctx.opts.jobId !== undefined ? { jobId: ctx.opts.jobId } : {}),
     ...(ctx.opts.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.opts.reviewOfJobId } : {}),
+    ...(ctx.opts.roomAudience !== undefined ? { roomAudience: ctx.opts.roomAudience } : {}),
+    ...(ctx.opts.initiator !== undefined ? { initiator: ctx.opts.initiator } : {}),
     ...toolsetNarrowingOf(ctx.allowedTools, ctx.filterOpts.excludeTools),
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),

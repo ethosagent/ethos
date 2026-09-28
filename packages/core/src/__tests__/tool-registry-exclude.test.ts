@@ -6,6 +6,7 @@
 
 import type { Tool, ToolContext, ToolFilterOpts, ToolResult } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { withSharedAudienceExclusions } from '../agent-loop/audience';
 import { DefaultToolRegistry } from '../tool-registry';
 
 function makeTool(name: string, extra: Partial<Tool> = {}): Tool {
@@ -113,5 +114,33 @@ describe('ToolFilterOpts.excludeTools — execution time', () => {
     const only = results[0];
     expect(only?.result.ok).toBe(false);
     if (only && !only.result.ok) expect(only.result.code).toBe('not_available');
+  });
+});
+
+// plan personality-memory-boundary G1-2 — the shared-audience list rides the
+// same `excludeTools` gate, so it inherits every property pinned above. This
+// pins that the list itself, as turn setup unions it
+// (`withSharedAudienceExclusions`), removes an alwaysInclude memory tool at
+// both halves.
+describe('shared-audience exclusions through excludeTools', () => {
+  it('drops and refuses an alwaysInclude memory_write', async () => {
+    const reg = new DefaultToolRegistry();
+    reg.register(makeTool('memory_write', { alwaysInclude: true }));
+    reg.register(makeTool('session_search'));
+    const filter: ToolFilterOpts = {
+      excludeTools: withSharedAudienceExclusions('shared', ['emit_card']),
+    };
+
+    const names = reg.toDefinitions(['session_search'], filter).map((d) => d.name);
+    expect(names).toEqual(['session_search']);
+
+    const [result] = await reg.executeParallel(
+      [{ toolCallId: '1', name: 'memory_write', args: {} }],
+      ctx(),
+      ['session_search'],
+      filter,
+    );
+    expect(result?.result.ok).toBe(false);
+    if (result && !result.result.ok) expect(result.result.code).toBe('not_available');
   });
 });

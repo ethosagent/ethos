@@ -25,7 +25,12 @@ export class MemoryGuidanceInjector implements ContextInjector {
     return ctx.turnNumber > 0;
   }
 
-  async inject(_ctx: PromptContext): Promise<InjectionResult | null> {
+  async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+    // A shared turn (`isDm: false`, set by context assembly from the turn's
+    // audience) excludes the memory tools, so guidance about them would point
+    // the model at tools it does not have (plan personality-memory-boundary
+    // G1-4). Pinned by `__tests__/memory-guidance-injector.test.ts`.
+    if (!ctx.isDm) return null;
     return { content: GUIDANCE, position: 'append' };
   }
 }

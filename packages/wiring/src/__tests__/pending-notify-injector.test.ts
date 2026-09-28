@@ -122,6 +122,18 @@ describe('createPendingNotifyInjector', () => {
     await expect(injector.inject(baseCtx({ personalityId: 'engineer' }))).resolves.toBeNull();
   });
 
+  it('a shared turn (isDm: false) neither shows nor consumes the pending rows', async () => {
+    // plan personality-memory-boundary D4 — the queue is read-and-consume, so
+    // not calling it is what keeps the notices for the next private turn.
+    const { queue, calls } = makeFakeQueue(new Map([['team-a:engineer', [row()]]]));
+    const injector = createPendingNotifyInjector(queue, 'team-a');
+
+    const result = await injector.inject(baseCtx({ personalityId: 'engineer', isDm: false }));
+
+    expect(result).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
   it('has a stable, team-scoped id and a priority just above team-memory-index (70)', () => {
     const { queue } = makeFakeQueue(new Map());
     const injector = createPendingNotifyInjector(queue, 'team-a');

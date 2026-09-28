@@ -5,8 +5,11 @@ import type {
   StoredMessage,
   ToolContext,
   ToolFilterOpts,
+  TurnAudience,
+  TurnInitiator,
 } from '@ethosagent/types';
 import type { ContextStore } from '../context-store';
+import { memoryFlushForbidden } from './audience';
 import { handleChunk } from './chunk-handler';
 import { effectiveGate, evaluateGate, gateThreshold } from './compaction';
 import { dedupHistory, toLLMMessages } from './history';
@@ -96,6 +99,10 @@ export interface TurnEndCtx {
   /** The run's root session key (`RunOptions.rootSessionKey ?? sessionKey`), as
    *  the batch path resolves it. See {@link TurnEndCtx.contextStore}. */
   rootSessionKey: string;
+  /** `TurnSetup.roomAudience`. Shared → no memory flush (`memoryFlushForbidden`). */
+  roomAudience?: TurnAudience;
+  /** `RunOptions.initiator`, handed to flush-dispatched tools as the batch path does. */
+  initiator?: TurnInitiator;
 }
 
 /** Extra loop-local fields the turn-end stage needs beyond `TurnSetup`. */
@@ -107,6 +114,7 @@ export interface TurnEndExtras {
   maxCompletionTokens?: number;
   contextStore: ContextStore;
   rootSessionKey: string;
+  initiator?: TurnInitiator;
 }
 
 /** Build a {@link TurnEndCtx} from the shared `TurnSetup` plus loop-locals so
@@ -128,6 +136,8 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     toolScope: setup,
     contextStore: extras.contextStore,
     rootSessionKey: extras.rootSessionKey,
+    roomAudience: setup.roomAudience,
+    ...(extras.initiator !== undefined ? { initiator: extras.initiator } : {}),
     ...(extras.maxCompletionTokens !== undefined
       ? { maxCompletionTokens: extras.maxCompletionTokens }
       : {}),
@@ -311,6 +321,15 @@ export async function runMemoryFlush(
   llmMessages: Message[],
   messageCount: number,
 ): Promise<FlushResult> {
+  // plan personality-memory-boundary G1-3 — never on a shared turn, and never
+  // when the turn's surface excluded `memory_write`: this flush calls the tool
+  // directly, not through `executeParallel`, so the exclusion would not
+  // otherwise reach it (`memoryFlushForbidden`, ./audience.ts). Pinned by
+  // `packages/core/src/__tests__/turn-end-consolidation.test.ts`.
+  if (memoryFlushForbidden(ctx.roomAudience, ctx.filterOpts.excludeTools)) {
+    return { flushed: false, deltaChars: 0 };
+  }
+
   const mc = deps.memoryConsolidation ?? {};
 
   // Trivial-delta skip: only flush when enough NEW messages accumulated since
@@ -358,6 +377,8 @@ export async function runMemoryFlush(
     memoryScopeId: ctx.memScopeId,
     ...(ctx.userScopeId ? { userScopeId: ctx.userScopeId } : {}),
     ...(deps.teamId !== undefined ? { teamId: deps.teamId } : {}),
+    ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
+    ...(ctx.initiator !== undefined ? { initiator: ctx.initiator } : {}),
     currentTurn: 0,
     messageCount,
     abortSignal: signal,

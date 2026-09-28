@@ -121,6 +121,21 @@ export interface ToolContext {
    */
   reviewOfJobId?: string;
   /**
+   * The running turn's RESOLVED audience (plan personality-memory-boundary G1):
+   * `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts) over
+   * `RunOptions.roomAudience` and the session's sticky stamp. Set on every
+   * agent-loop turn by `processTools`; absent on hand-built contexts, which
+   * mean private. A tool that starts another turn passes it on so the child is
+   * no less shared than its parent.
+   */
+  roomAudience?: import('./audience').TurnAudience;
+  /**
+   * Who started this turn — `RunOptions.initiator`, verbatim, no fallback.
+   * Absent when the caller did not say. Unused by G1; it is the positive
+   * "a person started this" signal a later filing gate reads.
+   */
+  initiator?: import('./audience').TurnInitiator;
+  /**
    * The running turn's tool narrowing (S12, plan openclaw-2026.9.6-gaps):
    * `narrow` is its effective allowlist (the personality toolset after
    * `toolsetOverride`/`toolsetNarrow`/small-window narrowing), `exclude` its
@@ -425,6 +440,10 @@ export interface ToolExecuteRequest {
   jobId?: string;
   /** Mirrors `ToolContext.reviewOfJobId`; see its doc there. */
   reviewOfJobId?: string;
+  /** Mirrors `ToolContext.roomAudience`; see its doc there. */
+  roomAudience?: import('./audience').TurnAudience;
+  /** Mirrors `ToolContext.initiator`; see its doc there. */
+  initiator?: import('./audience').TurnInitiator;
   /** Mirrors `ToolContext.toolsetNarrowing`; see its doc there. */
   toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   origin?: string;

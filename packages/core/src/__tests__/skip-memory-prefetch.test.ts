@@ -144,6 +144,22 @@ describe('RunOptions.skipMemoryPrefetch', () => {
     expect(captured[0]?.system ?? '').not.toContain(SEARCH_CONTENT);
   });
 
+  it('a shared-audience turn skips all three reads the same way (plan personality-memory-boundary G1-1)', async () => {
+    // `roomAudience: 'shared'` reaches the same gate as the flag, with a null
+    // prefetch (search fallback armed) and a userId (user read armed).
+    const memory = spyMemory({ prefetchReturns: null });
+    const captured: CompletionOptions[] = [];
+
+    await collect(
+      makeLoop(memory, captured).run('hello', { userId: 'u1', roomAudience: 'shared' }),
+    );
+
+    expect(memory.calls).toEqual({ prefetch: 0, read: 0, search: 0 });
+    const system = captured[0]?.system ?? '';
+    expect(system).not.toContain(SEARCH_CONTENT);
+    expect(system).not.toContain(USER_CONTENT);
+  });
+
   it('without the flag, behaviour is unchanged — prefetch and the user read both run', async () => {
     const memory = spyMemory({
       prefetchReturns: { entries: [{ key: 'MEMORY.md', content: MEMORY_CONTENT }] },
