@@ -77,6 +77,15 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toMatch(/Memory scope.*personality:engineer/i);
   });
 
+  it('names the shared-room memory enforcer under ## Memory (G-MEM)', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    const memory = sheet.slice(sheet.indexOf('## Memory'));
+    expect(memory).toContain(
+      '- Shared rooms (group chats, channels): private memory is not read or written — ' +
+        'enforced by `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts).',
+    );
+  });
+
   it('lists every tool in the toolset', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('read_file');

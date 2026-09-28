@@ -12,6 +12,7 @@ I do careful work and say what I did.
 
 ## Memory
 - Memory scope: personality:mcp-export-resolved
+- Shared rooms (group chats, channels): private memory is not read or written — enforced by `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts).
 
 ## Toolset
 2 tools:

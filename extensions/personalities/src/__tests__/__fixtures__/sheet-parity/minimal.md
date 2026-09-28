@@ -10,6 +10,7 @@
 
 ## Memory
 - Memory scope: personality:minimal
+- Shared rooms (group chats, channels): private memory is not read or written — enforced by `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts).
 
 ## Toolset
 - (none)

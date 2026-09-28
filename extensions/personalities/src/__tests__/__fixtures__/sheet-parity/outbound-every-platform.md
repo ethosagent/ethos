@@ -12,6 +12,7 @@ I do careful work and say what I did.
 
 ## Memory
 - Memory scope: personality:outbound-every-platform
+- Shared rooms (group chats, channels): private memory is not read or written — enforced by `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts).
 
 ## Toolset
 1 tool:

@@ -1032,6 +1032,12 @@ export function renderCharacterSheet(
 
   lines.push('## Memory');
   lines.push(`- Memory scope: personality:${config.id}`);
+  // Static: no personality field narrows or relaxes the shared-room rule, so
+  // the line only names where it is enforced (G-MEM, plan step 7).
+  lines.push(
+    '- Shared rooms (group chats, channels): private memory is not read or written — ' +
+      'enforced by `resolveTurnAudience` (packages/core/src/agent-loop/audience.ts).',
+  );
   lines.push('');
 
   // P-D11 — every permission section below reads the same extraction the
