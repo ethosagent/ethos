@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-28T08:41:11.160Z",
+  "updatedAt": "2026-09-28T10:47:24.859Z",
   "providers": {
     "anthropic": {
       "models": [
@@ -13,9 +13,10 @@
           }
         },
         {
-          "id": "claude-opus-5",
-          "label": "frontier, complex work",
+          "id": "claude-opus-5-5",
+          "label": "recommended for most work",
           "contextWindow": 1000000,
+          "default": true,
           "profile": {
             "maxOutputTokens": 128000
           }
@@ -24,7 +25,6 @@
           "id": "claude-sonnet-5",
           "label": "fast, balanced",
           "contextWindow": 1000000,
-          "default": true,
           "profile": {
             "maxOutputTokens": 128000
           }
@@ -35,6 +35,14 @@
           "contextWindow": 200000,
           "profile": {
             "maxOutputTokens": 64000
+          }
+        },
+        {
+          "id": "claude-opus-5",
+          "label": "prior gen",
+          "contextWindow": 1000000,
+          "profile": {
+            "maxOutputTokens": 128000
           }
         },
         {
@@ -78,14 +86,6 @@
           }
         },
         {
-          "id": "claude-opus-5-5",
-          "label": "next Opus, launching",
-          "contextWindow": 1000000,
-          "profile": {
-            "maxOutputTokens": 128000
-          }
-        },
-        {
           "id": "claude-mythos-5-1",
           "label": "Project Glasswing access only",
           "contextWindow": 1000000,
@@ -112,12 +112,18 @@
         {
           "id": "claude-sonnet-4-5-20250929",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 200000,
+          "profile": {
+            "maxOutputTokens": 64000
+          }
         },
         {
           "id": "claude-opus-4-5-20251101",
           "label": "prior gen",
-          "contextWindow": 200000
+          "contextWindow": 200000,
+          "profile": {
+            "maxOutputTokens": 64000
+          }
         }
       ]
     },
@@ -129,19 +135,29 @@
           "contextWindow": 1050000
         },
         {
-          "id": "gpt-5.6-sol",
-          "label": "flagship, complex work",
-          "contextWindow": 1050000
-        },
-        {
-          "id": "gpt-5.6-terra",
-          "label": "everyday, balanced",
+          "id": "gpt-6-sol",
+          "label": "flagship, everyday",
           "contextWindow": 1050000,
           "default": true
         },
         {
-          "id": "gpt-5.6-luna",
+          "id": "gpt-6-luna",
           "label": "fast, cheap",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "label": "prior gen, complex work",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "prior gen, balanced",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "prior gen, fast",
           "contextWindow": 1050000
         },
         {
@@ -171,9 +187,19 @@
           "default": true
         },
         {
+          "id": "anthropic/claude-opus-5.5",
+          "label": "Claude Opus 5.5 (OR)",
+          "contextWindow": 1000000
+        },
+        {
           "id": "anthropic/claude-opus-5",
           "label": "Claude Opus (OR)",
           "contextWindow": 1000000
+        },
+        {
+          "id": "openai/gpt-6-sol",
+          "label": "GPT-6 Sol (OR)",
+          "contextWindow": 1050000
         },
         {
           "id": "openai/gpt-5.6-terra",
@@ -186,34 +212,45 @@
           "contextWindow": 1050000
         },
         {
+          "id": "google/gemini-3.8-flash",
+          "label": "Gemini 3.8 Flash (OR)",
+          "contextWindow": 1048576
+        },
+        {
           "id": "google/gemini-2.5-pro",
-          "label": "Gemini 2.5 Pro (OR)",
-          "contextWindow": 1000000
+          "label": "Gemini 2.5 Pro, deprecated — retires 2026-10-20 (OR)",
+          "contextWindow": 1048576,
+          "retiresOn": "2026-10-20"
+        },
+        {
+          "id": "deepseek/deepseek-v4.1-flash",
+          "label": "DeepSeek V4.1 Flash, cheapest (OR)",
+          "contextWindow": 1048576
         },
         {
           "id": "deepseek/deepseek-v4-flash-0731",
-          "label": "DeepSeek V4 Flash, cheapest (OR)",
-          "contextWindow": 1310000
+          "label": "DeepSeek V4 Flash (OR)",
+          "contextWindow": 1310720
         },
         {
           "id": "deepseek/deepseek-v4-pro-0813",
           "label": "DeepSeek V4 Pro (OR)",
-          "contextWindow": 1310000
+          "contextWindow": 1048576
         },
         {
           "id": "qwen/qwen3.8-27b",
           "label": "Qwen 3.8 27B (OR)",
-          "contextWindow": 262144
+          "contextWindow": 1000000
         },
         {
-          "id": "qwen/qwen3.8-max",
+          "id": "qwen/qwen3.8-max-0902",
           "label": "Qwen 3.8 Max (OR)",
-          "contextWindow": 262144
+          "contextWindow": 1000000
         },
         {
           "id": "meta-llama/llama-4-maverick",
           "label": "Llama 4 Maverick (OR)",
-          "contextWindow": 1000000
+          "contextWindow": 1048576
         },
         {
           "id": "openai/gpt-oss-120b",
@@ -222,8 +259,8 @@
         },
         {
           "id": "moonshotai/kimi-k2.6",
-          "label": "Kimi K2 (OR)",
-          "contextWindow": 131072
+          "label": "Kimi K2.6 (OR)",
+          "contextWindow": 262144
         }
       ]
     },
@@ -235,19 +272,29 @@
           "contextWindow": 1050000
         },
         {
-          "id": "gpt-5.6-sol",
-          "label": "flagship, complex work",
-          "contextWindow": 1050000
-        },
-        {
-          "id": "gpt-5.6-terra",
-          "label": "everyday, balanced",
+          "id": "gpt-6-sol",
+          "label": "flagship, everyday",
           "contextWindow": 1050000,
           "default": true
         },
         {
-          "id": "gpt-5.6-luna",
+          "id": "gpt-6-luna",
           "label": "fast, cheap",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "label": "prior gen, complex work",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "prior gen, balanced",
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "prior gen, fast",
           "contextWindow": 1050000
         },
         {
@@ -271,18 +318,38 @@
           "contextWindow": 400000
         },
         {
+          "id": "claude-opus-5-5",
+          "label": "Claude Opus 5.5 on Azure",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-sonnet-5",
+          "label": "Claude Sonnet 5 on Azure",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "label": "Claude Haiku 4.5 on Azure",
+          "contextWindow": 200000
+        },
+        {
           "id": "claude-opus-4-6",
-          "label": "Claude Opus on Azure, prior gen",
+          "label": "Claude Opus 4.6, hosted on Anthropic, prior gen",
           "contextWindow": 1000000
         },
         {
           "id": "claude-sonnet-4-6",
-          "label": "Claude Sonnet on Azure, prior gen",
+          "label": "Claude Sonnet 4.6, hosted on Anthropic, prior gen",
           "contextWindow": 1000000
         },
         {
           "id": "DeepSeek-V4-Pro",
           "label": "reasoning MoE",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "DeepSeek-V4-Flash",
+          "label": "fast reasoning MoE",
           "contextWindow": 1000000
         }
       ]

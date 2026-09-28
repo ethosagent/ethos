@@ -21,6 +21,9 @@ function catalogToEntries(providerId: string): ModelEntry[] {
     // The per-model profile (e.g. Anthropic's documented `maxOutputTokens`)
     // travels with the row, the same way `bundledToManifest` carries it.
     if (e.profile) entry.profile = e.profile;
+    // A deprecated row's retirement date travels too, so a CLI reading the
+    // published JSON hides it on the same day the bundled catalog does.
+    if (e.retiresOn) entry.retiresOn = e.retiresOn;
     return entry;
   });
 }
@@ -41,6 +44,7 @@ async function buildOpenAICompat(): Promise<ModelEntry[]> {
         label: `${e.label} (OR)`,
         contextWindow: e.contextWindow,
         ...(e.default ? { default: true } : {}),
+        ...(e.retiresOn ? { retiresOn: e.retiresOn } : {}),
       }));
     }
   } else {
@@ -49,6 +53,7 @@ async function buildOpenAICompat(): Promise<ModelEntry[]> {
       label: `${e.label} (OR)`,
       contextWindow: e.contextWindow,
       ...(e.default ? { default: true } : {}),
+      ...(e.retiresOn ? { retiresOn: e.retiresOn } : {}),
     }));
   }
 

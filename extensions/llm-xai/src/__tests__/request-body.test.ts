@@ -167,7 +167,7 @@ describe('xaiFactory', () => {
     });
     expect(seen).toEqual([XAI_SECRET_REF]);
     expect(XAI_SECRET_REF).toBe('providers/xai/apiKey');
-    expect(provider.model).toBe('grok-4.6');
+    expect(provider.model).toBe('grok-4.7');
   });
 
   it('a config baseUrl cannot point the provider at another host', async () => {

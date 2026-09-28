@@ -220,7 +220,7 @@ function CatalogModelStep() {
         <Box flexDirection="row" gap={1} marginTop={1}>
           <Text color={DESIGN.textPrimary}>{`  ${GLYPHS.prompt} `}</Text>
           <Text color={manual ? DESIGN.textPrimary : DESIGN.textTertiary}>
-            {manual || 'e.g. us.anthropic.claude-sonnet-4-20250514-v1:0'}
+            {manual || 'e.g. us.anthropic.claude-sonnet-4-6'}
           </Text>
         </Box>
         <Text color={DESIGN.textTertiary}>{'  Enter confirm   Esc back'}</Text>

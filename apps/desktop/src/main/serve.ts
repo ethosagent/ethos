@@ -20,6 +20,7 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
+import { getDefaultModel } from '@ethosagent/wiring/model-catalog';
 import { serve as honoServe } from '@hono/node-server';
 import { resolveCallCaptureNativeDir, startCallCaptureDesktop } from './call-capture';
 import { getKeychainValue } from './keychain';
@@ -209,7 +210,8 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   const dataDir = getDataDir();
 
   const provider = (store.get('provider') as string) ?? 'anthropic';
-  const model = (store.get('model') as string) ?? 'claude-sonnet-4-20250514';
+  const model =
+    (store.get('model') as string) ?? getDefaultModel('anthropic')?.modelId ?? 'claude-opus-5-5';
   const baseUrl = store.get('baseUrl') as string | undefined;
 
   // Prefer keychain; fall back to secrets file (written by the onboarding handler)

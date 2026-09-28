@@ -125,7 +125,7 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
     const personality = answers.personality ?? 'researcher';
     const config: EthosConfig = {
       provider,
-      model: answers.model ?? getDefaultModel(provider)?.modelId ?? 'claude-sonnet-5',
+      model: answers.model ?? getDefaultModel(provider)?.modelId ?? 'claude-opus-5-5',
       apiKey: apiKeyRef,
       personality,
       memory: answers.memory,
@@ -354,7 +354,7 @@ async function runReadlineFallback({
       }
     }
   } else {
-    const defaultModel = getDefaultModel(provider)?.modelId ?? 'claude-sonnet-5';
+    const defaultModel = getDefaultModel(provider)?.modelId ?? 'claude-opus-5-5';
     const modelPrompt =
       provider === 'azure'
         ? `Azure deployment name (${defaultModel}): `

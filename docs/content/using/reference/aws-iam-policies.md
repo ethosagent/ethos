@@ -4,7 +4,7 @@ description: "Copy-paste IAM policy templates for Ethos on AWS — Secrets Manag
 kind: reference
 audience: user
 slug: aws-iam-policies
-updated: 2026-09-03
+updated: 2026-09-28
 ---
 
 ## Synopsis {#synopsis}
@@ -94,7 +94,7 @@ When `aws.secrets.enabled: true`, the instance role needs write permissions in a
 
 Attach this policy when `provider: bedrock` is set. Ethos calls Bedrock's `ConverseStream` operation and nothing else, so one action covers it.
 
-For a single-region foundation model id (`anthropic.claude-3-5-haiku-20241022-v1:0`):
+For a single-region foundation model id (`anthropic.claude-haiku-4-5-20251001-v1:0`):
 
 ```json
 {
@@ -118,10 +118,10 @@ A `us.`-prefixed id is a cross-region inference profile, which routes to a found
     "Effect": "Allow",
     "Action": "bedrock:InvokeModelWithResponseStream",
     "Resource": [
-      "arn:aws:bedrock:<region>:<account>:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
-      "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0",
-      "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0",
-      "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0"
+      "arn:aws:bedrock:<region>:<account>:inference-profile/us.anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6"
     ]
   }]
 }
@@ -131,7 +131,7 @@ Confirm the exact routing set for your profile before copying the region list:
 
 ```bash
 aws bedrock get-inference-profile \
-  --inference-profile-identifier us.anthropic.claude-sonnet-4-20250514-v1:0 \
+  --inference-profile-identifier us.anthropic.claude-sonnet-4-6 \
   --region <region> --query 'models[].modelArn' --output text
 ```
 

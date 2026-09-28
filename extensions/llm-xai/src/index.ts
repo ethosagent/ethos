@@ -23,7 +23,7 @@ import type {
 //   XaiProvider  (this file)
 //      │  · resolves providers/xai/apiKey — the ref tools-x-search already uses
 //      │  · pins baseUrl https://api.x.ai/v1, not overridable from config
-//      │  · owns its capabilities object and its default model (grok-4.6)
+//      │  · owns its capabilities object and its default model (grok-4.7)
 //      │  · builds ResponsesApiBody:
 //      │        model, input: toResponsesInput(messages),
 //      │        stream: true, store: false,
@@ -58,7 +58,7 @@ export const XAI_RESPONSES_ENDPOINT = `${XAI_BASE_URL}/responses`;
 /** Seed only — the operator overrides it with `model:` in config (D2). xAI's
  *  roster moves (the coding model is `grok-build-0.1`; `grok-code` is stale), so
  *  this package validates nothing locally and lets the vendor be the authority. */
-export const XAI_DEFAULT_MODEL = 'grok-4.6';
+export const XAI_DEFAULT_MODEL = 'grok-4.7';
 
 /** The EXISTING ref, already used by the `x_search` tool — one credential for
  *  the tool and the provider, never a second one. `XAI_API_KEY` resolves to it
@@ -74,7 +74,7 @@ export interface XaiProviderConfig {
   model: string;
   /** xAI API key (sent as `Authorization: Bearer`). */
   apiKey: string;
-  /** Context window. Defaults to grok-4.6's 500K; the roster spans 256K
+  /** Context window. Defaults to grok-4.7's 500K; the roster spans 256K
    *  (`grok-build-0.1`) to 1M (`grok-4.3`), so an operator on another model
    *  sets this. */
   maxContextTokens?: number;

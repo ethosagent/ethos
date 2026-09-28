@@ -74,10 +74,10 @@ describe('resolveProviderFromEnv — W2.4 provider matrix', () => {
   });
 
   it('defaults a model per provider and passes OpenRouter model through', () => {
-    expect(resolveProviderFromEnv({ ANTHROPIC_API_KEY: 'a' })?.model).toBe('claude-sonnet-5');
-    expect(resolveProviderFromEnv({ OPENAI_API_KEY: 'o' })?.model).toBe('gpt-5.6-terra');
+    expect(resolveProviderFromEnv({ ANTHROPIC_API_KEY: 'a' })?.model).toBe('claude-opus-5-5');
+    expect(resolveProviderFromEnv({ OPENAI_API_KEY: 'o' })?.model).toBe('gpt-6-sol');
     expect(resolveProviderFromEnv({ GOOGLE_API_KEY: 'g' })?.model).toBe('gemini-3.8-flash');
-    expect(resolveProviderFromEnv({ XAI_API_KEY: 'x' })?.model).toBe('grok-4.6');
+    expect(resolveProviderFromEnv({ XAI_API_KEY: 'x' })?.model).toBe('grok-4.7');
     expect(
       resolveProviderFromEnv({ OPENROUTER_API_KEY: 'r', OPENROUTER_MODEL: 'x/y' })?.model,
     ).toBe('x/y');

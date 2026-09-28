@@ -7055,7 +7055,10 @@ export function parseConfigYaml(src: string): EthosConfig {
   const config: EthosConfig = {
     schemaVersion: Number.isFinite(parsedSchemaVersion) ? parsedSchemaVersion : undefined,
     provider: kv.provider ?? 'anthropic',
-    model: kv.model ?? 'claude-sonnet-5',
+    // The catalog's Anthropic default (`getDefaultModel('anthropic')` in
+    // packages/wiring/src/model-catalog.ts); this package cannot import it, so
+    // packages/wiring/src/__tests__/config-default-model.test.ts pins the two equal.
+    model: kv.model ?? 'claude-opus-5-5',
     apiKey: kv.apiKey ?? '',
     personality: kv.personality ?? DEFAULT_PERSONALITY_ID,
     memory:

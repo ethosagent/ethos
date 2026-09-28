@@ -10,7 +10,7 @@ import { ChainedProvider } from '@ethosagent/core';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLLM, type WiringConfig } from '../index';
-import { lookupContextWindow, lookupProfile } from '../model-catalog';
+import { getModelsForProvider, lookupContextWindow, lookupProfile } from '../model-catalog';
 
 const DOCUMENTED: Array<[model: string, contextWindow: number, maxOutput: number]> = [
   ['claude-fable-5-1', 1_000_000, 128_000],
@@ -26,6 +26,9 @@ const DOCUMENTED: Array<[model: string, contextWindow: number, maxOutput: number
   ['claude-sonnet-4-6', 1_000_000, 128_000],
   ['claude-haiku-4-5', 200_000, 64_000],
   ['claude-haiku-4-5-20251001', 200_000, 64_000],
+  // Legacy 200K rows: 64K max output per each model's own page (2026-09-28).
+  ['claude-sonnet-4-5-20250929', 200_000, 64_000],
+  ['claude-opus-4-5-20251101', 200_000, 64_000],
 ];
 
 function sse(events: Array<Record<string, unknown>>): string {
@@ -96,6 +99,12 @@ describe('model catalog — documented Anthropic limits', () => {
   it.each(DOCUMENTED)('%s: context %d, max output %d', (model, contextWindow, maxOutput) => {
     expect(lookupContextWindow('anthropic', model)).toBe(contextWindow);
     expect(lookupProfile('anthropic', model)?.maxOutputTokens).toBe(maxOutput);
+  });
+
+  it('lists every Anthropic catalog row above, so none falls back to 8096', () => {
+    const documented = new Set(DOCUMENTED.map(([model]) => model));
+    const rows = getModelsForProvider('anthropic', new Date('2026-09-28T00:00:00Z'));
+    for (const row of rows) expect(documented.has(row.modelId), row.modelId).toBe(true);
   });
 
   it('caps only anthropic rows — OpenRouter, Azure and Bedrock ids carry no Anthropic cap', () => {

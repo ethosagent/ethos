@@ -92,7 +92,7 @@ Without it, Azure refuses the request because it was sent `max_tokens`.
 | `provider` | Default base URL | Where to get a key | Notes |
 |---|---|---|---|
 | `anthropic` | n/a (SDK default) | [console.anthropic.com](https://console.anthropic.com) | Best fit for `claude-*` models; supports key rotation via `ethos keys`. |
-| `openai` | `https://api.openai.com/v1` | [platform.openai.com](https://platform.openai.com/api-keys) | Use for `gpt-5.6-terra`, `gpt-6-astra`, etc. |
+| `openai` | `https://api.openai.com/v1` | [platform.openai.com](https://platform.openai.com/api-keys) | Use for `gpt-6-sol`, `gpt-6-astra`, `gpt-6-luna`, etc. |
 | `codex` | n/a — device auth | [openai.com](https://openai.com) (ChatGPT account) | Experimental; authenticates via device code, no API key. See [Use a ChatGPT subscription for coding work](use-chatgpt-subscription-via-codex). |
 | `openrouter` | `https://openrouter.ai/api/v1` | [openrouter.ai/keys](https://openrouter.ai/keys) | One key for Claude, GPT, Gemini, Llama, and 200+ more. |
 | `azure` | `https://<your-resource>.openai.azure.com` | [portal.azure.com](https://portal.azure.com) | `model:` is the deployment name; `apiVersion:` required (default `2024-10-21`). |
@@ -107,7 +107,7 @@ Provider strings are validated against [`packages/wiring/src/provider-catalog.ts
 
 ### Output cap for Claude models
 
-With `provider: anthropic`, each request's `max_tokens` is the model's documented maximum output, taken from the bundled [model catalog](../../building/reference/model-catalog.md): 128,000 for Claude Fable 5.1, Fable 5, Mythos 5.1, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7 and 4.6, Sonnet 5 and Sonnet 4.6; 64,000 for Claude Haiku 4.5. A Claude model the catalog does not list gets 8,096. The request always streams, so a large cap does not hit the SDK's request timeout.
+With `provider: anthropic`, each request's `max_tokens` is the model's documented maximum output, taken from the bundled [model catalog](../../building/reference/model-catalog.md): 128,000 for Claude Fable 5.1, Fable 5, Mythos 5.1, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7 and 4.6, Sonnet 5 and Sonnet 4.6; 64,000 for Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5. A Claude model the catalog does not list gets 8,096. The request always streams, so a large cap does not hit the SDK's request timeout.
 
 To send a different cap for one model, set it in `~/.ethos/config.yaml`. The config value beats the catalog:
 

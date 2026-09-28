@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: quickstart
 time: "5 min"
-updated: 2026-09-26
+updated: 2026-09-28
 ---
 
 Install the CLI, paste one API key, send one message. No config files to hand-edit before the first reply.
@@ -78,7 +78,7 @@ ethos setup
 The wizard walks you through four prompts. Pick defaults except where you have an opinion.
 
 - **Provider** — `anthropic` (default), `openrouter`, `ollama`, or `gemini`. OpenRouter aggregates many models behind one API key; Ollama runs models locally with no API key; Gemini is Google's API.
-- **Model** — `claude-sonnet-5` is the default for Anthropic. Other providers default to their headline model. You can change this later by editing `~/.ethos/config.yaml` or running `ethos setup model`.
+- **Model** — `claude-opus-5-5` is the default for Anthropic. Other providers default to their headline model. You can change this later by editing `~/.ethos/config.yaml` or running `ethos setup model`.
 - **API key** — paste it. The wizard stores the value in the secrets vault at `~/.ethos/secrets/providers/anthropic/apiKey` (file mode `0600`, vault directory `0700`); `~/.ethos/config.yaml` carries only the reference `${secrets:providers/anthropic/apiKey}` and is itself written with mode `0600`.
 - **Personality** — accept `researcher` for now. The next tutorial covers switching to the other built-ins (`engineer`, `reviewer`) and writing your own.
 

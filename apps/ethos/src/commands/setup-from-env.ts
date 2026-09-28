@@ -53,7 +53,7 @@ interface ResolvedProviderEnv {
 
 /** Default chat model per provider — the catalog default; no env var carries it for most providers. */
 function defaultModel(provider: string): string {
-  return getDefaultModel(provider)?.modelId ?? 'claude-sonnet-5';
+  return getDefaultModel(provider)?.modelId ?? 'claude-opus-5-5';
 }
 
 /** Provider precedence matches the compose init script it replaces. */

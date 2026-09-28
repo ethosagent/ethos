@@ -49,9 +49,9 @@ provider: anthropic
 
 ## model {#model}
 
-Type: string · Default: `claude-sonnet-5` · Required (effectively)
+Type: string · Default: `claude-opus-5-5` · Required (effectively)
 
-Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser falls back to `claude-sonnet-5` when the line is absent; `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`), which for Anthropic is also `claude-sonnet-5`.
+Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser (`parseConfigYaml` in `packages/config/src/index.ts`) falls back to `claude-opus-5-5`, the catalog's Anthropic default, when the line is absent; the two are pinned equal by `packages/wiring/src/__tests__/config-default-model.test.ts`. `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`).
 
 ```yaml
 model: claude-sonnet-5

@@ -62,6 +62,10 @@ export interface ModelEntry {
   /** Optional per-model profile carried through the remote manifest. Absent on
    *  old manifests — they stay valid. */
   profile?: ModelProfile;
+  /** ISO date (`YYYY-MM-DD`, UTC) the vendor retires this model. Consumers
+   *  hide the row from listings from that date on; lookups by id still answer.
+   *  Absent on rows with no announced retirement and on old manifests. */
+  retiresOn?: string;
 }
 
 export interface ProviderCatalog {

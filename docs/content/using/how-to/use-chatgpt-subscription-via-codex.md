@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-chatgpt-subscription-via-codex
 time: "5 min"
-updated: 2026-09-05
+updated: 2026-09-28
 ---
 
 ## Task
@@ -79,17 +79,17 @@ Codex output streams back through the agent loop's `tool_progress` channel. You'
 
 #### Pick a model
 
-Codex defaults to `gpt-5.6-terra`. To pin a different one, name it in the prompt and the adapter passes `--model` through:
+Codex picks its own default model; its docs recommend `gpt-6-sol` for everyday coding. To pin a different one, name it in the prompt and the adapter passes `--model` through:
 
 | Model | Use for |
 |---|---|
-| `gpt-5.6-terra` | Default — everyday, balanced |
-| `gpt-5.6-luna` | Fast, cheap — well-scoped edits |
-| `gpt-5.6-sol` | Flagship — complex, multi-file work |
+| `gpt-6-sol` | Everyday and complex coding, agentic work |
+| `gpt-6-luna` | Fast, cheap — focused, repeatable tasks |
 | `gpt-6-astra` | Top reasoning |
-| `gpt-5.5` | Prior generation |
+| `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.6-luna` | Prior generation, still available during the GPT-6 rollout |
+| `gpt-5.5` | Deprecated — retires from Codex on 2026-10-14 |
 
-GPT-5.4 and GPT-5.4 mini retired from Codex sign-in on 2026-08-31 — a delegation that names them fails with an unknown-model error; see [developers.openai.com/codex/models](https://developers.openai.com/codex/models).
+GPT-5.4 and GPT-5.4 mini retired from Codex sign-in on 2026-08-31, and GPT-5.5 follows on 2026-10-14 (it stays on the OpenAI API). A delegation that names a retired model fails with an unknown-model error; see [learn.chatgpt.com/docs/models](https://learn.chatgpt.com/docs/models).
 
 ### 5. Confirm the bill landed where you wanted
 

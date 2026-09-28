@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-zero-mode
 time: "5 min"
-updated: 2026-06-09
+updated: 2026-09-28
 ---
 
 ## Task
@@ -157,13 +157,13 @@ Without `--session`, each `-z` invocation starts a fresh context. Use `--session
 Pass `--model` to select a different [LLM provider](../../getting-started/glossary.md#llm-provider) model for the turn.
 
 ```bash
-ethos -z "explain this error" --model claude-sonnet-4-20250514
+ethos -z "explain this error" --model claude-sonnet-5
 ```
 
 Combine flags freely:
 
 ```bash
-cat logs/crash.txt | ethos -z "diagnose" --personality devops --model claude-sonnet-4-20250514 --no-stream
+cat logs/crash.txt | ethos -z "diagnose" --personality devops --model claude-sonnet-5 --no-stream
 ```
 
 ## Flag reference

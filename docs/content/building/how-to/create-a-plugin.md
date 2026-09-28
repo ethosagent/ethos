@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: create-a-plugin
 time: "30 min"
-updated: 2026-06-09
+updated: 2026-09-28
 ---
 
 ## Task
@@ -183,7 +183,7 @@ Write `SOUL.md` to disk first, then register the config.
 ```ts
 api.registerPersonality({
   id: 'finance-analyst', name: 'Finance Analyst',
-  description: 'Financial analysis personality.', model: 'claude-sonnet-4-20250514',
+  description: 'Financial analysis personality.', model: 'claude-sonnet-5',
   toolset: ['stock_lookup', 'authed_search', 'memory_read', 'memory_write'],
   soulPath: '~/.ethos/personalities/finance-analyst/SOUL.md',
 });

@@ -23,10 +23,9 @@ export const BUILTIN_CONFIG_PROVIDERS: ConfigOnlyProviderManifest[] = [
       tokenCounting: 'estimated',
       contractVersion: 1,
     },
-    models: [
-      'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-    ],
+    // Both Llama 4 models this listed left Together serverless in 2026; these
+    // two are on docs.together.ai/docs/serverless-models (2026-09-28).
+    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'openai/gpt-oss-120b'],
   },
   {
     id: 'fireworks',

@@ -29,5 +29,32 @@ describe('openrouter', () => {
         contextWindow: 200000,
       });
     });
+
+    it('maps expiration_date to retiresOn and says so in the label', () => {
+      // OpenRouter's /api/v1/models carries `expiration_date` ("2026-10-20")
+      // on a model it will stop serving; a live-built catalog must keep the
+      // retirement the static row carries (google/gemini-2.5-pro).
+      const result = transformOpenRouterEntry({
+        id: 'google/gemini-2.5-pro',
+        name: 'Google: Gemini 2.5 Pro',
+        context_length: 1048576,
+        expiration_date: '2026-10-20',
+      });
+      expect(result.retiresOn).toBe('2026-10-20');
+      expect(result.label).toContain('deprecated — retires 2026-10-20');
+    });
+
+    it('takes the date part of a timestamp and ignores a null or malformed date', () => {
+      const base = { id: 'x/y', name: 'Y', context_length: 1000 };
+      expect(
+        transformOpenRouterEntry({ ...base, expiration_date: '2026-10-09T00:00:00Z' }).retiresOn,
+      ).toBe('2026-10-09');
+      expect(transformOpenRouterEntry({ ...base, expiration_date: null })).not.toHaveProperty(
+        'retiresOn',
+      );
+      expect(transformOpenRouterEntry({ ...base, expiration_date: 'soon' })).not.toHaveProperty(
+        'retiresOn',
+      );
+    });
   });
 });

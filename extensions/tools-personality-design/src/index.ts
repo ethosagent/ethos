@@ -23,6 +23,9 @@ export interface ModelCatalogEntry {
   label: string;
   contextWindow: number;
   default?: boolean;
+  /** ISO date (`YYYY-MM-DD`) the vendor retires the model; the row is not
+   *  listed from that day on (same rule as `isModelRetired` in wiring). */
+  retiresOn?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,12 +126,14 @@ function listAvailableModelsTool(modelCatalog: ModelCatalogEntry[]): Tool {
     capabilities: {},
     schema: { type: 'object', properties: {} },
     async execute(_args: unknown, _ctx: ToolContext): Promise<ToolResult> {
-      if (modelCatalog.length === 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      const listed = modelCatalog.filter((m) => m.retiresOn === undefined || today < m.retiresOn);
+      if (listed.length === 0) {
         return { ok: true, value: 'No models in the catalog.' };
       }
 
-      const lines: string[] = [`# Available Models (${modelCatalog.length})\n`];
-      for (const m of modelCatalog) {
+      const lines: string[] = [`# Available Models (${listed.length})\n`];
+      for (const m of listed) {
         const defaultTag = m.default ? ' **(default)**' : '';
         lines.push(`- **${m.label}**${defaultTag}`);
         lines.push(`  - Provider: ${m.providerId}`);
