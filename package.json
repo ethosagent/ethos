@@ -49,7 +49,7 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.0",
     "vite": "^6.0.0",
-    "vitest": "^5.0.1",
+    "vitest": "^5.0.2",
     "yaml": "^2.9.0"
   },
   "dependencies": {
