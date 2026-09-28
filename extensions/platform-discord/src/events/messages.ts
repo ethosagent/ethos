@@ -5,7 +5,7 @@ import type {
   InboundMessage,
   PriorContextEntry,
 } from '@ethosagent/types';
-import type { Client, Message } from 'discord.js';
+import type { ChannelType, Client, Message } from 'discord.js';
 import type { ChannelMode } from '../config';
 import type { TriageContext } from '../routing/triage';
 import { triageMessage } from '../routing/triage';
@@ -174,6 +174,10 @@ export function registerEditHandler(ctx: MessageContext): void {
   });
 }
 
+/** `ChannelType.DM` — a one-to-one DM. The package imports discord.js types
+ *  only, so the enum member is spelled as its value. */
+const DM_CHANNEL_TYPE: ChannelType.DM = 1;
+
 /**
  * Shared logic: triage a Discord message into an InboundMessage envelope.
  * Returns `undefined` when the message should be dropped.
@@ -184,6 +188,8 @@ async function buildMessageEnvelope(
   isEdit: boolean,
 ): Promise<InboundMessage | undefined> {
   const isDm = message.channel.isDMBased();
+  // A group DM is DM-based (so routed as a DM) but read by several people.
+  const isGroupDm = isDm && message.channel.type !== DM_CHANNEL_TYPE;
   const isMention = ctx.client.user
     ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
     : false;
@@ -209,6 +215,7 @@ async function buildMessageEnvelope(
       text,
       messageId: message.id,
       isDm,
+      isGroupDm,
       isThread,
       threadId: isThread ? message.channelId : undefined,
       parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,

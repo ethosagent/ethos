@@ -47,7 +47,13 @@ export interface SlashContext {
   /** Storage is exposed for sub-commands that persist their own state. */
   storage?: Storage;
   /** Hook for `/ethos ask` — the adapter wires this to gateway.handleMessage. */
-  submitAgentTurn?: (input: { channel: string; user: string; text: string }) => Promise<void>;
+  /** `isDm` is `isSlackDm(channel_id, channel_name)` — the slash payload has no `channel_type`. */
+  submitAgentTurn?: (input: {
+    channel: string;
+    user: string;
+    text: string;
+    isDm: boolean;
+  }) => Promise<void>;
   /**
    * Allowlist of Slack user IDs permitted to run slash commands. Only these
    * users may invoke `/ethos`; everyone else receives an ephemeral "not

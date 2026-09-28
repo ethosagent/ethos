@@ -296,6 +296,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   roomAudience?: import('@ethosagent/types').TurnAudience;
   /** Who started this turn → `ToolContext.initiator`, verbatim. Children never inherit it. */
   initiator?: import('@ethosagent/types').TurnInitiator;
+  /** plan personality-memory-boundary D8 — a non-owner DM: runs shared for this turn (not persisted) but keeps the sender's own `user:<id>` read (`withPersonalityMemoryWithheld`, ./agent-loop/audience.ts). */
+  skipPersonalityMemory?: boolean;
   /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
   credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */

@@ -88,6 +88,29 @@ export function resolveTurnAudience(
 }
 
 /**
+ * D8 — a DM from someone other than the platform's owner. `MEMORY.md` is the
+ * owner's, so the turn runs as `'shared'` for everything this module governs
+ * (no personality-scope read, `SHARED_AUDIENCE_EXCLUDED_TOOLS` excluded, no
+ * flush, the file deny, children and jobs shared), EXCEPT that the sender's own
+ * `user:<id>` profile is still read (`userMemoryOnly`). Driven by
+ * `RunOptions.skipPersonalityMemory`, a per-turn narrowing that is NOT
+ * persisted: the session's sticky stamp is computed from the caller's audience
+ * before this, so the stranger's session is never stamped by it. Set by the
+ * gateway (`Gateway.runTurn`); pinned by the D8 cases in
+ * `packages/core/src/__tests__/shared-audience.test.ts` and
+ * `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`.
+ */
+export function withPersonalityMemoryWithheld(
+  audience: TurnAudience,
+  skipPersonalityMemory: boolean | undefined,
+): { roomAudience: TurnAudience; userMemoryOnly: boolean } {
+  if (audience === 'shared' || skipPersonalityMemory !== true) {
+    return { roomAudience: audience, userMemoryOnly: false };
+  }
+  return { roomAudience: 'shared', userMemoryOnly: true };
+}
+
+/**
  * The metadata to write so a shared turn's session stays shared, or `undefined`
  * when nothing needs writing (a private turn, or an already stamped session).
  * MERGES into the existing metadata because `SessionStore.updateSession`

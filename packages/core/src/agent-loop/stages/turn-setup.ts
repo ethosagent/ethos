@@ -16,6 +16,7 @@ import {
   privateMemoryDenyFor,
   resolveTurnAudience,
   sharedStampFor,
+  withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../audience';
 import { routeTurnModel } from '../model-route';
@@ -90,6 +91,7 @@ export async function* setupTurn(
     toolsetExclude?: string[];
     credentialPrompt?: boolean;
     roomAudience?: TurnAudience;
+    skipPersonalityMemory?: boolean;
   },
   /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
   decisions?: TurnDecisions,
@@ -126,9 +128,16 @@ export async function* setupTurn(
   // turn in it is shared too, whoever the caller is; the stamp MERGES into
   // metadata (`updateSession` replaces it wholesale) and `'private'` is never
   // written. Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
-  const roomAudience = resolveTurnAudience(opts.roomAudience, ethosSession.metadata);
-  const stamped = sharedStampFor(roomAudience, ethosSession.metadata);
+  const sessionAudience = resolveTurnAudience(opts.roomAudience, ethosSession.metadata);
+  const stamped = sharedStampFor(sessionAudience, ethosSession.metadata);
   if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
+  // D8 — a non-owner DM runs shared for this turn only, keeping the sender's
+  // own `user:<id>` read (`withPersonalityMemoryWithheld`, ../audience.ts).
+  // After the stamp on purpose: this narrowing is never persisted.
+  const { roomAudience, userMemoryOnly } = withPersonalityMemoryWithheld(
+    sessionAudience,
+    opts.skipPersonalityMemory,
+  );
 
   // A session's personality is bound at creation and never changes. The
   // effective personality therefore comes from the SESSION, not from the
@@ -538,6 +547,7 @@ export async function* setupTurn(
       filterOpts,
       memScopeId,
       roomAudience,
+      ...(userMemoryOnly ? { userMemoryOnly } : {}),
       ...(toolLoading ? { toolLoading } : {}),
       ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
     },

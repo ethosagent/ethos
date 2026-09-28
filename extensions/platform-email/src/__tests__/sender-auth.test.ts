@@ -342,6 +342,10 @@ describe('EmailAdapter.processMessage sender authentication', () => {
     // Replies still go to `from`.
     await adapter.send(msg.chatId, { text: 'ok' });
     expect(transport.sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: KNOWN_USER }));
+    // Still routed as a DM (so it is answered), but hinted shared: anyone could
+    // have sent it, so it runs without private memory (plan D10).
+    expect(msg.isDm).toBe(true);
+    expect(msg.audienceHint).toBe('shared');
   });
 
   it('a trusted dmarc=pass message resolves to `from` with no notice', async () => {
@@ -351,6 +355,8 @@ describe('EmailAdapter.processMessage sender authentication', () => {
     expect(msg.userId).toBe(KNOWN_USER);
     expect(msg.chatId).toBe(`${KNOWN_USER}:wire-the-money`);
     expect(msg.text).toBe('Please send it today.');
+    expect(msg.isDm).toBe(true);
+    expect(msg.audienceHint).toBeUndefined();
   });
 
   it('with the key unset, even a passing header is unverified', async () => {
@@ -372,5 +378,7 @@ describe('EmailAdapter.processMessage sender authentication', () => {
     expect(replayed.userId).toBe(unverifiedId(KNOWN_USER));
     expect(replayed.chatId).toBe(msg.chatId);
     expect(replayed.text.startsWith(UNVERIFIED_SENDER_NOTICE)).toBe(true);
+    // The hint rides the spool too, so a replayed unverified message stays shared.
+    expect(replayed.audienceHint).toBe('shared');
   });
 });

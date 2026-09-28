@@ -8,7 +8,7 @@
 // files through real Gateways. A second Gateway on the same spool object is a
 // process restart: a new claim owner, an empty in-memory state, the same disk.
 
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, privateChatSetFrom } from '@ethosagent/core';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { type SpoolRow, SQLiteInboundSpool } from '@ethosagent/inbound-spool';
@@ -190,6 +190,50 @@ describe('inbound spool — crash and replay', () => {
     expect(accepted.fresh).toBe(true);
     expect(accepted.claimed).toBe(true);
     expect(accepted.spoolId && spool.get(accepted.spoolId)?.status).toBe('received');
+  });
+});
+
+// plan personality-memory-boundary step 4 — a replay computes the room
+// audience from the SPOOLED message (`audienceHint` is serialised with it) and
+// the replaying process's own `privateChats`, exactly as a live turn does.
+describe('inbound spool — replay keeps the room audience', () => {
+  async function replayedAudience(
+    m: InboundMessage,
+    extra: Partial<GatewayConfig> = {},
+  ): Promise<unknown> {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    seed(spool, m);
+    const s = scriptedLoop();
+    await gateway(s.loop, out.adapter, spool, extra).replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    const opts: unknown = vi.mocked(s.loop.run).mock.calls[0]?.[1];
+    return opts;
+  }
+
+  it('a replayed group row runs shared', async () => {
+    const opts = await replayedAudience(
+      msg('group hello', { chatId: '-100g', isDm: false, isGroupMention: true }),
+    );
+    expect(opts).toMatchObject({ roomAudience: 'shared', initiator: 'user' });
+  });
+
+  it('a replayed DM row hinted shared runs shared', async () => {
+    const opts = await replayedAudience(msg('hinted', { audienceHint: 'shared' }));
+    expect(opts).toMatchObject({ roomAudience: 'shared' });
+  });
+
+  it('a replayed plain DM row runs private', async () => {
+    const opts = await replayedAudience(msg('dm'));
+    expect(opts).toMatchObject({ roomAudience: 'private' });
+  });
+
+  it('a replayed group row listed by the replaying process runs private', async () => {
+    const opts = await replayedAudience(
+      msg('listed', { chatId: '-100g', isDm: false, isGroupMention: true }),
+      { privateChats: privateChatSetFrom({ telegram: ['-100g'] }) },
+    );
+    expect(opts).toMatchObject({ roomAudience: 'private' });
   });
 });
 

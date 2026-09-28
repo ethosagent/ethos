@@ -248,6 +248,13 @@ export interface TurnSetup {
    * (`ToolContext.roomAudience`) and turn-end (flush guard).
    */
   roomAudience: TurnAudience;
+  /**
+   * D8 — set on a non-owner DM (`RunOptions.skipPersonalityMemory`), where
+   * `roomAudience` is `'shared'` for this turn only: context assembly still
+   * reads the sender's own `user:<id>` profile. See
+   * `withPersonalityMemoryWithheld` (./audience.ts).
+   */
+  userMemoryOnly?: boolean;
   /** Set only when on-demand tool loading is active for this turn
    *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
   toolLoading?: ToolLoadingState;

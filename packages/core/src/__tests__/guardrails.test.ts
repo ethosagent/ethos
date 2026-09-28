@@ -249,7 +249,10 @@ describe('Orchestrator guardrails', () => {
     // `AgentLoopConfig.privateMemoryRoots` (a one-line doc and a declaration),
     // its private field, constructor assignment and pass-through into the turn
     // deps. Pass-through only; the deny is built in agent-loop/audience.ts.
-    expect(lineCount).toBeLessThanOrEqual(1104);
+    // Bumped 1104 -> 1106 (personality-memory-boundary step 4, D8): the
+    // `skipPersonalityMemory` RunOptions field (a one-line doc and a
+    // declaration). The narrowing lives in agent-loop/audience.ts.
+    expect(lineCount).toBeLessThanOrEqual(1106);
   });
 
   it('no stage file exceeds 700 lines', () => {

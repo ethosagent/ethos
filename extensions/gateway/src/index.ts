@@ -25,6 +25,7 @@ import {
 import type { DeliveryLedger, DeliveryObligation } from '@ethosagent/delivery-ledger';
 import type { InboundDedupStore } from '@ethosagent/inbound-dedup';
 import type { InboundSpool, SpoolRow } from '@ethosagent/inbound-spool';
+import { jobRoomAudience } from '@ethosagent/job-runner';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
@@ -69,6 +70,7 @@ import type {
   TtsProviderEntry,
   TtsProviderRegistry,
   TurnAudience,
+  TurnInitiator,
   VoiceAudioFormat,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
@@ -469,6 +471,25 @@ interface SpoolTurnState {
 interface WakeReview {
   jobId: string;
   fallbackText: string;
+  /**
+   * The review turn's room audience: the job's own (`jobRoomAudience`,
+   * extensions/job-runner — its stamp, or for a legacy row its origin chat),
+   * never the synthetic message's `isDm`. See {@link Gateway.reviewAudience}.
+   */
+  roomAudience: TurnAudience;
+}
+
+/**
+ * What `runTurn` passes to `AgentLoop.run` about who is listening and who
+ * started the turn (plan personality-memory-boundary G1). A REQUIRED argument
+ * of `runTurn`, so a new gateway turn path cannot forget the audience (G1-9):
+ * the compiler refuses it.
+ */
+interface TurnAudienceOptions {
+  roomAudience: TurnAudience;
+  initiator: TurnInitiator;
+  /** D8 — a non-owner DM (`Gateway.withholdsPersonalityMemory`). */
+  skipPersonalityMemory: boolean;
 }
 
 /** Where a spooled turn's notices go: its own bot, chat and thread. */
@@ -504,6 +525,14 @@ export const INTERRUPTED_RETRY_NOTICE =
  * H3 (plan ux-feedback-and-config-clarity) — the ack for a second message that
  * was folded into the running turn's steer sink. Untracked, like every ack.
  */
+/**
+ * The reply to `/learn` in a shared room (plan personality-memory-boundary
+ * D17): learning writes private memory, which a room more than one person can
+ * read never touches, so no turn runs.
+ */
+export const LEARN_SHARED_ROOM_REPLY =
+  'Memory learning works in a private chat with me — send /learn there.';
+
 export const ABSORBED_STEER_ACK = "↩ noted — I'll fold this into the answer I'm writing.";
 
 /**
@@ -1157,8 +1186,8 @@ export interface GatewayConfig {
    * unlisted room stays trusted. No filter side effects — unlike a
    * `channel_filter.<platform>` block, it admits and refuses nothing.
    *
-   * Plan step 3 wires it in; nothing reads it yet. Step 4 makes `audienceFor`
-   * treat a listed room as private.
+   * Read by `Gateway.audienceFor`: a listed room — and every thread in it — is
+   * private.
    */
   privateChats?: PrivateChatSet;
   /**
@@ -1768,6 +1797,8 @@ export class Gateway {
    *  it live. No setter ships until that phase's fail-closed-per-adapter
    *  redesign is signed off. */
   private channelFilter: ChannelFilterConfig | undefined;
+  /** `GatewayConfig.privateChats`, fixed at construction (restart to change). */
+  private readonly privateChats: PrivateChatSet | undefined;
   /** Static per-channel toolset narrowing (platform → allowed tool names). */
   private readonly channelToolsets: Record<string, string[]> | undefined;
   /** SQLite DB for pairing codes. */
@@ -1964,6 +1995,7 @@ export class Gateway {
     );
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
+    this.privateChats = config.privateChats;
     this.channelToolsets = config.channelToolsets;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
@@ -3801,9 +3833,9 @@ export class Gateway {
         originChatId: message.chatId,
         ...(threadId ? { originThreadId: threadId } : {}),
         ...(message.userId ? { originUserId: message.userId } : {}),
-        // G1-6: a job launched from a group runs shared (`jobRoomAudience`,
-        // extensions/job-runner).
-        roomAudience: this.audienceFor(message),
+        // G1-6: a job launched from a group — or a non-owner DM (D8) — runs
+        // shared (`jobRoomAudience`, extensions/job-runner).
+        roomAudience: this.jobAudienceFor(message),
       });
       executor.nudge();
       // The id is the whole point of the ack: without it the user has nothing to
@@ -3910,6 +3942,15 @@ export class Gateway {
 
     // --- /learn command ---
     if (!cmdType && /^\/learn(?:\s|$)/i.test(text)) {
+      // D17 — learning writes private memory, which a shared room never
+      // touches: say where it works and run no turn. Pinned by
+      // `__tests__/learn-command.test.ts`.
+      if (this.audienceFor(message) === 'shared') {
+        await adapter
+          .send(message.chatId, { text: LEARN_SHARED_ROOM_REPLY, threadId })
+          .catch(() => {});
+        return;
+      }
       const { parseLearnArgs, buildLearnPrompt } = await import('@ethosagent/core');
       const learnText = text.slice('/learn'.length).trim();
       const parsed = parseLearnArgs(learnText);
@@ -4211,6 +4252,16 @@ export class Gateway {
         threadId,
         laneKey,
       };
+      // Computed when the turn runs, from the message itself — a spool replay
+      // (the hint is serialised with it) and a steer/queue/overflow turn get
+      // the same answer as the original. A review takes its job's audience.
+      const audience: TurnAudienceOptions = review
+        ? { roomAudience: review.roomAudience, initiator: 'system', skipPersonalityMemory: false }
+        : {
+            roomAudience: this.audienceFor(message),
+            initiator: 'user',
+            skipPersonalityMemory: this.withholdsPersonalityMemory(message),
+          };
       const turn = this.runTurn(
         laneKey,
         lane,
@@ -4220,6 +4271,7 @@ export class Gateway {
         text,
         threadId,
         signal,
+        audience,
         spoolTurn,
       );
       // What `shutdown()` waits on is the turn AND its row's settlement: the
@@ -4967,14 +5019,32 @@ export class Gateway {
       return;
     }
     counts.replayed++;
+    const roomAudience = await this.replayedReviewAudience(bot, row, message);
     this.enqueueReview(
       bot,
       adapter,
       message,
       row.id,
-      { jobId: row.reviewJobId ?? '', fallbackText },
+      { jobId: row.reviewJobId ?? '', fallbackText, roomAudience },
       row.laneKey,
     );
+  }
+
+  /**
+   * A replayed review's audience: shared when the row says so (the hint
+   * `admitWakeReview` spooled), else the job's (`reviewAudience`), read back
+   * from the bot's job store. A row whose job cannot be read — no store, a
+   * missing row, a store error, a row spooled before the hint existed with no
+   * job — runs shared: fail closed.
+   */
+  private async replayedReviewAudience(
+    bot: GatewayBotConfig,
+    row: SpoolRow,
+    message: InboundMessage,
+  ): Promise<TurnAudience> {
+    if (message.audienceHint === 'shared' || !row.reviewJobId || !bot.jobStore) return 'shared';
+    const job = await bot.jobStore.get(row.reviewJobId).catch(() => null);
+    return job ? this.reviewAudience(job) : 'shared';
   }
 
   /**
@@ -5059,6 +5129,7 @@ export class Gateway {
     text: string,
     threadId: string | undefined,
     signal: AbortSignal,
+    audience: TurnAudienceOptions,
     spoolTurn?: SpoolTurnState,
   ): Promise<void> {
     // A `wake_review` turn reaches here without `dispatchInbound`.
@@ -5520,6 +5591,11 @@ export class Gateway {
           userId,
           steerSink,
           origin: `${message.platform}:${message.chatId}`,
+          // plan personality-memory-boundary G1: a shared room never reads or
+          // writes private memory (enforced in core by `resolveTurnAudience`).
+          roomAudience: audience.roomAudience,
+          initiator: audience.initiator,
+          ...(audience.skipPersonalityMemory ? { skipPersonalityMemory: true } : {}),
           ...(voiceOrigin ? { voiceOrigin } : {}),
           ...(toolsetNarrow ? { toolsetNarrow } : {}),
           // Unconditional, not config-driven: UI-card tools have no rendering on
@@ -6027,12 +6103,17 @@ export class Gateway {
     }
     const threadId = job.originThreadId ? job.originThreadId : undefined;
     const fallbackText = this.buildWakeNotice(job);
+    const roomAudience = this.reviewAudience(job);
     const message: InboundMessage = {
       platform,
       chatId,
       botKey: bot.botKey,
       text: fallbackText,
+      // Routing only (streaming class, approval binding) — the audience is the
+      // job's (`reviewAudience`), not this. A shared review carries the hint
+      // so a replay of the row stays shared without the job store.
       isDm: false,
+      ...(roomAudience === 'shared' ? { audienceHint: 'shared' as const } : {}),
       isGroupMention: false,
       messageId: `wake:${job.id}`,
       ...(threadId ? { threadId } : {}),
@@ -6067,7 +6148,14 @@ export class Gateway {
       this.closeSpool(row.id);
       return false;
     }
-    this.enqueueReview(bot, adapter, message, row.id, { jobId: job.id, fallbackText }, laneKey);
+    this.enqueueReview(
+      bot,
+      adapter,
+      message,
+      row.id,
+      { jobId: job.id, fallbackText, roomAudience },
+      laneKey,
+    );
     return true;
   }
 
@@ -7615,16 +7703,57 @@ export class Gateway {
 
   /**
    * The room audience of whatever `message` starts (plan
-   * personality-memory-boundary G1): `'private'` only for a DM, `'shared'`
-   * otherwise. The ONE place the gateway decides it — `/background` stamps it
-   * on the job today; plan step 4 routes `runTurn` and wake reviews through it
-   * and widens the formula to `(isDm && audienceHint !== 'shared') ||
-   * privateChats.has(platform, chatId)`. Independent of `isDm`'s other jobs
-   * (admission, engagement, approval binding). Pinned by "stamps the job …
-   * when launched from …" in `__tests__/background-wake.test.ts`.
+   * personality-memory-boundary G1): `'private'` for a DM the adapter did not
+   * hint shared (`InboundMessage.audienceHint`, D10), or for a room the
+   * operator listed in `gateway.private_chats.<platform>` (`privateChats`,
+   * D9); `'shared'` otherwise. Keyed on `chatId`, never `threadId`, so a thread
+   * inherits its parent chat's audience. The ONE place the gateway decides it:
+   * every user turn (`enqueueTurn` → `runTurn`), `/learn` (D17) and the
+   * `/background` job stamp read it. Independent of `isDm`'s other jobs
+   * (admission, engagement, approval binding), which are unchanged. Pinned by
+   * `__tests__/memory-boundary-e2e.test.ts` and "stamps the job … when
+   * launched from …" in `__tests__/background-wake.test.ts`.
    */
   private audienceFor(message: InboundMessage): TurnAudience {
-    return message.isDm ? 'private' : 'shared';
+    if (message.isDm && message.audienceHint !== 'shared') return 'private';
+    return this.privateChats?.has(message.platform, message.chatId) ? 'private' : 'shared';
+  }
+
+  /**
+   * D8 — a DM from someone other than `channel_filter.<platform>.ownerUserId`,
+   * on a platform that has one. `MEMORY.md` is the owner's, so the turn runs
+   * with personality memory withheld while the sender's own `user:<id>`
+   * profile is still read (`RunOptions.skipPersonalityMemory`, enforced by
+   * `withPersonalityMemoryWithheld` in packages/core/src/agent-loop/audience.ts).
+   * No owner configured → false: the plan's rule has nothing to compare
+   * against. Pinned by `__tests__/memory-boundary-e2e.test.ts`.
+   */
+  private withholdsPersonalityMemory(message: InboundMessage): boolean {
+    if (!message.isDm) return false;
+    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
+    if (owner === undefined || owner === '') return false;
+    return !senderIsOwner(message, owner);
+  }
+
+  /**
+   * The audience a turn started by `message` runs under, D8 included: a
+   * non-owner DM is `'shared'` here. Used where the audience is PERSISTED on
+   * something that later runs on its own (a `/background` job, whose child has
+   * no sender to keep a `user:<id>` read for).
+   */
+  private jobAudienceFor(message: InboundMessage): TurnAudience {
+    return this.withholdsPersonalityMemory(message) ? 'shared' : this.audienceFor(message);
+  }
+
+  /**
+   * A wake review's audience: the job's (`jobRoomAudience` — its stamp, or a
+   * legacy row's origin chat). The review message is synthetic (`isDm:
+   * false`), so `audienceFor` would call every review shared; the job is the
+   * record of where the work came from. Pinned by the room-audience cases in
+   * `__tests__/parent-review.test.ts`.
+   */
+  private reviewAudience(job: BackgroundJob): TurnAudience {
+    return jobRoomAudience(job);
   }
 
   /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False

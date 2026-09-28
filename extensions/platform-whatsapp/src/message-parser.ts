@@ -114,6 +114,17 @@ export function resolveSentAt(ts: RawWhatsAppMessage['messageTimestamp']): numbe
   return Math.round(seconds * 1000);
 }
 
+/**
+ * True for a JID that addresses one person: a phone JID (`@s.whatsapp.net`)
+ * or a LID (`@lid`). Anything else that is not a group (`status@broadcast`,
+ * `@broadcast`, `@newsletter`) is read by many, so `parseInboundMessage` marks
+ * it `audienceHint: 'shared'` (plan personality-memory-boundary D10; read by
+ * `Gateway.audienceFor`). Pinned by `__tests__/message-parser.test.ts`.
+ */
+export function isOneToOneJid(jid: string): boolean {
+  return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
+}
+
 export function parseInboundMessage(
   msg: RawWhatsAppMessage,
   botJid: string,
@@ -124,6 +135,9 @@ export function parseInboundMessage(
 
   const jid = msg.key.remoteJid ?? '';
   const isDm = !jid.endsWith('@g.us');
+  // Routed as a DM (`isDm`) but not provably one person: a status broadcast,
+  // a `@broadcast` list or a `@newsletter` channel runs without private memory.
+  const shared = isDm && !isOneToOneJid(jid);
   const text = extractText(msg);
   const isGroupMention = !isDm && isBotMentioned(msg, botJid);
 
@@ -143,6 +157,7 @@ export function parseInboundMessage(
     attachments,
     replyToId: contextInfo?.stanzaId ?? undefined,
     isDm,
+    ...(shared ? { audienceHint: 'shared' as const } : {}),
     isGroupMention,
     messageId: msg.key.id ?? undefined,
     sentAt: resolveSentAt(msg.messageTimestamp),

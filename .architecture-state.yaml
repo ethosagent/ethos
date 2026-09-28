@@ -92,8 +92,8 @@ register_anchors:
     - { path: packages/safety/injection/src/wrap.ts, line: 35, contains: "export function wrapUntrusted" }
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
-    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 467, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 742, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 474, contains: "deps.safety.injection.prelude" }
+    - { path: packages/core/src/agent-loop.ts, line: 744, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 775, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
@@ -164,10 +164,10 @@ register_anchors:
   # names them in prose without a line anchor.
   G-MEM:
     - { path: packages/core/src/agent-loop/audience.ts, line: 82, contains: "export function resolveTurnAudience" }
-    - { path: packages/core/src/agent-loop/audience.ts, line: 143, contains: "export function privateMemoryDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 129, contains: "resolveTurnAudience(opts.roomAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 220, contains: "privateMemoryDenyFor(roomAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 447, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 166, contains: "export function privateMemoryDenyFor" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 131, contains: "resolveTurnAudience(opts.roomAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 229, contains: "privateMemoryDenyFor(roomAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 456, contains: "withSharedAudienceExclusions(" }
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 329, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 120, contains: "export function isPrivateMemoryPath" }
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 211, contains: "this.hitsDenyWhen(next)" }

@@ -4,7 +4,7 @@ description: "Memory is two plain-markdown files — MEMORY.md per-personality, 
 kind: explanation
 audience: user
 slug: memory-model
-updated: 2026-09-12
+updated: 2026-09-28
 ---
 
 ## Context
@@ -21,7 +21,7 @@ Ethos picks the other direction. Memory is two markdown files:
 └── users/<userId>/USER.md         who you are, per user
 ```
 
-You can `cat` them. You can `grep` them. You can `diff` them. You can commit them. The agent reads them on every turn and writes to them after every turn. That is the entire memory system.
+You can `cat` them. You can `grep` them. You can `diff` them. You can commit them. The agent reads them on every private turn and writes to them after it. That is the entire memory system.
 
 This page explains why that is the default, how the `prefetch` / `sync` cycle works, and how MEMORY.md and USER.md are scoped.
 
@@ -37,7 +37,7 @@ The split is load-bearing. `USER.md` is identity (rare changes, user-scoped). `M
 
 ### The prefetch / sync contract
 
-Every turn follows the same shape:
+Every private turn — the CLI, the web app, a direct message — follows the same shape. A turn in a group chat reads and writes neither file; see [Private memory stays out of shared rooms](#private-memory-stays-out-of-shared-rooms) below.
 
 The [memory provider](../../getting-started/glossary.md#memory-provider) runs `prefetch(ctx)` before the system prompt is built. It reads `USER.md` and `MEMORY.md` from disk, concatenates them under labelled headings (`## About You`, `## Memory`), truncates if the combined size exceeds the cap (20 000 chars by default, keeping the tail because recent memory matters most), and returns the result. The system prompt assembly takes that string and inlines it.
 
@@ -52,6 +52,10 @@ After the turn, the agent may emit a list of `MemoryUpdate[]`. The provider runs
 | `remove` | Removes lines containing `substringMatch` |
 
 Updates are routed by the update's `store` field — `'memory'` writes to `MEMORY.md`, `'user'` writes to `USER.md`. There are no other stores. The contract is small on purpose: the model has to do less to use memory well.
+
+### Private memory stays out of shared rooms
+
+`MEMORY.md` and `USER.md` are written from your private conversations. A group chat has other readers, so a turn there is shared: the gateway marks it (`Gateway.audienceFor`, `extensions/gateway/src/index.ts`) and the agent core enforces it in one place (`resolveTurnAudience`, `packages/core/src/agent-loop/audience.ts`). A shared turn does not prefetch either file, cannot call the memory tools, cannot open the memory files through a file tool, and skips the turn-end memory flush. A session that ran one shared turn stays shared. Rooms the operator trusts can be listed under `gateway.private_chats` to get memory back. [Keep memory out of group chats](../how-to/group-chat-memory.md) walks through it.
 
 ### MEMORY.md — always per personality
 

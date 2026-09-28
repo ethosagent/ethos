@@ -1575,7 +1575,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
    *  message into the gateway. Returns undefined when no `messageHandler`
    *  is registered (i.e. the gateway hasn't wired up yet). */
   private makeAskSubmitter():
-    | ((input: { channel: string; user: string; text: string }) => Promise<void>)
+    | ((input: { channel: string; user: string; text: string; isDm: boolean }) => Promise<void>)
     | undefined {
     const handler = this.messageHandler;
     if (!handler) return undefined;
@@ -1586,7 +1586,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         chatId: input.channel,
         userId: input.user,
         text: input.text,
-        isDm: false,
+        // From `isSlackDm` in `handleAsk`: an `/ethos ask` typed in a DM is a
+        // DM (admission, approvals, private memory), as the same words sent as
+        // a message would be. It used to be hard-coded false.
+        isDm: input.isDm,
         // Slash invocations are always treated as a direct address — the user
         // explicitly invoked the bot. Channel-mode is NOT bypassed by that: it
         // is enforced one layer up, in `handleAsk`, which refuses ephemerally

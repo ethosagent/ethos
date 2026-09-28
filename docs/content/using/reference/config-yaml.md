@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-26
+updated: 2026-09-28
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -475,7 +475,7 @@ Notes:
 
 Type: comma-separated chat ids · Default: unset (no trusted rooms)
 
-Group chats on `<platform>` that the operator vouches for as private (trusted rooms). A listed room is treated like a direct message when the gateway decides a turn's room audience.
+Group chats on `<platform>` that the operator vouches for as private (trusted rooms). A listed room is treated like a direct message when the gateway decides a turn's room audience: its turns read and write the personality's private memory, and the memory tools come back. An unlisted group never does. See [Keep memory out of group chats](../how-to/group-chat-memory.md).
 
 ```yaml
 gateway.private_chats.telegram: -1001234567890,-1009876543210
@@ -489,7 +489,9 @@ gateway.private_chats.slack: C0123TEAM
 
 Notes:
 
-- **Not yet in effect.** This release parses the list and hands it to the gateway (`GatewayConfig.privateChats`, built by `buildGateway` in [`apps/ethos/src/commands/gateway.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts)). Nothing reads it yet, so every group chat still runs as it did before.
+- Read by `Gateway.audienceFor` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts), which receives it as `GatewayConfig.privateChats` from `buildGateway` in [`apps/ethos/src/commands/gateway.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts).
+- A thread or topic inside a listed chat is private too. Listing a thread id alone does nothing: the check reads the parent chat id.
+- A chat whose session already ran shared stays shared after you list it. Send `/new` in the chat to start a session that follows the list.
 - The list is keyed on platform and chat id only. Every bot on that platform honours it.
 - It has no filter side effects. Unlike a `channel_filter.<platform>` block, listing a room does not turn on the sender allowlist, pairing or mention gating.
 - Read once at gateway startup, by `ethos gateway start` and `ethos boot`. Restart the gateway after editing. An edit made while the gateway runs is logged as `gateway.private_chats changed — restart required to apply`.

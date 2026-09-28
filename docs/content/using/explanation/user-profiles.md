@@ -4,7 +4,7 @@ description: "How the gateway resolves each sender to an opaque userId, where th
 kind: explanation
 audience: user
 slug: user-profiles
-updated: 2026-09-13
+updated: 2026-09-28
 ---
 
 ## Context
@@ -37,7 +37,9 @@ The file is plain markdown. You can read it with `cat`, edit it with your text e
 
 | Surface | userId on the turn | `USER.md` in the prompt |
 |---|---|---|
-| Channel bots under `ethos gateway start` or `ethos boot` | Resolved for every sender through the identity map | `users/<userId>/USER.md`; the personality's copy when that file is empty |
+| Channel bots under `ethos gateway start` or `ethos boot`, direct message from the owner (or on a platform with no `ownerUserId`) | Resolved for every sender through the identity map | `users/<userId>/USER.md`; the personality's copy when that file is empty |
+| Channel bots, direct message from someone other than `channel_filter.<platform>.ownerUserId` | Resolved | `users/<userId>/USER.md` only — never the personality's copy |
+| Channel bots, group chat (unless listed under `gateway.private_chats`) | Resolved | None — a shared room reads no private memory ([Keep memory out of group chats](../how-to/group-chat-memory.md)) |
 | Web chat | Only when the request passes one | Same rule |
 | `ethos chat` | None | `personalities/<id>/USER.md` |
 | A phone call answered by the receptionist | None | The receptionist personality's own copy |

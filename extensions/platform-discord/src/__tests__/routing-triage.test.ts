@@ -48,6 +48,29 @@ describe('routing triage', () => {
     expect(result.envelope?.platform).toBe('discord');
     expect(result.envelope?.botKey).toBe('test-bot');
     expect(result.envelope?.isDm).toBe(true);
+    expect(result.envelope?.audienceHint).toBeUndefined();
+  });
+
+  // plan personality-memory-boundary D10: a group DM is DM-based, so it is
+  // still routed as a DM, but several people read it — hinted shared.
+  it('triageMessage keeps a group DM a DM for routing but hints it shared', async () => {
+    const result = await triageMessage(
+      {
+        channelId: 'gdm-ch',
+        userId: 'user1',
+        text: 'hello',
+        messageId: 'msg1',
+        isDm: true,
+        isGroupDm: true,
+        isThread: false,
+        isMention: false,
+        sentAt: 1_700_000_000_000,
+        raw: {},
+      },
+      ctx,
+    );
+    expect(result.envelope?.isDm).toBe(true);
+    expect(result.envelope?.audienceHint).toBe('shared');
   });
 
   it('triageMessage drops non-DM non-mention in mention_only mode', async () => {

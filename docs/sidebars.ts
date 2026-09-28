@@ -95,6 +95,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/run-a-team-with-kanban',
             'using/how-to/work-with-a-team',
             'using/how-to/use-team-memory',
+            'using/how-to/group-chat-memory',
             'using/how-to/peer-two-ethos-agents',
           ],
         },

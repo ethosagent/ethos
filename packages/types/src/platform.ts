@@ -34,6 +34,17 @@ export interface InboundMessage {
   /** Sender ID of the quoted/replied-to message. Set by adapters that can provide it. */
   replyToUserId?: string;
   isDm: boolean;
+  /**
+   * Set to `'shared'` by an adapter when the chat is routed as a DM (`isDm`)
+   * but cannot be proven to have one reader: an unverified email sender, a
+   * Discord group DM, a WhatsApp broadcast/newsletter/status JID. Routing —
+   * admission, pairing, engagement, approval binding — still reads `isDm` and
+   * is unchanged; only the turn's room audience narrows, so it runs without
+   * private memory (plan personality-memory-boundary D10). Read by
+   * `Gateway.audienceFor` (extensions/gateway/src/index.ts). There is no
+   * `'private'` value: a hint can only narrow.
+   */
+  audienceHint?: 'shared';
   isGroupMention: boolean;
   /**
    * Platform-native message ID. When set, Gateway dedupes duplicate inbounds

@@ -35,6 +35,7 @@ import {
   resolveTurnAudience,
   SHARED_AUDIENCE_EXCLUDED_TOOLS,
   sharedStampFor,
+  withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../agent-loop/audience';
 import { persistLoaded } from '../agent-loop/stages/tool-search';
@@ -257,6 +258,73 @@ describe('G1-1 — a shared turn makes zero private-memory provider calls', () =
     expect(memory.calls.prefetch).toBe(1);
     expect(memory.calls.read).toBe(1);
     expect(calls[0]?.system).toContain(MEMORY_CONTENT);
+  });
+});
+
+describe('D8 — a non-owner DM withholds personality memory but keeps the sender’s own', () => {
+  it('withPersonalityMemoryWithheld narrows a private turn only when asked', () => {
+    expect(withPersonalityMemoryWithheld('private', true)).toEqual({
+      roomAudience: 'shared',
+      userMemoryOnly: true,
+    });
+    expect(withPersonalityMemoryWithheld('private', undefined)).toEqual({
+      roomAudience: 'private',
+      userMemoryOnly: false,
+    });
+    // Already shared: nothing to keep, the user read stays off too.
+    expect(withPersonalityMemoryWithheld('shared', true)).toEqual({
+      roomAudience: 'shared',
+      userMemoryOnly: false,
+    });
+  });
+
+  it('no personality prefetch or search, the user read still runs, memory tools excluded, never stamped', async () => {
+    const memory = spyMemory({ entries: [{ key: 'MEMORY.md', content: MEMORY_CONTENT }] });
+    const runs: string[] = [];
+    const tools = new DefaultToolRegistry();
+    tools.register(tool('memory_read', runs));
+    tools.register(tool('session_search', runs));
+    const calls: Call[] = [];
+    const session = new InMemorySessionStore();
+    const seen: boolean[] = [];
+    const loop = new AgentLoop({
+      llm: recordingLLM(calls, 'memory_read'),
+      personalities: personalities(['memory_read', 'session_search']),
+      tools,
+      session,
+      safety: createTestSafety(),
+      memory,
+      injectors: [
+        {
+          id: 'isdm-spy',
+          priority: 1,
+          async inject(ctx: PromptContext) {
+            seen.push(ctx.isDm);
+            return null;
+          },
+        },
+      ],
+    });
+
+    await drain(
+      loop.run('hello', {
+        sessionKey: 'telegram:bot:42',
+        userId: 'stranger',
+        roomAudience: 'private',
+        skipPersonalityMemory: true,
+      }),
+    );
+
+    expect(memory.calls).toEqual({ prefetch: 0, read: 1, search: 0 });
+    expect(calls[0]?.system).toContain(USER_CONTENT);
+    expect(calls[0]?.system).not.toContain(MEMORY_CONTENT);
+    expect(calls[0]?.tools).not.toContain('memory_read');
+    expect(calls[0]?.tools).toContain('session_search');
+    expect(runs).toEqual([]);
+    expect(seen).toEqual([false]);
+    // Not persisted: the stranger's session carries no stamp.
+    const stored = await session.getSessionByKey('telegram:bot:42');
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBeUndefined();
   });
 });
 

@@ -228,9 +228,28 @@ describe('dispatch — ask', () => {
       { ...basePayload, text: 'ask hello world' },
       ctxFor({ submitAgentTurn: submit }),
     );
-    expect(submit).toHaveBeenCalledWith({ channel: 'C1', user: 'U1', text: 'hello world' });
+    expect(submit).toHaveBeenCalledWith({
+      channel: 'C1',
+      user: 'U1',
+      text: 'hello world',
+      isDm: false,
+    });
     expect(r.responseType).toBe('in_channel');
     expect(r.text).toContain('hello world');
+  });
+
+  // plan personality-memory-boundary step 4: the submitter used to hard-code
+  // `isDm: false`, so an `/ethos ask` typed in a DM ran as a group message.
+  it.each([
+    ['a D… channel id', { channel_id: 'D123' }],
+    ['channel_name directmessage', { channel_id: 'C9', channel_name: 'directmessage' }],
+  ])('submits isDm: true from a DM (%s)', async (_label, where) => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+    await dispatch(
+      { ...basePayload, ...where, text: 'ask hi' },
+      ctxFor({ submitAgentTurn: submit }),
+    );
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ isDm: true, text: 'hi' }));
   });
 });
 

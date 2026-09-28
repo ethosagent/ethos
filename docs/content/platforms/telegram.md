@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-09-05
+updated: 2026-09-28
 ---
 
 ## Task
@@ -108,7 +108,7 @@ In **multi-bot** mode (`telegram.bots` list), the session key includes the `botK
 
 The session key forks when `/new` or `/personality <id>` runs in the chat — both append `:${Date.now()}` so the agent loses prior context cleanly. The previous session's outbound dedup keys are cleared at the same boundary.
 
-Group chats share one session across every member. To give each user their own thread, deploy two bots and `/start` them privately.
+Group chats share one session across every member. To give each user their own thread, deploy two bots and `/start` them privately. A group turn never reads or writes the personality's private memory (`MEMORY.md`, `USER.md`) unless the group is listed under `gateway.private_chats.telegram` — see [Keep memory out of group chats](../using/how-to/group-chat-memory.md).
 
 ### 3a. Plugin commands
 

@@ -60,6 +60,8 @@ function recordingAdapter() {
 interface RunOpts {
   abortSignal?: AbortSignal;
   reviewOfJobId?: string;
+  roomAudience?: string;
+  initiator?: string;
 }
 type RunImpl = (
   text: string,
@@ -67,9 +69,19 @@ type RunImpl = (
 ) => AsyncGenerator<{ type: string; [k: string]: unknown }>;
 
 function scriptedLoop(impl?: RunImpl) {
-  const calls: Array<{ text: string; reviewOfJobId?: string }> = [];
+  const calls: Array<{
+    text: string;
+    reviewOfJobId?: string;
+    roomAudience?: string;
+    initiator?: string;
+  }> = [];
   const run = vi.fn((text: string, opts: RunOpts) => {
-    calls.push({ text, ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}) });
+    calls.push({
+      text,
+      ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}),
+      ...(opts.roomAudience ? { roomAudience: opts.roomAudience } : {}),
+      ...(opts.initiator ? { initiator: opts.initiator } : {}),
+    });
     if (impl) return impl(text, opts);
     return (async function* () {
       yield { type: 'text_delta', text: 'Reviewed: the build is green.' };
@@ -308,6 +320,88 @@ describe("parent review — deliver: 'parent'", () => {
     // Idempotent: a second sweep has nothing left.
     expect(await gw.sweepUndeliveredJobs()).toEqual({ delivered: 0, failed: 0 });
     expect(rows(spool)).toHaveLength(1);
+  });
+});
+
+// plan personality-memory-boundary step 4 — a review turn takes its JOB's
+// audience (`Gateway.reviewAudience` → `jobRoomAudience`), never the synthetic
+// message's `isDm: false`, and is started by the system.
+describe('parent review — room audience', () => {
+  async function reviewedWith(overrides: Partial<BackgroundJob>) {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const j = job(overrides);
+    const s = scriptedLoop();
+    const exec = fakeExecutor();
+    gateway(s.loop, out.adapter, fakeJobStore([j]), spool, { executor: exec.executor });
+    exec.fire(j);
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    return s.calls[0];
+  }
+
+  it('a job stamped private (launched from a DM) reviews private', async () => {
+    const call = await reviewedWith({ roomAudience: 'private', originChatId: '42' });
+    expect(call).toMatchObject({ roomAudience: 'private', initiator: 'system' });
+  });
+
+  it('a job stamped shared (launched from a group) reviews shared', async () => {
+    const call = await reviewedWith({ roomAudience: 'shared', originChatId: '-100' });
+    expect(call).toMatchObject({ roomAudience: 'shared', initiator: 'system' });
+  });
+
+  it('a legacy unstamped job from a group origin reviews shared', async () => {
+    const call = await reviewedWith({ originChatId: '-100' });
+    expect(call?.roomAudience).toBe('shared');
+  });
+
+  it('a legacy unstamped job from a provable DM origin reviews private', async () => {
+    const call = await reviewedWith({ originChatId: '42' });
+    expect(call?.roomAudience).toBe('private');
+  });
+
+  it('a stamped shared job wins over a DM-looking origin (shared only narrows)', async () => {
+    const call = await reviewedWith({ roomAudience: 'shared', originChatId: '42' });
+    expect(call?.roomAudience).toBe('shared');
+  });
+
+  async function replayedWith(overrides: Partial<BackgroundJob>, dropJob = false) {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const out = recordingAdapter();
+    const j = job(overrides);
+    const store = fakeJobStore([j]);
+    const first = scriptedLoop(async function* () {
+      await new Promise(() => {});
+    });
+    const exec = fakeExecutor();
+    gateway(first.loop, out.adapter, store, spool, {
+      executor: exec.executor,
+      deliveryLedger: ledger,
+    });
+    exec.fire(j);
+    await waitUntil(() => first.calls.length === 1);
+    const second = scriptedLoop();
+    const store2 = dropJob ? fakeJobStore([]) : store;
+    const gw2 = gateway(second.loop, out.adapter, store2, spool, { deliveryLedger: ledger });
+    await gw2.replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    return { first: first.calls[0], replayed: second.calls[0] };
+  }
+
+  it('a replayed review keeps a private job private', async () => {
+    const { first, replayed } = await replayedWith({ roomAudience: 'private', originChatId: '42' });
+    expect(first?.roomAudience).toBe('private');
+    expect(replayed).toMatchObject({ roomAudience: 'private', initiator: 'system' });
+  });
+
+  it('a replayed review keeps a shared job shared, even with the job gone (the row carries the hint)', async () => {
+    const { replayed } = await replayedWith({ roomAudience: 'shared', originChatId: '42' }, true);
+    expect(replayed?.roomAudience).toBe('shared');
+  });
+
+  it('a replayed review whose job cannot be read runs shared (fail closed)', async () => {
+    const { replayed } = await replayedWith({ roomAudience: 'private', originChatId: '42' }, true);
+    expect(replayed?.roomAudience).toBe('shared');
   });
 });
 

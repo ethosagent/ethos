@@ -1,4 +1,4 @@
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, privateChatSetFrom } from '@ethosagent/core';
 import { BackgroundExecutor } from '@ethosagent/job-runner';
 import {
   type BackgroundJob,
@@ -579,13 +579,46 @@ describe('Gateway — /background acknowledgement', () => {
   });
 
   // plan personality-memory-boundary G1-6: a job launched from a group runs
-  // shared (`Gateway.audienceFor`), one launched from a DM runs private.
+  // shared (`Gateway.audienceFor`), one launched from a DM runs private; step 4
+  // adds the hint, the trusted-room list and a non-owner DM (D8,
+  // `Gateway.jobAudienceFor`: the job has no sender to keep a user read for).
+  const owned = { channelFilter: { test: { ownerUserId: 'owner-1', enabled: false } } };
   it.each([
-    { where: 'a group', isDm: false, isGroupMention: true, expected: 'shared' },
-    { where: 'a DM', isDm: true, isGroupMention: false, expected: 'private' },
+    { where: 'a group', isDm: false, isGroupMention: true, expected: 'shared', extra: {} },
+    { where: 'a DM', isDm: true, isGroupMention: false, expected: 'private', extra: {} },
+    {
+      where: 'a DM hinted shared',
+      isDm: true,
+      isGroupMention: false,
+      audienceHint: 'shared' as const,
+      expected: 'shared',
+      extra: {},
+    },
+    {
+      where: 'a listed group',
+      isDm: false,
+      isGroupMention: true,
+      expected: 'private',
+      extra: { privateChats: privateChatSetFrom({ test: ['chat-1'] }) },
+    },
+    {
+      where: 'a non-owner DM',
+      isDm: true,
+      isGroupMention: false,
+      expected: 'shared',
+      extra: owned,
+    },
+    {
+      where: 'the owner’s DM',
+      isDm: true,
+      isGroupMention: false,
+      userId: 'owner-1',
+      expected: 'private',
+      extra: owned,
+    },
   ])(
     'stamps the job $expected when launched from $where',
-    async ({ isDm, isGroupMention, expected }) => {
+    async ({ isDm, isGroupMention, expected, extra, ...rest }) => {
       const { executor } = fakeExecutor();
       const adapter = stubAdapter();
       const store = new FakeJobStore();
@@ -601,10 +634,17 @@ describe('Gateway — /background acknowledgement', () => {
         ],
         adapters: new Map([['test', adapter]]),
         clarifySweepIntervalMs: 0,
+        ...extra,
       });
 
       await gw.handleMessage(
-        makeMessage({ text: '/background crawl the docs', isDm, isGroupMention }),
+        makeMessage({
+          text: '/background crawl the docs',
+          isDm,
+          isGroupMention,
+          ...('audienceHint' in rest ? { audienceHint: rest.audienceHint } : {}),
+          ...('userId' in rest ? { userId: rest.userId } : {}),
+        }),
         adapter,
       );
 

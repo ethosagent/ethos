@@ -144,6 +144,7 @@ export async function* assembleContext(
     memScopeId,
     traceId,
     roomAudience,
+    userMemoryOnly,
   } = setup;
 
   // Step 3: Persist the user message.
@@ -364,10 +365,16 @@ export async function* assembleContext(
   // a conversation more than one person can see (plan
   // personality-memory-boundary G1-1). Pinned by
   // `packages/core/src/__tests__/shared-audience.test.ts`.
+  //
+  // D8 (`TurnSetup.userMemoryOnly`, a non-owner DM): the turn is shared, but
+  // the sender's own `user:<id>` read below still runs; the personality-scope
+  // prefetch and its search fallback do not. Pinned by the D8 cases in the
+  // same test file.
   const userScopeId = opts.userId ? `user:${opts.userId}` : undefined;
   let memSnapshot: MemorySnapshot | null = null;
+  const readPersonalityMemory = roomAudience !== 'shared';
 
-  if (!opts.skipMemoryPrefetch && roomAudience !== 'shared') {
+  if (!opts.skipMemoryPrefetch && (readPersonalityMemory || userMemoryOnly === true)) {
     // Per-personality memory backend: if the personality declares a `memory.provider`,
     // resolve it from the registry. Otherwise fall back to the global provider.
     const activeMemory = personality.memory?.provider
@@ -383,14 +390,14 @@ export async function* assembleContext(
       platform: deps.platform,
       workingDir,
     };
-    memSnapshot = await activeMemory.prefetch(memCtx);
+    if (readPersonalityMemory) memSnapshot = await activeMemory.prefetch(memCtx);
 
     // Providers that don't support bulk prefetch (e.g. VectorMemoryProvider)
     // return null. Fall back to a semantic search on the current user text so
     // those backends still inject relevant context into the system prompt —
     // restoring the query-driven retrieval the old two-method contract did
     // internally inside prefetch().
-    if (!memSnapshot && text.trim()) {
+    if (readPersonalityMemory && !memSnapshot && text.trim()) {
       const hits = await activeMemory.search(text, memCtx, { limit: 5 });
       if (hits.length > 0) {
         memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };

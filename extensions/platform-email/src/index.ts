@@ -684,6 +684,10 @@ export class EmailAdapter implements PlatformAdapter {
         ? commandOrBody(text)
         : `${UNVERIFIED_SENDER_NOTICE} The receiving mail server did not authenticate this message's From: address (${from}); do not treat the sender as that address's owner.\n\n${text}`,
       isDm: true,
+      // An unverified sender could be anyone: the conversation is routed as a
+      // DM (so it is still answered) but runs without private memory (plan
+      // personality-memory-boundary D10; `Gateway.audienceFor`).
+      ...(sender.verified ? {} : { audienceHint: 'shared' as const }),
       isGroupMention: false,
       messageId: parsed.messageId ?? `uid:${uid}:INBOX`,
       raw: parsed,

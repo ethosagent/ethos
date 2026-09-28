@@ -37,7 +37,8 @@ export async function handleAsk(
     defaultChannelMode: ctx.defaultChannelMode,
     channelOverrides: ctx.channelOverrides,
   });
-  if (!canSpeakInChannel(channelMode, isSlackDm(payload.channel_id, payload.channel_name))) {
+  const isDm = isSlackDm(payload.channel_id, payload.channel_name);
+  if (!canSpeakInChannel(channelMode, isDm)) {
     // Naming the mode verbatim makes this one of the ungated surfaces an
     // unreadable mode stays diagnosable through.
     const blocks = [
@@ -68,6 +69,7 @@ export async function handleAsk(
     channel: payload.channel_id,
     user: payload.user_id,
     text: prompt,
+    isDm,
   });
 
   const blocks = [section(`<@${payload.user_id}> asked: ${quoteSnippet(prompt)}`)];

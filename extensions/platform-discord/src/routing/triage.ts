@@ -23,6 +23,12 @@ export interface RawDiscordMessage {
   text: string;
   messageId: string;
   isDm: boolean;
+  /**
+   * A DM-based channel that is not a one-to-one DM (a group DM). Still routed
+   * as a DM (`isDm`); the envelope carries `audienceHint: 'shared'` so the
+   * turn runs without private memory (plan personality-memory-boundary D10).
+   */
+  isGroupDm?: boolean;
   isThread: boolean;
   threadId?: string;
   parentChannelId?: string;
@@ -88,6 +94,7 @@ export async function triageMessage(
       messageId: msg.messageId,
       threadId,
       isDm: msg.isDm,
+      shared: msg.isGroupDm === true,
       isGroupMention: msg.isMention,
       replyToId: msg.reference?.messageId,
       replyToUserId: msg.reference?.userId,
@@ -157,6 +164,7 @@ interface EnvelopeInputs {
   messageId: string;
   threadId: string | undefined;
   isDm: boolean;
+  shared: boolean;
   isGroupMention: boolean;
   replyToId?: string;
   replyToUserId?: string;
@@ -176,6 +184,7 @@ function buildEnvelope(input: EnvelopeInputs): InboundMessage {
     replyToId: input.replyToId,
     replyToUserId: input.replyToUserId,
     isDm: input.isDm,
+    ...(input.shared ? { audienceHint: 'shared' as const } : {}),
     isGroupMention: input.isGroupMention,
     messageId: input.messageId,
     ...(input.threadId ? { threadId: input.threadId } : {}),
