@@ -207,3 +207,65 @@ describe('workspace plugin trust', () => {
     expect(warnings.join('\n')).toMatch(/already loaded from ~\/\.ethos\/plugins/);
   });
 });
+
+// V-CC-1 — the grant covers what actually executes: code and skills outside
+// the plugin folder are refused, and a nested node_modules is hashed.
+describe('workspace plugin trust covers what executes', () => {
+  it('a change inside a nested node_modules voids the grant', async () => {
+    const dir = await writeDirPlugin(join(cwd, '.ethos', 'plugins'), 'helper', `nm-${tag}`, 't');
+    const dep = join(dir, 'node_modules', 'dep');
+    await mkdir(dep, { recursive: true });
+    await writeFile(join(dep, 'index.js'), 'export const v = 1;');
+    const storage = new FsStorage();
+    const pluginsDir = join(dataDir, 'plugins');
+    await trustWorkspacePlugin(storage, pluginsDir, dir);
+    await writeFile(join(dep, 'index.js'), 'export const v = 2;');
+    expect(await workspaceTrustState(storage, pluginsDir, dir)).toBe('changed');
+  });
+
+  it('refuses a trusted plugin whose skills_dir resolves outside its folder', async () => {
+    const dir = join(cwd, '.ethos', 'plugins', 'skilled');
+    await mkdir(dir, { recursive: true });
+    await mkdir(join(cwd, 'repo-skills'), { recursive: true });
+    await writeFile(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'skilled', ethos: { skills_dir: '../../../repo-skills' } }),
+    );
+    await trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir);
+    const { logger, warnings } = captureLogger();
+    const { loader: l } = loader(logger);
+    await l.loadAll();
+    expect(l.getPluginSkillSources().map((s) => s.dir)).toEqual([]);
+    expect(warnings.join('\n')).toMatch(/skills_dir.*outside the plugin folder/);
+  });
+
+  it('refuses a trusted node_modules package whose skills_dir resolves outside its folder', async () => {
+    const pkgDir = join(cwd, 'node_modules', 'ethos-plugin-sk');
+    await mkdir(pkgDir, { recursive: true });
+    await writeFile(
+      join(pkgDir, 'package.json'),
+      JSON.stringify({ name: 'ethos-plugin-sk', ethos: { skills_dir: '../../skills' } }),
+    );
+    await trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), pkgDir);
+    const { logger, warnings } = captureLogger();
+    const { loader: l } = loader(logger);
+    await l.loadAll();
+    expect(l.getPluginSkillSources().map((s) => s.dir)).toEqual([]);
+    expect(warnings.join('\n')).toMatch(/skills_dir.*outside the plugin folder/);
+  });
+
+  it('keeps a skills_dir inside the folder', async () => {
+    const dir = join(cwd, '.ethos', 'plugins', 'skilled');
+    await mkdir(join(dir, 'skills'), { recursive: true });
+    await writeFile(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'skilled', ethos: { skills_dir: 'skills' } }),
+    );
+    await trustWorkspacePlugin(new FsStorage(), join(dataDir, 'plugins'), dir);
+    const { loader: l } = loader();
+    await l.loadAll();
+    expect(l.getPluginSkillSources().map((s) => s.dir)).toEqual([join(dir, 'skills')]);
+  });
+  // Import containment runs in Node's resolver, which vitest's module runner
+  // bypasses — pinned in a real process by workspace-import-guard.test.ts.
+});

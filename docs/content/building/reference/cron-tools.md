@@ -4,7 +4,7 @@ description: "Action-dispatch cron tool — create, list, get, read_run, update,
 kind: reference
 audience: developer
 slug: cron-tools
-updated: 2026-09-24
+updated: 2026-09-28
 ---
 
 # Cron tool
@@ -45,7 +45,7 @@ Add the tool to the personality's `toolset.yaml`:
 | `name` | string | yes | Human-readable label (e.g. `"Morning Briefing"`). |
 | `schedule` | string | yes | Standard 5-field cron expression — minute hour day month weekday. All times are local. Validated via `isValidCronExpression`. |
 | `prompt` | string | yes | The prompt the agent runs on each firing. |
-| `missed_run_policy` | `'run-once' \| 'skip'` | no | What to do if the scheduler was down when the job's scheduled time passed. `run-once` fires the missed slot on next start; `skip` waits for the next normal occurrence. Default: `skip`. |
+| `missed_run_policy` | `'run-once' \| 'skip'` | no | What to do if the scheduler was down when the job's scheduled time passed. `run-once` fires the missed slot on next start; `skip` (default) waits for the next normal occurrence and records the skip in the run history. A slot is missed only when it fell due before the scheduler's previous tick or before the process started (`CronScheduler.tick`). |
 
 Always pins the job to the caller's personality (`ctx.personalityId`). Returns an error if no personality context is available.
 

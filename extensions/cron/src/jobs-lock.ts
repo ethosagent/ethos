@@ -71,7 +71,10 @@ export function currentBootId(): string | null {
   return cachedBootId;
 }
 
-function defaultIsAlive(pid: number): boolean {
+/** `process.kill(pid, 0)` liveness: EPERM (another user's process) counts as
+ *  alive. Also the owner probe for a `CronJob.runningSince` stamp
+ *  (`CronScheduler.isRunning`). */
+export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -140,7 +143,7 @@ export async function withJobsFileLock<T>(
   const pollMs = options.pollMs ?? 100;
   const stale = {
     unreadableStaleMs: options.unreadableStaleMs ?? 30_000,
-    isAlive: options.isAlive ?? defaultIsAlive,
+    isAlive: options.isAlive ?? isPidAlive,
   };
   const body = JSON.stringify({
     pid: process.pid,

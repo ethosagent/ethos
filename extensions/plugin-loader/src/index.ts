@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { assertWithinBase } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import {
@@ -48,6 +48,7 @@ import {
   readLockfile,
 } from './lockfile';
 import { execNpm, installPinnedTarball, type NpmRunner, PluginIntegrityError } from './tarball-pin';
+import { guardWorkspacePluginImports } from './workspace-import-guard';
 import { projectNodeModulesCandidates, workspaceTrustState } from './workspace-trust';
 
 // Plugin credential refs — re-exported so the CLI writer mints refs from the
@@ -336,7 +337,17 @@ export class PluginLoader {
       return false;
     }
     const state = await workspaceTrustState(this.storage, join(this.dataDir, 'plugins'), dir);
-    if (state === 'trusted') return true;
+    if (state === 'trusted') {
+      // The grant hashes this folder only, so nothing outside it may run under
+      // it: contain the module graph before anything is imported (V-CC-1).
+      guardWorkspacePluginImports(dir, (message) =>
+        this.logger.warn(`[plugin-loader] ${message}`, {
+          component: 'plugin-loader',
+          pluginId: id,
+        }),
+      );
+      return true;
+    }
     const why =
       state === 'changed'
         ? 'its files changed since it was trusted'
@@ -346,6 +357,23 @@ export class PluginLoader {
       { component: 'plugin-loader', pluginId: id },
     );
     return false;
+  }
+
+  /**
+   * V-CC-1 — whether a workspace plugin's `skills_dir` resolves outside its
+   * folder. Skills there are repo content the trust grant never hashed, so the
+   * plugin is refused (warned) rather than loaded with them. Lexical; a
+   * symlinked directory inside the folder already fails the hash closed.
+   */
+  private workspaceSkillsDirEscapes(id: string, dir: string, skillsDir: unknown): boolean {
+    if (typeof skillsDir !== 'string') return false;
+    const rel = relative(resolve(dir), resolve(dir, skillsDir));
+    if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return false;
+    this.logger.warn(
+      `[plugin-loader] Workspace plugin "${id}" at ${dir} not loaded: its skills_dir "${skillsDir}" resolves outside the plugin folder, which its trust grant does not cover. Move the skills inside the folder and run: ethos plugin trust`,
+      { component: 'plugin-loader', pluginId: id },
+    );
+    return true;
   }
 
   /**
@@ -391,6 +419,10 @@ export class PluginLoader {
     // Read package.json once — used for skills_dir discovery, contract check, and permissions.
     const pkgSrc = await this.storage.read(join(dir, 'package.json'));
     const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
+    if (opts.workspace) {
+      const skillsDir = (pkgJson.ethos as Record<string, unknown> | undefined)?.skills_dir;
+      if (this.workspaceSkillsDirEscapes(id, dir, skillsDir)) return;
+    }
 
     this.pluginPaths.set(id, dir);
 
@@ -545,6 +577,8 @@ export class PluginLoader {
           const wsId = (ethosNm?.id as string | undefined) ?? name.replace(/^@[^/]+\//, '');
           const gateCwd = opts.cwd ?? process.cwd();
           if (!(await this.workspaceGate(wsId, join(nmDir, name), gateCwd))) continue;
+          if (this.workspaceSkillsDirEscapes(wsId, join(nmDir, name), ethosNm?.skills_dir))
+            continue;
         }
 
         // G5 — the operator withdrew consent for this package. Refuse before

@@ -196,7 +196,7 @@ async function trustWorkspacePlugins(dir: string): Promise<void> {
     );
   }
   console.log(
-    `${c.dim}Any change to these files voids the grant; run this command again after reviewing it.${c.reset}`,
+    `${c.dim}Any change to these files (a nested node_modules included) voids the grant; run this command again after reviewing it. A trusted plugin may import only files inside its own folder.${c.reset}`,
   );
 }
 

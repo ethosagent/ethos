@@ -1349,10 +1349,21 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // §3b step 8 — adapters started. HARD PRECONDITION for step 9: a delivery
   // sweep against cold adapters sends into nothing while burning obligations.
   // -------------------------------------------------------------------------
-  // One failing adapter must not stop the rest (UBP-010).
+  // One failing adapter must not stop the rest (UBP-010), and a failed one is
+  // retried in the background until it starts, fails permanently, or
+  // `shutdown` aborts `adapterStartRetry` (V-CC-4). One that recovers after the
+  // platform-webhook mounts below were built is mounted by
+  // `onAdapterRecovered`, assigned there.
+  const adapterStartRetry = new AbortController();
+  let onAdapterRecovered: (adapter: PlatformAdapter) => void = () => {};
   await startAdaptersIsolated(adapters, {
     observability: gatewayObservability(),
     warn: (message) => console.warn(`${c.yellow}⚠${c.reset} ${message}`),
+    retry: {
+      signal: adapterStartRetry.signal,
+      onStarted: (a) => onAdapterRecovered(a),
+      isRetired: (a) => gateway.hasStopped(a),
+    },
   });
   heartbeatStartedAt = new Date().toISOString();
   await gateway.pluginsReady();
@@ -1663,6 +1674,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     }
   };
   ensurePlatformWebhookServer();
+  // An adapter whose start succeeded on a background retry (V-CC-4) has only
+  // now built its webhook handler: mount it in the live table, binding the
+  // listener if this is the first route.
+  onAdapterRecovered = (adapter) => {
+    const mounts = buildPlatformWebhookMounts(cfg, [adapter], (message) => logger.warn(message));
+    for (const [botKey, handler] of mounts.telegram)
+      platformWebhookMounts.telegram.set(botKey, handler);
+    for (const [route, handler] of mounts.slack) platformWebhookMounts.slack.set(route, handler);
+    ensurePlatformWebhookServer();
+  };
   /** The inverse of `ensurePlatformWebhookServer` — see
    *  `releaseWebhookServerIfIdle` for why an on-demand bind owes an on-demand
    *  unbind. Both mount tables have to be empty: one listener serves the
@@ -2493,6 +2514,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // promise, memoized; every caller awaits that same one.
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
+      adapterStartRetry.abort();
       // FIRST, and it is an await, not a `clearInterval`. A reconcile already
       // in flight adds bots, replaces adapters and rebinds the web server —
       // exactly the resources every step below tears down — so a teardown

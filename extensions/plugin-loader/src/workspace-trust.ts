@@ -15,11 +15,20 @@
 // Enforced by `PluginLoader.workspaceGate` (./index.ts), pinned by
 // `__tests__/workspace-trust.test.ts`.
 //
-// The hash covers every file under the plugin directory EXCEPT nested
-// `node_modules/` and `.git/` — the same tree the safety scan reads
-// (`collectFindings`). Limitation: a dependency the plugin loads from outside
-// that tree (a nested `node_modules`, or a sibling package in a pnpm layout)
-// can change after the grant without voiding it.
+// The hash covers every file under the plugin directory, a nested
+// `node_modules/` included, EXCEPT `.git/` (`hashPluginTree`). Nothing outside
+// that tree may execute or contribute skills under the grant, so it cannot
+// change behind it:
+//   - imports: a trusted workspace plugin's module graph is contained to its
+//     folder — any resolution to a file outside it (a relative `../lib/x.js`, an
+//     absolute path, a dependency hoisted to `<cwd>/node_modules` or a pnpm
+//     sibling, a symlink pointing out) is refused before it evaluates
+//     (`guardWorkspacePluginImports`, ./workspace-import-guard.ts);
+//   - skills: a `skills_dir` that resolves outside the folder refuses the
+//     plugin (`PluginLoader.workspaceSkillsDirEscapes`, ./index.ts).
+// A symlinked directory inside the folder cannot be hashed (it reads as a file)
+// and fails the grant closed. Not covered: `node:` builtins and the Ethos
+// process itself — what the plugin is handed through `activate(api)`.
 //
 // Like the capability grant in ./grants.ts this is a consent record, not a
 // sandbox: a trusted plugin runs in-process with full privileges.
@@ -82,8 +91,9 @@ async function writeWorkspaceTrust(
 
 /**
  * sha256 over the plugin directory's files — sorted relative paths and their
- * bytes, `node_modules/` and `.git/` skipped. Any added, removed, renamed or
- * edited file changes it.
+ * bytes, a nested `node_modules/` included (a trusted plugin may only import
+ * from inside its folder, so its dependencies live there), `.git/` skipped.
+ * Any added, removed, renamed or edited file changes it.
  */
 export async function hashPluginTree(storage: Storage, dir: string): Promise<string> {
   const root = resolve(dir);
@@ -93,7 +103,7 @@ export async function hashPluginTree(storage: Storage, dir: string): Promise<str
     for (const entry of entries) {
       const full = join(current, entry.name);
       if (entry.isDir) {
-        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        if (entry.name === '.git') continue;
         await walk(full);
       } else {
         files.push(full);
