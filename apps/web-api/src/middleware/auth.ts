@@ -32,6 +32,9 @@ export function authMiddleware(opts: AuthMiddlewareOptions): MiddlewareHandler {
         action: 'Re-open the URL printed by `ethos serve`. Token may have rotated.',
       });
     }
+    // Recorded like `dualAuth` does, so a handler that needs a POSITIVE cookie
+    // (the chat initiator, features/chat/rpc/send.ts) sees one on this path too.
+    c.set('authMethod', 'cookie');
     await next();
   };
 }

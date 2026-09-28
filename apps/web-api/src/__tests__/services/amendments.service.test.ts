@@ -58,6 +58,7 @@ const REVIEW: AmendmentReview = {
   afterBytes: '- read_file\n- web_fetch\n',
   expectedAfterHash: 'e'.repeat(64),
   textDiff: [' - read_file', '+- web_fetch'],
+  rollbackDiff: [],
   permissionDiff: {
     changes: [{ section: 'Toolset', field: 'toolset', direction: 'widens', detail: '+ web_fetch' }],
     widens: true,

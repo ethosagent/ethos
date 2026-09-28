@@ -127,8 +127,9 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // request), which is why this is no longer conditional on the MCP fields.
     //
     // `_authMethod` is how a handler learns whether the caller presented a
-    // cookie or a bearer API key. It is absent when no api-key store is wired
-    // (the cookie-only `authMiddleware` path), which handlers read as "cookie".
+    // cookie or a bearer API key. Both `dualAuth` and the cookie-only
+    // `authMiddleware` set it; a handler that grants something to a person
+    // (the chat initiator) requires `'cookie'` and treats absent as not one.
     const requestId: string | undefined = c.get('requestId');
     const authMethod: string | undefined = c.get('authMethod');
     const context: ServiceContainer = Object.assign(

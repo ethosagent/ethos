@@ -2,6 +2,7 @@
 // web rows, and the G2 filing gate they feed (G2-4):
 //   - web chat, cookie session → `initiator: 'user'`
 //   - web chat, bearer API key  → `initiator: 'system'`
+//   - web chat, no auth method recorded → `initiator: 'system'` (fails closed)
 // `chatSend` (features/chat/rpc/send.ts) decides it from `_authMethod`,
 // `ChatService.send` forwards it to `loop.run`, and the self-amendment intake
 // (`createAmendmentIntake`, packages/wiring/src/amendments.ts) files only for
@@ -20,10 +21,12 @@ import type { ToolContext, TurnInitiator } from '@ethosagent/types';
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
 import { createAmendmentIntake } from '@ethosagent/wiring';
 import { call } from '@orpc/server';
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatRepository } from '../../features/chat/repository';
 import { chatSend } from '../../features/chat/rpc/send';
 import { ChatService } from '../../features/chat/service';
+import { AUTH_COOKIE, authMiddleware } from '../../middleware/auth';
 import { makeStubAgentLoop } from '../test-helpers';
 
 describe('web chat initiator (cookie → user, bearer → system)', () => {
@@ -73,8 +76,16 @@ describe('web chat initiator (cookie → user, bearer → system)', () => {
     expect((await runOptsFor('cookie'))?.initiator).toBe('user');
   });
 
-  it('an absent auth method is the cookie-only middleware path → user', async () => {
-    expect((await runOptsFor(undefined))?.initiator).toBe('user');
+  it('an absent auth method fails closed → system (only a positive cookie is a person)', async () => {
+    expect((await runOptsFor(undefined))?.initiator).toBe('system');
+  });
+
+  it('the cookie-only authMiddleware records a positive cookie, so its turns stay user', async () => {
+    const app = new Hono();
+    app.use('*', authMiddleware({ tokens: { matches: async () => true } as never }));
+    app.get('/probe', (c) => c.text(String(c.get('authMethod'))));
+    const res = await app.request('/probe', { headers: { cookie: `${AUTH_COOKIE}=t` } });
+    expect(await res.text()).toBe('cookie');
   });
 
   it('a bearer API key starts a system turn', async () => {

@@ -14,13 +14,15 @@ function requestId(context: object): string | undefined {
 
 /**
  * Who started the turn (plan personality-memory-boundary, the initiator table):
- * a cookie session is the owner in the web app → `'user'`; a bearer API key is
- * a program → `'system'`. Same `_authMethod` read as `rpc/cron.ts` — absent
- * means the cookie-only `authMiddleware` path, i.e. cookie. Pinned by
- * apps/web-api/src/__tests__/services/chat-initiator.test.ts.
+ * a cookie session is the owner in the web app → `'user'`; anything else — a
+ * bearer API key, or no recorded auth method at all — is `'system'`. Fails
+ * closed: `'user'` unlocks self-amendment filing (`gateRefusal`,
+ * packages/wiring/src/amendments.ts), so it needs a POSITIVE cookie, which both
+ * auth middlewares record (`dualAuth` and `authMiddleware`, apps/web-api/src/
+ * middleware/). Pinned by apps/web-api/src/__tests__/services/chat-initiator.test.ts.
  */
 function initiator(context: object): 'user' | 'system' {
-  return (context as { _authMethod?: unknown })._authMethod === 'bearer' ? 'system' : 'user';
+  return (context as { _authMethod?: unknown })._authMethod === 'cookie' ? 'user' : 'system';
 }
 
 export const chatSend = os.chat.send.handler(({ input, context }) => {
