@@ -33,6 +33,17 @@ describe('evaluateEligibility', () => {
     expect(res).toEqual({ eligible: false, reason: 'tool-only' });
   });
 
+  it('excludes a shared session first, whatever else holds', () => {
+    expect(evaluateEligibility(input({ shared: true }))).toEqual({
+      eligible: false,
+      reason: 'shared-audience',
+    });
+    expect(evaluateEligibility(input({ shared: true, isDryRun: true }))).toEqual({
+      eligible: false,
+      reason: 'shared-audience',
+    });
+  });
+
   it('excludes dream sessions', () => {
     const res = evaluateEligibility(input({ sessionKey: 'dream:ethos' }));
     expect(res).toEqual({ eligible: false, reason: 'dream-session' });

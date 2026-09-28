@@ -10,7 +10,14 @@ import {
   SkillEvolver,
   skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
-import { AWAITING_DECISION, type LearningInbox, learningSubmitPort } from '@ethosagent/wiring';
+import {
+  AWAITING_DECISION,
+  isSharedSession,
+  type LearningInbox,
+  learningSubmitPort,
+  type PrivateChatSet,
+  privateChatSetFrom,
+} from '@ethosagent/wiring';
 import { createCliLearningInbox, createLearningReplayer, createLLM, getStorage } from '../wiring';
 
 const c = {
@@ -170,7 +177,11 @@ async function runEvolveRun(args: string[], config: EthosConfig, dir: string): P
   const tmpEvalPath = join(dir, `.evolver-run-${Date.now()}.eval.jsonl`);
   let wroteRecords = false;
   try {
-    wroteRecords = await exportSessionsToEval(sessionsDb, tmpEvalPath);
+    wroteRecords = await exportSessionsToEval(
+      sessionsDb,
+      tmpEvalPath,
+      privateChatSetFrom(config.gateway?.privateChats),
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!quiet) console.error(`${c.red}Failed to export sessions:${c.reset} ${msg}`);
@@ -199,28 +210,62 @@ const ROLE_MAP: Record<string, 'user' | 'assistant' | 'tool'> = {
 /**
  * Export messages from the session SQLite DB into an eval JSONL file.
  * Returns true if at least one record was written.
+ *
+ * Shared sessions are never exported (plan personality-memory-boundary G1-8):
+ * the sessions active in the window are read first and judged by
+ * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp in
+ * `metadata`, or a pre-upgrade group lane key, honouring `privateChats`), and
+ * only the remaining ids are passed to the message query, so a busy group
+ * cannot use up the row cap either. Pinned by the shared-session cases in
+ * `apps/ethos/src/commands/__tests__/evolve-export.test.ts`.
  */
-export async function exportSessionsToEval(dbPath: string, outPath: string): Promise<boolean> {
+export async function exportSessionsToEval(
+  dbPath: string,
+  outPath: string,
+  privateChats?: PrivateChatSet,
+): Promise<boolean> {
   // Dynamic import keeps SQLite out of the require graph for codepaths
   // that don't use `evolve run`.
   const { default: Database } = await import('@ethosagent/sqlite');
   const db = new Database(dbPath, { readonly: true });
 
   try {
-    // Fetch messages from the last 7 days across all sessions.
+    // Fetch messages from the last 7 days across all private sessions.
     // JOIN sessions to get the key (messages only has session_id FK, not session_key).
     // LIMIT 2000 prevents loading the entire table into memory on busy installs.
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const active = db
+      .prepare(
+        `SELECT DISTINCT s.id, s.key, s.metadata
+           FROM sessions s
+           JOIN messages m ON m.session_id = s.id
+          WHERE m.timestamp >= ?`,
+      )
+      .all(cutoff) as Array<{ id: string; key: string; metadata: string | null }>;
+    const privateIds = active
+      .filter((s) => {
+        const metadata = parseMetadata(s.metadata);
+        // Unreadable metadata cannot prove the session was never stamped shared: fail closed.
+        return metadata !== null && !isSharedSession({ key: s.key, metadata }, privateChats);
+      })
+      .map((s) => s.id);
+    if (privateIds.length === 0) return false;
+
     const rows = db
       .prepare(
         `SELECT s.key AS session_key, m.role, m.content
            FROM messages m
            JOIN sessions s ON m.session_id = s.id
           WHERE m.timestamp >= ?
+            AND m.session_id IN (SELECT value FROM json_each(?))
           ORDER BY m.timestamp ASC
           LIMIT 2000`,
       )
-      .all(cutoff) as Array<{ session_key: string; role: string; content: string }>;
+      .all(cutoff, JSON.stringify(privateIds)) as Array<{
+      session_key: string;
+      role: string;
+      content: string;
+    }>;
 
     if (rows.length === 0) return false;
 
@@ -251,6 +296,19 @@ export async function exportSessionsToEval(dbPath: string, outPath: string): Pro
     return true;
   } finally {
     db.close();
+  }
+}
+
+/** A `sessions.metadata` cell: `undefined` when empty, `null` when it is not a JSON object. */
+function parseMetadata(raw: string | null): Record<string, unknown> | undefined | null {
+  if (raw === null) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
   }
 }
 

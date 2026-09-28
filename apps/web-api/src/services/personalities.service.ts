@@ -41,7 +41,9 @@ import type {
   PersonalitySkill,
 } from '@ethosagent/web-contracts';
 import {
+  isSharedSession,
   listPendingExpressionCandidates,
+  type PrivateChatSet,
   resolveCharacterSheetDecisions,
   submitExpressionCandidate,
 } from '@ethosagent/wiring';
@@ -108,6 +110,12 @@ export interface PersonalitiesServiceOptions {
   llm?: () => Promise<import('@ethosagent/types').LLMProvider>;
   /** Session store — supplies recent-interaction evidence for Expression drafts. */
   sessions?: import('@ethosagent/types').SessionStore;
+  /**
+   * `gateway.private_chats`, read per draft, so a listed trusted room's
+   * sessions count as evidence. Absent → every group lane is shared and
+   * skipped (`gatherEvidence`).
+   */
+  readPrivateChats?: () => Promise<PrivateChatSet | undefined>;
   /** Storage — used to read the personality's Personality-Judge
    *  alignment sidecar. Omitted → `livingSoul` returns no `judge` block. */
   storage?: Storage;
@@ -1236,12 +1244,21 @@ export class PersonalitiesService {
    * personality, capped at 20 messages / 4000 chars. Mirrors the CLI's
    * `ethos personality evolve` evidence logic. Returns '' when no session
    * store is wired.
+   *
+   * Shared sessions are skipped in both the personality's own list and the
+   * all-sessions fallback (plan personality-memory-boundary G1-8):
+   * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp,
+   * or a pre-upgrade group lane key). Pinned by
+   * `apps/web-api/src/__tests__/services/personalities-evidence.test.ts`.
    */
   private async gatherEvidence(id: string): Promise<string> {
     const store = this.opts.sessions;
     if (!store) return '';
-    let sessions = await store.listSessions({ personalityId: id });
-    if (sessions.length === 0) sessions = await store.listSessions();
+    const privateChats = await this.opts.readPrivateChats?.();
+    const privateOnly = (list: import('@ethosagent/types').Session[]) =>
+      list.filter((s) => !isSharedSession(s, privateChats));
+    let sessions = privateOnly(await store.listSessions({ personalityId: id }));
+    if (sessions.length === 0) sessions = privateOnly(await store.listSessions());
     if (sessions.length === 0) return '';
     sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 

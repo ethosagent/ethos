@@ -197,6 +197,37 @@ describe('MemoryCaptureRunner', () => {
     expect(h.llmCalls).toHaveLength(0);
   });
 
+  // plan personality-memory-boundary G1-8 — a shared room never reaches private memory.
+  it('skips a session stamped shared without an LLM call', async () => {
+    const session = {
+      getSession: async (id: string) =>
+        ({ id, key: 'web:abc', metadata: { roomAudience: 'shared' } }) as unknown as Session,
+    } as unknown as SessionStore;
+    const h = makeHarness({ session });
+    await capture(h.runner);
+    expect(h.llmCalls).toHaveLength(0);
+    expect((await h.history.read('personality:muse')).entries).toHaveLength(0);
+  });
+
+  it('pre-upgrade fixture: skips an UNSTAMPED telegram group lane session', async () => {
+    const h = makeHarness({ session: makeSession({ s1: 'telegram:bot1:-1001234567890' }) });
+    await capture(h.runner);
+    expect(h.llmCalls).toHaveLength(0);
+  });
+
+  it('captures a DM lane, and a group listed in privateChats', async () => {
+    const dm = makeHarness({ session: makeSession({ s1: 'telegram:bot1:4242' }) });
+    await capture(dm.runner);
+    expect(dm.llmCalls).toHaveLength(1);
+
+    const trusted = makeHarness({
+      session: makeSession({ s1: 'telegram:bot1:-100200' }),
+      privateChats: { has: (p, c) => p === 'telegram' && c === '-100200' },
+    });
+    await capture(trusted.runner);
+    expect(trusted.llmCalls).toHaveLength(1);
+  });
+
   it('skips synthetic background-job wake turns', async () => {
     const h = makeHarness();
     await capture(h.runner, {

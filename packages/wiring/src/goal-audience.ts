@@ -16,9 +16,12 @@ import type { GoalOrigin, TurnAudience } from '@ethosagent/types';
  * in a Discord or email DM, whose ids cannot be classified, fails closed.
  * Anything else → `'shared'`.
  *
- * Limitation: `goal_create` records `web` for a turn that carries no origin,
- * so a goal created by a turn with no channel origin — a delegated child of a
- * group turn, for one — reads as private here.
+ * `goal_create` records `web` for a turn that carries no origin, which reads as
+ * private here — so it refuses a shared turn whose origin does not derive
+ * shared through this same function (bound in compose-tools.ts,
+ * `createGoalTools`'s `originAudience`); a delegated child of a group turn
+ * cannot create a goal that would run private. Pinned by
+ * extensions/tools-goals/src/__tests__/goal-audience.test.ts.
  */
 export function goalRoomAudience(origin: GoalOrigin, privateChats?: PrivateChatSet): TurnAudience {
   if (origin === 'web' || origin === 'cli') return 'private';

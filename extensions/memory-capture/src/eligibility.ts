@@ -7,10 +7,18 @@ export type ExclusionReason =
   | 'dream-session'
   | 'child-session'
   | 'wake-turn'
-  | 'dry-run';
+  | 'dry-run'
+  | 'shared-audience';
 
 export interface EligibilityInput {
   sessionKey: string;
+  /**
+   * The turn's session is shared (`isSharedSession`, packages/core/src/chat-audience.ts):
+   * stamped shared, or a pre-upgrade group lane key. Nothing said in a shared
+   * room is carried into the personality's private memory (plan
+   * personality-memory-boundary G1-8). Resolved by `MemoryCaptureRunner.process`.
+   */
+  shared?: boolean;
   /** First user message of the turn. */
   initialPrompt: string;
   /** Final assistant text of the turn. */
@@ -83,6 +91,8 @@ function isWakeTurn(initialPrompt: string): boolean {
 }
 
 export function evaluateEligibility(input: EligibilityInput): EligibilityResult {
+  // Checked first: a shared room's content never reaches private memory, whatever else holds.
+  if (input.shared) return { eligible: false, reason: 'shared-audience' };
   if (input.isDryRun) return { eligible: false, reason: 'dry-run' };
 
   const sessionKey = input.sessionKey;

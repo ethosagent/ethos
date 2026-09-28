@@ -31,6 +31,10 @@ describe('cronRunAudience', () => {
     expect(cronRunAudience(j)).toBe('shared');
   });
 
+  it('a job a shared delegated child created (stamp, no target) runs shared', () => {
+    expect(cronRunAudience(job({ id: 'child', roomAudience: 'shared' }))).toBe('shared');
+  });
+
   it('a CLI job (private stamp, no target) runs private', () => {
     expect(cronRunAudience(job({ id: 'c', roomAudience: 'private' }))).toBe('private');
   });

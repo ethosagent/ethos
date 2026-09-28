@@ -396,6 +396,14 @@ describe('cron tool roomAudience stamp', () => {
     expect(job?.origin).toEqual({ platform: 'telegram', chatId: '-100200' });
   });
 
+  it('a job created by a delegated child of a group turn (no origin) is stamped shared', async () => {
+    const job = await createFrom(
+      { sessionKey: 'telegram:bot1:-100200:sub:task:1', platform: 'cli', roomAudience: 'shared' },
+      'Child Job',
+    );
+    expect(job?.roomAudience).toBe('shared');
+  });
+
   it('a job created from the CLI is stamped private even with no origin', async () => {
     const job = await createFrom(
       { sessionKey: 'cli:ethos', platform: 'cli', roomAudience: 'private' },

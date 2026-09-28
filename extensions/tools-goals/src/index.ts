@@ -1,4 +1,11 @@
-import type { AcceptanceSpec, GoalOrigin, GoalStore, Tool, ToolResult } from '@ethosagent/types';
+import type {
+  AcceptanceSpec,
+  GoalOrigin,
+  GoalStore,
+  Tool,
+  ToolResult,
+  TurnAudience,
+} from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,7 +76,18 @@ interface CreateArgs {
   deadline?: string;
 }
 
-function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void): Tool {
+/**
+ * The room audience a goal with this origin runs under — `goalRoomAudience`
+ * (packages/wiring/src/goal-audience.ts), bound to `gateway.private_chats` by
+ * wiring. A goal has no audience column; its origin is the only carrier.
+ */
+export type GoalOriginAudience = (origin: GoalOrigin) => TurnAudience;
+
+function createGoalCreate(
+  store: GoalStore,
+  onCreated?: (goalId: string) => void,
+  originAudience?: GoalOriginAudience,
+): Tool {
   return {
     name: 'goal_create',
     description:
@@ -140,6 +158,21 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
       }
       const checksInvalid = checksError(args.acceptance_spec?.checks);
       if (checksInvalid) return errorResult(checksInvalid, 'input_invalid');
+      // G1-6 (plan personality-memory-boundary): any turn a shared turn causes
+      // is shared. A goal's runs derive their audience from its origin alone,
+      // so a shared turn may only create a goal whose origin derives shared.
+      // One with no room origin (a delegated child of a group turn records
+      // `web`) would run private — refused. Without the derivation wired, no
+      // origin can be proven shared, so every shared-turn goal is refused.
+      // Pinned by extensions/tools-goals/src/__tests__/goal-audience.test.ts.
+      const origin = deriveOrigin(ctx.origin);
+      if (ctx.roomAudience === 'shared' && originAudience?.(origin) !== 'shared') {
+        return errorResult(
+          'goal_create is unavailable here: this turn belongs to a shared room, and a goal created ' +
+            'from it would run with private memory. Ask for the goal in a private chat.',
+          'not_available',
+        );
+      }
       try {
         // ALWAYS the fallback today: nothing in the framework writes `userId`
         // into the run's ContextStore (see packages/core/src/context-store.ts —
@@ -154,7 +187,7 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
         const goal = store.create({
           userId: typeof userId === 'string' ? userId : 'default-user',
           personalityId: ctx.personalityId ?? 'default',
-          origin: deriveOrigin(ctx.origin),
+          origin,
           title: args.title,
           goalText: args.goal_text,
           ...(args.acceptance_spec !== undefined
@@ -275,6 +308,11 @@ function createGoalComplete(): Tool {
 export function createGoalTools(
   store: GoalStore,
   onCreated?: (goalId: string) => void,
+  originAudience?: GoalOriginAudience,
 ): Tool<unknown>[] {
-  return [createGoalCreate(store, onCreated), createGoalStatus(store), createGoalComplete()];
+  return [
+    createGoalCreate(store, onCreated, originAudience),
+    createGoalStatus(store),
+    createGoalComplete(),
+  ];
 }

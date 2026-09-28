@@ -191,6 +191,61 @@ describe('case freezing', () => {
     expect(await listCases(storage, DATA, 'researcher')).toEqual([]);
   });
 
+  // plan personality-memory-boundary G1-8 — a shared room's turn is never frozen.
+  describe('shared turns', () => {
+    const ctx = () => ({ storage, dataDir: DATA, personalities });
+
+    it('freezes nothing for a session stamped shared', async () => {
+      const { sessions, session } = await sessionWith('web:abc');
+      await sessions.updateSession(session.id, { metadata: { roomAudience: 'shared' } });
+      const id = await freezeLatestUserTurnCase(ctx(), sessions, {
+        sessionId: session.id,
+        sessionKey: session.key,
+        personalityId: 'researcher',
+      });
+      expect(id).toBeNull();
+      expect(await listCases(storage, DATA, 'researcher')).toEqual([]);
+    });
+
+    it('pre-upgrade fixture: freezes nothing for an UNSTAMPED telegram group lane', async () => {
+      const { sessions, session } = await sessionWith('telegram:bot1:-1001234567890');
+      const id = await freezeLatestUserTurnCase(ctx(), sessions, {
+        sessionId: session.id,
+        sessionKey: session.key,
+        personalityId: 'researcher',
+      });
+      expect(id).toBeNull();
+    });
+
+    it('skill_propose from a shared turn freezes nothing, even in a private-looking session', async () => {
+      const { sessions, session } = await sessionWith('cli:project');
+      const id = await freezeLatestUserTurnCase(ctx(), sessions, {
+        sessionId: session.id,
+        sessionKey: session.key,
+        personalityId: 'researcher',
+        roomAudience: 'shared',
+      });
+      expect(id).toBeNull();
+    });
+
+    it('a group listed in privateChats is frozen', async () => {
+      const { sessions, session } = await sessionWith('telegram:bot1:-100200');
+      const id = await freezeLatestUserTurnCase(ctx(), sessions, {
+        sessionId: session.id,
+        sessionKey: session.key,
+        personalityId: 'researcher',
+        privateChats: { has: (p, c) => p === 'telegram' && c === '-100200' },
+      });
+      expect(id).not.toBeNull();
+    });
+
+    it('the nightly freeze pass skips shared sessions (pre-upgrade group lane)', async () => {
+      const { sessions } = await sessionWith('telegram:bot1:-1001234567890');
+      const result = await freezeNightlyCases(ctx(), { personalityId: 'researcher', sessions });
+      expect(result.frozen).toEqual([]);
+    });
+  });
+
   it('the nightly freeze pass skips a missing board and freezes session turns', async () => {
     const { sessions } = await sessionWith('cli:project');
     const result = await freezeNightlyCases(

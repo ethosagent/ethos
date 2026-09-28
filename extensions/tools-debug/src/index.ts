@@ -1,3 +1,4 @@
+import { isSharedSession, type PrivateChatSet } from '@ethosagent/core';
 import type {
   ObservabilityStore,
   SessionStore,
@@ -9,6 +10,11 @@ import type {
 
 export interface DebugToolsDeps {
   sessionStore: SessionStore;
+  /**
+   * `gateway.private_chats`: a listed room's session is not shared for
+   * `get_session_events`. Absent → every group lane is shared.
+   */
+  privateChats?: PrivateChatSet;
   observabilityStore?: ObservabilityStore;
   readRecentErrors?: (
     limit: number,
@@ -48,7 +54,7 @@ function buildGetSessionEvents(deps: DebugToolsDeps): Tool {
     toolset: 'debug',
     maxResultChars: 20_000,
     capabilities: {},
-    async execute(args, _ctx): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { sessionId, limit, eventTypes } = args as {
         sessionId: string;
         limit?: number;
@@ -60,6 +66,24 @@ function buildGetSessionEvents(deps: DebugToolsDeps): Tool {
       }
 
       try {
+        // G1-8 (plan personality-memory-boundary): a shared room's transcript
+        // is not handed to another session — a private caller (a dream, an
+        // owner DM) could carry it into private memory. The caller's own
+        // session is its own context already. `isSharedSession`
+        // (packages/core/src/chat-audience.ts) covers the sticky stamp and
+        // pre-upgrade group lane keys. Pinned by
+        // extensions/tools-debug/src/__tests__/get-session-events.test.ts.
+        if (sessionId !== ctx.sessionId) {
+          const target = await deps.sessionStore.getSession(sessionId);
+          if (target && isSharedSession(target, deps.privateChats)) {
+            return {
+              ok: false,
+              error:
+                'That session is a shared room (group chat or channel); its messages are only readable from inside it.',
+              code: 'not_available',
+            };
+          }
+        }
         const messages = await deps.sessionStore.getMessages(sessionId, {
           limit: limit ?? 50,
         });

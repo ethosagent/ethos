@@ -131,6 +131,11 @@ describe('watcher_create — roomAudience stamp (plan personality-memory-boundar
     });
   });
 
+  it('a watcher created by a delegated child of a group turn (no origin) records shared', async () => {
+    const owner = await ownerAfterCreate({ roomAudience: 'shared' });
+    expect(owner?.roomAudience).toBe('shared');
+  });
+
   it('a watcher created from a private turn records private', async () => {
     expect((await ownerAfterCreate({ roomAudience: 'private' }))?.roomAudience).toBe('private');
   });

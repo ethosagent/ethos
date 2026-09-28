@@ -1519,6 +1519,9 @@ importers:
 
   extensions/memory-capture:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/memory-history':
         specifier: workspace:*
         version: link:../memory-history
@@ -2126,6 +2129,9 @@ importers:
 
   extensions/tools-debug:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

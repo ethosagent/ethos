@@ -104,4 +104,62 @@ describe('exportSessionsToEval', () => {
     expect(records.some((r) => r.role === ('system' as never))).toBe(false);
     expect(records).toHaveLength(4);
   });
+
+  // plan personality-memory-boundary G1-8 — nothing said in a room is exported.
+  describe('shared sessions', () => {
+    function seedSessions(sessions: Array<{ id: string; key: string; metadata?: string }>) {
+      seed();
+      const db = new Database(dbPath);
+      const now = new Date().toISOString();
+      const insertSession = db.prepare(
+        `INSERT INTO sessions (id, key, platform, model, provider, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const insertMsg = db.prepare(
+        `INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const s of sessions) {
+        insertSession.run(s.id, s.key, 'x', 'model-x', 'anthropic', s.metadata ?? null, now, now);
+        insertMsg.run(`m-${s.id}`, s.id, 'user', `said in ${s.id}`, now);
+      }
+      db.close();
+    }
+
+    async function exported(privateChats?: Parameters<typeof exportSessionsToEval>[2]) {
+      const wrote = await exportSessionsToEval(dbPath, outPath, privateChats);
+      if (!wrote) return [];
+      return parseEvalJsonl(await readFile(outPath, 'utf-8')).map((r) => r.content);
+    }
+
+    it('excludes a stamped session and an UNSTAMPED group lane (pre-upgrade fixture)', async () => {
+      seedSessions([
+        { id: 'stamped', key: 'web:abc', metadata: JSON.stringify({ roomAudience: 'shared' }) },
+        { id: 'legacy-group', key: 'telegram:bot1:-1001234567890' },
+        { id: 'dm', key: 'telegram:bot1:4242' },
+      ]);
+      const contents = await exported();
+      expect(contents).toContain('said in dm');
+      expect(contents).toContain('content-user');
+      expect(contents).not.toContain('said in stamped');
+      expect(contents).not.toContain('said in legacy-group');
+    });
+
+    it('fails closed on unreadable metadata; exports a listed trusted room', async () => {
+      seedSessions([
+        { id: 'garbled', key: 'cli:garbled', metadata: '{not json' },
+        { id: 'trusted', key: 'telegram:bot1:-100200' },
+      ]);
+      const contents = await exported({ has: (p, c) => p === 'telegram' && c === '-100200' });
+      expect(contents).toContain('said in trusted');
+      expect(contents).not.toContain('said in garbled');
+    });
+
+    it('writes nothing when every recent session is shared', async () => {
+      seedSessions([]);
+      const only = new Database(dbPath);
+      only.prepare(`UPDATE sessions SET key = 'slack:bot1:C123'`).run();
+      only.close();
+      expect(await exportSessionsToEval(dbPath, outPath)).toBe(false);
+    });
+  });
 });

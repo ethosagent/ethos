@@ -26,7 +26,12 @@
 //                               target and regression cases (L-T2's builders)
 
 import { basename, join } from 'node:path';
-import { InMemorySessionStore } from '@ethosagent/core';
+import {
+  InMemorySessionStore,
+  isSharedSession,
+  type PrivateChatSet,
+  privateChatSetFrom,
+} from '@ethosagent/core';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import {
   type AutoPromotionKnobs,
@@ -78,8 +83,10 @@ import type {
   PersonalityRegistry,
   Session,
   SessionFilter,
+  SessionStore,
   Storage,
   StoredMessage,
+  TurnAudience,
 } from '@ethosagent/types';
 import type { WiringConfig } from './index';
 import { createReplayLoop, REPLAY_RUN_OPTIONS, shadowForCandidate } from './learning-replay';
@@ -319,7 +326,11 @@ export function createLearningReplayer(
   opts: LearningReplayerOptions,
 ): (candidateId: string) => Promise<ReplayAndResolveResult> {
   const { storage, dataDir } = opts;
-  const regressionTopUp = learningRegressionTopUp(opts, opts.sessions);
+  const regressionTopUp = learningRegressionTopUp(
+    opts,
+    opts.sessions,
+    privateChatSetFrom(config.privateChats),
+  );
   return async (candidateId) => {
     const observability = opts.observability ?? (await learningAuditSink(opts));
     return replayAndResolve(
@@ -392,16 +403,17 @@ export async function learningAuditSink(ctx: LearningContext): Promise<LearningO
 export function learningRegressionTopUp(
   ctx: LearningContext & { personalities: PersonalityLookup },
   sessions?: CaseSessionSource,
+  privateChats?: PrivateChatSet,
 ): RegressionTopUp {
   return {
     core: (personalityId) => personalityCore(ctx, personalityId),
     sessionTurns: async (personalityId) => {
-      if (sessions) return recentSessionTurns(sessions, personalityId);
+      if (sessions) return recentSessionTurns(sessions, personalityId, privateChats);
       const dbPath = join(ctx.dataDir, 'sessions.db');
       if (!(await ctx.storage.exists(dbPath))) return [];
       const store = new SQLiteSessionStore(dbPath);
       try {
-        return await recentSessionTurns(store, personalityId);
+        return await recentSessionTurns(store, personalityId, privateChats);
       } finally {
         store.close();
       }
@@ -538,8 +550,16 @@ function isPlainText(m: StoredMessage): boolean {
   return (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0;
 }
 
-/** Each user message with up to 4 preceding plain-text messages. Oldest first. */
-function turnsOf(sessionKey: string, messages: readonly StoredMessage[]): SessionCaseTurn[] {
+/**
+ * Each user message with up to 4 preceding plain-text messages. Oldest first.
+ * `shared` marks every turn of a shared session, which `caseFromSessionTurn`
+ * refuses.
+ */
+function turnsOf(
+  sessionKey: string,
+  messages: readonly StoredMessage[],
+  shared = false,
+): SessionCaseTurn[] {
   const plain = messages.filter(isPlainText);
   const turns: SessionCaseTurn[] = [];
   plain.forEach((m, i) => {
@@ -549,6 +569,7 @@ function turnsOf(sessionKey: string, messages: readonly StoredMessage[]): Sessio
       messageId: m.id,
       prompt: m.content,
       context: plain.slice(Math.max(0, i - CASE_CONTEXT_MESSAGES), i).map((c) => c.content),
+      ...(shared ? { shared: true } : {}),
     });
   });
   return turns;
@@ -558,13 +579,35 @@ function turnsOf(sessionKey: string, messages: readonly StoredMessage[]): Sessio
  * Freeze the latest user turn of a session as a case and return its id — the
  * triggering turn for a fork or chat proposal. Null when the session key is one
  * of `LEARNING_EXCLUDED_KEY_PREFIXES` (X-D7) or there is no user turn.
+ *
+ * Null too for a shared turn (plan personality-memory-boundary G1-8): the
+ * calling turn ran `roomAudience: 'shared'`, or its session is shared by
+ * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp, or
+ * a pre-upgrade group lane key). A session the store no longer has is judged
+ * by its key. The turn is marked `shared` and `caseFromSessionTurn`
+ * (extensions/learning-inbox/src/cases.ts) refuses it. Pinned by the 'shared
+ * turns' cases in `packages/wiring/src/__tests__/learning-pipeline.test.ts`.
  */
 export async function freezeLatestUserTurnCase(
   ctx: LearningContext & { personalities: PersonalityLookup },
-  sessions: Pick<CaseSessionSource, 'getMessages'>,
-  turn: { sessionId: string; sessionKey: string; personalityId: string },
+  sessions: Pick<CaseSessionSource, 'getMessages'> & Pick<SessionStore, 'getSession'>,
+  turn: {
+    sessionId: string;
+    sessionKey: string;
+    personalityId: string;
+    roomAudience?: TurnAudience;
+    privateChats?: PrivateChatSet;
+  },
 ): Promise<string | null> {
-  const turns = turnsOf(turn.sessionKey, await sessions.getMessages(turn.sessionId, { limit: 20 }));
+  const source = await sessions.getSession(turn.sessionId);
+  const shared =
+    turn.roomAudience === 'shared' ||
+    isSharedSession(source ?? { key: turn.sessionKey }, turn.privateChats);
+  const turns = turnsOf(
+    turn.sessionKey,
+    await sessions.getMessages(turn.sessionId, { limit: 20 }),
+    shared,
+  );
   const latest = turns.at(-1);
   if (!latest) return null;
   const core = await personalityCore(ctx, turn.personalityId);
@@ -575,16 +618,24 @@ export async function freezeLatestUserTurnCase(
   return learningCase.id;
 }
 
-/** Recent real user turns for a personality, newest sessions first, excluded keys filtered at the query. */
+/**
+ * Recent real user turns for a personality, newest sessions first, excluded
+ * keys filtered at the query. Shared sessions (`isSharedSession`, G1-8) are
+ * dropped before the `maxSessions` cut, so a busy group cannot crowd out the
+ * private sessions the cases should come from.
+ */
 async function recentSessionTurns(
   sessions: CaseSessionSource,
   personalityId: string,
+  privateChats?: PrivateChatSet,
   maxSessions = 10,
 ): Promise<SessionCaseTurn[]> {
-  const listed = await sessions.listSessions({
-    personalityId,
-    excludeKeyPrefixes: [...LEARNING_EXCLUDED_KEY_PREFIXES],
-  });
+  const listed = (
+    await sessions.listSessions({
+      personalityId,
+      excludeKeyPrefixes: [...LEARNING_EXCLUDED_KEY_PREFIXES],
+    })
+  ).filter((s) => !isSharedSession(s, privateChats));
   listed.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   const turns: SessionCaseTurn[] = [];
   for (const s of listed.slice(0, maxSessions)) {
@@ -603,11 +654,12 @@ export async function freezeRecentSessionCases(
   sessions: CaseSessionSource,
   personalityId: string,
   limit = 3,
+  privateChats?: PrivateChatSet,
 ): Promise<string[]> {
   const core = await personalityCore(ctx, personalityId);
   const frozenAt = new Date().toISOString();
   const ids: string[] = [];
-  for (const turn of await recentSessionTurns(sessions, personalityId)) {
+  for (const turn of await recentSessionTurns(sessions, personalityId, privateChats)) {
     if (ids.length >= limit) break;
     const learningCase = caseFromSessionTurn(personalityId, turn, core, frozenAt);
     if (!learningCase) continue;
@@ -628,7 +680,13 @@ export async function freezeRecentSessionCases(
  */
 export async function freezeNightlyCases(
   ctx: LearningContext & { personalities: PersonalityLookup },
-  opts: { personalityId: string; sessions?: CaseSessionSource; kanbanDbPath?: string },
+  opts: {
+    personalityId: string;
+    sessions?: CaseSessionSource;
+    kanbanDbPath?: string;
+    /** `gateway.private_chats`: a listed room's sessions are not shared (G1-8). */
+    privateChats?: PrivateChatSet;
+  },
 ): Promise<CaptureCasesResult> {
   const { personalityId } = opts;
   return captureCases({
@@ -654,6 +712,6 @@ export async function freezeNightlyCases(
       }
     },
     sessionTurns: async () =>
-      opts.sessions ? recentSessionTurns(opts.sessions, personalityId) : [],
+      opts.sessions ? recentSessionTurns(opts.sessions, personalityId, opts.privateChats) : [],
   });
 }

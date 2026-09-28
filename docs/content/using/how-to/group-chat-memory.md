@@ -46,7 +46,7 @@ Work that runs later inherits the room it came from. It runs shared when the cha
 |---|---|
 | A cron job | shared if it was created in a shared chat, delivers to one, or reads a shared job's output through `contextFrom` |
 | A watcher wake | shared if a shared chat created the watcher, it delivers to one, or nothing records who created it |
-| A goal | the room audience of the chat it was set in (`web` and CLI goals are private) |
+| A goal | the room audience of the chat it was set in (`web` and CLI goals are private); a shared turn with no room of its own, such as a delegated sub-agent, cannot create one |
 | A kanban task a shared turn created | shared, including on a team member it is dispatched to |
 | An inbound webhook | shared, unless the hook sets `webhooks.<hook-id>.private: true` and every `deliver` target is private |
 | An A2A request, a phone caller, an MCP client (unless `expose_memory` is set) | shared |
@@ -77,6 +77,8 @@ On a shared turn:
 - A `/background` job, a delegated sub-agent and a background job's review turn launched from the group run shared too.
 
 A session that has run one shared turn stays shared for good, whichever surface opens it next.
+
+After the turn, nothing said in a shared session feeds private learning. Memory capture, the skill-improvement fork, the nightly Judge and Expression evidence, learning cases, `ethos evolve run` and the web Expression draft all skip it, and `get_session_events` refuses it to any other session. Group sessions from before the upgrade, which carry no stamp, are recognised by their session key and skipped too. A listed trusted room (step 3) is not skipped.
 
 ### 3. Trust a room (optional)
 

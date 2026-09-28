@@ -62,6 +62,11 @@ describe('WatcherManager wake audience', () => {
     expect(event?.roomAudience).toBe('shared');
   });
 
+  it('a watcher a shared delegated child created (stamp, no origin) wakes shared', async () => {
+    const event = await wakeOnce({ owner: { personalityId: 'ops', roomAudience: 'shared' } });
+    expect(event?.roomAudience).toBe('shared');
+  });
+
   it('a watcher a private turn created, with no delivery target, wakes private', async () => {
     const event = await wakeOnce({ owner: { personalityId: 'ops', roomAudience: 'private' } });
     expect(event?.roomAudience).toBe('private');

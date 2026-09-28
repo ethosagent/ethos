@@ -21,6 +21,8 @@ import {
   DefaultHookRegistry,
   DefaultToolRegistry,
   InMemorySessionStore,
+  isSharedSession,
+  type PrivateChatSet,
 } from '@ethosagent/core';
 import type {
   AgentDonePayload,
@@ -62,6 +64,11 @@ export interface ImprovementForkOptions {
   now?: () => number;
   /** Fired with the inbox candidate id once a proposal is submitted. */
   onSkillProposed?: (candidateId: string, personalityId: string) => void;
+  /**
+   * The operator's trusted rooms (`gateway.private_chats`), so a listed room's
+   * session is not refused as shared. Absent → every group lane is shared.
+   */
+  privateChats?: PrivateChatSet;
 }
 
 // Rubric system prompt for the fork personality.
@@ -95,13 +102,13 @@ export class ImprovementFork {
    */
   register(): () => void {
     return this.opts.hooks.registerVoid('agent_done', async (payload: AgentDonePayload) => {
-      if (this.shouldFork(payload)) {
+      if (await this.shouldFork(payload)) {
         await this.run(payload);
       }
     });
   }
 
-  private shouldFork(payload: AgentDonePayload): boolean {
+  private async shouldFork(payload: AgentDonePayload): Promise<boolean> {
     if (!payload.personalityId) return false;
 
     const personality = this.opts.personalities.get(payload.personalityId);
@@ -113,6 +120,15 @@ export class ImprovementFork {
     const minToolCalls = cfg.min_tool_calls ?? 5;
     const successfulCalls = payload.successfulToolCalls ?? 0;
     if (successfulCalls < minToolCalls) return false;
+
+    // G1-8 (plan personality-memory-boundary): a shared room's turn — stamped
+    // shared, or a pre-upgrade group lane key — never feeds the fork, which
+    // writes private memory and proposes skills. Checked before the cooldown
+    // so a group turn does not spend it. A session the store no longer has
+    // cannot be judged, so it is refused too. Pinned by the 'shared source
+    // session' cases in __tests__/improvement-fork.test.ts.
+    const source = await this.opts.runtime.sessionStore.getSession(payload.sessionId);
+    if (!source || isSharedSession(source, this.opts.privateChats)) return false;
 
     // Cooldown — refuse to re-fire too quickly per personality.
     const cooldownMinutes = cfg.cooldown_minutes ?? 60;
@@ -199,6 +215,9 @@ export class ImprovementFork {
     try {
       for await (const _event of forkLoop.run(userPrompt, {
         sessionKey: `improvement-fork-${Date.now()}`,
+        // `shouldFork` admits only a private source session, and a fork of a
+        // private session is private.
+        roomAudience: 'private',
         ...(model ? { modelOverride: model } : {}),
       })) {
         // drain — no streaming

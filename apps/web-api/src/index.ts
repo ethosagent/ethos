@@ -936,6 +936,14 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       ...(opts.learningReplay ? { replay: opts.learningReplay } : {}),
     }),
   });
+  // `gateway.private_chats` as it stands on disk, read per call: a cron job's
+  // audience stamp at create, and which sessions an Expression draft may quote.
+  const readPrivateChats = async () => {
+    const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+    return src === null
+      ? undefined
+      : privateChatSetFrom(parseConfigYaml(src).gateway?.privateChats);
+  };
   const personalitiesService = new PersonalitiesService({
     learning: learningService,
     personalities: opts.personalities,
@@ -944,6 +952,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     mcpJsonStore: sharedMcpJsonStore,
     ...(opts.personalitiesLlm ? { llm: opts.personalitiesLlm } : {}),
     sessions: opts.sessionStore,
+    readPrivateChats,
     storage,
     dataDir: opts.dataDir,
     // `execution.ssh.*` for the character sheet's `## Execution` section — the
@@ -1038,12 +1047,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     }),
     // Read per create, like the rest of this app's config reads, so a job's
     // audience stamp sees `gateway.private_chats` as it stands on disk.
-    readPrivateChats: async () => {
-      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
-      return src === null
-        ? undefined
-        : privateChatSetFrom(parseConfigYaml(src).gateway?.privateChats);
-    },
+    readPrivateChats,
   });
   const skillsService = new SkillsService({
     library: skillsLibrary,

@@ -98,6 +98,67 @@ describe('learning evidence excludes machine-driven sessions', () => {
     });
   });
 
+  // plan personality-memory-boundary G1-8 — nothing said in a room reaches the
+  // Judge, an Expression draft, memory consolidation or a nightly case.
+  describe('shared sessions', () => {
+    async function seedShared(key: string, text: string, stamped: boolean): Promise<void> {
+      const s = await store.createSession({
+        ...baseSession,
+        key,
+        ...(stamped ? { metadata: { roomAudience: 'shared' } } : {}),
+      });
+      await store.appendMessage({ sessionId: s.id, role: 'user', content: text });
+      await store.appendMessage({ sessionId: s.id, role: 'assistant', content: `re: ${text}` });
+    }
+
+    it('a stamped shared session and an UNSTAMPED group lane (pre-upgrade fixture) are excluded', async () => {
+      await seed('cli:project', 'the owner asked this');
+      await seedShared('web:resumed-group', 'stamped room talk', true);
+      await seedShared('telegram:bot1:-1001234567890', 'pre-upgrade group talk', false);
+
+      const recent = await gatherRecentUserPrompts(store, PID);
+      expect(recent.prompts.map((p) => p.prompt)).toEqual(['the owner asked this']);
+
+      const built = await buildEvidenceDigest(store, PID);
+      expect(built.digest).toContain('the owner asked this');
+      expect(built.digest).not.toContain('room talk');
+      expect(built.digest).not.toContain('group talk');
+      expect(built.userTurns.map((t) => t.prompt)).toEqual(['the owner asked this']);
+    });
+
+    it('a DM lane and a listed trusted room are evidence', async () => {
+      await seedShared('telegram:bot1:4242', 'dm talk', false);
+      await seedShared('telegram:bot1:-100200', 'trusted room talk', false);
+      const privateChats = { has: (p: string, c: string) => p === 'telegram' && c === '-100200' };
+
+      const recent = await gatherRecentUserPrompts(store, PID, privateChats);
+      expect(recent.prompts.map((p) => p.prompt).sort()).toEqual(['dm talk', 'trusted room talk']);
+      // Without the list the room fails closed.
+      expect((await gatherRecentUserPrompts(store, PID)).prompts.map((p) => p.prompt)).toEqual([
+        'dm talk',
+      ]);
+    });
+
+    it('a personality with only shared sessions falls back to private sessions, never the room', async () => {
+      await seedShared('telegram:bot1:-100999', 'group only', false);
+      const other = await store.createSession({
+        ...baseSession,
+        personalityId: 'someone-else',
+        key: 'cli:other',
+      });
+      await store.appendMessage({
+        sessionId: other.id,
+        role: 'user',
+        content: 'private elsewhere',
+      });
+
+      const recent = await gatherRecentUserPrompts(store, PID);
+      expect(recent.prompts.map((p) => p.prompt)).toEqual(['private elsewhere']);
+      const { digest } = await buildEvidenceDigest(store, PID);
+      expect(digest).not.toContain('group only');
+    });
+  });
+
   // X-D7: one list, imported rather than copied. If this import ever has to
   // become a duplicate, the copy needs a parity test — this is the pin that
   // says it is not a duplicate today.

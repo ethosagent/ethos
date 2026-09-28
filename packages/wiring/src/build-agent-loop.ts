@@ -768,6 +768,10 @@ export async function buildAgentLoop(
   // the SHADOWED soul rather than the live one — the two arms must differ only
   // in the candidate.
   const wiringStorage = wiringCtx.storage;
+  // `gateway.private_chats` — a listed room is private: a goal set there runs
+  // private, and its sessions are not shared for the post-turn filters (the
+  // fork and memory capture below, `isSharedSession`).
+  const roomPrivateChats = privateChatSetFrom(config.privateChats);
   // M-D6 (plan/phases/trust-before-reach.md Part 3) — `disablePostTurnLearning`
   // is a security gate, not a toggle. The fork turns what a turn SAID into a
   // skill on disk; in a process whose turns are driven by an external MCP
@@ -784,6 +788,7 @@ export async function buildAgentLoop(
     const learningCtx = { storage: wiringStorage, dataDir, personalities };
     const improvementFork = new ImprovementFork({
       hooks,
+      privateChats: roomPrivateChats,
       runtime: {
         llm,
         memoryProvider: memory,
@@ -804,6 +809,7 @@ export async function buildAgentLoop(
           sessionId: payload.sessionId,
           sessionKey: parent.key,
           personalityId,
+          privateChats: roomPrivateChats,
         });
         return id ? [id] : [];
       },
@@ -1584,8 +1590,6 @@ export async function buildAgentLoop(
     'team_memory_read',
     'team_memory_search',
   ]);
-  // `gateway.private_chats` — a goal set in a listed room runs private.
-  const goalPrivateChats = privateChatSetFrom(config.privateChats);
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
@@ -1616,7 +1620,7 @@ export async function buildAgentLoop(
         // Derived from the goal's origin on every attempt (`goalRoomAudience`):
         // a goal set in a group chat runs shared. Absent origin (a direct
         // `GoalRunner` caller) is judged as an unknown origin — shared.
-        roomAudience: goalRoomAudience(o.origin ?? '', goalPrivateChats),
+        roomAudience: goalRoomAudience(o.origin ?? '', roomPrivateChats),
         initiator: 'system',
         abortSignal: o.abortSignal,
         ...(o.steerSink ? { steerSink: o.steerSink } : {}),
@@ -1637,7 +1641,7 @@ export async function buildAgentLoop(
         sessionKey,
         // Same derivation as `runAttempt`; a shared planning turn also loses
         // `memory_read`/`session_list_by_date` from its read-only set.
-        roomAudience: goalRoomAudience(o.origin ?? '', goalPrivateChats),
+        roomAudience: goalRoomAudience(o.origin ?? '', roomPrivateChats),
         initiator: 'system',
         abortSignal: o.abortSignal,
         ...(o.personalityId ? { personalityId: o.personalityId } : {}),
@@ -1842,6 +1846,7 @@ export async function buildAgentLoop(
         ...(captureConfig.maxPerDay !== undefined ? { maxPerDay: captureConfig.maxPerDay } : {}),
       },
       workingDir: wiringCtx.dataDir,
+      privateChats: roomPrivateChats,
     });
     captureRunner.registerHook(hooks);
     onMemoryCapturedFn = (cb) => captureRunner.onCaptured(cb);

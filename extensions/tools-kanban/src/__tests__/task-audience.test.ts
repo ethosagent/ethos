@@ -75,6 +75,16 @@ describe('kanban task room audience', () => {
     expect(store.getTask(String(out.task_id))?.roomAudience).toBe('shared');
   });
 
+  it('kanban_create from a delegated child of a group turn (no origin) is stamped shared', async () => {
+    const child: ToolContext = {
+      ...ctx('shared'),
+      sessionKey: 'telegram:bot:-100200:sub:task:1',
+      platform: 'cli',
+    };
+    const out = await run(tools.kanban_create, { title: 't' }, child);
+    expect(store.getTask(String(out.task_id))?.roomAudience).toBe('shared');
+  });
+
   it('kanban_create from a private turn is stamped private', async () => {
     const out = await run(tools.kanban_create, { title: 't' }, ctx('private'));
     expect(store.getTask(String(out.task_id))?.roomAudience).toBe('private');

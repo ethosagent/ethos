@@ -119,6 +119,12 @@ describe('excluded session keys', () => {
     }
   });
 
+  it('refuses a turn marked shared (plan personality-memory-boundary G1-8)', () => {
+    const turn = { sessionKey: 'cli:ethos', messageId: 'm-shared', prompt: 'hi' };
+    expect(caseFromSessionTurn(PID, { ...turn, shared: true }, CORE, AT)).toBeNull();
+    expect(caseFromSessionTurn(PID, turn, CORE, AT)).not.toBeNull();
+  });
+
   it('captures an ordinary user turn with both criteria assertions', () => {
     const c = caseFromSessionTurn(
       PID,

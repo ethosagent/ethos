@@ -38,8 +38,11 @@ import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
 import {
   importLegacyLearningQueues,
+  isSharedSession,
   listPendingExpressionCandidates,
+  type PrivateChatSet,
   personalityCore,
+  privateChatSetFrom,
   submitExpressionCandidate,
 } from '@ethosagent/wiring';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
@@ -194,6 +197,35 @@ const LEARNING_EVIDENCE_FILTER = {
 
 type EvidenceMessage = import('@ethosagent/types').StoredMessage;
 
+/**
+ * Evidence sessions for a personality: its own, else every personality's (the
+ * returned `fallback` says which), newest first. Shared sessions are dropped
+ * from both lists before the fallback decision (plan personality-memory-boundary
+ * G1-8): `isSharedSession` (packages/core/src/chat-audience.ts) — the sticky
+ * stamp, or a pre-upgrade group lane key — so nothing said in a room reaches
+ * the Judge, an Expression draft, memory consolidation or a frozen case.
+ * Pinned by the 'shared sessions' cases in
+ * `apps/ethos/src/commands/__tests__/evidence-excluded-sessions.test.ts`.
+ */
+async function evidenceSessions(
+  store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
+  id: string,
+  privateChats: PrivateChatSet | undefined,
+): Promise<{ sessions: import('@ethosagent/types').Session[]; fallback: boolean }> {
+  const privateOnly = (list: import('@ethosagent/types').Session[]) =>
+    list.filter((s) => !isSharedSession(s, privateChats));
+  let sessions = privateOnly(
+    await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER }),
+  );
+  let fallback = false;
+  if (sessions.length === 0) {
+    sessions = privateOnly(await store.listSessions({ ...LEARNING_EVIDENCE_FILTER }));
+    fallback = true;
+  }
+  sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  return { sessions, fallback };
+}
+
 // Up to `CASE_CONTEXT_MESSAGES` plain-text messages before `index`, oldest
 // first — the same context a frozen session case carries everywhere else.
 function precedingPlainText(
@@ -215,15 +247,12 @@ function precedingPlainText(
 export async function gatherRecentUserPrompts(
   store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
   id: string,
+  privateChats?: PrivateChatSet,
 ): Promise<RecentPrompts> {
-  let scopedNote = '';
-  let sessions = await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER });
-  if (sessions.length === 0) {
-    sessions = await store.listSessions({ ...LEARNING_EVIDENCE_FILTER });
-    scopedNote =
-      'evidence drawn from recent sessions across all personalities (none recorded for this personality yet)';
-  }
-  sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  const { sessions, fallback } = await evidenceSessions(store, id, privateChats);
+  const scopedNote = fallback
+    ? 'evidence drawn from recent sessions across all personalities (none recorded for this personality yet)'
+    : '';
 
   const prompts: Array<{ id: string; prompt: string }> = [];
   const turns: SessionCaseTurn[] = [];
@@ -283,18 +312,17 @@ export interface EvidenceDigest {
 export async function buildEvidenceDigest(
   store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
   id: string,
+  privateChats?: PrivateChatSet,
 ): Promise<EvidenceDigest> {
   const digestLines: string[] = [];
   let totalChars = 0;
   const MAX_MSGS = 20;
   const MAX_CHARS = 4000;
 
-  let sessions = await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER });
-  if (sessions.length === 0) sessions = await store.listSessions({ ...LEARNING_EVIDENCE_FILTER });
+  const { sessions } = await evidenceSessions(store, id, privateChats);
   if (sessions.length === 0) {
     return { digest: '', hasSessions: false, messageIds: [], sessionIds: [], userTurns: [] };
   }
-  sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
   const messageIds: string[] = [];
   const sessionIds: string[] = [];
@@ -514,7 +542,11 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
     const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
     let recent: RecentPrompts;
     try {
-      recent = await gatherRecentUserPrompts(store, id);
+      recent = await gatherRecentUserPrompts(
+        store,
+        id,
+        privateChatSetFrom(config.gateway?.privateChats),
+      );
     } finally {
       store.close();
     }
@@ -648,10 +680,18 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
     let recent: RecentPrompts;
     let evidence: string;
     try {
-      recent = await gatherRecentUserPrompts(store, id);
+      recent = await gatherRecentUserPrompts(
+        store,
+        id,
+        privateChatSetFrom(config.gateway?.privateChats),
+      );
       scopedNote = recent.scopedNote;
 
-      const built = await buildEvidenceDigest(store, id);
+      const built = await buildEvidenceDigest(
+        store,
+        id,
+        privateChatSetFrom(config.gateway?.privateChats),
+      );
       if (!built.hasSessions) {
         console.log(
           'No recent session evidence yet — interact with this personality first, then evolve.',

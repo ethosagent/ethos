@@ -46,14 +46,8 @@ const RECEIVER_ALIASES: Record<string, readonly string[]> = {
  * still holds. Remove (or decrement) an entry in the same change that wires it
  * — the census fails on a stale count in either direction.
  */
-const PENDING_WIRING: ReadonlyArray<{ file: string; count: number; step: number; what: string }> = [
-  {
-    file: 'extensions/skill-evolver/src/improvement-fork.ts',
-    count: 1,
-    step: 6,
-    what: 'improvement fork (shouldFork refuses shared sources)',
-  },
-];
+const PENDING_WIRING: ReadonlyArray<{ file: string; count: number; step: number; what: string }> =
+  [];
 
 /** Packages that must never drive an AgentLoop (they never load Ethos memory). */
 const NO_LOOP_PACKAGES = ['extensions/execution-pi/', 'extensions/execution-coding-agents/'];

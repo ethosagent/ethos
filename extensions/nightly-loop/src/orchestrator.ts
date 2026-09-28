@@ -62,6 +62,13 @@ export interface NightlyEvidence {
 
 export interface NightlyPassDeps {
   readLivingSoul(id: string): Promise<{ core: string; expression: string }>;
+  /**
+   * The ONLY session content the pass reads — the Judge's prompts, the
+   * Expression draft and memory consolidation all consume this. It must hold
+   * no shared-room session (plan personality-memory-boundary G1-8); the CLI
+   * host enforces that in `evidenceSessions`
+   * (apps/ethos/src/commands/personality-evolve.ts).
+   */
   gatherEvidence(id: string): Promise<NightlyEvidence>;
   // Runs the Judge (wraps scorePersonality with a real EvalRunner in prod).
   scoreAlignment(args: {

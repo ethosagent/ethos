@@ -134,6 +134,13 @@ export interface SessionCaseTurn {
   prompt: string;
   /** Preceding plain-text messages, oldest first. Trimmed to 4. */
   context?: string[];
+  /**
+   * The turn was said in a shared room (plan personality-memory-boundary
+   * G1-8): its session is shared by `isSharedSession`
+   * (packages/core/src/chat-audience.ts) or the turn ran shared. Set by the
+   * producer, which holds the session; `caseFromSessionTurn` refuses it.
+   */
+  shared?: boolean;
 }
 
 // --- Builders --------------------------------------------------------------
@@ -203,7 +210,8 @@ export function caseFromEvalTask(
  * the Core is the only text a replay may hold the answer to.
  *
  * Returns null for an excluded session key: those turns are Ethos talking to
- * itself, and learning from them is a feedback loop, not evidence.
+ * itself, and learning from them is a feedback loop, not evidence. Null too for
+ * a turn marked `shared`.
  */
 export function caseFromSessionTurn(
   personalityId: string,
@@ -212,6 +220,8 @@ export function caseFromSessionTurn(
   frozenAt: string,
 ): LearningCase | null {
   if (isExcludedSessionKey(turn.sessionKey)) return null;
+  // A room's words are not evidence for a personality's private learning (G1-8).
+  if (turn.shared) return null;
   if (!turn.prompt.trim()) return null;
   const sourceRef = `session:${turn.messageId}`;
   return {

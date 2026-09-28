@@ -34,7 +34,11 @@ function learningPort(storage: InMemoryStorage): LearningSubmitPort {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function createMockSessionStore(messages: Array<{ role: string; content: string }>): SessionStore {
+/** `source` is the triggering turn's session; default a private CLI session. */
+function createMockSessionStore(
+  messages: Array<{ role: string; content: string }>,
+  source: { key: string; metadata?: Record<string, unknown> } | null = { key: 'cli:ethos' },
+): SessionStore {
   const stored = messages.map((m, i) => ({
     id: `msg-${i}`,
     sessionId: 'test-session',
@@ -51,7 +55,28 @@ function createMockSessionStore(messages: Array<{ role: string; content: string 
       createdAt: new Date(),
       updatedAt: new Date(),
     }),
-    getSession: async () => null,
+    getSession: async (id: string) =>
+      source
+        ? {
+            id,
+            key: source.key,
+            platform: source.key.split(':')[0] ?? 'cli',
+            model: 'test-model',
+            provider: 'test',
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0,
+              apiCallCount: 0,
+              compactionCount: 0,
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            ...(source.metadata ? { metadata: source.metadata } : {}),
+          }
+        : null,
     getSessionByKey: async () => null,
     listSessions: async () => [],
     deleteSession: async () => {},
@@ -572,6 +597,8 @@ describe('ImprovementFork honours skill_evolution', () => {
     llm: LLMProvider,
     storage: InMemoryStorage,
     now?: () => number,
+    source?: { key: string; metadata?: Record<string, unknown> } | null,
+    privateChats?: ImprovementForkOptions['privateChats'],
   ) {
     const hooks = new DefaultHookRegistry();
     new ImprovementFork({
@@ -579,10 +606,13 @@ describe('ImprovementFork honours skill_evolution', () => {
       runtime: {
         llm,
         memoryProvider: createMockMemoryProvider(),
-        sessionStore: createMockSessionStore([
-          { role: 'user', content: 'Hello' },
-          { role: 'assistant', content: 'World' },
-        ]),
+        sessionStore: createMockSessionStore(
+          [
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: 'World' },
+          ],
+          source,
+        ),
         safety: createTestSafety(),
       },
       personalities: makeRegistry({ skill_evolution: skillEvolution }),
@@ -590,6 +620,7 @@ describe('ImprovementFork honours skill_evolution', () => {
       storage,
       learning: learningPort(storage),
       now,
+      ...(privateChats ? { privateChats } : {}),
     }).register();
     return hooks;
   }
@@ -711,5 +742,74 @@ describe('ImprovementFork honours skill_evolution', () => {
     ).fireVoid('agent_done', turn(1));
     const [rewritten] = await listCandidates(allowed, DATA_DIR);
     expect(rewritten).toMatchObject({ op: 'rewrite', origin: 'fork' });
+  });
+
+  // plan personality-memory-boundary G1-8 — a shared room's turn never feeds
+  // the fork (it writes private memory and proposes skills).
+  describe('shared source session', () => {
+    const cfg = { enabled: true, min_tool_calls: 1 };
+
+    it('a session stamped shared is refused — no fork LLM call', async () => {
+      const { llm, calls } = recordingLLM();
+      const hooks = forkFor(cfg, llm, new InMemoryStorage(), undefined, {
+        key: 'web:abc',
+        metadata: { roomAudience: 'shared' },
+      });
+      await hooks.fireVoid('agent_done', turn(3));
+      expect(calls).toHaveLength(0);
+    });
+
+    it('pre-upgrade fixture: an UNSTAMPED telegram group lane is refused', async () => {
+      const { llm, calls } = recordingLLM();
+      const hooks = forkFor(cfg, llm, new InMemoryStorage(), undefined, {
+        key: 'telegram:bot1:-1001234567890',
+      });
+      await hooks.fireVoid('agent_done', turn(3));
+      expect(calls).toHaveLength(0);
+    });
+
+    it('a refused group turn does not spend the cooldown', async () => {
+      const { llm, calls } = recordingLLM();
+      // The mock reads `source.key` per lookup, so one fork sees a group turn, then a DM turn.
+      const source = { key: 'telegram:bot1:-100200' };
+      const hooks = forkFor(
+        { ...cfg, cooldown_minutes: 60 },
+        llm,
+        new InMemoryStorage(),
+        () => 0,
+        source,
+      );
+      await hooks.fireVoid('agent_done', turn(3));
+      expect(calls).toHaveLength(0);
+      source.key = 'cli:ethos';
+      await hooks.fireVoid('agent_done', turn(3));
+      expect(calls.length).toBeGreaterThan(0);
+    });
+
+    it('a session the store does not have is refused', async () => {
+      const { llm, calls } = recordingLLM();
+      const hooks = forkFor(cfg, llm, new InMemoryStorage(), undefined, null);
+      await hooks.fireVoid('agent_done', turn(3));
+      expect(calls).toHaveLength(0);
+    });
+
+    it('a DM lane and a listed trusted room still fork', async () => {
+      const dm = recordingLLM();
+      await forkFor(cfg, dm.llm, new InMemoryStorage(), undefined, {
+        key: 'telegram:bot1:4242',
+      }).fireVoid('agent_done', turn(3));
+      expect(dm.calls.length).toBeGreaterThan(0);
+
+      const trusted = recordingLLM();
+      await forkFor(
+        cfg,
+        trusted.llm,
+        new InMemoryStorage(),
+        undefined,
+        { key: 'telegram:bot1:-100200' },
+        { has: (platform, chatId) => platform === 'telegram' && chatId === '-100200' },
+      ).fireVoid('agent_done', turn(3));
+      expect(trusted.calls.length).toBeGreaterThan(0);
+    });
   });
 });

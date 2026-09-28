@@ -49,6 +49,7 @@ import {
   importLegacyLearningQueues,
   learningSubmitPort,
   pendingReplayCandidateIds,
+  privateChatSetFrom,
   resolveKanbanDbPath,
   submitExpressionCandidate,
 } from '@ethosagent/wiring';
@@ -276,8 +277,11 @@ function buildDeps(args: {
       const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
       const store = new SQLiteSessionStore(join(ethosDir, 'sessions.db'));
       try {
-        const recent = await gatherRecentUserPrompts(store, id);
-        const built = await buildEvidenceDigest(store, id);
+        // G1-8: a listed trusted room's sessions are evidence; every other
+        // shared session is dropped inside both readers.
+        const privateChats = privateChatSetFrom(config.gateway?.privateChats);
+        const recent = await gatherRecentUserPrompts(store, id, privateChats);
+        const built = await buildEvidenceDigest(store, id, privateChats);
         judgedTurns.set(id, recent.turns);
         digests.set(id, built);
         judgeRunFiles.delete(id);
@@ -368,6 +372,7 @@ function buildDeps(args: {
             personalityId: id,
             sessions: store,
             kanbanDbPath: resolveKanbanDbPath({}, ethosDir),
+            privateChats: privateChatSetFrom(config.gateway?.privateChats),
           }),
         );
         return nightlyCaseFreeze(result);

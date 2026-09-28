@@ -802,7 +802,12 @@ export interface CreateAgentLoopOptions {
 // ---------------------------------------------------------------------------
 
 // The chat-audience helpers apps need beside it (Law 5: apps reach core through wiring).
-export { type PrivateChatSet, privateChatSetFrom, targetAudience } from '@ethosagent/core';
+export {
+  isSharedSession,
+  type PrivateChatSet,
+  privateChatSetFrom,
+  targetAudience,
+} from '@ethosagent/core';
 // L-T8 — the inbox's own types, re-exported so a surface (web-api) reaches the
 // review inbox through the composition root rather than a second package link.
 export {

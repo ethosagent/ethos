@@ -3,6 +3,7 @@ import {
   createSpokenStyleInjector,
   type DefaultToolRegistry,
   personalityAssetDir,
+  privateChatSetFrom,
   SessionManager,
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
@@ -107,6 +108,7 @@ import type { InfrastructureResult } from './build-infrastructure';
 import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
+import { goalRoomAudience } from './goal-audience';
 import {
   composeGrounding,
   createCheckRunExec,
@@ -1632,7 +1634,14 @@ export async function composeAllTools(
   disposers.push('goal store', () => goalStore.close());
   const goalRunnerRef: GoalRunnerRef = {};
   if ((activePerson.toolset ?? []).some((name: string) => name.startsWith('goal_'))) {
-    for (const tool of createGoalTools(goalStore, (id) => goalRunnerRef.runner?.startGoal(id)))
+    // goal_create refuses a shared turn's goal unless its origin derives
+    // shared here — the same derivation the runner uses (build-agent-loop.ts).
+    const goalPrivateChats = privateChatSetFrom(config.privateChats);
+    for (const tool of createGoalTools(
+      goalStore,
+      (id) => goalRunnerRef.runner?.startGoal(id),
+      (origin) => goalRoomAudience(origin, goalPrivateChats),
+    ))
       tools.register(tool);
   }
 
@@ -1854,10 +1863,14 @@ export async function composeAllTools(
           : null;
       },
       targetCaseIds: async (ctx, personalityId) => {
+        // A shared turn's words are never frozen as a case (G1-8): the turn's
+        // own audience, then the session's (`freezeLatestUserTurnCase`).
         const id = await freezeLatestUserTurnCase(learningCtx, infra.sessionCompose.sessionStore, {
           sessionId: ctx.sessionId,
           sessionKey: ctx.sessionKey,
           personalityId,
+          ...(ctx.roomAudience ? { roomAudience: ctx.roomAudience } : {}),
+          privateChats: privateChatSetFrom(config.privateChats),
         });
         return id ? [id] : [];
       },
@@ -2157,6 +2170,7 @@ export async function composeAllTools(
   if (wiringCtx.isDebugSession) {
     const debugTools = buildDebugTools({
       sessionStore: infra.sessionCompose.sessionStore,
+      privateChats: privateChatSetFrom(config.privateChats),
     });
     for (const tool of debugTools) tools.register(tool);
   }
