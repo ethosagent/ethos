@@ -307,4 +307,43 @@ describe('run-all — gateway exit 3 is terminal', () => {
     vi.advanceTimersByTime(__testing__.INITIAL_BACKOFF_MS + 10);
     expect(spawned).toHaveLength(2);
   });
+
+  // UBP-011 — a child that exhausts its restart budget must not leave run-all
+  // alive (and its watchdog pinging) with the gateway dead for good: the
+  // supervisor is told, so it can stop everything and exit non-zero for
+  // systemd / PM2 to restart the whole unit.
+  it('reports a child that exhausts its restart budget to onGiveUp', () => {
+    vi.useFakeTimers();
+    dir = mkdtempSync(join(tmpdir(), 'run-all-'));
+    const log = { log: () => {}, error: () => {} };
+    const { spawn, spawned } = fakeSpawn();
+    const [gatewaySpec] = defaultChildSpecs();
+    if (!gatewaySpec) throw new Error('specs');
+    const gw = supervised(gatewaySpec);
+    const rotation = { ...__testing__.DEFAULT_LOG_ROTATION, enabled: false };
+    const onGiveUp = vi.fn();
+    __testing__.startChild(
+      gw as never,
+      'x.js',
+      dir,
+      spawn as never,
+      log,
+      () => {},
+      rotation,
+      onGiveUp,
+    );
+    // A fast-failing child: each crash comes right after its backoff restart,
+    // so all of them land inside the restart window.
+    for (let i = 0; i <= __testing__.MAX_RESTARTS_IN_WINDOW; i++) {
+      const delay = gw.backoffMs;
+      spawned[spawned.length - 1]?.child.emit('exit', 1, null);
+      vi.advanceTimersByTime(delay + 10);
+    }
+    expect(onGiveUp).toHaveBeenCalledTimes(1);
+    expect(onGiveUp).toHaveBeenCalledWith('gateway');
+    // No further restart is scheduled once given up.
+    const count = spawned.length;
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(spawned).toHaveLength(count);
+  });
 });

@@ -157,6 +157,14 @@ export class SessionsService {
     this.opts.cards?.deleteSession(id);
   }
 
+  /** Web `/undo` (UBP-023): remove the last `n` whole turns — a user message
+   *  and everything after it, tool rows included (`SQLiteSessionStore.undoTurns`). */
+  async undoTurns(id: string, n: number): Promise<{ removed: number }> {
+    const exists = await this.opts.sessions.get(id);
+    if (!exists) throw notFound(id);
+    return { removed: await this.opts.sessions.undoTurns(id, n) };
+  }
+
   async export(id: string, _format: 'markdown'): Promise<{ content: string; filename: string }> {
     const session = await this.opts.sessions.get(id);
     if (!session) throw notFound(id);

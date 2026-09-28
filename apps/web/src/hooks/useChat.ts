@@ -89,8 +89,8 @@ export interface UseChatResult {
    * session on the server. Used by the "New session" affordance.
    */
   resetSession: () => void;
-  /** Soft-delete the last N user+assistant turn pairs. Returns the
-   *  number of pairs actually removed. */
+  /** Soft-delete the last N whole turns (a user message and everything after
+   *  it). Resolves to the number removed; rejects when the RPC fails. */
   undoTurns: (n?: number) => Promise<number>;
   /** Force a server-side compaction (`/compact`). Returns pre/post token
    *  counts, or null when there's no session or the RPC failed. */
@@ -625,18 +625,16 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     historyLoadedFor.current = null;
   }, [resetPaging]);
 
+  // Rejects when the server does: a failed undo must reach the caller, not read
+  // as "nothing to undo" (UBP-023 — it hid that the RPC was never implemented).
   const undoTurns = useCallback(
     async (n = 1): Promise<number> => {
       if (!currentSessionId) return 0;
-      try {
-        const res = await rpc.sessions.undoTurns({ id: currentSessionId, n });
-        if (res.removed > 0) {
-          dispatch({ kind: 'action', action: { type: 'undo-turns', count: res.removed } });
-        }
-        return res.removed;
-      } catch {
-        return 0;
+      const res = await rpc.sessions.undoTurns({ id: currentSessionId, n });
+      if (res.removed > 0) {
+        dispatch({ kind: 'action', action: { type: 'undo-turns', count: res.removed } });
       }
+      return res.removed;
     },
     [currentSessionId],
   );

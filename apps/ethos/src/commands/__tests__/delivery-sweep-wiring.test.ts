@@ -19,7 +19,7 @@ describe('delivery-ledger periodic sweep wiring', () => {
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} arms gateway.startDeliverySweep() after the adapters start`, async () => {
       const src = await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
-      const started = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+      const started = src.indexOf('await startAdaptersIsolated(adapters, {');
       const armed = src.indexOf('gateway.startDeliverySweep();');
       expect(started).toBeGreaterThan(-1);
       expect(armed).toBeGreaterThan(started);

@@ -8,6 +8,7 @@
  * the job would record an empty output with no diagnostic).
  */
 
+import { decideEscalation } from '@ethosagent/cron';
 import type { AgentEvent } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { runCronTurn } from '../commands/cron-turn';
@@ -40,7 +41,8 @@ const okEvents = (): AgentEvent[] => [
 ];
 
 // A `returnDirect` tool's answer reaches the turn only as `done.text`, after
-// any preamble the model streamed: the job's output is the whole answer.
+// any preamble the model streamed: that answer IS the delivered output, and the
+// preamble survives only in the transcript (UBP-025).
 describe('runCronTurn output', () => {
   it('includes a returnDirect answer that only `done.text` carries', async () => {
     const bare = await runCronTurn({
@@ -62,7 +64,42 @@ describe('runCronTurn output', () => {
       prompt: 'go',
       personalityId: 'researcher',
     });
-    expect(afterPreamble.output).toBe('Let me look that up.\n\nDIRECT ANSWER');
+    expect(afterPreamble.output).toBe('DIRECT ANSWER');
+    expect(afterPreamble.transcript).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+
+  // UBP-025 — narration before a tool call is not fused into the answer.
+  it('delivers only the final iteration, so a [SILENT] answer after narration stays silent', async () => {
+    const result = await runCronTurn({
+      loop: makeLoop(() => [
+        { type: 'text_delta', text: "I'll check each target on the watchlist." },
+        { type: 'tool_start', toolCallId: 't1', toolName: 'web_fetch', args: {} },
+        { type: 'tool_end', toolCallId: 't1', toolName: 'web_fetch', ok: true, durationMs: 5 },
+        { type: 'text_delta', text: '[SILENT] No changes.' },
+        {
+          type: 'done',
+          text: "I'll check each target on the watchlist.[SILENT] No changes.",
+          turnCount: 2,
+        },
+      ]),
+      jobId: 'job-watch',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+    expect(result.output).toBe('[SILENT] No changes.');
+    expect(decideEscalation(result.output).action).toBe('silent');
+    expect(result.transcript).toBe("I'll check each target on the watchlist.[SILENT] No changes.");
+  });
+
+  it('a single-iteration answer has no separate transcript', async () => {
+    const result = await runCronTurn({
+      loop: makeLoop(okEvents),
+      jobId: 'job-one',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+    expect(result.output).toBe('output');
+    expect(result.transcript).toBeUndefined();
   });
 });
 
@@ -137,6 +174,25 @@ describe('runCronTurn session routing', () => {
 });
 
 describe('runCronTurn failure reporting', () => {
+  // UBP-004 — AgentLoop yields `error` and returns WITHOUT `done` on a fatal
+  // LLM error; the partial text must not be recorded as the answer.
+  it('throws on a fatal llm_error that ends the stream without done', async () => {
+    const loop = makeLoop(() => [
+      { type: 'text_delta', text: 'Here is your brief' },
+      { type: 'error', error: 'HTTP 500', code: 'llm_error' },
+    ]);
+    await expect(
+      runCronTurn({ loop, jobId: 'job-5', prompt: 'go', personalityId: 'researcher' }),
+    ).rejects.toThrow(/llm_error/);
+  });
+
+  it('throws when the stream ends with neither done nor error', async () => {
+    const loop = makeLoop(() => [{ type: 'text_delta', text: 'Here is your bri' }]);
+    await expect(
+      runCronTurn({ loop, jobId: 'job-6', prompt: 'go', personalityId: 'researcher' }),
+    ).rejects.toThrow(/without a final answer/);
+  });
+
   it('throws with the refusal reason instead of recording an empty output', async () => {
     const loop = makeLoop(() => [
       {

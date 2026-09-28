@@ -55,6 +55,10 @@ function makeCtx(personalityId?: string): ToolContext {
   };
 }
 
+function updateStatusSchema(all: Tool[]): unknown {
+  return all.find((t) => t.name === 'kanban_update_status')?.schema;
+}
+
 function toolsByName(tools: Tool[]): Record<string, Tool> {
   return Object.fromEntries(tools.map((t) => [t.name, t]));
 }
@@ -977,6 +981,49 @@ describe('kanban_complete before_ticket_complete hook', () => {
 
   afterEach(() => {
     store.close();
+  });
+
+  // UBP-028 — kanban_update_status must not be a second road to `done` that
+  // skips the fail-closed verifier and the ticket_completed hook.
+  it('kanban_update_status refuses done on a running ticket, so the verifier cannot be bypassed', async () => {
+    const hooks = new DefaultHookRegistry();
+    const verifier = vi.fn(async () => ({ handled: true, reason: 'criteria not met' }));
+    hooks.registerClaiming('before_ticket_complete', verifier);
+    const completed = vi.fn(async () => {});
+    hooks.registerVoid('ticket_completed', completed);
+    const tools = toolsByName(createKanbanTools({ store, hooks }));
+    const t = store.createTask({ title: 'gated', assignee: 'engineer' });
+    store.updateStatus(t.id, 'running');
+
+    const result = await (tools.kanban_update_status as Tool).execute(
+      { task_id: t.id, status: 'done' },
+      makeCtx('engineer'),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/kanban_complete/);
+    expect(store.getTask(t.id)?.status).toBe('running');
+    expect(completed).not.toHaveBeenCalled();
+  });
+
+  it('kanban_update_status refuses needs_revision -> done: the assignee must re-claim and complete', async () => {
+    const tools = toolsByName(createKanbanTools({ store }));
+    const t = store.createTask({ title: 'rejected once', assignee: 'engineer' });
+    store.updateStatus(t.id, 'running');
+    store.updateStatus(t.id, 'needs_revision', 'verifier rejected');
+
+    const result = await (tools.kanban_update_status as Tool).execute(
+      { task_id: t.id, status: 'done' },
+      makeCtx('engineer'),
+    );
+    expect(result.ok).toBe(false);
+    expect(store.getTask(t.id)?.status).toBe('needs_revision');
+  });
+
+  it('kanban_update_status does not offer done in its schema', () => {
+    const schema = (updateStatusSchema(createKanbanTools({ store })) ?? {}) as {
+      properties?: { status?: { enum?: string[] } };
+    };
+    expect(schema.properties?.status?.enum).not.toContain('done');
   });
 
   it('blocks completion and sets needs_revision when a verifier rejects', async () => {

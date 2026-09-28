@@ -245,4 +245,23 @@ describe('run-all — shutdown', () => {
     expect(onRotate).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledTimes(1);
   });
+
+  // UBP-011 — the give-up path stops the siblings and exits NON-zero, so a
+  // supervisor with Restart=on-failure restarts the whole unit.
+  it('exits with the code it was given — 1 when a child exhausted its restart budget', async () => {
+    const exit = vi.fn();
+    const serve = new FakeChild({ pid: 21 });
+    const shutdown = createShutdownHandler({
+      children: [supervised(null), supervised(serve)],
+      log: () => {},
+      exit,
+      graceMs: 5_000,
+    });
+
+    shutdown('gateway exhausted its restart budget', 1);
+    await tick(20);
+
+    expect(serve.signals).toEqual(['SIGTERM']);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
 });

@@ -48,6 +48,7 @@ import {
   readLockfile,
 } from './lockfile';
 import { execNpm, installPinnedTarball, type NpmRunner, PluginIntegrityError } from './tarball-pin';
+import { projectNodeModulesCandidates, workspaceTrustState } from './workspace-trust';
 
 // Plugin credential refs — re-exported so the CLI writer mints refs from the
 // same definition the loader and `PluginApiImpl` use, instead of a second copy.
@@ -130,6 +131,20 @@ export {
   PluginIntegrityError,
 } from './tarball-pin';
 export { loadWidgetTemplates } from './widgets-loader';
+export type {
+  WorkspaceTrustGrant,
+  WorkspaceTrustGrants,
+  WorkspaceTrustState,
+} from './workspace-trust';
+export {
+  discoverWorkspacePluginDirs,
+  hashPluginTree,
+  readWorkspaceTrust,
+  trustWorkspacePlugin,
+  untrustWorkspacePlugin,
+  workspaceTrustPath,
+  workspaceTrustState,
+} from './workspace-trust';
 
 /**
  * One safety-scan finding retained from load, plus the file it came from.
@@ -224,6 +239,10 @@ export interface PluginLoaderOptions {
   onRouteRegistered?: (entry: PluginRouteEntry) => void;
   /** Runs npm for lockfile auto-install. Defaults to `execNpm`; tests inject a fake. */
   runNpm?: NpmRunner;
+  /** The working directory whose `.ethos/plugins` and `node_modules` are the
+   *  WORKSPACE plugin sources `loadAll` gates on a trust grant. Defaults to
+   *  `process.cwd()` at `loadAll` time. */
+  cwd?: string;
 }
 
 export class PluginLoader {
@@ -246,9 +265,11 @@ export class PluginLoader {
   private readonly pluginHasWidgets = new Map<string, boolean>();
   private readonly pluginScanFindings = new Map<string, PluginScanFindingRecord[]>();
   private readonly runNpm: NpmRunner;
+  private readonly cwdOverride?: string;
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions) {
     this.runNpm = opts.runNpm ?? execNpm;
+    this.cwdOverride = opts.cwd;
     this.registries = registries;
     this.storage = opts.storage;
     this.credentialStorage = opts.credentialStorage ?? opts.storage;
@@ -270,24 +291,71 @@ export class PluginLoader {
 
   /**
    * Run the full discovery chain and load all plugins found.
-   * Order: user (~/.ethos/plugins/) → project (.ethos/plugins/) → npm
-   * Later sources with the same id override earlier ones.
+   *
+   * Order: the user's sources first — `~/.ethos/plugins/<name>/`, then
+   * `~/.ethos/plugins/node_modules` (a later user source with the same id
+   * overrides an earlier one) — then the WORKSPACE sources, `<cwd>/.ethos/plugins/`
+   * and `<cwd>/node_modules/{ethos-plugin-*,@ethos-plugins/*,@ethosagent/*}`.
+   *
+   * A workspace plugin came with the directory, not from an install decision,
+   * so it loads only with a trust grant for its directory at its current
+   * content (`ethos plugin trust`, ./workspace-trust.ts), and never replaces a
+   * plugin id the user's sources already provided (UBP-009, owner decision D4).
+   * `workspaceGate` enforces both, before any of the plugin's code, skills or
+   * manifest reach the process; pinned by `__tests__/workspace-trust.test.ts`.
    */
   async loadAll(): Promise<void> {
-    const dirs = [join(homedir(), '.ethos', 'plugins'), join(process.cwd(), '.ethos', 'plugins')];
+    const cwd = this.cwdOverride ?? process.cwd();
+    const userDir = join(homedir(), '.ethos', 'plugins');
+    const userNm = join(userDir, 'node_modules');
+    await this.loadFromDirectory(userDir);
+    await this.scanNodeModulesDir(userNm, { allowAll: true });
 
-    for (const dir of dirs) {
-      await this.loadFromDirectory(dir);
+    // `ethos` run from the home directory: `<cwd>/.ethos/plugins` IS the user
+    // dir, already loaded above as the user's own.
+    const cwdPlugins = join(cwd, '.ethos', 'plugins');
+    if (resolve(cwdPlugins) !== resolve(userDir)) {
+      await this.loadFromDirectory(cwdPlugins, { workspace: true, cwd });
     }
+    const cwdNm = resolve(cwd, 'node_modules');
+    if (cwdNm !== resolve(userNm)) await this.scanNodeModulesDir(cwdNm, { workspace: true, cwd });
+  }
 
-    await this.loadFromNodeModules();
+  /**
+   * UBP-009 — may the workspace plugin `id` at `dir` load? No when the user's
+   * own sources already provide that id (a workspace copy never shadows it),
+   * and no without a trust grant matching the directory's current content.
+   * Each refusal is a warning naming the command that grants trust.
+   */
+  private async workspaceGate(id: string, dir: string, cwd: string): Promise<boolean> {
+    if (this.plugins.has(id) || this.pluginPaths.has(id)) {
+      this.logger.warn(
+        `[plugin-loader] Workspace plugin "${id}" at ${dir} not loaded: a plugin with that id is already loaded from ~/.ethos/plugins, and a workspace plugin never replaces it.`,
+        { component: 'plugin-loader', pluginId: id },
+      );
+      return false;
+    }
+    const state = await workspaceTrustState(this.storage, join(this.dataDir, 'plugins'), dir);
+    if (state === 'trusted') return true;
+    const why =
+      state === 'changed'
+        ? 'its files changed since it was trusted'
+        : 'this workspace plugin is not trusted';
+    this.logger.warn(
+      `[plugin-loader] Workspace plugin "${id}" at ${dir} not loaded: ${why}. Review its code, then run: ethos plugin trust ${cwd}`,
+      { component: 'plugin-loader', pluginId: id },
+    );
+    return false;
   }
 
   /**
    * Load all plugins from a directory. Each subdirectory is one plugin.
    * Silently skips directories that don't look like plugins.
    */
-  async loadFromDirectory(dir: string): Promise<void> {
+  async loadFromDirectory(
+    dir: string,
+    opts: { workspace?: boolean; cwd?: string } = {},
+  ): Promise<void> {
     // Packages the user intentionally placed in ~/.ethos/plugins/ are treated as
     // trusted-repo — the user made an explicit install decision.
     const isUserPluginsDir = dir === join(homedir(), '.ethos', 'plugins');
@@ -297,7 +365,7 @@ export class PluginLoader {
       if (!entry.isDir) continue;
       const pluginDir = join(dir, entry.name);
       try {
-        await this.loadFromPluginDir(pluginDir, entry.name, tierOverride);
+        await this.loadFromPluginDir(pluginDir, entry.name, tierOverride, opts);
       } catch {
         // skip broken plugins
       }
@@ -309,8 +377,16 @@ export class PluginLoader {
    * either `plugin.yaml` or `package.json` (with ethos.type=plugin),
    * and an `index.ts` or `index.js` that exports `activate`.
    */
-  async loadFromPluginDir(dir: string, pluginId?: string, tierOverride?: TrustTier): Promise<void> {
+  async loadFromPluginDir(
+    dir: string,
+    pluginId?: string,
+    tierOverride?: TrustTier,
+    opts: { workspace?: boolean; cwd?: string } = {},
+  ): Promise<void> {
     const id = pluginId ?? dir.split('/').pop() ?? 'unknown';
+
+    // UBP-009 — a workspace plugin reaches nothing below without a grant.
+    if (opts.workspace && !(await this.workspaceGate(id, dir, opts.cwd ?? process.cwd()))) return;
 
     // Read package.json once — used for skills_dir discovery, contract check, and permissions.
     const pkgSrc = await this.storage.read(join(dir, 'package.json'));
@@ -409,15 +485,19 @@ export class PluginLoader {
    */
   async loadFromNodeModules(dir?: string): Promise<void> {
     const pluginsNmDir = join(homedir(), '.ethos', 'plugins', 'node_modules');
-    const dirs = dir ? [dir] : [resolve('node_modules'), pluginsNmDir];
-    for (const nmDir of dirs) {
-      await this.scanNodeModulesDir(nmDir, { allowAll: nmDir === pluginsNmDir });
+    if (dir) {
+      await this.scanNodeModulesDir(dir, { allowAll: dir === pluginsNmDir });
+      return;
     }
+    // The project's node_modules is a WORKSPACE source — gated like `loadAll`.
+    const cwd = this.cwdOverride ?? process.cwd();
+    await this.scanNodeModulesDir(resolve(cwd, 'node_modules'), { workspace: true, cwd });
+    await this.scanNodeModulesDir(pluginsNmDir, { allowAll: true });
   }
 
   private async scanNodeModulesDir(
     nmDir: string,
-    opts: { allowAll?: boolean } = {},
+    opts: { allowAll?: boolean; workspace?: boolean; cwd?: string } = {},
   ): Promise<void> {
     const entries = await this.storage.list(nmDir);
     if (entries.length === 0) return;
@@ -439,25 +519,9 @@ export class PluginLoader {
         }
       }
     } else {
-      // Project node_modules — keep strict name filter for performance.
-      for (const entry of entries) {
-        if (entry.startsWith('ethos-plugin-')) {
-          candidates.push(entry);
-          continue;
-        }
-        if (entry === '@ethos-plugins') {
-          const scopedEntries = await this.storage.list(join(nmDir, entry));
-          for (const sub of scopedEntries) {
-            candidates.push(`${entry}/${sub}`);
-          }
-        }
-        if (entry === '@ethosagent') {
-          const scopedEntries = await this.storage.list(join(nmDir, entry));
-          for (const sub of scopedEntries) {
-            candidates.push(`${entry}/${sub}`);
-          }
-        }
-      }
+      // Project node_modules — keep strict name filter for performance. The
+      // same filter `ethos plugin trust` offers to trust.
+      candidates.push(...(await projectNodeModulesCandidates(this.storage, nmDir)));
     }
 
     for (const name of candidates) {
@@ -472,6 +536,16 @@ export class PluginLoader {
           | undefined;
         const isEthos = isEthosPlugin(raw);
         const isOpenClaw = isOpenClawPackageJson(raw);
+
+        // UBP-009 — a workspace package reaches nothing below (skills, code)
+        // without a grant. A package that is neither a plugin nor a skills
+        // source has nothing to load either way.
+        if (opts.workspace) {
+          if (!isEthos && !isOpenClaw && typeof ethosNm?.skills_dir !== 'string') continue;
+          const wsId = (ethosNm?.id as string | undefined) ?? name.replace(/^@[^/]+\//, '');
+          const gateCwd = opts.cwd ?? process.cwd();
+          if (!(await this.workspaceGate(wsId, join(nmDir, name), gateCwd))) continue;
+        }
 
         // G5 — the operator withdrew consent for this package. Refuse before
         // its skills or its code reach the process. Load-time refusal only;

@@ -183,6 +183,7 @@ import {
   idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
+  startAdaptersIsolated,
   validateBindings,
   warnEmailSenderAuthUnconfigured,
   wireApprovalFlow,
@@ -465,7 +466,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
     // Serve-role turn shape (`runCronTurn`): reuses a web-origin session when
-    // the personality matches, which the gateway's simpler runJob does not.
+    // the personality matches, which the gateway's `createCronRunJob` does not.
     runJob: async (job, runOpts) => {
       const loop = sharedLoop;
       if (!loop) {
@@ -483,7 +484,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       const webOrigin =
         job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
       const ranAt = new Date().toISOString();
-      const { sessionKey, output, reusedWebOrigin, progress } = await runCronTurn({
+      const { sessionKey, output, transcript, reusedWebOrigin, progress } = await runCronTurn({
         loop,
         sessions: session,
         jobId: job.id,
@@ -501,7 +502,14 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         outputPath: null,
         ...(reusedWebOrigin && webOrigin ? { sessionKey: webOrigin } : {}),
       });
-      return { jobId: job.id, ranAt, output, sessionKey, progress };
+      return {
+        jobId: job.id,
+        ranAt,
+        output,
+        sessionKey,
+        progress,
+        ...(transcript !== undefined ? { transcript } : {}),
+      };
     },
   });
   watcherManager.attachScheduler(scheduler);
@@ -1341,7 +1349,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // §3b step 8 — adapters started. HARD PRECONDITION for step 9: a delivery
   // sweep against cold adapters sends into nothing while burning obligations.
   // -------------------------------------------------------------------------
-  await Promise.all(adapters.map((a) => a.start()));
+  // One failing adapter must not stop the rest (UBP-010).
+  await startAdaptersIsolated(adapters, {
+    observability: gatewayObservability(),
+    warn: (message) => console.warn(`${c.yellow}⚠${c.reset} ${message}`),
+  });
   heartbeatStartedAt = new Date().toISOString();
   await gateway.pluginsReady();
 
@@ -1609,7 +1621,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // this process's logs to say why. There is also nothing to duplicate: the
   // dispatch-map builder and the server are both shared imports.
   //
-  // PLACED AFTER `adapters.map((a) => a.start())` (§3b step 8 above), AND THAT
+  // PLACED AFTER `startAdaptersIsolated(adapters, …)` (§3b step 8 above), AND THAT
   // IS LOAD-BEARING — the same ordering constraint `runGatewayStart` documents.
   // `TelegramAdapter.webhook` is `undefined` until `start()` has registered the
   // webhook and built grammy's callback, so building the map any earlier mounts
@@ -1924,7 +1936,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // Phase C, §0 row 6 — start THIS adapter, then mount THIS adapter's
       // native webhook route, as one sequence. The cold-boot path gets the same
       // ordering per BOOT by placing `buildPlatformWebhookMounts` after
-      // `Promise.all(adapters.map(start))`; a hot-add needs it per ADAPTER,
+      // `startAdaptersIsolated(adapters, …)`; a hot-add needs it per ADAPTER,
       // which is what `startAndMountPlatformWebhook` is. A non-webhook-mode bot
       // mounts nothing and the call is just a start.
       start: async () => {

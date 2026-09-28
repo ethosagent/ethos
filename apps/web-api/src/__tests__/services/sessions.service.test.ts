@@ -140,4 +140,25 @@ describe('SessionsService', () => {
       code: 'SESSION_NOT_FOUND',
     });
   });
+
+  // UBP-023 — the `sessions.undoTurns` RPC the contract declares.
+  it('undoTurns returns how many turns the store removed', async () => {
+    const calls: Array<[string, number]> = [];
+    const service = makeService({
+      get: async () => aSession,
+      undoTurns: async (id: string, n: number) => {
+        calls.push([id, n]);
+        return 1;
+      },
+    });
+    expect(await service.undoTurns('sess_1', 2)).toEqual({ removed: 1 });
+    expect(calls).toEqual([['sess_1', 2]]);
+  });
+
+  it('undoTurns throws SESSION_NOT_FOUND for an unknown session', async () => {
+    const service = makeService({ undoTurns: async () => 0 });
+    await expect(service.undoTurns('nope', 1)).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
+  });
 });

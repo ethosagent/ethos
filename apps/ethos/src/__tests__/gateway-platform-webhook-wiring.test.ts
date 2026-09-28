@@ -281,7 +281,7 @@ describe('§2a Telegram webhook config reaches the adapter constructor', () => {
     expect(capturedOf(adapters[0]).dropPendingUpdates).toBe(false);
   });
 
-  it('does not double-default dropPendingUpdates — the adapter owns the `?? true`', async () => {
+  it('does not double-default dropPendingUpdates — the adapter owns the `?? false`', async () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
     expect(src).toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates,/);
     expect(src).not.toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates \?\?/);
@@ -486,7 +486,7 @@ describe('buildPlatformWebhookMounts', () => {
 describe('runGatewayStart wiring (source)', () => {
   it('builds the mounts AFTER every adapter has been started', async () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
-    const startedAt = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+    const startedAt = src.indexOf('await startAdaptersIsolated(adapters, {');
     const mountedAt = src.indexOf('buildPlatformWebhookMounts(config, adapters');
     expect(startedAt).toBeGreaterThan(-1);
     expect(mountedAt).toBeGreaterThan(-1);
@@ -536,7 +536,7 @@ describe('runGatewayStart wiring (source)', () => {
 describe('runBoot wiring — parity with runGatewayStart (source)', () => {
   it('builds the mounts AFTER every adapter has been started', async () => {
     const src = await read('apps/ethos/src/commands/boot.ts');
-    const startedAt = src.indexOf('await Promise.all(adapters.map((a) => a.start()));');
+    const startedAt = src.indexOf('await startAdaptersIsolated(adapters, {');
     const mountedAt = src.indexOf('buildPlatformWebhookMounts(cfg, gateway.listAdapters()');
     expect(startedAt).toBeGreaterThan(-1);
     expect(mountedAt).toBeGreaterThan(-1);

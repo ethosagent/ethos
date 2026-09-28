@@ -186,14 +186,16 @@ describe('recomputeMessageCosts (A5 backfill)', () => {
       key: 'cli:undone',
       model: 'claude-sonnet-4-6',
     });
+    // A turn is a user row and what followed it (UBP-023): undoing one removes
+    // `q1` and its priced answer `a1`.
     for (let i = 0; i < 2; i++) {
+      await store.appendMessage({ sessionId: session.id, role: 'user', content: `q${i}` });
       await store.appendMessage({
         sessionId: session.id,
         role: 'assistant',
         content: `a${i}`,
         usage: usage(),
       });
-      await store.appendMessage({ sessionId: session.id, role: 'user', content: `q${i}` });
     }
     expect(await store.undoTurns(session.id, 1)).toBe(1);
 

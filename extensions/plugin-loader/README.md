@@ -11,22 +11,35 @@ Without this extension, every new tool or hook would have to be wired manually i
 ## What it provides
 
 - `PluginLoader` class — discovery, activation, and lifecycle (`unload`, `unloadAll`, `list`, `isLoaded`).
-- Three discovery sources, applied in order: `~/.ethos/plugins/` → `<cwd>/.ethos/plugins/` → npm packages.
+- Two kinds of discovery source. USER sources, loaded first: `~/.ethos/plugins/<name>/`, then `~/.ethos/plugins/node_modules`. WORKSPACE sources, loaded after them and only with a trust grant: `<cwd>/.ethos/plugins/<name>/` and `<cwd>/node_modules/{ethos-plugin-*,@ethos-plugins/*,@ethosagent/*}`.
 - Per-plugin `PluginApiImpl` instance (from `@ethosagent/plugin-sdk`) so `unload()` can call `cleanup()` and roll back every registration.
 
 ## How it works
 
-`loadAll()` (`src/index.ts:30`) runs the three discovery sources sequentially. Later sources with the same plugin id override earlier ones — npm-installed plugins beat project-local, project-local beats user-global. Each source delegates to `loadFromPluginDir()` or `scanNodeModulesDir()`.
+`loadAll()` runs the user sources, then the workspace sources. Among the user sources a later one with the same plugin id overrides an earlier one (`~/.ethos/plugins/node_modules` beats `~/.ethos/plugins/<name>/`). Each source delegates to `loadFromPluginDir()` or `scanNodeModulesDir()`.
+
+### Workspace plugins need a trust grant
+
+A plugin inside the working directory arrived with whatever repo was cloned, not by an install decision, and importing it runs its code with your keys — in `ethos chat`, `serve`, `gateway`, and an `ethos acp` an IDE spawns on the folder it opened. So a workspace plugin is skipped, with a warning naming the command, until you grant it:
+
+```
+ethos plugin trust [dir]     # every workspace plugin under dir (default: cwd)
+ethos plugin untrust [dir]
+```
+
+The grant is keyed on the plugin directory AND a sha256 of its files (`trustWorkspacePlugin`, `src/workspace-trust.ts`), stored through `Storage` at `~/.ethos/plugins/workspace-trust.json`. Any added, removed or edited file — a `git pull` included — voids it until you trust again. A workspace plugin also never replaces an id your user sources already provide: it is skipped with a warning instead. Both rules are enforced by `PluginLoader.workspaceGate` before any of the plugin's code or skills load, and pinned by `src/__tests__/workspace-trust.test.ts`.
+
+Limitation: the hash skips nested `node_modules/` (the tree the safety scan reads), so a dependency the plugin loads from outside its own files can change after the grant without voiding it. A grant is consent, not a sandbox — a trusted plugin runs in-process with full privileges.
 
 `loadFromPluginDir()` (`src/index.ts:69`) resolves an entry point in this order: `index.ts`, `index.js`, `src/index.ts`, `src/index.js`, then `package.json#main` (`src/index.ts:211`). It then dynamically `import()`s the entry, checks for an `activate` export, constructs a per-plugin `PluginApiImpl`, and calls `activate(api)`. If `activate` throws, `api.cleanup()` is called and the plugin is silently dropped.
 
-`loadFromNodeModules()` (`src/index.ts:93`) only inspects packages whose name matches `ethos-plugin-*` or `@ethos-plugins/*` — this keeps the scan O(filtered packages), not O(all dependencies). Each candidate's `package.json` is checked with `isEthosPlugin()` from `@ethosagent/plugin-contract`, which validates the `ethos.type === "plugin"` field.
+`loadFromNodeModules()` only inspects project packages whose name matches `ethos-plugin-*`, `@ethos-plugins/*` or `@ethosagent/*` (`projectNodeModulesCandidates`) — this keeps the scan O(filtered packages), not O(all dependencies). Each candidate's `package.json` is checked with `isEthosPlugin()` from `@ethosagent/plugin-contract`, which validates the `ethos.type === "plugin"` field.
 
 `unload(id)` calls `plugin.deactivate?.()` (errors swallowed), then `api.cleanup()` to undo every `register*()` call the plugin made (each `register*` returns a cleanup function that the SDK accumulates). Reloading is `unload` + `activate` — `activatePlugin` (`src/index.ts:172`) calls `unload` first if the id already exists.
 
 ## On-disk layout
 
-Per-directory plugin (works in `~/.ethos/plugins/<name>/` or `<cwd>/.ethos/plugins/<name>/`):
+Per-directory plugin (works in `~/.ethos/plugins/<name>/`, or `<cwd>/.ethos/plugins/<name>/` once trusted):
 
 ```
 <plugin-name>/
