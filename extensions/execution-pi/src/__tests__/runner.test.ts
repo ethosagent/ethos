@@ -325,3 +325,48 @@ describe('createPersonalityGate', () => {
     expect(inner).toHaveBeenCalled();
   });
 });
+
+// A background job's taint is recorded on the row (`BackgroundJob.tainted`) so
+// the gateway's parent-review turn of it starts with the post-read downgrade
+// armed (packages/core/src/agent-loop/stages/per-call-enforcement.ts,
+// `resolveRunDowngrade`). Nothing reports what the external Pi read, and
+// its summary is text another agent wrote, so the run is marked tainted
+// before the agent starts — conservatively, whatever it then does.
+describe('PiJobRunner.run — the job is marked tainted', () => {
+  it('marks it once the external agent is about to run', async () => {
+    const ethosHome = tempDir();
+    const { runner } = makeRunner(ethosHome, tempDir(), recordingBackend(), {
+      write: [`${ethosHome}/worktrees/`],
+    });
+    let marks = 0;
+    await drain(
+      runner.run(job(), {
+        signal: new AbortController().signal,
+        steerSink: NOOP_STEER,
+        emitArtifact: () => {},
+        appendLog: () => {},
+        markTainted: () => {
+          marks++;
+        },
+      }),
+    ).catch(() => {}); // the spawn itself fails in unit-test land
+    expect(marks).toBe(1);
+  });
+
+  it('does not mark a job refused before anything ran', async () => {
+    const { runner } = makeRunner(tempDir(), tempDir());
+    let marks = 0;
+    await drain(
+      runner.run(job({ personalityId: 'ghost' }), {
+        signal: new AbortController().signal,
+        steerSink: NOOP_STEER,
+        emitArtifact: () => {},
+        appendLog: () => {},
+        markTainted: () => {
+          marks++;
+        },
+      }),
+    ).catch(() => {});
+    expect(marks).toBe(0);
+  });
+});

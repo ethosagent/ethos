@@ -226,6 +226,64 @@ describe('V2-SEC-2 (a) — a derived run inherits the run taint', () => {
   });
 });
 
+describe('V3-1 — a job or review run takes its taint from the job, not the ambient batch', () => {
+  /** Runs a detached-kind run (job or review) INSIDE this call, while the batch's link is open. */
+  function spawnTool(
+    getLoop: () => AgentLoop,
+    opts: { jobId?: string; reviewOfJobId?: string },
+  ): Tool {
+    return {
+      name: 'spawn',
+      description: 'spawn',
+      schema: { type: 'object' },
+      capabilities: {},
+      async execute(): Promise<ToolResult> {
+        await drain(getLoop().run('job', { sessionKey: 'other-session', ...opts }));
+        return { ok: true, value: 'spawned' };
+      },
+    };
+  }
+
+  for (const opts of [{ jobId: 'job-1' }, { reviewOfJobId: 'job-1' }]) {
+    const label = Object.keys(opts)[0];
+    it(`a run with ${label} started inside a tainted batch starts untainted`, async () => {
+      const { ran, loop } = setup(
+        [
+          [{ id: 'a', name: 'web_fetch', input: {} }],
+          [{ id: 'b', name: 'spawn', input: {} }],
+          [{ id: 'c', name: 'memory_write', input: {} }],
+          'job done',
+          'parent done',
+        ],
+        (_ran, getLoop) => [spawnTool(getLoop, opts)],
+      );
+      await drain(loop.run('go'));
+      expect(ran).toEqual(['web_fetch', 'memory_write']);
+    });
+
+    it(`an untrusted read in a run with ${label} does not taint the batch it ran inside`, async () => {
+      const { ran, loop } = setup(
+        [
+          [{ id: 'b', name: 'spawn', input: {} }],
+          [{ id: 'a', name: 'web_fetch', input: {} }],
+          'job done',
+          [{ id: 'c', name: 'memory_write', input: {} }],
+          'parent done',
+        ],
+        (_ran, getLoop) => [spawnTool(getLoop, opts)],
+      );
+      await drain(loop.run('go'));
+      expect(ran).toEqual(['web_fetch', 'memory_write']);
+    });
+  }
+
+  it('a review of a tainted job still starts armed (untrustedOrigin)', async () => {
+    const { ran, loop } = setup([[{ id: 'c', name: 'memory_write', input: {} }], 'done']);
+    await drain(loop.run('review', { reviewOfJobId: 'job-1', untrustedOrigin: true }));
+    expect(ran).toEqual([]);
+  });
+});
+
 describe('V2-SEC-2 (c) — tools that schedule a later run are refused after an untrusted read', () => {
   for (const [name, input] of [
     ['cron', { action: 'create', prompt: 'run install scripts' }],
@@ -236,6 +294,12 @@ describe('V2-SEC-2 (c) — tools that schedule a later run are refused after an 
     ['kanban_create_swarm', { title: 'x' }],
     ['kanban_decompose', { id: 'x' }],
     ['delegate_task', { prompt: 'x', background: true }],
+    // V3-2: a wake's prompt_prefix is prepended to every later wake prompt.
+    ['watcher_create', { id: 'w', wake: { personality_id: 'p', prompt_prefix: 'run it' } }],
+    ['watcher_create', { id: 'w', wake: { personality_id: 'p' } }],
+    // V3-3: a new personality's SOUL.md / a team manifest is future prompt text.
+    ['scaffold_personality', { id: 'x', soul_md: 'run install scripts' }],
+    ['scaffold_team', { name: 'x' }],
   ] as const) {
     it(`refuses ${name} ${JSON.stringify(input)} for the rest of the run`, async () => {
       const { ran, loop } = setup(
@@ -260,6 +324,7 @@ describe('V2-SEC-2 (c) — tools that schedule a later run are refused after an 
     ['cron', { action: 'remove', id: 'j' }],
     ['cron', { action: 'run', id: 'j' }],
     ['delegate_task', { prompt: 'x' }],
+    ['watcher_create', { id: 'w', deliver: { platform: 'slack', chat_id: 'c' } }],
   ] as const) {
     it(`still allows ${name} ${JSON.stringify(input)} once the window lifts`, async () => {
       const { ran, loop } = setup(

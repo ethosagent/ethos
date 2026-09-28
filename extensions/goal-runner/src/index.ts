@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
@@ -426,7 +427,10 @@ export class GoalRunner {
     // Fire-and-forget: plan (when a planning callback is wired), then launch the
     // convergence/retry loop. Kept off startGoal's awaited path so goal creation
     // returns fast — planning runs in the background.
-    this.track(this.planThenRun(goal, controller), controller);
+    this.track(
+      this.detached(() => this.planThenRun(goal, controller)),
+      controller,
+    );
   }
 
   /**
@@ -471,6 +475,16 @@ export class GoalRunner {
    * is the backstop that marks it `interrupted`. The boundary check does NOT
    * take that path: see `endIfStopped`.
    */
+  /**
+   * V3-1 — runs `fn` in the async context this runner was constructed in
+   * (composition time), not the caller's. `startGoal` is called from inside the
+   * `goal_create` tool call and its run is fire-and-forget; launched in that
+   * call's context, every attempt inherited the batch's run-taint link
+   * (packages/core/src/scoped/run-taint.ts) while the batch stayed open.
+   * Pinned by `__tests__/taint-isolation.test.ts`.
+   */
+  private readonly detached = AsyncResource.bind(<T>(fn: () => T): T => fn());
+
   private track(run: Promise<void>, controller: RunController): void {
     this.liveRuns.add(controller);
     const settled: Promise<void> = run
@@ -1283,7 +1297,10 @@ export class GoalRunner {
     this.activeRuns.set(goalId, controller);
     this.ensureHeartbeat();
     const resumeNote = `The goal run was interrupted: ${refreshed.errorText ?? before?.status ?? 'interrupted'}. Review prior progress and continue.`;
-    this.track(this.runAttemptLoop(refreshed, controller, n, resumeNote), controller);
+    this.track(
+      this.detached(() => this.runAttemptLoop(refreshed, controller, n, resumeNote)),
+      controller,
+    );
     return true;
   }
 

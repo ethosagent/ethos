@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import type { AgentLoop } from '@ethosagent/core';
 import type {
   ArtifactChange,
@@ -296,6 +297,20 @@ export class BackgroundExecutor {
   private nudgeTimer: ReturnType<typeof setTimeout> | undefined;
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
 
+  /**
+   * V3-1 — runs `fn` in the async context this executor was constructed in
+   * (composition time, `packages/wiring/src/build-agent-loop.ts`), not the
+   * context of whoever triggered the claim. `nudge()` is called from inside a
+   * tool call; without this, the claim loop and every job it started while
+   * that call's batch was open inherited the batch's run-taint link
+   * (packages/core/src/scoped/run-taint.ts) — so a job of an unrelated session
+   * started with the downgrade armed and was recorded tainted, and its own
+   * untrusted read tainted the unrelated run that nudged. A job's taint rides
+   * `markTainted` / `BackgroundJob.tainted` instead. Pinned by
+   * `__tests__/taint-isolation.test.ts`.
+   */
+  private readonly detached = AsyncResource.bind(<T>(fn: () => T): T => fn());
+
   constructor(deps: BackgroundExecutorDeps) {
     this.store = deps.store;
     this.defaultRunner = new EthosJobRunner(deps.loop);
@@ -549,7 +564,14 @@ export class BackgroundExecutor {
    * stampede; `claimAgain` re-runs the loop once if a trigger arrived mid-claim
    * (e.g. a row queued after we last saw the queue empty).
    */
-  private async claimLoop(): Promise<void> {
+  private claimLoop(): Promise<void> {
+    // Every claim trigger — nudge, poll, boot sweep, a finishing job — enters
+    // here, and every job starts inside `claimRows`, so this one detach covers
+    // them all, `fireComplete` included.
+    return this.detached(() => this.runClaimLoop());
+  }
+
+  private async runClaimLoop(): Promise<void> {
     if (this.claiming) {
       this.claimAgain = true;
       return;

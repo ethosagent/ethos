@@ -305,7 +305,9 @@ export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
 
 /**
  * Tools that schedule a LATER run whose prompt this run writes (V2-SEC-2): a
- * cron job, a goal, a kanban ticket, a background sub-agent. That text is
+ * cron job, a goal, a kanban ticket, a background sub-agent, a watcher that
+ * wakes the personality (V3-2 — `wake.prompt_prefix` is prepended, unwrapped,
+ * to every wake prompt, and the woken run starts fresh). That text is
  * authored under the taint, and the run it seeds starts fresh — so, like the
  * memory writers, they stay refused for the rest of the run once an untrusted
  * result was seen. Refused rather than marked tainted-origin because the runs
@@ -330,6 +332,24 @@ const RUN_SCOPED_SCHEDULERS: ReadonlyMap<string, SchedulerRule> = new Map<string
   ['kanban_create_swarm', () => true],
   ['kanban_decompose', () => true],
   ['delegate_task', (a) => a.background === true],
+  // A deliver-only watcher seeds no run; any wake does (V3-2).
+  ['watcher_create', (a) => a.wake !== undefined],
+]);
+
+/**
+ * Tools that write text a FUTURE system prompt carries without going through
+ * the turn's `ScopedFsImpl` (V3-3): `scaffold_personality` writes a new
+ * personality's SOUL.md and `scaffold_team` a team manifest through the
+ * compose-time Storage (extensions/tools-personality-design/src/index.ts), so
+ * the state-dir write refusal (`writesEthosState`, ../../scoped/scoped-fs.ts)
+ * never sees them. Refused for the rest of a tainted run whatever their args,
+ * on the same switch as the schedulers. Pinned by
+ * `../../__tests__/downgrade-derived-runs.test.ts` and
+ * extensions/tools-personality-design/src/__tests__/untrusted-taint.test.ts.
+ */
+const RUN_SCOPED_PROMPT_WRITERS: ReadonlySet<string> = new Set([
+  'scaffold_personality',
+  'scaffold_team',
 ]);
 
 /** One run's downgrade state: the step window, and whether any untrusted result was seen. */
@@ -349,6 +369,7 @@ export function isDowngraded(
   args?: unknown,
 ): boolean {
   if (!enabled) return false;
+  if (state.untrustedSeen === true && RUN_SCOPED_PROMPT_WRITERS.has(toolName)) return true;
   const scheduler = RUN_SCOPED_SCHEDULERS.get(toolName);
   if (state.untrustedSeen === true && scheduler) {
     const record = typeof args === 'object' && args !== null ? args : undefined;
@@ -418,16 +439,31 @@ type DowngradeConfig = NonNullable<
  * `onUntrustedRead` reports this run's own taint (`RunOptions.onUntrustedRead`,
  * wired by `EthosJobRunner` to `JobRunnerContext.markTainted`). Pinned by
  * extensions/job-runner/src/__tests__/untrusted-taint.test.ts.
+ *
+ * Such a run — `jobId` (a background job) or `reviewOfJobId` (its review
+ * turn) — IGNORES the ambient link (V3-1): whatever async context it happens
+ * to start in belongs to whoever kicked the shared executor or gateway lane,
+ * often another session, and the job's own flag is the source of truth. The
+ * executor also runs outside the caller's context (`BackgroundExecutor.detached`,
+ * extensions/job-runner/src/index.ts). Pinned by the V3-1 cases in
+ * `../../__tests__/downgrade-derived-runs.test.ts` and
+ * extensions/job-runner/src/__tests__/taint-isolation.test.ts.
  */
 export function resolveRunDowngrade(
   config: DowngradeConfig | undefined,
   injection: Pick<InjectionDefenseKit, 'resolveDowngradedTools'>,
-  origin: { untrustedOrigin?: boolean; onUntrustedRead?: () => void } = {},
+  origin: {
+    untrustedOrigin?: boolean;
+    onUntrustedRead?: () => void;
+    jobId?: string;
+    reviewOfJobId?: string;
+  } = {},
 ): { dgEnabled: boolean; dgTurns: number; dgTools: Set<string>; dgRemainingRef: DowngradeState } {
   const dgEnabled = config?.enabled !== false;
   const dgTurns = config?.turns ?? 2;
   const dgRemainingRef: DowngradeState = { value: 0 };
-  const parent = activeRunTaint();
+  const detached = origin.jobId !== undefined || origin.reviewOfJobId !== undefined;
+  const parent = detached ? undefined : activeRunTaint();
   // Armed BEFORE `onTaint` is set: starting tainted is not news to the parent.
   if (parent?.state.untrustedSeen === true || origin.untrustedOrigin === true) {
     armDowngrade(dgRemainingRef, dgEnabled, dgTurns);

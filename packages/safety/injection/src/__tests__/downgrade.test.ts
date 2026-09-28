@@ -52,4 +52,31 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
     expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/rest of this run/i);
     expect(DOWNGRADE_REJECTION_MESSAGE).not.toMatch(/retry|try again/i);
   });
+
+  // V3 wording: a sub-agent of a tainted run, or the review turn of a tainted
+  // background job, starts armed without reading anything itself. The text
+  // must not claim this run's own tool read the content.
+  it('is accurate for a run that inherited the taint', () => {
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/this run is handling untrusted content/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/inherited/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).not.toMatch(/tool read external content during this run/i);
+  });
+
+  it('names every run-scoped refusal the rule enforces', () => {
+    for (const name of [
+      'memory_write',
+      'team_memory_write',
+      'skill_propose',
+      'cron create/update',
+      'goal_create',
+      'kanban_create',
+      'background delegate_task',
+      'watcher_create',
+      'scaffold_personality',
+      'scaffold_team',
+      'Ethos state dir',
+    ]) {
+      expect(DOWNGRADE_REJECTION_MESSAGE).toContain(name);
+    }
+  });
 });
