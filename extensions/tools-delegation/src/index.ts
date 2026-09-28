@@ -859,9 +859,9 @@ function isLoopbackHost(host: string): boolean {
  * personality's `safeFetch` floor refuses every private range, which made each
  * mesh call to a same-machine peer fail (pinned by
  * apps/acp-server/src/__tests__/mesh-transport-e2e.test.ts). Redirects are
- * refused on that path so a peer cannot bounce the call elsewhere. Every other
- * member goes through the scoped fetch, floor included; nothing about
- * `safeFetch` itself is relaxed.
+ * refused on that path so a peer cannot bounce the call elsewhere (pinned there
+ * by 'a loopback member cannot redirect the call elsewhere'). Every other member
+ * goes through the scoped fetch, floor included; `safeFetch` is not relaxed.
  */
 function meshFetch(entry: MeshEntry, scoped: FetchImpl, deps?: MeshTransportDeps): FetchImpl {
   if (!isLoopbackHost(entry.host)) return scoped;

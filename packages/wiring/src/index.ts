@@ -13,7 +13,11 @@ import {
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
-import { AuthRotatingProvider, anthropicContextTokens } from '@ethosagent/llm-anthropic';
+import {
+  AuthRotatingProvider,
+  anthropicContextTokens,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+} from '@ethosagent/llm-anthropic';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
@@ -1129,7 +1133,7 @@ function serverCompactionFor(
   config: WiringConfig,
   log: Logger,
   windowTokens: number | undefined,
-): { triggerTokens: number } | undefined {
+): ServerCompactionSetting | undefined {
   if (cfg.serverCompaction !== true) return undefined;
   if (cfg.provider !== 'anthropic') {
     log.warn(
@@ -1148,8 +1152,40 @@ function serverCompactionFor(
       windowTokens ?? anthropicContextTokens(cfg.model),
       resolveCompactionGate(profile, config.compaction)?.pressure,
       config.compaction?.maxContextTokens,
+      profile?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     );
-  return { triggerTokens };
+  return { triggerTokens, triggerCapFor: anthropicTriggerCapFor(config) };
+}
+
+/** What `serverCompactionFor` hands the provider: the trigger for the entry's
+ *  own model, and the bound a `modelOverride` to another model clamps it to. */
+interface ServerCompactionSetting {
+  triggerTokens: number;
+  triggerCapFor: (model: string) => number;
+}
+
+/**
+ * V5-6 — the most a server-compaction trigger may be for a `modelOverride`:
+ * the local gate's threshold for THAT model (`pressureGateTokens` over its
+ * catalog window, its resolved pressure, the global ceiling and its output
+ * cap — the reserve `evaluateGate` takes). `AnthropicProvider.triggerFor`
+ * sends `min(trigger, cap)`, so an explicit trigger that already fits the
+ * override is kept and only a larger one is lowered. Pinned by
+ * __tests__/anthropic-context-window-catalog.test.ts.
+ */
+function anthropicTriggerCapFor(config: WiringConfig): (model: string) => number {
+  return (model) => {
+    const profile = mergeModelProfile(
+      lookupProfile('anthropic', model),
+      config.models?.[`anthropic/${model}`],
+    );
+    return pressureGateTokens(
+      anthropicContextWindowFor(model) ?? anthropicContextTokens(model),
+      resolveCompactionGate(profile, config.compaction)?.pressure,
+      config.compaction?.maxContextTokens,
+      profile?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    );
+  };
 }
 
 /**
@@ -1299,7 +1335,10 @@ async function createLLMFromRegistry(
         // `anthropicFactory` sends the edit only when both are present.
         serverCompaction: serverCompaction !== undefined,
         ...(serverCompaction
-          ? { serverCompactionTriggerTokens: serverCompaction.triggerTokens }
+          ? {
+              serverCompactionTriggerTokens: serverCompaction.triggerTokens,
+              serverCompactionTriggerCapFor: serverCompaction.triggerCapFor,
+            }
           : {}),
         ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
         ...(profile?.toolCallFormat !== undefined

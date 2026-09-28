@@ -4,7 +4,8 @@
 // The catalog window now reaches the provider the same way the output cap does:
 // `MODEL_CATALOG` → `resolveContextWindow` (`contextWindow` config > catalog) →
 // `createLLM` → `anthropicFactory` / `AuthRotatingProvider` → `maxContextTokens`,
-// and a `modelOverride` to a smaller-window model scales the trigger down.
+// and a `modelOverride` to a smaller-window model clamps the trigger to that
+// model's own gate (`triggerFor` in extensions/llm-anthropic/src/index.ts).
 // The SDK's fetch is stubbed globally, so nothing touches the network.
 
 import { pressureGateTokens } from '@ethosagent/core';
@@ -87,6 +88,21 @@ function withServerCompaction(model: string, extra: Partial<WiringConfig> = {}):
   };
 }
 
+function withTrigger(model: string, trigger: number): WiringConfig {
+  return {
+    ...anthropic(model),
+    providers: [
+      {
+        provider: 'anthropic',
+        model,
+        apiKey: 'k',
+        serverCompaction: true,
+        serverCompactionTriggerTokens: trigger,
+      },
+    ],
+  };
+}
+
 const ROTATION = { rotationKeys: [{ apiKey: 'k2', priority: 50 }] };
 
 describe('createLLM — the catalog window reaches AnthropicProvider.maxContextTokens', () => {
@@ -122,28 +138,57 @@ describe('createLLM — the catalog window reaches AnthropicProvider.maxContextT
 });
 
 describe('createLLM — the default server-compaction trigger follows the real window', () => {
+  // The local gate reserves the provider's output cap (`evaluateGate`), so the
+  // default trigger — the gate's own threshold — does too.
+  const OPUS_GATE = pressureGateTokens(1_000_000, undefined, undefined, 128_000);
+  const HAIKU_GATE = pressureGateTokens(200_000, undefined, undefined, 64_000);
+
   it('claude-opus-5 triggers at the local gate over 1M, not over 200K', async () => {
     const llm = await createLLM(withServerCompaction('claude-opus-5'));
-    expect(await sentTrigger(llm)).toBe(pressureGateTokens(1_000_000));
+    expect(await sentTrigger(llm)).toBe(OPUS_GATE);
   });
 
   it('claude-haiku-4-5 keeps the 200K trigger', async () => {
     const llm = await createLLM(withServerCompaction('claude-haiku-4-5'));
-    expect(await sentTrigger(llm)).toBe(pressureGateTokens(200_000));
+    expect(await sentTrigger(llm)).toBe(HAIKU_GATE);
   });
 
-  it('a modelOverride to a smaller-window model scales the trigger to its window', async () => {
+  it('the default trigger equals the gate the provider itself is measured against', async () => {
+    const llm = await createLLM(withServerCompaction('claude-haiku-4-5'));
+    expect(
+      pressureGateTokens(
+        llm.maxContextTokens,
+        undefined,
+        undefined,
+        llm.capabilities?.maxOutputTokens,
+      ),
+    ).toBe(HAIKU_GATE);
+  });
+
+  it('a modelOverride to a smaller-window model clamps the trigger to its gate', async () => {
     const llm = await createLLM(withServerCompaction('claude-opus-5'));
-    const base = pressureGateTokens(1_000_000);
-    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(Math.floor((base * 200_000) / 1e6));
+    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(HAIKU_GATE);
     // An override to a same-window model keeps the configured trigger.
-    expect(await sentTrigger(llm, 'claude-sonnet-5')).toBe(base);
+    expect(await sentTrigger(llm, 'claude-sonnet-5')).toBe(OPUS_GATE);
   });
 
-  it('a rotation pool scales the trigger for a modelOverride too', async () => {
+  it('an explicit trigger that fits the override is kept, not scaled (V5-6)', async () => {
+    const llm = await createLLM(withTrigger('claude-opus-5', 100_000));
+    expect(100_000).toBeLessThan(HAIKU_GATE);
+    expect(await sentTrigger(llm)).toBe(100_000);
+    // Before: floor(100000 * 200000 / 1000000) = 20000 — compaction at 10%.
+    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(100_000);
+  });
+
+  it('an explicit trigger larger than the override supports is clamped to its gate', async () => {
+    const llm = await createLLM(withTrigger('claude-opus-5', 900_000));
+    expect(await sentTrigger(llm)).toBe(900_000);
+    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(HAIKU_GATE);
+  });
+
+  it('a rotation pool clamps the trigger for a modelOverride too', async () => {
     const llm = await createLLM(withServerCompaction('claude-opus-5', ROTATION));
-    const base = pressureGateTokens(1_000_000);
-    expect(await sentTrigger(llm)).toBe(base);
-    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(Math.floor((base * 200_000) / 1e6));
+    expect(await sentTrigger(llm)).toBe(OPUS_GATE);
+    expect(await sentTrigger(llm, 'claude-haiku-4-5')).toBe(HAIKU_GATE);
   });
 });

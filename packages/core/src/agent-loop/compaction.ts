@@ -37,8 +37,9 @@ export interface CompactionDeps {
   /**
    * T3 — max output tokens the pending completion may generate. Reserved from
    * the window before computing pressure so the *response* can't push the
-   * request past the context limit. Defaults to `DEFAULT_OUTPUT_RESERVE_TOKENS`
-   * when the caller didn't set a completion budget.
+   * request past the context limit. Unset → the provider's
+   * `capabilities.maxOutputTokens`, else `DEFAULT_OUTPUT_RESERVE_TOKENS`
+   * (`__tests__/output-reserve-cap.test.ts`).
    */
   reservedOutputTokens?: number;
   /**
@@ -147,8 +148,9 @@ export interface GateEval {
   staticTokens: number;
 }
 
+type GateLLM = Pick<LLMProvider, 'maxContextTokens' | 'capabilities'>;
 export function evaluateGate(
-  deps: { llm: Pick<LLMProvider, 'maxContextTokens'>; windowTokens?: number } & Pick<
+  deps: { llm: GateLLM; windowTokens?: number } & Pick<
     CompactionDeps,
     | 'reservedOutputTokens'
     | 'staticTokens'
@@ -162,7 +164,8 @@ export function evaluateGate(
   systemPrompt: string,
 ): GateEval {
   const rawWindow = deps.windowTokens ?? (deps.llm.maxContextTokens || 200_000);
-  const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const cap = deps.llm.capabilities?.maxOutputTokens;
+  const requestedOutput = deps.reservedOutputTokens ?? cap ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
 
@@ -302,7 +305,7 @@ export function compactionTarget(
  * pre-LLM gate would compact a history in a `windowTokens` window, before any
  * request has measured a static slice: `evaluateGate` with no messages, then
  * `effectiveGate` with the resolved pressure (0.8 when unset, as in
- * `maybeCompact`) and the optional absolute ceiling. Wiring uses it as the
+ * `maybeCompact`), the optional ceiling and output reserve. Wiring uses it as the
  * default `serverCompactionTriggerTokens`, so switching a provider to
  * server-side compaction does not move WHEN compaction happens.
  */
@@ -310,8 +313,9 @@ export function pressureGateTokens(
   windowTokens: number,
   pressure?: number,
   maxContextTokens?: number,
+  reservedOutputTokens?: number,
 ): number {
-  const g = evaluateGate({ llm: { maxContextTokens: windowTokens } }, [], '');
+  const g = evaluateGate({ llm: { maxContextTokens: windowTokens }, reservedOutputTokens }, [], '');
   return effectiveGate(g, pressure ?? 0.8, maxContextTokens);
 }
 

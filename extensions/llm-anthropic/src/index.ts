@@ -76,8 +76,15 @@ export interface AnthropicProviderConfig {
   maxContextTokensFor?: (model: string) => number | undefined;
   /** Item 7 (D32) — server-side compaction, from `providers.<n>.serverCompaction`
    *  (wiring computes `triggerTokens`: `serverCompactionTriggerTokens`, else
-   *  the local compaction gate's own threshold). Absent → never sent. */
-  serverCompaction?: { triggerTokens: number };
+   *  the local compaction gate's own threshold). `triggerCapFor` is the most
+   *  the trigger may be for a `modelOverride` to another model (wiring: that
+   *  model's own gate threshold); see `triggerFor`. Absent → never sent. */
+  serverCompaction?: ServerCompactionConfig;
+}
+
+export interface ServerCompactionConfig {
+  triggerTokens: number;
+  triggerCapFor?: (model: string) => number | undefined;
 }
 
 /** Output cap when neither the call nor the model profile names one. */
@@ -340,6 +347,11 @@ export class AnthropicProvider implements LLMProvider {
       cacheBreakpoints: true,
       systemPromptStyle: 'top-level',
       tokenCounting: 'real',
+      // The cap `complete` sends when the call names none. The compaction gate
+      // reserves it from the window (`evaluateGate`,
+      // packages/core/src/agent-loop/compaction.ts), so the history it admits
+      // plus this output fits. Pinned by __tests__/context-window-stop.test.ts.
+      maxOutputTokens: this.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       contractVersion: 1,
     };
   }
@@ -355,7 +367,7 @@ export class AnthropicProvider implements LLMProvider {
   private readonly toolOrder: ToolOrder;
   /** UBP-037 — 1 on a chain hop (`maxRetries: 0`). */
   private readonly inStreamAttempts: number;
-  private readonly serverCompaction: { triggerTokens: number } | undefined;
+  private readonly serverCompaction: ServerCompactionConfig | undefined;
 
   constructor(config: AnthropicProviderConfig) {
     this.model = config.model;
@@ -424,13 +436,20 @@ export class AnthropicProvider implements LLMProvider {
 
   /**
    * The server-compaction trigger for `model`. The configured trigger is sized
-   * for `this.model`'s window; a `modelOverride` to a model with a SMALLER
-   * window gets the same fraction of its own window, so an Opus-configured
-   * provider routed to Haiku 4.5 does not send an 800K trigger to a 200K model.
-   * Pinned by __tests__/context-window.test.ts.
+   * for `this.model`'s window. A `modelOverride` to another model keeps it when
+   * it fits that model and is clamped only when it is larger: `min(trigger,
+   * triggerCapFor(model))`, the cap wiring resolves as that model's own gate
+   * threshold. So an Opus-configured provider routed to Haiku 4.5 does not send
+   * an 800K trigger to a 200K model, and an explicit 150K trigger stays 150K
+   * rather than being scaled to 30K. Without a cap resolver (a provider built
+   * outside wiring) a smaller-window override gets the same fraction of its
+   * window instead. Pinned by
+   * packages/wiring/src/__tests__/anthropic-context-window-catalog.test.ts.
    */
   private triggerFor(model: string, trigger: number): number {
     if (model === this.model) return trigger;
+    const cap = this.serverCompaction?.triggerCapFor?.(model);
+    if (cap !== undefined) return Math.min(trigger, cap);
     const window = this.maxContextTokensFor?.(model) ?? anthropicContextTokens(model);
     if (window >= this.maxContextTokens) return trigger;
     return Math.floor((trigger * window) / this.maxContextTokens);
@@ -623,7 +642,7 @@ export class AuthRotatingProvider implements LLMProvider {
     opts?: {
       toolOrder?: ToolOrder;
       requestTimeoutMs?: number;
-      serverCompaction?: { triggerTokens: number };
+      serverCompaction?: ServerCompactionConfig;
       /** UBP-033 — the model profile's output cap, for every pooled key. */
       maxOutputTokens?: number;
       /** Per-model cap for a `modelOverride`, for every pooled key. */
@@ -669,6 +688,23 @@ export class AuthRotatingProvider implements LLMProvider {
 
   get supportsThinking(): boolean {
     return this.providers[this.current]?.supportsThinking ?? false;
+  }
+
+  /**
+   * Only the output cap the pooled keys send, so the compaction gate reserves
+   * it (`evaluateGate`, packages/core/src/agent-loop/compaction.ts) as it does
+   * for a single `AnthropicProvider`. The pool has never advertised vision or
+   * the other capabilities, and still does not: forwarding them would change
+   * how a rotation deployment inlines attachments, which is a separate change.
+   * Pinned by __tests__/context-window-stop.test.ts.
+   */
+  get capabilities(): ProviderCapabilities {
+    return {
+      streaming: true,
+      toolCalling: true,
+      maxOutputTokens:
+        this.providers[this.current]?.capabilities.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    };
   }
 
   async *complete(
@@ -747,6 +783,7 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
   }
   const capFor = numberResolver(cfg.maxOutputTokensFor);
   const windowFor = numberResolver(cfg.maxContextTokensFor);
+  const triggerCapFor = numberResolver(cfg.serverCompactionTriggerCapFor);
   return new AnthropicProvider({
     apiKey,
     model: cfg.model as string,
@@ -776,7 +813,12 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
     // Item 7 — `providers.<n>.serverCompaction`; wiring always resolves the
     // trigger (`createLLMFromRegistry`), so a flag without one is not sent.
     ...(cfg.serverCompaction === true && typeof cfg.serverCompactionTriggerTokens === 'number'
-      ? { serverCompaction: { triggerTokens: cfg.serverCompactionTriggerTokens } }
+      ? {
+          serverCompaction: {
+            triggerTokens: cfg.serverCompactionTriggerTokens,
+            ...(triggerCapFor ? { triggerCapFor } : {}),
+          },
+        }
       : {}),
   });
 };

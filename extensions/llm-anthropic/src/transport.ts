@@ -36,6 +36,12 @@ export function toFinishReason(
   if (reason === 'tool_use') return 'tool_use';
   if (reason === 'max_tokens') return 'max_tokens';
   if (reason === 'stop_sequence') return 'stop_sequence';
+  // The context window cut the output off (input + max_tokens over the
+  // window) — the same consequence as the output cap, so the loop's max_tokens
+  // handling (cut-off notice, truncated tool calls rejected) applies. Same
+  // mapping as extensions/llm-bedrock/src/transport.ts `finishReasonOf`.
+  // Pinned by __tests__/context-window-stop.test.ts.
+  if (reason === 'model_context_window_exceeded') return 'max_tokens';
   return 'end_turn';
 }
 

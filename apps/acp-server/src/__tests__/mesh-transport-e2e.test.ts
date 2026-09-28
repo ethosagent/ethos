@@ -12,7 +12,7 @@
 // goes through the scoped fetch and its floor.
 
 import { mkdtempSync, rmSync } from 'node:fs';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
@@ -216,6 +216,55 @@ describe('the SSRF floor still applies off loopback', () => {
     const end = await runSender(route, secretsWith({ [REF]: TOKEN }));
     expect(end?.ok).toBe(false);
     expect(end?.result).toMatch(/private|HOST_NOT_ALLOWED/);
+  });
+});
+
+describe('a loopback member cannot redirect the call elsewhere', () => {
+  // `meshFetch` reaches a loopback member directly, past the safeFetch floor,
+  // and sends `redirect: 'error'` so that member cannot bounce the call (and
+  // its bearer token) to another host. A member answering 302 is refused and
+  // the redirect target is never contacted.
+  const extra: Server[] = [];
+  afterEach(async () => {
+    for (const srv of extra.splice(0)) await new Promise<void>((r) => srv.close(() => r()));
+  });
+
+  async function listen(srv: Server): Promise<number> {
+    extra.push(srv);
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    const addr = srv.address();
+    return addr && typeof addr === 'object' ? addr.port : 0;
+  }
+
+  it('route_to_agent to a member that answers 302 is refused; the target sees nothing', async () => {
+    const targetHits: Array<string | undefined> = [];
+    const targetPort = await listen(
+      createServer((req, res) => {
+        targetHits.push(req.headers.authorization);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+      }),
+    );
+    const redirectPort = await listen(
+      createServer((_req, res) => {
+        res.writeHead(302, { location: `http://127.0.0.1:${targetPort}/rpc` });
+        res.end();
+      }),
+    );
+    await new AgentMesh(registryPath, { storage: new FsStorage() }).register({
+      agentId: 'peer:redirect',
+      capabilities: ['research'],
+      model: 'mock-model',
+      pid: process.pid,
+      host: 'localhost',
+      port: redirectPort,
+      activeSessions: 0,
+      authTokenRef: REF,
+    });
+
+    const end = await runSender(route, secretsWith({ [REF]: TOKEN }));
+    expect(end?.ok).toBe(false);
+    expect(targetHits).toEqual([]);
   });
 });
 
