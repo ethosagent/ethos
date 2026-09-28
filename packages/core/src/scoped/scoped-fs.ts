@@ -9,7 +9,13 @@
 // through the whole `ScopedFs` contract for no security gain.
 import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
-import type { PrivatePathDeny, ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
+import type {
+  DefinitionWriteFloor,
+  PrivatePathDeny,
+  ScopedFs,
+  ScopedFsEntry,
+  Storage,
+} from '@ethosagent/types';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -32,7 +38,15 @@ const SHARED_DENY_WHY = 'private memory is not reachable from a shared conversat
  *     when the write reach covers them. Reads are unaffected. Mirror of
  *     `ScopedStorageScope.writeDeny` in
  *     `packages/storage-fs/src/scoped-storage.ts` — the two MUST change
- *     together.
+ *     together. The seventh argument, `definitionWriteFloor`, widens it to
+ *     EVERY personality's definition entries under every Ethos state dir,
+ *     including a personality directory created mid-turn (plan
+ *     personality-memory-boundary G2-pre B). It is injected rather than
+ *     computed here because the predicate over `ethosStateDirs()` lives in
+ *     `@ethosagent/storage-fs` (`personalityDefinitionFloor`), which core may
+ *     not import at runtime; `resolveCapabilities` passes it on every
+ *     construction (`CapabilityBackends.definitionWriteFloor`). `ScopedStorage`
+ *     applies the same predicate on its own.
  *
  *  1c. **Deny-when predicate** — `denyWhen` (sixth argument, set only on a
  *     shared turn by `resolveCapabilities`) refuses reads AND writes of the
@@ -73,6 +87,7 @@ export class ScopedFsImpl implements ScopedFs {
     alwaysDenyPaths: string[] = [],
     writeDenyPaths: string[] = [],
     private readonly denyWhen?: PrivatePathDeny,
+    private readonly definitionWriteFloor?: DefinitionWriteFloor,
   ) {
     this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
     this.writeDenyPaths = writeDenyPaths.map((p) => normalize(resolve(p)));
@@ -191,7 +206,11 @@ export class ScopedFsImpl implements ScopedFs {
   }
 
   private hitsWriteDeny(canonical: string, kind: string): boolean {
-    return kind === 'write' && matchesAny(canonical, this.writeDenyPaths);
+    return (
+      kind === 'write' &&
+      (matchesAny(canonical, this.writeDenyPaths) ||
+        (this.definitionWriteFloor?.(canonical, 'access') ?? false))
+    );
   }
 
   private hitsDenyFloor(canonical: string): boolean {

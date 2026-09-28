@@ -139,4 +139,22 @@ describe('ensureFsReachDirs', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]?.msg).toContain('could not derive write paths');
   });
+
+  // plan personality-memory-boundary G2-pre B — `mountsFor` mounts `learning/`
+  // read-only when a write path covers it; its bind source must exist first.
+  it('creates learning/ only when a write path covers it', async () => {
+    const storage = new InMemoryStorage();
+    const { log } = makeLogger();
+    await ensureFsReachDirs(
+      personality({ write: ['${ETHOS_HOME}/'] }),
+      storage,
+      { ethosHome: ETHOS_HOME, cwd: CWD },
+      log,
+    );
+    expect(await storage.exists(`${ETHOS_HOME}/learning`)).toBe(true);
+
+    const narrow = new InMemoryStorage();
+    await ensureFsReachDirs(personality(), narrow, { ethosHome: ETHOS_HOME, cwd: CWD }, log);
+    expect(await narrow.exists(`${ETHOS_HOME}/learning`)).toBe(false);
+  });
 });

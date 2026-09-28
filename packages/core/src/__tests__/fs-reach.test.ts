@@ -1,15 +1,20 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
 // literal substitution tokens (`${ETHOS_HOME}` etc.) resolved at runtime, not
 // JS template strings.
-import type { PersonalityConfig } from '@ethosagent/types';
+import {
+  type PersonalityConfig,
+  PERSONALITY_DEFINITION_ENTRIES as TYPES_DEFINITION_ENTRIES,
+} from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   deriveDocumentsRoots,
   deriveFsReachPaths,
   EmptySubstitutionError,
   type FsReachVars,
+  PERSONALITY_DEFINITION_ENTRIES,
   personalityAssetDir,
 } from '../fs-reach';
+import { PERSONALITY_DEFINITION_ENTRIES as CORE_BARREL_DEFINITION_ENTRIES } from '../index';
 
 const VARS: FsReachVars = {
   ethosHome: '/home/tester/.ethos',
@@ -277,5 +282,16 @@ describe('deriveFsReachPaths — writeDeny', () => {
     expect(writeDeny.some((p) => p.startsWith(`${OWN_DIR}files`))).toBe(false);
     expect(writeDeny).not.toContain(`${OWN_DIR}MEMORY.md`);
     expect(writeDeny).not.toContain(`${OWN_DIR}USER.md`);
+  });
+});
+
+// plan personality-memory-boundary G2-pre B — the constant moved to
+// `@ethosagent/types` so storage-fs can floor it; core re-exports the SAME
+// array (not a copy) so `@ethosagent/core` importers such as tools-file compile
+// unchanged and cannot drift from the floor.
+describe('PERSONALITY_DEFINITION_ENTRIES — owned by @ethosagent/types', () => {
+  it('fs-reach and the core barrel re-export the types constant itself', () => {
+    expect(PERSONALITY_DEFINITION_ENTRIES).toBe(TYPES_DEFINITION_ENTRIES);
+    expect(CORE_BARREL_DEFINITION_ENTRIES).toBe(TYPES_DEFINITION_ENTRIES);
   });
 });

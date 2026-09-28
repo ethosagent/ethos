@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { type DefinitionWriteFloor, personalityDefinitionWriteFloor } from '@ethosagent/types';
 
 /**
  * Canonical set of security-sensitive filesystem paths — credentials,
@@ -36,8 +37,10 @@ import { join, resolve } from 'node:path';
  * directory". Stores not listed (`delivery-ledger.db`, `inbound-spool.db`,
  * `cron/`, `teams/`, …) and OTHER personalities' directories stay readable to
  * a personality whose declared or default reach covers the state dir (the
- * default reach covers it when the process cwd is `~` or the state dir). The
- * floor is static and has no notion of which personality is asking.
+ * default reach covers it when the process cwd is `~` or the state dir), and
+ * the non-definition files in them (`MEMORY.md`, `files/`) stay writable —
+ * only their definition entries are floored ({@link personalityDefinitionFloor}).
+ * The floor is static and has no notion of which personality is asking.
  * `backups/` is deliberately NOT listed although its archives carry every
  * store above: the operator's own archive download confines its reads to that
  * directory with a `ScopedStorage` over this same floor
@@ -105,6 +108,14 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  *   run executes on the host.
  * - `sessions.db`, `observability.db`, `memory.db` — every personality's
  *   transcripts, telemetry and vector memory in one file each.
+ * - `learning` — the learning inbox (candidates, frozen replay cases, its
+ *   audit log, and G2's amendment records). A turn that could write there
+ *   could plant or edit a candidate the owner later approves; READS are denied
+ *   too (plan personality-memory-boundary G2-pre B), because the drafts come
+ *   from private sessions. Every legitimate reader and writer — `skill_propose`,
+ *   `skills_pending_*`, the nightly pass, `ethos learning`, the web Learning
+ *   page — holds compose-time Storage (`LearningContext` in
+ *   packages/wiring/src/learning-pipeline.ts), never a turn's.
  */
 const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   'keys.json',
@@ -117,4 +128,31 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   ...sqliteFiles('sessions.db'),
   ...sqliteFiles('observability.db'),
   ...sqliteFiles('memory.db'),
+  'learning',
 ];
+
+/**
+ * The personality-definition WRITE floor (plan personality-memory-boundary
+ * G2-pre B): under every Ethos state dir ({@link ethosStateDirs}, read when
+ * this is called), any `personalities/<any id>/<entry>` for an entry in
+ * `PERSONALITY_DEFINITION_ENTRIES` (`@ethosagent/types`) is refused for write
+ * — another personality's `toolset.yaml`, and the definition files of a
+ * personality directory created mid-turn, not only the caller's own. A
+ * predicate over the layout (`personalityDefinitionWriteFloor`), not an
+ * enumeration of existing personalities.
+ *
+ * Applied by EVERY `ScopedStorage` on its own (constructor → `check` /
+ * `checkSubtree`, lexical path and every symlink hop), and handed by wiring to
+ * every `ScopedFsImpl` through `CapabilityBackends.definitionWriteFloor`
+ * (packages/wiring/src/build-infrastructure.ts) — the same predicate, so the
+ * two boundary copies cannot disagree. Reads stay open: a turn may read a
+ * definition it cannot change. Pinned by `state-dir-deny.test.ts` and the
+ * floor cases in `scoped-storage.test.ts` / `packages/core/src/__tests__/scoped-fs.test.ts`.
+ *
+ * Legitimate writers never pass through it: `scaffold_personality`, the web
+ * editor and CLI (`FilePersonalityRegistry`), import/restore and claw-migrate
+ * all hold compose-time, unscoped Storage.
+ */
+export function personalityDefinitionFloor(): DefinitionWriteFloor {
+  return personalityDefinitionWriteFloor(ethosStateDirs());
+}

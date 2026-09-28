@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BoundaryError, privateMemoryPathDeny } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { defaultAlwaysDeny } from '../default-deny';
 import { FsStorage } from '../fs-storage';
 import { InMemoryStorage } from '../in-memory-storage';
 import { ScopedStorage } from '../scoped-storage';
@@ -445,5 +446,118 @@ describe('ScopedStorage — denyWhen (shared-turn private memory)', () => {
   it('without denyWhen (a private turn) the same read succeeds', async () => {
     const open = new ScopedStorage(new FsStorage(), { read: [`${own}/`], write: [`${own}/`] });
     await expect(open.read(join(own, 'MEMORY.md'))).resolves.toBe('canary: interview at ACME');
+  });
+});
+
+// plan personality-memory-boundary G2-pre B — the personality-definition WRITE
+// floor every `ScopedStorage` applies on its own (`personalityDefinitionFloor`,
+// ../sensitive-paths.ts): ANY personality's definition entries under ANY Ethos
+// state dir, not only the caller's (`writeDeny` above), including a directory
+// created mid-turn. No scope field turns it on or off. Mirror cases through
+// `ScopedFsImpl` live in packages/core/src/__tests__/scoped-fs.test.ts.
+describe('ScopedStorage — definition floor (every personality)', () => {
+  let state: string;
+  let other: string;
+  let cwd: string;
+  let scoped: ScopedStorage;
+
+  beforeEach(async () => {
+    state = await realpath(await mkdtemp(join(tmpdir(), 'ethos-def-floor-')));
+    // Read at construction, like `defaultAlwaysDeny()` — stub first.
+    vi.stubEnv('ETHOS_STATE_DIR', state);
+    other = join(state, 'personalities', 'alice');
+    cwd = join(state, 'work');
+    const fs = new FsStorage();
+    await fs.mkdir(join(state, 'personalities', 'bob', 'files'));
+    await fs.mkdir(join(other, 'files'));
+    await fs.mkdir(join(state, 'learning', 'candidates'));
+    await fs.mkdir(cwd);
+    await fs.write(join(other, 'toolset.yaml'), '- read_file\n');
+    await fs.write(join(other, 'config.yaml'), 'name: Alice\n');
+    await fs.write(join(state, 'learning', 'candidates', 'c1.json'), '{}');
+    // No `writeDeny` at all: the floor needs none.
+    scoped = new ScopedStorage(fs, {
+      read: [`${state}/`],
+      write: [`${state}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(state, { recursive: true, force: true });
+  });
+
+  it("refuses a write to another personality's toolset.yaml, and still reads it", async () => {
+    const err = await scoped.write(join(other, 'toolset.yaml'), '- terminal\n').catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).kind).toBe('write');
+    expect((err as BoundaryError).message).toContain('personality definition is operator-owned');
+    await expect(scoped.writeAtomic(join(other, 'toolset.yaml'), 'x')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(scoped.append(join(other, 'SOUL.md'), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.read(join(other, 'toolset.yaml'))).resolves.toBe('- read_file\n');
+  });
+
+  it('refuses personalities/new/toolset.yaml created mid-turn (a predicate, not a list)', async () => {
+    const fresh = join(state, 'personalities', 'new');
+    await expect(scoped.mkdir(fresh)).resolves.toBeUndefined();
+    await expect(scoped.write(join(fresh, 'toolset.yaml'), '- terminal\n')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(scoped.mkdir(join(fresh, 'skills'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.mkdir(join(fresh, 'files'))).resolves.toBeUndefined();
+    await expect(scoped.write(join(fresh, 'files', 'a.txt'), 'x')).resolves.toBeUndefined();
+  });
+
+  it("refuses a symlink to another personality's config.yaml, and a symlinked parent, on the hop", async () => {
+    await symlink(join(other, 'config.yaml'), join(cwd, 'notes.txt'));
+    const err = await scoped.write(join(cwd, 'notes.txt'), 'name: Evil\n').catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).message).toContain('personality definition is operator-owned');
+    await symlink(other, join(cwd, 'p'));
+    await expect(scoped.write(join(cwd, 'p', 'toolset.yaml'), 'x')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(new FsStorage().read(join(other, 'config.yaml'))).resolves.toBe('name: Alice\n');
+  });
+
+  it("refuses removing or renaming another personality's directory, or personalities/", async () => {
+    await expect(scoped.remove(other, { recursive: true })).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.rename(other, join(cwd, 'moved'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(
+      scoped.remove(join(state, 'personalities'), { recursive: true }),
+    ).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.remove(join(other, 'files'), { recursive: true })).resolves.toBeUndefined();
+  });
+
+  it("leaves another personality's non-definition files writable", async () => {
+    await expect(scoped.write(join(other, 'files', 'a.txt'), 'x')).resolves.toBeUndefined();
+    await expect(scoped.write(join(other, 'MEMORY.md'), 'x')).resolves.toBeUndefined();
+  });
+
+  it('refuses reading learning/ on a turn (always-deny floor), and writing into it', async () => {
+    const err = await scoped.read(join(state, 'learning', 'candidates', 'c1.json')).catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).kind).toBe('read');
+    await expect(scoped.list(join(state, 'learning'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(
+      scoped.write(join(state, 'learning', 'candidates', 'planted.json'), '{}'),
+    ).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('does not reach a directory outside every state dir', async () => {
+    const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'ethos-not-state-')));
+    try {
+      const fs = new FsStorage();
+      await fs.mkdir(join(elsewhere, 'personalities', 'x'));
+      const open = new ScopedStorage(fs, { read: [`${elsewhere}/`], write: [`${elsewhere}/`] });
+      await expect(
+        open.write(join(elsewhere, 'personalities', 'x', 'toolset.yaml'), 'x'),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(elsewhere, { recursive: true, force: true });
+    }
   });
 });

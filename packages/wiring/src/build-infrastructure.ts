@@ -495,7 +495,7 @@ export async function buildInfrastructure(
 
   const resolver = config.secretsResolver;
   const { safeFetch } = await import('@ethosagent/safety-network');
-  const { defaultAlwaysDeny } = await import('@ethosagent/storage-fs');
+  const { defaultAlwaysDeny, personalityDefinitionFloor } = await import('@ethosagent/storage-fs');
 
   const capabilityBackends: CapabilityBackends = {
     kvStoreFactory: sessionCompose.kvStoreFactory,
@@ -528,6 +528,10 @@ export async function buildInfrastructure(
       log,
     ),
     personalityFsWriteDeny: createPersonalityFsWriteDenyResolver(personalities, dataDir),
+    // plan personality-memory-boundary G2-pre B — no `scopedFs` writes ANY
+    // personality's definition; the same predicate every `ScopedStorage`
+    // applies on its own (packages/storage-fs/src/sensitive-paths.ts).
+    definitionWriteFloor: personalityDefinitionFloor(),
     personalityNetworkPolicy: createPersonalityNetworkPolicyResolver(personalities, log),
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny(),

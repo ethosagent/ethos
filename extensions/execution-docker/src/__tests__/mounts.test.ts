@@ -70,3 +70,47 @@ describe('mountsFor — the personality definition is read-only', () => {
     expect(m.has(`${OWN}/files`)).toBe(false);
   });
 });
+
+// plan personality-memory-boundary G2-pre B, OS layer: under a write reach
+// that spans the state dir, EVERY personality's definition and `learning/` are
+// read-only in the container — the half of the storage-fs definition floor and
+// the `learning` deny a shell inside the sandbox cannot route around.
+describe('mountsFor — every personality definition and learning/ are read-only', () => {
+  const PERSONALITIES = `${ETHOS_HOME}/personalities`;
+  const LEARNING = `${ETHOS_HOME}/learning`;
+
+  it("write: ['${ETHOS_HOME}/'] mounts personalities/ and learning/ ro, own files/ stays rw", () => {
+    const m = modes({ write: ['${ETHOS_HOME}/'] });
+    expect(m.get(ETHOS_HOME)).toBe('rw');
+    expect(m.get(PERSONALITIES)).toBe('ro');
+    expect(m.get(LEARNING)).toBe('ro');
+    expect(m.get(OWN)).toBe('ro');
+    expect(m.get(`${OWN}/files`)).toBe('rw');
+  });
+
+  it("write: ['${ETHOS_HOME}/personalities/'] is downgraded, but the caller keeps its files/", () => {
+    const m = modes({ write: ['${ETHOS_HOME}/personalities/'] });
+    expect(m.get(PERSONALITIES)).toBe('ro');
+    expect(m.get(`${OWN}/files`)).toBe('rw');
+    expect(m.has(LEARNING)).toBe(false);
+  });
+
+  it("a declared rw mount at another personality's directory or definition entry is ro", () => {
+    const m = modes({
+      write: [
+        '${ETHOS_HOME}/personalities/alice/',
+        '${ETHOS_HOME}/personalities/carol/toolset.yaml',
+        '${ETHOS_HOME}/learning/candidates/',
+      ],
+    });
+    expect(m.get(`${PERSONALITIES}/alice`)).toBe('ro');
+    expect(m.get(`${PERSONALITIES}/carol/toolset.yaml`)).toBe('ro');
+    expect(m.get(`${LEARNING}/candidates`)).toBe('ro');
+  });
+
+  it('a reach that does not span the state dir adds neither mount', () => {
+    const m = modes(undefined);
+    expect(m.has(PERSONALITIES)).toBe(false);
+    expect(m.has(LEARNING)).toBe(false);
+  });
+});

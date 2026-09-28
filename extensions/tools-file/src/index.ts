@@ -84,10 +84,10 @@ export function isWriteBlocked(abs: string): boolean {
  * `@ethosagent/config` honours), read per call.
  *
  * Defence in depth plus a better message, NOT the enforcer: the write is
- * refused at the boundary by `ScopedFsImpl.checkReach`'s `writeDenyPaths`
- * (`packages/core/src/scoped/scoped-fs.ts`), which covers only the CALLING
- * personality's definition. This check covers every personality directory,
- * because no turn has a reason to rewrite another personality's toolset.
+ * refused at the boundary by `ScopedFsImpl.checkReach`
+ * (`packages/core/src/scoped/scoped-fs.ts`) — `writeDenyPaths` for the
+ * calling personality and the injected `definitionWriteFloor` for every
+ * personality directory (plan personality-memory-boundary G2-pre B).
  */
 export function isPersonalityDefinitionPath(abs: string): boolean {
   const normalized = resolve(abs);

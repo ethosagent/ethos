@@ -1,12 +1,16 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { NetworkPolicy } from '@ethosagent/safety-network';
-import type {
-  KeyValueStore,
-  PrivateMemoryRoots,
-  SecretRef,
-  Storage,
-  ToolCapabilities,
-  ToolContext,
-  TurnAudience,
+import {
+  type DefinitionWriteFloor,
+  type KeyValueStore,
+  type PrivateMemoryRoots,
+  personalityDefinitionWriteFloor,
+  type SecretRef,
+  type Storage,
+  type ToolCapabilities,
+  type ToolContext,
+  type TurnAudience,
 } from '@ethosagent/types';
 import { privateMemoryDenyFor } from './agent-loop/audience';
 import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
@@ -42,6 +46,16 @@ export interface CapabilityBackends {
    * as `personalityFsReach`. Absent → no write-deny list.
    */
   personalityFsWriteDeny?: (personalityId?: string) => string[];
+  /**
+   * The personality-definition WRITE floor (plan personality-memory-boundary
+   * G2-pre B): every personality's definition entries under every Ethos state
+   * dir, handed to EVERY `ScopedFsImpl` built here. Wiring passes
+   * `personalityDefinitionFloor()` from `@ethosagent/storage-fs` — the same
+   * predicate `ScopedStorage` applies on its own, so the two boundaries agree.
+   * Absent → the floor over the default `~/.ethos` state dir, failing closed on
+   * the common layout like `privateMemoryRoots`.
+   */
+  definitionWriteFloor?: DefinitionWriteFloor;
   /**
    * Resolves the full network policy of the personality running the turn. The
    * `allow` list is intersected with each tool's declared `allowedHosts`;
@@ -119,6 +133,9 @@ export function resolveCapabilities(
   // (all three constructions below, the attachments rebuild included) refuses
   // the private memory files. Undefined on a private call.
   const sharedDeny = privateMemoryDenyFor(scopeIds.roomAudience, backends.privateMemoryRoots);
+  // G2-pre B — no call's `scopedFs` writes any personality's definition.
+  const definitionFloor =
+    backends.definitionWriteFloor ?? personalityDefinitionWriteFloor([join(homedir(), '.ethos')]);
 
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;
@@ -190,6 +207,7 @@ export function resolveCapabilities(
       backends.alwaysDenyPaths ?? [],
       personalityWriteDeny(),
       sharedDeny,
+      definitionFloor,
     );
   }
 
@@ -233,6 +251,7 @@ export function resolveCapabilities(
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
           sharedDeny,
+          definitionFloor,
         );
       } else if (!result.scopedFs && backends.storage) {
         // No fs_reach declared but attachments present — create read-only ScopedFs
@@ -243,6 +262,7 @@ export function resolveCapabilities(
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
           sharedDeny,
+          definitionFloor,
         );
       }
     }

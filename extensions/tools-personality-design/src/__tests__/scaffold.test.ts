@@ -6,7 +6,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { defaultAlwaysDeny, InMemoryStorage, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   PersonalityConfig,
   PersonalityRegistry,
@@ -129,6 +129,37 @@ describe('scaffold_personality — creates new personalities only', () => {
     expect(result.ok).toBe(true);
     expect(await storage.read(join(PERSONALITIES, 'fresh-one', 'toolset.yaml'))).toBe(
       '- read_file\n- terminal\n',
+    );
+  });
+});
+
+// plan personality-memory-boundary G2-pre B — every turn-scoped Storage now
+// refuses writing ANY personality's definition files, including a directory
+// created mid-turn. scaffold_personality is a legitimate writer of exactly
+// those files and must keep working: it holds the compose-time Storage, never
+// the turn's `ctx.storage`.
+describe('scaffold_personality — unaffected by the definition write floor', () => {
+  it('writes through compose-time Storage while the turn scope would refuse the same file', async () => {
+    const storage = new InMemoryStorage();
+    const turnScope = new ScopedStorage(storage, {
+      read: [`${PERSONALITIES}/`],
+      write: [`${PERSONALITIES}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    const target = join(PERSONALITIES, 'floor-proof', 'toolset.yaml');
+    await expect(turnScope.write(target, '- terminal\n')).rejects.toThrow(
+      'personality definition is operator-owned',
+    );
+
+    const result = await scaffoldFor(storage).execute(args('floor-proof'), {
+      ...ctx('architect'),
+      storage: turnScope,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(await storage.read(target)).toBe('- read_file\n- terminal\n');
+    expect(await storage.read(join(PERSONALITIES, 'floor-proof', 'SOUL.md'))).toBe(
+      '# Me\n\nI exist.',
     );
   });
 });

@@ -4,7 +4,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join, resolve as resolvePath } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 // The fs_reach derivation is SHARED with the app-layer ScopedStorage scope
 // (packages/core/src/fs-reach.ts). Two copies would drift into silent data
 // loss: a write ScopedStorage permits but no mount backs is written into the
@@ -15,19 +15,20 @@ import {
   personalityWriteDeny,
   substitute,
 } from '@ethosagent/core';
-import type {
-  Constitution,
-  ExecChunk,
-  ExecOpts,
-  ExecRpcResponse,
-  ExecSession,
-  ExecutionBackend,
-  ExecutionBackendConfig,
-  Logger,
-  MountSpec,
-  PersonalityConfig,
-  SandboxAttestation,
-  SecretsResolver,
+import {
+  type Constitution,
+  type ExecChunk,
+  type ExecOpts,
+  type ExecRpcResponse,
+  type ExecSession,
+  type ExecutionBackend,
+  type ExecutionBackendConfig,
+  isPersonalityDefinitionPath,
+  type Logger,
+  type MountSpec,
+  type PersonalityConfig,
+  type SandboxAttestation,
+  type SecretsResolver,
 } from '@ethosagent/types';
 import {
   encodeFrame,
@@ -1308,6 +1309,24 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * downgraded to `ro`. The consequence is that a direct container write to
    * `ownDir/MEMORY.md` fails with EROFS, loudly — the memory provider writes
    * it host-side, never through the container.
+   *
+   * EVERY other personality's definition, and `learning/`, get the same
+   * treatment (plan personality-memory-boundary G2-pre B, the OS-layer half of
+   * the storage-fs definition floor and the `learning` deny): when a rw mount
+   * is `${ethosHome}/personalities` or an ancestor of it, that directory gains
+   * a `ro` mount — so no container can edit another personality's
+   * `toolset.yaml` or create `personalities/<new>/toolset.yaml` — and the
+   * caller's own `files/` stays rw through the rule above; when a rw mount
+   * covers `${ethosHome}/learning`, `learning` gains a `ro` mount. A rw mount
+   * AT another personality's directory, at or below any personality's
+   * definition entry, or below `learning` is downgraded to `ro`.
+   * `ensureFsReachDirs` (packages/wiring/src/fs-reach-dirs.ts) pre-creates
+   * `learning` in that case so Docker never auto-creates it as root.
+   * LIMITATION: `ro` is not "not mounted" — `learning/` and other personalities'
+   * directories stay READABLE inside the container, as the state-dir deny
+   * entries (`keys.json`, `sessions.db`, …) already do under a reach that
+   * covers the state dir; the Storage-side read deny does not reach a shell.
+   * Other personalities' `files/` folders are read-only in that case too.
    */
   mountsFor(p: PersonalityConfig): MountSpec[] {
     const ethosHome = this.config.substitutionVars?.ethosHome ?? join(homedir(), '.ethos');
@@ -1346,15 +1365,37 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const within = (child: string, parent: string): boolean =>
       child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
     const writeDeny = personalityWriteDeny(ethosHome, p.id).map((d) => resolvePath(d));
+    const home = resolvePath(ethosHome);
+    const personalitiesDir = join(home, 'personalities');
+    const learningDir = join(home, 'learning');
+    const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
+    // G2-pre B — a rw mount AT another personality's directory, at or below
+    // ANY personality's definition entry, or at or below `learning`.
+    const floored = (path: string): boolean =>
+      writeDeny.some((deny) => within(path, deny)) ||
+      isPersonalityDefinitionPath(path, [home]) ||
+      (path !== ownDir && dirname(path) === personalitiesDir) ||
+      within(path, learningDir);
     for (const [path, mount] of byPath) {
-      if (mount.mode === 'rw' && writeDeny.some((deny) => within(path, deny))) {
+      if (mount.mode === 'rw' && floored(path)) {
         byPath.set(path, { ...mount, mode: 'ro' });
       }
     }
-    const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
-    const coversOwnDir = [...byPath.values()].some(
-      (m) => m.mode === 'rw' && within(ownDir, m.hostPath),
-    );
+    const coveredRw = (dir: string): boolean =>
+      [...byPath.values()].some((m) => m.mode === 'rw' && within(dir, m.hostPath));
+    // Judged BEFORE `personalities/` turns ro: a declared rw
+    // `${ETHOS_HOME}/personalities/` still earns the caller its rw `files/`.
+    const coversOwnDir = coveredRw(ownDir);
+    if (coveredRw(personalitiesDir)) {
+      byPath.set(personalitiesDir, {
+        hostPath: personalitiesDir,
+        containerPath: personalitiesDir,
+        mode: 'ro',
+      });
+    }
+    if (coveredRw(learningDir)) {
+      byPath.set(learningDir, { hostPath: learningDir, containerPath: learningDir, mode: 'ro' });
+    }
     if (coversOwnDir) {
       byPath.set(ownDir, { hostPath: ownDir, containerPath: ownDir, mode: 'ro' });
       add(join(ownDir, 'files'), 'rw');

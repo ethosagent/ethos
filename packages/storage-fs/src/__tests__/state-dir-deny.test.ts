@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultAlwaysDeny } from '../default-deny';
 import { InMemoryStorage } from '../in-memory-storage';
 import { ScopedStorage } from '../scoped-storage';
-import { ethosStateDirs, sensitiveDenyPaths } from '../sensitive-paths';
+import { ethosStateDirs, personalityDefinitionFloor, sensitiveDenyPaths } from '../sensitive-paths';
 
 // PST-001 (plan openclaw-2026.9.6-gaps): the always-deny floor covered only
 // `keys.json` and `secrets/` under the state dir, while `process.cwd()` is in a
@@ -31,6 +31,8 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'observability.db',
     'observability.db-wal',
     'memory.db',
+    // plan personality-memory-boundary G2-pre B — read AND write.
+    'learning',
   ])('denies ~/.ethos/%s', (entry) => {
     expect(sensitiveDenyPaths()).toContain(join(home, entry));
   });
@@ -71,5 +73,43 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     });
     expect(await scoped.read(join(own, 'MEMORY.md'))).toBe('mine');
     await scoped.write(join(own, 'files', 'note.md'), 'ok');
+  });
+
+  it('the personality-definition write floor follows ETHOS_STATE_DIR as well as ~/.ethos', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', '/srv/ethos-state');
+    const floor = personalityDefinitionFloor();
+    for (const dir of ['/srv/ethos-state', home]) {
+      expect(floor(join(dir, 'personalities', 'any', 'toolset.yaml'), 'access')).toBe(true);
+      expect(floor(join(dir, 'personalities', 'any', 'skills', 'x', 'SKILL.md'), 'access')).toBe(
+        true,
+      );
+      expect(floor(join(dir, 'personalities', 'any', 'MEMORY.md'), 'access')).toBe(false);
+      expect(floor(join(dir, 'personalities', 'any', 'files', 'toolset.yaml'), 'access')).toBe(
+        false,
+      );
+      expect(floor(join(dir, 'personalities', 'any'), 'subtree')).toBe(true);
+    }
+    expect(floor('/srv/other/personalities/any/toolset.yaml', 'access')).toBe(false);
+  });
+
+  it('a reach covering the whole home dir cannot read learning/ or write another toolset.yaml', async () => {
+    const inner = new InMemoryStorage();
+    const other = join(home, 'personalities', 'alice');
+    await inner.mkdir(join(home, 'learning'));
+    await inner.mkdir(other);
+    await inner.write(join(home, 'learning', 'audit.jsonl'), '{}');
+    await inner.write(join(other, 'toolset.yaml'), '- read_file\n');
+    const scoped = new ScopedStorage(inner, {
+      read: [`${homedir()}/`],
+      write: [`${homedir()}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    await expect(scoped.read(join(home, 'learning', 'audit.jsonl'))).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    await expect(scoped.write(join(other, 'toolset.yaml'), '- terminal\n')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    expect(await scoped.read(join(other, 'toolset.yaml'))).toBe('- read_file\n');
   });
 });

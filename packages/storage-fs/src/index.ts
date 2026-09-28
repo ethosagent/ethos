@@ -20,4 +20,8 @@ export {
   type FileSecretsResolverOptions,
   InMemorySecretsResolver,
 } from './secrets';
-export { ethosStateDirs, sensitiveDenyPaths } from './sensitive-paths';
+export {
+  ethosStateDirs,
+  personalityDefinitionFloor,
+  sensitiveDenyPaths,
+} from './sensitive-paths';

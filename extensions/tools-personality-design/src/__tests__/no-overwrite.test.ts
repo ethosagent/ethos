@@ -189,6 +189,30 @@ describe('scaffold_personality — no overwrite, no escalation', () => {
     );
   });
 
+  // plan personality-memory-boundary G2-pre B — the definition write floor
+  // refuses every personality's definition files on the turn's `ctx.storage`.
+  // These guards, not the floor, are what stops an overwrite here, because
+  // scaffold never writes through `ctx.storage`: a turn storage that throws on
+  // ANY call is never touched, on success or refusal.
+  it('(d2) never touches the turn-scoped ctx.storage, writing or refusing', async () => {
+    const { storage, tool } = await setup();
+    const turnStorage = new InMemoryStorage();
+    const turnCalls = [
+      vi.spyOn(turnStorage, 'exists'),
+      vi.spyOn(turnStorage, 'mkdir'),
+      vi.spyOn(turnStorage, 'write'),
+      vi.spyOn(turnStorage, 'writeAtomic'),
+    ];
+    const turnCtx = { ...ctx('designer'), storage: turnStorage };
+
+    expect((await tool.execute(args('fresh2'), turnCtx)).ok).toBe(true);
+    expect((await tool.execute(args('reviewer'), turnCtx)).ok).toBe(false);
+    for (const call of turnCalls) expect(call).not.toHaveBeenCalled();
+    expect(await storage.read(join(PERSONALITIES, 'reviewer', 'toolset.yaml'))).toBe(
+      '- read_file\n',
+    );
+  });
+
   it('(e) refuses a new id listing a tool the caller lacks, writing nothing', async () => {
     await expectRefusedUntouched(
       (tool) => tool.execute(args('escalator', ['read_file', 'terminal']), ctx('designer')),

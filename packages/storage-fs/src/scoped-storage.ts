@@ -14,6 +14,7 @@ import {
   type StorageRemoveOptions,
   type StorageWriteOptions,
 } from '@ethosagent/types';
+import { personalityDefinitionFloor } from './sensitive-paths';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
@@ -67,9 +68,12 @@ const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
  * Order of checks (any deny wins over any allow):
  *   1. always-deny — request rejected.
  *   1b. write-deny — WRITES only: request rejected when the path is (or is
- *      under) a `writeDeny` entry. `remove` and `rename` additionally refuse
- *      a path that CONTAINS a `writeDeny` entry, because deleting or moving a
- *      directory rewrites everything below it.
+ *      under) a `writeDeny` entry, or when the personality-definition floor
+ *      says it is ANY personality's definition entry under an Ethos state dir
+ *      (`personalityDefinitionFloor`, ./sensitive-paths.ts — applied by every
+ *      instance, no scope field; plan personality-memory-boundary G2-pre B).
+ *      `remove` and `rename` additionally refuse a path that CONTAINS one,
+ *      because deleting or moving a directory rewrites everything below it.
  *   1c. deny-when — reads AND writes: request rejected when the `denyWhen`
  *      predicate (a shared turn's private memory files) says so; `remove` and
  *      `rename` also ask it about the subtree.
@@ -118,6 +122,14 @@ export class ScopedStorage implements Storage {
   private readonly denyPrefixes: string[];
   private readonly writeDenyPrefixes: string[];
   private readonly denyWhen: PrivatePathDeny | undefined;
+  /**
+   * G2-pre B — every personality's definition entries under every Ethos state
+   * dir, write-only. Computed once per instance from `ethosStateDirs()`, like
+   * the `defaultAlwaysDeny()` list a caller passes. Mirror of `ScopedFsImpl`'s
+   * `definitionWriteFloor` (packages/core/src/scoped/scoped-fs.ts), which
+   * wiring builds from the same `personalityDefinitionFloor`.
+   */
+  private readonly definitionFloor = personalityDefinitionFloor();
 
   constructor(
     private readonly inner: Storage,
@@ -135,9 +147,15 @@ export class ScopedStorage implements Storage {
     return this.denyWhen?.(path, 'access') ?? false;
   }
 
-  /** True when `path` is a `writeDeny` entry or lies under one. */
+  /**
+   * True for a WRITE to a `writeDeny` entry (or below one), or to any
+   * personality's definition entry under a state dir (the G2-pre B floor).
+   */
   private hitsWriteDeny(path: string, kind: 'read' | 'write'): boolean {
-    return kind === 'write' && isPathAllowed(path, this.writeDenyPrefixes);
+    return (
+      kind === 'write' &&
+      (isPathAllowed(path, this.writeDenyPrefixes) || this.definitionFloor(path, 'access'))
+    );
   }
 
   /**
@@ -149,7 +167,10 @@ export class ScopedStorage implements Storage {
   private checkSubtree(rawPath: string): void {
     const path = resolve(rawPath);
     const withSlash = path.endsWith('/') ? path : `${path}/`;
-    if (this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash))) {
+    if (
+      this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash)) ||
+      this.definitionFloor(path, 'subtree')
+    ) {
       throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
     if (this.denyWhen?.(path, 'subtree')) {

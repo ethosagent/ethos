@@ -2,7 +2,7 @@
 // tokens (`${ETHOS_HOME}` etc.) are literal markers resolved at runtime, not JS
 // template strings.
 import { basename, join, resolve } from 'node:path';
-import type { PersonalityConfig } from '@ethosagent/types';
+import { PERSONALITY_DEFINITION_ENTRIES, type PersonalityConfig } from '@ethosagent/types';
 
 /**
  * A personality's `fs_reach` is enforced at TWO layers — the app layer
@@ -169,27 +169,18 @@ export function deriveFsReachPaths(
 }
 
 /**
- * The entries directly under a personality's own directory that DEFINE it:
- * who it is (`SOUL.md`, `ETHOS.md`), what it may do (`toolset.yaml`,
- * `mcp.yaml`, `tools.yaml`), how it is configured (`config.yaml`), and the
- * skills it carries (`skills/`, a directory — the trailing slash makes it a
- * prefix). An agent turn must never change these (reach-and-containment 3a):
- * the registry hot-reloads them on mtime, so a turn that could write
- * `toolset.yaml` could grant itself any tool on its next turn.
+ * `PERSONALITY_DEFINITION_ENTRIES` — the entries that DEFINE a personality —
+ * lives in `@ethosagent/types` (packages/types/src/personality-definition.ts)
+ * since plan personality-memory-boundary G2-pre B, because `@ethosagent/storage-fs`
+ * enforces a floor over it and core may not import storage-fs at runtime.
+ * Re-exported here so `@ethosagent/core` importers compile unchanged.
  *
- * It must cover every path `FilePersonalityRegistry.loadOne` fingerprints
- * (`extensions/personalities/src/index.ts`) — those are the files whose change
- * alters the loaded personality. `ETHOS.md` is on top of that list: it is not
- * fingerprinted, but it is identity text shipped beside `SOUL.md`.
- *
- * Deliberately absent: `MEMORY.md` / `USER.md` (content the agent is meant to
- * maintain; their writer is the memory provider, not the turn's scoped storage)
- * and `files/` (`personalityAssetDir`, the documented asset drop).
- *
- * Enforced as a write-only list by `ScopedStorage.check`
- * (`packages/storage-fs/src/scoped-storage.ts`) and `ScopedFsImpl.checkReach`
- * (`packages/core/src/scoped/scoped-fs.ts`), and on the OS layer by the
- * read-only `ownDir` mount in `DockerExecutionBackend.mountsFor`
+ * Enforced as a write-only list for the CALLING personality by
+ * `personalityWriteDeny` below (`ScopedStorage.check`, `ScopedFsImpl.checkReach`),
+ * for EVERY personality under every state dir by the definition write floor
+ * (`personalityDefinitionFloor` in packages/storage-fs/src/sensitive-paths.ts,
+ * injected into `ScopedFsImpl` as `definitionWriteFloor`), and on the OS layer
+ * by the read-only mounts in `DockerExecutionBackend.mountsFor`
  * (`extensions/execution-docker/src/index.ts`).
  *
  * LIMITATION: on LOCAL execution a personality with `terminal` can still edit
@@ -201,15 +192,7 @@ export function deriveFsReachPaths(
  * `sed -i ~/.ethos/personalities/<self>/toolset.yaml` and nothing more: a
  * relative path (`cd ~; sed -i .ethos/…`) or a computed one passes.
  */
-export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
-  'SOUL.md',
-  'config.yaml',
-  'toolset.yaml',
-  'mcp.yaml',
-  'tools.yaml',
-  'ETHOS.md',
-  'skills/',
-];
+export { PERSONALITY_DEFINITION_ENTRIES };
 
 /**
  * Absolute write-deny paths for one personality: each

@@ -39,6 +39,7 @@ export * from './oauth';
 export * from './observability';
 export * from './pause-lifecycle';
 export * from './personality';
+export * from './personality-definition';
 export * from './platform';
 export * from './plugin';
 export * from './plugin-llm';
