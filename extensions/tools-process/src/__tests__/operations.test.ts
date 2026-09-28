@@ -143,7 +143,7 @@ describe.skipIf(process.platform === 'win32')('stopProcess process group', () =>
     const s = `7.${Math.floor(Math.random() * 1e6)
       .toString()
       .padStart(6, '0')}`;
-    const { pid } = spawnDetached(
+    const { pid, identity } = spawnDetached(
       'grp',
       `cd /tmp && sleep ${s}; true`,
       dataDir,
@@ -151,7 +151,7 @@ describe.skipIf(process.platform === 'win32')('stopProcess process group', () =>
       dataDir,
     );
     saveRegistry(dataDir, {
-      grp: makeEntry('grp', { status: 'running', pid, exitCode: undefined }),
+      grp: makeEntry('grp', { status: 'running', pid, exitCode: undefined, ...identity }),
     });
     await new Promise((r) => setTimeout(r, 200));
     const result = await stopProcess(dataDir, 'grp', 'SIGTERM');
@@ -165,5 +165,120 @@ describe.skipIf(process.platform === 'win32')('stopProcess process group', () =>
       // pgrep exits 1 when nothing matches — the answer this test wants.
     }
     expect(alive).toBe('');
+  });
+});
+
+// V-ES-5 — registry entries outlive the host process and a reboot, and
+// liveness is checked by pid, so a `running` entry can name a pid the OS has
+// since handed to an unrelated process. Signalling its GROUP would take that
+// process's whole family with it. The entry records the process's start time
+// (and, on Linux, the boot) at spawn; stop refuses when they no longer match.
+describe.skipIf(process.platform === 'win32')('stopProcess after pid reuse (V-ES-5)', () => {
+  const unique = () =>
+    `7.${Math.floor(Math.random() * 1e6)
+      .toString()
+      .padStart(6, '0')}`;
+  const alive = (pattern: string): string => {
+    try {
+      return execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' }).trim();
+    } catch {
+      return '';
+    }
+  };
+  const cleanup: number[] = [];
+  afterEach(() => {
+    for (const pid of cleanup.splice(0)) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  it('records a start-time identity at spawn', () => {
+    const { pid, identity } = spawnDetached(
+      'idn',
+      `sleep ${unique()}`,
+      dataDir,
+      undefined,
+      dataDir,
+    );
+    cleanup.push(pid);
+    if (process.platform === 'linux' || process.platform === 'darwin') {
+      expect(identity.pidStartToken).toMatch(/\S/);
+    }
+    if (process.platform === 'linux') expect(identity.bootId).toMatch(/\S/);
+  });
+
+  it('refuses to signal a group whose leader is no longer the process it started', async () => {
+    // The "reused" pid: an unrelated group leader with a child of its own.
+    const s = unique();
+    const { pid } = spawnDetached(
+      'other',
+      `sleep ${s} & sleep ${s}; wait`,
+      dataDir,
+      undefined,
+      dataDir,
+    );
+    cleanup.push(pid);
+    await new Promise((r) => setTimeout(r, 200));
+    saveRegistry(dataDir, {
+      stale: makeEntry('stale', {
+        status: 'running',
+        pid,
+        exitCode: undefined,
+        pidStartToken: 'recorded-for-a-different-process',
+      }),
+    });
+    const result = await stopProcess(dataDir, 'stale', 'SIGKILL');
+    expect(result).toEqual({ ok: true, stopped: false });
+    await new Promise((r) => setTimeout(r, 200));
+    // Neither the leader nor its children were signalled.
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    expect(() => process.kill(-pid, 0)).not.toThrow();
+    const { loadRegistry } = await import('../registry');
+    expect(loadRegistry(dataDir).stale?.status).toBe('orphan');
+  });
+
+  it.skipIf(process.platform !== 'linux')(
+    'refuses an entry recorded under another boot',
+    async () => {
+      const s = unique();
+      const { pid, identity } = spawnDetached('boot', `sleep ${s}`, dataDir, undefined, dataDir);
+      cleanup.push(pid);
+      saveRegistry(dataDir, {
+        boot: makeEntry('boot', {
+          status: 'running',
+          pid,
+          exitCode: undefined,
+          ...identity,
+          bootId: 'an-earlier-boot',
+        }),
+      });
+      expect(await stopProcess(dataDir, 'boot', 'SIGKILL')).toEqual({ ok: true, stopped: false });
+      expect(alive(`sleep ${s}`)).not.toBe('');
+    },
+  );
+
+  it('an entry with no identity (written before it existed) signals only the pid', async () => {
+    const s = unique();
+    const { pid } = spawnDetached(
+      'legacy',
+      `sleep ${s} & sleep ${s}; wait`,
+      dataDir,
+      undefined,
+      dataDir,
+    );
+    cleanup.push(pid);
+    await new Promise((r) => setTimeout(r, 200));
+    saveRegistry(dataDir, {
+      legacy: makeEntry('legacy', { status: 'running', pid, exitCode: undefined }),
+    });
+    const result = await stopProcess(dataDir, 'legacy', 'SIGKILL');
+    expect(result.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 200));
+    // The shell (the pid) is gone; its group is not signalled.
+    expect(alive(`sleep ${s}`)).not.toBe('');
   });
 });

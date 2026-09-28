@@ -19,7 +19,84 @@ describe('foldDenyKey (UBP-008)', () => {
   });
 
   it('is the identity on a case-sensitive filesystem', () => {
-    expect(foldDenyKey('/h/Keys.json', false)).toBe('/h/Keys.json');
+    expect(foldDenyKey('/h/Keys.json', false, false)).toBe('/h/Keys.json');
+  });
+
+  // V-ES-1: U+1E9E CAPITAL SHARP S lowercases to ß and never reaches `ss`, but
+  // APFS opens `.ẞh` as `.ssh`. A full fold (lower, upper, lower) lands it.
+  it('folds U+1E9E and U+00DF onto ss, and NFD onto NFC', () => {
+    expect(foldDenyKey('/h/.ẞh/id', true)).toBe(foldDenyKey('/h/.ssh/id', true));
+    expect(foldDenyKey('/h/.ßh/id', true)).toBe(foldDenyKey('/h/.ssh/id', true));
+    expect(foldDenyKey('/h/seẞions.db', true)).toBe(foldDenyKey('/h/sessions.db', true));
+    expect(foldDenyKey('/h/cafe\u0301', true)).toBe(foldDenyKey('/h/caf\u00e9', true));
+  });
+
+  // V-ES-3: /System/Volumes/Data/<p> is the same file as /<p> on macOS.
+  it('maps the macOS data-volume firmlink spelling onto the plain path', () => {
+    expect(foldDenyKey('/System/Volumes/Data/Users/u/.ethos/x', true, true)).toBe(
+      foldDenyKey('/Users/u/.ethos/x', true, true),
+    );
+    expect(foldDenyKey('/SYSTEM/volumes/DATA/Users/u/.ssh', true, true)).toBe('/users/u/.ssh');
+    expect(foldDenyKey('/System/Volumes/Data', true, true)).toBe('/');
+    expect(foldDenyKey('/System/Volumes/Database/x', true, true)).toBe(
+      '/system/volumes/database/x',
+    );
+    expect(foldDenyKey('/System/Volumes/Data/Users/u', false, false)).toBe(
+      '/System/Volumes/Data/Users/u',
+    );
+  });
+});
+
+// V-ES-1 / V-ES-3 against the real volume. Gated on darwin (not on
+// CASE_INSENSITIVE_FS) so a Mac run cannot silently skip them.
+describe.skipIf(process.platform !== 'darwin')('ScopedStorage on APFS (V-ES-1, V-ES-3)', () => {
+  let home: string;
+  let scoped: ScopedStorage;
+  const saved = process.env.ETHOS_STATE_DIR;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-scoped-apfs-')));
+    await mkdir(join(home, '.ssh'), { recursive: true });
+    await writeFile(join(home, '.ssh', 'id_ed25519'), 'PRIVATE-KEY');
+    await writeFile(join(home, 'sessions.db'), 'SESSIONS');
+    await mkdir(join(home, 'caf\u00e9'), { recursive: true });
+    await writeFile(join(home, 'caf\u00e9', 'k'), 'NFC');
+    const state = join(home, '.ethos');
+    await mkdir(join(state, 'personalities', 'therapist'), { recursive: true });
+    await writeFile(join(state, 'personalities', 'therapist', 'MEMORY.md'), 'THERAPIST-PRIVATE');
+    process.env.ETHOS_STATE_DIR = state;
+    scoped = new ScopedStorage(new FsStorage(), {
+      read: ['/'],
+      write: ['/'],
+      alwaysDeny: [join(home, '.ssh'), join(home, 'sessions.db'), join(home, 'caf\u00e9')],
+    });
+  });
+
+  afterEach(async () => {
+    if (saved === undefined) delete process.env.ETHOS_STATE_DIR;
+    else process.env.ETHOS_STATE_DIR = saved;
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('refuses the capital-sharp-s and NFD spellings of deny entries', async () => {
+    for (const p of [
+      join(home, '.ẞh', 'id_ed25519'),
+      join(home, 'seẞions.db'),
+      join(home, 'cafe\u0301', 'k'),
+    ]) {
+      await expect(scoped.read(p)).rejects.toThrow(/always-deny floor/);
+    }
+  });
+
+  it('refuses the /System/Volumes/Data alias of the deny floor and the state dir', async () => {
+    const alias = (p: string) => `/System/Volumes/Data${p}`;
+    await expect(scoped.read(alias(join(home, '.ssh', 'id_ed25519')))).rejects.toThrow(
+      /always-deny floor/,
+    );
+    const other = join(home, '.ethos', 'personalities', 'therapist', 'MEMORY.md');
+    await expect(scoped.read(alias(other))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.write(alias(other), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    expect(await readFile(other, 'utf8')).toBe('THERAPIST-PRIVATE');
   });
 });
 

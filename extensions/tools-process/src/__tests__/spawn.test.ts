@@ -234,3 +234,67 @@ describe('rotateLogIfNeeded', () => {
     expect(readFileSync(log, 'utf8')).not.toContain('xxxxxxxxxx');
   });
 });
+
+// V-ES-8 — the allowlist must keep ordinary commands working (git over ssh,
+// a corporate proxy, locale, toolchain roots) and still never pass a name
+// that looks like a secret or one loaded from ~/.ethos/.env.
+const OPERATIONAL_ENV: Record<string, string> = {
+  SSH_AUTH_SOCK: '/tmp/ves8-agent.sock',
+  HTTPS_PROXY: 'http://proxy.ves8:3128',
+  https_proxy: 'http://proxy.ves8:3128',
+  NO_PROXY: 'localhost,.ves8',
+  LC_CTYPE: 'UTF-8',
+  GOPATH: '/tmp/ves8-go',
+  NVM_DIR: '/tmp/ves8-nvm',
+  XDG_CONFIG_HOME: '/tmp/ves8-xdg',
+  TERM_PROGRAM: 'ves8-term',
+  COLORTERM: 'truecolor',
+  VIRTUAL_ENV: '/tmp/ves8-venv',
+  JAVA_HOME: '/tmp/ves8-jdk',
+};
+const SECRET_ENV: Record<string, string> = {
+  VES8_API_KEY: 'ves8-secret-1',
+  GITHUB_TOKEN: 'ves8-secret-2',
+  AWS_REGION: 'ves8-secret-3',
+  NVM_AUTH_TOKEN: 'ves8-secret-4',
+  CONDA_PASSWORD: 'ves8-secret-5',
+  XDG_SECRET_KEY: 'ves8-secret-6',
+  ALL_PROXY: 'ves8-secret-7',
+};
+
+/** Sets the fixture vars (ALL_PROXY marked as loaded from ~/.ethos/.env) and returns a restore. */
+function stageEnv(): () => void {
+  const saved = new Map<string, string | undefined>();
+  const all = { ...OPERATIONAL_ENV, ...SECRET_ENV, ETHOS_DOTENV_KEYS: 'ALL_PROXY' };
+  for (const [k, v] of Object.entries(all)) {
+    saved.set(k, process.env[k]);
+    process.env[k] = v;
+  }
+  return () => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+}
+
+function expectOperationalOnly(out: string): void {
+  for (const [k, v] of Object.entries(OPERATIONAL_ENV)) expect(out).toContain(`${k}=${v}\n`);
+  for (const v of Object.values(SECRET_ENV)) expect(out).not.toContain(v);
+}
+
+describe('minimalHostEnv allowlist (V-ES-8)', () => {
+  it('forwards operational vars and withholds secret-shaped and .env-loaded ones', () => {
+    const restore = stageEnv();
+    try {
+      const env = minimalHostEnv(undefined);
+      expectOperationalOnly(
+        Object.entries(env)
+          .map(([k, v]) => `${k}=${v}\n`)
+          .join(''),
+      );
+    } finally {
+      restore();
+    }
+  });
+});

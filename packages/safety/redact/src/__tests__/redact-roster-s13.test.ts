@@ -240,3 +240,61 @@ describe('redactString — UBP-045 OpenAI-key near-misses', () => {
     expect(redactString(`x ${key} y`)).not.toContain(key);
   });
 });
+
+// V-ES-4 (plan upstream-bug-parity, fix round 1): common lowercase and
+// embedded secret shapes passed through, because the Generic-secret rule wants
+// whitespace or punctuation right before `key`/`token` and the secret-named
+// rule is UPPER_SNAKE only. Synthetic fixtures; each keeps the name visible.
+describe('redactString — V-ES-4 lowercase and embedded secret forms', () => {
+  it.each([
+    ['aws_secret_access_key = ', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+    ['aws_access_key_id = ', 'EXAMPLEKEYID0123456'],
+    ['//registry.npmjs.org/:_authToken=', 'npm_abcdefghijklmnopqrstuvwxyz0123456789'],
+    ['api_key=', 'abcdef1234567890abcdef1234'],
+    ['apiKey: ', 'abcdef1234567890abcdef1234'],
+    ['db_password: ', 'supersecretvalue'],
+    ['Password=', 'hunter2hunter2'],
+    ['secret_key_base: ', '0123456789abcdef0123456789'],
+    ['client_secret=', 'abcdef1234567890abcdef'],
+    ['https://api.example.com/x?access_token=', 'abcdef1234567890abcdef'],
+    ['https://api.example.com/x?a=1&api_key=', 'abcdef1234567890abcdef'],
+    ['https://maps.example.com/js?token=', 'abcdef1234567890abcdef'],
+    ['https://maps.example.com/js?v=3&key=', 'abcdef1234567890abcdef'],
+  ])('redacts the value of %s', (prefix, value) => {
+    const text = `${prefix}${value}&next=1`;
+    const result = redactString(text);
+    expect(result).not.toContain(value);
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(result).toContain('[REDACTED:');
+    expect(detectSecrets(text).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'max_tokens: 4096',
+    'tokenizer=cl100k_base_tokenizer_v2',
+    'password: required',
+    'password_hash=pbkdf2_sha256_abcdefghijk',
+    'passwordless=enabled_for_everyone',
+    'access_token_expires_in=3600000000',
+    'api_key_name: my-service-key-name',
+    'https://api.example.com/items?page_token=CAUQAAabcdefghijklmnop',
+    'https://api.example.com/items?next_page_token=CAUQAAabcdefghijklmnop',
+    'https://api.example.com/items?pageToken=CAUQAAabcdefghijklmnop',
+    'https://api.example.com/items?sort_key=created_at_descending',
+    'https://example.com/?monkey=bananas_and_more',
+    'https://example.com/?max_tokens=40964096',
+    `api_key: ${'$'}{OPENAI_API_KEY_FROM_ENV}`,
+    'password=$(cat /run/secrets/db_password)',
+    'the api key is stored in the vault, not here',
+  ])('leaves %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
+    expect(detectSecrets(text)).toEqual([]);
+  });
+
+  it('is idempotent', () => {
+    const first = redactString(
+      'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY ?token=abcdef1234567890',
+    );
+    expect(redactString(first)).toBe(first);
+  });
+});

@@ -140,4 +140,17 @@ describe('tools-file — personality definition files are operator-owned', () =>
     expect(isWriteBlocked(join(homedir(), '.SSH', 'authorized_keys'))).toBe(true);
     expect(isWriteBlocked(join(homedir(), '.Ethos', 'Config.yaml'))).toBe(true);
   });
+
+  // V-ES-1 / V-ES-3 — APFS opens `.ẞh` as `.ssh`, and /System/Volumes/Data/<p>
+  // is the same file as /<p>.
+  it.skipIf(process.platform !== 'darwin')('the backstops fold ẞ and the firmlink', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', dataDir);
+    expect(isWriteBlocked(join(homedir(), '.ẞh', 'authorized_keys'))).toBe(true);
+    expect(
+      isWriteBlocked(`/System/Volumes/Data${join(homedir(), '.ssh', 'authorized_keys')}`),
+    ).toBe(true);
+    expect(isPersonalityDefinitionPath(`/System/Volumes/Data${join(own, 'toolset.yaml')}`)).toBe(
+      true,
+    );
+  });
 });

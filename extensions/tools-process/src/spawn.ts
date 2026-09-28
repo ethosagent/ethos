@@ -18,12 +18,15 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { ExecSession, ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
+import { identityOf, type ProcessIdentity } from './process-identity';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
   pid: number;
   stdoutLog: string;
   stderrLog: string;
+  /** What `stopProcess` checks before signalling the group (V-ES-5, ./process-identity.ts). */
+  identity: ProcessIdentity;
 }
 
 /**
@@ -36,21 +39,58 @@ export interface SpawnResult {
  * must be passed explicitly via the tool's `env` arg, not inherited silently.
  *
  * Copied, not shared, into `packages/core/src/scoped/scoped-process.ts` (the
- * host `terminal`/`run_tests`/`lint` path) and
- * `extensions/execution-local/src/index.ts`; the three lists change together.
+ * host `terminal`/`run_tests`/`lint` path),
+ * `extensions/execution-local/src/index.ts` and
+ * `extensions/execution-process-backend/src/index.ts`; the four change
+ * together. Pinned by `__tests__/spawn.test.ts` ('allowlist (V-ES-8)').
  */
-const PASSTHROUGH_ENV_KEYS = [
+const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
   'PATH',
   'HOME',
   'USER',
   'LOGNAME',
   'SHELL',
   'LANG',
-  'LC_ALL',
   'TERM',
+  'COLORTERM',
   'TMPDIR',
   'TZ',
-] as const;
+  // V-ES-8: without these `git push` over ssh, a corporate proxy, the locale
+  // macOS sets (LC_CTYPE only) and the common toolchain roots all break.
+  'SSH_AUTH_SOCK',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'NODE_PATH',
+  'GOPATH',
+  'GOROOT',
+  'GOBIN',
+  'JAVA_HOME',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'PYENV_ROOT',
+  'PYTHONPATH',
+  'VIRTUAL_ENV',
+]);
+/** Whole families forwarded by prefix: locale, nvm, conda, XDG dirs, terminal identity. */
+const PASSTHROUGH_ENV_PREFIXES = ['LC_', 'NVM_', 'CONDA_', 'XDG_', 'TERM_'] as const;
+/** A name that looks like a credential is never forwarded, even inside an allowed family. */
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_/i;
+
+/**
+ * True when `key` may pass from the host env to a child. Names `loadDotEnv`
+ * copied in from `~/.ethos/.env` (recorded in `ETHOS_DOTENV_KEYS`,
+ * packages/storage-fs/src/env-secrets.ts) never pass, whatever they are.
+ */
+function isPassthroughEnvKey(key: string, dotenvKeys: ReadonlySet<string>): boolean {
+  if (dotenvKeys.has(key) || SECRET_ENV_NAME.test(key)) return false;
+  return PASSTHROUGH_ENV_KEYS.has(key) || PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p));
+}
 
 /**
  * Build the minimal base env for a host child process: the passthrough
@@ -59,9 +99,9 @@ const PASSTHROUGH_ENV_KEYS = [
  */
 export function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
   const base: Record<string, string> = {};
-  for (const key of PASSTHROUGH_ENV_KEYS) {
-    const val = process.env[key];
-    if (val !== undefined) base[key] = val;
+  const dotenvKeys = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
+  for (const [key, val] of Object.entries(process.env)) {
+    if (val !== undefined && isPassthroughEnvKey(key, dotenvKeys)) base[key] = val;
   }
   return env ? { ...base, ...env } : base;
 }
@@ -190,7 +230,7 @@ export function spawnDetached(
     throw new Error('Failed to spawn process: pid is undefined');
   }
 
-  return { pid: child.pid, stdoutLog, stderrLog };
+  return { pid: child.pid, stdoutLog, stderrLog, identity: identityOf(child.pid) };
 }
 
 /** Sentinel pid for backend-routed (containerized) processes — they have no
@@ -280,5 +320,5 @@ export function spawnViaBackend(
     }
   })();
 
-  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog };
+  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog, identity: {} };
 }

@@ -19,6 +19,7 @@ import {
   type StopSignal,
   stopProcess,
 } from './operations';
+import type { ProcessIdentity } from './process-identity';
 import {
   isAlive,
   loadRegistry,
@@ -244,6 +245,7 @@ function makeProcessStart(
         }
 
         let pid: number;
+        let identity: ProcessIdentity = {};
         try {
           // Gap 10 — fire process_complete on the REAL child exit, not just
           // when process_wait happens to observe it. The notifier's once-guard
@@ -265,6 +267,7 @@ function makeProcessStart(
             ? spawnViaBackend(id, command, effectiveCwd, env, dataDir, backend, personality, onExit)
             : spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
           pid = result.pid;
+          identity = result.identity;
         } catch (err) {
           return {
             ok: false,
@@ -283,6 +286,7 @@ function makeProcessStart(
           startedAt,
           lastTouchedAt: startedAt,
           started_by: startedBy,
+          ...identity,
         };
         saveRegistry(dataDir, registry);
 

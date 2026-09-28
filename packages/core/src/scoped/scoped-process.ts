@@ -8,31 +8,69 @@ import type { ProcessResult, ScopedProcess, SpawnOpts } from '@ethosagent/types'
  * a prompt-injected `curl …?k=$ANTHROPIC_API_KEY` would ship them off the
  * machine. Only the minimum a shell and common toolchains need is forwarded.
  *
- * The same list as `PASSTHROUGH_ENV_KEYS` in
- * `extensions/tools-process/src/spawn.ts` and
- * `extensions/execution-local/src/index.ts`, copied rather than imported
- * (core cannot import extensions, and the extensions depend only on types).
- * The three change together. Pinned by `scoped-process-lifetime.test.ts`.
+ * The same allowlist (`PASSTHROUGH_ENV_KEYS`, `PASSTHROUGH_ENV_PREFIXES`,
+ * `SECRET_ENV_NAME`, `isPassthroughEnvKey`) as
+ * `extensions/tools-process/src/spawn.ts`,
+ * `extensions/execution-local/src/index.ts` and
+ * `extensions/execution-process-backend/src/index.ts`, copied rather than
+ * imported (core cannot import extensions, and the extensions depend only on
+ * types). The four change together. Pinned by `scoped-process-lifetime.test.ts`
+ * ('env allowlist (V-ES-8)').
  */
-const PASSTHROUGH_ENV_KEYS = [
+const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
   'PATH',
   'HOME',
   'USER',
   'LOGNAME',
   'SHELL',
   'LANG',
-  'LC_ALL',
   'TERM',
+  'COLORTERM',
   'TMPDIR',
   'TZ',
-] as const;
+  // V-ES-8: without these `git push` over ssh, a corporate proxy, the locale
+  // macOS sets (LC_CTYPE only) and the common toolchain roots all break.
+  'SSH_AUTH_SOCK',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'NODE_PATH',
+  'GOPATH',
+  'GOROOT',
+  'GOBIN',
+  'JAVA_HOME',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'PYENV_ROOT',
+  'PYTHONPATH',
+  'VIRTUAL_ENV',
+]);
+/** Whole families forwarded by prefix: locale, nvm, conda, XDG dirs, terminal identity. */
+const PASSTHROUGH_ENV_PREFIXES = ['LC_', 'NVM_', 'CONDA_', 'XDG_', 'TERM_'] as const;
+/** A name that looks like a credential is never forwarded, even inside an allowed family. */
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_/i;
+
+/**
+ * True when `key` may pass from the host env to a child. Names `loadDotEnv`
+ * copied in from `~/.ethos/.env` (recorded in `ETHOS_DOTENV_KEYS`,
+ * packages/storage-fs/src/env-secrets.ts) never pass, whatever they are.
+ */
+function isPassthroughEnvKey(key: string, dotenvKeys: ReadonlySet<string>): boolean {
+  if (dotenvKeys.has(key) || SECRET_ENV_NAME.test(key)) return false;
+  return PASSTHROUGH_ENV_KEYS.has(key) || PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p));
+}
 
 /** The passthrough allowlist drawn from `process.env`, with `env` merged on top (explicit wins). */
 export function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
   const base: Record<string, string> = {};
-  for (const key of PASSTHROUGH_ENV_KEYS) {
-    const val = process.env[key];
-    if (val !== undefined) base[key] = val;
+  const dotenvKeys = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
+  for (const [key, val] of Object.entries(process.env)) {
+    if (val !== undefined && isPassthroughEnvKey(key, dotenvKeys)) base[key] = val;
   }
   return env ? { ...base, ...env } : base;
 }

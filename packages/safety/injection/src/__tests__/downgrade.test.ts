@@ -43,7 +43,13 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
   // wait for one, and the goal gave up. The pause lifts after N model steps.
   it('states the automatic expiry, not a user-message requirement', () => {
     expect(DOWNGRADE_REJECTION_MESSAGE).not.toMatch(/user message/i);
-    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/lifts on its own/i);
-    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/retry/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/next few model steps/i);
+  });
+
+  // V-ES-9: the memory and skill writers stay blocked for the run, and the
+  // text invites no retry — an invitation turned the window into a delay.
+  it('says the persistence tools stay blocked, and invites no retry', () => {
+    expect(DOWNGRADE_REJECTION_MESSAGE).toMatch(/rest of this run/i);
+    expect(DOWNGRADE_REJECTION_MESSAGE).not.toMatch(/retry|try again/i);
   });
 });

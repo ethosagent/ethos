@@ -31,6 +31,13 @@ export interface ProcessEntry {
    * default (`started_by ?? 'unknown'`).
    */
   started_by?: string;
+  /**
+   * The spawned process's recorded start time and boot (V-ES-5,
+   * ./process-identity.ts). `stopProcess` signals the process GROUP only
+   * while these still match the pid; absent on entries written before them.
+   */
+  pidStartToken?: string;
+  bootId?: string;
 }
 
 export type Registry = Record<string, ProcessEntry>;

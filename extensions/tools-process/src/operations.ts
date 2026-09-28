@@ -4,6 +4,7 @@
 // not). Threading ctx through the shared API is deferred.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { matchesIdentity } from './process-identity';
 import {
   isAlive,
   loadRegistry,
@@ -303,8 +304,25 @@ export async function stopProcess(
     return { ok: true, stopped: true, ...(exitCode !== undefined && { exit_code: exitCode }) };
   }
 
+  // V-ES-5 — the entry may outlive the process (a host restart, a reboot) and
+  // the OS may have handed its pid to something unrelated. Never signal a pid
+  // that is provably not the process we started; signal its GROUP only when
+  // it provably is (./process-identity.ts). An entry with no recorded identity
+  // gets the single-pid signal it got before process groups.
+  const identity = matchesIdentity(entry.pid, entry);
+  if (identity === 'different') {
+    await updateEntry(dataDir, id, { status: 'orphan' });
+    return { ok: true, stopped: false };
+  }
+  const group = identity === 'same';
+  const send = (sig: NodeJS.Signals): void => {
+    if (group) signalProcessGroup(entry.pid, sig);
+    else process.kill(entry.pid, sig);
+  };
+  const running = (): boolean => (group ? isGroupAlive(entry.pid) : isAlive(entry.pid));
+
   try {
-    signalProcessGroup(entry.pid, signal);
+    send(signal);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ESRCH') {
@@ -324,11 +342,11 @@ export async function stopProcess(
     const deadline = Date.now() + SIGTERM_GRACE_MS;
     while (Date.now() < deadline) {
       await sleep(WAIT_POLL_MS);
-      if (!isGroupAlive(entry.pid)) break;
+      if (!running()) break;
     }
-    if (isGroupAlive(entry.pid)) {
+    if (running()) {
       try {
-        signalProcessGroup(entry.pid, 'SIGKILL');
+        send('SIGKILL');
       } catch {
         // ESRCH means it exited just before SIGKILL — fine
       }

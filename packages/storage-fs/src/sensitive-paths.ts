@@ -97,19 +97,59 @@ export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.plat
  * floor in `ScopedStorage`, its write-deny list and state-dir exclusion, the
  * tools-file write blocklists and the terminal/process argv floors. On a
  * case-insensitive filesystem two spellings that differ only in case name one
- * file, so a deny entry must match every spelling. Upper-then-lower (not
+ * file, so a deny entry must match every spelling. A full case fold (not
  * `toLowerCase` alone) so characters that case-FOLD onto ASCII — U+017F long
  * s, U+212A Kelvin sign — land on the same key, and NFC so composed and
- * decomposed spellings agree. Folding more than the filesystem does only
- * over-denies. Allow-side matches stay exact, so a case variant of an allowed
- * path is refused rather than widened.
+ * decomposed spellings agree. The fold is lower-upper-lower (V-ES-1): U+1E9E
+ * CAPITAL SHARP S uppercases to itself and lowercases to `ß`, so
+ * upper-then-lower left `.ẞh` as `.ßh` while APFS opens it as `.ssh`;
+ * lowercasing first reaches `ß`, whose uppercase is `SS`. On macOS the key
+ * also drops a leading `/System/Volumes/Data` ({@link DATA_VOLUME_FIRMLINK},
+ * V-ES-3), so the firmlink spelling of a denied path or of the state dir is
+ * the same key. Folding more than the filesystem does only over-denies.
+ * Allow-side matches stay exact, so a case variant of an allowed path is
+ * refused rather than widened.
  *
  * Mirror of `foldDenyKey` in `packages/core/src/scoped/scoped-fs.ts` — core
  * cannot import this package at runtime; the two change together. Pinned by
  * `__tests__/scoped-storage-casefold-statedir.test.ts`.
  */
-export function foldDenyKey(path: string, insensitive: boolean = CASE_INSENSITIVE_FS): string {
-  return insensitive ? path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC') : path;
+export function foldDenyKey(
+  path: string,
+  insensitive: boolean = CASE_INSENSITIVE_FS,
+  dataVolumeAlias: boolean = DATA_VOLUME_FIRMLINK,
+): string {
+  const folded = insensitive
+    ? path.normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
+    : path;
+  return dataVolumeAlias ? stripDataVolume(folded) : folded;
+}
+
+/**
+ * Whether `/System/Volumes/Data/<p>` names the same file as `/<p>` — macOS
+ * 10.15+, where the writable data volume is mounted there and firmlinked into
+ * the root (V-ES-3). A firmlink is not a symlink (`lstat` reports a plain
+ * directory), so the symbolic-containment walk never sees it.
+ */
+export const DATA_VOLUME_FIRMLINK = process.platform === 'darwin';
+
+const DATA_VOLUME = '/system/volumes/data';
+
+/**
+ * Drops every leading `/System/Volumes/Data` (compared case-insensitively, as
+ * APFS does). Mapping a data-volume entry that is NOT firmlinked onto the root
+ * only over-denies, which is the safe direction for a deny key.
+ */
+function stripDataVolume(key: string): string {
+  let out = key;
+  for (;;) {
+    const head = out.slice(0, DATA_VOLUME.length).toLowerCase();
+    if (head !== DATA_VOLUME) return out;
+    const rest = out.slice(DATA_VOLUME.length);
+    if (rest === '' || rest === '/') return '/';
+    if (!rest.startsWith('/')) return out;
+    out = rest;
+  }
 }
 
 /**

@@ -63,18 +63,26 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
     regex: /(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
   },
   // Only the PRIVATE block is a secret; a certificate or public key is not.
+  // The body may not cross another `-----BEGIN ` (V-ES-2): a plain lazy
+  // `[\s\S]*?` scanned from every unterminated header to the end of the input,
+  // so a page of headers with no END line was quadratic. Pinned by
+  // __tests__/redact-perf.test.ts.
   {
     label: 'PEM private key',
     tag: '[REDACTED:private-key]',
     regex:
-      /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/g,
+      /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/g,
   },
   // header.payload.signature, where header and payload are base64url JSON
-  // objects (`{"` encodes to `eyJ`). Runs before the Bearer pattern.
+  // objects (`{"` encodes to `eyJ`). Runs before the Bearer pattern. The left
+  // boundary is the vendor one, not `\b` (V-ES-2): `\b` let a match start after
+  // every `-`, and the header body accepts `-`, so `eyJ-eyJ-…` rescanned the
+  // rest of the run from each one — quadratic. Pinned by
+  // __tests__/redact-perf.test.ts.
   {
     label: 'JWT',
     tag: '[REDACTED:jwt]',
-    regex: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+    regex: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
   },
   // Case-sensitive `Bearer` + a 20-char token floor, so prose ("the bearer of",
   // "Bearer tokenization") does not match.
@@ -136,21 +144,55 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   // purpose: `MAX_TOKENS=4096` (suffix is TOKENS) and `tokenizer=` do not match.
   // A value already tagged by a vendor pattern above, or a `$VAR` / `${{ … }}`
   // reference, is left as it is.
+  //
+  // V-ES-2: the name and separator are CAPTURED (`$<pre>` in the tag puts them
+  // back) and every quantifier before the value is bounded. The first version
+  // held them in a variable-length lookbehind, which the engine re-evaluates
+  // backwards at every position — 100k spaces took ~15s, on every tool result.
+  // A name prefix longer than 64 chars, or more than 8 blanks around the `=`,
+  // is no longer recognised; neither is a shape `env` or a config file prints.
+  // Pinned by __tests__/redact-perf.test.ts.
   {
     label: 'Secret-named value',
-    tag: '[REDACTED:secret-value]',
+    tag: '$<pre>[REDACTED:secret-value]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<=\b[A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_KEY|TOKEN|SECRET|PASSWORD|PASSWD)[ \t]*[=:][ \t]*["']?)(?![$[])[^\s"'`]{8,}/g,
+    regex: /(?<pre>\b[A-Z0-9_]{0,64}(?:API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_KEY|TOKEN|SECRET|PASSWORD|PASSWD)[ \t]{0,8}[=:][ \t]{0,8}["']?)(?![$[])[^\s"'`]{8,}/g,
+  },
+  // V-ES-4. The lowercase and camelCase assignment forms UPPER_SNAKE misses: an
+  // AWS credentials-file line (`aws_secret_access_key = …`), `.npmrc`'s
+  // `:_authToken=`, `api_key=`, `apiKey:`, `db_password: `, Rails'
+  // `secret_key_base:`. Case-insensitive, so the name list is narrower than the
+  // rule above: bare `token`/`secret`/`key` are left out, which is what keeps
+  // `max_tokens:` and `tokenizer=` alone, and the 12-char value floor keeps
+  // `password: required`. Bounded quantifiers and a captured name for the
+  // V-ES-2 reason. Pinned by the 'V-ES-4' cases in this file's roster test.
+  {
+    label: 'Secret-named value',
+    tag: '$<pre>[REDACTED:secret-value]',
+    // biome-ignore format: long regex must stay on one line
+    regex: /(?<pre>\b[A-Za-z0-9_]{0,48}(?:api_?key|access_?token|auth_?token|refresh_?token|client_?secret|secret(?:_access)?_key(?:_base)?|access_key(?:_id)?|password|passwd)[ \t]{0,4}[=:][ \t]{0,4}["']?)(?![$[])[^\s"'`&]{12,}/gi,
+  },
+  // V-ES-4. A credential in a URL query (`?access_token=`, `&api_key=`,
+  // `?token=`, a maps `?key=`). A pagination cursor (`page_token`,
+  // `next_page_token`, `pageToken`) is not a secret and must round-trip, so the
+  // `(?<!page[_-]?)` guard excludes it; `key` counts only as the WHOLE name, so
+  // `sort_key=` and `monkey=` stay.
+  {
+    label: 'URL credential parameter',
+    tag: '$<pre>[REDACTED:secret-value]',
+    // biome-ignore format: long regex must stay on one line
+    regex: /(?<pre>[?&](?:(?:[A-Za-z0-9_-]{0,32}[_-])?(?:access_?token|auth_?token|id_?token|refresh_?token|api_?key|apikey|(?<!page[_-]?)token|secret|password|passwd)|key)=)(?![$[])[^\s&#"'`]{8,}/gi,
   },
   // UBP-044. The JSON-key form, `"elevenlabs_api_key": "…"` / `"apiKey":"…"`.
   // A bare `"key"` (an S3 object key, a map key) is NOT a secret name, and a
   // pagination `"nextPageToken"` / `"page_token"` is a cursor the model must be
-  // able to pass back, so both are excluded.
+  // able to pass back, so both are excluded. Captured and bounded for the same
+  // reason as the rule above (V-ES-2).
   {
     label: 'Secret-named value',
-    tag: '[REDACTED:secret-value]',
+    tag: '$<pre>[REDACTED:secret-value]',
     // biome-ignore format: long regex must stay on one line
-    regex: /(?<="[A-Za-z0-9_-]*(?:(?:api|access|secret|private|auth)[_-]?key|(?<![Pp]age_?)token|secret|password|passwd)"\s*:\s*")(?!\[REDACTED:)[^"\\]{8,}(?=")/gi,
+    regex: /(?<pre>"[A-Za-z0-9_-]{0,64}(?:(?:api|access|secret|private|auth)[_-]?key|(?<![Pp]age_?)token|secret|password|passwd)"\s{0,8}:\s{0,8}")(?!\[REDACTED:)[^"\\]{8,}(?=")/gi,
   },
 ];
 
@@ -208,10 +250,14 @@ function redactValue(v: unknown, extraPatterns?: string[]): unknown {
 }
 
 export const PII_PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
+  // The local part starts only at the beginning of a run of local-part
+  // characters (V-ES-2). With `\b` a match could start after every `.` or `-`,
+  // and each start rescanned the rest of the run looking for an `@`, so
+  // `a.a.a.…` with no `@` was quadratic. Pinned by __tests__/redact-perf.test.ts.
   {
     label: 'Email',
     tag: '[REDACTED:email]',
-    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    regex: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
   },
   { label: 'Credit card', tag: '[REDACTED:card]', regex: /\b(?:\d[ -]?){13,16}\b/g },
   {

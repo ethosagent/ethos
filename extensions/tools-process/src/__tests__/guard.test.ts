@@ -577,3 +577,11 @@ describe.skipIf(!CASE_INSENSITIVE_FS)('argv floor on a case-insensitive filesyst
     expect(checkCommand(`cat ${homedir()}/.Ethos/keys.json`).dangerous).toBe(true);
   });
 });
+
+// V-ES-1 — APFS opens U+1E9E CAPITAL SHARP S as `ss`, so `.ẞh` IS `.ssh`.
+describe.skipIf(process.platform !== 'darwin')('argv floor on APFS (V-ES-1)', () => {
+  it('refuses the capital-sharp-s spelling of ~/.ssh', () => {
+    expect(checkCommand('cat ~/.ẞh/id_rsa').dangerous).toBe(true);
+    expect(checkCommand(`cat ${homedir()}/.ẞh/id_ed25519`).dangerous).toBe(true);
+  });
+});

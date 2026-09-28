@@ -36,7 +36,13 @@ import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
-import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
+import {
+  advanceDowngrade,
+  consultWatcherHalt,
+  type DowngradeState,
+  enforceBeforeToolCall,
+  isDowngraded,
+} from './per-call-enforcement';
 import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
@@ -114,7 +120,7 @@ export interface ToolProcessingContext {
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
-  dgRemaining: { value: number };
+  dgRemaining: DowngradeState;
   dgTools: Set<string>;
   dgTurns: number;
 
@@ -301,10 +307,9 @@ export async function* processTools(
       }
     }
 
-    // Ch.3d — refuse downgraded tools while `ctx.dgRemaining` > 0. It expires after `dgTurns`
-    // iterations with no further untrusted read (decrement-then-rearm at the end of processTools);
-    // a fresh run() resets it (`dgRemainingRef` in packages/core/src/agent-loop.ts).
-    if (ctx.dgEnabled && ctx.dgRemaining.value > 0 && ctx.dgTools.has(tc.toolName)) {
+    // Ch.3d — the step window, and the run-scoped persistence refusal (`isDowngraded`,
+    // ./per-call-enforcement.ts). A fresh run() resets both (`dgRemainingRef`, agent-loop.ts).
+    if (isDowngraded(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTools, tc.toolName)) {
       deps.observability?.recordSafetyBlock({
         traceId: ctx.traceId,
         code: 'tool_downgraded_post_untrusted_read',
@@ -839,14 +844,8 @@ export async function* processTools(
     });
   }
 
-  // Ch.3d — decrement the prior iteration's counter, then arm a fresh
-  // window if we just read untrusted content. The decrement-then-set
-  // order means an untrusted read in iteration N protects iterations
-  // N+1 .. N+turns.
-  if (ctx.dgRemaining.value > 0) ctx.dgRemaining.value--;
-  if (ctx.dgEnabled && untrustedReadThisIteration) {
-    ctx.dgRemaining.value = ctx.dgTurns;
-  }
+  // Ch.3d — decrement the window, re-arm it (and the run taint) on an untrusted read.
+  advanceDowngrade(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTurns, untrustedReadThisIteration);
 
   // FW-9 — drain SteerSink at the iteration seam. Each entry becomes a
   // `[USER STEER]: <text>` text block (plus any UBP-012 attachment blocks the
