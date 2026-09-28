@@ -267,6 +267,11 @@ function realPathOrLexical(hostPath: string): string {
   }
 }
 
+/** A host path and its realpath, deduplicated — the two names a bind is judged by. */
+function spellings(hostPath: string): string[] {
+  return [...new Set([hostPath, realPathOrLexical(hostPath)])];
+}
+
 /** True when `hostPath` exists on the host (it has a realpath). */
 function hostPathExists(hostPath: string): boolean {
   try {
@@ -1377,7 +1382,9 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * the definition entries, and the rest of the state dir (operator config and
    * policy, `scripts/`, `plugins/`, `cron/`, `teams/`) must not be writable
    * from a container shell either; the caller's own `files/` keeps its rw
-   * mount. A path spelled through macOS's `/.vol`, `/.resolve` or
+   * mount. Each mount is judged by its lexical path and its realpath, so a
+   * symlink to a folder holding a state dir is downgraded too (verification
+   * round H4). A path spelled through macOS's `/.vol`, `/.resolve` or
    * `/.nofollow` is refused outright (verification round G3).
    */
   mountsFor(p: PersonalityConfig): MountSpec[] {
@@ -1449,18 +1456,25 @@ export class DockerExecutionBackend implements ExecutionBackend {
       ),
     ];
     const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
+    const ownDirs = spellings(ownDir);
     // G2-pre B — a rw mount AT another personality's directory, at or below
-    // ANY personality's definition entry, or at or below `learning`.
+    // ANY personality's definition entry, or at or below `learning`. Judged by
+    // the mount's lexical path AND its realpath (`spellings`): Docker binds
+    // the real directory, so a rw mount that is a symlink into the state dir
+    // is floored like the directory it names (verification round H4).
     const floored = (path: string): boolean =>
-      writeDeny.some((deny) => withinFolded(path, deny)) ||
-      isPersonalityDefinitionPath(path, homes) ||
-      homes.some(
-        (h) =>
-          // `path !== ownDir` is exact on purpose: a case variant of the
-          // caller's own directory is floored, never exempted.
-          (path !== ownDir &&
-            foldForDeny(dirname(path)) === foldForDeny(join(h, 'personalities'))) ||
-          withinFolded(path, join(h, 'learning')),
+      spellings(path).some(
+        (s) =>
+          writeDeny.some((deny) => withinFolded(s, deny)) ||
+          isPersonalityDefinitionPath(s, homes) ||
+          homes.some(
+            (h) =>
+              // `!ownDirs.includes(s)` is exact on purpose: a case variant of
+              // the caller's own directory is floored, never exempted.
+              (!ownDirs.includes(s) &&
+                foldForDeny(dirname(s)) === foldForDeny(join(h, 'personalities'))) ||
+              withinFolded(s, join(h, 'learning')),
+          ),
       );
     for (const [path, mount] of byPath) {
       if (mount.mode === 'rw' && floored(path)) {
@@ -1468,7 +1482,9 @@ export class DockerExecutionBackend implements ExecutionBackend {
       }
     }
     const coveredRw = (dir: string): boolean =>
-      [...byPath.values()].some((m) => m.mode === 'rw' && withinFolded(dir, m.hostPath));
+      [...byPath.values()].some(
+        (m) => m.mode === 'rw' && spellings(m.hostPath).some((s) => withinFolded(dir, s)),
+      );
     // Judged BEFORE `personalities/` turns ro, and EXACTLY (not folded): the
     // caller's rw `files/` below is a grant, so it follows only a rw mount
     // that really covers `ownDir` on every host. A declared rw
@@ -1516,8 +1532,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const foldsCase = this.hostFoldsCase();
     for (const [path, mount] of byPath) {
       if (mount.mode !== 'rw') continue;
-      const holdsStateDir = homes.some((h) => withinFolded(h, path));
-      if (holdsStateDir || (foldsCase && guards.some((g) => g !== path && withinFolded(g, path)))) {
+      // By the lexical path AND the realpath (verification round H4): a rw
+      // `R/homelink` that links to `R/home` holds `R/home/.ethos` once Docker
+      // has followed the link, although no state dir is lexically under it.
+      const real = spellings(path);
+      const holdsStateDir = homes.some((h) => real.some((s) => withinFolded(h, s)));
+      const holdsGuard =
+        foldsCase && guards.some((g) => real.some((s) => g !== s && withinFolded(g, s)));
+      if (holdsStateDir || holdsGuard) {
         byPath.set(path, { ...mount, mode: 'ro' });
         if (!this.warnedReadOnlyMounts.has(path)) {
           this.warnedReadOnlyMounts.add(path);

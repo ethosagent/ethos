@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultToolRegistry } from '@ethosagent/core';
-import { createAmendment, readAmendment } from '@ethosagent/learning-inbox';
+import { amendmentProposalPath, createAmendment, readAmendment } from '@ethosagent/learning-inbox';
 import { noopLogger } from '@ethosagent/logger';
 import { hashDefinitionBytes } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -274,6 +274,18 @@ describe('list and show', () => {
     }
     // The rationale keeps its own lines.
     expect(lines.some((l) => l.trim() === 'line two')).toBe(true);
+  });
+
+  // verification round H2 — the `list` table's cells are one-line fields too.
+  it('list collapses a newline planted in a record field', async () => {
+    const record = await file();
+    const path = amendmentProposalPath(dataDir, record.id);
+    const onDisk: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    writeFileSync(path, JSON.stringify({ ...Object(onDisk), personalityId: 'scout\nID  forged' }));
+    await runPersonalityAmendmentsCommand(['list'], deps());
+    const lines = printed().split('\n');
+    expect(lines.some((l) => l.startsWith('ID  forged'))).toBe(false);
+    expect(printed()).toContain('scout?ID  forged');
   });
 
   it('bidi overrides, isolates and zero-width characters are replaced too', () => {

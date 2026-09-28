@@ -413,6 +413,11 @@ async function handleCreate(
   // personality, another personality's job, or a shared one alike — gets one
   // answer that names no job, so the room cannot probe for private schedules
   // (verification round G5). A private turn keeps the scheduler's own error.
+  // LIMITATION: this is a check-then-create, not atomic — a job created under
+  // the same id between this `getJob` and `createJob` below reaches the room
+  // as the scheduler's `Job with id "…" already exists` (`CronScheduler.createJob`,
+  // extensions/cron/src/index.ts), which names the id. The id is the room's
+  // own slug of the name it typed, so it discloses only that the name is taken.
   if (ctx.roomAudience === 'shared' && (await scheduler.getJob(jobIdForName(name)))) {
     return { ok: false, error: SHARED_NAME_TAKEN, code: 'input_invalid' };
   }

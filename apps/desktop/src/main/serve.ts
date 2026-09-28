@@ -40,6 +40,20 @@ export function getDataDir(): string {
 }
 
 /**
+ * The operator's shared state dir, whose `config.yaml` the three shared reads
+ * below take their settings from. Named explicitly rather than through
+ * `ethosDir()`, which follows `ETHOS_STATE_DIR`: `bootRuntime` sets that
+ * variable to a custom data folder, and a restart (`restartBackend`, ./ipc.ts)
+ * re-runs `bootRuntime` in this same process with it already set, so an
+ * `ethosDir()` read would then find `<dataDir>/config.yaml` instead
+ * (verification round H1). Pinned by the 'shared config reads' cases in
+ * __tests__/serve.test.ts.
+ */
+export function sharedEthosDir(): string {
+  return join(homedir(), '.ethos');
+}
+
+/**
  * Reads the shared `~/.ethos/config.yaml`'s `auxiliary.asr` / `auxiliary.tts`
  * blocks and `callCapture.personalityId`, mapping them onto the
  * `WiringConfig` fields `createAgentLoop()` / `validateCallCaptureBinding()`
@@ -89,8 +103,9 @@ export function getDataDir(): string {
 export async function readSharedVoiceAndCallCaptureConfig(
   storage: Storage,
   secrets: SecretsResolver,
+  dir: string = sharedEthosDir(),
 ): Promise<Pick<WiringConfig, 'auxiliaryAsr' | 'auxiliaryTts' | 'callCapture'>> {
-  const shared = await readConfig(storage, secrets);
+  const shared = await readConfig(storage, secrets, { dir });
   return {
     ...(shared?.auxiliary?.asr ? { auxiliaryAsr: shared.auxiliary.asr } : {}),
     ...(shared?.auxiliary?.tts ? { auxiliaryTts: shared.auxiliary.tts } : {}),
@@ -113,13 +128,27 @@ export async function readSharedVoiceAndCallCaptureConfig(
 export async function readSharedExecutionFlags(
   storage: Storage,
   secrets: SecretsResolver,
+  dir: string = sharedEthosDir(),
 ): Promise<Pick<WiringConfig, 'execution'>> {
-  const execution = (await readConfig(storage, secrets))?.execution;
+  const execution = (await readConfig(storage, secrets, { dir }))?.execution;
   const flags = {
     ...(execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
     ...(execution?.containerized === true ? { containerized: true } : {}),
   };
   return Object.keys(flags).length > 0 ? { execution: flags } : {};
+}
+
+/**
+ * `learningReplay.*` from the shared `~/.ethos/config.yaml`, resolved — the
+ * settings `desktopLearningReplay` bounds a replay by. An absent file resolves
+ * as an empty config.
+ */
+export async function readSharedLearningReplaySettings(
+  storage: Storage,
+  secrets: SecretsResolver,
+  dir: string = sharedEthosDir(),
+): Promise<ReturnType<typeof resolveLearningReplay>> {
+  return resolveLearningReplay((await readConfig(storage, secrets, { dir })) ?? {});
 }
 
 /**
@@ -255,8 +284,9 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   // under the settings `ethos serve` reads (see `desktopLearningReplay`).
   let learningReplaySettings: ReturnType<typeof resolveLearningReplay> | null = null;
   try {
-    learningReplaySettings = resolveLearningReplay(
-      (await readConfig(new FsStorage(), secretsResolver)) ?? {},
+    learningReplaySettings = await readSharedLearningReplaySettings(
+      new FsStorage(),
+      secretsResolver,
     );
   } catch (err) {
     console.warn(
@@ -281,12 +311,11 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
   // the checks that read only the environment — the terminal/process argv
   // floors and the `write_file` pre-check — see a custom data folder through
-  // this variable. Set only HERE, after the three reads of the shared
-  // `~/.ethos/config.yaml` above (`readSharedVoiceAndCallCaptureConfig`,
-  // `readConfig` for learning replay, `readSharedExecutionFlags`): each
-  // resolves its path through `ethosDir()`, which follows this variable, so
-  // setting it first made them read `<dataDir>/config.yaml` instead
-  // (verification round G2). Nothing between startup and here builds a floor.
+  // this variable. The three reads of the shared `~/.ethos/config.yaml` above
+  // name `sharedEthosDir()` explicitly rather than following this variable, so
+  // they are unaffected by it — including on a restart, when it is already set
+  // from the previous boot (verification rounds G2, H1). Nothing between
+  // startup and here builds a floor.
   process.env.ETHOS_STATE_DIR = dataDir;
 
   const { callCapture: sharedCallCapture, ...sharedVoiceConfig } = sharedVoiceAndCallCaptureConfig;

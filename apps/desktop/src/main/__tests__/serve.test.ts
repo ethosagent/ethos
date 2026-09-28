@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Mock electron-store before importing serve (store.ts depends on it)
 vi.mock('electron-store', () => ({
@@ -18,7 +19,13 @@ vi.mock('../keychain', () => ({
   getKeychainValue: vi.fn().mockResolvedValue(null),
 }));
 
-import { getPort, readSharedExecutionFlags, readSharedVoiceAndCallCaptureConfig } from '../serve';
+import {
+  getPort,
+  readSharedExecutionFlags,
+  readSharedLearningReplaySettings,
+  readSharedVoiceAndCallCaptureConfig,
+  sharedEthosDir,
+} from '../serve';
 
 // Builds a literal `${secrets:<path>}` ref via concatenation (not a template
 // literal) so biome's noTemplateCurlyInString rule doesn't mistake the
@@ -254,22 +261,58 @@ describe('the desktop backend names its data folder as the state dir', () => {
     expect(set).toBeGreaterThan(-1);
     expect(set).toBeLessThan(src.indexOf('await createAgentLoop('));
   });
+});
 
-  // Verification round G2 — the shared config reads resolve `~/.ethos` through
-  // `ethosDir()`, which follows ETHOS_STATE_DIR: set first, they would read the
-  // custom data folder's config.yaml instead of the shared one.
-  it('sets it only after the three reads of the shared ~/.ethos/config.yaml', async () => {
-    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
-    const body = src.slice(src.indexOf('async function bootRuntime('));
-    const set = body.indexOf('process.env.ETHOS_STATE_DIR = dataDir;');
-    for (const read of [
-      'await readSharedVoiceAndCallCaptureConfig(',
-      'await readConfig(new FsStorage(), secretsResolver)',
-      'await readSharedExecutionFlags(',
-    ]) {
-      const at = body.indexOf(read);
-      expect([read, at]).not.toEqual([read, -1]);
-      expect([read, at < set]).toEqual([read, true]);
-    }
+// Verification round H1. `bootRuntime` sets ETHOS_STATE_DIR to a custom data
+// folder, and a restart (`restartBackend`, ../ipc.ts) re-runs it in the same
+// process with the variable still set. The shared reads name
+// `sharedEthosDir()` explicitly, so they read `~/.ethos/config.yaml` whatever
+// the variable says — the restart case below, not a source-order assertion.
+describe('shared config reads', () => {
+  const prior = process.env.ETHOS_STATE_DIR;
+  afterEach(() => {
+    if (prior === undefined) delete process.env.ETHOS_STATE_DIR;
+    else process.env.ETHOS_STATE_DIR = prior;
+  });
+
+  it('names ~/.ethos, not ETHOS_STATE_DIR', () => {
+    process.env.ETHOS_STATE_DIR = '/custom/data';
+    expect(sharedEthosDir()).toBe(join(homedir(), '.ethos'));
+  });
+
+  it('on a restart with ETHOS_STATE_DIR already set, all three still read ~/.ethos/config.yaml', async () => {
+    const custom = '/custom/data';
+    process.env.ETHOS_STATE_DIR = custom;
+    const storage = new InMemoryStorage();
+    const base = ['provider: anthropic', 'model: m', 'apiKey: k', 'personality: p'];
+    await storage.mkdir(sharedEthosDir());
+    await storage.write(
+      join(sharedEthosDir(), 'config.yaml'),
+      [
+        ...base,
+        'callCapture.personalityId: shared-voice',
+        'execution.containerized: true',
+        'learningReplay.maxCases: 3',
+      ].join('\n'),
+    );
+    await storage.mkdir(custom);
+    await storage.write(
+      join(custom, 'config.yaml'),
+      [
+        ...base,
+        'callCapture.personalityId: wrong',
+        'execution.allowLocalFallback: true',
+        'learningReplay.maxCases: 9',
+      ].join('\n'),
+    );
+    const secrets = new InMemorySecretsResolver();
+
+    expect(await readSharedVoiceAndCallCaptureConfig(storage, secrets)).toEqual({
+      callCapture: { personalityId: 'shared-voice' },
+    });
+    expect(await readSharedExecutionFlags(storage, secrets)).toEqual({
+      execution: { containerized: true },
+    });
+    expect((await readSharedLearningReplaySettings(storage, secrets)).maxCases).toBe(3);
   });
 });

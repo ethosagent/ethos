@@ -199,7 +199,7 @@ async function list(args: readonly string[], deps: AmendmentsCliDeps): Promise<v
   for (const line of table(
     ['ID', 'PERSONALITY', 'CHANGE', 'STATUS', 'FILED'],
     records.map((r) =>
-      [r.id, r.personalityId, opsLabel(r), r.status, r.createdAt.slice(0, 16)].map(clean),
+      [r.id, r.personalityId, opsLabel(r), r.status, r.createdAt.slice(0, 16)].map(cleanLine),
     ),
   )) {
     deps.out(line);

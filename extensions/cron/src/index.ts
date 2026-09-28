@@ -95,9 +95,10 @@ export interface CronJob {
    * `ToolContext.roomAudience` (`cron` tool), or the web Cron page's delivery
    * target (`CronService.create`, apps/web-api). Top-level, not on `JobOrigin`:
    * a CLI-created job has no origin but still has an audience. Absent on jobs
-   * written before the field existed. Narrowed to `'shared'` by `updateJob`
-   * when a shared turn edits or runs the job (`CronJobUpdate.roomAudience`).
-   * Read here only by `resolveContext`'s fire-time check (through
+   * written before the field existed. Never restamped after creation: a
+   * shared turn cannot see, edit or run a job not stamped `'shared'`
+   * (`readableFrom` in extensions/tools-cron/src/index.ts, pinned by its
+   * `__tests__/room-audience.test.ts`). Read here only by `resolveContext`'s fire-time check (through
    * `CronSchedulerConfig.runAudience`, or `stampAudience` when a host passes
    * none) — the runners resolve a firing's audience with
    * `cronRunAudience` (packages/wiring/src/cron-audience.ts), which also judges

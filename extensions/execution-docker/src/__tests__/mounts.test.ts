@@ -6,7 +6,7 @@
 // it. This is the half of `writeDeny` a terminal inside the sandbox cannot
 // route around — `echo x >> toolset.yaml` gets "Read-only file system".
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -292,6 +292,48 @@ describe('mountsFor — a rw mount holding a state dir is read-only on every hos
     be.mountsFor(p);
     be.mountsFor(p);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Verification round H4 — Docker binds a symlink's target, so a rw mount is
+// judged by its realpath as well: a cwd that links to a folder holding the
+// state dir is read-only although no state dir is lexically under it.
+describe('mountsFor — a rw symlink to a folder holding a state dir is read-only', () => {
+  let tmp: string | undefined;
+  afterEach(() => {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  });
+
+  it('cwd R/homelink -> R/home, state dir R/home/.ethos, Linux host: the mount is ro', () => {
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), 'ethos-docker-link-')));
+    const home = join(tmp, 'home');
+    const state = join(home, '.ethos');
+    mkdirSync(join(state, 'personalities', 'bob'), { recursive: true });
+    mkdirSync(join(state, 'learning'), { recursive: true });
+    const link = join(tmp, 'homelink');
+    symlinkSync(home, link);
+    const be = new DockerExecutionBackend(
+      {
+        config: {
+          images: { default: 'x@sha256:abc' },
+          substitutionVars: { ethosHome: state, cwd: link },
+        },
+        secrets,
+        logger,
+      },
+      async () => false,
+      undefined,
+      undefined,
+      undefined,
+      () => false,
+    );
+    const p = { id: 'bob', name: 'bob' } as unknown as PersonalityConfig;
+    const m = new Map(be.mountsFor(p).map((x) => [x.hostPath, x.mode]));
+    expect(m.get(link)).toBe('ro');
+    // The guards the link's target reaches are bound read-only as well.
+    expect(m.get(join(state, 'personalities'))).toBe('ro');
+    expect(m.get(join(state, 'learning'))).toBe('ro');
   });
 });
 

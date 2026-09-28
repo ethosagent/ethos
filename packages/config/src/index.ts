@@ -3649,12 +3649,17 @@ let preVersionedConfigWarned = false;
  * (Law 10 — library code is silent). The CLI passes one from its first config
  * read (`initSecrets` in apps/ethos/src/wiring.ts); a read without a logger
  * does not warn and does not use up the once-per-process warning.
+ *
+ * `opts.dir` reads `<dir>/config.yaml` instead of `ethosDir()`'s — for a host
+ * that has pointed `ETHOS_STATE_DIR` at its own data folder but still reads
+ * the operator's shared `~/.ethos/config.yaml` (the desktop backend,
+ * `sharedEthosDir` in apps/desktop/src/main/serve.ts).
  */
 export async function readRawConfig(
   storage: Storage,
-  opts: { logger?: Logger } = {},
+  opts: { logger?: Logger; dir?: string } = {},
 ): Promise<EthosConfig | null> {
-  const configPath = join(ethosDir(), 'config.yaml');
+  const configPath = join(opts.dir ?? ethosDir(), 'config.yaml');
   const src = await storage.read(configPath);
   if (!src) return null;
   const parsed = parseConfigYaml(src);
@@ -3750,8 +3755,9 @@ async function migrateActiveContextPersonality(
 export async function readConfig(
   storage: Storage,
   secrets: SecretsResolver,
+  opts: { dir?: string } = {},
 ): Promise<EthosConfig | null> {
-  const raw = await readRawConfig(storage);
+  const raw = await readRawConfig(storage, opts);
   if (!raw) return null;
   return resolveConfigSecrets(raw, secrets);
 }
