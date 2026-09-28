@@ -190,6 +190,61 @@ describe('delegate_task', () => {
     ]);
   });
 
+  // plan personality-memory-boundary G1-6: a turn a shared turn causes is
+  // shared — foreground, every MoA agent, and the synthesis pass. `initiator`
+  // is never inherited.
+  it('a child of a shared turn is shared (foreground, MoA, synthesis)', async () => {
+    const seen: Array<{ sessionKey?: string; roomAudience?: string; initiator?: string }> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: { sessionKey?: string; roomAudience?: string; initiator?: string },
+      ): AsyncGenerator<AgentEvent> {
+        seen.push({
+          sessionKey: opts.sessionKey,
+          roomAudience: opts.roomAudience,
+          initiator: opts.initiator,
+        });
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+    const ctx = makeCtx({ roomAudience: 'shared', initiator: 'user' });
+
+    await createDelegateTaskTool(loop).execute({ prompt: 'task' }, ctx);
+    await createMixtureOfAgentsTool(loop).execute(
+      { agents: [{ prompt: 'a' }, { prompt: 'b' }], synthesis_prompt: 'combine' },
+      ctx,
+    );
+
+    expect(seen).toHaveLength(4);
+    expect(seen.some((s) => s.sessionKey?.includes(':moa:synthesis:'))).toBe(true);
+    for (const s of seen) {
+      expect(s.roomAudience).toBe('shared');
+      expect(s.initiator).toBeUndefined();
+    }
+  });
+
+  it('a child of a private turn is private; a hand-built context passes nothing', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: Record<string, unknown>,
+      ): AsyncGenerator<AgentEvent> {
+        seen.push(opts);
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+    await createDelegateTaskTool(loop).execute(
+      { prompt: 'task' },
+      makeCtx({ roomAudience: 'private' }),
+    );
+    await createDelegateTaskTool(loop).execute({ prompt: 'task', label: 'b' }, makeCtx());
+    expect(seen[0]?.roomAudience).toBe('private');
+    expect(seen[1]).not.toHaveProperty('roomAudience');
+  });
+
   it('a parent turn with no narrowing leaves the child unnarrowed', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const loop = {

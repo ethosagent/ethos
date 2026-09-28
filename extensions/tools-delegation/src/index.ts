@@ -129,6 +129,14 @@ async function runSubAgent(
      * turn's tool narrowing to the child run" in `__tests__/delegation.test.ts`.
      */
     narrowing?: ToolContext['toolsetNarrowing'];
+    /**
+     * The parent turn's RESOLVED `ToolContext.roomAudience`, passed on so a
+     * child of a shared turn is shared (plan personality-memory-boundary
+     * G1-6). `initiator` is deliberately NOT forwarded: children never inherit
+     * it. Pinned by "a child of a shared turn is shared" in
+     * `__tests__/delegation.test.ts`.
+     */
+    roomAudience?: ToolContext['roomAudience'];
   },
 ): Promise<string> {
   let output = '';
@@ -151,6 +159,7 @@ async function runSubAgent(
     agentId: childAgentId(opts.depth),
     ...(opts.narrowing?.narrow ? { toolsetNarrow: opts.narrowing.narrow } : {}),
     ...(opts.narrowing?.exclude ? { toolsetExclude: opts.narrowing.exclude } : {}),
+    ...(opts.roomAudience !== undefined ? { roomAudience: opts.roomAudience } : {}),
   })) {
     if (terminal) continue;
     if (event.type === 'text_delta') output += event.text;
@@ -595,6 +604,10 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           ...(originThreadId ? { originThreadId } : {}),
           ...(originUserId ? { originUserId } : {}),
           ...(ctx.toolsetNarrowing ? { toolsetNarrowing: ctx.toolsetNarrowing } : {}),
+          // G1-6: the child runs no less shared than this turn
+          // (`jobRoomAudience`, extensions/job-runner). Absent only on a
+          // hand-built context, which leaves the row to the legacy origin rule.
+          ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
         });
 
         background.nudge();
@@ -650,6 +663,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           depth: depth + 1,
           abortSignal: ctx.abortSignal,
           narrowing: ctx.toolsetNarrowing,
+          roomAudience: ctx.roomAudience,
         });
 
         const header = label ? `[${label}]\n\n` : '';
@@ -763,6 +777,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
             narrowing: ctx.toolsetNarrowing,
+            roomAudience: ctx.roomAudience,
           });
           return { label, output };
         }),
@@ -809,6 +824,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
             narrowing: ctx.toolsetNarrowing,
+            roomAudience: ctx.roomAudience,
           });
 
           return {
@@ -1142,6 +1158,10 @@ export function createRouteToAgentTool(
               remotePeer,
               remoteJobId: String(remoteJobId),
               ...(ctx.personalityId ? { personalityId: ctx.personalityId } : {}),
+              // Recorded for the row's reader; a proxy row never runs locally
+              // and the peer runs it private, which is why `route_to_agent` is
+              // excluded on shared turns (SHARED_AUDIENCE_EXCLUDED_TOOLS, D21).
+              ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
             });
             // Transition to running so it isn't expired as a stale queued row and
             // so the reconciler picks it up. The unique owner guarantees

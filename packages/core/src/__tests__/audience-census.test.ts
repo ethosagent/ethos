@@ -47,13 +47,6 @@ const RECEIVER_ALIASES: Record<string, readonly string[]> = {
  * — the census fails on a stale count in either direction.
  */
 const PENDING_WIRING: ReadonlyArray<{ file: string; count: number; step: number; what: string }> = [
-  { file: 'extensions/tools-delegation/src/index.ts', count: 1, step: 2, what: 'runSubAgent' },
-  {
-    file: 'extensions/job-runner/src/ethos-job-runner.ts',
-    count: 1,
-    step: 2,
-    what: 'background job child',
-  },
   { file: 'extensions/gateway/src/index.ts', count: 1, step: 4, what: 'gateway runTurn' },
   { file: 'apps/ethos/src/commands/gateway.ts', count: 1, step: 5, what: 'cron systemLoop' },
   { file: 'apps/ethos/src/commands/cron-turn.ts', count: 1, step: 5, what: 'runCronTurn' },

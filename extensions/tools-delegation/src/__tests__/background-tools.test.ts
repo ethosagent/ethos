@@ -66,6 +66,7 @@ class FakeJobStore implements JobStore {
       originThreadId: input.originThreadId,
       originUserId: input.originUserId,
       toolsetNarrowing: input.toolsetNarrowing,
+      roomAudience: input.roomAudience,
       remotePeer: input.remotePeer,
       remoteJobId: input.remoteJobId,
       runner: input.runner,
@@ -535,6 +536,24 @@ describe('delegate_task background path', () => {
     expect(store.jobs.get(JSON.parse(local.value).jobId)?.originUserId).toBeUndefined();
   });
 
+  // plan personality-memory-boundary G1-6: the job carries the parent turn's
+  // resolved audience, so `EthosJobRunner` runs the child no less shared.
+  it("stamps the parent turn's room audience on the job", async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const tool = createDelegateTaskTool(loop, deps);
+    const jobOf = async (ctx: ToolContext) => {
+      const res = await tool.execute({ prompt: 'p', background: true }, ctx);
+      if (!res.ok) throw new Error('expected ok');
+      return store.jobs.get(JSON.parse(res.value).jobId);
+    };
+
+    expect((await jobOf(makeCtx({ roomAudience: 'shared' })))?.roomAudience).toBe('shared');
+    expect((await jobOf(makeCtx({ roomAudience: 'private' })))?.roomAudience).toBe('private');
+    // A hand-built context stamps nothing: the row falls to the legacy origin rule.
+    expect((await jobOf(makeCtx()))?.roomAudience).toBeUndefined();
+  });
+
   it("persists the parent turn's tool narrowing on the job (S12)", async () => {
     const store = new FakeJobStore();
     const { deps } = makeDeps(store);
@@ -814,7 +833,7 @@ describe('route_to_agent background path', () => {
 
     const res = await tool.execute(
       { capability: 'research', prompt: 'analyze the data', background: true },
-      makeCtx({ personalityId: 'me', scopedFetch: { fetch: mockFetch } }),
+      makeCtx({ personalityId: 'me', roomAudience: 'private', scopedFetch: { fetch: mockFetch } }),
     );
 
     expect(res.ok).toBe(true);
@@ -837,6 +856,7 @@ describe('route_to_agent background path', () => {
     expect(job?.owner.startsWith('mesh-proxy:')).toBe(true);
     expect(job?.personalityId).toBe('me');
     expect(job?.depth).toBe(1);
+    expect(job?.roomAudience).toBe('private');
   });
 
   it('returns execution_failed when no peer advertises the capability', async () => {

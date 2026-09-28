@@ -1,4 +1,4 @@
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, targetAudience } from '@ethosagent/core';
 import type {
   AgentEvent,
   BackgroundJob,
@@ -6,6 +6,7 @@ import type {
   JobRunner,
   JobRunnerContext,
   RunnerCapabilities,
+  TurnAudience,
 } from '@ethosagent/types';
 import { SUMMARY_INSTRUCTION } from './summary';
 
@@ -29,6 +30,25 @@ const ETHOS_CAPABILITIES: RunnerCapabilities = {
   sandbox: 'process',
   transport: 'in-process',
 };
+
+/**
+ * The audience a background child runs under (plan personality-memory-boundary
+ * G1-6). A stamped row (`BackgroundJob.roomAudience`) runs as stamped. An
+ * unstamped row — written before the column existed (D11) — resolves from its
+ * origin chat: a channel origin is judged by `targetAudience` (a provably
+ * one-to-one chat is private, everything else, Discord and email included, is
+ * shared); no origin at all (CLI, web, ACP) is private. Trusted rooms
+ * (`gateway.private_chats`) are not consulted here, so a legacy job from a
+ * listed group still runs shared — fail closed. Pinned by
+ * `__tests__/room-audience.test.ts`.
+ */
+export function jobRoomAudience(
+  job: Pick<BackgroundJob, 'roomAudience' | 'originPlatform' | 'originChatId'>,
+): TurnAudience {
+  if (job.roomAudience !== undefined) return job.roomAudience;
+  if (job.originPlatform === undefined) return 'private';
+  return targetAudience(job.originPlatform, job.originChatId ?? '');
+}
 
 /**
  * The default runner: the AgentLoop path the executor used to call inline.
@@ -64,6 +84,9 @@ export class EthosJobRunner implements JobRunner {
       rootSessionKey: job.rootSessionKey,
       jobId: job.id,
       abortSignal: ctx.signal,
+      // A turn a shared turn causes is shared (G1-6). No `initiator`: children
+      // never inherit it.
+      roomAudience: jobRoomAudience(job),
       // The spawning turn's narrowing (S12), so the child never regains a
       // tool the parent turn was narrowed out of.
       ...(job.toolsetNarrowing?.narrow ? { toolsetNarrow: job.toolsetNarrowing.narrow } : {}),

@@ -15,7 +15,7 @@ import { EthosJobRunner } from './ethos-job-runner';
 import { BoundedLogBuffer } from './log-buffer';
 import { capText, extractSummarySection, SUMMARY_RESULT_CAP } from './summary';
 
-export { ETHOS_RUNNER_NAME, EthosJobRunner } from './ethos-job-runner';
+export { ETHOS_RUNNER_NAME, EthosJobRunner, jobRoomAudience } from './ethos-job-runner';
 export { BoundedLogBuffer, type RunnerLogLine } from './log-buffer';
 // Every background job runs in summary mode, whatever the runner: the parent
 // re-ingests only a bounded digest. Exported so an out-of-process runner

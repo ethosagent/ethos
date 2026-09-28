@@ -14,10 +14,10 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
-    "@ethosagent/core": "workspace:*",
     "@ethosagent/job-store": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*"
   }

@@ -137,6 +137,30 @@ const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
   9: (db) => addColumnIfMissing(db, 'toolset_narrowing', 'TEXT'),
 };
 
+/**
+ * Additive nullable columns added on EVERY open, idempotently, whatever
+ * `user_version` says — and deliberately NOT a migration step (plan
+ * personality-memory-boundary D18(a)). Every older build refuses a database
+ * stamped newer than itself (`migrate`'s downgrade guard), and all of them
+ * tolerate an extra nullable column (`create` names its columns; `rowToJob`
+ * maps fields by name), so a bump would only lock older CLIs/desktops sharing
+ * `~/.ethos` out of jobs.db. The goal-store convention
+ * (extensions/goal-store/src/index.ts, "an ADDITIVE NULLABLE column does not
+ * bump user_version"), also used by session-sqlite.
+ *
+ * Rule-5 conflict, flagged not rewritten: steps 2–9 of `JOB_STORE_MIGRATIONS`
+ * above bumped `user_version` for additive columns too. New additive columns go
+ * here; those steps are left as they are (rewriting a shipped chain is its own
+ * change) and are a cleanup candidate.
+ *
+ * `room_audience` — `BackgroundJob.roomAudience`; NULL on every existing row,
+ * which reads as "unstamped" and resolves from the origin chat (D11).
+ * Pinned by the 'room audience column' cases in `__tests__/job-store.test.ts`.
+ */
+function addAdditiveColumns(db: Database.Database): void {
+  addColumnIfMissing(db, 'room_audience', 'TEXT');
+}
+
 function addColumnIfMissing(db: Database.Database, column: string, type: string): void {
   const cols = db.pragma('table_info(jobs)') as Array<{ name: string }>;
   if (!cols.some((c) => c.name === column)) {
@@ -181,6 +205,7 @@ interface JobRow {
   deliver: string;
   origin_user_id: string | null;
   toolset_narrowing: string | null;
+  room_audience: string | null;
 }
 
 interface JobEventRow {
@@ -224,6 +249,7 @@ function rowToJob(r: JobRow): BackgroundJob {
     originThreadId: r.origin_thread_id ?? undefined,
     originUserId: r.origin_user_id ?? undefined,
     toolsetNarrowing: parseToolsetNarrowing(r.toolset_narrowing),
+    roomAudience: parseRoomAudience(r.room_audience),
     remotePeer: r.remote_peer ?? undefined,
     remoteJobId: r.remote_job_id ?? undefined,
     runner: r.runner ?? undefined,
@@ -256,6 +282,16 @@ function parseToolsetNarrowing(raw: string | null): BackgroundJob['toolsetNarrow
     ...(isNames(narrow) ? { narrow } : {}),
     ...(isNames(exclude) ? { exclude } : {}),
   };
+}
+
+/**
+ * `room_audience` is written only by `create` from a typed value. NULL is an
+ * unstamped (pre-column) row; any other unrecognised value is a hand-edited
+ * row and reads as `'shared'` — shared only narrows, so fail closed.
+ */
+function parseRoomAudience(raw: string | null): BackgroundJob['roomAudience'] {
+  if (raw === null) return undefined;
+  return raw === 'private' ? 'private' : 'shared';
 }
 
 function rowToEvent(r: JobEventRow): BackgroundJobEvent {
@@ -305,6 +341,7 @@ export class SQLiteJobStore implements JobStore {
       baseline: SCHEMA,
       migrations: JOB_STORE_MIGRATIONS,
     });
+    addAdditiveColumns(this.db);
     this.db.exec(DELIVERY_INDEX);
   }
 
@@ -319,8 +356,9 @@ export class SQLiteJobStore implements JobStore {
           personality_id, depth, status, label, prompt, spend_usd,
           max_cost_usd, cancel_requested, created_at,
           origin_platform, origin_bot_key, origin_chat_id, origin_thread_id,
-          remote_peer, remote_job_id, runner, deliver, origin_user_id, toolset_narrowing)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          remote_peer, remote_job_id, runner, deliver, origin_user_id, toolset_narrowing,
+          room_audience)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -347,6 +385,7 @@ export class SQLiteJobStore implements JobStore {
         input.deliver ?? 'user',
         input.originUserId ?? null,
         input.toolsetNarrowing ? JSON.stringify(input.toolsetNarrowing) : null,
+        input.roomAudience ?? null,
       );
 
     this.appendEventSync(id, 'queued', {});

@@ -67,6 +67,7 @@ import type {
   TtsProvider,
   TtsProviderEntry,
   TtsProviderRegistry,
+  TurnAudience,
   VoiceAudioFormat,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
@@ -3786,6 +3787,9 @@ export class Gateway {
         originChatId: message.chatId,
         ...(threadId ? { originThreadId: threadId } : {}),
         ...(message.userId ? { originUserId: message.userId } : {}),
+        // G1-6: a job launched from a group runs shared (`jobRoomAudience`,
+        // extensions/job-runner).
+        roomAudience: this.audienceFor(message),
       });
       executor.nudge();
       // The id is the whole point of the ack: without it the user has nothing to
@@ -7593,6 +7597,20 @@ export class Gateway {
   private personalitySwitchAllowed(bot: GatewayBotConfig): boolean {
     if (bot.binding.type === 'team') return false;
     return bot.binding.allowSlashSwitch === true;
+  }
+
+  /**
+   * The room audience of whatever `message` starts (plan
+   * personality-memory-boundary G1): `'private'` only for a DM, `'shared'`
+   * otherwise. The ONE place the gateway decides it — `/background` stamps it
+   * on the job today; plan step 4 routes `runTurn` and wake reviews through it
+   * and widens the formula to `(isDm && audienceHint !== 'shared') ||
+   * privateChats.has(platform, chatId)`. Independent of `isDm`'s other jobs
+   * (admission, engagement, approval binding). Pinned by "stamps the job …
+   * when launched from …" in `__tests__/background-wake.test.ts`.
+   */
+  private audienceFor(message: InboundMessage): TurnAudience {
+    return message.isDm ? 'private' : 'shared';
   }
 
   /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False

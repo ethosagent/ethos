@@ -1333,13 +1333,13 @@ importers:
 
   extensions/job-runner:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
-      '@ethosagent/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@ethosagent/job-store':
         specifier: workspace:*
         version: link:../job-store

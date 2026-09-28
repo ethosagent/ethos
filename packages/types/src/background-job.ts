@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AgentEvent } from './agent-event';
+import type { TurnAudience } from './audience';
 import type { Logger } from './logger';
 import type { SteerSink } from './steer';
 
@@ -134,6 +135,16 @@ export interface BackgroundJob {
    */
   toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   /**
+   * The spawning turn's audience (plan personality-memory-boundary G1-6: a
+   * turn a shared turn causes is shared). Stamped at create from the parent's
+   * RESOLVED `ToolContext.roomAudience` (`delegate_task`), from the gateway's
+   * `audienceFor(message)` (`/background`), or `'private'` by the CLI and ACP.
+   * Applied by `EthosJobRunner.run` via `jobRoomAudience`
+   * (extensions/job-runner/src/ethos-job-runner.ts). Absent on rows written
+   * before the column: those resolve from the origin chat (D11).
+   */
+  roomAudience?: TurnAudience;
+  /**
    * Which runner executed this row (`JobRunner.name`, e.g. `ethos`). Absent on
    * rows written before the seam existed, and on rows that ran on the default
    * runner. Persisted because the badge renders from the row, not from a live
@@ -238,6 +249,8 @@ export interface CreateBackgroundJobInput {
   originUserId?: string;
   /** See `BackgroundJob.toolsetNarrowing`. */
   toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
+  /** See `BackgroundJob.roomAudience`. Omitted means a legacy-shaped row (D11). */
+  roomAudience?: TurnAudience;
   remotePeer?: string;
   remoteJobId?: string;
 }

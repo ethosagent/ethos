@@ -2393,6 +2393,8 @@ async function handleBackgroundCommand(arg: string, state: ChatState): Promise<v
     childSessionKey: `${root}:bgcmd:${short}`,
     depth: 0,
     prompt: arg,
+    // The CLI is one person's terminal: private (plan personality-memory-boundary).
+    roomAudience: 'private',
   });
   executor.nudge();
   out(`${c.dim}[background task started: ${job.id}]${c.reset}\n`);

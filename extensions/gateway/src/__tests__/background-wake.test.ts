@@ -578,6 +578,42 @@ describe('Gateway — /background acknowledgement', () => {
     expect(created[0]?.originUserId).toBe('user-1');
   });
 
+  // plan personality-memory-boundary G1-6: a job launched from a group runs
+  // shared (`Gateway.audienceFor`), one launched from a DM runs private.
+  it.each([
+    { where: 'a group', isDm: false, isGroupMention: true, expected: 'shared' },
+    { where: 'a DM', isDm: true, isGroupMention: false, expected: 'private' },
+  ])(
+    'stamps the job $expected when launched from $where',
+    async ({ isDm, isGroupMention, expected }) => {
+      const { executor } = fakeExecutor();
+      const adapter = stubAdapter();
+      const store = new FakeJobStore();
+      const gw = new Gateway({
+        bots: [
+          {
+            botKey: 'b1',
+            loop: gatedLoop().loop,
+            binding: { type: 'personality', name: 'default' },
+            backgroundExecutor: executor,
+            jobStore: store,
+          },
+        ],
+        adapters: new Map([['test', adapter]]),
+        clarifySweepIntervalMs: 0,
+      });
+
+      await gw.handleMessage(
+        makeMessage({ text: '/background crawl the docs', isDm, isGroupMention }),
+        adapter,
+      );
+
+      const created = [...store.jobs.values()];
+      expect(created).toHaveLength(1);
+      expect(created[0]?.roomAudience).toBe(expected);
+    },
+  );
+
   it('answers originUserIdFor a live turn with its sender, and nothing once it ends', async () => {
     const g = gatedLoop();
     const adapter = stubAdapter();

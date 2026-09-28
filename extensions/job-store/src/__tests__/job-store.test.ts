@@ -886,6 +886,79 @@ describe('SQLiteJobStore', () => {
     store.close();
   });
 
+  // plan personality-memory-boundary D18(a): `room_audience` is an additive
+  // column added on every open WITHOUT a `user_version` bump.
+  it('room audience column: round-trips, absent when unstamped', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    expect((await store.create(baseInput({ roomAudience: 'shared' }))).roomAudience).toBe('shared');
+    expect((await store.create(baseInput({ roomAudience: 'private' }))).roomAudience).toBe(
+      'private',
+    );
+    expect((await store.create(baseInput())).roomAudience).toBeUndefined();
+    store.close();
+  });
+
+  it('room audience column: a hand-edited unknown value reads shared (fail closed)', async () => {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    const store = new SQLiteJobStore(path);
+    const job = await store.create(baseInput({ roomAudience: 'private' }));
+    store.close();
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.prepare(`UPDATE jobs SET room_audience = 'everyone' WHERE id = ?`).run(job.id);
+    raw.close();
+    const reopened = new SQLiteJobStore(path);
+    expect((await reopened.get(job.id))?.roomAudience).toBe('shared');
+    reopened.close();
+  });
+
+  it('room audience column: a v9 database gains it on open, stamp unchanged, idempotent, legacy rows unstamped', async () => {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    const Database = (await import('@ethosagent/sqlite')).default;
+    // Build the v9 shape (every column up to toolset_narrowing, no
+    // room_audience) the way a build before the column left it.
+    const first = new SQLiteJobStore(path);
+    first.close();
+    const raw = new Database(path);
+    raw.exec('ALTER TABLE jobs DROP COLUMN room_audience');
+    raw
+      .prepare(
+        `INSERT INTO jobs (id, owner, parent_session_key, root_session_key, child_session_key,
+           depth, status, prompt, spend_usd, cancel_requested, created_at,
+           origin_platform, origin_bot_key, origin_chat_id)
+         VALUES ('legacy-1','proc-A','root','root','root:child',1,'queued','old job',
+                 0,0,1000,'telegram','bot-1','-100')`,
+      )
+      .run();
+    const columnsOf = (db: InstanceType<typeof Database>) =>
+      (db.pragma('table_info(jobs)') as Array<{ name: string }>).map((c) => c.name);
+    expect(columnsOf(raw)).not.toContain('room_audience');
+    expect((raw.pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version).toBe(
+      9,
+    );
+    raw.close();
+
+    // Open twice: the ALTER runs once and the second open is a no-op.
+    for (let i = 0; i < 2; i++) {
+      const store = new SQLiteJobStore(path);
+      expect((await store.get('legacy-1'))?.roomAudience).toBeUndefined();
+      expect((await store.create(baseInput({ roomAudience: 'shared' }))).roomAudience).toBe(
+        'shared',
+      );
+      store.close();
+    }
+
+    const after = new Database(path);
+    expect(columnsOf(after).filter((c) => c === 'room_audience')).toHaveLength(1);
+    // D18(a): no bump — an older build sharing ~/.ethos still opens jobs.db.
+    expect((after.pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version).toBe(
+      9,
+    );
+    after.close();
+  });
+
   it('round-trips deliver, defaulting to user (openclaw-9.5 item 6)', async () => {
     const store = new SQLiteJobStore(':memory:');
     expect((await store.create(baseInput())).deliver).toBe('user');

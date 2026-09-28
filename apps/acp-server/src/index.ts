@@ -571,6 +571,10 @@ export class AcpServer {
             ...(p.personalityId ? { personalityId: p.personalityId } : {}),
             ...(label ? { label } : {}),
             ...(typeof p.maxCostUsd === 'number' ? { maxCostUsd: p.maxCostUsd } : {}),
+            // An ACP spawn comes from the local owner's editor client, like its
+            // `acp:` turns (private by design); stamped so the row never falls to
+            // the legacy origin rule (`jobRoomAudience`, extensions/job-runner).
+            roomAudience: 'private',
           });
           this.backgroundExecutor.nudge();
           return { jsonrpc: '2.0', id, result: { jobId: job.id, status: job.status } };
@@ -864,6 +868,10 @@ export class AcpServer {
             ...(p.personalityId ? { personalityId: p.personalityId } : {}),
             ...(label ? { label } : {}),
             ...(typeof p.maxCostUsd === 'number' ? { maxCostUsd: p.maxCostUsd } : {}),
+            // An ACP spawn comes from the local owner's editor client, like its
+            // `acp:` turns (private by design); stamped so the row never falls to
+            // the legacy origin rule (`jobRoomAudience`, extensions/job-runner).
+            roomAudience: 'private',
           });
           this.backgroundExecutor.nudge();
           sendResult({ jobId: job.id, status: job.status });
