@@ -8,7 +8,7 @@ import type {
 } from '@ethosagent/types';
 import { orderToolDefinitions } from '@ethosagent/types';
 import type OpenAI from 'openai';
-import { normalizeGeminiSchema, toOpenAIMessages } from './index';
+import { isGemini3Model, normalizeGeminiSchema, toOpenAIMessages } from './index';
 import type { LocalOpenAiRuntime } from './runtime-classify';
 import { sanitizeToolSchemaForGrammar } from './schema-sanitize';
 
@@ -212,7 +212,12 @@ export function buildChatCompletionsParams(
   const oaiMessages = toOpenAIMessages(
     messages,
     options.system,
-    opts?.thoughtSignatures ? { thoughtSignatures: opts.thoughtSignatures } : undefined,
+    opts?.thoughtSignatures
+      ? {
+          thoughtSignatures: opts.thoughtSignatures,
+          signUnsigned: isGemini3Model(options.modelOverride ?? model),
+        }
+      : undefined,
   );
 
   // Lane 2a — deterministic ASCII-stable tool ordering at the serialization

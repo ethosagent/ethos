@@ -72,7 +72,7 @@ export async function* streamGeminiGenerate(
   const base = config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
   const url = `${base}/models/${config.model}:streamGenerateContent?alt=sse&key=${config.apiKey}`;
 
-  const bodyStr = JSON.stringify(buildGeminiBody(messages, tools, options, state));
+  const bodyStr = JSON.stringify(buildGeminiBody(messages, tools, options, state, config.model));
 
   const response = await fetchWithTransientRetry(
     () =>
@@ -96,13 +96,34 @@ export async function* streamGeminiGenerate(
   yield* parseGeminiSSE(response.body, config.model, state);
 }
 
-/** Exported for the request-body tests. */
+/**
+ * Google's documented dummy signature for a function call the model never
+ * signed (a call from another provider after a failover, or one from before a
+ * restart): "you can set the following dummy signatures of either
+ * `context_engineering_is_the_way_to_go` or `skip_thought_signature_validator`"
+ * (ai.google.dev/gemini-api/docs/generate-content/thought-signatures, fetched
+ * 2026-09-28), placed as `thoughtSignature` beside the `functionCall`.
+ */
+export const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
+
+/** Gemini 3 is the generation that answers 400 to a missing signature. */
+export function isGemini3Model(model: string | undefined): boolean {
+  return model !== undefined && /(^|[/:])gemini-3/i.test(model);
+}
+
+/** Exported for the request-body tests. `model` is the model the request is
+ *  sent to; for a Gemini 3 model, the first function call of a model turn that
+ *  carries no remembered signature gets {@link SKIP_THOUGHT_SIGNATURE}. Only
+ *  the first: with parallel calls Gemini signs the first call alone, so the
+ *  rest are sent as they are. Pinned by __tests__/thought-signature-spec.test.ts. */
 export function buildGeminiBody(
   messages: Message[],
   tools: ToolDefinitionLite[],
   options: CompletionOptions,
   state: GeminiStreamState = createGeminiStreamState(),
+  model?: string,
 ): Record<string, unknown> {
+  const dummyForUnsigned = isGemini3Model(model);
   // Item 7 (D33) — a persisted server-compaction block reaches this provider
   // as its readable summary; the Anthropic-only encrypted half is dropped.
   const flattened = flattenCompactionEnvelopes(messages);
@@ -122,7 +143,10 @@ export function buildGeminiBody(
       parts:
         typeof m.content === 'string'
           ? [{ text: m.content }]
-          : m.content.map((c) => convertPart(c, toolNames, state.thoughtSignatures)),
+          : signFirstCall(
+              m.content.map((c) => convertPart(c, toolNames, state.thoughtSignatures)),
+              dummyForUnsigned && m.role === 'assistant',
+            ),
     }));
 
   const body: Record<string, unknown> = {
@@ -152,6 +176,21 @@ export function buildGeminiBody(
   }
 
   return body;
+}
+
+/** The first `functionCall` part of a model turn, when unsigned, gets the
+ *  documented dummy signature. Everything else is returned unchanged. */
+function signFirstCall(
+  parts: Array<Record<string, unknown>>,
+  apply: boolean,
+): Array<Record<string, unknown>> {
+  if (!apply) return parts;
+  const first = parts.findIndex((p) => 'functionCall' in p);
+  const part = parts[first];
+  if (!part || 'thoughtSignature' in part) return parts;
+  return parts.map((p, i) =>
+    i === first ? { ...p, thoughtSignature: SKIP_THOUGHT_SIGNATURE } : p,
+  );
 }
 
 function convertPart(

@@ -180,6 +180,23 @@ function isGeminiEndpoint(baseUrl: string): boolean {
 // Message conversion: our Message[] → OpenAI ChatCompletionMessageParam[]
 // ---------------------------------------------------------------------------
 
+/**
+ * Google's documented dummy signature for a tool call Gemini never signed (a
+ * call from another provider after a failover, or from before a restart), sent
+ * as `extra_content.google.thought_signature` on the OpenAI-compat endpoint:
+ * "you can set the following dummy signatures of either
+ * `context_engineering_is_the_way_to_go` or `skip_thought_signature_validator`"
+ * (ai.google.dev/gemini-api/docs/generate-content/thought-signatures, fetched
+ * 2026-09-28). Pinned by __tests__/gemini-thought-signature-spec.test.ts.
+ */
+export const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
+
+/** Gemini 3 is the generation that answers 400 to a missing signature; the
+ *  dummy is sent to no other model. */
+export function isGemini3Model(model: string): boolean {
+  return /(^|[/:])gemini-3/i.test(model);
+}
+
 // Exported for adapter tests — pure function over Message[] with no side effects.
 //
 // UBP-032 — `opts.thoughtSignatures` (Gemini's OpenAI-compat endpoint only):
@@ -189,7 +206,13 @@ function isGeminiEndpoint(baseUrl: string): boolean {
 export function toOpenAIMessages(
   messages: Message[],
   system?: string,
-  opts?: { thoughtSignatures?: ReadonlyMap<string, string> },
+  opts?: {
+    thoughtSignatures?: ReadonlyMap<string, string>;
+    /** The first tool call of an assistant message with no remembered
+     *  signature gets {@link SKIP_THOUGHT_SIGNATURE} — set only for a Gemini 3
+     *  model (`isGemini3Model`). */
+    signUnsigned?: boolean;
+  },
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
@@ -268,7 +291,11 @@ export function toOpenAIMessages(
             type: 'function',
             function: { name: block.name, arguments: JSON.stringify(block.input) },
           };
-          const signature = opts?.thoughtSignatures?.get(block.id);
+          // Only the first call of the message: with parallel calls Gemini
+          // signs the first alone, and the rest are sent as they came.
+          const signature =
+            opts?.thoughtSignatures?.get(block.id) ??
+            (opts?.signUnsigned && toolCalls.length === 0 ? SKIP_THOUGHT_SIGNATURE : undefined);
           if (signature !== undefined) {
             // Not in the SDK's type; the SDK serializes the object as given.
             Object.assign(call, { extra_content: { google: { thought_signature: signature } } });
