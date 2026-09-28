@@ -66,6 +66,7 @@ import {
   SECRET_KIND,
 } from '@ethosagent/worker-router';
 import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
+import { amendmentPersonalityLoader, createAmendmentService } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
@@ -1940,6 +1941,27 @@ export async function buildAgentLoop(
     // between turns must read the one the turn runs against, not a second one
     // it built itself.
     personalities,
+    // The self-amendment review service (plan personality-memory-boundary G2).
+    // It needs a registry that knows the user dir — the loop's does not (to it
+    // every personality is built-in, so `writeDefinitionBytes` would refuse
+    // all of them) — so it gets its own, built lazily on first use. No tool
+    // holds this: the host hands it to the TTY-gated CLI only (G2-1 (c)).
+    amendments: createAmendmentService({
+      storage: wiringCtx.storage,
+      dataDir,
+      workingDir: wiringCtx.workingDir,
+      loadPersonalities: amendmentPersonalityLoader({
+        storage: wiringCtx.storage,
+        dataDir,
+        ...(wiringCtx.builtinPersonalitiesDir
+          ? { builtinPersonalitiesDir: wiringCtx.builtinPersonalitiesDir }
+          : {}),
+      }),
+      tools,
+      executionPostureFor: (personalityId) => toolsResult.executionPostureFor(personalityId),
+      ...(opts.observability ? { observability: opts.observability } : {}),
+      log,
+    }),
     refreshPersonalities: () => personalities.loadFromDirectory(join(dataDir, 'personalities')),
     sttProviders: infra.sttProviders,
     ttsProviders: infra.ttsProviders,

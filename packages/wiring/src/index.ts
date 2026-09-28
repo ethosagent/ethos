@@ -841,10 +841,19 @@ export {
 // plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
 export {
   AMENDMENT_TAINT_REFUSAL,
+  type AmendmentActionCode,
+  type AmendmentActionResult,
   type AmendmentIntakeDeps,
   type AmendmentObservability,
+  type AmendmentPersonalities,
+  type AmendmentReview,
+  type AmendmentService,
+  type AmendmentServiceDeps,
   acquireAmendmentLock,
+  amendmentFlags,
+  amendmentPersonalityLoader,
   createAmendmentIntake,
+  createAmendmentService,
 } from './amendments';
 export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
@@ -1694,6 +1703,16 @@ export interface CreateAgentLoopResult {
    * dispose it.
    */
   personalities: import('@ethosagent/personalities/compose').PersonalityCompose['personalities'];
+  /**
+   * The self-amendment review service (plan personality-memory-boundary G2):
+   * list, get (live recompute), apply, decline, rollback. Always present; its
+   * user-dir-aware personality registry is built on first use. It has no
+   * filing path, and no tool is handed it — the `propose_self_amendment` tool
+   * holds only the intake's port (compose-tools.ts). Hosts give it to the
+   * TTY-gated CLI and nothing else (G2-1 (c)). Pinned by
+   * packages/wiring/src/__tests__/amendments.test.ts.
+   */
+  amendments: import('./amendments').AmendmentService;
   /** Re-load this loop's personality registry from `~/.ethos/personalities/`.
    *  Cheap when nothing changed (mtime-fingerprint cache → ~4 stat() calls per
    *  dir). Callers refresh before resolving a personality so a newly dropped or

@@ -1,13 +1,16 @@
-// Governed self-amendment — the FILING intake (plan
-// personality-memory-boundary-and-self-amendment, G2, "The intake").
+// Governed self-amendment (plan personality-memory-boundary-and-self-amendment,
+// G2): the FILING intake ("The intake") and the owner's review service
+// ("Apply, decline, rollback", `createAmendmentService`, below the intake).
 //
 // `createAmendmentIntake` implements the `AmendmentSubmitPort` the
 // `propose_self_amendment` tool holds (extensions/tools-personality-design/src/
 // propose-amendment.ts). It only files: it writes a `pending` (or
 // `auto_rejected`) record into the amendment store (`@ethosagent/learning-inbox`
 // `createAmendment`) and never touches the personality's `toolset.yaml`. Apply,
-// decline and rollback are `AmendmentService` (plan step 11), reachable only
-// from the TTY-gated CLI (G2-1).
+// decline and rollback are `AmendmentService`, which shares no code path with
+// the port: the tool is handed the intake alone (compose-tools.ts), and the
+// service is returned to the HOST beside the loop (`CreateAgentLoopResult.
+// amendments`), whose only caller that applies is the TTY-gated CLI (G2-1 (c)).
 //
 // The checks run in the plan's order, and each refusal returns a reason and
 // writes nothing — except a constitution violation, which is recorded as
@@ -29,20 +32,40 @@ import {
 } from '@ethosagent/constitution';
 import { reconstructFromWatermark, selectActiveWatermark } from '@ethosagent/core';
 import {
+  type AmendmentFilter,
   type AmendmentOpsRefusal,
+  amendmentAppliedPath,
   amendmentApplyLockPath,
+  amendmentPriorPath,
   applyOps,
   checkPendingLimits,
   createAmendment,
+  expectedAfterHash,
+  listAmendments,
   opsHash,
+  readAmendment,
+  transitionAmendment,
 } from '@ethosagent/learning-inbox';
-import { hashDefinitionBytes } from '@ethosagent/personalities';
+import {
+  createPersonalityRegistry,
+  DefinitionChangedError,
+  type DescribedPersonality,
+  diffPermissionSurface,
+  type FilePersonalityRegistry,
+  hashDefinitionBytes,
+  notComparedLine,
+  type PermissionDiff,
+  permissionSurface,
+} from '@ethosagent/personalities';
 import { redactString } from '@ethosagent/safety-redact';
 import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
 import {
+  type AmendmentActor,
   type AmendmentEvidence,
+  type AmendmentFlag,
   type AmendmentOp,
   type AmendmentPreCheck,
+  type AmendmentRecord,
   type AmendmentSubmitInput,
   type AmendmentSubmitPort,
   type AmendmentSubmitResult,
@@ -81,8 +104,9 @@ const FILING_KEY_PREFIXES = ['cli:', 'web:'] as const;
  * A caller of `acquireSentinelLock` (packages/wiring/src/backup/sentinel-lock.ts),
  * which holds the raw `node:fs` calls and the stale-holder protocol. Filing
  * holds it across the limit check, the dedupe and the write, so two filings
- * cannot both pass the 3-pending limit; apply, decline and rollback (plan step
- * 11) take the same lock. A contended filing waits `LOCK_WAIT_MS`, then refuses
+ * cannot both pass the 3-pending limit; apply, decline and rollback
+ * (`createAmendmentService`) take the same lock, so no two of the four
+ * interleave. A contended filing waits `LOCK_WAIT_MS`, then refuses
  * with nothing written.
  */
 export async function acquireAmendmentLock(
@@ -97,7 +121,7 @@ export async function acquireAmendmentLock(
     unreadableStaleMs: UNREADABLE_LOCK_STALE_MS,
     refusal: (pid) =>
       `amendments: ${lockPath} is still held${pid === null ? '' : ` by process ${pid}`} after ` +
-      `${timeoutMs}ms, so nothing was filed. ` +
+      `${timeoutMs}ms, so nothing was changed. ` +
       (pid === null
         ? 'If no Ethos process is running, delete that file.'
         : `Only once process ${pid} is confirmed gone (\`ps -p ${pid}\`), delete ${lockPath}.`),
@@ -443,6 +467,657 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
       } finally {
         release();
       }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The review service: list, get, apply, decline, rollback (plan G2, "Apply,
+// decline, rollback"). No filing path: it cannot create a record, and the
+// `propose_self_amendment` tool is never handed it (compose-tools.ts passes
+// the intake alone). Every mutation holds `.apply.lock`
+// (`acquireAmendmentLock`), the lock filing holds too.
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry the service reads and writes through. It MUST be a
+ * `FilePersonalityRegistry` built with `userPersonalitiesDir` set to the data
+ * dir: only then does `describe(id).builtin` tell a user personality from a
+ * built-in, and only then does `writeDefinitionBytes` accept a user one (the
+ * loop's own registry is built without a user dir, so to it everything is
+ * built-in). `amendmentPersonalityLoader` builds one.
+ */
+export type AmendmentPersonalities = Pick<
+  FilePersonalityRegistry,
+  'describe' | 'writeDefinitionBytes'
+>;
+
+/**
+ * A loader that re-reads `<dataDir>/personalities/` into one user-dir-aware
+ * `FilePersonalityRegistry` and returns it. The registry is built on first
+ * use — only a host that reviews amendments pays for it — and refreshed on
+ * every call (mtime-cached), so each operation sees the live definitions.
+ */
+export function amendmentPersonalityLoader(opts: {
+  storage: Storage;
+  dataDir: string;
+  builtinPersonalitiesDir?: string;
+}): () => Promise<AmendmentPersonalities> {
+  let registry: Promise<FilePersonalityRegistry> | undefined;
+  return async () => {
+    registry ??= createPersonalityRegistry({
+      storage: opts.storage,
+      userPersonalitiesDir: opts.dataDir,
+      ...(opts.builtinPersonalitiesDir
+        ? { builtinPersonalitiesDir: opts.builtinPersonalitiesDir }
+        : {}),
+    });
+    let loaded: FilePersonalityRegistry;
+    try {
+      loaded = await registry;
+    } catch (err) {
+      registry = undefined; // a failed build is retried on the next call, not cached
+      throw err;
+    }
+    await loaded.loadFromDirectory(join(opts.dataDir, 'personalities'));
+    return loaded;
+  };
+}
+
+export interface AmendmentServiceDeps {
+  /** Unscoped Storage, as for the intake. */
+  storage: Storage;
+  dataDir: string;
+  /** Passed to `enforceConstitution` for `${CWD}` substitution. */
+  workingDir: string;
+  /** See {@link AmendmentPersonalities}; called once per operation. */
+  loadPersonalities: () => Promise<AmendmentPersonalities>;
+  /** Re-validates the ops (still registered, still toolset-gated) and the `tool-unavailable` flag. */
+  tools: Pick<ToolRegistry, 'get' | 'getPluginId'>;
+  /** The live execution posture, for the `local-terminal` flag. Absent → `'none'`. */
+  executionPostureFor?: (personalityId: string) => ExecutionPosture | undefined;
+  observability?: AmendmentObservability;
+  log: Logger;
+  /** Injectable for tests; defaults to {@link acquireAmendmentLock}. */
+  acquireLock?: (dataDir: string) => Promise<() => void>;
+  now?: () => number;
+}
+
+/** What `get` shows a reviewer. Everything but `record` is recomputed from live state. */
+export interface AmendmentReview {
+  record: AmendmentRecord;
+  /** The personality still loads and is user-owned (the only kind apply writes). */
+  personality: 'ok' | 'not_found' | 'builtin';
+  /** The live `toolset.yaml` bytes; `null` when the file (or the personality) is gone. */
+  liveBytes: string | null;
+  liveHash: string | null;
+  /** The live file is not the bytes the proposal was filed against — apply would go `stale`. */
+  stale: boolean;
+  /**
+   * An apply wrote `applied.json` and the live file already holds exactly the
+   * after-bytes of its prior snapshot, but the record never reached `applied`
+   * — the process died between the live write and the status update. The plan
+   * leaves recovery to the owner in v1: apply answers `stale`, and the owner
+   * closes it with `decline`.
+   */
+  interruptedApply: boolean;
+  /** `applyOps` on the LIVE bytes; `null` when the ops no longer apply (`opsProblem`). */
+  afterBytes: string | null;
+  opsProblem?: string;
+  /**
+   * `sha256(baseHash ‖ opsHash ‖ afterBytes)` over the live after-bytes — the
+   * value apply must be handed (G2-5). `null` when there is nothing to apply.
+   */
+  expectedAfterHash: string | null;
+  /** Line diff of `toolset.yaml`, live → after: each line prefixed `' '`, `'-'` or `'+'`. */
+  textDiff: string[];
+  permissionDiff: PermissionDiff | null;
+  /** `Not compared: …` — printed beside the permission diff (D27). */
+  notCompared: string;
+  flags: AmendmentFlag[];
+}
+
+export type AmendmentActionCode =
+  | 'not_found'
+  | 'not_pending'
+  | 'not_applied'
+  | 'personality_not_found'
+  | 'builtin'
+  | 'stale'
+  | 'hash_mismatch'
+  | 'auto_rejected'
+  | 'constitution_violation'
+  | 'constitution_malformed'
+  | 'live_edited'
+  | 'prior_missing'
+  | 'reason_required'
+  | 'locked';
+
+/** An action's answer. `ok: false` with a `record` means the record itself moved (`stale`, `auto_rejected`). */
+export type AmendmentActionResult =
+  | { ok: true; record: AmendmentRecord }
+  | { ok: false; code: AmendmentActionCode; reason: string; record?: AmendmentRecord };
+
+export interface AmendmentService {
+  /** Newest first (`listAmendments`). */
+  list(filter?: AmendmentFilter): Promise<AmendmentRecord[]>;
+  get(id: string): Promise<AmendmentReview | null>;
+  apply(
+    id: string,
+    opts: { actor: AmendmentActor; decidedBy: string; expectedAfterHash: string },
+  ): Promise<AmendmentActionResult>;
+  decline(
+    id: string,
+    opts: { actor: AmendmentActor; decidedBy: string; reason: string },
+  ): Promise<AmendmentActionResult>;
+  rollback(
+    id: string,
+    opts: { actor: AmendmentActor; decidedBy: string },
+  ): Promise<AmendmentActionResult>;
+}
+
+/** Body of `applied.json`, written before the live write (the `promote.ts` order). */
+interface AppliedMarker {
+  amendmentId: string;
+  personalityId: string;
+  priorHash: string;
+  afterHash: string;
+  at: string;
+}
+
+type ConstitutionOutcome =
+  | { kind: 'ok' }
+  | { kind: 'violation'; reason: string }
+  | { kind: 'malformed'; error: string };
+
+/**
+ * The constitution over a CLONE of `config` with `toolset` swapped in —
+ * `enforceConstitution` clamps `budgetCapUsd` in place, and the registry hands
+ * out live references (G2-3).
+ */
+async function checkConstitution(
+  deps: Pick<AmendmentServiceDeps, 'storage' | 'dataDir' | 'workingDir' | 'log'>,
+  config: PersonalityConfig,
+  toolset: string[],
+): Promise<ConstitutionOutcome> {
+  const constitution = await loadConstitution(deps.storage, deps.dataDir);
+  if (constitution.status === 'malformed') return { kind: 'malformed', error: constitution.error };
+  try {
+    enforceConstitution({
+      constitution: constitution.constitution,
+      personalities: [{ ...structuredClone(config), toolset }],
+      ethosHome: deps.dataDir,
+      workingDir: deps.workingDir,
+      log: deps.log,
+    });
+  } catch (err) {
+    if (!(err instanceof ConstitutionViolationError)) throw err;
+    return { kind: 'violation', reason: err.message };
+  }
+  return { kind: 'ok' };
+}
+
+/** Longest-common-subsequence line diff; `toolset.yaml` is a short list, so O(n·m) is fine. */
+function lineDiff(before: string, after: string): string[] {
+  const a = before === '' ? [] : before.replace(/\n$/, '').split('\n');
+  const b = after === '' ? [] : after.replace(/\n$/, '').split('\n');
+  const width = b.length + 1;
+  const lcs = new Array<number>((a.length + 1) * width).fill(0);
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i * width + j] =
+        a[i] === b[j]
+          ? (lcs[(i + 1) * width + j + 1] ?? 0) + 1
+          : Math.max(lcs[(i + 1) * width + j] ?? 0, lcs[i * width + j + 1] ?? 0);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push(` ${a[i]}`);
+      i++;
+      j++;
+    } else if ((lcs[(i + 1) * width + j] ?? 0) >= (lcs[i * width + j + 1] ?? 0)) {
+      out.push(`-${a[i]}`);
+      i++;
+    } else {
+      out.push(`+${b[j]}`);
+      j++;
+    }
+  }
+  for (; i < a.length; i++) out.push(`-${a[i]}`);
+  for (; j < b.length; j++) out.push(`+${b[j]}`);
+  return out;
+}
+
+/**
+ * The review flags, from live state (types: `AmendmentFlag`).
+ * - `tool-unavailable` — an added tool is registered but `isAvailable()` is false.
+ * - `no-recorded-refusal` — no evidence was cited (D26).
+ * - `local-terminal` — a shell tool under a `local` posture, either as recorded
+ *   at filing or now (live posture, with the live or the after toolset). Such a
+ *   personality can already edit its own files and run the CLI (G2-1's
+ *   exception), so the owner is told.
+ * - `high-risk` / `team-workflow` — the permission diff's own row flags.
+ */
+export function amendmentFlags(input: {
+  record: AmendmentRecord;
+  tools: Pick<ToolRegistry, 'get'>;
+  livePosture: ExecutionPosture['backend'];
+  liveToolset: readonly string[];
+  afterToolset: readonly string[];
+  permissionDiff: PermissionDiff | null;
+}): AmendmentFlag[] {
+  const { record, tools } = input;
+  const flags = new Set<AmendmentFlag>();
+  for (const { op, tool } of record.ops) {
+    if (op === 'add_tool' && tools.get(tool)?.isAvailable?.() === false) {
+      flags.add('tool-unavailable');
+    }
+  }
+  if (record.evidence.length === 0) flags.add('no-recorded-refusal');
+  const recordedLocalShell =
+    record.provenance.executionPosture === 'local' && record.provenance.holdsShellTool;
+  const liveLocalShell =
+    input.livePosture === 'local' &&
+    (input.liveToolset.some(isShellTool) || input.afterToolset.some(isShellTool));
+  if (recordedLocalShell || liveLocalShell) flags.add('local-terminal');
+  for (const change of input.permissionDiff?.changes ?? []) {
+    if (change.flag) flags.add(change.flag);
+  }
+  return [...flags];
+}
+
+/** Where the live file is — recomputed from the personality id on every call, never read from a record (G2-8). */
+function liveToolsetPath(described: DescribedPersonality): string | null {
+  return toolsetPathOf(described.config);
+}
+
+/** The review service. See the section header above. */
+export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentService {
+  const now = deps.now ?? Date.now;
+  const acquireLock = deps.acquireLock ?? ((dataDir: string) => acquireAmendmentLock(dataDir));
+  const livePosture = (personalityId: string): ExecutionPosture['backend'] =>
+    deps.executionPostureFor?.(personalityId)?.backend ?? 'none';
+
+  async function locked(fn: () => Promise<AmendmentActionResult>): Promise<AmendmentActionResult> {
+    let release: () => void;
+    try {
+      release = await acquireLock(deps.dataDir);
+    } catch (err) {
+      return {
+        ok: false,
+        code: 'locked',
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
+  /** The personality an action writes, or the refusal. Built-ins are never written (D25). */
+  async function mutableTarget(
+    record: AmendmentRecord,
+  ): Promise<
+    | { ok: true; registry: AmendmentPersonalities; described: DescribedPersonality; path: string }
+    | { ok: false; result: AmendmentActionResult }
+  > {
+    const registry = await deps.loadPersonalities();
+    const described = registry.describe(record.personalityId);
+    const path = described ? liveToolsetPath(described) : null;
+    if (!described || !path) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          code: 'personality_not_found',
+          reason: `personality ${record.personalityId} was not found`,
+        },
+      };
+    }
+    if (described.builtin) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          code: 'builtin',
+          reason: `${record.personalityId} is a built-in personality and cannot be changed`,
+        },
+      };
+    }
+    return { ok: true, registry, described, path };
+  }
+
+  /** True when an earlier apply of this record wrote the live file but never recorded it. */
+  async function interruptedApply(record: AmendmentRecord, liveHash: string | null) {
+    if (liveHash === null) return false;
+    const marker = await deps.storage.read(amendmentAppliedPath(deps.dataDir, record.id));
+    const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, record.id));
+    if (marker === null || prior === null) return false;
+    const after = applyOps(prior, record.ops);
+    return after.ok && hashDefinitionBytes(after.afterBytes) === liveHash;
+  }
+
+  async function markStale(
+    record: AmendmentRecord,
+    decidedBy: string,
+    actor: AmendmentActor,
+    reason: string,
+  ): Promise<AmendmentActionResult> {
+    const next = await transitionAmendment(
+      deps.storage,
+      deps.dataDir,
+      record.id,
+      { to: 'stale', actor, decidedBy, reason },
+      now,
+    );
+    return { ok: false, code: 'stale', reason, record: next };
+  }
+
+  return {
+    list: (filter) => listAmendments(deps.storage, deps.dataDir, filter),
+
+    async get(id) {
+      const record = await readAmendment(deps.storage, deps.dataDir, id);
+      if (!record) return null;
+      const registry = await deps.loadPersonalities();
+      const described = registry.describe(record.personalityId);
+      const path = described ? liveToolsetPath(described) : null;
+      const liveBytes = path ? await deps.storage.read(path) : null;
+      const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
+      const review: AmendmentReview = {
+        record,
+        personality: !described || !path ? 'not_found' : described.builtin ? 'builtin' : 'ok',
+        liveBytes,
+        liveHash,
+        stale: liveHash !== record.baseHash,
+        interruptedApply: await interruptedApply(record, liveHash),
+        afterBytes: null,
+        expectedAfterHash: null,
+        textDiff: [],
+        permissionDiff: null,
+        notCompared: notComparedLine(),
+        flags: [],
+      };
+      const liveToolset = liveBytes === null ? [] : parseToolsetYaml(liveBytes);
+      let afterToolset: string[] = liveToolset;
+      if (described && (record.status === 'pending' || record.status === 'stale')) {
+        const registryProblem = opsRefusal(deps.tools, record.ops);
+        const after = applyOps(liveBytes, record.ops);
+        if (registryProblem) review.opsProblem = registryProblem;
+        else if (!after.ok) review.opsProblem = describeOpsRefusal(after);
+        if (after.ok && !registryProblem) {
+          afterToolset = after.after;
+          review.afterBytes = after.afterBytes;
+          review.expectedAfterHash = expectedAfterHash(
+            record.baseHash,
+            opsHash(after.ops),
+            after.afterBytes,
+          );
+          review.textDiff = lineDiff(liveBytes ?? '', after.afterBytes);
+          review.permissionDiff = diffPermissionSurface(
+            permissionSurface({ ...described.config, toolset: liveToolset }),
+            permissionSurface({ ...described.config, toolset: after.after }),
+          );
+        }
+      }
+      review.flags = amendmentFlags({
+        record,
+        tools: deps.tools,
+        livePosture: livePosture(record.personalityId),
+        liveToolset,
+        afterToolset,
+        permissionDiff: review.permissionDiff,
+      });
+      return review;
+    },
+
+    apply(id, opts) {
+      return locked(async () => {
+        // 2. Status.
+        const record = await readAmendment(deps.storage, deps.dataDir, id);
+        if (!record) return { ok: false, code: 'not_found', reason: `no amendment ${id}` };
+        if (record.status !== 'pending') {
+          return { ok: false, code: 'not_pending', reason: `amendment ${id} is ${record.status}` };
+        }
+        // 3. The personality exists and is user-owned.
+        const target = await mutableTarget(record);
+        if (!target.ok) return target.result;
+        const { registry, described, path } = target;
+
+        // 4. The live bytes are the ones the proposal was filed against.
+        const liveBytes = await deps.storage.read(path);
+        const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
+        if (liveBytes === null || liveHash !== record.baseHash) {
+          const reason = (await interruptedApply(record, liveHash))
+            ? 'an earlier apply wrote toolset.yaml but did not record it; the live file already ' +
+              'holds the approved bytes — decline this amendment to close it'
+            : 'toolset.yaml changed since this amendment was filed';
+          return markStale(record, opts.decidedBy, opts.actor, reason);
+        }
+
+        // 5. Recompute; re-validate the ops against the live registry; the constitution.
+        const registryProblem = opsRefusal(deps.tools, record.ops);
+        if (registryProblem) return markStale(record, opts.decidedBy, opts.actor, registryProblem);
+        const after = applyOps(liveBytes, record.ops);
+        if (!after.ok) {
+          return markStale(record, opts.decidedBy, opts.actor, describeOpsRefusal(after));
+        }
+        const constitution = await checkConstitution(deps, described.config, after.after);
+        if (constitution.kind === 'malformed') {
+          return {
+            ok: false,
+            code: 'constitution_malformed',
+            reason: `the constitution is malformed, so nothing was applied (${constitution.error})`,
+          };
+        }
+        if (constitution.kind === 'violation') {
+          const next = await transitionAmendment(
+            deps.storage,
+            deps.dataDir,
+            id,
+            { to: 'auto_rejected', actor: opts.actor, reason: constitution.reason },
+            now,
+          );
+          deps.observability?.recordSafetyApproval({
+            decision: 'denied',
+            severity: 'warn',
+            code: 'amendment.auto_reject',
+            cause: constitution.reason,
+            details: { amendmentId: id, personalityId: record.personalityId, ops: record.ops },
+          });
+          return { ok: false, code: 'auto_rejected', reason: constitution.reason, record: next };
+        }
+
+        // 6. The reviewer approved exactly these bytes (G2-5).
+        const hash = expectedAfterHash(record.baseHash, opsHash(after.ops), after.afterBytes);
+        if (hash !== opts.expectedAfterHash) {
+          return {
+            ok: false,
+            code: 'hash_mismatch',
+            reason: 'the change to apply is not the one reviewed; show it again and re-approve',
+          };
+        }
+
+        // 7. Prior snapshot and marker BEFORE the live write (the promote.ts
+        //    order): a crash after this and before the write leaves the record
+        //    `pending` over untouched live bytes, and a retry proceeds.
+        const afterHash = hashDefinitionBytes(after.afterBytes);
+        await deps.storage.writeAtomic(amendmentPriorPath(deps.dataDir, id), liveBytes);
+        const marker: AppliedMarker = {
+          amendmentId: id,
+          personalityId: record.personalityId,
+          priorHash: liveHash,
+          afterHash,
+          at: new Date(now()).toISOString(),
+        };
+        await deps.storage.writeAtomic(
+          amendmentAppliedPath(deps.dataDir, id),
+          `${JSON.stringify(marker, null, 2)}\n`,
+        );
+
+        // 8. Compare-and-swap onto the bytes the proposal was filed against.
+        try {
+          await registry.writeDefinitionBytes(
+            record.personalityId,
+            'toolset.yaml',
+            after.afterBytes,
+            {
+              expectedHash: record.baseHash,
+            },
+          );
+        } catch (err) {
+          if (!(err instanceof DefinitionChangedError)) throw err;
+          return markStale(
+            record,
+            opts.decidedBy,
+            opts.actor,
+            'toolset.yaml changed while applying; nothing was written',
+          );
+        }
+
+        // 9. Record it.
+        const next = await transitionAmendment(
+          deps.storage,
+          deps.dataDir,
+          id,
+          { to: 'applied', actor: opts.actor, decidedBy: opts.decidedBy, appliedHash: afterHash },
+          now,
+        );
+        deps.observability?.recordSafetyApproval({
+          decision: 'approved',
+          severity: 'warn',
+          code: 'amendment.approve',
+          cause: `applied by ${opts.decidedBy}`,
+          details: {
+            amendmentId: id,
+            personalityId: record.personalityId,
+            ops: record.ops,
+            baseHash: record.baseHash,
+            appliedHash: afterHash,
+          },
+        });
+        return { ok: true, record: next };
+      });
+    },
+
+    decline(id, opts) {
+      return locked(async () => {
+        const reason = opts.reason.trim();
+        if (!reason) return { ok: false, code: 'reason_required', reason: 'a reason is required' };
+        const record = await readAmendment(deps.storage, deps.dataDir, id);
+        if (!record) return { ok: false, code: 'not_found', reason: `no amendment ${id}` };
+        if (record.status !== 'pending' && record.status !== 'stale') {
+          return { ok: false, code: 'not_pending', reason: `amendment ${id} is ${record.status}` };
+        }
+        const next = await transitionAmendment(
+          deps.storage,
+          deps.dataDir,
+          id,
+          { to: 'declined', actor: opts.actor, decidedBy: opts.decidedBy, reason },
+          now,
+        );
+        deps.observability?.recordSafetyApproval({
+          decision: 'denied',
+          severity: 'info',
+          code: 'amendment.decline',
+          cause: reason,
+          details: { amendmentId: id, personalityId: record.personalityId, ops: record.ops },
+        });
+        return { ok: true, record: next };
+      });
+    },
+
+    rollback(id, opts) {
+      return locked(async () => {
+        const record = await readAmendment(deps.storage, deps.dataDir, id);
+        if (!record) return { ok: false, code: 'not_found', reason: `no amendment ${id}` };
+        const appliedHash = record.applied?.appliedHash;
+        if (record.status !== 'applied' || !appliedHash) {
+          return { ok: false, code: 'not_applied', reason: `amendment ${id} is ${record.status}` };
+        }
+        const target = await mutableTarget(record);
+        if (!target.ok) return target.result;
+        const { registry, described, path } = target;
+
+        // Only onto the exact bytes this apply wrote — so stacked applies unwind LIFO.
+        const live = await deps.storage.read(path);
+        if (live === null || hashDefinitionBytes(live) !== appliedHash) {
+          return {
+            ok: false,
+            code: 'live_edited',
+            reason:
+              'toolset.yaml changed since this amendment was applied (a later amendment or an ' +
+              'edit); roll that back first',
+          };
+        }
+        // The snapshot lives in the amendment's own directory (by id); its
+        // hash must be the base the proposal was filed against.
+        const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, id));
+        if (prior === null || hashDefinitionBytes(prior) !== record.baseHash) {
+          return {
+            ok: false,
+            code: 'prior_missing',
+            reason: `the prior toolset.yaml snapshot for ${id} is missing or does not match`,
+          };
+        }
+        const constitution = await checkConstitution(
+          deps,
+          described.config,
+          parseToolsetYaml(prior),
+        );
+        if (constitution.kind === 'malformed') {
+          return {
+            ok: false,
+            code: 'constitution_malformed',
+            reason: `the constitution is malformed, so nothing was rolled back (${constitution.error})`,
+          };
+        }
+        if (constitution.kind === 'violation') {
+          return {
+            ok: false,
+            code: 'constitution_violation',
+            reason: `the constitution forbids the prior toolset: ${constitution.reason}`,
+          };
+        }
+        try {
+          await registry.writeDefinitionBytes(record.personalityId, 'toolset.yaml', prior, {
+            expectedHash: appliedHash,
+          });
+        } catch (err) {
+          if (!(err instanceof DefinitionChangedError)) throw err;
+          return {
+            ok: false,
+            code: 'live_edited',
+            reason: 'toolset.yaml changed while rolling back; nothing was written',
+          };
+        }
+        const next = await transitionAmendment(
+          deps.storage,
+          deps.dataDir,
+          id,
+          { to: 'rolled_back', actor: opts.actor, decidedBy: opts.decidedBy },
+          now,
+        );
+        deps.observability?.recordSafetyApproval({
+          decision: 'approved',
+          severity: 'warn',
+          code: 'amendment.rollback',
+          cause: `rolled back by ${opts.decidedBy}`,
+          details: {
+            amendmentId: id,
+            personalityId: record.personalityId,
+            ops: record.ops,
+            restoredHash: record.baseHash,
+          },
+        });
+        return { ok: true, record: next };
+      });
     },
   };
 }

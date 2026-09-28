@@ -47,13 +47,17 @@ export type AmendmentStatus =
 /**
  * Review flags. Never stored: recomputed on every read, because each depends
  * on live state (the registry, the execution posture) rather than on the
- * filing.
+ * filing. `team-workflow` is the permission diff's flag for removing a kanban
+ * closer tool (`KANBAN_CLOSER_TOOLS`, extensions/personalities/src/
+ * permission-surface.ts). Computed by `amendmentFlags`
+ * (packages/wiring/src/amendments.ts).
  */
 export type AmendmentFlag =
   | 'tool-unavailable'
   | 'no-recorded-refusal'
   | 'local-terminal'
-  | 'high-risk';
+  | 'high-risk'
+  | 'team-workflow';
 
 /** A refused tool call in the filing session the personality cites (optional, D26). */
 export interface AmendmentEvidence {
