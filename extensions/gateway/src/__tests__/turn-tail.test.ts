@@ -742,11 +742,12 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
     };
   }
 
-  function gatewayOn(loop: AgentLoop): Gateway {
+  function gatewayOn(loop: AgentLoop, extra: Record<string, unknown> = {}): Gateway {
     return new Gateway({
       bots: [{ botKey: 'bot-a', loop, binding: { type: 'personality', name: 'default' } }],
       clarifySweepIntervalMs: 0,
       clarifyEscalationDelayMs: 0,
+      ...extra,
     });
   }
 
@@ -859,13 +860,14 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
       }),
       hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) },
     };
-    const gw = gatewayOn(loop as unknown as AgentLoop);
+    // `dedupWindow: 0` turns inbound dedup off, so the same message runs twice.
+    const gw = gatewayOn(loop as unknown as AgentLoop, { dedupWindow: 0 });
     const out = recordingAdapter();
 
-    // No message ids: the reply key is the content-only fallback
-    // (`replyDedupScope`), so the second identical final is suppressed.
-    await gw.handleMessage(msg('one', { messageId: undefined }), out.adapter);
-    const second = gw.handleMessage(msg('two', { messageId: undefined }), out.adapter);
+    // The SAME inbound message answered twice: the reply key is scoped to it
+    // (`replyDedupScope`, UBP-014), so the second identical final is suppressed.
+    await gw.handleMessage(msg('one', { messageId: 'm-same' }), out.adapter);
+    const second = gw.handleMessage(msg('one', { messageId: 'm-same' }), out.adapter);
     await waitUntil(() => calls === 2 && gates.length === 1);
 
     await gw.shutdown({ notify: 'RESEND', drainTimeoutMs: 50 });

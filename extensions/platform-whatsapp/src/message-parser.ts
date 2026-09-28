@@ -13,6 +13,9 @@ export interface RawWhatsAppMessage {
     remoteJidAlt?: string;
     /** Baileys 7: the same alternate for a group message's `participant`. */
     participantAlt?: string;
+    /** Baileys 7: the server-assigned id of a newsletter message
+     *  (`decodeMessageNode`, lib/Utils/decode-wa-message.js). */
+    server_id?: string;
   };
   pushName?: string;
   message?: {
@@ -144,7 +147,10 @@ export function parseInboundMessage(
     replyToId: contextInfo?.stanzaId ?? undefined,
     isDm,
     isGroupMention,
-    messageId: msg.key.id ?? undefined,
+    // The gateway keys inbound dedup, the spool and reply dedup on this
+    // (UBP-014), so any stable id Baileys gives is used: the stanza id, else a
+    // newsletter's `server_id`. An empty string is no id.
+    messageId: msg.key.id || msg.key.server_id || undefined,
     sentAt: resolveSentAt(msg.messageTimestamp),
     botKey,
     raw: msg,

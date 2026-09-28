@@ -524,15 +524,18 @@ function laneKeyOf(
  * The dedup scope of a reply (UBP-014, ARCHITECTURE.md §V S3 as amended
  * 2026-09-28): the inbound message it answers — its spool row id when spooled
  * (the same id the ledger stamps as `inboundRef`, so a redelivery re-arms the
- * same key), else the platform message id. A message with neither falls back
- * to the content-only key, as before the amendment.
+ * same key), else the platform message id, else `localId`: the id the gateway
+ * assigned this message object (`Gateway.localInboundId`), so a message with
+ * neither still gets its own key instead of the content-only one. Pinned by
+ * 'a message with no spool row and no platform id' in
+ * __tests__/dedup-reply-scope.test.ts.
  */
 function replyDedupScope(
   spoolId: string | undefined,
   message: InboundMessage,
-): DedupScope | undefined {
-  const inboundId = spoolId ?? message.messageId;
-  return inboundId ? { inboundId } : undefined;
+  localId: string,
+): DedupScope {
+  return { inboundId: spoolId ?? message.messageId ?? localId };
 }
 
 /**
@@ -1744,6 +1747,14 @@ export class Gateway {
   private readonly interruptedLanes = new Set<string>();
   /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
   private readonly outboundDedup: MessageDedupCache;
+  /**
+   * UBP-014 — the gateway-assigned inbound id of a message that has neither a
+   * spool row nor a platform `messageId` (`replyDedupScope`). Keyed on the
+   * message object, so the hook-claim path and the turn path of one message
+   * read the same id; a new message object is a new inbound message.
+   */
+  private readonly localInboundIds = new WeakMap<InboundMessage, string>();
+  private localInboundSeq = 0;
   /** `sendThrough` sends in flight, by target + body: a concurrent identical
    *  send awaits the first one's outcome instead of reporting success for a
    *  send that may yet fail (V-GC-1). */
@@ -4093,7 +4104,11 @@ export class Gateway {
           // gate, then the ledger-wrapped adapter send.
           const claimSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
           if (
-            this.outboundDedup.shouldSend(claimSessionKey, reply, replyDedupScope(spoolId, message))
+            this.outboundDedup.shouldSend(
+              claimSessionKey,
+              reply,
+              replyDedupScope(spoolId, message, this.localInboundId(message)),
+            )
           ) {
             const claimDelivered = await this.sendTracked(
               {
@@ -5417,7 +5432,7 @@ export class Gateway {
     // UBP-014 — the reply paths below dedup per inbound message (ARCHITECTURE.md
     // §V S3 as amended 2026-09-28): an identical answer to a DIFFERENT message
     // still sends. See `replyDedupScope`.
-    const replyScope = replyDedupScope(inboundRef, message);
+    const replyScope = replyDedupScope(inboundRef, message, this.localInboundId(message));
     this.lastInboundHadAudio.set(laneKey, hasAudioAttachments(message.attachments));
     // Refresh every loop registry from disk before resolving which personality
     // this turn runs as, so a hot-dropped or edited directory takes effect on
@@ -5592,7 +5607,7 @@ export class Gateway {
               threadId,
               sessionKey,
               dedup: this.outboundDedup,
-              ...(replyScope?.inboundId ? { inboundId: replyScope.inboundId } : {}),
+              inboundId: replyScope.inboundId,
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
               minEditIntervalMs: this.streamingEditIntervalMs,
               onFloodDisable: () => {
@@ -5781,8 +5796,10 @@ export class Gateway {
             );
             if (noted) markAnswered();
           } else {
-            // Suppressed by the dedup cache: this exact note already reached
-            // the lane inside the TTL. See the same branch on the answer path.
+            // Suppressed by the dedup cache: this exact note already answered
+            // THIS inbound message inside the TTL (the key is scoped to it,
+            // UBP-014), so the chat has it. See the same branch on the answer
+            // path.
             markAnswered();
           }
         } else if (responseText) {
@@ -7440,6 +7457,18 @@ export class Gateway {
    */
   async sweepPendingDeliveries(): Promise<{ redelivered: number; failed: number }> {
     return this.runDeliverySweep(0);
+  }
+
+  /** The id `replyDedupScope` falls back to for a message with no spool row
+   *  and no platform id: `gw-local:<n>`, assigned once per message object. */
+  private localInboundId(message: InboundMessage): string {
+    let id = this.localInboundIds.get(message);
+    if (id === undefined) {
+      this.localInboundSeq += 1;
+      id = `gw-local:${this.localInboundSeq}`;
+      this.localInboundIds.set(message, id);
+    }
+    return id;
   }
 
   /** UBP-020 — a turn ended with no reply text; the user got a notice instead. */
