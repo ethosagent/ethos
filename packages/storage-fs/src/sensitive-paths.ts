@@ -102,9 +102,13 @@ export function sensitiveDenyPaths(extraStateDirs: readonly string[] = []): stri
 export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
 /**
- * The key every DENY-side path comparison uses (UBP-008): this manifest's
- * floor in `ScopedStorage`, its write-deny list and state-dir exclusion, the
- * tools-file write blocklists and the terminal/process argv floors. On a
+ * A platform-conditional deny key (UBP-008), used by the terminal and process
+ * argv floors (`extensions/tools-terminal/src/guard.ts`,
+ * `extensions/tools-process/src/guard.ts`) and by the `write_file` pre-check's
+ * second probe of the definition floor (`isPersonalityDefinitionPath`,
+ * `extensions/tools-file/src/index.ts`). `ScopedStorage` does not use it: its
+ * deny lists and state-dir exclusion compare `foldForDeny` keys, which fold
+ * case on every platform (post-merge round I3). On a
  * case-insensitive filesystem two spellings that differ only in case name one
  * file, so a deny entry must match every spelling. A full case fold (not
  * `toLowerCase` alone) so characters that case-FOLD onto ASCII — U+017F long
@@ -115,9 +119,10 @@ export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.plat
  * lowercasing first reaches `ß`, whose uppercase is `SS`. On macOS the key
  * also drops leading `/System/Volumes/Data`, `/.nofollow` and `/.resolve/<n>`
  * components ({@link VOLUME_ALIAS_PREFIX}, V-ES-3, V2-SEC-1), so an alias
- * spelling of a denied path or of the state dir is the same key;
- * `/.vol/<dev>/<inode>` is refused outright ({@link isOpaqueVolumeAlias}).
- * Folding more than the filesystem does only over-denies.
+ * spelling of a denied path or of the state dir is the same key. Every deny
+ * refuses a `/.vol` or `/.resolve` path outright, whatever this key says
+ * (`isUnmappablePathAlias`, @ethosagent/types). Folding more than the
+ * filesystem does only over-denies.
  * Allow-side matches stay exact, so a case variant of an allowed path is
  * refused rather than widened.
  *
@@ -174,21 +179,6 @@ function stripVolumeAliases(key: string): string {
 }
 
 /**
- * True when `path` goes through macOS `/.vol/<dev>/<inode>` (V2-SEC-1), which
- * opens a file by device and inode number. No string fold can say which file
- * that is, so every deny-direction check refuses it outright:
- * `ScopedFsImpl.hitsDenyFloor` (`packages/core/src/scoped/scoped-fs.ts`),
- * `ScopedStorage.hitsDenyFloor` (`packages/storage-fs/src/scoped-storage.ts`)
- * and `isWriteBlocked` (`extensions/tools-file/src/index.ts`).
- */
-export function isOpaqueVolumeAlias(
-  path: string,
-  volumeAliases: boolean = DATA_VOLUME_FIRMLINK,
-): boolean {
-  return volumeAliases && /^\/\.vol(?:\/|$)/i.test(stripVolumeAliases(path));
-}
-
-/**
  * Every directory Ethos keeps its state in: `~/.ethos`, plus the
  * `ETHOS_STATE_DIR` override when one is set (the same override `ethosDir()`
  * in `@ethosagent/config` honours — this package sits below config in the
@@ -208,6 +198,9 @@ export function isOpaqueVolumeAlias(
  * hand `createAgentLoop` a data directory that is neither `~/.ethos` nor
  * `ETHOS_STATE_DIR` — the desktop app's custom data folder — and a floor
  * computed from the environment alone would leave that directory unguarded.
+ * `ScopedStorage` judges its state-dir exclusion over the same set (its
+ * scope's `stateDirs`), and `ScopedFsImpl` keeps a mirror fed by
+ * `CapabilityBackends.stateDirs` (post-merge round I1).
  * Every wiring construction of the floors passes it
  * (`packages/wiring/src/build-infrastructure.ts`, `build-agent-loop.ts`,
  * `memory-backend.ts`); pinned by the custom-dataDir cases in

@@ -3,18 +3,15 @@
 // `/`) does not reach into it, and a default cwd AT the state dir is dropped.
 // Mirror of packages/storage-fs/src/__tests__/scoped-storage-casefold-statedir.test.ts.
 
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { isUnmappablePathAlias } from '@ethosagent/types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveFsReachPaths, personalityWriteDeny } from '../fs-reach';
-import {
-  CASE_INSENSITIVE_FS,
-  foldDenyKey,
-  isOpaqueVolumeAlias,
-  ScopedFsImpl,
-} from '../scoped/scoped-fs';
+import { withRunTaint } from '../scoped/run-taint';
+import { CASE_INSENSITIVE_FS, foldDenyKey, ScopedFsImpl } from '../scoped/scoped-fs';
 
 describe('foldDenyKey (UBP-008)', () => {
   it('folds case, including characters whose lowercase alone would miss', () => {
@@ -75,12 +72,13 @@ describe('foldDenyKey (UBP-008)', () => {
     expect(foldDenyKey('/.nofollow/a', false, false)).toBe('/.nofollow/a');
   });
 
+  // The boundary's refusal of an inode alias is `isUnmappablePathAlias`
+  // (@ethosagent/types, applied by `matchesAny`), on every platform.
   it('names /.vol/<dev>/<inode> as an alias a string cannot resolve', () => {
-    expect(isOpaqueVolumeAlias('/.vol/16777232/2', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.VOL', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.nofollow/.vol/1/2', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.volume/x', true)).toBe(false);
-    expect(isOpaqueVolumeAlias('/.vol/1/2', false)).toBe(false);
+    expect(isUnmappablePathAlias('/.vol/16777232/2')).toBe(true);
+    expect(isUnmappablePathAlias('/.VOL')).toBe(true);
+    expect(isUnmappablePathAlias('/.nofollow/.vol/1/2')).toBe(true);
+    expect(isUnmappablePathAlias('/.volume/x')).toBe(false);
   });
 });
 
@@ -276,5 +274,126 @@ describe('state dir under an ancestor grant (UBP-047)', () => {
     await expect(fs.read(join(state, 'personalities', 'therapist', 'MEMORY.md'))).resolves.toBe(
       'private',
     );
+  });
+});
+
+// Post-merge round I — the state dirs layer 2b and 1d judge include the
+// injected ones (I1), the exclusion holds on the real target (I2), and both
+// fold case whatever the platform (I3).
+describe('state-dir exclusion — injected dirs, real target, platform (post-merge round I)', () => {
+  let root: string;
+  let dataDir: string;
+  const saved = { HOME: process.env.HOME, ETHOS_STATE_DIR: process.env.ETHOS_STATE_DIR };
+  const tainted = { state: { untrustedSeen: true }, open: true, mark: () => {} };
+
+  beforeEach(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), 'ethos-statedir-i-')));
+    dataDir = join(root, 'desktop-data');
+    await mkdir(join(dataDir, 'personalities', 'therapist'), { recursive: true });
+    await writeFile(join(dataDir, 'personalities', 'therapist', 'MEMORY.md'), 'private');
+    await mkdir(join(root, 'project'), { recursive: true });
+    await writeFile(join(root, 'project', 'a.txt'), 'work');
+    // Neither `~/.ethos` nor ETHOS_STATE_DIR names the data dir.
+    process.env.HOME = join(root, 'home');
+    delete process.env.ETHOS_STATE_DIR;
+  });
+
+  afterEach(async () => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const other = () => join(dataDir, 'personalities', 'therapist', 'MEMORY.md');
+  const fsFor = (reach: string[], stateDirs: string[] = [dataDir]) =>
+    new ScopedFsImpl(
+      new FsStorage(),
+      new Set(reach),
+      new Set(reach),
+      [],
+      [],
+      undefined,
+      undefined,
+      stateDirs,
+    );
+
+  it('I1: an ancestor grant does not reach into an injected, wiring-only state dir', async () => {
+    await expect(fsFor([root]).read(other())).rejects.toThrow(/^PATH_NOT_REACHABLE:/);
+    await expect(fsFor([root]).read(join(root, 'project', 'a.txt'))).resolves.toBe('work');
+    // Control: without the injection the environment does not know the dir.
+    await expect(fsFor([root], []).read(other())).resolves.toBe('private');
+  });
+
+  it('I1: a tainted run cannot write into an injected state dir, even when granted', async () => {
+    const fs = fsFor([`${dataDir}/`, join(root, 'project')]);
+    const target = join(dataDir, 'personalities', 'therapist', 'notes.md');
+    await expect(withRunTaint(tainted, () => fs.write(target, 'x'))).rejects.toThrow(
+      /untrusted content/,
+    );
+    await expect(
+      withRunTaint(tainted, () => fs.write(join(root, 'project', 'b.txt'), 'x')),
+    ).resolves.toBeUndefined();
+  });
+
+  it('I2: a granted symlink to an ancestor of a state dir does not reach into it', async () => {
+    await mkdir(join(root, 'x'), { recursive: true });
+    await symlink(root, join(root, 'x', 'link'));
+    const link = join(root, 'x', 'link');
+    const fs = fsFor([link]);
+    const through = join(link, 'desktop-data', 'personalities', 'therapist', 'MEMORY.md');
+    await expect(fs.read(through)).rejects.toThrow(/^PATH_NOT_REACHABLE:.*state dir/);
+    await expect(fs.write(through, 'x')).rejects.toThrow(/^PATH_NOT_REACHABLE:/);
+    expect(await readFile(other(), 'utf8')).toBe('private');
+    await expect(fs.read(join(link, 'project', 'a.txt'))).resolves.toBe('work');
+    // A grant whose realpath is AT the state dir is honoured through the link.
+    await symlink(dataDir, join(root, 'x', 'data-link'));
+    await expect(
+      fsFor([join(root, 'x', 'data-link')]).read(
+        join(root, 'x', 'data-link', 'personalities', 'therapist', 'MEMORY.md'),
+      ),
+    ).resolves.toBe('private');
+  });
+
+  describe('I3: on a case-sensitive platform', () => {
+    const platform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      vi.resetModules();
+    });
+
+    it('2b and the tainted write still refuse a case variant of the state dir', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      vi.resetModules();
+      const mod = await import('../scoped/scoped-fs');
+      const taint = await import('../scoped/run-taint');
+      expect(mod.CASE_INSENSITIVE_FS).toBe(false);
+      const variant = join(root, 'DESKTOP-DATA', 'personalities', 'therapist', 'MEMORY.md');
+      const ancestor = new mod.ScopedFsImpl(
+        new FsStorage(),
+        new Set([root]),
+        new Set([root]),
+        [],
+        [],
+        undefined,
+        undefined,
+        [dataDir],
+      );
+      await expect(ancestor.read(variant)).rejects.toThrow(/^PATH_NOT_REACHABLE:/);
+      const granted = new mod.ScopedFsImpl(
+        new FsStorage(),
+        new Set([`${join(root, 'DESKTOP-DATA')}/`]),
+        new Set([`${join(root, 'DESKTOP-DATA')}/`]),
+        [],
+        [],
+        undefined,
+        undefined,
+        [dataDir],
+      );
+      await expect(taint.withRunTaint(tainted, () => granted.write(variant, 'x'))).rejects.toThrow(
+        /untrusted content/,
+      );
+    });
   });
 });

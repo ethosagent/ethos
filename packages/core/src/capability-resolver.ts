@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import type { NetworkPolicy } from '@ethosagent/safety-network';
 import {
   type DefinitionWriteFloor,
@@ -58,6 +58,15 @@ export interface CapabilityBackends {
    */
   definitionWriteFloor?: DefinitionWriteFloor;
   /**
+   * Ethos state dirs beside `~/.ethos` and `ETHOS_STATE_DIR` — wiring passes
+   * its `dataDir`, which a host can set to neither (post-merge round I1).
+   * Handed to EVERY `ScopedFsImpl` built here, whose state-dir exclusion
+   * (layer 2b) and tainted state-dir write refusal (1d) judge them beside the
+   * environment's — the same set `ScopedStorage` judges through its scope's
+   * `stateDirs`. Absent → the environment's dirs only.
+   */
+  stateDirs?: readonly string[];
+  /**
    * Resolves the full network policy of the personality running the turn. The
    * `allow` list is intersected with each tool's declared `allowedHosts`;
    * `deny` and `allow_private_urls` plus the always-on safety floor
@@ -91,6 +100,13 @@ export interface CapabilityBackends {
    */
   privateMemoryRoots?: PrivateMemoryRoots;
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
+  /**
+   * The directory `attachmentCache` keeps its files in (`<root>/<session>/<message>/`,
+   * `FsAttachmentCache`). A shared call's deny exempts only attachment
+   * directories exactly that depth below it (`exemptAttachmentReads`; post-merge
+   * round I4). Absent → no exemption.
+   */
+  attachmentCacheRoot?: string;
   inboundAttachments?: import('@ethosagent/types').Attachment[];
 }
 
@@ -218,6 +234,7 @@ export function resolveCapabilities(
       personalityWriteDeny(),
       sharedDeny,
       definitionFloor,
+      backends.stateDirs,
     );
   }
 
@@ -249,7 +266,11 @@ export function resolveCapabilities(
       // gateway caches attachments at `<state>/cache/attachments/` — so the
       // rebuilt `scopedFs` exempts exactly THIS turn's attachment directories
       // from it, for reading (verification round G1).
-      const attachmentDeny = exemptAttachmentReads(sharedDeny, attachmentDirs);
+      const attachmentDeny = exemptAttachmentReads(
+        sharedDeny,
+        attachmentDirs,
+        backends.attachmentCacheRoot,
+      );
       if (result.scopedFs && backends.storage) {
         // Reconstruct with merged read paths
         const readDecl = capabilities.fs_reach?.read;
@@ -267,6 +288,7 @@ export function resolveCapabilities(
           personalityWriteDeny(),
           attachmentDeny,
           definitionFloor,
+          backends.stateDirs,
         );
       } else if (!result.scopedFs && backends.storage) {
         // No fs_reach declared but attachments present — create read-only ScopedFs
@@ -278,6 +300,7 @@ export function resolveCapabilities(
           personalityWriteDeny(),
           attachmentDeny,
           definitionFloor,
+          backends.stateDirs,
         );
       }
     }
@@ -295,15 +318,26 @@ export function resolveCapabilities(
  * — never case-folded, since this widens what is reachable. Writes, subtree
  * checks and every other path still go to `deny`; a symlink inside the folder
  * is judged on where it lands. Undefined `deny` (a private call) stays
- * undefined. Pinned by the G1 cases in
+ * undefined. Only a directory exactly `<session>/<message>` below
+ * `cacheRoot` is exempted — never the cache root or a session folder, which
+ * would hold other conversations' files (post-merge round I4); no `cacheRoot`
+ * → nothing is. Pinned by the G1 and I4 cases in
  * `packages/core/src/__tests__/shared-audience.test.ts`.
  */
 function exemptAttachmentReads(
   deny: PrivatePathDeny | undefined,
   dirs: ReadonlySet<string>,
+  cacheRoot: string | undefined,
 ): PrivatePathDeny | undefined {
   if (!deny) return undefined;
-  const roots = withRealPaths([...dirs].map((d) => resolve(d)));
+  const perMessage = [...dirs]
+    .map((d) => resolve(d))
+    .filter((d) => {
+      if (cacheRoot === undefined) return false;
+      const parts = relative(resolve(cacheRoot), d).split(sep);
+      return parts.length === 2 && parts.every((p) => p !== '' && p !== '..');
+    });
+  const roots = withRealPaths(perMessage);
   return (absPath, op, kind) => {
     if (op === 'access' && kind === 'read') {
       const path = resolve(absPath);

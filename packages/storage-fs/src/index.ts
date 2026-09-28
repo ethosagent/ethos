@@ -24,7 +24,6 @@ export {
   CASE_INSENSITIVE_FS,
   ethosStateDirs,
   foldDenyKey,
-  isOpaqueVolumeAlias,
   personalityDefinitionFloor,
   realPathOfLongestExistingAncestor,
   sensitiveDenyPaths,

@@ -37,7 +37,7 @@ const SHARED_DENY_WHY =
 export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
 /**
- * The key every DENY-side comparison uses (UBP-008). On a case-insensitive
+ * A platform-conditional deny key (UBP-008). On a case-insensitive
  * filesystem two spellings that differ only in case name one file, so a deny
  * entry must match every spelling. A full case fold (not `toLowerCase` alone)
  * so characters that case-FOLD onto ASCII — U+017F long s, U+212A Kelvin sign
@@ -48,13 +48,17 @@ export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.plat
  * uppercase is `SS`. On macOS the key also drops leading
  * `/System/Volumes/Data`, `/.nofollow` and `/.resolve/<n>` components
  * ({@link VOLUME_ALIAS_PREFIX}, V-ES-3, V2-SEC-1), so an alias spelling of a
- * denied path or of the state dir is the same key; `/.vol/<dev>/<inode>` is
- * refused outright ({@link isOpaqueVolumeAlias}).
+ * denied path or of the state dir is the same key. Every deny refuses a
+ * `/.vol` or `/.resolve` path outright, whatever this key says
+ * (`isUnmappablePathAlias`, @ethosagent/types).
  * Folding more than the filesystem does only over-denies.
  *
- * Only deny-direction checks fold: the always-deny floor, the write-deny list
- * and the state-dir exclusion. Allow prefixes stay exact, so a case variant of
- * an allowed path is refused rather than widened.
+ * Its one consumer in core is the default-reach cwd drop (`within` in
+ * ../fs-reach.ts). The boundary checks in this file — the deny lists, the
+ * state-dir exclusion (layer 2b) and the tainted state-dir write (1d) — use
+ * `foldForDeny` instead, which folds case on every platform (post-merge round
+ * I3). Allow prefixes stay exact, so a case variant of an allowed path is
+ * refused rather than widened.
  *
  * Mirror of `foldDenyKey` in `packages/storage-fs/src/sensitive-paths.ts` —
  * core cannot import storage-fs at runtime; the two change together. Pinned
@@ -109,33 +113,22 @@ function stripVolumeAliases(key: string): string {
 }
 
 /**
- * True when `path` goes through macOS `/.vol/<dev>/<inode>` (V2-SEC-1), which
- * opens a file by device and inode number. No string fold can say which file
- * that is, so every deny-direction check refuses it outright:
- * `ScopedFsImpl.hitsDenyFloor` (`packages/core/src/scoped/scoped-fs.ts`),
- * `ScopedStorage.hitsDenyFloor` (`packages/storage-fs/src/scoped-storage.ts`)
- * and `isWriteBlocked` (`extensions/tools-file/src/index.ts`).
+ * Every directory Ethos keeps its state in: `~/.ethos`, `ETHOS_STATE_DIR` when
+ * set (both read per call), and `extra` — the state dirs wiring knows that the
+ * environment does not (its `dataDir`, injected as `ScopedFsImpl`'s eighth
+ * argument from `CapabilityBackends.stateDirs`; post-merge round I1). Each in
+ * its lexical form and its realpath ({@link withRealPaths}, verification round
+ * A2) so a symlinked state dir is excluded (layer 2b) and taint-guarded under
+ * its real name too. Mirror of `ethosStateDirs` in
+ * `packages/storage-fs/src/sensitive-paths.ts` (core cannot import it).
  */
-export function isOpaqueVolumeAlias(
-  path: string,
-  volumeAliases: boolean = DATA_VOLUME_FIRMLINK,
-): boolean {
-  return volumeAliases && /^\/\.vol(?:\/|$)/i.test(stripVolumeAliases(path));
-}
-
-/**
- * Every directory Ethos keeps its state in: `~/.ethos` plus `ETHOS_STATE_DIR`
- * when set, read per call, each in its lexical form and its realpath
- * ({@link withRealPaths}, verification round A2) so a symlinked state dir is
- * excluded (layer 2b) and taint-guarded under its real name too. Copy of
- * `ethosStateDirs` in `packages/storage-fs/src/sensitive-paths.ts` (core
- * cannot import it); a wiring-only `dataDir` reaches core through the injected
- * `definitionWriteFloor`, not here.
- */
-function ethosStateDirs(): string[] {
+function ethosStateDirs(extra: readonly string[] = []): string[] {
   const dirs = [join(homedir(), '.ethos')];
   const override = process.env.ETHOS_STATE_DIR;
-  if (override && resolve(override) !== dirs[0]) dirs.push(resolve(override));
+  for (const dir of override ? [override, ...extra] : extra) {
+    const abs = resolve(dir);
+    if (!dirs.includes(abs)) dirs.push(abs);
+  }
   return withRealPaths(dirs);
 }
 
@@ -206,16 +199,23 @@ function ethosStateDirs(): string[] {
  *     be granted by a prefix at or below the state dir (`ownDir`, `skills/`,
  *     or an explicit `${ETHOS_HOME}/`). Otherwise the cwd would hand every
  *     personality the others' `MEMORY.md`/`USER.md` and every unlisted store.
- *     Mirror of the same rule in `ScopedStorage` — the two change together.
+ *     Layer 4 applies it again on the real target, comparing each prefix by
+ *     its realpath ({@link reachesStateDirThroughLink}), so a granted prefix
+ *     that is a symlink to an ancestor of a state dir does not reach into it
+ *     either (post-merge round I2). Mirror of the same rule in
+ *     `ScopedStorage` — the two change together.
  *
  *  1d. **Tainted state-dir write** (V2-SEC-2 b) — once the run has read
  *     untrusted content, a write into an Ethos state dir outside a
  *     personality's `files/` is refused ({@link writesEthosState}), on the
  *     lexical path and on the real target (layer 4).
  *
- * The state-dir exclusion and the tainted-write check compare
- * {@link foldDenyKey} keys (UBP-008); layers 1 and 1b compare `foldForDeny`
- * keys, which fold on every platform. Both only ever refuse more.
+ * The state dirs 2b and 1d judge are `~/.ethos`, `ETHOS_STATE_DIR` and the
+ * injected `stateDirs` (wiring's `dataDir`), with their realpaths
+ * ({@link ethosStateDirs}; post-merge round I1). Every deny-direction
+ * comparison here — layers 1, 1b, 2b and 1d — uses `foldForDeny` keys, which
+ * fold case on every platform (post-merge round I3). Folding only ever
+ * refuses more.
  *
  * This closes **misdirection**, not **TOCTOU**: an attacker who can swap a
  * path between this walk and the subsequent open still wins, and closing
@@ -237,6 +237,7 @@ export class ScopedFsImpl implements ScopedFs {
     writeDenyPaths: string[] = [],
     private readonly denyWhen?: PrivatePathDeny,
     private readonly definitionWriteFloor?: DefinitionWriteFloor,
+    private readonly extraStateDirs: readonly string[] = [],
   ) {
     this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
     this.writeDenyPaths = writeDenyPaths.map((p) => normalize(resolve(p)));
@@ -288,6 +289,7 @@ export class ScopedFsImpl implements ScopedFs {
 
   private checkReach(path: string, allowed: Set<string>, kind: string): void {
     const canonical = normalize(resolve(path));
+    const stateDirs = ethosStateDirs(this.extraStateDirs);
 
     // NB: the literal `PATH_NOT_REACHABLE:` prefix below is the contract
     // tools-file's `isReachError` consumer matches against. Do not change
@@ -306,13 +308,13 @@ export class ScopedFsImpl implements ScopedFs {
     if (this.hitsDenyWhen(canonical, kind)) {
       throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" refused — ${SHARED_DENY_WHY}`);
     }
-    if (this.hitsTaintedStateWrite(canonical, kind)) {
+    if (this.hitsTaintedStateWrite(canonical, kind, stateDirs)) {
       throw new Error(
         `PATH_NOT_REACHABLE: write of "${path}" refused — this run read untrusted content, and the Ethos state dir holds what later prompts read`,
       );
     }
 
-    let prefix = matchAllowedPrefix(canonical, allowed);
+    let prefix = matchAllowedPrefix(canonical, allowed, stateDirs);
     if (prefix === null) {
       throw new Error(`PATH_NOT_REACHABLE: ${kind} not permitted for ${path}`);
     }
@@ -330,10 +332,10 @@ export class ScopedFsImpl implements ScopedFs {
     for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
       const next = followFirstSymlink(prefix, current);
       if (next === null) {
-        this.checkRealTarget(canonical, path, kind);
+        this.checkRealTarget(canonical, path, kind, allowed, stateDirs);
         return;
       }
-      const nextPrefix = matchAllowedPrefix(next, allowed);
+      const nextPrefix = matchAllowedPrefix(next, allowed, stateDirs);
       if (nextPrefix === null || this.hitsDenyFloor(next)) {
         throw new Error(
           `PATH_NOT_REACHABLE: ${kind} of "${path}" resolves outside the allowlist through a symbolic link`,
@@ -360,10 +362,17 @@ export class ScopedFsImpl implements ScopedFs {
 
   /**
    * Layer 4 — the deny layers on where the path really lands, run once the
-   * symlink walk has nothing more to follow. Mirror of
+   * symlink walk has nothing more to follow, and the state-dir exclusion on
+   * the real target ({@link reachesStateDirThroughLink}). Mirror of
    * `ScopedStorage.checkRealTarget` (packages/storage-fs/src/scoped-storage.ts).
    */
-  private checkRealTarget(canonical: string, path: string, kind: string): void {
+  private checkRealTarget(
+    canonical: string,
+    path: string,
+    kind: string,
+    allowed: Set<string>,
+    stateDirs: readonly string[],
+  ): void {
     const real = realPathOfLongestExistingAncestor(canonical);
     if (real === null) {
       throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" cannot be resolved to a real path`);
@@ -380,16 +389,25 @@ export class ScopedFsImpl implements ScopedFs {
     if (this.hitsDenyWhen(real, kind)) {
       throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" refused — ${SHARED_DENY_WHY}`);
     }
-    if (this.hitsTaintedStateWrite(real, kind)) {
+    if (this.hitsTaintedStateWrite(real, kind, stateDirs)) {
       throw new Error(
         `PATH_NOT_REACHABLE: write of "${path}" refused — this run read untrusted content, and the Ethos state dir holds what later prompts read`,
+      );
+    }
+    if (reachesStateDirThroughLink(real, allowed, stateDirs)) {
+      throw new Error(
+        `PATH_NOT_REACHABLE: ${kind} of "${path}" resolves into an Ethos state dir no grant at or below it covers`,
       );
     }
   }
 
   /** Layer 1d — a write into the state dir after the run read untrusted content. */
-  private hitsTaintedStateWrite(canonical: string, kind: string): boolean {
-    return kind === 'write' && runIsTainted() && writesEthosState(canonical);
+  private hitsTaintedStateWrite(
+    canonical: string,
+    kind: string,
+    stateDirs: readonly string[],
+  ): boolean {
+    return kind === 'write' && runIsTainted() && writesEthosState(canonical, stateDirs);
   }
 
   /** A `kind` other than `'read'` is judged as a write (fail closed). */
@@ -418,13 +436,16 @@ export class ScopedFsImpl implements ScopedFs {
  * the memory provider writes them), team memory, skills, a new personality's
  * `SOUL.md`, cron's `jobs.json` — so once the run has read untrusted content
  * (`runIsTainted`, ./run-taint.ts) `checkReach` refuses it for the rest of the
- * run, the same promise the memory writers keep. Compared as deny keys.
- * Pinned by `../__tests__/downgrade-derived-runs.test.ts`.
+ * run, the same promise the memory writers keep. `stateDirs` is
+ * {@link ethosStateDirs} with the injected dirs (post-merge round I1);
+ * compared as `foldForDeny` keys (I3). Pinned by
+ * `../__tests__/downgrade-derived-runs.test.ts` and, for a wiring-only data
+ * dir, `packages/wiring/src/__tests__/custom-datadir-floor.test.ts`.
  */
-function writesEthosState(canonical: string): boolean {
-  const key = foldDenyKey(canonical);
-  return ethosStateDirs().some((dir) => {
-    const root = foldDenyKey(normalize(resolve(dir)));
+function writesEthosState(canonical: string, stateDirs: readonly string[]): boolean {
+  const key = foldForDeny(canonical);
+  return stateDirs.some((dir) => {
+    const root = foldForDeny(normalize(resolve(dir)));
     if (!within(root, key)) return false;
     const [top, , sub] = key.slice(root.length + 1).split('/');
     return !(top === 'personalities' && sub === 'files');
@@ -509,18 +530,23 @@ export function withRealPaths(dirs: readonly string[]): string[] {
  * The canonical form of the first allowed prefix containing `canonical`, or
  * null when no prefix does. Purely lexical — no filesystem access. A prefix
  * that would reach into an Ethos state dir only as its ancestor is skipped
- * (layer 2b, {@link shadowsStateDir}).
+ * (layer 2b, {@link shadowsStateDir}) — `stateDirs` is {@link ethosStateDirs}
+ * with the injected dirs.
  */
-function matchAllowedPrefix(canonical: string, allowed: Iterable<string>): string | null {
-  const stateDirKeys = ethosStateDirs().map((d) => foldDenyKey(normalize(resolve(d))));
-  const pathKey = foldDenyKey(canonical);
+function matchAllowedPrefix(
+  canonical: string,
+  allowed: Iterable<string>,
+  stateDirs: readonly string[],
+): string | null {
+  const stateDirKeys = stateDirs.map((d) => foldForDeny(normalize(resolve(d))));
+  const pathKey = foldForDeny(canonical);
   for (const prefix of allowed) {
     const canonicalPrefix = normalize(resolve(prefix));
     if (
       canonical === canonicalPrefix ||
       canonical.startsWith(canonicalPrefix.endsWith('/') ? canonicalPrefix : `${canonicalPrefix}/`)
     ) {
-      if (shadowsStateDir(foldDenyKey(canonicalPrefix), pathKey, stateDirKeys)) continue;
+      if (shadowsStateDir(foldForDeny(canonicalPrefix), pathKey, stateDirKeys)) continue;
       return canonicalPrefix;
     }
   }
@@ -535,11 +561,40 @@ function within(root: string, path: string): boolean {
 /**
  * Layer 2b (UBP-047): true when `prefixKey` covers `pathKey` only because it is
  * a strict ancestor of a state dir that holds the path. All three are
- * {@link foldDenyKey} keys — this is a deny-direction test.
+ * `foldForDeny` keys — this is a deny-direction test.
  */
 function shadowsStateDir(prefixKey: string, pathKey: string, stateDirKeys: string[]): boolean {
   return stateDirKeys.some(
     (dir) => within(dir, pathKey) && within(prefixKey, dir) && prefixKey !== dir,
+  );
+}
+
+/**
+ * Layer 2b on the real target (post-merge round I2): true when `real` — the
+ * realpath of the accessed path — lies in a state dir that no `allowed` prefix
+ * at or below that state dir covers, each prefix compared by ITS realpath.
+ * Layer 2b alone judges the lexical grant, so a granted `/x/link` → `$HOME`
+ * passed it for `/x/link/.ethos/…`. `foldForDeny` keys; deny-direction only.
+ * Mirror of `reachesStateDirThroughLink` in
+ * `packages/storage-fs/src/scoped-storage.ts`. Pinned by the I2 case in
+ * `../__tests__/scoped-fs-casefold-statedir.test.ts`.
+ */
+function reachesStateDirThroughLink(
+  real: string,
+  allowed: Iterable<string>,
+  stateDirs: readonly string[],
+): boolean {
+  const realKey = foldForDeny(real);
+  const holding = stateDirs
+    .map((d) => foldForDeny(normalize(resolve(d))))
+    .filter((dir) => within(dir, realKey));
+  if (holding.length === 0) return false;
+  const prefixKeys = [...allowed].map((p) => {
+    const canonicalPrefix = normalize(resolve(p));
+    return foldForDeny(realPathOfLongestExistingAncestor(canonicalPrefix) ?? canonicalPrefix);
+  });
+  return holding.some(
+    (dir) => !prefixKeys.some((prefix) => within(dir, prefix) && within(prefix, realKey)),
   );
 }
 

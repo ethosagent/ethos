@@ -497,6 +497,7 @@ export async function buildInfrastructure(
   const resolver = config.secretsResolver;
   const { safeFetch } = await import('@ethosagent/safety-network');
   const { defaultAlwaysDeny, personalityDefinitionFloor } = await import('@ethosagent/storage-fs');
+  const attachmentCacheRoot = join(dataDir, 'cache', 'attachments');
 
   const capabilityBackends: CapabilityBackends = {
     kvStoreFactory: sessionCompose.kvStoreFactory,
@@ -536,6 +537,9 @@ export async function buildInfrastructure(
     // (verification round F2 — the desktop app's custom data folder is
     // neither).
     definitionWriteFloor: personalityDefinitionFloor([dataDir]),
+    // post-merge round I1 — the same dirs for every `scopedFs`'s state-dir
+    // exclusion and tainted state-dir write refusal.
+    stateDirs: [dataDir],
     personalityNetworkPolicy: createPersonalityNetworkPolicyResolver(personalities, log),
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny([dataDir]),
@@ -543,7 +547,8 @@ export async function buildInfrastructure(
     // refuses (`resolveCapabilities`); the turn's scoped Storage gets the same
     // roots through `AgentLoopConfig.privateMemoryRoots` (build-agent-loop).
     privateMemoryRoots: { stateDirs: [dataDir], extraRoots: privateMemoryExtraRoots(config) },
-    attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
+    attachmentCache: new FsAttachmentCache(new FsStorage(), attachmentCacheRoot),
+    attachmentCacheRoot,
   };
 
   // -------------------------------------------------------------------------

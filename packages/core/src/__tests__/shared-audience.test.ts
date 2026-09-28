@@ -12,7 +12,7 @@
 
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { FsAttachmentCache, FsStorage, InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
@@ -1122,10 +1122,37 @@ describe('G1 — a shared turn reads its own attachments, and no one else’s', 
         personalityFsReach: () => ({ read: [`${home}/`], write: [] }),
         privateMemoryRoots: { stateDirs: [home] },
         attachmentCache: cache,
+        attachmentCacheRoot: join(home, 'cache', 'attachments'),
         inboundAttachments: [{ ref: 'a1', type: 'file', url, mimeType: 'application/pdf' }],
       },
     ).scopedFs;
   }
+
+  // Post-merge round I4 — an attachment URL naming a file directly in the
+  // cache root (or a session folder) must not exempt that whole directory.
+  it('exempts only a per-message directory, never the cache root or a session folder', async () => {
+    const enc = new TextEncoder();
+    const theirs = await cache.write(enc.encode('private doc'), {
+      sessionKey: 'telegram:bot:42',
+      messageId: 'm9',
+      filename: 'doc.pdf',
+      mime: 'application/pdf',
+    });
+    const theirsPath = cache.resolveLocalPath(theirs);
+    const sessionDir = dirname(dirname(theirsPath));
+    const cacheRoot = dirname(sessionDir);
+    for (const url of [
+      `file://${join(cacheRoot, 'x.pdf')}`,
+      `file://${join(sessionDir, 'x.pdf')}`,
+    ]) {
+      const fs = await resolvedFs('shared', url);
+      await expect(fs?.read(theirsPath)).rejects.toThrow(
+        /^PATH_NOT_REACHABLE: .*shared conversation/,
+      );
+    }
+    // Control: the per-message directory itself is exempted.
+    expect(await (await resolvedFs('shared', theirs))?.read(theirsPath)).toBe('private doc');
+  });
 
   it('reads this turn’s attachment but not another session’s, and writes neither', async () => {
     const enc = new TextEncoder();

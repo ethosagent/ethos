@@ -27,9 +27,11 @@
 //
 // Used ONLY for deny decisions: `isPrivateMemoryPath` (./memory-paths.ts),
 // `isPersonalityDefinitionPath` (./personality-definition.ts), the always-deny
-// and write-deny prefix matches in `ScopedStorage`
+// and write-deny prefix matches, the state-dir exclusion (layer 2b, lexical
+// and on the real target) in `ScopedStorage`
 // (packages/storage-fs/src/scoped-storage.ts) and `ScopedFsImpl`
-// (packages/core/src/scoped/scoped-fs.ts), and the docker floor
+// (packages/core/src/scoped/scoped-fs.ts), the latter's tainted state-dir
+// write refusal (`writesEthosState`), and the docker floor
 // (`DockerExecutionBackend.mountsFor`). NEVER to widen an allow: an allowlist
 // prefix is still matched exactly, so a folded match can only refuse more.
 // Pinned by packages/types/src/__tests__/deny-fold.test.ts and the case-variant

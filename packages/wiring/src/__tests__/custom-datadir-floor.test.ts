@@ -7,15 +7,19 @@
 // with the working directory (and so the default reach) ABOVE the data dir. Not
 // AT it: a cwd at or inside the state dir is dropped from the default reach
 // (UBP-047, `deriveFsReachPaths`), and wiring passes the data dir as the
-// reach's `ethosHome`. The ancestor-grant exclusion (layer 2b) knows only
-// `~/.ethos` and `ETHOS_STATE_DIR`, so the root's grant still reaches this
-// wiring-only data dir — which is exactly what the floors below must hold.
+// reach's `ethosHome`. The floors hold on their own, and — since post-merge
+// round I1 — so does the ancestor-grant exclusion (layer 2b) and the tainted
+// state-dir write refusal (1d): wiring hands the data dir to every
+// `ScopedFsImpl` (`CapabilityBackends.stateDirs`,
+// packages/wiring/src/build-infrastructure.ts), so the root's grant no longer
+// reaches into it.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolContext } from '@ethosagent/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withRunTaint } from '../../../core/src/scoped/run-taint';
 import { createAgentLoop, type WiringConfig } from '../index';
 
 describe('a custom dataDir is floored on the scopedFs boundary (verification round F2)', () => {
@@ -33,6 +37,9 @@ describe('a custom dataDir is floored on the scopedFs boundary (verification rou
     writeFileSync(join(own, 'SOUL.md'), '# p\n');
     writeFileSync(join(own, 'toolset.yaml'), '- read_file\n- write_file\n');
     writeFileSync(join(dataDir, 'constitution.yaml'), 'tools: {}\n');
+    const other = join(dataDir, 'personalities', 'other');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'MEMORY.md'), 'OTHER-PRIVATE');
     for (const key of ['HOME', 'ETHOS_STATE_DIR'] as const) prevEnv[key] = process.env[key];
     // HOME elsewhere and no ETHOS_STATE_DIR: only wiring knows the data dir.
     process.env.HOME = join(root, 'home');
@@ -100,8 +107,30 @@ describe('a custom dataDir is floored on the scopedFs boundary (verification rou
     expect(readFileSync(path, 'utf-8')).toBe('tools: {}\n');
   });
 
+  // Post-merge round I1 — the root's grant is an ancestor of the data dir.
+  it("an ancestor grant does not reach another personality's memory in the data dir", async () => {
+    const path = join(dataDir, 'personalities', 'other', 'MEMORY.md');
+    expect((await call('read_file', { path }))?.ok).toBe(false);
+    expect((await call('write_file', { path, content: 'x' }))?.ok).toBe(false);
+    expect((await call('write_file', { path: join(dataDir, 'notes.md'), content: 'x' }))?.ok).toBe(
+      false,
+    );
+    expect(readFileSync(path, 'utf-8')).toBe('OTHER-PRIVATE');
+  });
+
+  it('a tainted run cannot write into the data dir, even its own directory', async () => {
+    const link = { state: { untrustedSeen: true }, open: true, mark: () => {} };
+    const own = join(dataDir, 'personalities', 'p', 'notes.md');
+    const result = await withRunTaint(link, () => call('write_file', { path: own, content: 'x' }));
+    expect(result?.ok).toBe(false);
+    expect(() => readFileSync(own, 'utf-8')).toThrow();
+  });
+
   it('still writes an ordinary file in the reach', async () => {
-    const path = join(dataDir, 'notes.md');
-    expect((await call('write_file', { path, content: 'ok' }))?.ok).toBe(true);
+    expect((await call('write_file', { path: join(root, 'notes.md'), content: 'ok' }))?.ok).toBe(
+      true,
+    );
+    const own = join(dataDir, 'personalities', 'p', 'notes.md');
+    expect((await call('write_file', { path: own, content: 'ok' }))?.ok).toBe(true);
   });
 });

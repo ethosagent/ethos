@@ -2,14 +2,14 @@
 // UBP-047 — a grant that is an ANCESTOR of the Ethos state dir does not reach
 // into it. Mirror of packages/core/src/__tests__/scoped-fs-casefold-statedir.test.ts.
 
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BoundaryError } from '@ethosagent/types';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { BoundaryError, isUnmappablePathAlias } from '@ethosagent/types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FsStorage } from '../fs-storage';
 import { ScopedStorage } from '../scoped-storage';
-import { CASE_INSENSITIVE_FS, foldDenyKey, isOpaqueVolumeAlias } from '../sensitive-paths';
+import { CASE_INSENSITIVE_FS, foldDenyKey } from '../sensitive-paths';
 
 describe('foldDenyKey (UBP-008)', () => {
   it('folds case, including characters whose lowercase alone would miss', () => {
@@ -66,12 +66,13 @@ describe('foldDenyKey (UBP-008)', () => {
     expect(foldDenyKey('/.nofollow/a', false, false)).toBe('/.nofollow/a');
   });
 
+  // The boundary's refusal of an inode alias is `isUnmappablePathAlias`
+  // (@ethosagent/types, applied by `matchesDenyPrefix`), on every platform.
   it('names /.vol/<dev>/<inode> as an alias a string cannot resolve', () => {
-    expect(isOpaqueVolumeAlias('/.vol/16777232/2', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.VOL', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.nofollow/.vol/1/2', true)).toBe(true);
-    expect(isOpaqueVolumeAlias('/.volume/x', true)).toBe(false);
-    expect(isOpaqueVolumeAlias('/.vol/1/2', false)).toBe(false);
+    expect(isUnmappablePathAlias('/.vol/16777232/2')).toBe(true);
+    expect(isUnmappablePathAlias('/.VOL')).toBe(true);
+    expect(isUnmappablePathAlias('/.nofollow/.vol/1/2')).toBe(true);
+    expect(isUnmappablePathAlias('/.volume/x')).toBe(false);
   });
 });
 
@@ -243,5 +244,88 @@ describe('state dir under an ancestor grant (UBP-047)', () => {
     await expect(scoped.read(join(state, 'personalities', 'therapist', 'MEMORY.md'))).resolves.toBe(
       'private',
     );
+  });
+});
+
+// Post-merge round I — the state-dir exclusion judges the scope's `stateDirs`
+// (I1), holds on the real target (I2), and folds case whatever the platform
+// (I3). Mirror of the same block in
+// packages/core/src/__tests__/scoped-fs-casefold-statedir.test.ts.
+describe('state-dir exclusion — scope stateDirs, real target, platform (post-merge round I)', () => {
+  let root: string;
+  let dataDir: string;
+  const saved = { HOME: process.env.HOME, ETHOS_STATE_DIR: process.env.ETHOS_STATE_DIR };
+
+  beforeEach(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), 'ethos-statedir-i-')));
+    dataDir = join(root, 'desktop-data');
+    await mkdir(join(dataDir, 'personalities', 'therapist'), { recursive: true });
+    await writeFile(join(dataDir, 'personalities', 'therapist', 'MEMORY.md'), 'private');
+    await mkdir(join(root, 'project'), { recursive: true });
+    await writeFile(join(root, 'project', 'a.txt'), 'work');
+    // Neither `~/.ethos` nor ETHOS_STATE_DIR names the data dir.
+    process.env.HOME = join(root, 'home');
+    delete process.env.ETHOS_STATE_DIR;
+  });
+
+  afterEach(async () => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const other = () => join(dataDir, 'personalities', 'therapist', 'MEMORY.md');
+  const scopedFor = (reach: string[], stateDirs: string[] = [dataDir]) =>
+    new ScopedStorage(new FsStorage(), { read: reach, write: reach, stateDirs });
+
+  it('I1: an ancestor grant does not reach into a scope-only state dir', async () => {
+    await expect(scopedFor([root]).read(other())).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scopedFor([root]).read(join(root, 'project', 'a.txt'))).resolves.toBe('work');
+    // Control: without `stateDirs` the environment does not know the dir.
+    await expect(scopedFor([root], []).read(other())).resolves.toBe('private');
+  });
+
+  it('I2: a granted symlink to an ancestor of a state dir does not reach into it', async () => {
+    await mkdir(join(root, 'x'), { recursive: true });
+    await symlink(root, join(root, 'x', 'link'));
+    const link = join(root, 'x', 'link');
+    const scoped = scopedFor([link]);
+    const through = join(link, 'desktop-data', 'personalities', 'therapist', 'MEMORY.md');
+    await expect(scoped.read(through)).rejects.toThrow(/state dir/);
+    await expect(scoped.write(through, 'x')).rejects.toBeInstanceOf(BoundaryError);
+    expect(await readFile(other(), 'utf8')).toBe('private');
+    await expect(scoped.read(join(link, 'project', 'a.txt'))).resolves.toBe('work');
+    // A grant whose realpath is AT the state dir is honoured through the link.
+    await symlink(dataDir, join(root, 'x', 'data-link'));
+    await expect(
+      scopedFor([join(root, 'x', 'data-link')]).read(
+        join(root, 'x', 'data-link', 'personalities', 'therapist', 'MEMORY.md'),
+      ),
+    ).resolves.toBe('private');
+  });
+
+  describe('I3: on a case-sensitive platform', () => {
+    const platform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      vi.resetModules();
+    });
+
+    it('the exclusion still refuses a case variant of the state dir', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      vi.resetModules();
+      const paths = await import('../sensitive-paths');
+      const mod = await import('../scoped-storage');
+      expect(paths.CASE_INSENSITIVE_FS).toBe(false);
+      const variant = join(root, 'DESKTOP-DATA', 'personalities', 'therapist', 'MEMORY.md');
+      const scoped = new mod.ScopedStorage(new FsStorage(), {
+        read: [root],
+        write: [root],
+        stateDirs: [dataDir],
+      });
+      await expect(scoped.read(variant)).rejects.toThrow(/not permitted/);
+    });
   });
 });
