@@ -72,6 +72,7 @@ describe('DOWNGRADE_REJECTION_MESSAGE', () => {
       'kanban_create',
       'kanban_block',
       'background delegate_task',
+      'route_to_agent',
       'watcher_create',
       'scaffold_personality',
       'scaffold_team',

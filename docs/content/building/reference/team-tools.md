@@ -72,6 +72,10 @@ Toolset `delegation`. Six tools — two for in-process sub-agent spawning, four 
 
 The delegation tools require the personality's `network` capability — without it they return `not_available`. Mesh tools also require at least one peer registered in the active mesh (`ethos serve --mesh <name>` from each peer).
 
+Each call sends the peer's bearer token, resolved from the `authTokenRef` the peer registered through the operator's secrets store (`meshAuthHeaders` in `extensions/tools-delegation/src/index.ts`). Only `ethos serve --team` peers register one; a solo `ethos serve` keeps a private token, so a mesh call to it fails with a 401 that says so. A peer on a loopback host (`localhost`, `127.0.0.1`, `::1`) is reached directly, because its address comes from the registry and not from the model; any other host goes through the personality's network policy and the private-range floor (`meshFetch`, pinned by `apps/acp-server/src/__tests__/mesh-transport-e2e.test.ts`).
+
+When the calling run has read untrusted content, the peer's run starts with the post-read downgrade armed (`untrustedOrigin: true` on the `prompt` call, `meshTaintParams`), and `route_to_agent(background: true)` is refused for the rest of the run.
+
 ## The `before_ticket_complete` hook {#before-ticket-complete}
 
 The completion path through `kanban_complete` is interception-aware. Before the running → done transition commits, the tool fires the [claiming hook](./hook-registry.md#claiming-hooks) `before_ticket_complete`. A handler returning `{ handled: true, reason }` rejects the completion: the ticket goes to `needs_revision` (with `reason` in the audit trail and a comment) instead of `done`. The assignee can re-claim and retry; the re-claim counts against the task's `max_retries` budget.
