@@ -67,7 +67,7 @@ async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
 }
 
 describe('post-untrusted-read downgrade — memory-persisting tools (UBP-049)', () => {
-  it.each(['memory_write', 'team_memory_write', 'skill_propose'])(
+  it.each(['memory_write', 'team_memory_write', 'skill_propose', 'propose_self_amendment'])(
     'refuses %s in the step after an untrusted read',
     async (writer) => {
       const ran: string[] = [];
@@ -94,7 +94,7 @@ describe('post-untrusted-read downgrade — memory-persisting tools (UBP-049)', 
   // model to retry, the untrusted text was still in context, and the write
   // ran two steps later in the same run. Persistence tools stay refused for
   // the rest of the run once any untrusted result has been seen.
-  it.each(['memory_write', 'team_memory_write', 'skill_propose'])(
+  it.each(['memory_write', 'team_memory_write', 'skill_propose', 'propose_self_amendment'])(
     'keeps %s refused for the rest of the run, past the step window',
     async (writer) => {
       const ran: string[] = [];

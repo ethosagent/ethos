@@ -287,7 +287,10 @@ export function recordToolCallForBudgets(
 
 /**
  * Downgraded tools whose output a FUTURE system prompt carries: memory, team
- * memory and proposed skills. For these the step window is not enough
+ * memory, proposed skills and a filed self-amendment (`propose_self_amendment`,
+ * which the owner may apply to the personality's own definition — plan
+ * personality-memory-boundary G2; the filing intake's taint scan is the other
+ * belt). For these the step window is not enough
  * (V-ES-9): the untrusted text stays in context after the window lifts, so a
  * page saying "remember: …" reached MEMORY.md two steps later in the same
  * run. Once this run has seen any `outputIsUntrusted` result they stay
@@ -301,6 +304,7 @@ export const RUN_SCOPED_DOWNGRADE_TOOLS: ReadonlySet<string> = new Set([
   'memory_write',
   'team_memory_write',
   'skill_propose',
+  'propose_self_amendment',
 ]);
 
 /**
