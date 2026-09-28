@@ -76,7 +76,12 @@ import type {
 import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
-import { approvalLimits, createMemoryBundle, createUndecoratedBackend } from './memory-backend';
+import {
+  approvalLimits,
+  createMemoryBundle,
+  createUndecoratedBackend,
+  privateMemoryExtraRoots,
+} from './memory-backend';
 import {
   lookupLegacyCatalogModelId,
   lookupProfile,
@@ -1193,6 +1198,9 @@ export async function buildAgentLoop(
     storage: wiringCtx.storage,
     attachmentCache: infra.capabilityBackends.attachmentCache,
     dataDir,
+    // plan personality-memory-boundary G1-5 — the vault root, refused to a
+    // shared turn's scoped Storage alongside the fixed layout under `dataDir`.
+    privateMemoryRoots: privateMemoryExtraRoots(config),
     // Off under replay — see `session`/`contextLog` above.
     ...(opts.replay ? {} : { contentStore, contextLog }),
     // D7/T1.5/T1.8 — the resolver's context. The registry is the one

@@ -452,6 +452,7 @@ export function createOutboxReviewer(deps: OutboxReviewerDeps): OutboxReviewer {
         // Drained to exhaustion on purpose: `done` is the answer, not the end
         // of the turn, and breaking out would skip the loop's turn-end work
         // (CLAUDE.md, "Single-owner contracts").
+        // audience: private-by-design (owner review loop for outbound publications)
         for await (const event of loop.run(buildOutboxReviewPrompt(item, revision.text), {
           sessionKey: outboxReviewSessionKey(item),
           personalityId: approver,

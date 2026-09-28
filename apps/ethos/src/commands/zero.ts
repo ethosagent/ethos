@@ -189,6 +189,7 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
 
   try {
     let streamed = '';
+    // audience: private-by-design (ethos -z — the owner terminal)
     for await (const event of loop.run(fullPrompt, {
       sessionKey,
       personalityId,
@@ -302,6 +303,7 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
       });
     }
     // `credentialPrompt` — a refusal lands in `result.error` (`buildResultLine`).
+    // audience: private-by-design (ethos -z — the owner terminal)
     for await (const event of loop.run(fullPrompt, {
       sessionKey,
       personalityId,

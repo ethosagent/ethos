@@ -182,6 +182,7 @@ export class DreamExecutor {
       // generator skips it (F07). A refused turn yields `error` then `done`,
       // so success is a `done` with no `error` before it. Pinned by
       // `__tests__/dream-executor.test.ts` ('turn tail').
+      // audience: private-by-design (private maintenance turn)
       for await (const event of loop.run(prompt, {
         personalityId,
         sessionKey,

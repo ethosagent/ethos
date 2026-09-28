@@ -423,6 +423,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.activeSink = steerSink;
 
     try {
+      // audience: private-by-design (local bridge for the owner web chat and TUI)
       for await (const event of this.loop.run(input, {
         ...opts,
         abortSignal: this.controller.signal,

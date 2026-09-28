@@ -8,6 +8,7 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import {
   BoundaryError,
+  type PrivatePathDeny,
   type Storage,
   type StorageDirEntry,
   type StorageRemoveOptions,
@@ -40,10 +41,23 @@ export interface ScopedStorageScope {
    * would either make `SOUL.md` unreadable or give the floor two meanings.
    */
   writeDeny?: readonly string[];
+  /**
+   * Read+write deny predicate, set only on a shared turn (plan
+   * personality-memory-boundary G1-5): the private memory files
+   * (`privateMemoryPathDeny` in `@ethosagent/types`). Judged with `'access'`
+   * on the lexical path AND on every symlink-resolved hop in `check`, and with
+   * `'subtree'` in `checkSubtree` so `remove`/`rename` of a directory that
+   * contains one is refused too. Mirror of `ScopedFsImpl`'s `denyWhen`
+   * (packages/core/src/scoped/scoped-fs.ts) — the two MUST change together.
+   */
+  denyWhen?: PrivatePathDeny;
 }
 
 /** The reason `BoundaryError` carries for a `writeDeny` refusal. */
 const WRITE_DENY_REASON = 'personality definition is operator-owned';
+
+/** The reason `BoundaryError` carries for a `denyWhen` refusal. */
+const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
 
 /**
  * Decorator over Storage that enforces a per-scope read/write allowlist
@@ -56,6 +70,9 @@ const WRITE_DENY_REASON = 'personality definition is operator-owned';
  *      under) a `writeDeny` entry. `remove` and `rename` additionally refuse
  *      a path that CONTAINS a `writeDeny` entry, because deleting or moving a
  *      directory rewrites everything below it.
+ *   1c. deny-when — reads AND writes: request rejected when the `denyWhen`
+ *      predicate (a shared turn's private memory files) says so; `remove` and
+ *      `rename` also ask it about the subtree.
  *   2. allow allowlist — request rejected if no prefix matches.
  *   3. symbolic containment — layers 1 and 2 are lexical, and `resolve()`
  *      is a string operation while a symlink is a filesystem fact. A link
@@ -80,9 +97,10 @@ const WRITE_DENY_REASON = 'personality definition is operator-owned';
  * reason: `packages/wiring` is a different layer. A FOURTH is `reachable` in
  * `apps/web-api/src/services/documents.service.ts`, guarding the
  * operator-supplied Documents root. **All four must change together.**
- * Layer 1b (`writeDeny`) exists in exactly two of them — this file and
- * `ScopedFsImpl.checkReach` (`writeDenyPaths`) — the two boundaries a
- * personality's turn writes through; those two must change together too.
+ * Layers 1b (`writeDeny`) and 1c (`denyWhen`) exist in exactly two of them —
+ * this file and `ScopedFsImpl.checkReach` (`writeDenyPaths`, `denyWhen`) — the
+ * two boundaries a personality's turn reads and writes through; those two must
+ * change together too.
  *
  * The fourth walks with async `lstat` from `node:fs/promises` — so an
  * `lstatSync` grep misses it — but applies the same errno rule as the other
@@ -99,6 +117,7 @@ export class ScopedStorage implements Storage {
   private readonly writePrefixes: string[];
   private readonly denyPrefixes: string[];
   private readonly writeDenyPrefixes: string[];
+  private readonly denyWhen: PrivatePathDeny | undefined;
 
   constructor(
     private readonly inner: Storage,
@@ -108,6 +127,12 @@ export class ScopedStorage implements Storage {
     this.writePrefixes = scope.write.map(normalizePrefix);
     this.denyPrefixes = (scope.alwaysDeny ?? []).map(normalizePrefix);
     this.writeDenyPrefixes = (scope.writeDeny ?? []).map(normalizePrefix);
+    this.denyWhen = scope.denyWhen;
+  }
+
+  /** True when the `denyWhen` predicate refuses `path` (read or write alike). */
+  private hitsDenyWhen(path: string): boolean {
+    return this.denyWhen?.(path, 'access') ?? false;
   }
 
   /** True when `path` is a `writeDeny` entry or lies under one. */
@@ -127,6 +152,9 @@ export class ScopedStorage implements Storage {
     if (this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash))) {
       throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
+    if (this.denyWhen?.(path, 'subtree')) {
+      throw new BoundaryError('write', path, [], SHARED_AUDIENCE_DENY_REASON);
+    }
   }
 
   private check(rawPath: string, kind: 'read' | 'write'): void {
@@ -138,6 +166,9 @@ export class ScopedStorage implements Storage {
     }
     if (this.hitsWriteDeny(path, kind)) {
       throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+    }
+    if (this.hitsDenyWhen(path)) {
+      throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
     }
     const allowed = kind === 'read' ? this.readPrefixes : this.writePrefixes;
     let prefix = matchAllowedPrefix(path, allowed);
@@ -174,6 +205,11 @@ export class ScopedStorage implements Storage {
       // asset folder pointing at `../toolset.yaml` must not launder a write.
       if (this.hitsWriteDeny(next, kind)) {
         throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+      }
+      // …and so is `denyWhen`: an innocently named link inside the cwd that
+      // points at `personalities/<id>/MEMORY.md` is refused on where it lands.
+      if (this.hitsDenyWhen(next)) {
+        throw new BoundaryError(kind, path, [], SHARED_AUDIENCE_DENY_REASON);
       }
       current = next;
       prefix = nextPrefix;

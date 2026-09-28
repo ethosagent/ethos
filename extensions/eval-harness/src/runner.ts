@@ -143,6 +143,7 @@ export class EvalRunner {
     let errorMsg: string | undefined;
 
     try {
+      // audience: private-by-design (synthetic eval tasks)
       for await (const event of this.loop.run(task.prompt, {
         sessionKey,
         personalityId: task.personalityId,

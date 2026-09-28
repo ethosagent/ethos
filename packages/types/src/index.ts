@@ -30,6 +30,7 @@ export * from './llm-timeouts';
 export * from './logger';
 export * from './mcp';
 export * from './memory';
+export * from './memory-paths';
 export * from './model-catalog';
 export * from './model-registry';
 export * from './monitor';

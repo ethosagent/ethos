@@ -60,6 +60,7 @@ export async function askPersonality(
   const sessionKey = mcpConsoleSessionKey(args.personality_id, conversation);
 
   const turn = await collectTurnResult(
+    // audience: private-by-design (MCP console, the operator's own tool — D16)
     loop.run(args.prompt, { sessionKey, personalityId: args.personality_id }),
   );
 

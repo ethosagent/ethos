@@ -36,7 +36,7 @@ I do careful work and say what I did.
 Publishing: approval required on telegram, slack · reviewer: brand-editor · not covered: MCP tools, a2a_send
 
 ## Boundary
-Register status for this personality (the twelve published guarantees).
+Register status for this personality (the thirteen published guarantees).
 enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·
 relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.
 
@@ -54,3 +54,4 @@ relaxed = widens or disables something above the non-overridable floor · n/a = 
 | G-WATCH | enforced | out-of-band cross-turn observer; no personality field narrows it |
 | G-CHAN  | n/a      | set by channel config, not by this personality — an unconfigured platform is ungated |
 | G-AUDIT | enforced | safety decisions land in observability.db; no tamper-evidence |
+| G-MEM   | enforced | a shared-audience turn neither reads nor writes private memory; no personality field narrows it |

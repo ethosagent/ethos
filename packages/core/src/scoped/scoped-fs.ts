@@ -9,10 +9,13 @@
 // through the whole `ScopedFs` contract for no security gain.
 import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
-import type { ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
+import type { PrivatePathDeny, ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
 
 /** Bound on symlink hops followed while validating a single path. */
 const MAX_SYMLINK_HOPS = 32;
+
+/** Why a `denyWhen` refusal happened, as the `PATH_NOT_REACHABLE` message says it. */
+const SHARED_DENY_WHY = 'private memory is not reachable from a shared conversation';
 
 /**
  * Scoped filesystem capability. Enforces three layers on every call:
@@ -30,6 +33,14 @@ const MAX_SYMLINK_HOPS = 32;
  *     `ScopedStorageScope.writeDeny` in
  *     `packages/storage-fs/src/scoped-storage.ts` — the two MUST change
  *     together.
+ *
+ *  1c. **Deny-when predicate** — `denyWhen` (sixth argument, set only on a
+ *     shared turn by `resolveCapabilities`) refuses reads AND writes of the
+ *     private memory files (`privateMemoryPathDeny` in `@ethosagent/types`),
+ *     judged on the lexical path and on every symlink-resolved hop. Mirror of
+ *     `ScopedStorageScope.denyWhen` in `packages/storage-fs/src/scoped-storage.ts`
+ *     — the two MUST change together. `ScopedFs` has no remove/rename, so
+ *     only the `'access'` question is ever asked here.
  *
  *  2. **Declared reach allowlist** — the intersection of the tool's
  *     `capabilities.fs_reach` with the personality's `fs_reach`,
@@ -61,6 +72,7 @@ export class ScopedFsImpl implements ScopedFs {
     private readonly writePaths: Set<string>,
     alwaysDenyPaths: string[] = [],
     writeDenyPaths: string[] = [],
+    private readonly denyWhen?: PrivatePathDeny,
   ) {
     this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
     this.writeDenyPaths = writeDenyPaths.map((p) => normalize(resolve(p)));
@@ -127,6 +139,9 @@ export class ScopedFsImpl implements ScopedFs {
         `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
       );
     }
+    if (this.hitsDenyWhen(canonical)) {
+      throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" refused — ${SHARED_DENY_WHY}`);
+    }
 
     let prefix = matchAllowedPrefix(canonical, allowed);
     if (prefix === null) {
@@ -158,12 +173,21 @@ export class ScopedFsImpl implements ScopedFs {
           `PATH_NOT_REACHABLE: ${kind} of "${path}" refused — personality definition is operator-owned`,
         );
       }
+      // …and so is `denyWhen`: a link that lands on a private memory file is
+      // refused on where it lands, whatever it is called.
+      if (this.hitsDenyWhen(next)) {
+        throw new Error(`PATH_NOT_REACHABLE: ${kind} of "${path}" refused — ${SHARED_DENY_WHY}`);
+      }
       current = next;
       prefix = nextPrefix;
     }
     throw new Error(
       `PATH_NOT_REACHABLE: ${kind} of "${path}" follows too many symbolic links to resolve`,
     );
+  }
+
+  private hitsDenyWhen(canonical: string): boolean {
+    return this.denyWhen?.(canonical, 'access') ?? false;
   }
 
   private hitsWriteDeny(canonical: string, kind: string): boolean {

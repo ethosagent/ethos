@@ -595,7 +595,7 @@ function plural(n: number, word: string): string {
  * Derive every register row's status from the personality's RESOLVED
  * configuration plus whatever this surface resolved for it (execution posture,
  * script surface, declared network reach). Keyed by `GuaranteeId`, so a
- * thirteenth register row fails to compile here until it is given a status —
+ * fourteenth register row fails to compile here until it is given a status —
  * the sheet cannot silently stop covering the register.
  */
 function guaranteeRows(
@@ -865,6 +865,11 @@ function guaranteeRows(
       status: 'enforced',
       detail: 'safety decisions land in observability.db; no tamper-evidence',
     },
+    'G-MEM': {
+      status: 'enforced',
+      detail:
+        'a shared-audience turn neither reads nor writes private memory; no personality field narrows it',
+    },
   };
 }
 
@@ -872,7 +877,7 @@ function guaranteeRows(
  * Render the `## Boundary` block — which published guarantees are enforced,
  * narrowed, relaxed, or inapplicable for THIS personality.
  *
- * A table rather than bullets: twelve rows read as a scan for the `relaxed`
+ * A table rather than bullets: thirteen rows read as a scan for the `relaxed`
  * ones, which is the operator's actual question, and the status column stays
  * aligned in a terminal as well as in the Web tab's Markdown.
  */
@@ -880,7 +885,7 @@ function boundarySection(rows: Record<GuaranteeId, GuaranteeRow>): string[] {
   const width = Math.max(...GUARANTEE_IDS.map((id) => id.length));
   return [
     '## Boundary',
-    'Register status for this personality (the twelve published guarantees).',
+    'Register status for this personality (the thirteen published guarantees).',
     'enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·',
     'relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.',
     '',

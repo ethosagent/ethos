@@ -109,6 +109,7 @@ export function createBrowserVoiceSessionOpener(
     const runner: AgentTurnRunner = {
       run: (text, runOpts) =>
         runOnLoop(loop, (agentLoop) =>
+          // audience: private-by-design (browser voice — a physical room, a stated known limitation)
           agentLoop.run(text, {
             sessionKey: laneKey,
             ...(info.personalityId ? { personalityId: info.personalityId } : {}),
@@ -171,6 +172,7 @@ export async function runBrowserVoiceTurn(
     fallbackId: opts.fallbackClientId,
   });
   let reply = '';
+  // audience: private-by-design (browser voice — a physical room, a stated known limitation)
   for await (const event of deps.agentLoop.run(opts.text, {
     sessionKey: laneKey,
     ...(opts.personalityId ? { personalityId: opts.personalityId } : {}),

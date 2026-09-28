@@ -106,6 +106,7 @@ export class BatchRunner {
     const toolResults: AtroposToolResult[] = [];
 
     try {
+      // audience: private-by-design (synthetic batch prompts)
       for await (const event of this.loop.run(task.prompt, { sessionKey, personalityId })) {
         switch (event.type) {
           case 'text_delta':

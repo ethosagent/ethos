@@ -2,9 +2,11 @@ export { isGated, PendingMemoryGate, type WithPendingGateOptions, withPendingGat
 export {
   EVIDENCE_APPROVER,
   MAX_EVIDENCE_SESSIONS,
+  PENDING_FILE,
   PendingMemoryStore,
   type PendingMemoryStoreOptions,
   scopeDir,
+  TOMBSTONE_FILE,
   TombstoneStore,
   type TombstoneStoreOptions,
 } from './store';

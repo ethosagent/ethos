@@ -17,8 +17,10 @@ import type {
   TombstoneRecord,
 } from './types';
 
-const PENDING_FILE = 'memory-pending.jsonl';
-const TOMBSTONE_FILE = 'memory-tombstones.jsonl';
+// Both exported so `isPrivateMemoryPath`'s name set (@ethosagent/types) is
+// pinned against them (packages/types/src/__tests__/memory-paths.test.ts).
+export const PENDING_FILE = 'memory-pending.jsonl';
+export const TOMBSTONE_FILE = 'memory-tombstones.jsonl';
 
 const DEFAULT_CAP = 200;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;

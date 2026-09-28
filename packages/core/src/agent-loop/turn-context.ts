@@ -142,6 +142,8 @@ export interface LoopDeps {
   storage?: Storage;
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
   dataDir?: string;
+  /** Extra private-memory roots from wiring (`AgentLoopConfig.privateMemoryRoots`). */
+  privateMemoryRoots?: readonly string[];
   observability?: AgentLoopObservability;
   contextEngines: ContextEngineRegistry;
   /** Context-engine LLM handle — preferred over engine-constructor injection. */
@@ -205,9 +207,16 @@ export interface TurnSetup {
    * compound if the resolved workdir were fed back in as `cwd`), and one
    * derivation is the only way the app-layer prefixes and the workdir can be
    * guaranteed to describe the same filesystem. `writeDeny` (the
-   * personality's own definition files) rides the same scope.
+   * personality's own definition files) rides the same scope, and so does
+   * `denyWhen` on a shared turn (G1-5).
    */
-  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
+  fsReach: {
+    read: string[];
+    write: string[];
+    writeDeny: string[];
+    /** Shared turns only: the private-memory deny (`privateMemoryDenyFor`, ./agent-loop/audience.ts). */
+    denyWhen?: import('@ethosagent/types').PrivatePathDeny;
+  };
   obsConfig: PersonalityObservabilityConfig | undefined;
   traceId: string | undefined;
   turnNumber: number;

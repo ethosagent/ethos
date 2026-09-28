@@ -1,3 +1,4 @@
+import { ScopedStorage } from '@ethosagent/storage-fs';
 import type { AgentSafety, Storage } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { runAgentSafetyConformance } from '../safety-conformance';
@@ -53,7 +54,8 @@ describe('runAgentSafetyConformance', () => {
     expect(failuresMatching(result.failures, 'injection.shortPatternCheck')).toHaveLength(1);
     expect(failuresMatching(result.failures, 'redaction.redactString')).toHaveLength(1);
     expect(failuresMatching(result.failures, 'redaction.detectSecrets')).toHaveLength(1);
-    expect(failuresMatching(result.failures, 'scopedStorageFactory')).toHaveLength(1);
+    // Two: the allowlist AND the shared-room `denyWhen` (G-MEM) are both absent.
+    expect(failuresMatching(result.failures, 'scopedStorageFactory')).toHaveLength(2);
 
     // And the messages say what was expected, not just "failed".
     expect(result.failures.join('\n')).toContain('chat-template token');
@@ -140,6 +142,18 @@ describe('runAgentSafetyConformance', () => {
     );
     expect(result.passed).toBe(false);
     expect(result.failures.join('\n')).toContain('the scope is not enforced');
+  });
+
+  it('catches a scopedStorageFactory that drops denyWhen (G-MEM shared-room case)', async () => {
+    const result = await runAgentSafetyConformance(
+      createTestSafety({
+        scopedStorageFactory: (base, scope) =>
+          new ScopedStorage(base, { read: scope.read, write: scope.write }),
+      }),
+    );
+    expect(result.passed).toBe(false);
+    expect(result.failures.join('\n')).toContain('denyWhen predicate refuses');
+    expect(result.failures).toHaveLength(1);
   });
 
   it('catches a scopedStorageFactory that denies everything', async () => {

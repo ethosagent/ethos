@@ -166,6 +166,22 @@ export function approvalLimits(approval: MemoryBackendSelection['memoryApproval'
   };
 }
 
+/**
+ * Directories that are private memory in their entirety, beyond the fixed
+ * layout under `dataDir` that `isPrivateMemoryPath` (@ethosagent/types)
+ * already knows: the vault root, whenever `memoryVault.path` is configured —
+ * vault `search()` reads across the whole vault, not only the agent subtree,
+ * and the vault provider is registered for every personality whatever the
+ * top-level `memory:` says. Handed to `AgentLoopConfig.privateMemoryRoots` and
+ * `CapabilityBackends.privateMemoryRoots`, so a shared turn's file tools refuse
+ * the vault (plan personality-memory-boundary G1-5). Pinned by
+ * `packages/wiring/src/__tests__/scoped-storage-factory.test.ts`.
+ */
+export function privateMemoryExtraRoots(selection: MemoryBackendSelection): string[] {
+  const vaultPath = selection.memoryVault?.path;
+  return vaultPath ? [resolve(vaultPath)] : [];
+}
+
 export interface UndecoratedBackend {
   /** Undecorated write provider for the configured backend. */
   base: MemoryProvider & GlobalMemoryStore;

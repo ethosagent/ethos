@@ -81,7 +81,12 @@ import { activateFirstPartyPlugins } from './activate-first-party';
 import { validateCallCaptureBinding } from './call-capture-binding';
 import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
-import { buildVaultBackend, composeGatedMemory, composeGatedVectorMemory } from './memory-backend';
+import {
+  buildVaultBackend,
+  composeGatedMemory,
+  composeGatedVectorMemory,
+  privateMemoryExtraRoots,
+} from './memory-backend';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
 import { createBuiltinVoiceRegistries } from './voice-registries';
@@ -526,6 +531,10 @@ export async function buildInfrastructure(
     personalityNetworkPolicy: createPersonalityNetworkPolicyResolver(personalities, log),
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny(),
+    // plan personality-memory-boundary G1-5 — what a shared call's `scopedFs`
+    // refuses (`resolveCapabilities`); the turn's scoped Storage gets the same
+    // roots through `AgentLoopConfig.privateMemoryRoots` (build-agent-loop).
+    privateMemoryRoots: { stateDirs: [dataDir], extraRoots: privateMemoryExtraRoots(config) },
     attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
   };
 

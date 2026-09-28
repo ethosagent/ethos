@@ -1,7 +1,7 @@
 import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BoundaryError } from '@ethosagent/types';
+import { BoundaryError, privateMemoryPathDeny } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FsStorage } from '../fs-storage';
 import { InMemoryStorage } from '../in-memory-storage';
@@ -370,5 +370,80 @@ describe('ScopedStorage — writeDeny (personality definition)', () => {
   it('without writeDeny the same write succeeds (the list is opt-in per scope)', async () => {
     const open = new ScopedStorage(new FsStorage(), { read: [`${own}/`], write: [`${own}/`] });
     await expect(open.write(join(own, 'toolset.yaml'), '- terminal\n')).resolves.toBeUndefined();
+  });
+});
+
+// plan personality-memory-boundary G1-5 — `denyWhen`, the shared-turn private
+// memory deny. Read AND write, on the lexical path AND on where a symlink
+// lands. Mirror cases through `ScopedFsImpl` live in
+// packages/core/src/__tests__/scoped-fs.test.ts — the two boundaries change together.
+describe('ScopedStorage — denyWhen (shared-turn private memory)', () => {
+  let home: string;
+  let own: string;
+  let cwd: string;
+  let scoped: ScopedStorage;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-deny-when-')));
+    own = join(home, 'personalities', 'bob');
+    cwd = join(home, 'work');
+    const fs = new FsStorage();
+    await fs.mkdir(join(own, 'files'));
+    await fs.mkdir(join(own, 'ui'));
+    await fs.mkdir(cwd);
+    await fs.write(join(own, 'MEMORY.md'), 'canary: interview at ACME');
+    await fs.write(join(own, 'files', 'logo.txt'), 'asset');
+    await fs.write(join(own, 'ui', 'report.html'), '<p>hi</p>');
+    scoped = new ScopedStorage(fs, {
+      read: [`${own}/`, `${cwd}/`],
+      write: [`${own}/`, `${cwd}/`],
+      denyWhen: privateMemoryPathDeny({ stateDirs: [home] }),
+    });
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('refuses reading and writing MEMORY.md with the shared-audience reason', async () => {
+    const err = await scoped.read(join(own, 'MEMORY.md')).catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).kind).toBe('read');
+    expect((err as BoundaryError).message).toContain('shared-audience memory');
+    await expect(scoped.write(join(own, 'MEMORY.md'), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.append(join(own, 'USER.md'), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.exists(join(own, 'MEMORY.md'))).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('keeps the asset folder and Canvas templates readable', async () => {
+    await expect(scoped.read(join(own, 'files', 'logo.txt'))).resolves.toBe('asset');
+    await expect(scoped.read(join(own, 'ui', 'report.html'))).resolves.toBe('<p>hi</p>');
+    await expect(scoped.list(own)).resolves.toContain('MEMORY.md');
+  });
+
+  it('refuses an innocently named symlink in the cwd that lands on MEMORY.md (verify item 20)', async () => {
+    await symlink(join(own, 'MEMORY.md'), join(cwd, 'notes.txt'));
+    const err = await scoped.read(join(cwd, 'notes.txt')).catch((e) => e);
+    expect(err).toBeInstanceOf(BoundaryError);
+    expect((err as BoundaryError).message).toContain('shared-audience memory');
+    // The refusal never names where the link landed.
+    expect((err as BoundaryError).message).not.toContain('MEMORY.md');
+  });
+
+  it('refuses a symlinked PARENT that lands in the personality dir, on the hop', async () => {
+    await symlink(own, join(cwd, 'p'));
+    await expect(scoped.read(join(cwd, 'p', 'MEMORY.md'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.read(join(cwd, 'p', 'files', 'logo.txt'))).resolves.toBe('asset');
+  });
+
+  it('refuses removing or renaming a directory that contains memory', async () => {
+    await expect(scoped.remove(own, { recursive: true })).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.rename(own, join(cwd, 'moved'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.remove(join(own, 'files'), { recursive: true })).resolves.toBeUndefined();
+  });
+
+  it('without denyWhen (a private turn) the same read succeeds', async () => {
+    const open = new ScopedStorage(new FsStorage(), { read: [`${own}/`], write: [`${own}/`] });
+    await expect(open.read(join(own, 'MEMORY.md'))).resolves.toBe('canary: interview at ACME');
   });
 });

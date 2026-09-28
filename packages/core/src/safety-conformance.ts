@@ -245,6 +245,32 @@ export async function runAgentSafetyConformance(
     failures.push(`scopedStorageFactory: threw: ${message(err)}`);
   }
 
+  // --- scopedStorageFactory: denyWhen (G-MEM, shared-room case) -------------
+  // A shared turn hands the factory a `denyWhen` predicate over the private
+  // memory files (`privateMemoryDenyFor`, ./agent-loop/audience.ts). A factory
+  // that rebuilds the scope from `read`/`write` alone passes every check above
+  // and silently drops it — the shared room then reads `MEMORY.md`.
+  try {
+    const scoped = safety.scopedStorageFactory(permissiveStorage(), {
+      read: ['/conformance/allowed/'],
+      write: ['/conformance/allowed/'],
+      denyWhen: (path) => path.endsWith('/MEMORY.md'),
+    });
+    let rejected = false;
+    try {
+      await scoped.read('/conformance/allowed/MEMORY.md');
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      failures.push(
+        'scopedStorageFactory: read a path its denyWhen predicate refuses — a shared room would read private memory',
+      );
+    }
+  } catch (err) {
+    failures.push(`scopedStorageFactory (denyWhen): threw: ${message(err)}`);
+  }
+
   return { passed: failures.length === 0, failures };
 }
 

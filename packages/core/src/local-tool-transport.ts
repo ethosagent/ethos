@@ -126,7 +126,12 @@ export class LocalToolTransport implements ToolTransport {
       const resolved = resolveCapabilities(
         tool.name,
         tool.capabilities,
-        { sessionId: request.sessionId, personalityId: request.personalityId },
+        {
+          sessionId: request.sessionId,
+          personalityId: request.personalityId,
+          // G1-5 — a shared call's `scopedFs` refuses the private memory files.
+          ...(request.roomAudience !== undefined ? { roomAudience: request.roomAudience } : {}),
+        },
         { ...this.backends, inboundAttachments: live?.inboundAttachments },
       );
       Object.assign(ctx, resolved);

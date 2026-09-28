@@ -351,6 +351,7 @@ export class CompletionsService {
       ...(input.seed !== undefined ? { seed: input.seed } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     };
+    // audience: private-by-design (owner web completions surface)
     return this.opts.loop.run(input.lastUserText, opts);
   }
 

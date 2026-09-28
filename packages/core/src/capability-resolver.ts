@@ -1,11 +1,14 @@
 import type { NetworkPolicy } from '@ethosagent/safety-network';
 import type {
   KeyValueStore,
+  PrivateMemoryRoots,
   SecretRef,
   Storage,
   ToolCapabilities,
   ToolContext,
+  TurnAudience,
 } from '@ethosagent/types';
+import { privateMemoryDenyFor } from './agent-loop/audience';
 import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
 import { type SafeFetchFn, ScopedFetchImpl } from './scoped/scoped-fetch';
 import { ScopedFsImpl } from './scoped/scoped-fs';
@@ -61,6 +64,14 @@ export interface CapabilityBackends {
   safeFetch?: SafeFetchFn;
   /** Always-deny path list for filesystem scoping. */
   alwaysDenyPaths?: string[];
+  /**
+   * Where private memory lives (plan personality-memory-boundary G1-5). On a
+   * call whose `CapabilityScopeIds.roomAudience` is `'shared'`, every
+   * `ScopedFsImpl` built here refuses those files (`privateMemoryDenyFor`,
+   * ./agent-loop/audience.ts). Absent → the default `~/.ethos` state dir, so
+   * a host that forgets to wire it fails closed on the common layout.
+   */
+  privateMemoryRoots?: PrivateMemoryRoots;
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
   inboundAttachments?: import('@ethosagent/types').Attachment[];
 }
@@ -75,6 +86,11 @@ type ResolvedFields = Partial<
 export interface CapabilityScopeIds {
   sessionId: string;
   personalityId?: string;
+  /**
+   * The calling turn's resolved audience (`ToolExecuteRequest.roomAudience`).
+   * `'shared'` turns on the private-memory deny for every `scopedFs` built.
+   */
+  roomAudience?: TurnAudience;
 }
 
 export function resolveCapabilities(
@@ -99,6 +115,10 @@ export function resolveCapabilities(
     writeDenyCache ??= backends.personalityFsWriteDeny?.(scopeIds.personalityId) ?? [];
     return writeDenyCache;
   };
+  // plan personality-memory-boundary G1-5 — a shared call's `scopedFs`
+  // (all three constructions below, the attachments rebuild included) refuses
+  // the private memory files. Undefined on a private call.
+  const sharedDeny = privateMemoryDenyFor(scopeIds.roomAudience, backends.privateMemoryRoots);
 
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;
@@ -169,6 +189,7 @@ export function resolveCapabilities(
       new Set(writePaths),
       backends.alwaysDenyPaths ?? [],
       personalityWriteDeny(),
+      sharedDeny,
     );
   }
 
@@ -211,6 +232,7 @@ export function resolveCapabilities(
           new Set(writePaths),
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
+          sharedDeny,
         );
       } else if (!result.scopedFs && backends.storage) {
         // No fs_reach declared but attachments present — create read-only ScopedFs
@@ -220,6 +242,7 @@ export function resolveCapabilities(
           new Set(),
           backends.alwaysDenyPaths ?? [],
           personalityWriteDeny(),
+          sharedDeny,
         );
       }
     }

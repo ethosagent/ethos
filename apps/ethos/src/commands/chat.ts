@@ -1232,6 +1232,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     state.pendingTierOverride = undefined;
     const toolsetNarrow = state.pendingToolsetNarrow;
     state.pendingToolsetNarrow = undefined;
+    // audience: private-by-design (CLI chat — the owner terminal)
     for await (const event of loop.run(input, {
       sessionKey: state.sessionKey,
       personalityId: state.personalityId,
@@ -1641,6 +1642,7 @@ async function runSingleQuery(
   let turnUsage: TurnTiming['turnUsage'] = null;
   let streamedText = '';
 
+  // audience: private-by-design (CLI one-shot — the owner terminal)
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,

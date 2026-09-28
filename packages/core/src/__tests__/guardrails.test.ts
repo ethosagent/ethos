@@ -245,7 +245,11 @@ describe('Orchestrator guardrails', () => {
     // declaration each), the resolved audience and `initiator` into the
     // `processTools` opts (two lines) and `initiator` into the turn-end extras
     // (one line). Pass-through only; the rules live in agent-loop/audience.ts.
-    expect(lineCount).toBeLessThanOrEqual(1099);
+    // Bumped 1099 -> 1104 (personality-memory-boundary step 1b):
+    // `AgentLoopConfig.privateMemoryRoots` (a one-line doc and a declaration),
+    // its private field, constructor assignment and pass-through into the turn
+    // deps. Pass-through only; the deny is built in agent-loop/audience.ts.
+    expect(lineCount).toBeLessThanOrEqual(1104);
   });
 
   it('no stage file exceeds 700 lines', () => {

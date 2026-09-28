@@ -11,7 +11,10 @@ import type { AgentSafety, Storage } from '@ethosagent/types';
  * compound it into `.../out/out`. One derivation, one scope.
  *
  * `writeDeny` (the personality's definition files, `personalityWriteDeny` in
- * `fs-reach.ts`) is passed through unchanged; the factory enforces it.
+ * `fs-reach.ts`) is passed through unchanged; the factory enforces it. So is
+ * `denyWhen`, present only on a shared turn (plan personality-memory-boundary
+ * G1-5, `privateMemoryDenyFor` in ./audience.ts): the factory forwards it to
+ * `ScopedStorage`, which refuses the private memory files.
  *
  * Returns undefined when no base Storage is wired, leaving
  * `ToolContext.storage` unset (legacy behaviour — tools fall back to raw fs).
@@ -19,7 +22,12 @@ import type { AgentSafety, Storage } from '@ethosagent/types';
 export function buildScopedStorage(
   storage: Storage | undefined,
   safety: AgentSafety,
-  scope: { read: string[]; write: string[]; writeDeny?: string[] },
+  scope: {
+    read: string[];
+    write: string[];
+    writeDeny?: string[];
+    denyWhen?: import('@ethosagent/types').PrivatePathDeny;
+  },
 ): Storage | undefined {
   if (!storage) return undefined;
   return safety.scopedStorageFactory(storage, scope);

@@ -7,11 +7,21 @@
 //     shared session (`sharedStampFor`) and unions the exclusion list into the
 //     turn's `excludeTools` (`withSharedAudienceExclusions`);
 //   - context-assembly skips the memory read and sets `PromptContext.isDm`;
-//   - turn-end skips the memory flush (`memoryFlushForbidden`).
+//   - turn-end skips the memory flush (`memoryFlushForbidden`);
+//   - both file boundaries refuse the private memory files
+//     (`privateMemoryDenyFor` → `denyWhen` on `ScopedStorage` via turn-setup's
+//     `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`).
 //
 // Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
 
-import type { TurnAudience } from '@ethosagent/types';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import {
+  type PrivateMemoryRoots,
+  type PrivatePathDeny,
+  privateMemoryPathDeny,
+  type TurnAudience,
+} from '@ethosagent/types';
 
 /**
  * The `Session.metadata` key holding the sticky stamp. Its only value is
@@ -118,4 +128,22 @@ export function memoryFlushForbidden(
   excludeTools: readonly string[] | undefined,
 ): boolean {
   return audience === 'shared' || (excludeTools?.includes('memory_write') ?? false);
+}
+
+/**
+ * The file-boundary deny predicate for a turn (G1-5): on a shared turn, a
+ * `PrivatePathDeny` over `roots` (`privateMemoryPathDeny`, @ethosagent/types);
+ * on a private turn, `undefined`, so private turns carry no predicate at all.
+ * Absent `roots` falls back to the default `~/.ethos` state dir — fail closed
+ * on the common layout rather than open. Called by turn-setup (the turn's
+ * `fsReach.denyWhen` → `ScopedStorage`) and by `resolveCapabilities` (every
+ * `ScopedFsImpl`); pinned by the G1-5 cases in
+ * `packages/core/src/__tests__/shared-audience.test.ts`.
+ */
+export function privateMemoryDenyFor(
+  audience: TurnAudience | undefined,
+  roots: PrivateMemoryRoots | undefined,
+): PrivatePathDeny | undefined {
+  if (audience !== 'shared') return undefined;
+  return privateMemoryPathDeny(roots ?? { stateDirs: [join(homedir(), '.ethos')] });
 }

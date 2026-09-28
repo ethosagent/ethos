@@ -9,6 +9,10 @@
 // called from `setupTurn` (stages/turn-setup.ts) and read by `assembleContext`
 // (stages/context-assembly.ts).
 
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FsStorage, InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   ContextInjector,
@@ -21,11 +25,12 @@ import type {
   Tool,
   ToolDefinitionLite,
 } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import {
   memoryFlushForbidden,
+  privateMemoryDenyFor,
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
   SHARED_AUDIENCE_EXCLUDED_TOOLS,
@@ -33,6 +38,7 @@ import {
   withSharedAudienceExclusions,
 } from '../agent-loop/audience';
 import { persistLoaded } from '../agent-loop/stages/tool-search';
+import { type CapabilityBackends, resolveCapabilities } from '../capability-resolver';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
 import { DefaultToolRegistry } from '../tool-registry';
@@ -198,6 +204,16 @@ describe('audience module (unit)', () => {
       ].sort(),
     );
     expect(SHARED_AUDIENCE_EXCLUDED_TOOLS).not.toContain('session_search');
+  });
+
+  it('privateMemoryDenyFor: a predicate only on a shared turn; absent roots fail closed on ~/.ethos', () => {
+    expect(privateMemoryDenyFor('private', { stateDirs: ['/s'] })).toBeUndefined();
+    expect(privateMemoryDenyFor(undefined, { stateDirs: ['/s'] })).toBeUndefined();
+    const deny = privateMemoryDenyFor('shared', { stateDirs: ['/s'] });
+    expect(deny?.('/s/personalities/p/MEMORY.md', 'access')).toBe(true);
+    expect(deny?.('/s/personalities/p/files/a.png', 'access')).toBe(false);
+    const fallback = privateMemoryDenyFor('shared', undefined);
+    expect(fallback?.(join(homedir(), '.ethos', 'users', 'u1', 'USER.md'), 'access')).toBe(true);
   });
 
   it('memoryFlushForbidden: shared, or memory_write excluded', () => {
@@ -433,5 +449,234 @@ describe('G1-7 — a session that ran a shared turn stays shared', () => {
     const after = await session.getSession(s.id);
     expect(after?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('shared');
     expect(after?.metadata?.loadedTools).toEqual(['web_search']);
+  });
+});
+
+// G1-5 — through the REAL transport: `AgentLoop.run` → `executeParallel` →
+// `LocalToolTransport` → `resolveCapabilities` (ctx.scopedFs) and the turn's
+// `buildScopedStorage` (ctx.storage). Never `tool.execute` directly: the
+// deny must survive every hop the production path takes.
+describe('G1-5 — no file tool reaches a private memory file on a shared turn', () => {
+  let home: string;
+  let own: string;
+  let cwd: string;
+  let vault: string;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-g15-')));
+    own = join(home, 'personalities', 'lean');
+    cwd = join(home, 'work');
+    vault = join(home, 'vault');
+    await mkdir(join(own, 'files'), { recursive: true });
+    await mkdir(join(own, 'ui'), { recursive: true });
+    await mkdir(join(home, 'users', 'u1'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await mkdir(vault, { recursive: true });
+    await writeFile(join(own, 'MEMORY.md'), MEMORY_CONTENT);
+    await writeFile(join(own, 'files', 'logo.txt'), 'asset');
+    await writeFile(join(own, 'ui', 'report.html'), '<p>template</p>');
+    await writeFile(join(home, 'users', 'u1', 'USER.md'), USER_CONTENT);
+    await writeFile(join(home, 'memory.db'), 'sqlite');
+    await writeFile(join(vault, 'journal.md'), 'vault note');
+    // An innocently named link in the working directory (verify item 20).
+    await symlink(join(own, 'MEMORY.md'), join(cwd, 'notes.txt'));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  /** An LLM whose first reply calls `toolName` once per path, then ends. */
+  function readingLLM(toolName: string, paths: string[]): LLMProvider {
+    let n = 0;
+    return {
+      name: 'mock',
+      model: 'mock-model',
+      maxContextTokens: 200_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete(): AsyncIterable<CompletionChunk> {
+        if (n++ === 0) {
+          for (const [i, path] of paths.entries()) {
+            yield { type: 'tool_use_start', toolCallId: `c${i}`, toolName };
+            yield {
+              type: 'tool_use_end',
+              toolCallId: `c${i}`,
+              inputJson: JSON.stringify({ path }),
+            };
+          }
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+      async countTokens() {
+        return 1;
+      },
+    };
+  }
+
+  type Outcome = Record<string, string>;
+
+  function pathArgs(input: unknown): { path: string } {
+    const path =
+      typeof input === 'object' && input !== null && 'path' in input ? String(input.path) : '';
+    return { path };
+  }
+
+  /** A file tool reading through `ctx.scopedFs` (`fs_reach: from-personality`). */
+  function scopedFsReader(out: Outcome): Tool {
+    return {
+      name: 'read_file',
+      description: 'read',
+      toolset: 'file',
+      capabilities: { fs_reach: { read: 'from-personality' } },
+      schema: { type: 'object', properties: { path: { type: 'string' } } },
+      async execute(input, ctx) {
+        const args = pathArgs(input);
+        try {
+          if (!ctx.scopedFs) throw new Error('no scopedFs');
+          out[args.path] = await ctx.scopedFs.read(args.path);
+        } catch (err) {
+          out[args.path] = `refused: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        return { ok: true, value: 'done' };
+      },
+    };
+  }
+
+  /** A file tool reading through the turn's scoped `ctx.storage`. */
+  function storageReader(out: Outcome): Tool {
+    return {
+      name: 'storage_read',
+      description: 'read',
+      toolset: 'file',
+      capabilities: {},
+      schema: { type: 'object', properties: { path: { type: 'string' } } },
+      async execute(input, ctx) {
+        const args = pathArgs(input);
+        try {
+          if (!ctx.storage) throw new Error('no storage');
+          out[args.path] = (await ctx.storage.read(args.path)) ?? '(missing)';
+        } catch (err) {
+          out[args.path] = `refused: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        return { ok: true, value: 'done' };
+      },
+    };
+  }
+
+  function loopFor(llm: LLMProvider, tools: DefaultToolRegistry): AgentLoop {
+    return new AgentLoop({
+      llm,
+      tools,
+      personalities: personalities(['read_file', 'storage_read']),
+      storage: new FsStorage(),
+      dataDir: home,
+      privateMemoryRoots: [vault],
+      safety: createTestSafety(),
+      options: { workingDir: cwd },
+    });
+  }
+
+  function backends(): CapabilityBackends {
+    return {
+      storage: new FsStorage(),
+      personalityFsReach: () => ({ read: [`${own}/`, `${cwd}/`, `${vault}/`], write: [] }),
+      privateMemoryRoots: { stateDirs: [home], extraRoots: [vault] },
+    };
+  }
+
+  it('read_file (scopedFs) refuses MEMORY.md, a symlink to it and the vault; assets and templates still read', async () => {
+    const out: Outcome = {};
+    const tools = new DefaultToolRegistry(backends());
+    tools.register(scopedFsReader(out));
+    const paths = [
+      join(own, 'MEMORY.md'),
+      join(cwd, 'notes.txt'),
+      join(vault, 'journal.md'),
+      join(own, 'files', 'logo.txt'),
+      join(own, 'ui', 'report.html'),
+    ];
+    await drain(
+      loopFor(readingLLM('read_file', paths), tools).run('read', { roomAudience: 'shared' }),
+    );
+
+    expect(out[join(own, 'MEMORY.md')]).toMatch(/^refused: PATH_NOT_REACHABLE/);
+    expect(out[join(cwd, 'notes.txt')]).toMatch(/^refused: PATH_NOT_REACHABLE/);
+    expect(out[join(vault, 'journal.md')]).toMatch(/^refused: PATH_NOT_REACHABLE/);
+    expect(out[join(own, 'files', 'logo.txt')]).toBe('asset');
+    expect(out[join(own, 'ui', 'report.html')]).toBe('<p>template</p>');
+    expect(JSON.stringify(out)).not.toContain(MEMORY_CONTENT);
+  });
+
+  it('the turn’s scoped Storage refuses MEMORY.md, USER.md under users/, memory.db, a symlink and the vault', async () => {
+    const out: Outcome = {};
+    const tools = new DefaultToolRegistry();
+    tools.register(storageReader(out));
+    // The default reach is [ownDir, skills/, cwd]; the state dir itself is the
+    // cwd's parent, so read users/ and memory.db through a cwd that IS the
+    // state dir to prove the deny, not the allowlist, refuses them.
+    const loop = new AgentLoop({
+      llm: readingLLM('storage_read', [
+        join(own, 'MEMORY.md'),
+        join(home, 'users', 'u1', 'USER.md'),
+        join(home, 'memory.db'),
+        join(home, 'work', 'notes.txt'),
+        join(vault, 'journal.md'),
+        join(own, 'files', 'logo.txt'),
+      ]),
+      tools,
+      personalities: personalities(['read_file', 'storage_read']),
+      storage: new FsStorage(),
+      dataDir: home,
+      privateMemoryRoots: [vault],
+      safety: createTestSafety(),
+      options: { workingDir: home },
+    });
+    await drain(loop.run('read', { roomAudience: 'shared' }));
+
+    for (const p of [
+      join(own, 'MEMORY.md'),
+      join(home, 'users', 'u1', 'USER.md'),
+      join(home, 'memory.db'),
+      join(home, 'work', 'notes.txt'),
+      join(vault, 'journal.md'),
+    ]) {
+      expect(out[p], p).toMatch(/^refused: .*shared-audience memory/);
+    }
+    expect(out[join(own, 'files', 'logo.txt')]).toBe('asset');
+  });
+
+  it('a private turn reads the same files (absent roomAudience = today)', async () => {
+    const out: Outcome = {};
+    const tools = new DefaultToolRegistry(backends());
+    tools.register(scopedFsReader(out));
+    await drain(loopFor(readingLLM('read_file', [join(own, 'MEMORY.md')]), tools).run('read'));
+    expect(out[join(own, 'MEMORY.md')]).toBe(MEMORY_CONTENT);
+  });
+
+  it('the attachments rebuild of scopedFs keeps the deny', () => {
+    const resolved = resolveCapabilities(
+      'vision',
+      { fs_reach: { read: 'from-personality' }, attachments: { kinds: ['image'] } },
+      { sessionId: 's', personalityId: 'lean', roomAudience: 'shared' },
+      {
+        ...backends(),
+        attachmentCache: new InMemoryAttachmentCache(),
+        inboundAttachments: [
+          {
+            ref: 'a1',
+            type: 'image',
+            url: 'file:///tmp/ethos-test-cache/attachments/s/m/a1.png',
+            mimeType: 'image/png',
+          },
+        ],
+      },
+    );
+    return expect(resolved.scopedFs?.read(join(own, 'MEMORY.md'))).rejects.toThrow(
+      /^PATH_NOT_REACHABLE: .*shared conversation/,
+    );
   });
 });

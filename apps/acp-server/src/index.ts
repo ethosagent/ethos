@@ -707,6 +707,7 @@ export class AcpServer {
           try {
             let fullText = '';
             let turnCount = 0;
+            // audience: private-by-design (ACP — the local owner editor client)
             for await (const event of this.runner.run(p.text, {
               sessionKey: p.sessionKey,
               personalityId: p.personalityId,
@@ -1019,6 +1020,7 @@ export class AcpServer {
     let fullText = '';
     let turnCount = 0;
     let failure: string | undefined;
+    // audience: private-by-design (ACP — the local owner editor client)
     for await (const event of this.runner.run(text, {
       sessionKey,
       personalityId,

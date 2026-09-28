@@ -228,6 +228,7 @@ async function runScenario(
       let outputTokens = 0;
       let error: string | undefined;
       const start = Date.now();
+      // audience: private-by-design (synthetic benchmark prompts)
       for await (const event of loop.run(prompts[i] ?? '', { sessionKey, personalityId })) {
         if (event.type === 'usage') {
           inputTokens += event.inputTokens;

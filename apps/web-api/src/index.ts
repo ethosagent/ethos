@@ -1465,6 +1465,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       // A wake turn for a team member runs on its team's loop (D4).
       runTurn: ({ text, sessionKey, personalityId, signal }) =>
         runOnLoop(loopForPersonality(personalityId), (loop) =>
+          // audience: private-by-design (satellite wake — a physical room, a stated known limitation)
           loop.run(text, {
             sessionKey,
             personalityId,

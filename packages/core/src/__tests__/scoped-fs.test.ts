@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
+import { privateMemoryPathDeny } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { personalityWriteDeny } from '../fs-reach';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
@@ -97,5 +98,65 @@ describe('ScopedFsImpl — always-deny floor over the Ethos state dir', () => {
     await expect(fs.read(join(state, 'sessions.db'))).rejects.toThrow(/PATH_NOT_REACHABLE/);
     await expect(fs.write(join(state, 'mcp.json'), '[]')).rejects.toThrow(/PATH_NOT_REACHABLE/);
     expect(await fs.read(join(state, 'personalities', 'bob', 'MEMORY.md'))).toBe('mine');
+  });
+});
+
+// plan personality-memory-boundary G1-5 — `ScopedFsImpl`'s sixth constructor
+// argument, the shared-turn private memory deny. The same cases as the
+// `denyWhen` block in packages/storage-fs/src/__tests__/scoped-storage.test.ts,
+// through the capability path the file tools (`ctx.scopedFs`) actually use.
+describe('ScopedFsImpl — denyWhen (shared-turn private memory)', () => {
+  let home: string;
+  let own: string;
+  let cwd: string;
+  let fs: ScopedFsImpl;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), 'ethos-scopedfs-denywhen-')));
+    own = join(home, 'personalities', 'bob');
+    cwd = join(home, 'work');
+    await mkdir(join(own, 'files'), { recursive: true });
+    await mkdir(join(own, 'ui'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(own, 'MEMORY.md'), 'canary: interview at ACME');
+    await writeFile(join(own, 'files', 'logo.txt'), 'asset');
+    await writeFile(join(own, 'ui', 'report.html'), '<p>hi</p>');
+    fs = new ScopedFsImpl(
+      new FsStorage(),
+      new Set([`${own}/`, `${cwd}/`]),
+      new Set([`${own}/`, `${cwd}/`]),
+      [],
+      [],
+      privateMemoryPathDeny({ stateDirs: [home] }),
+    );
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('refuses reading and writing MEMORY.md / USER.md with the PATH_NOT_REACHABLE: prefix', async () => {
+    await expect(fs.read(join(own, 'MEMORY.md'))).rejects.toThrow(
+      /^PATH_NOT_REACHABLE: .*shared conversation/,
+    );
+    await expect(fs.write(join(own, 'USER.md'), 'x')).rejects.toThrow(/^PATH_NOT_REACHABLE:/);
+    await expect(fs.exists(join(own, 'MEMORY.md'))).rejects.toThrow(/^PATH_NOT_REACHABLE:/);
+  });
+
+  it('keeps the asset folder and Canvas templates readable', async () => {
+    await expect(fs.read(join(own, 'files', 'logo.txt'))).resolves.toBe('asset');
+    await expect(fs.read(join(own, 'ui', 'report.html'))).resolves.toBe('<p>hi</p>');
+  });
+
+  it('refuses an innocently named symlink in the cwd that lands on MEMORY.md (verify item 20)', async () => {
+    await symlink(join(own, 'MEMORY.md'), join(cwd, 'notes.txt'));
+    await expect(fs.read(join(cwd, 'notes.txt'))).rejects.toThrow(
+      /^PATH_NOT_REACHABLE: .*shared conversation/,
+    );
+  });
+
+  it('without denyWhen (a private turn) the same read succeeds', async () => {
+    const open = new ScopedFsImpl(new FsStorage(), new Set([`${own}/`]), new Set());
+    await expect(open.read(join(own, 'MEMORY.md'))).resolves.toBe('canary: interview at ACME');
   });
 });

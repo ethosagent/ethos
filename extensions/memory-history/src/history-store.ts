@@ -7,8 +7,10 @@ import type { HistoryEntry, HistoryReadFilter, HistoryReadResult, HistorySource 
 /** Default inline-diff cap. Beyond this the before-state is spilled to a blob. */
 const DEFAULT_DIFF_CAP_BYTES = 4096;
 
-const HISTORY_FILE = 'memory-history.jsonl';
-const BLOB_DIR = 'history-blobs';
+// Both exported so `isPrivateMemoryPath`'s name set (@ethosagent/types) is
+// pinned against them (packages/types/src/__tests__/memory-paths.test.ts).
+export const HISTORY_FILE = 'memory-history.jsonl';
+export const BLOB_DIR = 'history-blobs';
 
 export interface HistoryStoreOptions {
   /**

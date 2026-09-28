@@ -110,6 +110,8 @@ export interface AgentLoopConfig {
    * `storage` is set.
    */
   dataDir?: string;
+  /** G1-5 — wholly private dirs beyond `dataDir`'s layout (the vault root), refused on shared turns (`privateMemoryDenyFor`). */
+  privateMemoryRoots?: readonly string[];
   /**
    * Optional observability adapter. When provided, AgentLoop records traces,
    * spans, and events for LLM calls, tool calls, and errors via typed
@@ -412,6 +414,7 @@ export class AgentLoop {
   private readonly storage?: Storage;
   private readonly attachmentCache?: import('@ethosagent/types').AttachmentCache;
   private readonly dataDir?: string;
+  private readonly privateMemoryRoots?: readonly string[];
   private readonly observability?: AgentLoopObservability;
   /** See AgentLoopConfig.turnAuditors. */
   private readonly turnAuditors?: readonly import('@ethosagent/types').TurnAuditor[];
@@ -479,6 +482,7 @@ export class AgentLoop {
     if (config.storage) this.storage = config.storage;
     if (config.attachmentCache) this.attachmentCache = config.attachmentCache;
     if (config.dataDir) this.dataDir = config.dataDir;
+    if (config.privateMemoryRoots) this.privateMemoryRoots = config.privateMemoryRoots;
     if (config.observability) this.observability = config.observability;
     if (config.turnAuditors) this.turnAuditors = config.turnAuditors;
     if (config.teamId) this.teamId = config.teamId;
@@ -625,6 +629,7 @@ export class AgentLoop {
       storage: this.storage,
       attachmentCache: this.attachmentCache,
       dataDir: this.dataDir,
+      privateMemoryRoots: this.privateMemoryRoots,
       observability: this.observability,
       contextEngines: this.contextEngines,
       llmHandle: this.llmHandle,

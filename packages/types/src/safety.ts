@@ -59,10 +59,21 @@ export interface RedactionKit {
  * written, even when `write` covers them: the personality's own definition
  * (`personalityWriteDeny` in `packages/core/src/fs-reach.ts`). Optional and
  * additive; enforced by `ScopedStorage.check` in `@ethosagent/storage-fs`.
+ *
+ * `denyWhen` — a read+write deny predicate, set only on a shared turn: the
+ * private memory files (`privateMemoryPathDeny`, ./memory-paths.ts). A factory
+ * MUST forward it; `ScopedStorage.check`/`checkSubtree` apply it to the
+ * lexical path and every symlink-resolved hop. Checked by
+ * `runAgentSafetyConformance` (packages/core/src/safety-conformance.ts).
  */
 export type ScopedStorageFactory = (
   base: import('./storage').Storage,
-  scope: { read: string[]; write: string[]; writeDeny?: string[] },
+  scope: {
+    read: string[];
+    write: string[];
+    writeDeny?: string[];
+    denyWhen?: import('./memory-paths').PrivatePathDeny;
+  },
 ) => import('./storage').Storage;
 
 export type WatcherDecision =
@@ -161,6 +172,7 @@ export const GUARANTEE_IDS = [
   'G-WATCH',
   'G-CHAN',
   'G-AUDIT',
+  'G-MEM',
 ] as const;
 
 /** One published guarantee's id. See {@link GUARANTEE_IDS}. */

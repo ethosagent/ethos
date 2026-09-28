@@ -16,7 +16,9 @@ import type {
 // Files we look at on prefetch in a personality scope. Hard-coded to the
 // two keys the old contract exposed; the file-keyed contract still lets
 // tools-memory write arbitrary `.md` keys via sync().
-const PERSONALITY_PREFETCH_KEYS = ['MEMORY.md', 'USER.md'] as const;
+// Exported so `isPrivateMemoryPath`'s name set (@ethosagent/types) is pinned
+// against it (packages/types/src/__tests__/memory-paths.test.ts).
+export const PERSONALITY_PREFETCH_KEYS = ['MEMORY.md', 'USER.md'] as const;
 
 /** Default ceiling, in characters, for any single memory key's content. */
 const DEFAULT_MEMORY_CHAR_LIMIT = 512 * 1024; // 512K per key

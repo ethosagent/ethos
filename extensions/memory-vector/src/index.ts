@@ -100,6 +100,13 @@ function nextContent(update: MemoryUpdate, current: string | undefined): string 
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * The database file name, opened directly under `VectorMemoryConfig.dir`.
+ * Exported so `isPrivateMemoryPath`'s name set (@ethosagent/types) is pinned
+ * against it (packages/types/src/__tests__/memory-paths.test.ts).
+ */
+export const VECTOR_DB_FILE = 'memory.db';
+
 export interface VectorMemoryConfig {
   /** Directory containing memory.db. Defaults to ~/.ethos */
   dir?: string;
@@ -190,7 +197,7 @@ export class VectorMemoryProvider implements MemoryProvider {
     this.topK = config.topK ?? TOP_K;
     this.embedFn = config.embedFn;
     this.storage = config.storage;
-    this.db = new Database(join(this.dir, 'memory.db'));
+    this.db = new Database(join(this.dir, VECTOR_DB_FILE));
     // memory.db is opened by every process that builds an agent loop under
     // `memory: vector` (gateway and serve start together under `ethos run-all`).
     // An explicit busy timeout makes concurrent opens/writes wait instead of

@@ -12,12 +12,17 @@ import type {
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
-import { resolveTurnAudience, sharedStampFor, withSharedAudienceExclusions } from '../audience';
+import {
+  privateMemoryDenyFor,
+  resolveTurnAudience,
+  sharedStampFor,
+  withSharedAudienceExclusions,
+} from '../audience';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import { routeTurnTier } from '../tier-router';
 import { resolveToolLoading } from '../tool-loading';
-import type { LoopDeps, TurnSetupResult } from '../turn-context';
+import type { LoopDeps, TurnSetup, TurnSetupResult } from '../turn-context';
 import type { TurnDecisions } from '../turn-decisions';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 
@@ -199,15 +204,29 @@ export async function* setupTurn(
   // missing credential: error event, done, `refused` — before
   // `recordTurnStart` burns a turn number.
   let workingDir: string;
-  let fsReach: { read: string[]; write: string[]; writeDeny: string[] };
+  let fsReach: TurnSetup['fsReach'];
   try {
+    const ethosHome = deps.dataDir ?? join(homedir(), '.ethos');
     const derived = deriveFsReachPaths(personality, {
-      ethosHome: deps.dataDir ?? join(homedir(), '.ethos'),
+      ethosHome,
       self: personality.id,
       cwd: deps.workingDir,
     });
     workingDir = derived.workdir;
-    fsReach = { read: derived.read, write: derived.write, writeDeny: derived.writeDeny };
+    // plan personality-memory-boundary G1-5 — a shared turn's scoped Storage
+    // refuses the private memory files (`privateMemoryDenyFor`, ../audience.ts);
+    // `resolveCapabilities` builds the same deny for `scopedFs`. A private turn
+    // carries no predicate. Pinned by the G1-5 cases in shared-audience.test.ts.
+    const denyWhen = privateMemoryDenyFor(roomAudience, {
+      stateDirs: [ethosHome],
+      ...(deps.privateMemoryRoots ? { extraRoots: deps.privateMemoryRoots } : {}),
+    });
+    fsReach = {
+      read: derived.read,
+      write: derived.write,
+      writeDeny: derived.writeDeny,
+      ...(denyWhen ? { denyWhen } : {}),
+    };
   } catch (err) {
     if (!(err instanceof EmptySubstitutionError)) throw err;
     if (traceId) deps.observability?.endTrace(traceId, 'error');

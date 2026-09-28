@@ -27,6 +27,7 @@ export function createPendingLoop(deps: PendingLoopDeps): AgentLoop {
     if (!deps.bound() && deps.boot) await deps.boot();
     const loop = deps.bound();
     if (loop) {
+      // audience: private-by-design (wrapper — forwards its caller's RunOptions unchanged)
       yield* loop.run(...args);
       return;
     }

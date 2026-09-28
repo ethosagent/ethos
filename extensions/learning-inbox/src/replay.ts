@@ -484,6 +484,7 @@ export async function runReplay(input: RunReplayInput): Promise<ReplayReport> {
       };
       // Drained to exhaustion even after an abort: `done` is not the end of a
       // turn, and breaking out skips the loop's own turn tail.
+      // audience: private-by-design (replays learning cases; shared sessions are kept out of cases by the G1-d filters, plan step 6)
       for await (const event of runtime.loop.run(learningCase.prompt, options)) {
         run.events.push(event);
         if (event.type !== 'usage') continue;
