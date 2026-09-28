@@ -183,21 +183,28 @@ export interface PlatformAdapter {
   start(): Promise<void>;
   stop(): Promise<void>;
   send(chatId: string, message: OutboundMessage): Promise<DeliveryResult>;
-  sendTyping?(chatId: string): Promise<void>;
+  /**
+   * Show a typing indicator. `opts.threadId` is the thread or forum topic the
+   * turn is in (the same value as `OutboundMessage.threadId`), so the
+   * indicator lands there rather than in the parent chat. Optional and
+   * additive: a one-parameter implementation still satisfies this contract.
+   */
+  sendTyping?(chatId: string, opts?: { threadId?: string }): Promise<void>;
   /**
    * Replace the content of an already-sent message. `opts.final` marks the
    * LAST edit of a streaming draft — the caller knows no further text is
    * coming, which lets an adapter apply a terminal-only presentation (Slack
    * collapses an over-long answer into a lead message plus a file). Absent or
-   * `false` means "more edits may follow"; adapters may ignore the field
-   * entirely, and a three-parameter implementation still satisfies this
-   * contract.
+   * `false` means "more edits may follow". `opts.threadId` is the thread the
+   * message was sent into, for adapters that address a thread as its own
+   * channel (Discord). Adapters may ignore either field entirely, and a
+   * three-parameter implementation still satisfies this contract.
    */
   editMessage?(
     chatId: string,
     messageId: string,
     text: string,
-    opts?: { final?: boolean },
+    opts?: { final?: boolean; threadId?: string },
   ): Promise<DeliveryResult>;
   onMessage(handler: (message: InboundMessage) => void): void;
   health(): Promise<{ ok: boolean; latencyMs?: number }>;

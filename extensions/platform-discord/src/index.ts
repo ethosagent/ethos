@@ -114,8 +114,8 @@ const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
 /**
  * A tracked "Thinking…" placeholder whose typing refresh last fired this long
  * ago belongs to a PREVIOUS turn that ended without a reply (errored, halted,
- * or answered elsewhere). The adapter has no turn id — `sendTyping(chatId)` is
- * the whole contract — so the turn boundary is inferred: the gateway refreshes
+ * or answered elsewhere). The adapter has no turn id — `sendTyping(chatId, opts)`
+ * is the whole contract — so the turn boundary is inferred: the gateway refreshes
  * typing every few seconds while a turn is live, and a gap this large means
  * the turn is over. The next `sendTyping` then deletes the stale message and
  * posts a fresh one, so a placeholder is posted per TURN, never once per chat
@@ -230,7 +230,8 @@ export class DiscordAdapter
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
   private readonly pendingReactions = new Map<string, string>();
   private readonly pendingReactionsMax = 256;
-  /** The current turn's thinking placeholder per chat: its messageId plus when
+  /** The current turn's thinking placeholder per target channel (the thread
+   *  for a thread turn, else the chat): its messageId plus when
    *  the typing refresh last touched it (per-turn staleness — see
    *  {@link THINKING_PLACEHOLDER_STALE_MS}). */
   private readonly thinkingMessages = new Map<
@@ -363,9 +364,9 @@ export class DiscordAdapter
     const ids: string[] = [];
     let total = 0;
     try {
-      await this.clearThinkingPlaceholder(chatId);
-
       const targetId = message.threadId ?? chatId;
+      await this.clearThinkingPlaceholder(targetId);
+
       const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('send' in channel)) {
         return { ok: false, error: 'Channel not found or not sendable', permanent: true };
@@ -445,15 +446,23 @@ export class DiscordAdapter
     }
   }
 
-  async sendTyping(chatId: string): Promise<void> {
+  /**
+   * Typing and the "Thinking…" placeholder go to `opts.threadId` when the turn
+   * is in a thread — the gateway's `chatId` is the PARENT channel there — and
+   * the placeholder is tracked per target channel, so two threads under one
+   * parent each keep their own (UBP-017, pinned by
+   * `__tests__/thread-typing.test.ts`).
+   */
+  async sendTyping(chatId: string, opts?: { threadId?: string }): Promise<void> {
+    const targetId = opts?.threadId ?? chatId;
     try {
-      const channel = await this.client.channels.fetch(chatId);
+      const channel = await this.client.channels.fetch(targetId);
       if (channel && 'sendTyping' in channel) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         await (channel as any).sendTyping();
       }
       if (this.postsThinkingPlaceholder && channel && 'send' in channel) {
-        const existing = this.thinkingMessages.get(chatId);
+        const existing = this.thinkingMessages.get(targetId);
         if (existing && Date.now() - existing.lastTypingAt <= THINKING_PLACEHOLDER_STALE_MS) {
           // Same turn — the gateway's periodic typing refresh. Keep the one
           // placeholder and slide the liveness window.
@@ -464,14 +473,14 @@ export class DiscordAdapter
           // A previous turn's placeholder no send() ever cleared (the turn
           // ended without a reply). Delete it so the channel never accumulates
           // stale "Thinking…" rows, then post this turn's own.
-          await this.clearThinkingPlaceholder(chatId);
+          await this.clearThinkingPlaceholder(targetId);
         }
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         const placeholder = await (channel as any).send({
           content: 'Thinking…',
           allowedMentions: { parse: [] },
         });
-        this.thinkingMessages.set(chatId, {
+        this.thinkingMessages.set(targetId, {
           messageId: String(placeholder.id),
           lastTypingAt: Date.now(),
         });
@@ -481,11 +490,19 @@ export class DiscordAdapter
     }
   }
 
-  async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
+  /** A thread's messages live in the thread channel, so `opts.threadId` is
+   *  where the edit fetches from (UBP-017). */
+  async editMessage(
+    chatId: string,
+    messageId: string,
+    text: string,
+    opts?: { final?: boolean; threadId?: string },
+  ): Promise<DeliveryResult> {
+    const targetId = opts?.threadId ?? chatId;
     try {
-      await this.clearThinkingPlaceholder(chatId);
+      await this.clearThinkingPlaceholder(targetId);
 
-      const channel = await this.client.channels.fetch(chatId);
+      const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('messages' in channel) || !('send' in channel)) {
         return { ok: false, error: 'Channel not found' };
       }
@@ -806,12 +823,14 @@ export class DiscordAdapter
     }
   }
 
-  private async clearThinkingPlaceholder(chatId: string): Promise<void> {
-    const entry = this.thinkingMessages.get(chatId);
+  /** `channelId` is the channel the placeholder was posted in — the thread's
+   *  own id for a thread turn. */
+  private async clearThinkingPlaceholder(channelId: string): Promise<void> {
+    const entry = this.thinkingMessages.get(channelId);
     if (!entry) return;
-    this.thinkingMessages.delete(chatId);
+    this.thinkingMessages.delete(channelId);
     try {
-      const channel = await this.client.channels.fetch(chatId);
+      const channel = await this.client.channels.fetch(channelId);
       if (channel && 'messages' in channel) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         const msg = await (channel as any).messages.fetch(entry.messageId);

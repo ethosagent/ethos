@@ -154,15 +154,15 @@ Long-poll and Socket Mode remain first-class, permanent defaults. This is additi
 
 ## `dropPendingUpdates` and poll-mode bots
 
-One footgun sits next door to this feature, and it applies only to Telegram bots that stay on **poll** mode.
+One setting sits next door to this feature, and it applies only to Telegram bots that stay on **poll** mode.
 
 ```yaml
-telegram.bots.0.dropPendingUpdates: false
+telegram.bots.0.dropPendingUpdates: true
 ```
 
-Default `true`, which is exactly what the gateway did before this key existed. grammy calls `deleteWebhook({ drop_pending_updates })` on every `bot.start()`, so with the default, every restart — crash, deploy, supervisor respawn — silently discards whatever Telegram queued while the process was down.
+Default `false`. grammy calls `deleteWebhook({ drop_pending_updates })` on every `bot.start()`, so with the default, whatever Telegram queued while the process was down (a crash, a deploy, a supervisor respawn, a sleep window) is delivered once the bot is back, and each message gets its answer.
 
-Set it `false` on any poll-mode bot in a deployment that sleeps and wakes, so a restart after a sleep window does not wipe the backlog accumulated during it.
+Set it `true` only if a restart should skip that backlog instead. With `true`, every restart silently discards the messages sent while the bot was down.
 
 It does nothing in webhook mode: `bot.start()` is never called for a webhook-mode bot, so there is no `deleteWebhook` call to carry the flag.
 

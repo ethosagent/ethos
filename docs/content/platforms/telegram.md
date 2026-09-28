@@ -36,7 +36,7 @@ For zero-to-first-message, follow [Deploy your first Telegram agent](../using/tu
 - `extensions/platform-telegram/src/validate.ts` — `getMe`-based token validation called by setup.
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
 - `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
-- `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new TelegramAdapter({ token, dropPendingUpdates: true })`).
+- `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new TelegramAdapter({ token, dropPendingUpdates })`, passed through from config; the adapter defaults it to `false`).
 
 ## Steps
 

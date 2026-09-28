@@ -4,7 +4,7 @@
 // The load-bearing property pinned here is that the whole block is ADDITIVE:
 // a config that names none of the new keys must parse to exactly what it
 // parsed to before they existed — `useWebhook` absent (long-poll),
-// `dropPendingUpdates` absent (so the adapter's `?? true` applies), `mode`
+// `dropPendingUpdates` absent (so the adapter's `?? false` applies), `mode`
 // absent (Socket Mode). Every other test here is about a key that an operator
 // actually wrote.
 

@@ -44,46 +44,59 @@ export function escapeHtml(text: string): string {
  * Convert Markdown formatting to Telegram-compatible HTML.
  *
  * Order of operations:
- *   1. Escape raw HTML in ALL text content.
- *   2. Apply markdown→HTML substitutions from most specific to least specific.
+ *   1. Pull fenced blocks, then inline code spans, out of the RAW text into
+ *      placeholders, rendering each as `<pre>`/`<code>` around its
+ *      HTML-escaped content. Nothing below ever sees code, so no emphasis tag
+ *      lands inside `<pre>`/`<code>` — Telegram's HTML parser rejects that
+ *      nesting and the whole chunk would fall back to plain text (UBP-051).
+ *   2. Escape raw HTML in the remaining prose.
+ *   3. Apply markdown→HTML substitutions from most specific to least specific.
+ *   4. Put the rendered code back.
  *
  * Covers: **bold**, _italic_, `code`, ```code blocks``` (with optional
- * language tag), ~~strike~~, ||spoiler||, [label](url).
+ * language tag), ~~strike~~, ||spoiler||, [label](url). Pinned by
+ * `__tests__/format-code.test.ts` and `__tests__/phase4.test.ts`.
  */
 export function markdownToTelegramHtml(text: string): string {
-  // Step 1: escape raw HTML so the agent can't inject tags.
-  let out = escapeHtml(text);
+  const code: string[] = [];
+  const stash = (html: string) => `\uE000${code.push(html) - 1}\uE000`;
 
-  // Step 2: code blocks (``` ... ```) — must come before inline code.
+  // Step 1: code blocks (``` ... ```) — must come before inline code.
   // With optional language tag: ```ts\ncode\n``` → <pre><code class="language-ts">code</code></pre>
   // Without language tag: ```\ncode\n``` → <pre>code</pre>
-  out = out.replace(
-    /```(\w+)?\n([\s\S]*?)```/g,
-    (_match, lang: string | undefined, code: string) => {
+  // A private-use U+E000 the model wrote would be read back as a placeholder; drop it.
+  let out = text
+    .replace(/\uE000/g, '')
+    .replace(/```(\w+)?\n([\s\S]*?)```/g, (_match, lang: string | undefined, body: string) => {
       if (lang) {
-        return `<pre><code class="language-${lang}">${code}</code></pre>`;
+        return stash(`<pre><code class="language-${lang}">${escapeHtml(body)}</code></pre>`);
       }
-      return `<pre>${code}</pre>`;
-    },
+      return stash(`<pre>${escapeHtml(body)}</pre>`);
+    });
+
+  // Inline code (` ... `) — single backtick pairs.
+  out = out.replace(/`([^`\n]+)`/g, (_match, body: string) =>
+    stash(`<code>${escapeHtml(body)}</code>`),
   );
 
-  // Step 3: inline code (` ... `) — single backtick pairs.
-  out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  // Step 2: escape raw HTML so the agent can't inject tags. The placeholders
+  // are U+E000-delimited digits, which escaping leaves alone.
+  out = escapeHtml(out);
 
-  // Step 4: bold (**text**)
+  // Step 3: bold (**text**)
   out = out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
-  // Step 5: italic (_text_) — avoid matching inside URLs or already-converted tags.
+  // Italic (_text_) — avoid matching inside URLs or already-converted tags.
   // Use word-boundary-aware matching: _text_ but not mid_word_case.
   out = out.replace(/(?<![a-zA-Z0-9])_(.+?)_(?![a-zA-Z0-9])/g, '<i>$1</i>');
 
-  // Step 6: strikethrough (~~text~~)
+  // Strikethrough (~~text~~)
   out = out.replace(/~~(.+?)~~/g, '<s>$1</s>');
 
-  // Step 7: spoiler (||text||)
+  // Spoiler (||text||)
   out = out.replace(/\|\|(.+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
 
-  // Step 8: links [label](url) — the URL was already HTML-escaped in step 1,
+  // Links [label](url) — the URL was already HTML-escaped in step 2,
   // so &amp; in query strings is correct for HTML attributes. Only allow
   // http(s) schemes; strip links with dangerous schemes (javascript:, data:,
   // vbscript:, etc.) by rendering them as plain text.
@@ -92,7 +105,8 @@ export function markdownToTelegramHtml(text: string): string {
     return label;
   });
 
-  return out;
+  // Step 4: restore the rendered code.
+  return out.replace(/\uE000(\d+)\uE000/g, (_match, i: string) => code[Number(i)] ?? '');
 }
 
 /**

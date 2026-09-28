@@ -19,6 +19,7 @@ import type {
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
 import type { Bot, InputFile } from 'grammy';
+import { formatApprovalCardText } from './blocks/approval';
 import { CHANNEL_MODES, type ChannelMode, ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
 import { grammy } from './sdk';
@@ -257,6 +258,41 @@ export function truncateWithEllipsis(text: string, limit: number): string {
 // Text chunking — Telegram has a 4096 char limit per message
 // ---------------------------------------------------------------------------
 
+/**
+ * The opening line of a ``` fence left open at the end of `text`, or
+ * `undefined` when every fence in it is closed. A fence line is one whose
+ * first non-blank characters are three backticks.
+ */
+function openFenceAtEnd(text: string): string | undefined {
+  let open: string | undefined;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart();
+    if (!trimmed.startsWith('```')) continue;
+    open = open === undefined ? trimmed : undefined;
+  }
+  return open;
+}
+
+/** Where to cut `text` so the head fits `limit`: a newline, else a space. */
+function cutPoint(text: string, limit: number): number {
+  const newlineAt = text.lastIndexOf('\n', limit);
+  if (newlineAt > limit * 0.6) return newlineAt + 1;
+  const spaceAt = text.lastIndexOf(' ', limit);
+  if (spaceAt > limit * 0.6) return spaceAt + 1;
+  return limit;
+}
+
+/** Room a chunk reserves for the "\n```" that closes a fence it splits. */
+const FENCE_CLOSE_RESERVE = 4;
+
+/**
+ * Split `text` into chunks of at most `maxLength`.
+ *
+ * Fence-aware (UBP-051): a chunk boundary that falls inside a ``` block
+ * closes the fence at the end of that chunk and reopens it — language tag
+ * included — at the start of the next, so each chunk renders its code as code
+ * on its own. Pinned by `__tests__/format-code.test.ts`.
+ */
 export function chunkText(text: string, maxLength = 4096): string[] {
   if (text.length <= maxLength) return [text];
 
@@ -269,18 +305,21 @@ export function chunkText(text: string, maxLength = 4096): string[] {
       break;
     }
 
-    // Prefer breaking at a newline, then a space
-    let cutAt = maxLength;
-    const newlineAt = remaining.lastIndexOf('\n', maxLength);
-    if (newlineAt > maxLength * 0.6) {
-      cutAt = newlineAt + 1;
-    } else {
-      const spaceAt = remaining.lastIndexOf(' ', maxLength);
-      if (spaceAt > maxLength * 0.6) cutAt = spaceAt + 1;
+    let cutAt = cutPoint(remaining, maxLength);
+    if (openFenceAtEnd(remaining.slice(0, cutAt)) !== undefined) {
+      cutAt = cutPoint(remaining, maxLength - FENCE_CLOSE_RESERVE);
+    }
+    let chunk = remaining.slice(0, cutAt);
+    let rest = remaining.slice(cutAt);
+    const opener = openFenceAtEnd(chunk);
+    // Reopen only when the next chunk still makes progress past the opener.
+    if (opener !== undefined && cutAt > opener.length + 1) {
+      chunk += chunk.endsWith('\n') ? '```' : '\n```';
+      rest = `${opener}\n${rest}`;
     }
 
-    chunks.push(remaining.slice(0, cutAt));
-    remaining = remaining.slice(cutAt);
+    chunks.push(chunk);
+    remaining = rest;
   }
 
   return chunks;
@@ -339,6 +378,38 @@ const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
   file: '(attached file)',
   audio: '(voice message)',
 };
+
+/**
+ * Does this Telegram message @mention the bot? Reads the text OR the caption
+ * (a captioned photo carries its words in `caption`), and compares
+ * case-insensitively — Telegram usernames are case-insensitive, so
+ * `@ethosbot` addresses `EthosBot`. A `mention` entity (`entities` /
+ * `caption_entities`) naming the bot counts, and so does the handle anywhere
+ * in the text not followed by another handle character — which covers a
+ * `/cmd@EthosBot` command and refuses a longer handle (`@EthosBot2`).
+ * UBP-015, pinned by `__tests__/inbound-mention-media.test.ts`.
+ */
+export function mentionsBot(msg: Record<string, unknown>, username: string | undefined): boolean {
+  if (!username) return false;
+  const text = typeof msg.text === 'string' ? msg.text : msg.caption;
+  if (typeof text !== 'string' || text === '') return false;
+  const handle = `@${username.toLowerCase()}`;
+  const entities = Array.isArray(msg.entities) ? msg.entities : msg.caption_entities;
+  const byEntity =
+    Array.isArray(entities) &&
+    entities.some((e: { type?: unknown; offset?: unknown; length?: unknown }) => {
+      if (e.type !== 'mention' || typeof e.offset !== 'number' || typeof e.length !== 'number') {
+        return false;
+      }
+      return text.slice(e.offset, e.offset + e.length).toLowerCase() === handle;
+    });
+  if (byEntity) return true;
+  const lower = text.toLowerCase();
+  for (let at = lower.indexOf(handle); at !== -1; at = lower.indexOf(handle, at + 1)) {
+    if (!/[a-z0-9_]/.test(lower.charAt(at + handle.length))) return true;
+  }
+  return false;
+}
 
 /**
  * Telegram's `date` is the message's send time in whole SECONDS. Scale to the
@@ -473,7 +544,13 @@ export interface TelegramAdapterConfig {
    * routing identity has a single source of truth.
    */
   botKey: string;
-  /** Whether to drop updates that arrived while the bot was offline. Default true. */
+  /**
+   * Whether to drop updates that arrived while the bot was offline. Default
+   * `false` (D3, UBP-002): the backlog Telegram queued while a poll-mode bot
+   * was down (Telegram keeps it at most 24h) is delivered after the restart
+   * and enters through the gateway's `acceptInbound` like any live message.
+   * Only poll mode reads this — `bot.start()` is never called in webhook mode.
+   */
   dropPendingUpdates?: boolean;
   /**
    * Bot identity pushed to BotFather at start(). Personality-bound bots
@@ -730,7 +807,7 @@ export class TelegramAdapter
     this.bot = new Bot(config.token);
     this.cache = config.cache;
     this.config = config;
-    this.dropPendingUpdates = config.dropPendingUpdates ?? true;
+    this.dropPendingUpdates = config.dropPendingUpdates ?? false;
     this.botKey = config.botKey;
     this.identity = config.identity;
     this.receiptReaction = config.receiptReaction ?? '👀';
@@ -918,7 +995,12 @@ export class TelegramAdapter
     this.warnIfPrivacyModeHidesObserved();
     this.warnIfOverridesUnreadable();
 
-    this.bot.on('message', (ctx) => {
+    // Async on purpose (UBP-016): grammY awaits this handler before it acks
+    // the update (poll mode advances the offset, webhook mode answers the
+    // request), so a media message reaches `messageHandler` — the gateway's
+    // `acceptInbound`, which spools it synchronously — before the ack, not
+    // after a background download a restart could lose.
+    this.bot.on('message', async (ctx) => {
       if (!this.messageHandler) return;
 
       const rawMsg = ctx.message as unknown as Record<string, unknown>;
@@ -944,7 +1026,7 @@ export class TelegramAdapter
 
       // --- Channel-mode gating (Gap 5) ---
       const isDm = ctx.chat.type === 'private';
-      const isGroupMention = ctx.message.text?.includes(`@${ctx.me.username}`) ?? false;
+      const isGroupMention = mentionsBot(rawMsg, ctx.me.username);
       const chatIdStr = String(chatId);
       const decision = this.channelDecision({ chatIdStr, isDm, isGroupMention, threadId, text });
 
@@ -1001,11 +1083,12 @@ export class TelegramAdapter
         return;
       }
 
-      // Async media download — best-effort. If download fails, forward
-      // the message without attachments so the agent still sees the caption.
-      void this.downloadAndAttach(msg, media).then((enriched) => {
-        if (this.messageHandler) this.messageHandler(enriched);
-      });
+      // Media download — best-effort, awaited so the ack waits for it (see
+      // above). A failed download, or a throw from the attachment cache,
+      // forwards the message without attachments so the agent still sees the
+      // caption. Pinned by `__tests__/inbound-mention-media.test.ts`.
+      const enriched = await this.downloadAndAttachOrPlain(msg, media);
+      this.messageHandler?.(enriched);
     });
 
     // --- edited_message handler (3.3) ---
@@ -1045,7 +1128,7 @@ export class TelegramAdapter
       // to stamp (R8). `isGroupMention` is computed rather than assumed false:
       // in `mention_only` a false would drop an edit that mentions the bot.
       const isDm = ctx.chat.type === 'private';
-      const isGroupMention = text.includes(`@${ctx.me.username}`);
+      const isGroupMention = mentionsBot(rawMsg, ctx.me.username);
       const chatIdStr = String(chatId);
       const decision = this.channelDecision({ chatIdStr, isDm, isGroupMention, threadId, text });
       if (!decision.shouldRecord) return;
@@ -1089,7 +1172,7 @@ export class TelegramAdapter
             this.messageHandler?.(msg);
             return;
           }
-          void this.downloadAndAttach(msg, media).then((enriched) => {
+          void this.downloadAndAttachOrPlain(msg, media).then((enriched) => {
             this.messageHandler?.(enriched);
           });
         }, 200),
@@ -1277,6 +1360,25 @@ export class TelegramAdapter
   // ---------------------------------------------------------------------------
   // Media download helper
   // ---------------------------------------------------------------------------
+
+  /**
+   * {@link downloadAndAttach}, but never rejects: any throw (the attachment
+   * cache's `write`, most likely) is logged and the message is forwarded as it
+   * arrived — caption or media placeholder, no attachments — rather than lost
+   * to an unhandled rejection.
+   */
+  private async downloadAndAttachOrPlain(
+    msg: InboundMessage,
+    media: MediaDescriptor[],
+  ): Promise<InboundMessage> {
+    try {
+      return await this.downloadAndAttach(msg, media);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger?.warn(`[telegram] media attach failed, forwarding without it: ${detail}`);
+      return msg;
+    }
+  }
 
   /**
    * Download media descriptors and attach them to the message. Best-effort:
@@ -1553,12 +1655,25 @@ export class TelegramAdapter
     }
   }
 
-  async sendTyping(chatId: string): Promise<void> {
-    await this.bot.api.sendChatAction(Number(chatId), 'typing').catch(() => {});
+  /** `opts.threadId` puts the indicator in that forum topic, not General (UBP-017). */
+  async sendTyping(chatId: string, opts?: { threadId?: string }): Promise<void> {
+    const threadOpt = opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {};
+    await this.bot.api.sendChatAction(Number(chatId), 'typing', threadOpt).catch(() => {});
   }
 
-  async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
+  /**
+   * Edits address a message by id alone, so `opts.threadId` matters only for
+   * the overflow chunks a longer re-flow appends: they land in the same topic
+   * as the message they continue (UBP-017).
+   */
+  async editMessage(
+    chatId: string,
+    messageId: string,
+    text: string,
+    opts?: { final?: boolean; threadId?: string },
+  ): Promise<DeliveryResult> {
     const useHtml = this.parseMode === 'html';
+    const threadOpt = opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {};
     try {
       const newChunks = chunkText(text, this.maxMessageLength);
       const existingIds = this.chunkMap.get(messageId) ?? [messageId];
@@ -1575,6 +1690,7 @@ export class TelegramAdapter
           const body = useHtml ? markdownToTelegramHtml(chunk) : chunk;
           const sent = await this.bot.api.sendMessage(Number(chatId), body, {
             ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
+            ...threadOpt,
           });
           return String(sent.message_id);
         },
@@ -1698,9 +1814,7 @@ export class TelegramAdapter
     reason: string | null;
     args: unknown;
   }): Promise<{ messageTs: string } | { error: string }> {
-    const reasonLine = input.reason ? `\nReason: ${input.reason}` : '';
-    const argsLine = input.args ? `\nArgs: ${JSON.stringify(input.args)}` : '';
-    const text = `Tool approval required: ${input.toolName}${reasonLine}${argsLine}`;
+    const text = formatApprovalCardText(input.toolName, input.reason, input.args);
 
     const rows: InlineButton[][] = [
       [

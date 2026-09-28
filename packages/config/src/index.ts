@@ -776,15 +776,17 @@ export interface TelegramBotConfig {
   webhookSecretToken?: string;
   /**
    * Discard updates Telegram queued while the process was down. Default
-   * `true`, preserving the literal that used to be hardcoded at the call site.
+   * `false` (UBP-002, owner decision D3): a message sent during a crash,
+   * upgrade or supervisor restart is answered after the restart, entering
+   * through the gateway's `acceptInbound` like any live message. The default
+   * is applied by the adapter (`TelegramAdapter` constructor,
+   * `config.dropPendingUpdates ?? false`), not here.
    *
    * Only affects POLL-mode bots: grammy's `bot.start()` calls
-   * `deleteWebhook({ drop_pending_updates })` on every invocation, so every
-   * restart drops the backlog. In webhook mode `bot.start()` is never called
-   * and this flag does nothing. A bot that stays on poll mode under a
-   * sleep/wake deployment should set this `false`, so a restart after a sleep
-   * window does not wipe the backlog Telegram queued while the process was
-   * paused (§6).
+   * `deleteWebhook({ drop_pending_updates })` on every invocation, so with
+   * `true` every restart drops the backlog. In webhook mode `bot.start()` is
+   * never called and this flag does nothing. Set it `true` only to have a
+   * restart deliberately skip everything queued while the bot was down.
    */
   dropPendingUpdates?: boolean;
   /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
