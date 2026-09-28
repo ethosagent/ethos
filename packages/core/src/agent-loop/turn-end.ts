@@ -90,6 +90,9 @@ export interface TurnEndCtx {
   toolScope: Pick<TurnSetup, 'toolLoading' | 'allowedTools' | 'filterOpts'>;
   /** Output reserve for the pressure gate (from RunOptions.maxCompletionTokens). */
   maxCompletionTokens?: number;
+  /** `TurnSetup.gateWindowTokens` — the turn's gate window when an override
+   *  routed it to a smaller-window model. */
+  gateWindowTokens?: number;
   /** THIS run's plugin context store — the flush dispatches tools, and a tool
    *  gets the same contract here as in a batch (`__tests__/tool-context-parity.test.ts`). */
   contextStore: ContextStore;
@@ -140,6 +143,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     contextStore: extras.contextStore,
     rootSessionKey: extras.rootSessionKey,
     ...(extras.untrustedSeen === true ? { untrustedSeen: true } : {}),
+    ...(setup.gateWindowTokens !== undefined ? { gateWindowTokens: setup.gateWindowTokens } : {}),
     ...(extras.maxCompletionTokens !== undefined
       ? { maxCompletionTokens: extras.maxCompletionTokens }
       : {}),

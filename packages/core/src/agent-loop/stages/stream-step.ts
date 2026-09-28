@@ -106,6 +106,8 @@ export interface StreamStepContext {
   activeTier: ModelTierName;
   effectiveModel: string;
   modelOverride: string | undefined;
+  /** `TurnSetup.gateWindowTokens` — the context-fit preflight's window. */
+  gateWindowTokens?: number | undefined;
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
   /** Item 7 — `TurnSetup.serverCompaction`; cleared here when the provider
    *  reports `SERVER_COMPACTION_REJECTED_WARNING`. */
@@ -213,6 +215,7 @@ export async function* streamStep(
     const fitError = currentTurnFitError(
       {
         llm: deps.llm,
+        ...(ctx.gateWindowTokens !== undefined ? { windowTokens: ctx.gateWindowTokens } : {}),
         ...(ctx.opts.maxCompletionTokens !== undefined
           ? { reservedOutputTokens: ctx.opts.maxCompletionTokens }
           : {}),

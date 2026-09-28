@@ -674,7 +674,7 @@ export async function* assembleContext(
   // state is reused so the aged prefix stays byte-identical (cache holds).
   let agingCacheBreakpoint: number | undefined;
   {
-    const window = deps.llm.maxContextTokens || 200_000;
+    const window = setup.gateWindowTokens ?? (deps.llm.maxContextTokens || 200_000);
     const prevState = await loadAgingState(deps.storage, deps.dataDir, sessionId);
     const usageEstimate =
       lastActualInputTokens ??
@@ -724,6 +724,7 @@ export async function* assembleContext(
     : await maybeCompact(
         {
           llm: deps.llm,
+          ...(setup.gateWindowTokens !== undefined ? { windowTokens: setup.gateWindowTokens } : {}),
           contextEngines: deps.contextEngines,
           session: deps.session,
           observability: deps.observability,

@@ -350,6 +350,60 @@ describe('findRate — current-generation rows', () => {
     expect(findRate('claude-opus-5')?.prefix).not.toBe('claude-opus-4');
   });
 
+  // Anthropic model reference, 2026-06-24: Opus 5.5 $4/$20 with cache reads at
+  // $0.20; Mythos 5.1 and Mythos 5 $10/$50. The unstated rates follow the
+  // table's convention (cache write 1.25x input, cache read 0.1x input).
+  it('prices Opus 5.5 and Mythos 5.1 / 5 at their documented rates', () => {
+    const CASES: ReadonlyArray<{
+      id: string;
+      prefix: string;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }> = [
+      {
+        id: 'claude-opus-5-5',
+        prefix: 'claude-opus-5-5',
+        input: 4,
+        output: 20,
+        cacheRead: 0.2,
+        cacheWrite: 5,
+      },
+      {
+        id: 'claude-mythos-5-1',
+        prefix: 'claude-mythos-5-1',
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+      },
+      {
+        id: 'claude-mythos-5',
+        prefix: 'claude-mythos-5',
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+      },
+    ];
+    for (const c of CASES) {
+      const rate = findRate(c.id);
+      expect(rate?.prefix, `id: ${c.id}`).toBe(c.prefix);
+      expect(rate?.input, `id: ${c.id} input`).toBe(c.input);
+      expect(rate?.output, `id: ${c.id} output`).toBe(c.output);
+      expect(rate?.cacheRead, `id: ${c.id} cacheRead`).toBeCloseTo(c.cacheRead, 12);
+      expect(rate?.cacheWrite, `id: ${c.id} cacheWrite`).toBeCloseTo(c.cacheWrite, 12);
+    }
+    // Opus 5.5 must not fall through to the Opus 5 row ($5/$25).
+    expect(
+      estimateCost('claude-opus-5-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 }).costUsd,
+    ).toBeCloseTo(24, 12);
+    // Routed ids match the same rows.
+    expect(findRate('anthropic/claude-opus-5-5')?.prefix).toBe('claude-opus-5-5');
+    expect(findRate('anthropic/claude-mythos-5-1')?.prefix).toBe('claude-mythos-5-1');
+  });
+
   it('bills Fable 5.1 cache reads at a quarter of Fable 5', () => {
     const read = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000 };
     expect(estimateCost('claude-fable-5-1', read).costUsd).toBeCloseTo(0.25, 12);

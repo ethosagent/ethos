@@ -54,8 +54,26 @@ export interface AnthropicProviderConfig {
   /** UBP-033 — the model profile's output cap (`maxOutputTokens`, threaded by
    *  wiring from the model catalog / `models.<provider>/<model>` config). A
    *  per-call `CompletionOptions.maxTokens` wins; absent both →
-   *  `DEFAULT_MAX_OUTPUT_TOKENS`. */
+   *  `DEFAULT_MAX_OUTPUT_TOKENS`. Applies to `model` only. */
   maxOutputTokens?: number;
+  /** The output cap for a `CompletionOptions.modelOverride` that names a
+   *  model other than `model` (a personality role, think_deeper). Wiring
+   *  resolves it from the same catalog + config merge as `maxOutputTokens`.
+   *  Absent, or `undefined` for that model → `DEFAULT_MAX_OUTPUT_TOKENS`,
+   *  never `maxOutputTokens`: the configured model's cap can exceed the
+   *  override's (Opus 128000 vs Haiku 4.5 64000), which the API refuses. */
+  maxOutputTokensFor?: (model: string) => number | undefined;
+  /** The context window of `model` — what `maxContextTokens` reports and the
+   *  local compaction gate measures against. Wiring resolves it with the
+   *  window precedence (`contextWindow` config > model catalog, the
+   *  `resolveContextWindow` call in `createLLMFromRegistry`). Absent →
+   *  `anthropicContextTokens(model)`, the 200K fallback. */
+  maxContextTokens?: number;
+  /** The context window of a `CompletionOptions.modelOverride` naming another
+   *  model, from the same catalog. Used to scale the server-compaction trigger
+   *  down for an override with a smaller window. Absent, or `undefined` for
+   *  that model → `anthropicContextTokens(override)`. */
+  maxContextTokensFor?: (model: string) => number | undefined;
   /** Item 7 (D32) — server-side compaction, from `providers.<n>.serverCompaction`
    *  (wiring computes `triggerTokens`: `serverCompactionTriggerTokens`, else
    *  the local compaction gate's own threshold). Absent → never sent. */
@@ -136,11 +154,14 @@ export const SERVER_COMPACTION_BETA = 'compact-2026-01-12';
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** The window `AnthropicProvider.maxContextTokens` reports for `model` — the
- *  one the local compaction gate measures against. Exported so wiring derives
- *  the default server-compaction trigger from the same number. */
+/** The FALLBACK window for a Claude model the caller has no window for: the
+ *  documented windows live in the model catalog (`MODEL_CATALOG` in
+ *  packages/wiring/src/model-catalog.ts — 1M for current models, 200K for
+ *  Haiku 4.5) and reach the provider as `AnthropicProviderConfig.maxContextTokens`
+ *  / `maxContextTokensFor`. 200K is the smallest window a current Claude model
+ *  has, so an unknown id is never gated above what it can take. */
 export function anthropicContextTokens(_model: string): number {
-  return 200_000; // all current Claude models
+  return 200_000;
 }
 
 function isThinkingModel(model: string): boolean {
@@ -325,6 +346,10 @@ export class AnthropicProvider implements LLMProvider {
 
   /** UBP-033 — the profile's output cap, when wiring passed one. */
   readonly maxOutputTokens: number | undefined;
+  /** The per-model cap resolver for a `modelOverride`, when wiring passed one. */
+  readonly maxOutputTokensFor: ((model: string) => number | undefined) | undefined;
+  /** The per-model window resolver for a `modelOverride`, when wiring passed one. */
+  readonly maxContextTokensFor: ((model: string) => number | undefined) | undefined;
 
   private readonly client: Anthropic;
   private readonly toolOrder: ToolOrder;
@@ -357,11 +382,16 @@ export class AnthropicProvider implements LLMProvider {
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
       ...(config.fetchImpl ? { fetch: config.fetchImpl } : {}),
     });
-    this.maxContextTokens = anthropicContextTokens(config.model);
+    this.maxContextTokens =
+      config.maxContextTokens !== undefined && config.maxContextTokens > 0
+        ? config.maxContextTokens
+        : anthropicContextTokens(config.model);
+    this.maxContextTokensFor = config.maxContextTokensFor;
     this.supportsThinking = isThinkingModel(config.model);
     this.toolOrder = config.toolOrder ?? 'stable';
     this.serverCompaction = config.serverCompaction;
     this.maxOutputTokens = config.maxOutputTokens;
+    this.maxOutputTokensFor = config.maxOutputTokensFor;
     this.inStreamAttempts = config.maxRetries === 0 ? 1 : IN_STREAM_MAX_ATTEMPTS;
   }
 
@@ -390,6 +420,20 @@ export class AnthropicProvider implements LLMProvider {
         await sleepUnlessAborted(inStreamRetryDelayMs(attempt), options.abortSignal);
       }
     }
+  }
+
+  /**
+   * The server-compaction trigger for `model`. The configured trigger is sized
+   * for `this.model`'s window; a `modelOverride` to a model with a SMALLER
+   * window gets the same fraction of its own window, so an Opus-configured
+   * provider routed to Haiku 4.5 does not send an 800K trigger to a 200K model.
+   * Pinned by __tests__/context-window.test.ts.
+   */
+  private triggerFor(model: string, trigger: number): number {
+    if (model === this.model) return trigger;
+    const window = this.maxContextTokensFor?.(model) ?? anthropicContextTokens(model);
+    if (window >= this.maxContextTokens) return trigger;
+    return Math.floor((trigger * window) / this.maxContextTokens);
   }
 
   private async *completeOnce(
@@ -455,10 +499,17 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const effectiveModel = options.modelOverride ?? this.model;
+    // The profile cap is per model: an override to another model takes that
+    // model's cap (or the default), never the configured model's. Pinned by
+    // __tests__/output-cap-and-stream-retry.test.ts ('max_tokens follows …').
+    const profileCap =
+      effectiveModel === this.model
+        ? this.maxOutputTokens
+        : this.maxOutputTokensFor?.(effectiveModel);
 
     const buildParams = (serverCompaction: boolean): AnthropicStreamParams => ({
       model: effectiveModel,
-      max_tokens: options.maxTokens ?? this.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: options.maxTokens ?? profileCap ?? DEFAULT_MAX_OUTPUT_TOKENS,
       messages: buildMessages(serverCompaction),
       ...(systemBlocks ? { system: systemBlocks } : {}),
       ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
@@ -478,7 +529,7 @@ export class AnthropicProvider implements LLMProvider {
                     type: 'input_tokens' as const,
                     value: Math.max(
                       SERVER_COMPACTION_MIN_TRIGGER_TOKENS,
-                      this.serverCompaction.triggerTokens,
+                      this.triggerFor(effectiveModel, this.serverCompaction.triggerTokens),
                     ),
                   },
                 },
@@ -575,6 +626,12 @@ export class AuthRotatingProvider implements LLMProvider {
       serverCompaction?: { triggerTokens: number };
       /** UBP-033 — the model profile's output cap, for every pooled key. */
       maxOutputTokens?: number;
+      /** Per-model cap for a `modelOverride`, for every pooled key. */
+      maxOutputTokensFor?: (model: string) => number | undefined;
+      /** The model's context window, for every pooled key. */
+      maxContextTokens?: number;
+      /** Per-model window for a `modelOverride`, for every pooled key. */
+      maxContextTokensFor?: (model: string) => number | undefined;
     },
   ) {
     const sorted = [...profiles].sort((a, b) => b.priority - a.priority);
@@ -592,6 +649,11 @@ export class AuthRotatingProvider implements LLMProvider {
             : {}),
           ...(opts?.serverCompaction ? { serverCompaction: opts.serverCompaction } : {}),
           ...(opts?.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+          ...(opts?.maxOutputTokensFor ? { maxOutputTokensFor: opts.maxOutputTokensFor } : {}),
+          ...(opts?.maxContextTokens !== undefined
+            ? { maxContextTokens: opts.maxContextTokens }
+            : {}),
+          ...(opts?.maxContextTokensFor ? { maxContextTokensFor: opts.maxContextTokensFor } : {}),
         }),
     );
     if (this.providers.length === 0) throw new Error('AuthRotatingProvider: no profiles provided');
@@ -602,7 +664,7 @@ export class AuthRotatingProvider implements LLMProvider {
   }
 
   get maxContextTokens(): number {
-    return this.providers[this.current]?.maxContextTokens ?? 200_000;
+    return this.providers[this.current]?.maxContextTokens ?? anthropicContextTokens(this.model);
   }
 
   get supportsThinking(): boolean {
@@ -665,6 +727,16 @@ import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk'
 
 export const PROVIDER_CONTRACT_MAJOR = 3;
 
+/** Narrow an untyped factory-config resolver so it can only yield a positive
+ *  number (an output cap or a context window). */
+function numberResolver(fn: unknown): ((model: string) => number | undefined) | undefined {
+  if (typeof fn !== 'function') return undefined;
+  return (model) => {
+    const n: unknown = fn(model);
+    return typeof n === 'number' && n > 0 ? n : undefined;
+  };
+}
+
 export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
   const secretKey = await secrets.get('providers/anthropic/apiKey');
   const apiKey = secretKey ?? (cfg.apiKey as string);
@@ -673,6 +745,8 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
       'Using plaintext apiKey from config for anthropic; migrate to the secret store: ethos secrets set providers/anthropic/apiKey <key>',
     );
   }
+  const capFor = numberResolver(cfg.maxOutputTokensFor);
+  const windowFor = numberResolver(cfg.maxContextTokensFor);
   return new AnthropicProvider({
     apiKey,
     model: cfg.model as string,
@@ -683,8 +757,17 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
     // Retry count threaded from wiring (`0` on a chain hop). Absent → SDK default.
     ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
     // UBP-033 — the model profile's output cap (`profile.maxOutputTokens`,
-    // `createLLMFromRegistry` in packages/wiring). Absent → 8096.
+    // `createLLMFromRegistry` in packages/wiring; the model catalog records
+    // each Claude model's documented cap). Absent → 8096.
     ...(typeof cfg.maxOutputTokens === 'number' ? { maxOutputTokens: cfg.maxOutputTokens } : {}),
+    // The same resolution for a `modelOverride` to another model. Whatever
+    // the resolver returns is checked, so a non-number never reaches the wire.
+    ...(capFor ? { maxOutputTokensFor: capFor } : {}),
+    // The resolved context window (`createLLMFromRegistry`: `contextWindow`
+    // config > model catalog) and the same lookup for a `modelOverride`.
+    // Absent → `anthropicContextTokens`, the 200K fallback.
+    ...(typeof cfg.maxContextTokens === 'number' ? { maxContextTokens: cfg.maxContextTokens } : {}),
+    ...(windowFor ? { maxContextTokensFor: windowFor } : {}),
     // Lane 2a — tool-ordering escape hatch threaded from config; invalid
     // values fall through to the 'stable' default.
     ...(cfg.toolOrder === 'insertion' || cfg.toolOrder === 'stable'

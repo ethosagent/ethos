@@ -23,6 +23,7 @@ import { compactionFailureCode, withCompactionDeadline } from './compaction-time
 
 export interface CompactionDeps {
   llm: LLMProvider;
+  windowTokens?: number; // `TurnSetup.gateWindowTokens` (./turn-window); absent → llm's window
   contextEngines: ContextEngineRegistry;
   session: SessionStore;
   observability?: AgentLoopObservability;
@@ -147,7 +148,7 @@ export interface GateEval {
 }
 
 export function evaluateGate(
-  deps: { llm: Pick<LLMProvider, 'maxContextTokens'> } & Pick<
+  deps: { llm: Pick<LLMProvider, 'maxContextTokens'>; windowTokens?: number } & Pick<
     CompactionDeps,
     | 'reservedOutputTokens'
     | 'staticTokens'
@@ -160,7 +161,7 @@ export function evaluateGate(
   messages: Message[],
   systemPrompt: string,
 ): GateEval {
-  const rawWindow = deps.llm.maxContextTokens || 200_000;
+  const rawWindow = deps.windowTokens ?? (deps.llm.maxContextTokens || 200_000);
   const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
@@ -237,12 +238,12 @@ export function currentTurnFitError(
   deps: { llm: Pick<LLMProvider, 'maxContextTokens' | 'model'> } & Pick<
     CompactionDeps,
     'reservedOutputTokens'
-  >,
+  > & { windowTokens?: number },
   input: { systemPrompt: string; toolSchemas: string; currentTurn: Message[] },
 ): string | undefined {
   const g = evaluateGate(deps, input.currentTurn, `${input.systemPrompt}${input.toolSchemas}`);
   if (g.current <= g.window) return undefined;
-  const rawWindow = deps.llm.maxContextTokens || 200_000;
+  const rawWindow = deps.windowTokens ?? (deps.llm.maxContextTokens || 200_000);
   const staticOnly = evaluateGate(deps, [], `${input.systemPrompt}${input.toolSchemas}`).current;
   return (
     `context window too small: the system prompt and tool schemas (~${staticOnly} tokens) plus ` +

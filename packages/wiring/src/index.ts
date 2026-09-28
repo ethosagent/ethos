@@ -1115,7 +1115,9 @@ export function isProviderAllowed(providerName: string, allowedPlugins?: string[
  * trigger defaults to the local gate's own threshold for the model
  * (`pressureGateTokens` over the provider's reported window, with the resolved
  * `compaction.pressure` and `compaction.maxContextTokens`), so the switch
- * changes WHO compacts, not WHEN.
+ * changes WHO compacts, not WHEN. `windowTokens` is the window the provider
+ * reports (the resolved `contextWindow`-config-or-catalog window); absent →
+ * `anthropicContextTokens`, the 200K fallback.
  */
 function serverCompactionFor(
   cfg: {
@@ -1126,6 +1128,7 @@ function serverCompactionFor(
   },
   config: WiringConfig,
   log: Logger,
+  windowTokens: number | undefined,
 ): { triggerTokens: number } | undefined {
   if (cfg.serverCompaction !== true) return undefined;
   if (cfg.provider !== 'anthropic') {
@@ -1142,11 +1145,43 @@ function serverCompactionFor(
   const triggerTokens =
     cfg.serverCompactionTriggerTokens ??
     pressureGateTokens(
-      anthropicContextTokens(cfg.model),
+      windowTokens ?? anthropicContextTokens(cfg.model),
       resolveCompactionGate(profile, config.compaction)?.pressure,
       config.compaction?.maxContextTokens,
     );
   return { triggerTokens };
+}
+
+/**
+ * The output cap `AnthropicProvider` sends for a `CompletionOptions.modelOverride`
+ * naming another Claude model: the same catalog-then-config merge the entry's
+ * own `maxOutputTokens` gets, keyed on the overriding model. Without it an
+ * override inherited the configured model's cap (Opus 128000 → Haiku 4.5,
+ * whose cap is 64000). Pinned by __tests__/anthropic-output-cap-catalog.test.ts.
+ */
+function anthropicOutputCapFor(config: WiringConfig): (model: string) => number | undefined {
+  return (model) =>
+    mergeModelProfile(lookupProfile('anthropic', model), config.models?.[`anthropic/${model}`])
+      ?.maxOutputTokens;
+}
+
+/**
+ * The context window `AnthropicProvider` scales the server-compaction trigger
+ * by for a `CompletionOptions.modelOverride` naming another Claude model: the
+ * model catalog's window for it. Pinned by
+ * __tests__/anthropic-context-window-catalog.test.ts.
+ */
+function anthropicContextWindowFor(model: string): number | undefined {
+  return lookupContextWindow('anthropic', model);
+}
+
+/**
+ * The window the rotation pool reports: the same `contextWindow` config >
+ * catalog precedence `resolveOne` applies through `resolveContextWindow`
+ * (hosted Anthropic is never probed). Absent → the provider's 200K fallback.
+ */
+function anthropicPoolWindow(config: WiringConfig): number | undefined {
+  return config.contextWindow ?? lookupContextWindow('anthropic', config.model);
 }
 
 /**
@@ -1256,7 +1291,7 @@ async function createLLMFromRegistry(
       lookupProfile(cfg.provider, cfg.model),
       config.models?.[`${cfg.provider}/${cfg.model}`],
     );
-    const serverCompaction = serverCompactionFor(cfg, config, log);
+    const serverCompaction = serverCompactionFor(cfg, config, log, contextWindow);
     const provider = await factory({
       config: {
         ...(cfg as unknown as Record<string, unknown>),
@@ -1272,6 +1307,12 @@ async function createLLMFromRegistry(
           : {}),
         ...(profile?.maxOutputTokens !== undefined
           ? { maxOutputTokens: profile.maxOutputTokens }
+          : {}),
+        ...(cfg.provider === 'anthropic'
+          ? {
+              maxOutputTokensFor: anthropicOutputCapFor(config),
+              maxContextTokensFor: anthropicContextWindowFor,
+            }
           : {}),
         // §3 — a profile that declares structured-output support turns on the
         // provider's `capabilities.structuredOutput`, which internal JSON
@@ -1416,10 +1457,12 @@ async function createLLMFromRegistry(
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
+      const poolWindow = anthropicPoolWindow(config);
       const serverCompaction = serverCompactionFor(
         { provider: config.provider, model: config.model, ...topEntryFields },
         config,
         log,
+        poolWindow,
       );
       // UBP-033 — the model profile's output cap, the same merge `resolveOne`
       // applies on the factory path; pinned by
@@ -1442,19 +1485,17 @@ async function createLLMFromRegistry(
         // too, and so does the per-request deadline: every pooled key builds
         // its own client, so a deadline set only on the non-rotating path
         // would silently not apply to a rotation deployment.
-        config.toolOrder !== undefined ||
-          config.requestTimeoutMs !== undefined ||
-          serverCompaction !== undefined ||
-          maxOutputTokens !== undefined
-          ? {
-              ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
-              ...(config.requestTimeoutMs !== undefined
-                ? { requestTimeoutMs: config.requestTimeoutMs }
-                : {}),
-              ...(serverCompaction ? { serverCompaction } : {}),
-              ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-            }
-          : undefined,
+        {
+          ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
+          ...(config.requestTimeoutMs !== undefined
+            ? { requestTimeoutMs: config.requestTimeoutMs }
+            : {}),
+          ...(serverCompaction ? { serverCompaction } : {}),
+          ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+          maxOutputTokensFor: anthropicOutputCapFor(config),
+          ...(poolWindow !== undefined ? { maxContextTokens: poolWindow } : {}),
+          maxContextTokensFor: anthropicContextWindowFor,
+        },
       );
       if (serverCompaction) markServerCompaction(pool);
       return tagProviderEntry(pool, topKey);

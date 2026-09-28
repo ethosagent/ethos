@@ -102,8 +102,21 @@ export const MODEL_PRICING: readonly ModelRate[] = [
   // 4.1 price (15/75), and without the specific rows every 4.x id fell through
   // to it at 3x its real rate. Same shape for `claude-haiku-4-5` over
   // `claude-haiku-4` and `claude-sonnet-4-6` over `claude-sonnet-4`.
+  //
+  // Opus 5.5 and Mythos 5.1 / 5 come from Anthropic's model reference
+  // (2026-06-24), which states input/output for all three and the cache-read
+  // rate for Opus 5.5 only ($0.20/MTok, 0.05x input). The rates it does not
+  // state follow the convention above, derived and not documented: cache write
+  // 1.25x input on all three, cache read 0.1x input on Mythos 5.1 and 5.
+  // `claude-opus-5-5` must precede `claude-opus-5` and `claude-mythos-5-1`
+  // must precede `claude-mythos-5`, for the same substring reason as Fable.
+  // Pinned by 'prices Opus 5.5 and Mythos 5.1 / 5 at their documented rates'
+  // in __tests__/pricing.test.ts.
   { prefix: 'claude-fable-5-1', input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
   { prefix: 'claude-fable-5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
+  { prefix: 'claude-mythos-5-1', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
+  { prefix: 'claude-mythos-5', input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
+  { prefix: 'claude-opus-5-5', input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   { prefix: 'claude-opus-5', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4-8', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   { prefix: 'claude-opus-4-7', input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
