@@ -1,5 +1,5 @@
-// plan personality-memory-boundary G1 — `targetAudience` and `isSharedSession`
-// (packages/core/src/chat-audience.ts). Private only when the id shape PROVES a
+// plan personality-memory-boundary G1 — `targetAudience`, `isSharedSession`,
+// `turnWasShared` and `sessionAudienceStampFor` (packages/core/src/chat-audience.ts). Private only when the id shape PROVES a
 // one-to-one chat or the operator listed the room; everything else, including
 // ids that cannot be classified, is shared (fail-closed).
 
@@ -7,9 +7,12 @@ import { describe, expect, it } from 'vitest';
 import { ROOM_AUDIENCE_METADATA_KEY } from '../agent-loop/audience';
 import {
   isSharedSession,
+  PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,
   type PrivateChatSet,
   privateChatSetFrom,
+  sessionAudienceStampFor,
   targetAudience,
+  turnWasShared,
 } from '../chat-audience';
 import { buildLaneKey } from '../lane-key';
 
@@ -90,6 +93,101 @@ describe('isSharedSession', () => {
 
   it('a channel-platform key with a malformed segment fails closed', () => {
     expect(isSharedSession({ key: 'telegram:bot:%E0%A4%A' })).toBe(true);
+  });
+
+  it('verification round B3: a judged private stamp outranks the key shape', () => {
+    // A Discord / email DM the gateway judged private at run time.
+    const discordDm = {
+      key: buildLaneKey('discord', 'b', '555'),
+      metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private' },
+    };
+    expect(isSharedSession(discordDm)).toBe(false);
+    expect(
+      isSharedSession({
+        key: buildLaneKey('email', 'b', 'a@example.com'),
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private' },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('turnWasShared (verification round B2)', () => {
+  const withheld = { [PERSONALITY_MEMORY_WITHHELD_METADATA_KEY]: true };
+
+  it('is isSharedSession OR the D8 withheld marker', () => {
+    expect(turnWasShared({ key: buildLaneKey('telegram', 'b', '-100') })).toBe(true);
+    expect(turnWasShared({ key: buildLaneKey('telegram', 'b', '42') })).toBe(false);
+    // A stranger's Telegram DM: private by key, but a turn withheld memory.
+    expect(turnWasShared({ key: buildLaneKey('telegram', 'b', '42'), metadata: withheld })).toBe(
+      true,
+    );
+    // A stranger's Discord DM judged private, with the marker.
+    expect(
+      turnWasShared({
+        key: buildLaneKey('discord', 'b', '555'),
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private', ...withheld },
+      }),
+    ).toBe(true);
+    // The owner's Discord DM judged private: learnable.
+    expect(
+      turnWasShared({
+        key: buildLaneKey('discord', 'b', '555'),
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private' },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('sessionAudienceStampFor', () => {
+  const dm = buildLaneKey('discord', 'b', '555');
+
+  it('a shared turn stamps shared (merging), even over a judged private stamp', () => {
+    expect(sessionAudienceStampFor('shared', false, { key: 'cli:x', metadata: { a: 1 } })).toEqual({
+      a: 1,
+      [ROOM_AUDIENCE_METADATA_KEY]: 'shared',
+    });
+    expect(
+      sessionAudienceStampFor('shared', false, {
+        key: dm,
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private' },
+      }),
+    ).toEqual({ [ROOM_AUDIENCE_METADATA_KEY]: 'shared' });
+    expect(
+      sessionAudienceStampFor('shared', false, {
+        key: dm,
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'shared' },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('a private turn judges only an unstamped channel-shaped key private', () => {
+    expect(sessionAudienceStampFor('private', false, { key: dm })).toEqual({
+      [ROOM_AUDIENCE_METADATA_KEY]: 'private',
+    });
+    // Key shape already private, or not a channel lane: nothing to write.
+    expect(
+      sessionAudienceStampFor('private', false, { key: buildLaneKey('slack', 'b', 'D1') }),
+    ).toBeUndefined();
+    expect(sessionAudienceStampFor('private', false, { key: 'cli:repo' })).toBeUndefined();
+    // Never over a shared stamp (a private turn cannot run on one anyway).
+    expect(
+      sessionAudienceStampFor('private', false, {
+        key: dm,
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'shared' },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('a D8 turn adds the withheld marker once', () => {
+    expect(
+      sessionAudienceStampFor('private', true, { key: buildLaneKey('telegram', 'b', '42') }),
+    ).toEqual({ [PERSONALITY_MEMORY_WITHHELD_METADATA_KEY]: true });
+    expect(
+      sessionAudienceStampFor('private', true, {
+        key: buildLaneKey('telegram', 'b', '42'),
+        metadata: { [PERSONALITY_MEMORY_WITHHELD_METADATA_KEY]: true },
+      }),
+    ).toBeUndefined();
   });
 });
 

@@ -179,7 +179,7 @@ export async function refreshSinglePanel(
       let output = '';
       let structured: unknown = null;
       let turnError: string | undefined;
-      // audience: private-by-design (panel prompts come only from private turns; D20 excludes dashboard_* on shared turns)
+      // audience: private-by-design (panel prompts come only from private turns: D20 excludes every panel-prompt writer — dashboard_add_panel/update_panel/import/set_params — on shared turns; pre-upgrade panels are a documented residual)
       for await (const event of loop.run(fullPrompt, {
         sessionKey,
         ...(personalityId ? { personalityId } : {}),

@@ -1,4 +1,4 @@
-import { isSharedSession, type PrivateChatSet } from '@ethosagent/core';
+import { type PrivateChatSet, turnWasShared } from '@ethosagent/core';
 import type {
   ObservabilityStore,
   SessionStore,
@@ -69,17 +69,18 @@ function buildGetSessionEvents(deps: DebugToolsDeps): Tool {
         // G1-8 (plan personality-memory-boundary): a shared room's transcript
         // is not handed to another session — a private caller (a dream, an
         // owner DM) could carry it into private memory. The caller's own
-        // session is its own context already. `isSharedSession`
-        // (packages/core/src/chat-audience.ts) covers the sticky stamp and
-        // pre-upgrade group lane keys. Pinned by
+        // session is its own context already. `turnWasShared`
+        // (packages/core/src/chat-audience.ts) covers the sticky stamp,
+        // pre-upgrade group lane keys and a non-owner DM (the D8 marker).
+        // Pinned by
         // extensions/tools-debug/src/__tests__/get-session-events.test.ts.
         if (sessionId !== ctx.sessionId) {
           const target = await deps.sessionStore.getSession(sessionId);
-          if (target && isSharedSession(target, deps.privateChats)) {
+          if (target && turnWasShared(target, deps.privateChats)) {
             return {
               ok: false,
               error:
-                'That session is a shared room (group chat or channel); its messages are only readable from inside it.',
+                "That session is a shared room (group chat or channel) or another person's DM; its messages are only readable from inside it.",
               code: 'not_available',
             };
           }

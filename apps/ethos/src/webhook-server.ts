@@ -396,8 +396,8 @@ export type WebhookServer = Server & {
  * packages/core/src/chat-audience.ts over `gateway.private_chats`), on the
  * platform named by its `adapterId` (`telegram:<botKey>` → `telegram`, the
  * same split `relayToTargets` uses). No `targetAudience` → every platform
- * target counts as shared. `undefined` means private. Pinned by the D12 cases
- * in `__tests__/platform-webhook-server.test.ts`.
+ * target counts as shared. `undefined` means private. Pinned by 'webhook room
+ * audience (D12)' in `__tests__/webhook-server.test.ts`.
  */
 export function webhookAudienceHint(
   hook: Pick<WebhookConfig, 'private' | 'deliver'>,

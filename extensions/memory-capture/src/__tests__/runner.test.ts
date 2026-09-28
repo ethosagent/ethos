@@ -228,6 +228,35 @@ describe('MemoryCaptureRunner', () => {
     expect(trusted.llmCalls).toHaveLength(1);
   });
 
+  // Verification round B2/B3 — `turnWasShared` (packages/core/src/chat-audience.ts).
+  it('skips a stranger’s DM (the D8 withheld marker) without an LLM call', async () => {
+    const session = {
+      getSession: async (id: string) =>
+        ({
+          id,
+          key: 'telegram:bot1:4242',
+          metadata: { personalityMemoryWithheld: true },
+        }) as unknown as Session,
+    } as unknown as SessionStore;
+    const h = makeHarness({ session });
+    await capture(h.runner);
+    expect(h.llmCalls).toHaveLength(0);
+  });
+
+  it('captures a Discord DM the gateway judged private (not excluded on its key)', async () => {
+    const session = {
+      getSession: async (id: string) =>
+        ({
+          id,
+          key: 'discord:bot1:555',
+          metadata: { roomAudience: 'private' },
+        }) as unknown as Session,
+    } as unknown as SessionStore;
+    const h = makeHarness({ session });
+    await capture(h.runner);
+    expect(h.llmCalls).toHaveLength(1);
+  });
+
   it('skips synthetic background-job wake turns', async () => {
     const h = makeHarness();
     await capture(h.runner, {

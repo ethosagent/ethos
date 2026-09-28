@@ -271,3 +271,37 @@ describe('forkSession', () => {
     });
   });
 });
+
+describe('forkSession — room audience (verification round B15)', () => {
+  async function seedKey(store: SessionStore, key: string, metadata?: Record<string, unknown>) {
+    return store.createSession({
+      key,
+      platform: 'telegram',
+      model: 'm',
+      provider: 'p',
+      ...(metadata ? { metadata } : {}),
+      usage: zeroUsage,
+    });
+  }
+
+  it('stamps the fork of an unstamped pre-upgrade group session shared', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedKey(store, 'telegram:bot:-1001', { pinnedTools: ['x'] });
+    const { session } = await forkSession(store, source.id, { key: 'web-session-1' });
+    expect(session.metadata).toEqual({ pinnedTools: ['x'], roomAudience: 'shared' });
+  });
+
+  it('leaves the fork of a private session unstamped', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedKey(store, 'telegram:bot:42');
+    const { session } = await forkSession(store, source.id, { key: 'web-session-2' });
+    expect(session.metadata?.roomAudience).toBeUndefined();
+  });
+
+  it('keeps a judged-private stamp as it is', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedKey(store, 'discord:bot:555', { roomAudience: 'private' });
+    const { session } = await forkSession(store, source.id, { key: 'discord:bot:555:fork:1' });
+    expect(session.metadata).toEqual({ roomAudience: 'private' });
+  });
+});

@@ -63,6 +63,21 @@ describe('postmortem handler', () => {
     assignee: 'engineer',
   };
 
+  // plan personality-memory-boundary D20/D4(a), verification round B17.
+  it('writes nothing for a task stamped shared', async () => {
+    registerPostmortemHandler({
+      teamName: 'myteam',
+      memory,
+      hooks,
+      isSharedTask: (id) => id === 'bda3f812',
+    });
+    await hooks.fireVoid('after_ticket_revision', payload);
+    expect(memory.entries.size).toBe(0);
+
+    await hooks.fireVoid('after_ticket_revision', { ...payload, taskId: 'other123' });
+    expect([...memory.entries.keys()]).toEqual(['postmortem-other123.md']);
+  });
+
   it('writes postmortem to team memory on revision', async () => {
     registerPostmortemHandler({ teamName: 'myteam', memory, hooks });
     await hooks.fireVoid('after_ticket_revision', payload);

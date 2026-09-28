@@ -3,9 +3,10 @@
 // every stage that enforces them, so "shared only narrows" is computed in one
 // place:
 //
-//   - turn-setup resolves the audience (`resolveTurnAudience`), merge-stamps a
-//     shared session (`sharedStampFor`) and unions the exclusion list into the
-//     turn's `excludeTools` (`withSharedAudienceExclusions`);
+//   - turn-setup resolves the audience (`resolveTurnAudience`), merge-stamps
+//     the session (`sessionAudienceStampFor`, ../chat-audience.ts) and unions
+//     the exclusion list into the turn's `excludeTools`
+//     (`withSharedAudienceExclusions`);
 //   - context-assembly skips the memory read and sets `PromptContext.isDm`;
 //   - turn-end skips the memory flush (`memoryFlushForbidden`);
 //   - both file boundaries refuse the private memory files
@@ -25,9 +26,14 @@ import {
 import { withRealPaths } from '../scoped/scoped-fs';
 
 /**
- * The `Session.metadata` key holding the sticky stamp. Its only value is
- * `'shared'`: a private turn never writes it, so a session can move private →
- * shared and never back (`sharedStampFor`).
+ * The `Session.metadata` key holding the session's judged audience. `'shared'`
+ * is the sticky stamp: once written, every later turn in the session is shared
+ * (`resolveTurnAudience`). `'private'` is a JUDGEMENT, not a widening: it is
+ * written only onto an unstamped session whose key shape alone would read as
+ * shared (a Discord or email DM the gateway judged private at run time), so
+ * post-turn readers stop guessing from the key (verification round B3). It
+ * never overrides `'shared'`, and `resolveTurnAudience` reads it as "no
+ * stamp". Written by `sessionAudienceStampFor` (../chat-audience.ts).
  */
 export const ROOM_AUDIENCE_METADATA_KEY = 'roomAudience';
 
@@ -55,18 +61,34 @@ export const SHARED_AUDIENCE_EXCLUDED_TOOLS: readonly string[] = [
   // Writes a meeting transcript into personality memory (D5(a)).
   'meet_join',
   // A shell or exec tool bypasses Storage and the file-reach boundary (D6(a)).
+  // `run_tests` and `lint` take a free-form `command` run under `bash -c` on the
+  // host (`makeCommandTool`, extensions/tools-code/src/index.ts) — a shell by
+  // another name (verification round B1). Every tool declaring
+  // `capabilities.process` must be listed here or justified in
+  // `packages/wiring/src/__tests__/shared-audience-process-tools.test.ts`.
   'terminal',
   'run_code',
+  'run_tests',
+  'lint',
   'process_start',
   'process_list',
   'process_logs',
   'process_stop',
   'process_wait',
   'process_watch',
-  // Would carry a shared prompt somewhere it runs private (D20, D21).
+  // Would carry a shared prompt somewhere it runs private (D20, D21): a
+  // dashboard panel prompt (added, edited, imported, or re-parameterised) is
+  // refreshed by a private turn, and a mesh peer runs what it is sent private
+  // (verification round B12/B14).
   'dashboard_add_panel',
   'dashboard_update_panel',
+  'dashboard_import',
+  'dashboard_set_params',
   'route_to_agent',
+  'dispatch_team',
+  'broadcast_to_agents',
+  // Returns panel content a private turn refreshed (verification round B13).
+  'dashboard_export',
   // Drafts distilled from private sessions (D22(a)).
   'skills_pending_list',
   'skills_pending_view',
@@ -94,9 +116,12 @@ export function resolveTurnAudience(
  * (no personality-scope read, `SHARED_AUDIENCE_EXCLUDED_TOOLS` excluded, no
  * flush, the file deny, children and jobs shared), EXCEPT that the sender's own
  * `user:<id>` profile is still read (`userMemoryOnly`). Driven by
- * `RunOptions.skipPersonalityMemory`, a per-turn narrowing that is NOT
- * persisted: the session's sticky stamp is computed from the caller's audience
- * before this, so the stranger's session is never stamped by it. Set by the
+ * `RunOptions.skipPersonalityMemory`, a per-turn narrowing that never NARROWS
+ * a later turn: the session's sticky stamp is computed from the caller's
+ * audience before this, so the stranger's session is never stamped shared by
+ * it. What IS persisted is the `personalityMemoryWithheld` marker
+ * (`sessionAudienceStampFor`, ../chat-audience.ts), read only by post-turn
+ * learners through `turnWasShared` (verification round B2). Set by the
  * gateway (`Gateway.runTurn`); pinned by the D8 cases in
  * `packages/core/src/__tests__/shared-audience.test.ts` and
  * `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`.
@@ -109,21 +134,6 @@ export function withPersonalityMemoryWithheld(
     return { roomAudience: audience, userMemoryOnly: false };
   }
   return { roomAudience: 'shared', userMemoryOnly: true };
-}
-
-/**
- * The metadata to write so a shared turn's session stays shared, or `undefined`
- * when nothing needs writing (a private turn, or an already stamped session).
- * MERGES into the existing metadata because `SessionStore.updateSession`
- * replaces `metadata` wholesale; never writes `'private'`.
- */
-export function sharedStampFor(
-  audience: TurnAudience,
-  sessionMetadata: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  if (audience !== 'shared') return undefined;
-  if (sessionMetadata?.[ROOM_AUDIENCE_METADATA_KEY] === 'shared') return undefined;
-  return { ...(sessionMetadata ?? {}), [ROOM_AUDIENCE_METADATA_KEY]: 'shared' };
 }
 
 /**

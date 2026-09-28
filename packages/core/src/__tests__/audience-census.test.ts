@@ -5,9 +5,10 @@
 //
 //   (a) passes `roomAudience` in its call (anywhere between `run(` and the
 //       matching `)`, so multi-line option objects count), or
-//   (b) carries the marker `// audience: private-by-design (<reason>)` on the
-//       call's first line or on the line directly above it, with a non-empty
-//       reason, or
+//   (b) carries the marker `// audience: private-by-design (<reason>)` — or,
+//       for a WRAPPER whose host decides the audience, `// audience: delegated
+//       (<where it is set>)` — on the call's first line or on the line
+//       directly above it, with a non-empty reason, or
 //   (c) is still listed in PENDING_WIRING below — a caller a later plan step
 //       wires. The list may only shrink: an entry whose file has FEWER
 //       unwired sites than it claims fails too, so the step that wires a
@@ -19,9 +20,13 @@
 // the receiver's LAST property name ends in `loop` (case-insensitive:
 // `loop.run`, `this.loop.run`, `bot.loop.run`, `systemLoop.run`,
 // `forkLoop.run`, `deps.agentLoop.run`, `runtime.loop.run` …), plus the
-// receivers in RECEIVER_ALIASES — AgentLoops held under another name. A match
-// on a comment line is ignored. The call's text is taken by balancing
-// parentheses from `run(` forward, skipping string and template literals.
+// receivers in RECEIVER_ALIASES — AgentLoops held under another name — plus
+// ANY `.run(` whose call passes an object with a `sessionKey` property: a
+// `RunOptions`-shaped call is an AgentLoop turn whatever its receiver is
+// called (verification round B5 — `this.runner.run({ sessionKey … })` was
+// invisible). A match on a comment line is ignored. The call's text is taken
+// by balancing parentheses from `run(` forward, skipping string and template
+// literals.
 //
 // The self-test block at the bottom pins the scanner itself (multi-line
 // options, markers, comments), so a scanner that silently finds nothing
@@ -39,7 +44,13 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', '__tests__', '__fixtures__', 
 const RECEIVER_ALIASES: Record<string, readonly string[]> = {
   // ACP's structural `AgentRunner` is the AgentLoop in production.
   'apps/acp-server/src/index.ts': ['this.runner'],
+  // The voice pipeline's `AgentTurnRunner`: a wrapper whose HOST binds the
+  // session key and audience (browser-voice-session.ts, sip-inbound-dispatch.ts).
+  'extensions/voice-session/src/voice-session.ts': ['this.runner'],
 };
+
+/** An object literal with a `sessionKey` property: `{ sessionKey`, `, sessionKey:` … */
+const RUN_OPTIONS_SHAPED = /[{,]\s*sessionKey\s*[:,}]/;
 
 /**
  * Callers a later plan step wires, with the number of unwired sites each file
@@ -52,7 +63,7 @@ const PENDING_WIRING: ReadonlyArray<{ file: string; count: number; step: number;
 /** Packages that must never drive an AgentLoop (they never load Ethos memory). */
 const NO_LOOP_PACKAGES = ['extensions/execution-pi/', 'extensions/execution-coding-agents/'];
 
-const MARKER = /\/\/ audience: private-by-design \(([^)]*\S[^)]*)\)/;
+const MARKER = /\/\/ audience: (?:private-by-design|delegated) \(([^)]*\S[^)]*)\)/;
 const CALL = /([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\??\.run\(/g;
 
 interface CallSite {
@@ -93,13 +104,17 @@ function isLoopReceiver(file: string, receiver: string): boolean {
   return (RECEIVER_ALIASES[file] ?? []).includes(receiver);
 }
 
+/** Only the call's own option object counts, never a nested function body. */
+function isRunOptionsShaped(text: string): boolean {
+  return RUN_OPTIONS_SHAPED.test(text);
+}
+
 /** Every AgentLoop `.run(` call site in `source`, classified. */
 function scanSource(file: string, source: string): CallSite[] {
   const lines = source.split('\n');
   const sites: CallSite[] = [];
   for (const match of source.matchAll(CALL)) {
     const receiver = match[1] ?? '';
-    if (!isLoopReceiver(file, receiver)) continue;
     const index = match.index ?? 0;
     const lineIdx = source.slice(0, index).split('\n').length - 1;
     const lineText = lines[lineIdx] ?? '';
@@ -108,6 +123,7 @@ function scanSource(file: string, source: string): CallSite[] {
     const trimmed = lineText.trimStart();
     if (before.includes('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
     const text = callText(source, index + match[0].length - 1);
+    if (!isLoopReceiver(file, receiver) && !isRunOptionsShaped(text)) continue;
     let status: CallSite['status'] = 'unwired';
     if (/\broomAudience\b/.test(text)) status = 'wired';
     else if (MARKER.test(lineText) || MARKER.test(lines[lineIdx - 1] ?? '')) status = 'marked';
@@ -225,6 +241,9 @@ describe('audience census — scanner self-test', () => {
       'marked',
     );
     expect(scan('// audience: private-by-design ()\nloop.run(t, {});')[0]?.status).toBe('unwired');
+    expect(scan('// audience: delegated (host sets it)\nloop.run(t, {});')[0]?.status).toBe(
+      'marked',
+    );
   });
 
   it('finds every loop-named receiver and ignores other .run( calls and comments', () => {
@@ -245,5 +264,14 @@ describe('audience census — scanner self-test', () => {
   it('honours RECEIVER_ALIASES only in the file they name', () => {
     expect(scan('this.runner.run(t, {});', 'apps/acp-server/src/index.ts')).toHaveLength(1);
     expect(scan('this.runner.run(t, {});', 'apps/other.ts')).toHaveLength(0);
+  });
+
+  it('catches a RunOptions-shaped call on ANY receiver (verification round B5)', () => {
+    const [site] = scan('this.runner.run(text, { sessionKey, personalityId });', 'apps/other.ts');
+    expect(site?.receiver).toBe('this.runner');
+    expect(site?.status).toBe('unwired');
+    expect(scan('runner.run({ sessionKey: k, roomAudience: a });')[0]?.status).toBe('wired');
+    // `sessionKey` as a value, not a property, is not RunOptions-shaped.
+    expect(scan('stmt.run(sessionKey);')).toHaveLength(0);
   });
 });

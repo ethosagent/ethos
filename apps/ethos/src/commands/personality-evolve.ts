@@ -38,12 +38,12 @@ import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
 import {
   importLegacyLearningQueues,
-  isSharedSession,
   listPendingExpressionCandidates,
   type PrivateChatSet,
   personalityCore,
   privateChatSetFrom,
   submitExpressionCandidate,
+  turnWasShared,
 } from '@ethosagent/wiring';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -201,8 +201,8 @@ type EvidenceMessage = import('@ethosagent/types').StoredMessage;
  * Evidence sessions for a personality: its own, else every personality's (the
  * returned `fallback` says which), newest first. Shared sessions are dropped
  * from both lists before the fallback decision (plan personality-memory-boundary
- * G1-8): `isSharedSession` (packages/core/src/chat-audience.ts) — the sticky
- * stamp, or a pre-upgrade group lane key — so nothing said in a room reaches
+ * G1-8): `turnWasShared` (packages/core/src/chat-audience.ts) — the sticky
+ * stamp, a pre-upgrade group lane key, or a non-owner DM's D8 marker — so nothing said in a room reaches
  * the Judge, an Expression draft, memory consolidation or a frozen case.
  * Pinned by the 'shared sessions' cases in
  * `apps/ethos/src/commands/__tests__/evidence-excluded-sessions.test.ts`.
@@ -213,7 +213,7 @@ async function evidenceSessions(
   privateChats: PrivateChatSet | undefined,
 ): Promise<{ sessions: import('@ethosagent/types').Session[]; fallback: boolean }> {
   const privateOnly = (list: import('@ethosagent/types').Session[]) =>
-    list.filter((s) => !isSharedSession(s, privateChats));
+    list.filter((s) => !turnWasShared(s, privateChats));
   let sessions = privateOnly(
     await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER }),
   );

@@ -9,7 +9,7 @@
 // both. These tests drive real `SQLiteInboundSpool` / `SQLiteDeliveryLedger`
 // files through real Gateways; a second Gateway on the same files is a restart.
 
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, buildLaneKey } from '@ethosagent/core';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
 import { type SpoolRow, SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import type {
@@ -19,6 +19,7 @@ import type {
   JobStore,
   OutboundMessage,
   PlatformAdapter,
+  SessionStore,
 } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Gateway, type GatewayConfig, type HeldNotice, type HeldNoticeStore } from '../index';
@@ -59,6 +60,7 @@ function recordingAdapter() {
 
 interface RunOpts {
   abortSignal?: AbortSignal;
+  sessionKey?: string;
   reviewOfJobId?: string;
   roomAudience?: string;
   initiator?: string;
@@ -71,6 +73,7 @@ type RunImpl = (
 function scriptedLoop(impl?: RunImpl) {
   const calls: Array<{
     text: string;
+    sessionKey?: string;
     reviewOfJobId?: string;
     roomAudience?: string;
     initiator?: string;
@@ -78,6 +81,7 @@ function scriptedLoop(impl?: RunImpl) {
   const run = vi.fn((text: string, opts: RunOpts) => {
     calls.push({
       text,
+      ...(opts.sessionKey ? { sessionKey: opts.sessionKey } : {}),
       ...(opts.reviewOfJobId ? { reviewOfJobId: opts.reviewOfJobId } : {}),
       ...(opts.roomAudience ? { roomAudience: opts.roomAudience } : {}),
       ...(opts.initiator ? { initiator: opts.initiator } : {}),
@@ -362,6 +366,43 @@ describe('parent review — room audience', () => {
   it('a stamped shared job wins over a DM-looking origin (shared only narrows)', async () => {
     const call = await reviewedWith({ roomAudience: 'shared', originChatId: '42' });
     expect(call?.roomAudience).toBe('shared');
+  });
+
+  // Verification round B4 — a shared review never stamps a private lane's session.
+  it('a shared review of a DM-origin job runs in its own sub-session, not the DM’s', async () => {
+    const call = await reviewedWith({ roomAudience: 'shared', originChatId: '42' });
+    expect(call?.sessionKey).toBe(`${buildLaneKey('telegram', 'bot-a', '42')}:review:job-1234abcd`);
+  });
+
+  it('a shared review of a group-origin job runs in the group’s session', async () => {
+    const call = await reviewedWith({ roomAudience: 'shared', originChatId: '-100' });
+    expect(call?.sessionKey).toBe(buildLaneKey('telegram', 'bot-a', '-100'));
+  });
+
+  it('a private review runs in the lane session', async () => {
+    const call = await reviewedWith({ roomAudience: 'private', originChatId: '42' });
+    expect(call?.sessionKey).toBe(buildLaneKey('telegram', 'bot-a', '42'));
+  });
+
+  it('the lane session’s own judged stamp decides when the store has it', async () => {
+    // An unclassifiable chat id the gateway judged private at run time.
+    const laneKey = buildLaneKey('telegram', 'bot-a', 'chat-1');
+    const sessionStore = {
+      getSessionByKey: async (key: string) =>
+        key === laneKey ? { key, metadata: { roomAudience: 'private' } } : null,
+    } as unknown as SessionStore;
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const j = job({ roomAudience: 'shared', originChatId: 'chat-1' });
+    const s = scriptedLoop();
+    const exec = fakeExecutor();
+    gateway(s.loop, out.adapter, fakeJobStore([j]), spool, {
+      executor: exec.executor,
+      sessionStore: () => sessionStore,
+    });
+    exec.fire(j);
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(s.calls[0]?.sessionKey).toBe(`${laneKey}:review:job-1234abcd`);
   });
 
   async function replayedWith(overrides: Partial<BackgroundJob>, dropJob = false) {

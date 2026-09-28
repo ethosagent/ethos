@@ -336,6 +336,7 @@ export class VoiceSession {
         await prior;
         // Barged over while waiting for the previous turn: never start.
         if (controller.signal.aborted) return;
+        // audience: delegated (the host's AgentTurnRunner — browser-voice-session.ts, sip-inbound-dispatch.ts)
         for await (const event of this.runner.run(text, { abortSignal: controller.signal })) {
           // Past the terminal event only the turn-end tail is left: drained,
           // not spoken — even if the session was stopped meanwhile.

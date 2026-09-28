@@ -95,10 +95,13 @@ export interface CronJob {
    * `ToolContext.roomAudience` (`cron` tool), or the web Cron page's delivery
    * target (`CronService.create`, apps/web-api). Top-level, not on `JobOrigin`:
    * a CLI-created job has no origin but still has an audience. Absent on jobs
-   * written before the field existed. Never read here — the runners resolve a
-   * firing's audience with `cronRunAudience` (packages/wiring/src/cron-audience.ts),
-   * which also judges the delivery target and `contextFrom`, and treats an
-   * absent stamp as shared (D11). `jobs.json` is rewritten whole, so an older
+   * written before the field existed. Narrowed to `'shared'` by `updateJob`
+   * when a shared turn edits or runs the job (`CronJobUpdate.roomAudience`).
+   * Never read here — the runners resolve a firing's audience with
+   * `cronRunAudience` (packages/wiring/src/cron-audience.ts), which also judges
+   * the delivery target and `contextFrom`, and judges an absent stamp by the
+   * delivery target alone (D11): a channel target that is not provably private
+   * runs shared, no target runs private. `jobs.json` is rewritten whole, so an older
    * binary that does not know the field keeps it (pinned by
    * `__tests__/unknown-field-roundtrip.test.ts`).
    */
@@ -143,6 +146,13 @@ export interface CronJobUpdate {
   script?: ScriptRef | null;
   /** An object sets the precheck gate; `null` clears it. */
   precheck?: ScriptRef | null;
+  /**
+   * Narrow the job to `'shared'` (plan personality-memory-boundary D20,
+   * verification round B14): a `cron` tool call from a shared turn that edits
+   * or runs a job restamps it, so the room's prompt never fires private. Only
+   * `'shared'` — nothing widens a job.
+   */
+  roomAudience?: 'shared';
 }
 
 export interface CronRunResult {
@@ -700,7 +710,8 @@ export class CronScheduler {
       !patch.schedule &&
       patch.prompt === undefined &&
       patch.script === undefined &&
-      patch.precheck === undefined
+      patch.precheck === undefined &&
+      patch.roomAudience === undefined
     ) {
       throw new Error('At least one of name, schedule, prompt, script, or precheck is required');
     }
@@ -774,6 +785,7 @@ export class CronScheduler {
         if (patch.precheck === null) delete existing.precheck;
         else existing.precheck = patch.precheck;
       }
+      if (patch.roomAudience === 'shared') existing.roomAudience = 'shared';
 
       jobs[idx] = existing;
       updatedJob = existing;

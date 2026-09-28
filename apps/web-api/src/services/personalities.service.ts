@@ -41,11 +41,11 @@ import type {
   PersonalitySkill,
 } from '@ethosagent/web-contracts';
 import {
-  isSharedSession,
   listPendingExpressionCandidates,
   type PrivateChatSet,
   resolveCharacterSheetDecisions,
   submitExpressionCandidate,
+  turnWasShared,
 } from '@ethosagent/wiring';
 import type { ApiKeyRecord } from '../middleware/bearer-auth';
 import type { ConfigRepository } from '../repositories/config.repository';
@@ -1247,8 +1247,8 @@ export class PersonalitiesService {
    *
    * Shared sessions are skipped in both the personality's own list and the
    * all-sessions fallback (plan personality-memory-boundary G1-8):
-   * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp,
-   * or a pre-upgrade group lane key). Pinned by
+   * `turnWasShared` (packages/core/src/chat-audience.ts — the sticky stamp,
+   * a pre-upgrade group lane key, or a non-owner DM's D8 marker). Pinned by
    * `apps/web-api/src/__tests__/services/personalities-evidence.test.ts`.
    */
   private async gatherEvidence(id: string): Promise<string> {
@@ -1256,7 +1256,7 @@ export class PersonalitiesService {
     if (!store) return '';
     const privateChats = await this.opts.readPrivateChats?.();
     const privateOnly = (list: import('@ethosagent/types').Session[]) =>
-      list.filter((s) => !isSharedSession(s, privateChats));
+      list.filter((s) => !turnWasShared(s, privateChats));
     let sessions = privateOnly(await store.listSessions({ personalityId: id }));
     if (sessions.length === 0) sessions = privateOnly(await store.listSessions());
     if (sessions.length === 0) return '';

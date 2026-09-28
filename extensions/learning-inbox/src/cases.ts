@@ -136,7 +136,7 @@ export interface SessionCaseTurn {
   context?: string[];
   /**
    * The turn was said in a shared room (plan personality-memory-boundary
-   * G1-8): its session is shared by `isSharedSession`
+   * G1-8): its session is shared by `turnWasShared`
    * (packages/core/src/chat-audience.ts) or the turn ran shared. Set by the
    * producer, which holds the session; `caseFromSessionTurn` refuses it.
    */

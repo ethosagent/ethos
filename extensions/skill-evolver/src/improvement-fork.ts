@@ -21,8 +21,8 @@ import {
   DefaultHookRegistry,
   DefaultToolRegistry,
   InMemorySessionStore,
-  isSharedSession,
   type PrivateChatSet,
+  turnWasShared,
 } from '@ethosagent/core';
 import type {
   AgentDonePayload,
@@ -122,13 +122,14 @@ export class ImprovementFork {
     if (successfulCalls < minToolCalls) return false;
 
     // G1-8 (plan personality-memory-boundary): a shared room's turn — stamped
-    // shared, or a pre-upgrade group lane key — never feeds the fork, which
+    // shared, a pre-upgrade group lane key, or a non-owner DM's D8 marker
+    // (`turnWasShared`, packages/core/src/chat-audience.ts) — never feeds the fork, which
     // writes private memory and proposes skills. Checked before the cooldown
     // so a group turn does not spend it. A session the store no longer has
     // cannot be judged, so it is refused too. Pinned by the 'shared source
     // session' cases in __tests__/improvement-fork.test.ts.
     const source = await this.opts.runtime.sessionStore.getSession(payload.sessionId);
-    if (!source || isSharedSession(source, this.opts.privateChats)) return false;
+    if (!source || turnWasShared(source, this.opts.privateChats)) return false;
 
     // Cooldown — refuse to re-fire too quickly per personality.
     const cooldownMinutes = cfg.cooldown_minutes ?? 60;

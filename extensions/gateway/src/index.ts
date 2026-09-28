@@ -8,6 +8,7 @@ import {
   forkSession,
   forkSessionKey,
   haltNotice,
+  isSharedSession,
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
@@ -21,6 +22,7 @@ import {
   selectTtsEntry,
   stripAnsiEscapes,
   type TtsProviderForPersonality,
+  targetAudience,
 } from '@ethosagent/core';
 import type { DeliveryLedger, DeliveryObligation } from '@ethosagent/delivery-ledger';
 import type { InboundDedupStore } from '@ethosagent/inbound-dedup';
@@ -5149,7 +5151,19 @@ export class Gateway {
     // A `wake_review` turn reaches here without `dispatchInbound`.
     const restoring = this.pendingLaneRestore(bot.botKey);
     if (restoring) await restoring;
-    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    const review = spoolTurn?.review;
+    const laneSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    // A shared wake review whose lane is private (a DM — say a non-owner's,
+    // whose `/background` job was stamped shared by D8) runs in its own
+    // sub-session: its first turn would otherwise stamp the DM session shared
+    // for good, withholding memory from every later turn in it — the same rule
+    // `runCronTurn` applies to a web origin (verification round B4). Pinned by
+    // the room-audience cases in `__tests__/parent-review.test.ts`.
+    const sessionKey =
+      review?.roomAudience === 'shared' &&
+      !(await this.laneSessionIsShared(laneSessionKey, message))
+        ? `${laneSessionKey}:review:${review.jobId}`
+        : laneSessionKey;
     // Stamped on this turn's reply obligations: the replay's double-reply
     // guard (`DeliveryLedger.hasObligationFor`) reads it back.
     const inboundRef = spoolTurn?.id;
@@ -5170,7 +5184,6 @@ export class Gateway {
     // work before the turn runs — not at completion, which would be too late.
     // A parent-review turn (plan openclaw-9.5-adoption item 6) is the agent
     // reacting to its own background work, not the user arriving: no signal.
-    const review = spoolTurn?.review;
     if (personalityId && !review) this.onUserTurn?.({ personalityId });
 
     this.activeTurns.set(laneKey, {
@@ -7757,6 +7770,21 @@ export class Gateway {
    */
   private jobAudienceFor(message: InboundMessage): TurnAudience {
     return this.withholdsPersonalityMemory(message) ? 'shared' : this.audienceFor(message);
+  }
+
+  /**
+   * Whether the lane's session already runs shared (`isSharedSession`,
+   * @ethosagent/core — its stamp, else its key shape), read through
+   * `GatewayConfig.sessionStore`. With no store, or no session yet, the origin
+   * chat itself is judged (`targetAudience`, honouring `privateChats`). Used
+   * only to keep a shared wake review out of a private lane's session
+   * (`runTurn`).
+   */
+  private async laneSessionIsShared(sessionKey: string, message: InboundMessage): Promise<boolean> {
+    const store = this.sessionStoreFor?.();
+    const session = store ? await store.getSessionByKey(sessionKey).catch(() => null) : null;
+    if (session) return isSharedSession(session, this.privateChats);
+    return targetAudience(message.platform, message.chatId, this.privateChats) === 'shared';
   }
 
   /**

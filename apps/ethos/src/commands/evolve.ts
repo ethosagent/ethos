@@ -12,11 +12,11 @@ import {
 } from '@ethosagent/skill-evolver';
 import {
   AWAITING_DECISION,
-  isSharedSession,
   type LearningInbox,
   learningSubmitPort,
   type PrivateChatSet,
   privateChatSetFrom,
+  turnWasShared,
 } from '@ethosagent/wiring';
 import { createCliLearningInbox, createLearningReplayer, createLLM, getStorage } from '../wiring';
 
@@ -213,8 +213,9 @@ const ROLE_MAP: Record<string, 'user' | 'assistant' | 'tool'> = {
  *
  * Shared sessions are never exported (plan personality-memory-boundary G1-8):
  * the sessions active in the window are read first and judged by
- * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp in
- * `metadata`, or a pre-upgrade group lane key, honouring `privateChats`), and
+ * `turnWasShared` (packages/core/src/chat-audience.ts — the sticky stamp in
+ * `metadata`, a pre-upgrade group lane key honouring `privateChats`, or a
+ * non-owner DM's D8 marker), and
  * only the remaining ids are passed to the message query, so a busy group
  * cannot use up the row cap either. Pinned by the shared-session cases in
  * `apps/ethos/src/commands/__tests__/evolve-export.test.ts`.
@@ -246,7 +247,7 @@ export async function exportSessionsToEval(
       .filter((s) => {
         const metadata = parseMetadata(s.metadata);
         // Unreadable metadata cannot prove the session was never stamped shared: fail closed.
-        return metadata !== null && !isSharedSession({ key: s.key, metadata }, privateChats);
+        return metadata !== null && !turnWasShared({ key: s.key, metadata }, privateChats);
       })
       .map((s) => s.id);
     if (privateIds.length === 0) return false;

@@ -146,7 +146,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 616, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 633, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 124, contains: "export function checkMessage" }
@@ -163,11 +163,11 @@ register_anchors:
   # and G-FS and a kernel path is cited by exactly one row, so the register
   # names them in prose without a line anchor.
   G-MEM:
-    - { path: packages/core/src/agent-loop/audience.ts, line: 83, contains: "export function resolveTurnAudience" }
-    - { path: packages/core/src/agent-loop/audience.ts, line: 186, contains: "export function privateMemoryDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 131, contains: "resolveTurnAudience(opts.roomAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 229, contains: "privateMemoryDenyFor(roomAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 456, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 105, contains: "export function resolveTurnAudience" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 196, contains: "export function privateMemoryDenyFor" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 139, contains: "resolveTurnAudience(requestedAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 239, contains: "privateMemoryDenyFor(roomAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 466, contains: "withSharedAudienceExclusions(" }
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 329, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 140, contains: "export function isPrivateMemoryPath" }
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 279, contains: "this.hitsDenyWhen(next)" }

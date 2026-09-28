@@ -28,9 +28,9 @@
 import { basename, join } from 'node:path';
 import {
   InMemorySessionStore,
-  isSharedSession,
   type PrivateChatSet,
   privateChatSetFrom,
+  turnWasShared,
 } from '@ethosagent/core';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import {
@@ -582,8 +582,8 @@ function turnsOf(
  *
  * Null too for a shared turn (plan personality-memory-boundary G1-8): the
  * calling turn ran `roomAudience: 'shared'`, or its session is shared by
- * `isSharedSession` (packages/core/src/chat-audience.ts — the sticky stamp, or
- * a pre-upgrade group lane key). A session the store no longer has is judged
+ * `turnWasShared` (packages/core/src/chat-audience.ts — the sticky stamp, a
+ * pre-upgrade group lane key, or a non-owner DM's D8 marker). A session the store no longer has is judged
  * by its key. The turn is marked `shared` and `caseFromSessionTurn`
  * (extensions/learning-inbox/src/cases.ts) refuses it. Pinned by the 'shared
  * turns' cases in `packages/wiring/src/__tests__/learning-pipeline.test.ts`.
@@ -602,7 +602,7 @@ export async function freezeLatestUserTurnCase(
   const source = await sessions.getSession(turn.sessionId);
   const shared =
     turn.roomAudience === 'shared' ||
-    isSharedSession(source ?? { key: turn.sessionKey }, turn.privateChats);
+    turnWasShared(source ?? { key: turn.sessionKey }, turn.privateChats);
   const turns = turnsOf(
     turn.sessionKey,
     await sessions.getMessages(turn.sessionId, { limit: 20 }),
@@ -620,7 +620,7 @@ export async function freezeLatestUserTurnCase(
 
 /**
  * Recent real user turns for a personality, newest sessions first, excluded
- * keys filtered at the query. Shared sessions (`isSharedSession`, G1-8) are
+ * keys filtered at the query. Shared sessions (`turnWasShared`, G1-8) are
  * dropped before the `maxSessions` cut, so a busy group cannot crowd out the
  * private sessions the cases should come from.
  */
@@ -635,7 +635,7 @@ async function recentSessionTurns(
       personalityId,
       excludeKeyPrefixes: [...LEARNING_EXCLUDED_KEY_PREFIXES],
     })
-  ).filter((s) => !isSharedSession(s, privateChats));
+  ).filter((s) => !turnWasShared(s, privateChats));
   listed.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   const turns: SessionCaseTurn[] = [];
   for (const s of listed.slice(0, maxSessions)) {

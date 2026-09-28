@@ -261,6 +261,23 @@ function readOnlyMemory(base: MemoryProvider): MemoryProvider {
 }
 
 /**
+ * The shipped `AgentSafety.scopedStorageFactory`: every per-turn scope the
+ * loop builds becomes a `ScopedStorage` over the caller's scope — `denyWhen`
+ * (the shared-turn private memory deny, G1-5) and `writeDeny` forwarded by the
+ * spread — plus the system-wide `defaultAlwaysDeny()`. The personality-
+ * definition floor is `ScopedStorage`'s own and always on. Exported so
+ * `packages/wiring/src/__tests__/scoped-storage-factory.test.ts` and
+ * `safety-conformance-wiring.test.ts` exercise THIS function rather than a
+ * replica of it (verification round B6).
+ */
+export function shippedScopedStorageFactory(
+  storageFs: Pick<typeof import('@ethosagent/storage-fs'), 'ScopedStorage' | 'defaultAlwaysDeny'>,
+): import('@ethosagent/types').ScopedStorageFactory {
+  return (base, scope) =>
+    new storageFs.ScopedStorage(base, { ...scope, alwaysDeny: storageFs.defaultAlwaysDeny() });
+}
+
+/**
  * The loop's per-personality tool exclusion (`AgentLoopConfig.personalityToolExclude`).
  * Depends only on the personality, so tool definitions stay byte-stable per
  * personality. Always defined (plan personality-memory-boundary G2): it is the
@@ -743,9 +760,7 @@ export async function buildAgentLoop(
     redactString: redactStringFn,
     detectSecrets: detectSecretsFn,
   } = await import('@ethosagent/safety-redact');
-  const { ScopedStorage: ScopedStorageCls, defaultAlwaysDeny: defaultAlwaysDenyFn } = await import(
-    '@ethosagent/storage-fs'
-  );
+  const storageFs = await import('@ethosagent/storage-fs');
 
   const safety: import('@ethosagent/types').AgentSafety = {
     injection: {
@@ -764,8 +779,7 @@ export async function buildAgentLoop(
       redactString: redactStringFn,
       detectSecrets: detectSecretsFn,
     },
-    scopedStorageFactory: (base, scope) =>
-      new ScopedStorageCls(base, { ...scope, alwaysDeny: defaultAlwaysDenyFn() }),
+    scopedStorageFactory: shippedScopedStorageFactory(storageFs),
     // G4 — this composition root gates tool calls behind the danger predicate
     // (`./danger-predicate`, reached via the `before_tool_call` modifying hooks
     // each surface registers). Declaring it makes core verify the claim at the
@@ -789,7 +803,7 @@ export async function buildAgentLoop(
   const wiringStorage = wiringCtx.storage;
   // `gateway.private_chats` — a listed room is private: a goal set there runs
   // private, and its sessions are not shared for the post-turn filters (the
-  // fork and memory capture below, `isSharedSession`).
+  // fork and memory capture below, `turnWasShared`).
   const roomPrivateChats = privateChatSetFrom(config.privateChats);
   // M-D6 (plan/phases/trust-before-reach.md Part 3) — `disablePostTurnLearning`
   // is a security gate, not a toggle. The fork turns what a turn SAID into a

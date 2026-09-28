@@ -171,6 +171,7 @@ export class A2aAsyncManager {
       await store.update(task.id, { status: 'working' });
       this.auditStatus(task, args, 'working');
       const { text, error } = await collectAgentRun(
+        // audience: delegated (A2aTaskRunner — apps/ethos/src/commands/serve-a2a-runner.ts runs every peer task shared, D13)
         this.opts.runner.run(args.personalityId, args.message, {
           sessionKey: args.sessionKey,
           skill: args.skill,

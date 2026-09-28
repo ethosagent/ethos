@@ -68,3 +68,48 @@ describe('goal_create — room audience (G1-6)', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ origin: 'web' }));
   });
 });
+
+describe('goal_status — personality scope and room audience (verification round B13)', () => {
+  const goals = [
+    { id: 'mine-dm', personalityId: 'eng', origin: 'telegram:4242', output: 'private notes' },
+    { id: 'mine-room', personalityId: 'eng', origin: 'telegram:-100200', output: 'room output' },
+    { id: 'other', personalityId: 'ops', origin: 'telegram:-100200', output: 'ops output' },
+  ];
+
+  function goalStatus(originAudience?: GoalOriginAudience) {
+    const store = {
+      get: (id: string) => goals.find((g) => g.id === id) ?? null,
+      list: () => goals,
+    } as unknown as GoalStore;
+    return createGoalTools(store, undefined, originAudience).find(
+      (t) => t.name === 'goal_status',
+    ) as Tool<unknown>;
+  }
+
+  const ids = (value: unknown) =>
+    (JSON.parse(String(value)) as Array<{ id: string }>).map((g) => g.id);
+
+  it('never returns another personality’s goal', async () => {
+    const tool = goalStatus(real);
+    expect(await tool.execute({ id: 'other' }, ctx('private'))).toMatchObject({ ok: false });
+    const listed = await tool.execute({}, ctx('private'));
+    expect(listed.ok && ids(listed.value)).toEqual(['mine-dm', 'mine-room']);
+  });
+
+  it('a shared turn reads only goals whose origin derives shared', async () => {
+    const tool = goalStatus(real);
+    expect(await tool.execute({ id: 'mine-dm' }, ctx('shared'))).toMatchObject({
+      ok: false,
+      error: 'goal not found: mine-dm',
+    });
+    expect((await tool.execute({ id: 'mine-room' }, ctx('shared'))).ok).toBe(true);
+    const listed = await tool.execute({}, ctx('shared'));
+    expect(listed.ok && ids(listed.value)).toEqual(['mine-room']);
+  });
+
+  it('fails closed with no derivation wired: a shared turn reads no goal', async () => {
+    const tool = goalStatus();
+    const listed = await tool.execute({}, ctx('shared'));
+    expect(listed.ok && ids(listed.value)).toEqual([]);
+  });
+});

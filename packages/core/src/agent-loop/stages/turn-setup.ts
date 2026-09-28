@@ -10,12 +10,12 @@ import type {
   ToolFilterOpts,
   TurnAudience,
 } from '@ethosagent/types';
+import { isSharedSession, sessionAudienceStampFor } from '../../chat-audience';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
 import {
   privateMemoryDenyFor,
   resolveTurnAudience,
-  sharedStampFor,
   withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../audience';
@@ -124,20 +124,30 @@ export async function* setupTurn(
 
   // plan personality-memory-boundary G1 — the turn's audience: the caller's
   // `roomAudience` narrowed by the session's sticky stamp (`resolveTurnAudience`,
-  // ../audience.ts). A shared turn stamps an unstamped session so every later
-  // turn in it is shared too, whoever the caller is; the stamp MERGES into
-  // metadata (`updateSession` replaces it wholesale) and `'private'` is never
-  // written. Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
-  const sessionAudience = resolveTurnAudience(opts.roomAudience, ethosSession.metadata);
-  const stamped = sharedStampFor(sessionAudience, ethosSession.metadata);
-  if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
+  // ../audience.ts). A caller that names NO audience (web `chat.send` with a
+  // session id, a fork) gets the session's own: `isSharedSession`
+  // (../../chat-audience.ts) — its stamp, else its key shape, so a pre-upgrade
+  // unstamped group session still runs shared (verification round B15).
+  // The session is then stamped (`sessionAudienceStampFor`): a shared turn
+  // stamps `'shared'` so every later turn is shared too, whoever the caller is;
+  // a private turn on an unstamped channel-shaped key records the judged
+  // `'private'`; a D8 turn records the withheld marker. The write MERGES into
+  // metadata (`updateSession` replaces it wholesale). Pinned by
+  // `packages/core/src/__tests__/shared-audience.test.ts`.
+  const requestedAudience =
+    opts.roomAudience ?? (isSharedSession(ethosSession) ? ('shared' as const) : undefined);
+  const sessionAudience = resolveTurnAudience(requestedAudience, ethosSession.metadata);
   // D8 — a non-owner DM runs shared for this turn only, keeping the sender's
   // own `user:<id>` read (`withPersonalityMemoryWithheld`, ../audience.ts).
-  // After the stamp on purpose: this narrowing is never persisted.
+  // The narrowing never reaches a later turn: the stamp below is computed from
+  // `sessionAudience`, and the withheld marker it adds is read only by
+  // post-turn learners (`turnWasShared`), never by `resolveTurnAudience`.
   const { roomAudience, userMemoryOnly } = withPersonalityMemoryWithheld(
     sessionAudience,
     opts.skipPersonalityMemory,
   );
+  const stamped = sessionAudienceStampFor(sessionAudience, userMemoryOnly, ethosSession);
+  if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
 
   // A session's personality is bound at creation and never changes. The
   // effective personality therefore comes from the SESSION, not from the

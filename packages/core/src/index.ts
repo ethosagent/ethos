@@ -19,7 +19,6 @@ export {
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
   SHARED_AUDIENCE_EXCLUDED_TOOLS,
-  sharedStampFor,
   withSharedAudienceExclusions,
 } from './agent-loop/audience';
 // tools-as-code-api Lane B — the per-turn bridge (and its budget-counter
@@ -111,9 +110,12 @@ export type { ChannelModeParser, ChannelOverrideEntry } from './channel-override
 export { ChannelOverrideStore } from './channel-overrides';
 export {
   isSharedSession,
+  PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,
   type PrivateChatSet,
   privateChatSetFrom,
+  sessionAudienceStampFor,
   targetAudience,
+  turnWasShared,
 } from './chat-audience';
 export {
   ClarifyBridge,

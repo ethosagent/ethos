@@ -768,6 +768,7 @@ async function runSyncTask(
 ): Promise<A2aTaskResult> {
   const taskId = randomUUID();
   const { text: finalText, error } = await collectAgentRun(
+    // audience: delegated (A2aTaskRunner — apps/ethos/src/commands/serve-a2a-runner.ts runs every peer task shared, D13)
     runner.run(personalityId, text, { sessionKey, skill, delegation }),
   );
   if (error !== undefined) {

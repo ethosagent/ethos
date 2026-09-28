@@ -163,6 +163,7 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
         // of this check (it narrows the type there).
         if (!ctx.personalityId) return PERSONALITY_REQUIRED;
         const caller = ctx.personalityId;
+        const shared = ctx.roomAudience === 'shared';
 
         switch (action) {
           case 'create':
@@ -179,13 +180,13 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
               repeat,
             });
           case 'list':
-            return handleList(scheduler, caller);
+            return handleList(scheduler, caller, shared);
           case 'get':
-            return handleGet(scheduler, caller, { id });
+            return handleGet(scheduler, caller, shared, { id });
           case 'read_run':
-            return handleReadRun(scheduler, caller, { id, at });
+            return handleReadRun(scheduler, caller, shared, { id, at });
           case 'update':
-            return handleUpdate(scheduler, caller, {
+            return handleUpdate(scheduler, caller, shared, {
               id,
               name,
               schedule,
@@ -200,7 +201,7 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           case 'resume':
             return handleResume(scheduler, caller, { id });
           case 'run':
-            return handleRun(scheduler, caller, { id });
+            return handleRun(scheduler, caller, shared, { id });
           case 'remove':
             return handleRemove(scheduler, caller, { id });
           default:
@@ -242,12 +243,25 @@ async function loadOwnedJob(
 ): Promise<{ ok: true; job: CronJob } | { ok: false; result: ToolResult }> {
   const job = await scheduler.getJob(id);
   if (!job || job.personalityId !== caller) {
-    return {
-      ok: false,
-      result: { ok: false, error: `Job not found: ${id}`, code: 'input_invalid' },
-    };
+    return { ok: false, result: jobNotFound(id) };
   }
   return { ok: true, job };
+}
+
+function jobNotFound(id: string): ToolResult {
+  return { ok: false, error: `Job not found: ${id}`, code: 'input_invalid' };
+}
+
+/**
+ * Whether a shared turn may READ this job — its prompt, its runs' output (plan
+ * personality-memory-boundary G1, verification round B13). Only a job stamped
+ * `'shared'`: an unstamped or private job's runs may have read private memory,
+ * so their output is not for the room. A private turn reads every job it owns.
+ * A refused job answers exactly as a missing one (`jobNotFound`), like the
+ * ownership gate. Pinned by `__tests__/room-audience.test.ts`.
+ */
+function readableFrom(shared: boolean, job: CronJob): boolean {
+  return !shared || job.roomAudience === 'shared';
 }
 
 /**
@@ -377,8 +391,9 @@ async function handleCreate(
       // The creating turn's resolved audience, whatever the origin (plan
       // personality-memory-boundary G1-6): a job scheduled from a group chat
       // fires shared (`cronRunAudience`, packages/wiring/src/cron-audience.ts).
-      // Absent only on a hand-built context, which the runner then treats as
-      // an unstamped job (shared, D11).
+      // Absent only on a hand-built context, which the runner then judges as
+      // an unstamped job: by its delivery target alone (D11) — shared for a
+      // channel target not provably private, private with no target.
       ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
     });
 
@@ -398,9 +413,16 @@ async function handleCreate(
   }
 }
 
-async function handleList(scheduler: CronScheduler, caller: string): Promise<ToolResult> {
-  // Always the caller's own jobs — there is no filter argument to widen it.
-  const jobs = (await scheduler.listJobs()).filter((j) => j.personalityId === caller);
+async function handleList(
+  scheduler: CronScheduler,
+  caller: string,
+  shared: boolean,
+): Promise<ToolResult> {
+  // Always the caller's own jobs — there is no filter argument to widen it —
+  // and on a shared turn only the ones stamped shared (`readableFrom`).
+  const jobs = (await scheduler.listJobs()).filter(
+    (j) => j.personalityId === caller && readableFrom(shared, j),
+  );
 
   if (jobs.length === 0) {
     return {
@@ -419,6 +441,7 @@ async function handleList(scheduler: CronScheduler, caller: string): Promise<Too
 async function handleGet(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
@@ -426,6 +449,7 @@ async function handleGet(
   const owned = await loadOwnedJob(scheduler, args.id, caller);
   if (!owned.ok) return owned.result;
   const job = owned.job;
+  if (!readableFrom(shared, job)) return jobNotFound(args.id);
 
   let runs: CronRunInfo[] = [];
   try {
@@ -444,6 +468,7 @@ async function handleGet(
 async function handleReadRun(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string; at?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
@@ -451,6 +476,7 @@ async function handleReadRun(
 
   const owned = await loadOwnedJob(scheduler, args.id, caller);
   if (!owned.ok) return owned.result;
+  if (!readableFrom(shared, owned.job)) return jobNotFound(args.id);
 
   let runs: CronRunInfo[] = [];
   try {
@@ -494,6 +520,7 @@ async function handleReadRun(
 async function handleUpdate(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: {
     id?: string;
     name?: string;
@@ -541,6 +568,9 @@ async function handleUpdate(
     if (script) patch.script = script;
     const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
     if (precheck) patch.precheck = precheck;
+    // D20 (verification round B14): a shared turn's edit makes the job the
+    // room's — it fires shared from now on, whatever it was stamped.
+    if (shared) patch.roomAudience = 'shared';
 
     const updated = await scheduler.updateJob(args.id, patch);
     return {
@@ -595,6 +625,7 @@ async function handleResume(
 async function handleRun(
   scheduler: CronScheduler,
   caller: string,
+  shared: boolean,
   args: { id?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
@@ -603,6 +634,12 @@ async function handleRun(
   const refusal = systemJobRefusal(owned.job, 'run');
   if (refusal) return refusal;
   try {
+    // D20 (verification round B14): a run from a shared turn returns its
+    // output to the room, so it must run shared — restamp the job BEFORE the
+    // run, since the runner reads the stamp (`cronRunAudience`).
+    if (shared && owned.job.roomAudience !== 'shared') {
+      await scheduler.updateJob(args.id, { roomAudience: 'shared' });
+    }
     const result = await scheduler.runJobNow(args.id);
     return {
       ok: true,

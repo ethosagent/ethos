@@ -1,5 +1,6 @@
 import type {
   AcceptanceSpec,
+  Goal,
   GoalOrigin,
   GoalStore,
   Tool,
@@ -216,7 +217,26 @@ interface StatusArgs {
   limit?: number;
 }
 
-function createGoalStatus(store: GoalStore): Tool {
+/**
+ * Whether this turn may read `goal` (plan personality-memory-boundary G1,
+ * verification round B13): only the calling personality's own goals (the same
+ * `ctx.personalityId ?? 'default'` `goal_create` records), and on a shared turn
+ * only goals whose origin derives shared — a goal that ran private may carry
+ * private memory in its output. Without the derivation wired, no goal is
+ * readable from a shared turn. Pinned by
+ * extensions/tools-goals/src/__tests__/goal-audience.test.ts.
+ */
+function goalReadable(
+  goal: Goal,
+  personalityId: string,
+  shared: boolean,
+  originAudience: GoalOriginAudience | undefined,
+): boolean {
+  if (goal.personalityId !== personalityId) return false;
+  return !shared || originAudience?.(goal.origin) === 'shared';
+}
+
+function createGoalStatus(store: GoalStore, originAudience?: GoalOriginAudience): Tool {
   return {
     name: 'goal_status',
     description: 'Check the status and output of a goal. Omit id to list recent goals.',
@@ -230,7 +250,7 @@ function createGoalStatus(store: GoalStore): Tool {
         limit: { type: 'number', description: 'Max goals to list when id is omitted. Default 10.' },
       },
     },
-    async execute(rawArgs) {
+    async execute(rawArgs, ctx) {
       const args = (rawArgs ?? {}) as Partial<StatusArgs>;
       if (args.id !== undefined && typeof args.id !== 'string') {
         return errorResult('id must be a string', 'input_invalid');
@@ -241,14 +261,21 @@ function createGoalStatus(store: GoalStore): Tool {
       ) {
         return errorResult('limit must be a positive integer', 'input_invalid');
       }
+      const personalityId = ctx.personalityId ?? 'default';
+      const shared = ctx.roomAudience === 'shared';
+      const readable = (goal: Goal) => goalReadable(goal, personalityId, shared, originAudience);
       try {
         if (args.id) {
           const goal = store.get(args.id);
-          if (!goal) return errorResult(`goal not found: ${args.id}`, 'input_invalid');
+          // Another personality's goal, or one a shared turn may not read,
+          // answers exactly as a missing one.
+          if (!goal || !readable(goal)) {
+            return errorResult(`goal not found: ${args.id}`, 'input_invalid');
+          }
           return jsonResult(goal);
         }
         const limit = args.limit ?? 10;
-        const goals = store.list({ limit });
+        const goals = store.list().filter(readable).slice(0, limit);
         return jsonResult(goals);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -312,7 +339,7 @@ export function createGoalTools(
 ): Tool<unknown>[] {
   return [
     createGoalCreate(store, onCreated, originAudience),
-    createGoalStatus(store),
+    createGoalStatus(store, originAudience),
     createGoalComplete(),
   ];
 }

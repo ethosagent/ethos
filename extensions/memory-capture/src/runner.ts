@@ -8,7 +8,7 @@
 // in-memory in-flight flag; every rate-limit / dedup fact is derived from the
 // append-only history (§3.2), so nothing races across processes.
 
-import { isSharedSession, type PrivateChatSet } from '@ethosagent/core';
+import { type PrivateChatSet, turnWasShared } from '@ethosagent/core';
 import type { HistoryStore } from '@ethosagent/memory-history';
 import type {
   AgentDonePayload,
@@ -77,7 +77,7 @@ export interface MemoryCaptureRunnerOptions {
   grounding?: GroundingConsult;
   /**
    * The operator's trusted rooms (`gateway.private_chats`). A session in a
-   * listed room is not shared for `isSharedSession`; absent → every group
+   * listed room is not shared for `turnWasShared`; absent → every group
    * lane is shared (fail closed).
    */
   privateChats?: PrivateChatSet;
@@ -209,9 +209,10 @@ export class MemoryCaptureRunner {
 
     const eligibility = evaluateEligibility({
       sessionKey,
-      // G1-8: a stamped-shared or pre-upgrade group session is never captured.
+      // G1-8: a stamped-shared or pre-upgrade group session, or a non-owner DM
+      // (the D8 marker), is never captured (`turnWasShared`).
       // A session the store no longer has is judged by an empty key: nothing to read.
-      shared: session ? isSharedSession(session, this.opts.privateChats) : false,
+      shared: session ? turnWasShared(session, this.opts.privateChats) : false,
       initialPrompt: job.initialPrompt,
       finalText: job.text,
       isDryRun: job.isDryRun,

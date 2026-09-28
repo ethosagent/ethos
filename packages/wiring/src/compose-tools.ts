@@ -2088,7 +2088,14 @@ export async function composeAllTools(
     for (const tool of createTeamMemoryTools(teamMemory)) tools.register(tool);
 
     if (config.postmortems !== false) {
-      registerPostmortemHandler({ teamName: config.teamName, memory: teamMemory, hooks });
+      const store = kanbanStore;
+      registerPostmortemHandler({
+        teamName: config.teamName,
+        memory: teamMemory,
+        hooks,
+        // A shared task's postmortem never reaches team memory (B17).
+        ...(store ? { isSharedTask: (id) => store.getTask(id)?.roomAudience === 'shared' } : {}),
+      });
     }
 
     injectors.push(createTeamMemoryIndexInjector(teamMemory, config.teamName));

@@ -10,9 +10,10 @@ import {
   wrapUntrusted,
 } from '@ethosagent/safety-injection';
 import { detectSecrets, redactPii, redactString } from '@ethosagent/safety-redact';
-import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
+import * as storageFs from '@ethosagent/storage-fs';
 import type { AgentSafety } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { shippedScopedStorageFactory } from '../build-agent-loop';
 
 // ---------------------------------------------------------------------------
 // G2, wiring half — the shipped bundle must pass the conformance suite.
@@ -29,7 +30,9 @@ import { describe, expect, it } from 'vitest';
 // this is the same kit reaching core, minus the LLM classifier, which is
 // optional on `InjectionDefenseKit` and has no conformance assertion.
 //
-// Known limit, stated rather than papered over: this is a REPLICA of the
+// Known limit, stated rather than papered over: apart from
+// `scopedStorageFactory` — the real `shippedScopedStorageFactory` the
+// composition root calls (verification round B6) — this is a REPLICA of the
 // shipped bundle, not the bundle itself. Swap a symbol in
 // `build-agent-loop.ts` for a weaker one and this test still passes. Closing
 // that would mean extracting the bundle assembly out of `buildAgentLoop` into
@@ -54,8 +57,7 @@ function buildShippedSafety(): AgentSafety {
       redactString,
       detectSecrets,
     },
-    scopedStorageFactory: (base, scope) =>
-      new ScopedStorage(base, { ...scope, alwaysDeny: defaultAlwaysDeny() }),
+    scopedStorageFactory: shippedScopedStorageFactory(storageFs),
     approvalPosture: { kind: 'gated', policy: 'danger-predicate' },
   };
 }

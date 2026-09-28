@@ -1590,6 +1590,15 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         // DM (admission, approvals, private memory), as the same words sent as
         // a message would be. It used to be hard-coded false.
         isDm: input.isDm,
+        // The room AUDIENCE is decided on the conversation id alone (plan
+        // personality-memory-boundary G1, verification round B16): only a
+        // `D…` id is provably a one-to-one `im`. `isSlackDm` also trusts
+        // `channel_name === 'directmessage'`, which is fine for routing but is
+        // not proof for private memory — so any other id is hinted shared
+        // (`InboundMessage.audienceHint`, read by `Gateway.audienceFor`).
+        ...(input.isDm && !input.channel.startsWith('D')
+          ? { audienceHint: 'shared' as const }
+          : {}),
         // Slash invocations are always treated as a direct address — the user
         // explicitly invoked the bot. Channel-mode is NOT bypassed by that: it
         // is enforced one layer up, in `handleAsk`, which refuses ephemerally

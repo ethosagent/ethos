@@ -4,15 +4,18 @@
 // - `privateMemoryExtraRoots` (./memory-backend.ts) is what reaches
 //   `AgentLoopConfig.privateMemoryRoots` (build-agent-loop.ts) and
 //   `CapabilityBackends.privateMemoryRoots` (build-infrastructure.ts).
-// - The factory's forwarding of `denyWhen` is checked by the conformance suite
-//   on the shipped-bundle replica in `safety-conformance-wiring.test.ts`
-//   (`runAgentSafetyConformance`'s shared-room case); the same replica caveat
-//   stated there applies.
+// - The REAL factory (`shippedScopedStorageFactory`, build-agent-loop.ts — the
+//   function `buildAgentLoop` puts on `AgentSafety.scopedStorageFactory`)
+//   forwards `denyWhen` and keeps the personality-definition floor
+//   (verification round B6; it used to be checked on a replica only).
 
-import { resolve } from 'node:path';
-import { defaultAlwaysDeny, InMemoryStorage, ScopedStorage } from '@ethosagent/storage-fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import * as storageFs from '@ethosagent/storage-fs';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { BoundaryError, privateMemoryPathDeny } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { shippedScopedStorageFactory } from '../build-agent-loop';
 import { privateMemoryExtraRoots } from '../memory-backend';
 
 describe('privateMemoryExtraRoots', () => {
@@ -36,13 +39,10 @@ describe('privateMemoryExtraRoots', () => {
   });
 });
 
-describe('the shipped factory shape forwards denyWhen', () => {
-  it('a spread scope reaches ScopedStorage and refuses the vault on a shared turn', async () => {
-    // Same expression as `scopedStorageFactory` in build-agent-loop.ts.
-    const factory = (
-      base: InMemoryStorage,
-      scope: ConstructorParameters<typeof ScopedStorage>[1],
-    ) => new ScopedStorage(base, { ...scope, alwaysDeny: defaultAlwaysDeny() });
+describe('the shipped factory (shippedScopedStorageFactory)', () => {
+  const factory = shippedScopedStorageFactory(storageFs);
+
+  it('forwards denyWhen: the vault is refused on a shared turn', async () => {
     const base = new InMemoryStorage();
     await base.mkdir('/v');
     await base.write('/v/journal.md', 'vault note');
@@ -55,5 +55,32 @@ describe('the shipped factory shape forwards denyWhen', () => {
       }),
     });
     await expect(scoped.read('/v/journal.md')).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('forwards denyWhen: MEMORY.md under the state dir is refused, read and write', async () => {
+    const stateDir = join(homedir(), '.ethos');
+    const memoryFile = join(stateDir, 'personalities', 'p', 'MEMORY.md');
+    const base = new InMemoryStorage();
+    await base.mkdir(join(stateDir, 'personalities', 'p'));
+    await base.write(memoryFile, 'private');
+    const scoped = factory(base, {
+      read: [`${stateDir}/`],
+      write: [`${stateDir}/`],
+      denyWhen: privateMemoryPathDeny({ stateDirs: [stateDir], extraRoots: [] }),
+    });
+    await expect(scoped.read(memoryFile)).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.write(memoryFile, 'x')).rejects.toBeInstanceOf(BoundaryError);
+  });
+
+  it('keeps the personality-definition floor even with the directory in write scope', async () => {
+    const dir = join(homedir(), '.ethos', 'personalities', 'p');
+    const base = new InMemoryStorage();
+    await base.mkdir(dir);
+    const scoped = factory(base, { read: [`${dir}/`], write: [`${dir}/`] });
+    await expect(scoped.write(join(dir, 'toolset.yaml'), '- terminal\n')).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    // A private turn carries no predicate: the same scope's MEMORY.md is writable.
+    await expect(scoped.write(join(dir, 'MEMORY.md'), 'ok')).resolves.toBeUndefined();
   });
 });

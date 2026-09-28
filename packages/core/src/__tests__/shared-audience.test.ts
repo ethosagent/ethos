@@ -4,8 +4,9 @@
 // Every assertion is on the thing that would leak, not on a rendering of it:
 // provider CALLS (not prompt text), tool DEFINITIONS the LLM receives and tool
 // EXECUTIONS (not a flag), the persisted session METADATA (not a return value).
-// Enforcers: `resolveTurnAudience` / `sharedStampFor` /
-// `withSharedAudienceExclusions` (packages/core/src/agent-loop/audience.ts),
+// Enforcers: `resolveTurnAudience` / `sessionAudienceStampFor` /
+// `withSharedAudienceExclusions` (packages/core/src/agent-loop/audience.ts;
+// `sessionAudienceStampFor` in packages/core/src/chat-audience.ts),
 // called from `setupTurn` (stages/turn-setup.ts) and read by `assembleContext`
 // (stages/context-assembly.ts).
 
@@ -34,12 +35,12 @@ import {
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
   SHARED_AUDIENCE_EXCLUDED_TOOLS,
-  sharedStampFor,
   withPersonalityMemoryWithheld,
   withSharedAudienceExclusions,
 } from '../agent-loop/audience';
 import { persistLoaded } from '../agent-loop/stages/tool-search';
 import { type CapabilityBackends, resolveCapabilities } from '../capability-resolver';
+import { PERSONALITY_MEMORY_WITHHELD_METADATA_KEY, turnWasShared } from '../chat-audience';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
 import { DefaultToolRegistry } from '../tool-registry';
@@ -157,15 +158,6 @@ describe('audience module (unit)', () => {
     );
   });
 
-  it('sharedStampFor merges, writes only for an unstamped shared turn, never writes private', () => {
-    expect(sharedStampFor('private', { a: 1 })).toBeUndefined();
-    expect(sharedStampFor('shared', { [ROOM_AUDIENCE_METADATA_KEY]: 'shared' })).toBeUndefined();
-    expect(sharedStampFor('shared', { loadedTools: ['x'] })).toEqual({
-      loadedTools: ['x'],
-      [ROOM_AUDIENCE_METADATA_KEY]: 'shared',
-    });
-  });
-
   it('withSharedAudienceExclusions unions on shared and returns the input untouched on private', () => {
     const surface = ['emit_card'];
     expect(withSharedAudienceExclusions('private', surface)).toBe(surface);
@@ -189,6 +181,8 @@ describe('audience module (unit)', () => {
         'meet_join',
         'terminal',
         'run_code',
+        'run_tests',
+        'lint',
         'process_start',
         'process_list',
         'process_logs',
@@ -197,7 +191,12 @@ describe('audience module (unit)', () => {
         'process_watch',
         'dashboard_add_panel',
         'dashboard_update_panel',
+        'dashboard_import',
+        'dashboard_set_params',
+        'dashboard_export',
         'route_to_agent',
+        'dispatch_team',
+        'broadcast_to_agents',
         'skills_pending_list',
         'skills_pending_view',
         'skills_pending_approve',
@@ -343,9 +342,72 @@ describe('D8 — a non-owner DM withholds personality memory but keeps the sende
     expect(calls[0]?.tools).toContain('session_search');
     expect(runs).toEqual([]);
     expect(seen).toEqual([false]);
-    // Not persisted: the stranger's session carries no stamp.
+    // The narrowing is not persisted as a stamp: the stranger's session is not
+    // shared. Only the learners' withheld marker is (verification round B2).
     const stored = await session.getSessionByKey('telegram:bot:42');
     expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBeUndefined();
+    expect(stored?.metadata?.[PERSONALITY_MEMORY_WITHHELD_METADATA_KEY]).toBe(true);
+    expect(stored && turnWasShared(stored)).toBe(true);
+
+    // The marker never narrows a later turn: without the D8 flag the same
+    // session runs private and reads personality memory again.
+    await drain(loop.run('again', { sessionKey: 'telegram:bot:42', roomAudience: 'private' }));
+    expect(memory.calls.prefetch).toBe(1);
+  });
+});
+
+describe('verification round B3/B15 — the session audience a turn records and falls back to', () => {
+  it('a private turn on an unstamped Discord DM records the judged private stamp', async () => {
+    const session = new InMemorySessionStore();
+    const loop = new AgentLoop({
+      llm: recordingLLM([]),
+      personalities: personalities([]),
+      session,
+      safety: createTestSafety(),
+    });
+    const key = 'discord:bot:555';
+    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private' }));
+    const stored = await session.getSessionByKey(key);
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('private');
+    expect(stored && turnWasShared(stored)).toBe(false);
+  });
+
+  it('a caller naming no audience runs a pre-upgrade group session shared and stamps it', async () => {
+    const session = new InMemorySessionStore();
+    const memory = spyMemory({ entries: [{ key: 'MEMORY.md', content: MEMORY_CONTENT }] });
+    const calls: Call[] = [];
+    const loop = new AgentLoop({
+      llm: recordingLLM(calls),
+      personalities: personalities([]),
+      session,
+      safety: createTestSafety(),
+      memory,
+    });
+    // A web `chat.send` against an old unstamped Telegram group session.
+    const key = 'telegram:bot:-1001';
+    await drain(loop.run('hi', { sessionKey: key }));
+    expect(memory.calls.prefetch).toBe(0);
+    expect(calls[0]?.system).not.toContain(MEMORY_CONTENT);
+    const stored = await session.getSessionByKey(key);
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('shared');
+  });
+
+  it('a caller naming no audience keeps a judged-private session private', async () => {
+    const session = new InMemorySessionStore();
+    const memory = spyMemory({ entries: [{ key: 'MEMORY.md', content: MEMORY_CONTENT }] });
+    const loop = new AgentLoop({
+      llm: recordingLLM([]),
+      personalities: personalities([]),
+      session,
+      safety: createTestSafety(),
+      memory,
+    });
+    const key = 'discord:bot:555';
+    await drain(loop.run('hi', { sessionKey: key, roomAudience: 'private' }));
+    await drain(loop.run('again', { sessionKey: key }));
+    expect(memory.calls.prefetch).toBe(2);
+    const stored = await session.getSessionByKey(key);
+    expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('private');
   });
 });
 

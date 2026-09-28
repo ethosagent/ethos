@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { Session, SessionStore, StoredMessage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { ROOM_AUDIENCE_METADATA_KEY } from './agent-loop/audience';
+import { isSharedSession } from './chat-audience';
 
 export interface ForkSessionOptions {
   /** The new session's key. Caller-supplied so each surface keeps its own key convention. */
@@ -51,7 +53,8 @@ export interface ForkSessionResult {
  * openclaw-9.5-adoption D27).
  *
  * The fork inherits `platform/model/provider/personalityId/workingDir/title/
- * metadata`, points `parentSessionId` at the source, and starts with zero
+ * metadata` (with the `'shared'` room stamp added when the source is shared by
+ * `isSharedSession`), points `parentSessionId` at the source, and starts with zero
  * usage. History is replayed in order with no limit, and every `StoredMessage`
  * field is carried over except the three the store owns (`id`, `sessionId`,
  * `timestamp`) and `usage` — copied generically, so a field added to
@@ -86,6 +89,14 @@ export async function forkSession(
   const history = opts.upToMessageId ? cutHistory(all, opts.upToMessageId) : all;
 
   const personalityId = opts.personalityId ?? source.personalityId;
+  // A fork of a shared session is shared (plan personality-memory-boundary G1,
+  // verification round B15). The copied metadata already carries a `'shared'`
+  // stamp; a pre-upgrade group session has none — only its key shape says
+  // shared (`isSharedSession`) — and the fork's new key may not, so the stamp
+  // is written here. Pinned by `packages/core/src/__tests__/session-fork.test.ts`.
+  const metadata = isSharedSession(source)
+    ? { ...(source.metadata ?? {}), [ROOM_AUDIENCE_METADATA_KEY]: 'shared' }
+    : source.metadata;
   const session = await store.createSession({
     key: opts.key,
     platform: source.platform,
@@ -95,7 +106,7 @@ export async function forkSession(
     parentSessionId: source.id,
     ...(source.workingDir ? { workingDir: source.workingDir } : {}),
     ...(source.title ? { title: source.title } : {}),
-    ...(source.metadata ? { metadata: source.metadata } : {}),
+    ...(metadata ? { metadata } : {}),
     usage: {
       inputTokens: 0,
       outputTokens: 0,

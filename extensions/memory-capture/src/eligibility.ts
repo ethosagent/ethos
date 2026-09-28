@@ -13,8 +13,8 @@ export type ExclusionReason =
 export interface EligibilityInput {
   sessionKey: string;
   /**
-   * The turn's session is shared (`isSharedSession`, packages/core/src/chat-audience.ts):
-   * stamped shared, or a pre-upgrade group lane key. Nothing said in a shared
+   * The turn's session is shared (`turnWasShared`, packages/core/src/chat-audience.ts):
+   * stamped shared, a pre-upgrade group lane key, or a non-owner DM (D8). Nothing said in a shared
    * room is carried into the personality's private memory (plan
    * personality-memory-boundary G1-8). Resolved by `MemoryCaptureRunner.process`.
    */
