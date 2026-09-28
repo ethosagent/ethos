@@ -839,6 +839,13 @@ export {
 } from './a2a-peering-service';
 // F06 — the cleanup stack every composition root in this repo registers on.
 // plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
+export {
+  AMENDMENT_TAINT_REFUSAL,
+  type AmendmentIntakeDeps,
+  type AmendmentObservability,
+  acquireAmendmentLock,
+  createAmendmentIntake,
+} from './amendments';
 export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
 export { goalRoomAudience } from './goal-audience';

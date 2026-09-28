@@ -12,6 +12,17 @@ function requestId(context: object): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * Who started the turn (plan personality-memory-boundary, the initiator table):
+ * a cookie session is the owner in the web app → `'user'`; a bearer API key is
+ * a program → `'system'`. Same `_authMethod` read as `rpc/cron.ts` — absent
+ * means the cookie-only `authMiddleware` path, i.e. cookie. Pinned by
+ * apps/web-api/src/__tests__/services/chat-initiator.test.ts.
+ */
+function initiator(context: object): 'user' | 'system' {
+  return (context as { _authMethod?: unknown })._authMethod === 'bearer' ? 'system' : 'user';
+}
+
 export const chatSend = os.chat.send.handler(({ input, context }) => {
   const reqId = requestId(context);
   // Fix 5 (pi-delegation.md D7) — an ordinary chat message establishes
@@ -29,6 +40,7 @@ export const chatSend = os.chat.send.handler(({ input, context }) => {
     text: input.text,
     ...(input.personalityId ? { personalityId: input.personalityId } : {}),
     ...(input.dryRun ? { dryRun: true } : {}),
+    initiator: initiator(context),
     ...(input.origin ? { origin: input.origin } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
   });

@@ -18,6 +18,7 @@ const DEFAULT_DOWNGRADED_TOOLS: ReadonlyArray<string> = [
   'browser_type',
   'process_start',
   'process_stop',
+  'propose_self_amendment',
 ];
 
 export function resolveDowngradedTools(spec: 'auto' | string[] | undefined): Set<string> {

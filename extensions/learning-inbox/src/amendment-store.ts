@@ -9,9 +9,10 @@
 // limit and the dedupe (`checkPendingLimits`, re-run inside
 // `createAmendment`) and every transition are meant to run under
 // `amendmentApplyLockPath`. This package cannot take that lock itself
-// (`acquireSentinelLock` lives in `packages/wiring`); its callers there — the
-// filing intake and the apply service, plan steps 10b–11 — are not wired yet,
-// so until they are nothing calls these functions outside tests.
+// (`acquireSentinelLock` lives in `packages/wiring`); its callers there take
+// it: the filing intake (`createAmendmentIntake`, packages/wiring/src/
+// amendments.ts, via `acquireAmendmentLock`) and, from plan step 11, the apply
+// service.
 
 import type {
   AmendmentActor,

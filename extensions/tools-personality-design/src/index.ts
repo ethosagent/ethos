@@ -12,6 +12,12 @@ import type {
   ToolResult,
 } from '@ethosagent/types';
 
+export {
+  createProposeSelfAmendmentTool,
+  PROPOSE_AMENDMENT_LIMITS,
+  PROPOSE_SELF_AMENDMENT_TOOL,
+} from './propose-amendment';
+
 // ---------------------------------------------------------------------------
 // Local types (ModelCatalogEntry lives in @ethosagent/wiring — app layer;
 // we define it locally to avoid a cross-layer import)

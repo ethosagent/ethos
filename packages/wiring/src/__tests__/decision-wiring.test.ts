@@ -250,7 +250,12 @@ describe('createAgentLoop — which injection classifier is built', () => {
       expect(get).not.toHaveBeenCalledWith(DECISIONS_API_KEY_REF);
       // decision-tool D5 — no decision layer, no `decide` tool and no hook.
       expect(result.toolRegistry.get('decide')).toBeUndefined();
-      expect(Reflect.get(result.loop, 'personalityToolExclude')).toBeUndefined();
+      // The exclusion seam is always defined (plan personality-memory-boundary
+      // G2) but hides no `decide`: only the opt-in `propose_self_amendment`.
+      const exclude = Reflect.get(result.loop, 'personalityToolExclude') as (
+        p: PersonalityConfig,
+      ) => string[];
+      expect(exclude(result.personalities.getDefault())).toEqual(['propose_self_amendment']);
     } finally {
       await result.dispose();
     }

@@ -110,6 +110,14 @@ export interface ChatSendInput {
   personalityId?: string;
   userId?: string;
   dryRun?: boolean;
+  /**
+   * Who started this turn → `RunOptions.initiator`, verbatim. The RPC layer
+   * sets `'user'` for a cookie session and `'system'` for a bearer API key
+   * (`chatSend`, ./rpc/send.ts): a key with `chat:send` is a program, not the
+   * owner at the keyboard, and the self-amendment filing gate reads this
+   * (`gateRefusal`, packages/wiring/src/amendments.ts). Absent → unset.
+   */
+  initiator?: import('@ethosagent/types').TurnInitiator;
   /** `voice` → `text` is a transcript of speech (talk-mode). Default `text`. */
   origin?: 'text' | 'voice';
   attachments?: Array<{
@@ -308,6 +316,7 @@ export class ChatService {
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
+        ...(input.initiator ? { initiator: input.initiator } : {}),
         // openclaw-9.5 item 1 — this surface can answer a missing plugin
         // credential (the chat pane's masked prompt), so the loop refuses the
         // turn pre-turn with `credential_required` instead of running it

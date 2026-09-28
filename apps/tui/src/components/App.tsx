@@ -992,6 +992,8 @@ export function App({
     bridge.send(outgoing, {
       sessionKey,
       personalityId: personality,
+      // A person typed it (plan personality-memory-boundary, the initiator table).
+      initiator: 'user',
       ...(setPluginCredential ? { credentialPrompt: true } : {}),
     });
   };
@@ -1283,7 +1285,7 @@ export function App({
         streamedTextRef.current = '';
         turnToolDurationsRef.current = [];
         turnUsageRef.current = null;
-        bridge.send(prompt, { sessionKey, personalityId: personality });
+        bridge.send(prompt, { sessionKey, personalityId: personality, initiator: 'user' });
         break;
       }
       case 'exit':

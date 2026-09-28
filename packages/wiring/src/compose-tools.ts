@@ -58,7 +58,10 @@ import { createMeetingTools } from '@ethosagent/tools-meeting';
 import { createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
 import type { MessagingSendFn, OutboxGate } from '@ethosagent/tools-messaging';
 import { compose as composeMessaging } from '@ethosagent/tools-messaging/compose';
-import { createTeamDesignTools } from '@ethosagent/tools-personality-design';
+import {
+  createProposeSelfAmendmentTool,
+  createTeamDesignTools,
+} from '@ethosagent/tools-personality-design';
 import { compose as composePersonalityDesign } from '@ethosagent/tools-personality-design/compose';
 import { createProcessGuardHook, isAlive } from '@ethosagent/tools-process';
 import { compose as composeProcess } from '@ethosagent/tools-process/compose';
@@ -104,6 +107,7 @@ import type {
   Tool,
   TurnAuditor,
 } from '@ethosagent/types';
+import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
 import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
@@ -1876,6 +1880,29 @@ export async function composeAllTools(
       },
       toolset: 'skills',
     }) as Tool,
+  );
+
+  // propose_self_amendment (plan personality-memory-boundary G2) — a personality
+  // files a request to change its OWN toolset. Registered unconditionally, and
+  // opt-in twice: the intake refuses a personality whose toolset.yaml does not
+  // list the tool, and `personalityToolExclude` (build-agent-loop.ts) hides it
+  // from every personality that does not, so their tool definitions and prompt
+  // prefix are unchanged. The tool holds only the filing port; nothing here can
+  // apply an amendment (G2-1).
+  tools.register(
+    createProposeSelfAmendmentTool(
+      createAmendmentIntake({
+        storage: wiringCtx.storage,
+        dataDir: wiringCtx.dataDir,
+        workingDir: wiringCtx.workingDir,
+        personalities,
+        tools,
+        sessions: infra.sessionCompose.sessionStore,
+        executionPostureFor: (personalityId) => routing.resolvePosture(personalityId),
+        ...(opts.observability ? { observability: opts.observability } : {}),
+        log,
+      }),
+    ),
   );
 
   // -------------------------------------------------------------------------

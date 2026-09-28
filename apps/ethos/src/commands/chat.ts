@@ -1236,6 +1236,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     for await (const event of loop.run(input, {
       sessionKey: state.sessionKey,
       personalityId: state.personalityId,
+      // A person typed this message at the REPL (plan personality-memory-
+      // boundary, the initiator table). The one-shot `-q` path below leaves it
+      // unset: it is as often a script as a person.
+      initiator: 'user',
       abortSignal: state.abort.signal,
       ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
       ...(turnAttachments ? { attachments: turnAttachments } : {}),

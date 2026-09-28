@@ -4,6 +4,7 @@ import { FsContentStore } from '@ethosagent/cas-fs';
 import {
   backgroundDefaults,
   decisionToolEnabled,
+  type ResolvedDecisionsConfig,
   resolveDecisionsConfig,
 } from '@ethosagent/config';
 import {
@@ -44,6 +45,7 @@ import {
   MeshProxyReconciler,
 } from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
+import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createAgentConsultTool } from '@ethosagent/tools-voice';
 import { createWebTools } from '@ethosagent/tools-web';
@@ -255,6 +257,30 @@ function readOnlyMemory(base: MemoryProvider): MemoryProvider {
     list: (ctx, opts) => base.list(ctx, opts),
     sync: async () => {},
   };
+}
+
+/**
+ * The loop's per-personality tool exclusion (`AgentLoopConfig.personalityToolExclude`).
+ * Depends only on the personality, so tool definitions stay byte-stable per
+ * personality. Always defined (plan personality-memory-boundary G2): it is the
+ * union of
+ *   - plan decision-tool D6/D13 — `decide` is visible only to a personality
+ *     that picked the operator's decision model (`decisionToolEnabled`,
+ *     @ethosagent/config); with no `decisions.*` there is no `decide` to hide;
+ *   - `propose_self_amendment` is visible only to a personality whose toolset
+ *     lists it. A personality with an undeclared toolset sees every other
+ *     registered tool, so without this its tool list — and its cached prompt
+ *     prefix — would change the day the tool was registered. The execute-time
+ *     gate is the same list (`executeParallel`'s `excludeTools`). Pinned by
+ *     packages/wiring/src/__tests__/amendment-exclude.test.ts.
+ */
+export function buildPersonalityToolExclude(
+  decisions: Pick<ResolvedDecisionsConfig, 'provider'> | undefined,
+): (person: PersonalityConfig) => string[] {
+  return (person) => [
+    ...(decisions && !decisionToolEnabled(person.decisions, decisions) ? ['decide'] : []),
+    ...(person.toolset?.includes(PROPOSE_SELF_AMENDMENT_TOOL) ? [] : [PROPOSE_SELF_AMENDMENT_TOOL]),
+  ];
 }
 
 /**
@@ -692,15 +718,7 @@ export async function buildAgentLoop(
         };
       })()
     : undefined;
-  // plan decision-tool D6/D13 — `decide` is visible only to a personality that
-  // picked the operator's decision model (`decisionToolEnabled`,
-  // @ethosagent/config). Depends only on the personality, so tool definitions
-  // stay byte-stable per personality. With no `decisions.*` there is no
-  // `decide` to hide and no hook.
-  const personalityToolExclude = decisions
-    ? (person: PersonalityConfig): string[] =>
-        decisionToolEnabled(person.decisions, decisions) ? [] : ['decide']
-    : undefined;
+  const personalityToolExclude = buildPersonalityToolExclude(decisions);
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
   const tierRouter = decisionSites?.tierRouter;
@@ -979,7 +997,7 @@ export async function buildAgentLoop(
   // The per-personality exclusion the loop applies (decision-tool D13), so a
   // measurement counts only the schemas that personality's turns send.
   const excludeFor = (person: PersonalityConfig) => {
-    const excludeTools = personalityToolExclude?.(person) ?? [];
+    const excludeTools = personalityToolExclude(person);
     return excludeTools.length > 0 ? { excludeTools } : undefined;
   };
   // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`,
@@ -1233,7 +1251,7 @@ export async function buildAgentLoop(
     logger: log,
     ...(toolLoading ? { toolLoading } : {}),
     smallWindowResolver,
-    ...(personalityToolExclude ? { personalityToolExclude } : {}),
+    personalityToolExclude,
     ...(tierRouter ? { tierRouter } : {}),
     // §15.3 — the approver's private sink channel; the same object is on
     // `approverDecision.sinks` above. Absent with no `decisions.*`.

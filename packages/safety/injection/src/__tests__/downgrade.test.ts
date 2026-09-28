@@ -9,6 +9,13 @@ describe('resolveDowngradedTools', () => {
     expect(tools.has('browse_url')).toBe(true);
   });
 
+  // plan personality-memory-boundary G2 — the belt beside the filing intake's
+  // taint scan: right after an untrusted read, the model cannot file a
+  // self-amendment in the same breath.
+  it('pauses propose_self_amendment by default', () => {
+    expect(resolveDowngradedTools('auto').has('propose_self_amendment')).toBe(true);
+  });
+
   it('returns the default set for undefined (no config)', () => {
     expect(resolveDowngradedTools(undefined).has('terminal')).toBe(true);
   });

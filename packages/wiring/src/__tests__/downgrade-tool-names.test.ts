@@ -27,6 +27,7 @@ import { resolveDowngradedTools } from '@ethosagent/safety-injection';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
 import { createFileTools } from '@ethosagent/tools-file';
+import { createProposeSelfAmendmentTool } from '@ethosagent/tools-personality-design';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalTools } from '@ethosagent/tools-terminal';
 import { createWebTools } from '@ethosagent/tools-web';
@@ -50,6 +51,7 @@ describe('Ch.3d default downgrade list — drift gate', () => {
     for (const t of createProcessTools('/tmp/ethos-test')) registered.add(t.name);
     for (const t of createCodeTools(sandboxStub)) registered.add(t.name);
     for (const t of createBrowserTools({})) registered.add(t.name);
+    registered.add(createProposeSelfAmendmentTool(undefined).name);
 
     const downgraded = [...resolveDowngradedTools('auto')];
     const missing = downgraded.filter((name) => !registered.has(name));
