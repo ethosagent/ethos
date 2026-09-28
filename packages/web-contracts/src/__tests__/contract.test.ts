@@ -316,6 +316,7 @@ describe('contract router', () => {
       'a2a',
       'activity',
       'admin',
+      'amendments',
       'apiKeys',
       'approvals',
       'backup',

@@ -794,6 +794,9 @@ export interface TeamLoopInfo {
   /** The coordinator loop's memory surfaces, forwarded so `ethos serve --team`'s
    *  web memory editor targets the backend that loop reads (F04). */
   memoryBundle: import('@ethosagent/wiring').CreateAgentLoopResult['memoryBundle'];
+  /** The coordinator loop's self-amendment service, forwarded so `ethos serve --team`'s
+   *  read-only web view (D30) has one — `CreateAgentLoopResult.amendments`. */
+  amendments: import('@ethosagent/wiring').CreateAgentLoopResult['amendments'];
   /** Release the coordinator loop's runtime — `CreateAgentLoopResult.dispose` (F06). */
   dispose: import('@ethosagent/wiring').CreateAgentLoopResult['dispose'];
   /** `CreateAgentLoopResult.drain` of the coordinator loop (F06). */
@@ -870,6 +873,7 @@ export async function createTeamAgentLoop(
     refreshPersonalities,
     goals,
     memoryBundle,
+    amendments,
     dispose,
     drain,
     approverDecision,
@@ -913,6 +917,7 @@ export async function createTeamAgentLoop(
     refreshPersonalities,
     goals,
     memoryBundle,
+    amendments,
     dispose,
     drain,
     ...(approverDecision ? { approverDecision } : {}),

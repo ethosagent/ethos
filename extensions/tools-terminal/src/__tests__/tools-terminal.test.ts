@@ -98,6 +98,17 @@ function makeBackend(out: string): FakeBackend {
   return be;
 }
 
+describe('terminal self-amendment tripwire (D32)', () => {
+  it('a host command sees ETHOS_TOOL_PROCESS=1', async () => {
+    const result = await terminalTool.execute(
+      { command: 'printf "%s" "$ETHOS_TOOL_PROCESS"' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.startsWith('1')).toBe(true);
+  });
+});
+
 describe('terminal routing', () => {
   it('uses ctx.scopedProcess when NO backend is injected (local preserved)', async () => {
     const spawn = vi.fn().mockResolvedValue({ exitCode: 0, stdout: 'local out', stderr: '' });

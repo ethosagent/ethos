@@ -173,6 +173,23 @@ export type AmendmentSubmitResult =
   | { ok: false; reason: string };
 
 /**
+ * The environment variable a tool-spawned host process carries (`'1'`), and
+ * that `ethos personality amendments apply|rollback` refuses to run under
+ * (D32). Set by the host paths of `terminal` (extensions/tools-terminal),
+ * `process_start` (`spawnDetached`, extensions/tools-process/src/spawn.ts)
+ * and `run_code` and its command tools (extensions/tools-code); read by
+ * `assertNotToolProcess` (apps/ethos/src/commands/personality-amendments.ts).
+ *
+ * A TRIPWIRE, NOT A BOUNDARY: `env -u ETHOS_TOOL_PROCESS` defeats it. It
+ * catches a personality holding a shell tool under local execution that runs
+ * the CLI plainly; such a personality can already edit its own definition
+ * files (G2-1's exception). Routed backends are not given it: ssh cannot
+ * deliver env (`SshEnvUnsupportedError`), and a docker container has neither
+ * the CLI nor `learning/` (denied, `STATE_DIR_DENY_ENTRIES`).
+ */
+export const TOOL_PROCESS_ENV_VAR = 'ETHOS_TOOL_PROCESS';
+
+/**
  * The only thing the `propose_self_amendment` tool holds: it can FILE, never
  * apply (G2-1 (b)). Implemented by the intake in wiring.
  */

@@ -428,6 +428,9 @@ try {
       } else if (sub === 'judge') {
         const { runPersonalityJudge } = await import('./commands/personality-evolve');
         await runPersonalityJudge(args.slice(2));
+      } else if (sub === 'amendments') {
+        const { runPersonalityAmendments } = await import('./commands/personality-amendments');
+        await runPersonalityAmendments(args.slice(2));
       } else if (sub === 'export') {
         const { runPersonalityExport } = await import('./commands/personality-export');
         await runPersonalityExport(args.slice(2));
@@ -510,7 +513,7 @@ try {
         console.log(`✓ Personality "${retireId}" retired. History preserved.`);
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | fork <id> [<new-id>] | retire <id> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | fork <id> [<new-id>] | retire <id> | amendments [list | show <id> | apply <id> | decline <id> --reason <r> | rollback <id>] | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;

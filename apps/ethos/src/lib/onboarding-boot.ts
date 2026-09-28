@@ -2,7 +2,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { SkillsInjector } from '@ethosagent/skills';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import type { ExecutionBackendRegistry, NotificationRouter, ToolRegistry } from '@ethosagent/types';
-import type { DangerPredicate } from '@ethosagent/web-api';
+import type { AmendmentReader, DangerPredicate } from '@ethosagent/web-api';
 import type { LoopGoals } from './goal-slash';
 
 /** What onboarding `ethos serve` hands over once `createAgentLoop` has built the loop. */
@@ -17,6 +17,8 @@ export interface BootedLoop {
   executionBackends?: ExecutionBackendRegistry;
   skillsInjector?: SkillsInjector;
   refreshPersonalities?: () => Promise<void>;
+  /** The self-amendment service (read-only on the web, D30) — backs `amendments.*`. */
+  amendments?: AmendmentReader;
   dispose: () => Promise<void>;
 }
 
@@ -35,6 +37,7 @@ export interface AdoptionSeams {
         executionBackends?: ExecutionBackendRegistry;
         skillsInjector?: SkillsInjector;
         refreshPersonalities?: () => Promise<void>;
+        amendments?: AmendmentReader;
       },
     ): () => Promise<void>;
   };
@@ -79,6 +82,7 @@ export async function adoptBootedLoop(booted: BootedLoop, seams: AdoptionSeams):
       ...(booted.executionBackends ? { executionBackends: booted.executionBackends } : {}),
       ...(booted.skillsInjector ? { skillsInjector: booted.skillsInjector } : {}),
       ...(booted.refreshPersonalities ? { refreshPersonalities: booted.refreshPersonalities } : {}),
+      ...(booted.amendments ? { amendments: booted.amendments } : {}),
     });
     // Last: it flushes the web API's buffered tools into the loop's registry,
     // and a flush that throws leaves the buffer for the next boot.

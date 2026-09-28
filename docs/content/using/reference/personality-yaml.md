@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-26
+updated: 2026-09-28
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -488,6 +488,7 @@ Notes:
 
 - An empty file (or one with only comments) means the personality runs with no external tools. The file may be omitted entirely for an internal-only personality.
 - Tools the personality requests but does not list are rejected by `DefaultToolRegistry` and returned to the LLM as `is_error: true` so the Anthropic tool-result contract remains intact.
+- Listing `propose_self_amendment` lets the personality file a request to add or remove entries in this file. The request waits for you; nothing changes until you run `ethos personality amendments apply <id>` in a terminal. A personality that does not list the tool is never offered it, and a built-in cannot file. Source: [`extensions/tools-personality-design/src/propose-amendment.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-personality-design/src/propose-amendment.ts). Applying a request rewrites the file as a plain list, dropping comments; the review shows this first. Walkthrough: [Review a personality's change request](../how-to/review-personality-change-requests.md).
 
 ## SOUL.md {#ethos-md}
 

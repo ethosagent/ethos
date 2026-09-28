@@ -142,6 +142,8 @@ export interface ServiceContainer {
   outbox: import('../services/outbox.service').OutboxService;
   /** The learning review inbox — reads, scorecards, and the human's decisions. */
   learning: import('../services/learning.service').LearningService;
+  /** Personality self-amendments, read-only (D30) — `amendments.list | get`. */
+  amendments: import('../services/amendments.service').AmendmentsService;
   /** Connected wake satellites + the pushed routing table. Absent when this
    *  deployment mounts no satellite lane. */
   satellites?: import('../voice/satellite-registry').SatelliteRegistry;

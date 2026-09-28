@@ -16,6 +16,7 @@ import { sessionsUpdate } from '../features/sessions/rpc/update';
 import { a2aRouter } from './a2a';
 import { activityRouter } from './activity';
 import { adminRouter } from './admin';
+import { amendmentsRouter } from './amendments';
 import { apiKeysRouter } from './api-keys';
 import { approvalsRouter } from './approvals';
 import { backupRouter } from './backup';
@@ -126,6 +127,7 @@ export const apiRouter = {
   usage: usageRouter,
   outbox: outboxRouter,
   learning: learningRouter,
+  amendments: amendmentsRouter,
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,

@@ -803,6 +803,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     cronTriggers,
     goals: shared.goals,
     memoryBundle: shared.memoryBundle,
+    amendments: shared.amendments,
     jobStore: shared.jobStore,
     jobRunners: shared.jobRunners,
     backgroundExecutor: shared.backgroundExecutor,

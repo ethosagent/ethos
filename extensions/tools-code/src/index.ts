@@ -1,13 +1,14 @@
 import { stripAnsiEscapes } from '@ethosagent/core';
-import type {
-  ExecChunk,
-  ExecOpts,
-  ExecutionBackend,
-  ExecutionRoute,
-  ExecutionRouter,
-  PersonalityConfig,
-  Tool,
-  ToolResult,
+import {
+  type ExecChunk,
+  type ExecOpts,
+  type ExecutionBackend,
+  type ExecutionRoute,
+  type ExecutionRouter,
+  type PersonalityConfig,
+  TOOL_PROCESS_ENV_VAR,
+  type Tool,
+  type ToolResult,
 } from '@ethosagent/types';
 import { buildShimCommand, type ShimRuntime } from './shim';
 
@@ -574,6 +575,10 @@ function makeCommandTool(
           {
             cwd: cwd ?? ctx.workingDir,
             timeout: opts.timeoutMs,
+            // The self-amendment CLI tripwire (`TOOL_PROCESS_ENV_VAR`, D32) —
+            // a tripwire, not a boundary. Host path only: run_code itself
+            // never runs on the host.
+            env: { [TOOL_PROCESS_ENV_VAR]: '1' },
           },
         );
         const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from 'antd';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { DefinitionChanges } from '../components/DefinitionChanges';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { type LearningListScope, learningKeys } from '../features/learning/api/keys';
 import { getClientId } from '../lib/clientId';
@@ -123,6 +124,8 @@ export function Learning() {
             </Button>
           </div>
         )}
+
+        <DefinitionChanges />
 
         <div className="learning-panes">
           <div className="learning-list" data-testid="learning-list">

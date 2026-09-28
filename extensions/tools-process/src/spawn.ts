@@ -17,7 +17,12 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import type { ExecSession, ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
+import {
+  type ExecSession,
+  type ExecutionBackend,
+  type PersonalityConfig,
+  TOOL_PROCESS_ENV_VAR,
+} from '@ethosagent/types';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
@@ -149,7 +154,10 @@ export function spawnDetached(
     cwd,
     // F3 — minimal explicit env: forward only the passthrough allowlist plus the
     // caller's explicit vars, never the host's full secret-bearing process.env.
-    env: minimalHostEnv(env),
+    // The self-amendment CLI tripwire (`TOOL_PROCESS_ENV_VAR`, D32) is set
+    // last, so a caller's explicit env cannot clear it — `env -u` inside the
+    // command still can: a tripwire, not a boundary.
+    env: { ...minimalHostEnv(env), [TOOL_PROCESS_ENV_VAR]: '1' },
     stdio: ['ignore', outFd, errFd],
   });
 

@@ -78,6 +78,7 @@ import { backupRoutes } from './routes/backup';
 import { documentsRoutes } from './routes/documents';
 import { personalityAvatarRoutes } from './routes/personality-avatar';
 import type { RouteModule } from './routes/route-module';
+import { type AmendmentReader, AmendmentsService } from './services/amendments.service';
 import { ApiKeysService } from './services/api-keys.service';
 import { createWebApprovalHook, type DangerPredicate } from './services/approval-hook';
 import { type ApprovalObservability, ApprovalsService } from './services/approvals.service';
@@ -287,6 +288,16 @@ export interface CreateWebApiOptions {
    * procedure still works.
    */
   learningReplay?: (candidateId: string) => Promise<ReplayAndResolveResult>;
+  /**
+   * The loop's self-amendment service (`CreateAgentLoopResult.amendments`,
+   * plan personality-memory-boundary G2), narrowed to its reads: the web is
+   * read-only in v1 (D30), so `apply`/`decline`/`rollback` never reach this
+   * process's surface. Every host that has a loop passes it — `ethos serve`,
+   * `ethos boot` (both via `buildServeWebApi`) and the desktop app; onboarding
+   * mode installs it later through `bindAgentLoop`. Absent → `amendments.*`
+   * answer `NOT_CONFIGURED`.
+   */
+  amendments?: AmendmentReader;
   /**
    * Auto-deny window for a pending approval, in ms. Omitted → the
    * `ApprovalsService` default (10 minutes); `0` disables the timeout so a
@@ -751,6 +762,8 @@ export interface CreateWebApiResult {
       skillsInjector?: SkillsInjector;
       /** The loop's personality-registry reload, run before each turn. */
       refreshPersonalities?: () => Promise<void>;
+      /** The loop's self-amendment reads — backs `amendments.*`. */
+      amendments?: AmendmentReader;
     },
   ) => () => Promise<void>;
   /**
@@ -835,6 +848,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     executionBackends?: import('@ethosagent/types').ExecutionBackendRegistry;
     skillsInjector?: SkillsInjector;
     refreshPersonalities?: () => Promise<void>;
+    amendments?: AmendmentReader;
   } = {};
   /** The loop's personality-registry refresh: the bound one, else the host's. */
   const refreshLoopPersonalities = lateFn(
@@ -936,6 +950,9 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       ...(opts.learningReplay ? { replay: opts.learningReplay } : {}),
     }),
   });
+  // Self-amendments, read-only (D30): resolved per call, so the reader an
+  // onboarding boot installs through `bindAgentLoop` is picked up.
+  const amendmentsService = new AmendmentsService(() => bound.amendments ?? opts.amendments);
   // `gateway.private_chats` as it stands on disk, read per call: a cron job's
   // audience stamp at create, and which sessions an Expression draft may quote.
   const readPrivateChats = async () => {
@@ -2059,6 +2076,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       usage: new UsageService(opts.sessionStore),
       outbox: outboxService,
       learning: learningService,
+      amendments: amendmentsService,
       calls: callsService,
       observedChats: observedChatsService,
       toolRegistry: opts.toolRegistry,
@@ -2189,11 +2207,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
         if (extras.executionBackends) bound.executionBackends = extras.executionBackends;
         if (extras.skillsInjector) bound.skillsInjector = extras.skillsInjector;
         if (extras.refreshPersonalities) bound.refreshPersonalities = extras.refreshPersonalities;
+        if (extras.amendments) bound.amendments = extras.amendments;
         releases.push('bound loop surfaces', () => {
           bound.mcpManager = undefined;
           bound.executionBackends = undefined;
           bound.skillsInjector = undefined;
           bound.refreshPersonalities = undefined;
+          bound.amendments = undefined;
         });
         wireMainLoop(loop, extras.notificationRouter);
         startRefreshScheduler();
@@ -2288,6 +2308,7 @@ export type { WakeRoute, WakeRoutingTable } from './repositories/config.reposito
 export { WebTokenRepository } from './repositories/web-token.repository';
 export type { RouteModule } from './routes/route-module';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
+export type { AmendmentReader } from './services/amendments.service';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
 export { IdempotencyStore } from './stores/idempotency-store';
 // The satellite lane, exported so a host that OWNS a satellite client can be

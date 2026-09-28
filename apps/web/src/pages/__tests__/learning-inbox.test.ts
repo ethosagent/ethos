@@ -58,6 +58,9 @@ vi.mock('../../rpc', () => ({
       rollback: (...args: unknown[]) => rollbackFn(...args),
       replay: (...args: unknown[]) => replayFn(...args),
     },
+    // The read-only "Definition changes" section (DefinitionChanges.tsx) —
+    // empty here; pinned by components/__tests__/definition-changes.test.ts.
+    amendments: { list: () => Promise.resolve({ amendments: [] }) },
   },
 }));
 

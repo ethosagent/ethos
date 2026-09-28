@@ -337,6 +337,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     runCallCapture,
     goals,
     memoryBundle,
+    amendments,
     approverDecision,
     executionPostureFor,
     dispose: disposeLoop,
@@ -412,6 +413,9 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     // The goal store + loop-bearing executor `createAgentLoop` built together.
     // Without it a desktop goal was stored `running` and never executed.
     goals,
+    // Personality self-amendments, read-only on the web (D30) — the same
+    // service `ethos serve`/`ethos boot` pass; apply stays in the CLI.
+    amendments,
     // The screencast takeover lane's session registry (B3). The desktop is the
     // third in-process web-API host: `createAgentLoop` above built the browser
     // tools HERE, so the session `browser_request_takeover` locked is the one

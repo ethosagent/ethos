@@ -4,7 +4,7 @@ description: "A personality is a frozen schema plus a character sheet — every 
 kind: explanation
 audience: developer
 slug: personality-governance
-updated: 2026-09-25
+updated: 2026-09-28
 ---
 
 ## Context
@@ -98,21 +98,25 @@ The split matters for trust. An authored summary of a personality can lie, or si
 
 A contract the agent can edit is not a contract. The registry hot-reloads a personality whenever one of its files changes on disk, so if a turn could `write_file` its own `toolset.yaml`, it could grant itself any tool on its next turn — and the personality would stop being the architecture.
 
-So the files that define a personality are write-protected from that personality's own turns: `SOUL.md`, `config.yaml`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, `ETHOS.md`, and everything under `skills/`. The list is `PERSONALITY_DEFINITION_ENTRIES` in `packages/core/src/fs-reach.ts`. `deriveFsReachPaths` returns it as `writeDeny` on every branch, so a declared `fs_reach.write` that covers the whole data directory cannot reopen it. No config key turns it off.
+So the files that define a personality are write-protected from every turn — its own, and every other personality's: `SOUL.md`, `config.yaml`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, `ETHOS.md`, and everything under `skills/`. The list is `PERSONALITY_DEFINITION_ENTRIES` in `packages/types/src/personality-definition.ts` (re-exported by `packages/core/src/fs-reach.ts`), and `isPersonalityDefinitionPath` in the same file says whether a path is any personality's definition entry under the state directory. `deriveFsReachPaths` returns the calling personality's entries as `writeDeny` on every branch, so a declared `fs_reach.write` that covers the whole data directory cannot reopen them. No config key turns it off. The learning inbox, `learning/`, is further out of reach: a turn can neither read nor write it (`STATE_DIR_DENY_ENTRIES`, `packages/storage-fs/src/sensitive-paths.ts`).
 
-The turn can still *read* these files, which is why this is a write-only list and not part of the always-deny floor. Three enforcers carry it:
+The turn can still *read* the definition files, which is why this is a write-only floor and not part of the always-deny floor. Three enforcers carry it:
 
 | Layer | Enforcer |
 |---|---|
-| Storage the tools write through | `ScopedStorage.check` in `packages/storage-fs/src/scoped-storage.ts` (`writeDeny`) |
-| File-tool capability (`ctx.scopedFs`) | `ScopedFsImpl.checkReach` in `packages/core/src/scoped/scoped-fs.ts` (`writeDenyPaths`) |
+| Storage the tools write through | `ScopedStorage.check` in `packages/storage-fs/src/scoped-storage.ts` (`writeDeny`, plus `personalityDefinitionFloor` for every personality's entries) |
+| File-tool capability (`ctx.scopedFs`) | `ScopedFsImpl.checkReach` in `packages/core/src/scoped/scoped-fs.ts` (`writeDenyPaths`, plus the definition-write predicate wiring hands it) |
 | Docker sandbox | `DockerExecutionBackend.mountsFor` in `extensions/execution-docker/src/index.ts` mounts the personality directory read-only, with `files/` writable |
+
+Limitation: a personality holding `terminal` under `execution: local` runs a shell no Storage mediates, so none of this binds it. It can edit its own definition files directly.
 
 `scaffold_personality` writes through its own Storage rather than the turn's, so it refuses separately: it will not scaffold the calling personality's id, an id already in the personality registry (which covers built-ins), or any id that already has a `config.yaml`. It also refuses a toolset that lists a tool the calling personality does not hold, and refuses outright when the caller cannot be resolved or has no explicit toolset, so creating a personality can never mint a tool its creator lacks. Every refusal runs before anything is written (`scaffoldPersonalityTool` in `extensions/tools-personality-design/src/index.ts`, pinned by `src/__tests__/no-overwrite.test.ts` in that package).
 
 Two things stay writable on purpose. `MEMORY.md` and `USER.md` are content the agent maintains, and the memory provider writes them through its own Storage. `files/` is the personality's asset folder.
 
-The legitimate paths for change run through someone other than the agent. A skill is proposed to the learning inbox and promoted only after a human approves it (`skills_pending_approve`, an always-ask tool). Toolset, `SOUL.md` and config changes are operator edits — the Web Personalities tab or an editor.
+The legitimate paths for change run through someone other than the agent. A skill is proposed to the learning inbox and promoted only after a human approves it (`skills_pending_approve` refuses and names `ethos learning approve`). `SOUL.md` and config changes are operator edits — the Web Personalities tab or an editor.
+
+A toolset change has one governed path the personality can start. A personality that lists `propose_self_amendment` can file a request to add or remove its own tools. The tool holds a port that can only file (`AmendmentSubmitPort`, `packages/types/src/amendment.ts`); the checks — a person-started CLI or cookie-web turn, no untrusted content in context, not a built-in, the constitution — run in `createAmendmentIntake` (`packages/wiring/src/amendments.ts`). Applying is the owner's, at `ethos personality amendments apply <id>`, which refuses without a TTY, asks for the personality id to be typed back, and passes the hash of the review it printed so the bytes written are the bytes read (`AmendmentService.apply`, same file). The web shows these requests read-only. The CLI also refuses when `ETHOS_TOOL_PROCESS=1`, which the host shell tools set in every process they start. That is a tripwire, not a boundary: `env -u` defeats it, and a local-shell personality can edit `toolset.yaml` without the CLI anyway, which is why its review says so. Walkthrough: [Review a personality's change request](../../using/how-to/review-personality-change-requests.md).
 
 ### How a schema change actually happens
 

@@ -148,6 +148,20 @@ describe('spawnDetached env (F3)', () => {
     }
   });
 
+  it('sets the self-amendment tripwire, and a caller env cannot clear it (D32)', async () => {
+    const out = join(dataDir, 'env-tripwire.txt');
+    const result = spawnDetached(
+      'envtripwire',
+      `printf '%s' "$ETHOS_TOOL_PROCESS" > ${JSON.stringify(out)}`,
+      dataDir,
+      { ETHOS_TOOL_PROCESS: '0' },
+      dataDir,
+    );
+    spawnedPids.push(result.pid);
+    await waitFor(() => existsSync(out) && readFileSync(out, 'utf8').length > 0);
+    expect(readFileSync(out, 'utf8')).toBe('1');
+  });
+
   it('forwards an explicitly-opted env var to the spawned child', async () => {
     const out = join(dataDir, 'env-explicit.txt');
     const result = spawnDetached(

@@ -4,7 +4,7 @@ description: "How Ethos measures a drafted skill or Expression change against fr
 kind: explanation
 audience: user
 slug: learning-inbox
-updated: 2026-09-25
+updated: 2026-09-28
 ---
 
 ## Context
@@ -119,7 +119,7 @@ Every other candidate waits in `pending_review` (or in `pending_replay`, until s
 | `ethos personality evolve <id>` | Answer `y` or `N` on an Expression candidate. `N` rejects it. |
 | `ethos evolve apply`, `--approve`, `--reject`, `prune` | Older skill verbs, now adapters onto the inbox. `apply` approves only a `pass`. |
 
-The Learning page is where the web dashboard decides on candidates. The Skills page's **Approval queue** tab approves nothing: it is a link to the Learning page filtered to skills (`/learning?kind=skill`). The Living Soul section's list of waiting changes is a link filtered to that personality (`/learning?personality=<id>`). The **Learning** row in the sidebar's Library section counts candidates waiting in `pending_review`.
+The Learning page is where the web dashboard decides on candidates. The Skills page's **Approval queue** tab approves nothing: it is a link to the Learning page filtered to skills (`/learning?kind=skill`). The Living Soul section's list of waiting changes is a link filtered to that personality (`/learning?personality=<id>`). The **Learning** row in the sidebar's Library section counts candidates waiting in `pending_review`, plus pending definition changes (below).
 
 Two rules cannot drift between these surfaces:
 
@@ -129,6 +129,17 @@ Two rules cannot drift between these surfaces:
 **Approval is human-only.** The agent's `skills_pending_approve` tool promotes nothing: it returns a refusal that sends the user to the web Learning page or `ethos learning approve <id>` (`SKILL_APPROVAL_IS_HUMAN_ONLY`, `extensions/tools-skills/src/index.ts`). A model approving its own proposal would be a second non-human path, and in `ethos chat` under `approvalMode: off`, where no prompt appears, it would promote with no human at all. `skills_pending_reject` still works, because rejecting only narrows what the agent does.
 
 The `learning.*` RPCs behind the Learning page (`apps/web-api/src/rpc/learning.ts`) accept the dashboard's session cookie only. `learning` is absent from `SCOPE_MAP` in `apps/web-api/src/middleware/dual-auth.ts`, so a bearer API key is refused.
+
+### Definition changes are not candidates
+
+A personality that lists `propose_self_amendment` can ask to add or remove tools in its own `toolset.yaml`. That request is an *amendment*, not a candidate, and nothing on this page promotes it. It lives in its own directory, `~/.ethos/learning/amendments/`, which `listCandidates` never reads (`extensions/learning-inbox/src/paths.ts`), so no replay, nightly pass or `evolution_approval_mode: auto` setting can apply it.
+
+| Surface | What you can do there |
+|---|---|
+| `ethos personality amendments` | `list`, `show` (permission diff, `toolset.yaml` diff, flags, history), `apply`, `decline --reason`, `rollback`. Apply and rollback need a terminal and the personality id typed back (`apps/ethos/src/commands/personality-amendments.ts`). |
+| Web dashboard, **Learning** page | A read-only **Definition changes** section: each pending request's permission diff, `toolset.yaml` diff, flags and the CLI command to run. No button applies anything (`apps/web/src/components/DefinitionChanges.tsx`). |
+
+The `amendments.*` RPCs are cookie-only, like `learning.*`. Walkthrough: [Review a personality's change request](../how-to/review-personality-change-requests.md).
 
 ### What promotion checks, and how rollback works
 
@@ -179,7 +190,7 @@ These are limitations, written down so nobody reads the scorecard as more than i
 ## See also
 
 - [`ethos learning` CLI reference](../reference/cli.md#ethos-learning) — `list`, `show`, `replay`, `approve`, `reject`, `rollback`.
+- [Review a personality's change request](../how-to/review-personality-change-requests.md) — the amendments a personality files for its own toolset.
 - [Why skills, separate from tools and personalities?](what-is-a-skill.md) — what a skill is and how the evolver drafts one.
-- [What is dreaming, and why does an agent need idle time?](dreaming.md) — the other thing a personality does while you are away.
 - [Approve posts before sending](../how-to/approve-posts-before-sending.md) — the outbox, whose decisions share `ethos audit decisions` with learning.
 - [Glossary: skill evolution](../../getting-started/glossary.md#skill-evolution)

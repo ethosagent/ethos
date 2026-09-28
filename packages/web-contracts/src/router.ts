@@ -12,6 +12,9 @@ import { SessionDecisionSchema } from './events';
 import {
   A2aIdentityViewSchema,
   A2aPeerRowSchema,
+  AmendmentRecordViewSchema,
+  AmendmentReviewViewSchema,
+  AmendmentStatusSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
   ApprovalLeaseSchema,
@@ -5480,6 +5483,39 @@ const learning = {
 };
 
 // ---------------------------------------------------------------------------
+// Amendments — a personality's request to add or remove tools from its own
+// toolset (plan personality-memory-boundary-and-self-amendment G2).
+//
+// READ-ONLY in v1 (D30). There is no apply, decline or rollback here: the
+// owner acts from the CLI (`ethos personality amendments apply <id>`), where
+// the TTY and typed-confirmation gate lives (D32). The read service web-api
+// holds is `Pick<AmendmentService, 'list' | 'get'>`
+// (apps/web-api/src/services/amendments.service.ts), so no web path reaches
+// a write even structurally.
+//
+// Auth: cookie only. `amendments` is deliberately absent from `SCOPE_MAP`
+// (`apps/web-api/src/middleware/dual-auth.ts`), so a bearer API key fails
+// closed — a pending amendment is a personality asking for more reach, and
+// its rationale and evidence are the owner's to read. Pinned by
+// apps/web-api/src/__tests__/services/amendments.service.test.ts.
+// ---------------------------------------------------------------------------
+
+const AmendmentsListInput = z.object({
+  personalityId: z.string().min(1).optional(),
+  /** Restrict to these statuses. Absent means all. */
+  statuses: z.array(AmendmentStatusSchema).min(1).optional(),
+});
+const AmendmentsListOutput = z.object({ amendments: z.array(AmendmentRecordViewSchema) });
+const AmendmentsGetInput = z.object({ amendmentId: z.string().min(1) });
+const AmendmentsGetOutput = z.object({ review: AmendmentReviewViewSchema });
+
+/** @experimental */
+const amendments = {
+  list: oc.input(AmendmentsListInput).output(AmendmentsListOutput),
+  get: oc.input(AmendmentsGetInput).output(AmendmentsGetOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Observed chats — the rooms a bot WATCHES and never answers
 // (plan/phases/ambient-group-monitoring.md R12).
 //
@@ -6469,6 +6505,7 @@ export const contract = {
   usage,
   outbox,
   learning,
+  amendments,
   channels,
   a2a,
   namedSecrets,

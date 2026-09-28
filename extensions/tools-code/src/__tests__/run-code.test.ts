@@ -431,6 +431,18 @@ describe('run_tests / lint exit-code evidence', () => {
     expect(result.structured).toEqual({ exitCode: 0, command: 'biome check .' });
   });
 
+  it('sets the self-amendment tripwire env on the host path (D32)', async () => {
+    const spawn = vi.fn().mockResolvedValue({ exitCode: 0, stdout: 'clean', stderr: '' });
+    const localCtx = { ...ctx, scopedProcess: { spawn } as unknown as typeof ctx.scopedProcess };
+    const [, , lint] = createCodeTools({});
+    await lint.execute({ command: 'biome check .' }, localCtx);
+    expect(spawn).toHaveBeenCalledWith(
+      'bash',
+      ['-c', 'biome check .'],
+      expect.objectContaining({ env: { ETHOS_TOOL_PROCESS: '1' } }),
+    );
+  });
+
   it('states it on an empty-output success too', async () => {
     const backend = makeBackend(true, { stdout: '', exitCode: 0 });
     const [, runTests] = createCodeTools({ backend });

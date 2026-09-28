@@ -90,7 +90,7 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
   {
     name: 'personality',
     group: 'Agents',
-    description: 'List, create, show, evolve and manage personalities',
+    description: 'List, create, show, evolve and manage personalities, and review amendments',
   },
   { name: 'set', group: 'Agents', description: 'Set the default personality or the active team' },
   { name: 'team', group: 'Agents', description: 'Start, stop and inspect agent teams' },

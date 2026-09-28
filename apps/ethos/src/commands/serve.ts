@@ -508,6 +508,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
   // No `| undefined`: definite assignment makes a branch that forgets it a compile error.
   let memoryBundle: import('@ethosagent/wiring').MemoryBundle;
+  // The loop's self-amendment service, read-only on the web (D30). Definite
+  // assignment, like `memoryBundle`: every branch builds a loop that has one.
+  let amendments: import('@ethosagent/wiring').CreateAgentLoopResult['amendments'];
   let jobStore: import('@ethosagent/types').JobStore | undefined;
   let backgroundExecutor:
     | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
@@ -775,6 +778,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
     memoryBundle = result.memoryBundle;
+    amendments = result.amendments;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
@@ -800,6 +804,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       runCallCapture: teamRunCallCapture,
       goals: teamGoals,
       memoryBundle: teamMemoryBundle,
+      amendments: teamAmendments,
       dispose: teamDispose,
       executionPostureFor: teamExecutionPostureFor,
       approverDecision: teamApproverDecision,
@@ -826,6 +831,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // goal in coordinator mode was stored `running` and never executed.
     goals = teamGoals;
     memoryBundle = teamMemoryBundle;
+    amendments = teamAmendments;
     disposeLoop = teamDispose;
   } else {
     activeMeshName = meshName;
@@ -846,6 +852,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
     memoryBundle = result.memoryBundle;
+    amendments = result.amendments;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
@@ -1353,6 +1360,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     cronTriggers,
     goals,
     memoryBundle,
+    amendments,
     jobStore,
     jobRunners,
     backgroundExecutor,
@@ -2181,6 +2189,9 @@ export interface BuildServeWebApiOptions {
   /** The loop's memory surfaces (`CreateAgentLoopResult.memoryBundle`) — the
    *  web editor, Timeline, restore and approve queue on its configured backend. */
   memoryBundle: import('@ethosagent/wiring').MemoryBundle;
+  /** The loop's self-amendment service (`CreateAgentLoopResult.amendments`).
+   *  The web holds only its reads (`AmendmentReader`, D30). */
+  amendments: import('@ethosagent/web-api').AmendmentReader;
   jobStore: import('@ethosagent/types').JobStore | undefined;
   jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
   backgroundExecutor:
@@ -2260,6 +2271,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     cronTriggers,
     goals,
     memoryBundle,
+    amendments,
     jobStore,
     jobRunners,
     backgroundExecutor,
@@ -2302,6 +2314,8 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // The loop's memory surfaces (F04): editor, Timeline, restore and approve
     // all on the backend the agent reads — the vault under `memory: vault`.
     memoryBundle,
+    // Self-amendments, read-only (D30): `amendments.list | get` only.
+    amendments,
     identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime

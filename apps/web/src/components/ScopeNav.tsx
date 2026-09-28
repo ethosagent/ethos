@@ -16,6 +16,7 @@ import { useRecentSessions } from '../features/sessions/api/queries';
 import { useTeam, useTeamsList } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
+import { AMENDMENT_AWAITING } from '../lib/amendments';
 import { LEARNING_AWAITING_REVIEW } from '../lib/learning';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import {
@@ -137,7 +138,19 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
     refetchInterval: 30_000,
     retry: false,
   });
-  const learningAwaiting = learningAwaitingQuery.data?.candidates.length ?? 0;
+  // Pending self-amendments count too (plan personality-memory-boundary G2):
+  // a personality asking for more reach waits on the same person. The badge is
+  // the only notification (D30); an error (no loop yet) counts as none.
+  const amendmentsAwaitingQuery = useQuery({
+    queryKey: learningKeys.amendments(AMENDMENT_AWAITING),
+    queryFn: () => rpc.amendments.list({ statuses: [...AMENDMENT_AWAITING] }),
+    enabled: libraryAltitude,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const learningAwaiting =
+    (learningAwaitingQuery.data?.candidates.length ?? 0) +
+    (amendmentsAwaitingQuery.data?.amendments.length ?? 0);
   const memberIds = useMemo(
     () => (team ? new Set(team.members.map((m) => m.personalityId)) : undefined),
     [team],

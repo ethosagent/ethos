@@ -2628,3 +2628,115 @@ export const LearningTimelineEntryViewSchema = z.object({
   reason: z.string().nullable(),
 });
 export type LearningTimelineEntryView = z.infer<typeof LearningTimelineEntryViewSchema>;
+
+// ---------------------------------------------------------------------------
+// Amendments — a personality's request to change its own toolset (plan
+// personality-memory-boundary-and-self-amendment G2). Read-only on the web in
+// v1 (D30): the owner applies, declines and rolls back from the CLI.
+//
+// These mirror `AmendmentRecord` and `AmendmentReview` from
+// `@ethosagent/types` / `@ethosagent/wiring` field for field. Zod strips
+// unknown keys, so a field the type gains and this schema lacks would vanish
+// on the wire in silence; packages/web-contracts/src/__tests__/
+// amendments-contract.test.ts round-trips a fully populated `AmendmentRecord`
+// to catch that.
+// ---------------------------------------------------------------------------
+
+export const AmendmentStatusSchema = z.enum([
+  'pending',
+  'applied',
+  'declined',
+  'auto_rejected',
+  'stale',
+  'rolled_back',
+]);
+export type AmendmentStatusView = z.infer<typeof AmendmentStatusSchema>;
+
+export const AmendmentFlagSchema = z.enum([
+  'tool-unavailable',
+  'no-recorded-refusal',
+  'local-terminal',
+  'high-risk',
+  'team-workflow',
+]);
+
+export const AmendmentRecordViewSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: z.string(),
+  personalityId: z.string(),
+  target: z.literal('toolset'),
+  ops: z.array(z.object({ op: z.enum(['add_tool', 'remove_tool']), tool: z.string() })),
+  opsHash: z.string(),
+  baseHash: z.string(),
+  /** Written by the personality. Untrusted: render as text, never as markup. */
+  rationale: z.string(),
+  evidence: z.array(
+    z.object({
+      sessionId: z.string(),
+      toolCallId: z.string(),
+      toolName: z.string(),
+      messageId: z.string(),
+      /** Capped and redacted at filing. Untrusted text. */
+      excerpt: z.string(),
+    }),
+  ),
+  provenance: z.object({
+    sessionId: z.string(),
+    sessionKey: z.string(),
+    platform: z.string(),
+    origin: z.string().optional(),
+    initiator: z.enum(['user', 'system']),
+    roomAudience: z.enum(['private', 'shared']),
+    turn: z.number().optional(),
+    traceId: z.string().optional(),
+    executionPosture: z.enum(['docker', 'ssh', 'local', 'none']),
+    holdsShellTool: z.boolean(),
+  }),
+  preCheck: z.union([z.literal('ok'), z.object({ reason: z.string() })]),
+  status: AmendmentStatusSchema,
+  history: z.array(
+    z.object({
+      action: z.enum(['filed', 'auto_reject', 'approve', 'decline', 'stale', 'rollback']),
+      actor: z.enum(['intake', 'cli', 'web']),
+      decidedBy: z.string().optional(),
+      at: z.string(),
+      reason: z.string().optional(),
+    }),
+  ),
+  applied: z.object({ appliedHash: z.string(), at: z.string() }).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AmendmentRecordView = z.infer<typeof AmendmentRecordViewSchema>;
+
+/** One changed permission row (`PermissionChange`, extensions/personalities/src/permission-surface.ts). */
+export const AmendmentPermissionChangeViewSchema = z.object({
+  section: z.string(),
+  field: z.string(),
+  direction: z.enum(['widens', 'narrows', 'changes']),
+  detail: z.string(),
+  flag: z.enum(['high-risk', 'team-workflow']).optional(),
+});
+
+/**
+ * What the reviewer sees (`AmendmentReview`, packages/wiring/src/amendments.ts),
+ * recomputed from live state on every read. The raw live and after bytes are
+ * left out: `textDiff` carries the change.
+ */
+export const AmendmentReviewViewSchema = z.object({
+  record: AmendmentRecordViewSchema,
+  personality: z.enum(['ok', 'not_found', 'builtin']),
+  liveHash: z.string().nullable(),
+  stale: z.boolean(),
+  interruptedApply: z.boolean(),
+  opsProblem: z.string().optional(),
+  expectedAfterHash: z.string().nullable(),
+  /** `toolset.yaml`, live → after; each line prefixed `' '`, `'-'` or `'+'`. */
+  textDiff: z.array(z.string()),
+  permissionDiff: z
+    .object({ changes: z.array(AmendmentPermissionChangeViewSchema), widens: z.boolean() })
+    .nullable(),
+  notCompared: z.string(),
+  flags: z.array(AmendmentFlagSchema),
+});
+export type AmendmentReviewView = z.infer<typeof AmendmentReviewViewSchema>;

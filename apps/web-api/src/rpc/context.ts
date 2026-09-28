@@ -5,6 +5,7 @@ import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
 import type { DebugService } from '../features/debug/service';
 import type { SessionsService } from '../features/sessions/service';
+import type { AmendmentsService } from '../services/amendments.service';
 import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
 import type { BackupService } from '../services/backup.service';
@@ -130,6 +131,10 @@ export interface RpcContext {
    *  (plan `trust-before-reach.md` Part 4, L-T8). Not optional: it answers an
    *  empty inbox where nothing was ever proposed. */
   learning: LearningService;
+  /** Personality self-amendments, READ-ONLY (plan personality-memory-boundary
+   *  G2, D30). Not optional: with no loop behind it (onboarding) it answers
+   *  `NOT_CONFIGURED` rather than an empty list. */
+  amendments: AmendmentsService;
   /** Connected wake satellites + the pushed routing table. Absent in
    *  deployments with no satellite lane — the RPCs then report an empty house
    *  rather than throwing at a Settings page. */

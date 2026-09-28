@@ -106,6 +106,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'using/how-to/use-skills',
             'using/how-to/manage-skill-evolution',
+            'using/how-to/review-personality-change-requests',
             'using/how-to/schedule-tasks-with-cron',
             'using/how-to/loop-over-tools-in-code',
             'using/how-to/run-tools-over-ssh',

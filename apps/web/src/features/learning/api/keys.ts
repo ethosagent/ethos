@@ -17,4 +17,9 @@ export const learningKeys = {
   /** Counts behind the sidebar badge and the links that replaced the old queues. */
   count: (scope: LearningListScope & { statuses: readonly string[] }) =>
     [...learningKeys.all(), 'count', scope] as const,
+  /** Personality self-amendments (`amendments.list`, read-only) — the page section and the badge. */
+  amendments: (statuses: readonly string[]) =>
+    [...learningKeys.all(), 'amendments', statuses] as const,
+  /** One amendment's review (`amendments.get`). */
+  amendment: (amendmentId: string) => [...learningKeys.all(), 'amendment', amendmentId] as const,
 };

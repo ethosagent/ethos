@@ -1,11 +1,12 @@
-import type {
-  ExecChunk,
-  ExecutionBackend,
-  ExecutionRoute,
-  ExecutionRouter,
-  PersonalityConfig,
-  Tool,
-  ToolResult,
+import {
+  type ExecChunk,
+  type ExecutionBackend,
+  type ExecutionRoute,
+  type ExecutionRouter,
+  type PersonalityConfig,
+  TOOL_PROCESS_ENV_VAR,
+  type Tool,
+  type ToolResult,
 } from '@ethosagent/types';
 import { EXIT_SUFFIX } from './exit-code';
 import { ERROR_WRAPPER_RESERVE, spillOversizedOutput } from './spill';
@@ -275,6 +276,9 @@ function makeTerminalTool(route: ExecutionRouter): Tool {
           {
             cwd: cwd ?? ctx.workingDir,
             timeout,
+            // The self-amendment CLI tripwire (`TOOL_PROCESS_ENV_VAR`, D32) —
+            // a tripwire, not a boundary (`env -u` defeats it).
+            env: { [TOOL_PROCESS_ENV_VAR]: '1' },
           },
         );
 
