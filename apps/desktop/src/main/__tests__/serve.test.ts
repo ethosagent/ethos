@@ -239,3 +239,19 @@ describe('the desktop backend forwards the loop memory bundle', () => {
     expect(src).not.toContain('memoryBackend:');
   });
 });
+
+// Verification round F2 (plan personality-memory-boundary). A custom desktop
+// data folder is neither `~/.ethos` nor `ETHOS_STATE_DIR`, so the checks that
+// read only the environment (the terminal/process argv floors, the
+// `write_file` pre-check) would not know it. The backend exports it as
+// `ETHOS_STATE_DIR` before building the loop — the same value the gateway
+// child is spawned with (gateway-control.ts). Asserted against source for the
+// same reason as the blocks above.
+describe('the desktop backend names its data folder as the state dir', () => {
+  it('sets ETHOS_STATE_DIR to dataDir before createAgentLoop', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
+    const set = src.indexOf('process.env.ETHOS_STATE_DIR = dataDir;');
+    expect(set).toBeGreaterThan(-1);
+    expect(set).toBeLessThan(src.indexOf('await createAgentLoop('));
+  });
+});

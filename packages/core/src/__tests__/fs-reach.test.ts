@@ -255,9 +255,11 @@ describe('deriveFsReachPaths — writeDeny', () => {
     `${OWN_DIR}tools.yaml`,
     `${OWN_DIR}ETHOS.md`,
     `${OWN_DIR}skills/`,
+    `${OWN_DIR}commands/`,
+    `${OWN_DIR}.expression-history/`,
   ];
 
-  it('lists the seven definition entries under ownDir on the default branch', () => {
+  it('lists the nine definition entries under ownDir on the default branch', () => {
     expect(deriveFsReachPaths(personality(), VARS).writeDeny).toEqual(DEFINITION);
   });
 

@@ -45,11 +45,18 @@ The personality can file only for itself, and only from a conversation you start
 | A web chat driven by an API key | No |
 | Telegram, Slack, Discord, WhatsApp, email | No |
 | A cron job, watcher, goal, background job or delegated sub-agent | No |
-| A conversation with a web page, MCP result, `session_search` result or attachment in its context | No — the agent is told to file from a fresh session |
+| A conversation with a web page, MCP result, `session_search`, `get_session_events` or `get_observability` result, or attachment in its context | No — the agent is told to file from a fresh session |
 
 A failed call counts as well as a successful one: a `terminal` command that exits 1 still printed what it fetched. Only the framework's own refusals, such as `Tool web_fetch is not permitted for this personality`, are not counted. A compacted conversation is checked in full when its summary was written from the earlier messages.
 
-A fresh session does not reset memory. If untrusted text reached `MEMORY.md` or `USER.md` in an earlier session, the memory snapshot carries it into every later session, and this check does not see it. Read the rationale and evidence as the personality's claim either way.
+The check reads the conversation's stored messages, so it does not see text that reaches the prompt another way:
+
+- `MEMORY.md` and `USER.md`. A fresh session does not reset memory: untrusted text that reached them earlier is in every later session.
+- Project files: `AGENTS.md` or `CLAUDE.md` in the working directory, and skills in the project or your home directory. A personality that can write the working directory can edit them.
+- Text a trusted tool shows from its own store, such as team memory, kanban comments, a scheduled job's output or a goal's output.
+- A message an API key sent into your own web chat session. A stored message does not record how it was sent.
+
+Read the rationale and evidence as the personality's claim either way.
 
 A request adds or removes toolset entries. Each personality holds at most 3 pending requests. A filing that your `~/.ethos/constitution.yaml` forbids is rejected on the spot and recorded as `auto_rejected`.
 
@@ -192,7 +199,7 @@ The next turn is offered it. `ethos audit decisions` records every apply, declin
 | `FORBIDDEN: ETHOS_TOOL_PROCESS=1: ...` | The command ran inside a process an agent's `terminal`, `process_start` or code tool started. | Run it from your own terminal. The check is a tripwire, not a boundary: `env -u ETHOS_TOOL_PROCESS` defeats it. |
 | `FORBIDDEN: Confirmation did not match` | The typed id differed from the personality id. | Re-run and type the id exactly. |
 | `CONFIG_CONFLICT: ... is stale` | `toolset.yaml` changed after the request was filed. | Decline it. The personality can file again against the new file. |
-| `An earlier apply was interrupted after it wrote toolset.yaml` in `show` | Ethos stopped between writing `toolset.yaml` and recording the apply. | Run `ethos personality amendments apply <id>`. It records the request as applied without writing anything, so you can roll it back. Decline is refused for it. |
+| `An earlier apply was interrupted after it wrote toolset.yaml` in `show` | Ethos stopped between writing `toolset.yaml` and recording the apply. | Run `ethos personality amendments apply <id>`. It records the request as applied without writing anything, so you can roll it back. Decline is refused for it. If another request has since been applied with the same result, the interrupted one is not recorded twice: it stays `stale`, and you can decline it. |
 | `FORBIDDEN: ... constitution ...` | `~/.ethos/constitution.yaml` forbids the result. | Nothing was written. Change the constitution first if you still want it. |
 | `FORBIDDEN: ... already forbids <personality-id>'s current definition` | The personality breaks the constitution without this change, often a `${CWD}` rule read from the directory you ran the command in. | Nothing was recorded. Fix the personality or the constitution, or run the command from the directory the rule expects. |
 | `CONFIG_CONFLICT: ... does not match the bytes it applied` | The stored request or its saved `toolset.yaml` was edited on disk. | Nothing was rolled back. Restore `toolset.yaml` by hand. |

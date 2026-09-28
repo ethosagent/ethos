@@ -34,6 +34,11 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'memory.db',
     // plan personality-memory-boundary G2-pre B — read AND write.
     'learning',
+    // verification round F1 — operator policy, read AND write.
+    'constitution.yaml',
+    'evolve-config.json',
+    'allowlist.json',
+    'approval-leases.json',
   ])('denies ~/.ethos/%s', (entry) => {
     expect(sensitiveDenyPaths()).toContain(join(home, entry));
   });
@@ -112,6 +117,82 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
       BoundaryError,
     );
     expect(await scoped.read(join(other, 'toolset.yaml'))).toBe('- read_file\n');
+  });
+});
+
+// Verification round F1 — operator policy files a turn could otherwise rewrite
+// to widen its own power: the constitution, `evolve-config.json`'s
+// `autoApprove`, and the approval allowlist and leases. Refused for read and
+// write, in any letter case.
+describe('always-deny floor — operator policy (verification round F1)', () => {
+  const home = join(homedir(), '.ethos');
+
+  it.each(['constitution.yaml', 'evolve-config.json', 'allowlist.json', 'approval-leases.json'])(
+    'a reach covering the home dir cannot read or write %s, in any case',
+    async (entry) => {
+      const inner = new InMemoryStorage();
+      await inner.mkdir(home);
+      await inner.write(join(home, entry), 'policy');
+      const scoped = new ScopedStorage(inner, {
+        read: [`${homedir()}/`],
+        write: [`${homedir()}/`],
+        alwaysDeny: defaultAlwaysDeny(),
+      });
+      await expect(scoped.read(join(home, entry))).rejects.toBeInstanceOf(BoundaryError);
+      await expect(scoped.write(join(home, entry), 'widened')).rejects.toBeInstanceOf(
+        BoundaryError,
+      );
+      await expect(scoped.write(join(home, entry.toUpperCase()), 'x')).rejects.toBeInstanceOf(
+        BoundaryError,
+      );
+      expect(await inner.read(join(home, entry))).toBe('policy');
+    },
+  );
+});
+
+// Verification round F2 — a data dir wiring knows and the environment does not
+// (the desktop app's custom data folder) is floored when it is passed in.
+describe('state dirs — a data dir outside ~/.ethos (verification round F2)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const custom = '/srv/desktop-data';
+
+  it('is not a state dir unless passed, and is floored when it is', async () => {
+    expect(ethosStateDirs()).not.toContain(custom);
+    expect(ethosStateDirs([custom])).toContain(custom);
+    expect(sensitiveDenyPaths([custom])).toContain(join(custom, 'sessions.db'));
+    expect(defaultAlwaysDeny([custom])).toContain(join(custom, 'constitution.yaml'));
+    const floor = personalityDefinitionFloor([custom]);
+    expect(floor(join(custom, 'personalities', 'a', 'toolset.yaml'), 'access')).toBe(true);
+    expect(
+      personalityDefinitionFloor()(join(custom, 'personalities', 'a', 'toolset.yaml'), 'access'),
+    ).toBe(false);
+  });
+
+  it('ScopedStorage applies both floors to a data dir named in its scope', async () => {
+    const inner = new InMemoryStorage();
+    await inner.mkdir(join(custom, 'personalities', 'a'));
+    await inner.write(join(custom, 'sessions.db'), 'transcripts');
+    const scoped = new ScopedStorage(inner, {
+      read: [`${custom}/`],
+      write: [`${custom}/`],
+      alwaysDeny: defaultAlwaysDeny([custom]),
+      stateDirs: [custom],
+    });
+    await expect(scoped.read(join(custom, 'sessions.db'))).rejects.toBeInstanceOf(BoundaryError);
+    await expect(
+      scoped.write(join(custom, 'personalities', 'a', 'toolset.yaml'), '- terminal\n'),
+    ).rejects.toBeInstanceOf(BoundaryError);
+    // Without the scope field, the same write passes: the floor is what stops it.
+    const unfloored = new ScopedStorage(inner, { read: [`${custom}/`], write: [`${custom}/`] });
+    await unfloored.write(join(custom, 'personalities', 'a', 'toolset.yaml'), '- terminal\n');
+  });
+
+  it('dedupes a passed dir that ETHOS_STATE_DIR already names', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', custom);
+    expect(ethosStateDirs([custom]).filter((d) => d === custom)).toHaveLength(1);
   });
 });
 

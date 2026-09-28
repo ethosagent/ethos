@@ -543,7 +543,10 @@ export const ARGV_FS_DENY_PATTERNS: Array<{ test: (cmd: string) => boolean; path
 // the state dir can edit the definition files beside it, which only Storage's
 // write-deny list protects. Same honest scope as everything above: `cd ~;
 // sed -i … .ethos/…`, `$(printf ~)/.ethos` or a variable holding the path all
-// pass. `execution: docker` is the boundary.
+// pass. The Docker sandbox is the boundary — the default posture, which the
+// operator turns off with `execution.containerized: true`,
+// `ETHOS_EXECUTION_BACKEND=local` or `execution.allowLocalFallback: true`
+// (`resolveExecutionPosture`, packages/wiring/src/resolve-execution-posture.ts).
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A path ends at `/`, whitespace, a quote, a shell operator or end of string.
 const PATH_END = '(?=[/\\s\'"`;|&)]|$)';

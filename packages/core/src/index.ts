@@ -15,6 +15,7 @@ export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
 // plan personality-memory-boundary G1 — the shared-audience rules for a running
 // turn, and the chat-level audience questions asked outside one.
 export {
+  defaultEthosStateDirs,
   memoryFlushForbidden,
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,

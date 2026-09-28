@@ -83,4 +83,22 @@ describe('the shipped factory (shippedScopedStorageFactory)', () => {
     // A private turn carries no predicate: the same scope's MEMORY.md is writable.
     await expect(scoped.write(join(dir, 'MEMORY.md'), 'ok')).resolves.toBeUndefined();
   });
+
+  it('floors the wiring dataDir when it is neither ~/.ethos nor ETHOS_STATE_DIR (verification round F2)', async () => {
+    const custom = '/srv/desktop-data';
+    const base = new InMemoryStorage();
+    await base.mkdir(join(custom, 'personalities', 'p'));
+    await base.write(join(custom, 'constitution.yaml'), 'policy');
+    const scope = { read: [`${custom}/`], write: [`${custom}/`] };
+    const scoped = shippedScopedStorageFactory(storageFs, custom)(base, scope);
+    await expect(
+      scoped.write(join(custom, 'personalities', 'p', 'toolset.yaml'), '- terminal\n'),
+    ).rejects.toBeInstanceOf(BoundaryError);
+    await expect(scoped.read(join(custom, 'constitution.yaml'))).rejects.toBeInstanceOf(
+      BoundaryError,
+    );
+    // The factory without the data dir only knows the environment's dirs.
+    const blind = shippedScopedStorageFactory(storageFs)(base, scope);
+    expect(await blind.read(join(custom, 'constitution.yaml'))).toBe('policy');
+  });
 });

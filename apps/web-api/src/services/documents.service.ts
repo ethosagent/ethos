@@ -332,7 +332,8 @@ export class DocumentsService {
       scoped: new ScopedStorage(this.opts.storage, {
         read: [workdir],
         write: [workdir],
-        alwaysDeny: defaultAlwaysDeny(),
+        alwaysDeny: defaultAlwaysDeny([this.opts.dataDir]),
+        stateDirs: [this.opts.dataDir],
       }),
     };
   }

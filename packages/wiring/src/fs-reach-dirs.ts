@@ -23,7 +23,8 @@ import type { Logger, PersonalityConfig, Storage } from '@ethosagent/types';
  * created as well: `DockerExecutionBackend.mountsFor` mounts `ownDir`
  * read-only with a rw `ownDir/files` child in exactly that case, and a missing
  * bind source would be auto-created by Docker as ROOT (see above). Likewise
- * `learning/` when a write path covers it, which `mountsFor` mounts read-only.
+ * `learning/`, `skills/` and `commands/` when a write path covers them, which
+ * `mountsFor` mounts read-only.
  *
  * Read-only reach is NOT created: a read prefix that doesn't exist is simply an
  * empty scope, and materializing it would grant the personality a directory it
@@ -63,11 +64,14 @@ export async function ensureFsReachDirs(
     child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
   const dirs = writePaths.map((p) => resolvePath(p));
   if (dirs.some((dir) => within(ownDir, dir))) dirs.push(join(ownDir, 'files'));
-  // `mountsFor` also mounts `learning/` read-only when a write path covers it
-  // (plan personality-memory-boundary G2-pre B); same root-owned-bind-source
+  // `mountsFor` also mounts `learning/` (plan personality-memory-boundary
+  // G2-pre B) and the global `skills/` and `commands/` (verification round F7)
+  // read-only when a write path covers them; same root-owned-bind-source
   // reason as `files` above.
-  const learningDir = resolvePath(join(vars.ethosHome, 'learning'));
-  if (dirs.some((dir) => within(learningDir, dir))) dirs.push(learningDir);
+  for (const entry of ['learning', 'skills', 'commands']) {
+    const guard = resolvePath(join(vars.ethosHome, entry));
+    if (dirs.some((dir) => within(guard, dir))) dirs.push(guard);
+  }
 
   for (const dir of dirs) {
     if (isForbiddenMount(dir)) {

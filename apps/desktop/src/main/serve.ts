@@ -207,6 +207,13 @@ export async function startServer(port: number): Promise<number> {
 
 async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   const dataDir = getDataDir();
+  // Verification round F2 — the same state dir the gateway child is given
+  // (`ETHOS_STATE_DIR: getDataDir()`, ./gateway-control.ts). Wiring floors
+  // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
+  // the checks that read only the environment — the terminal/process argv
+  // floors and the `write_file` pre-check — see a custom data folder through
+  // this variable.
+  process.env.ETHOS_STATE_DIR = dataDir;
 
   const provider = (store.get('provider') as string) ?? 'anthropic';
   const model = (store.get('model') as string) ?? 'claude-sonnet-4-20250514';

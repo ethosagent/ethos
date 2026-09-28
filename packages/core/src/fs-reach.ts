@@ -185,7 +185,11 @@ export function deriveFsReachPaths(
  *
  * LIMITATION: on LOCAL execution a personality with `terminal` can still edit
  * its own definition — `sh -c` runs as the Ethos user and no Storage mediates
- * it. Use `execution: docker` if that matters. The terminal and process
+ * it. If that matters, run exec tools in the Docker sandbox — the default;
+ * local execution is the operator's choice (`execution.containerized: true`,
+ * `ETHOS_EXECUTION_BACKEND=local`, or `execution.allowLocalFallback: true`
+ * with no Docker — `resolveExecutionPosture`,
+ * packages/wiring/src/resolve-execution-posture.ts). The terminal and process
  * guards refuse a command that names the state dir literally
  * (`stateDirReference` in `extensions/tools-terminal/src/guard.ts` and
  * `extensions/tools-process/src/guard.ts`, S16), which catches the lazy

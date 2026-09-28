@@ -89,6 +89,8 @@ export const AMENDMENT_TAINT_REFUSAL =
 
 /** Longest evidence excerpt stored on a record. */
 const EVIDENCE_EXCERPT_CHARS = 300;
+/** Longest tool name an evidence row keeps (`evidenceToolName`). */
+const EVIDENCE_TOOL_NAME_CHARS = 128;
 
 /** How long a filing waits for `.apply.lock` before refusing. */
 const LOCK_WAIT_MS = 5_000;
@@ -105,10 +107,10 @@ const FILING_KEY_PREFIXES = ['cli:', 'web:'] as const;
  * A caller of `acquireSentinelLock` (packages/wiring/src/backup/sentinel-lock.ts),
  * which holds the raw `node:fs` calls and the stale-holder protocol. Filing
  * holds it across the limit check, the dedupe and the write, so two filings
- * cannot both pass the 3-pending limit; apply, decline and rollback
- * (`createAmendmentService`) take the same lock, so no two of the four
- * interleave. A contended filing waits `LOCK_WAIT_MS`, then refuses
- * with nothing written.
+ * cannot both pass the 3-pending limit; apply, decline, rollback and
+ * refresh (`createAmendmentService`, through its `locked` wrapper) take the
+ * same lock, so no two of the five interleave. A contended filing waits
+ * `LOCK_WAIT_MS`, then refuses with nothing written.
  */
 export async function acquireAmendmentLock(
   dataDir: string,
@@ -206,8 +208,19 @@ export function gateRefusal(ctx: ToolContext): string | null {
  *   because stored rows do not record the flag;
  * - any `mcp__*` result, any result from a tool no longer registered, and any
  *   result with no tool name;
- * - any `session_search` result: it returns snippets of stored messages, this
- *   session's pre-watermark rows included, so it can carry anything above.
+ * - any result from a recall tool (`RECALL_TOOLS`: `session_search`,
+ *   `get_session_events`, `get_observability`): it returns stored messages or
+ *   telemetry, this session's pre-watermark rows included, so it can carry
+ *   anything above.
+ * NOT seen (a documented limitation, verification round F6): text the prompt
+ * assembles from files, which is never a stored message — project context
+ * (`AGENTS.md`, `CLAUDE.md` in the working directory), skills from the
+ * project, home and state dirs, and memory; and third-party text a trusted
+ * tool re-serves from its own store (team memory, kanban comments, cron run
+ * output, goal output, pending skills, session titles), whose result is
+ * judged by that tool's own trust. A turn that can write one of those can
+ * steer a later filing; see the G2 limitations in
+ * docs/content/security/security-boundary.md.
  * A failed result is judged exactly like a successful one — a failing
  * `terminal` still printed what `curl` fetched, and an MCP server's error text
  * is its own. The only rows skipped are the framework's own refusals
@@ -269,8 +282,18 @@ export function isFrameworkRefusal(message: StoredMessage): boolean {
   return frameworkRefusalTexts(message.toolName).includes(message.content);
 }
 
-/** Tools whose output is stored conversation text, and so can carry anything that was ever in it. */
-const RECALL_TOOLS: ReadonlySet<string> = new Set(['session_search']);
+/**
+ * Tools whose output is stored conversation or telemetry text, and so can
+ * carry anything that was ever in it: `session_search` (snippets of stored
+ * messages), and the debug tools `get_session_events` (another session's
+ * messages) and `get_observability` (span and event payloads, tool arguments
+ * included) — verification round F5.
+ */
+const RECALL_TOOLS: ReadonlySet<string> = new Set([
+  'session_search',
+  'get_session_events',
+  'get_observability',
+]);
 
 function isTainted(tools: Pick<ToolRegistry, 'get'>, message: StoredMessage): boolean {
   if (message.role === 'user' || message.role === 'user_steer') {
@@ -338,12 +361,25 @@ async function collectEvidence(
     evidence.push({
       sessionId: ctx.sessionId,
       toolCallId: id,
-      toolName: row.toolName ?? 'unknown',
+      toolName: evidenceToolName(row.toolName),
       messageId: row.id,
       excerpt: redactString(row.content).slice(0, EVIDENCE_EXCERPT_CHARS),
     });
   }
   return evidence;
+}
+
+/**
+ * The tool name an evidence row records. A refused call's name is whatever the
+ * model asked for — the registry's `Unknown tool: <name>` refusal is stored
+ * under it — so anything outside a tool name's charset is replaced and the
+ * length capped before it reaches the record (verification round F4; the CLI
+ * also cleans every printed string, `clean` in
+ * apps/ethos/src/commands/personality-amendments.ts).
+ */
+function evidenceToolName(name: string | undefined): string {
+  if (!name) return 'unknown';
+  return name.replace(/[^A-Za-z0-9_.:-]/g, '?').slice(0, EVIDENCE_TOOL_NAME_CHARS);
 }
 
 /** A shell or code runner — the tools that make a `local` posture able to edit its own files. */
@@ -912,6 +948,12 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
    * but never recorded it, or null. Proof, not a hint: the marker names this
    * record, the prior snapshot hashes to `baseHash`, the record's ops turn that
    * snapshot into the marker's `afterHash`, and the live file hashes to it.
+   * And the live bytes are THIS record's (verification round F9): no other
+   * amendment of the same personality and target was applied after the marker
+   * was written, or is applied with the live hash — otherwise a later
+   * amendment that produced identical bytes (the owner re-filed and applied
+   * the same change) would be recorded twice, and rolling back either would
+   * disown the other. Such a record is left as it is.
    */
   async function interruptedMarker(
     record: AmendmentRecord,
@@ -925,7 +967,19 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
     if (!marker || marker.afterHash !== liveHash) return null;
     if (hashDefinitionBytes(prior) !== record.baseHash) return null;
     const after = applyOps(prior, record.ops);
-    return after.ok && hashDefinitionBytes(after.afterBytes) === liveHash ? marker : null;
+    if (!after.ok || hashDefinitionBytes(after.afterBytes) !== liveHash) return null;
+    const siblings = await listAmendments(deps.storage, deps.dataDir, {
+      personalityId: record.personalityId,
+    });
+    const claimed = siblings.some(
+      (other) =>
+        other.id !== record.id &&
+        other.target === record.target &&
+        other.applied !== undefined &&
+        ((other.status === 'applied' && other.applied.appliedHash === liveHash) ||
+          other.applied.at > marker.at),
+    );
+    return claimed ? null : marker;
   }
 
   /**

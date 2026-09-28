@@ -9,8 +9,9 @@ import { sensitiveDenyPaths } from './sensitive-paths';
  * Kept as a named export — rather than inlining `sensitiveDenyPaths` at the
  * ScopedStorage wiring sites — so the always-deny wiring reads intent-first.
  * Both the `ScopedStorage` decorator and the capability-resolved `ScopedFs`
- * consume this one source of truth.
+ * consume this one source of truth. `extraStateDirs` adds state dirs the
+ * environment does not name — wiring passes its `dataDir` (`ethosStateDirs`).
  */
-export function defaultAlwaysDeny(): string[] {
-  return sensitiveDenyPaths();
+export function defaultAlwaysDeny(extraStateDirs: readonly string[] = []): string[] {
+  return sensitiveDenyPaths(extraStateDirs);
 }

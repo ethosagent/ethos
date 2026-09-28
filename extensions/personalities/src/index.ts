@@ -1326,12 +1326,20 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     return { entry, soul: parseLivingSoul(next) };
   }
 
+  /**
+   * The Expression text a `revertExpression(id, revisionId)` would restore,
+   * or null when there is no such snapshot. For showing the owner exactly what
+   * a revert writes before it is confirmed (verification round F3).
+   */
+  async readExpressionSnapshot(id: string, revisionId: string): Promise<string | null> {
+    const dir = this.dirOf(this.requireMutable(id));
+    return this.storage.read(join(dir, '.expression-history', `${revisionId}.md`));
+  }
+
   async revertExpression(id: string, revisionId: string): Promise<LivingSoul> {
     const existing = this.requireMutable(id);
     const dir = this.dirOf(existing);
-    const priorExpression = await this.storage.read(
-      join(dir, '.expression-history', `${revisionId}.md`),
-    );
+    const priorExpression = await this.readExpressionSnapshot(id, revisionId);
     if (priorExpression === null) {
       throw new EthosError({
         code: 'INVALID_INPUT',

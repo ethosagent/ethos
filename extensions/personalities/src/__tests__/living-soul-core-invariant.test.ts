@@ -236,3 +236,29 @@ describe('header joins — a section without a trailing newline', () => {
     expect(soul.core).toBe('I am Nova.\n\n');
   });
 });
+
+// Verification round F3 — `ethos personality revert` shows the snapshot it
+// would restore before asking; `readExpressionSnapshot` is what it reads, and
+// `revertExpression` restores exactly those bytes.
+describe('readExpressionSnapshot', () => {
+  it('returns the bytes revertExpression restores, and null for no snapshot', async () => {
+    const storage = new InMemoryStorage();
+    const dir = join('/data', 'personalities', 'nova');
+    await storage.mkdir(dir);
+    await storage.write(join(dir, 'config.yaml'), 'name: Nova\n');
+    await storage.write(join(dir, 'SOUL.md'), '# Core\nI am Nova.\n\n# Expression\nI speak.\n');
+    const registry = new FilePersonalityRegistry(storage, '/data');
+    registry.define({ id: 'nova', name: 'Nova', soulFile: join(dir, 'SOUL.md') });
+
+    const { entry: made } = await registry.evolveExpression('nova', 'I shout.\n', {
+      summary: 'louder',
+      evidenceRef: 'ev-1',
+    });
+    const snapshot = await registry.readExpressionSnapshot('nova', made.prevExpressionRef);
+    expect(snapshot).toBe('I speak.\n');
+    expect(await registry.readExpressionSnapshot('nova', 'expr-rev-99')).toBeNull();
+
+    const reverted = await registry.revertExpression('nova', made.prevExpressionRef);
+    expect(reverted.expression).toBe(snapshot);
+  });
+});

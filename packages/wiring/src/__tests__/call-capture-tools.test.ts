@@ -79,7 +79,8 @@ describe('call capture is never registered as an LLM-callable tool', () => {
     expect(src).toMatch(/storage: new ScopedStorage\(wiringCtx\.storage, \{/);
     expect(src).toMatch(/read: \[documentsWorkdir\]/);
     expect(src).toMatch(/write: \[documentsWorkdir\]/);
-    expect(src).toMatch(/alwaysDeny: defaultAlwaysDeny\(\)/);
+    // Verification round F2 — the floor covers the wired data dir too.
+    expect(src).toMatch(/alwaysDeny: defaultAlwaysDeny\(\[dataDir\]\)/);
     // The block runs from the gate check through the next named section
     // ("Ch.6a — In-process watcher" immediately follows it in the file).
     const gateIdx = src.indexOf('isCallCaptureToolsEnabled(process.platform, config)');

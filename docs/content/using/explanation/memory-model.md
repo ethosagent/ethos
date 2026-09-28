@@ -55,7 +55,7 @@ Updates are routed by the update's `store` field — `'memory'` writes to `MEMOR
 
 ### Private memory stays out of shared rooms
 
-`MEMORY.md` and `USER.md` are written from your private conversations. A group chat has other readers, so a turn there is shared: the gateway marks it (`Gateway.audienceFor`, `extensions/gateway/src/index.ts`) and the agent core enforces it in one place (`resolveTurnAudience`, `packages/core/src/agent-loop/audience.ts`), pinned end to end by `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`. The channel adapter does not decide what a shared turn may touch; it only reports what kind of chat the message came from. Rooms the operator trusts can be listed under `gateway.private_chats` to get memory back. [Keep memory out of group chats](../how-to/group-chat-memory.md) walks through it.
+`MEMORY.md` and `USER.md` are written from your private conversations. A group chat has other readers, so a turn there is shared: the gateway marks it (`Gateway.audienceFor`, `extensions/gateway/src/index.ts`) and the agent core enforces it in one place (`resolveTurnAudience`, `packages/core/src/agent-loop/audience.ts`), pinned end to end by `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`. The channel adapter does not decide what a shared turn may touch; it only reports what kind of chat the message came from. A group the operator trusts can be listed under `gateway.private_chats.<platform>`: after a gateway restart, it and every thread in it are private again and get memory back. [Keep memory out of group chats](../how-to/group-chat-memory.md) walks through it.
 
 #### Which rooms are shared
 

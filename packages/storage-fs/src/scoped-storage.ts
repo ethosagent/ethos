@@ -8,6 +8,7 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import {
   BoundaryError,
+  type DefinitionWriteFloor,
   foldForDeny,
   type PrivatePathDeny,
   type Storage,
@@ -55,6 +56,13 @@ export interface ScopedStorageScope {
    * (packages/core/src/scoped/scoped-fs.ts) — the two MUST change together.
    */
   denyWhen?: PrivatePathDeny;
+  /**
+   * Ethos state dirs the definition write floor covers beside `~/.ethos` and
+   * `ETHOS_STATE_DIR` — wiring passes its `dataDir`, which a host can set to
+   * neither (verification round F2, `ethosStateDirs` in ./sensitive-paths.ts).
+   * Absent → the environment's dirs only.
+   */
+  stateDirs?: readonly string[];
 }
 
 /** The reason `BoundaryError` carries for a `writeDeny` refusal. */
@@ -139,12 +147,13 @@ export class ScopedStorage implements Storage {
   private readonly denyWhen: PrivatePathDeny | undefined;
   /**
    * G2-pre B — every personality's definition entries under every Ethos state
-   * dir, write-only. Computed once per instance from `ethosStateDirs()`, like
-   * the `defaultAlwaysDeny()` list a caller passes. Mirror of `ScopedFsImpl`'s
-   * `definitionWriteFloor` (packages/core/src/scoped/scoped-fs.ts), which
-   * wiring builds from the same `personalityDefinitionFloor`.
+   * dir, write-only. Computed once per instance from `ethosStateDirs()` and
+   * the scope's `stateDirs`, like the `defaultAlwaysDeny()` list a caller
+   * passes. Mirror of `ScopedFsImpl`'s `definitionWriteFloor`
+   * (packages/core/src/scoped/scoped-fs.ts), which wiring builds from the same
+   * `personalityDefinitionFloor`.
    */
-  private readonly definitionFloor = personalityDefinitionFloor();
+  private readonly definitionFloor: DefinitionWriteFloor;
 
   constructor(
     private readonly inner: Storage,
@@ -155,6 +164,7 @@ export class ScopedStorage implements Storage {
     this.denyPrefixes = (scope.alwaysDeny ?? []).map(normalizePrefix);
     this.writeDenyPrefixes = (scope.writeDeny ?? []).map(normalizePrefix);
     this.denyWhen = scope.denyWhen;
+    this.definitionFloor = personalityDefinitionFloor(scope.stateDirs ?? []);
   }
 
   /** True when the `denyWhen` predicate refuses a `kind` access to `path`. */

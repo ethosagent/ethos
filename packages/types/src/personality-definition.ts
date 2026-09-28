@@ -30,7 +30,13 @@ import { foldForDeny } from './deny-fold';
  * It must cover every path `FilePersonalityRegistry.loadOne` fingerprints
  * (`extensions/personalities/src/index.ts`) — those are the files whose change
  * alters the loaded personality. `ETHOS.md` is on top of that list: it is not
- * fingerprinted, but it is identity text shipped beside `SOUL.md`.
+ * fingerprinted, but it is identity text shipped beside `SOUL.md`. So are
+ * `.expression-history/`, whose snapshots `FilePersonalityRegistry.revertExpression`
+ * writes back into `SOUL.md` (a turn that could plant one could choose what a
+ * revert restores), and `commands/`, the personality's slash-command templates
+ * the CLI loads as prompts (verification rounds F3, F7). Their legitimate
+ * writers — the registry's `evolveExpression`/`revertExpression` and the
+ * operator — hold compose-time Storage.
  *
  * Deliberately absent: `MEMORY.md` / `USER.md` (content the agent is meant to
  * maintain; their writer is the memory provider, not the turn's scoped storage)
@@ -55,7 +61,20 @@ export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
   'tools.yaml',
   'ETHOS.md',
   'skills/',
+  'commands/',
+  '.expression-history/',
 ];
+
+/**
+ * Entries directly under a STATE DIR that are definition too: the global
+ * skills every personality loads (`<stateDir>/skills/`) and the global slash
+ * commands (`<stateDir>/commands/`). Write-floored beside the per-personality
+ * entries by {@link isPersonalityDefinitionPath} (verification round F7): a
+ * turn that could write a global skill could plant instructions every
+ * personality reads. Nothing writes them from a turn — skill installs, the
+ * learning inbox's promotion and `ethos evolve` hold compose-time Storage.
+ */
+export const STATE_DIR_DEFINITION_ENTRIES: readonly string[] = ['skills/', 'commands/'];
 
 /**
  * A boundary's write-floor predicate. `'access'` asks about the path itself;
@@ -92,9 +111,15 @@ const ENTRY_NAMES: readonly string[] = PERSONALITY_DEFINITION_ENTRIES.map((e) =>
   foldForDeny(e.endsWith('/') ? e.slice(0, -1) : e),
 );
 
+/** {@link STATE_DIR_DEFINITION_ENTRIES} without the directory marker, folded. */
+const STATE_ENTRY_NAMES: readonly string[] = STATE_DIR_DEFINITION_ENTRIES.map((e) =>
+  foldForDeny(e.slice(0, -1)),
+);
+
 /**
  * True when `absPath` is `<stateDir>/personalities/<any id>/<entry>` for an
- * entry in {@link PERSONALITY_DEFINITION_ENTRIES}, or lies below one (a file
+ * entry in {@link PERSONALITY_DEFINITION_ENTRIES}, or `<stateDir>/<entry>` for
+ * one in {@link STATE_DIR_DEFINITION_ENTRIES}, or lies below one (a file
  * under `skills/`). A predicate over the layout, not a list of existing
  * personalities, so a personality directory created mid-turn is covered too.
  */
@@ -104,7 +129,9 @@ export function isPersonalityDefinitionPath(
 ): boolean {
   for (const stateDir of stateDirs) {
     const rel = segmentsBelow(absPath, stateDir);
-    if (rel === null || rel[0] !== 'personalities') continue;
+    if (rel === null) continue;
+    if (rel[0] !== undefined && STATE_ENTRY_NAMES.includes(rel[0])) return true;
+    if (rel[0] !== 'personalities') continue;
     const entry = rel[2];
     if (entry !== undefined && ENTRY_NAMES.includes(entry)) return true;
   }

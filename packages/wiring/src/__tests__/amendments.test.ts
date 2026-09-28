@@ -706,6 +706,32 @@ describe('crash safety (the promote.ts snapshot order)', () => {
     expect(result.ok && result.record.history.at(-1)).toMatchObject({ decidedBy: 'recoverer' });
   });
 
+  it('is not recovered when a later amendment produced the same live bytes (F9)', async () => {
+    const first = await file();
+    const crashing = build({
+      loadPersonalities: wrappedLoader((real) => async (...args) => {
+        await real(...args);
+        throw new Error('crash after the write');
+      }),
+    });
+    await expect(approve(first.id, crashing)).rejects.toThrow('crash after the write');
+    // An older build left it stale; the owner then restored the file by hand,
+    // re-filed the same change and applied it: the live bytes are now the
+    // SECOND record's, byte-identical to what the first one's marker names.
+    await transitionAmendment(storage, dataDir, first.id, { to: 'stale', actor: 'cli' });
+    writeFileSync(toolsetPath('scout'), SCOUT_TOOLSET);
+    const second = await file();
+    expect(await approve(second.id)).toMatchObject({ ok: true, record: { status: 'applied' } });
+
+    expect(await service.get(first.id)).toMatchObject({ interruptedApply: false });
+    expect(await service.refresh(first.id, { actor: 'cli', decidedBy: 'o' })).toMatchObject({
+      ok: true,
+      record: { status: 'stale' },
+    });
+    expect(await statusOf(first.id)).toBe('stale');
+    expect(codes().filter((c) => c === 'amendment.approve')).toHaveLength(1);
+  });
+
   it('a marker that does not match the live bytes is not a recovery', async () => {
     const record = await file();
     await approve(record.id);

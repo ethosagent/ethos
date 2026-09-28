@@ -492,7 +492,7 @@ export class BackupService {
     const scoped = new ScopedStorage(this.opts.storage, {
       read: [dir],
       write: [],
-      alwaysDeny: defaultAlwaysDeny(),
+      alwaysDeny: defaultAlwaysDeny([this.opts.dataDir]),
     });
     const target = resolve(dir, name);
     try {

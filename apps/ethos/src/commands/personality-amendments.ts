@@ -166,11 +166,11 @@ export function assertTty(isTty: boolean): void {
 }
 
 async function confirmTyped(personalityId: string, verb: string, deps: AmendmentsCliDeps) {
-  const answer = await deps.ask(`Type the personality id (${personalityId}) to ${verb}: `);
+  const answer = await deps.ask(`Type the personality id (${clean(personalityId)}) to ${verb}: `);
   if (answer.trim() === personalityId) return;
   throw new EthosError({
     code: 'FORBIDDEN',
-    cause: `Confirmation did not match "${personalityId}"; nothing was ${verb === 'apply' ? 'applied' : 'rolled back'}`,
+    cause: `Confirmation did not match "${clean(personalityId)}"; nothing was ${verb === 'apply' ? 'applied' : 'rolled back'}`,
     action: 'Re-run the command and type the personality id exactly.',
   });
 }
@@ -196,7 +196,9 @@ async function list(args: readonly string[], deps: AmendmentsCliDeps): Promise<v
   }
   for (const line of table(
     ['ID', 'PERSONALITY', 'CHANGE', 'STATUS', 'FILED'],
-    records.map((r) => [r.id, r.personalityId, opsLabel(r), r.status, r.createdAt.slice(0, 16)]),
+    records.map((r) =>
+      [r.id, r.personalityId, opsLabel(r), r.status, r.createdAt.slice(0, 16)].map(clean),
+    ),
   )) {
     deps.out(line);
   }
@@ -226,7 +228,7 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
     // it now (`AmendmentService.refresh`). Nothing new is written.
     const done = settled(id, await deps.service.refresh(id, by));
     deps.out(
-      `${c.green}✓${c.reset} Recorded ${id} as applied: an earlier apply had already written ${done.personalityId}'s toolset.yaml.`,
+      `${c.green}✓${c.reset} Recorded ${clean(id)} as applied: an earlier apply had already written ${clean(done.personalityId)}'s toolset.yaml.`,
     );
     deps.out(`${c.dim}Undo with: ethos personality amendments rollback ${id}${c.reset}`);
     return;
@@ -234,7 +236,7 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
   if (record.status !== 'pending') {
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
-      cause: `Amendment ${id} is ${record.status}, not pending`,
+      cause: `Amendment ${clean(id)} is ${clean(record.status)}, not pending`,
       action: nextStep(review) ?? 'Nothing to apply.',
     });
   }
@@ -246,8 +248,8 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
       cause: review.stale
-        ? `Amendment ${id} is stale: ${record.personalityId}'s toolset.yaml changed since it was filed`
-        : `Amendment ${id} no longer applies: ${clean(review.opsProblem ?? 'nothing to change')}`,
+        ? `Amendment ${clean(id)} is stale: ${clean(record.personalityId)}'s toolset.yaml changed since it was filed`
+        : `Amendment ${clean(id)} no longer applies: ${clean(review.opsProblem ?? 'nothing to change')}`,
       action: `Close it with: ethos personality amendments decline ${id} --reason "<text>"`,
       details: { status: refreshed.ok ? refreshed.record.status : refreshed.record?.status },
     });
@@ -261,7 +263,7 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
   if (!result.ok && result.code === 'hash_mismatch') await deps.service.refresh(id, by);
   const done = settled(id, result);
   deps.out(
-    `${c.green}✓${c.reset} Applied ${id} to ${done.personalityId}'s toolset.yaml. Other processes pick it up on their next turn.`,
+    `${c.green}✓${c.reset} Applied ${clean(id)} to ${clean(done.personalityId)}'s toolset.yaml. Other processes pick it up on their next turn.`,
   );
   deps.out(`${c.dim}Undo with: ethos personality amendments rollback ${id}${c.reset}`);
 }
@@ -295,13 +297,15 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
   if (record.status !== 'applied') {
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
-      cause: `Amendment ${id} is ${record.status}; only an applied amendment rolls back`,
+      cause: `Amendment ${clean(id)} is ${clean(record.status)}; only an applied amendment rolls back`,
       action: 'List what was applied with: ethos personality amendments list --all',
     });
   }
-  deps.out(`${c.bold}Roll back ${record.id}${c.reset} — ${record.personalityId}`);
+  deps.out(`${c.bold}Roll back ${clean(record.id)}${c.reset} — ${clean(record.personalityId)}`);
   deps.out(`  Undoes: ${opsLabel(record)}`);
-  deps.out(`  Restores the toolset.yaml saved when it was applied (${record.applied?.at ?? '?'}).`);
+  deps.out(
+    `  Restores the toolset.yaml saved when it was applied (${clean(record.applied?.at ?? '?')}).`,
+  );
   deps.out('  Refused if toolset.yaml was edited since, or the constitution forbids the result.');
   deps.out('');
   deps.out(`  ${c.bold}toolset.yaml${c.reset} (live → restored)`);
@@ -315,7 +319,7 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
   const result = await deps.service.rollback(id, { actor: 'cli', decidedBy: deps.decidedBy });
   const done = settled(id, result);
   deps.out(
-    `${c.green}✓${c.reset} Rolled back ${id}; ${done.personalityId}'s toolset.yaml is restored.`,
+    `${c.green}✓${c.reset} Rolled back ${clean(id)}; ${clean(done.personalityId)}'s toolset.yaml is restored.`,
   );
 }
 
@@ -324,8 +328,8 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
 function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
   const { record } = review;
   const out = deps.out;
-  out(`${c.bold}Amendment ${record.id}${c.reset}  [${record.status}]`);
-  out(`  Personality: ${record.personalityId}${personalityNote(review)}`);
+  out(`${c.bold}Amendment ${clean(record.id)}${c.reset}  [${clean(record.status)}]`);
+  out(`  Personality: ${clean(record.personalityId)}${personalityNote(review)}`);
   out(`  Change:      ${opsLabel(record)}`);
   if (review.flags.includes('local-terminal')) {
     out('');
@@ -357,17 +361,17 @@ function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
       change.direction === 'widens' ? c.red : change.direction === 'narrows' ? c.green : c.yellow;
     const flag = change.flag ? `  ${c.bold}[${change.flag}]${c.reset}` : '';
     out(
-      `    ${colour}${change.direction.toUpperCase().padEnd(7)}${c.reset} ${change.section}: ${change.detail}${flag}`,
+      `    ${colour}${change.direction.toUpperCase().padEnd(7)}${c.reset} ${clean(change.section)}: ${clean(change.detail)}${flag}`,
     );
   }
-  out(`    ${c.dim}${review.notCompared}${c.reset}`);
+  out(`    ${c.dim}${clean(review.notCompared)}${c.reset}`);
   out('');
   out(`  ${c.bold}toolset.yaml${c.reset}`);
   if (review.textDiff.length === 0) out(`    ${c.dim}(no diff — see above)${c.reset}`);
   for (const line of review.textDiff) out(`    ${diffColour(line)}${clean(line)}${c.reset}`);
   out('');
   out(
-    `  ${c.bold}Flags${c.reset}        ${review.flags.length > 0 ? review.flags.join(', ') : 'none'}`,
+    `  ${c.bold}Flags${c.reset}        ${review.flags.length > 0 ? clean(review.flags.join(', ')) : 'none'}`,
   );
   out(
     `  ${c.bold}Rationale${c.reset}    ${c.dim}(written by the personality — untrusted)${c.reset}`,
@@ -376,21 +380,20 @@ function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
   out(`  ${c.bold}Evidence${c.reset}`);
   if (record.evidence.length === 0) out(`    ${c.dim}none cited${c.reset}`);
   for (const e of record.evidence) {
-    out(`    ${e.toolName} refused (call ${e.toolCallId}): ${clean(e.excerpt)}`);
+    out(`    ${clean(e.toolName)} refused (call ${clean(e.toolCallId)}): ${clean(e.excerpt)}`);
   }
   const p = record.provenance;
-  out(`  ${c.bold}Filed${c.reset}        ${record.createdAt} from ${p.sessionKey}`);
-  out(
-    `    ${c.dim}platform ${p.platform} · initiator ${p.initiator} · room ${p.roomAudience} · execution ${p.executionPosture}${p.holdsShellTool ? ' · holds a shell tool' : ''}${c.reset}`,
-  );
+  out(`  ${c.bold}Filed${c.reset}        ${clean(record.createdAt)} from ${clean(p.sessionKey)}`);
+  const origin = `platform ${p.platform} · initiator ${p.initiator} · room ${p.roomAudience} · execution ${p.executionPosture}`;
+  out(`    ${c.dim}${clean(origin)}${p.holdsShellTool ? ' · holds a shell tool' : ''}${c.reset}`);
   out(`  ${c.bold}History${c.reset}`);
   for (const h of record.history) {
     const by = h.decidedBy ? ` by ${h.decidedBy}` : '';
-    const why = h.reason ? ` — ${clean(h.reason)}` : '';
-    out(`    ${h.at}  ${h.action} (${h.actor}${by})${why}`);
+    const why = h.reason ? ` — ${h.reason}` : '';
+    out(`    ${clean(`${h.at}  ${h.action} (${h.actor}${by})${why}`)}`);
   }
   if (review.expectedAfterHash) {
-    out(`  ${c.bold}Review hash${c.reset}  ${review.expectedAfterHash}`);
+    out(`  ${c.bold}Review hash${c.reset}  ${clean(review.expectedAfterHash)}`);
   }
   out('');
 }
@@ -403,7 +406,7 @@ function personalityNote(review: AmendmentReview): string {
 }
 
 function nextStep(review: AmendmentReview): string | null {
-  const id = review.record.id;
+  const id = clean(review.record.id);
   if (review.interruptedApply) {
     return `Record the interrupted apply with: ethos personality amendments apply ${id}`;
   }
@@ -430,7 +433,11 @@ function diffColour(line: string): string {
 }
 
 /**
- * Personality-written text is untrusted: replace terminal control sequences
+ * Every string read from an amendment record is printed through this —
+ * the rationale and evidence excerpts, and equally the tool names, call ids,
+ * session key, platform, history actors and ids a tampered or model-shaped
+ * record can carry (verification round F4). Personality-written text is
+ * untrusted: replace terminal control sequences
  * (C0 except newline and tab, DEL, C1) so it cannot recolour, move the cursor
  * or overwrite the lines around it, and the invisible characters that make
  * text read other than it is — bidi embeddings and overrides (U+202A–U+202E),

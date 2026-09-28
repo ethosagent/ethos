@@ -481,6 +481,34 @@ describe('scaffold_team', () => {
     expect(await storage.exists(teamsBase)).toBe(false);
   });
 
+  it('refuses an existing team in any letter case, and writes under dataDir (F8)', async () => {
+    const storage = new InMemoryStorage();
+    const teamsBase = '/data/ethos/teams';
+    await storage.mkdir(teamsBase);
+    await storage.write(`${teamsBase}/Core-Team.yaml`, 'name: Core-Team\n');
+    const teamTools = createTeamDesignTools({
+      personalityRegistry: makePersonalityRegistry([]),
+      storage,
+      dataDir: '/data/ethos',
+    });
+    const scaffoldTool = teamTools.find((t) => t.name === 'scaffold_team');
+    const members = [{ personality: 'engineer' }];
+    const clash = await scaffoldTool?.execute(
+      { name: 'core-team', description: 'x', members },
+      makeCtx(),
+    );
+    expect(clash).toMatchObject({ ok: false, code: 'input_invalid' });
+    expect(await storage.read(`${teamsBase}/Core-Team.yaml`)).toBe('name: Core-Team\n');
+    expect(await storage.exists(`${teamsBase}/core-team.yaml`)).toBe(false);
+
+    const fresh = await scaffoldTool?.execute(
+      { name: 'new-team', description: 'x', members },
+      makeCtx(),
+    );
+    expect(fresh?.ok).toBe(true);
+    expect(await storage.read(`${teamsBase}/new-team.yaml`)).toContain('name: new-team');
+  });
+
   it('rejects invalid team name', async () => {
     const storage = new InMemoryStorage();
     const teamTools = createTeamDesignTools({

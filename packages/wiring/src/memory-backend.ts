@@ -210,6 +210,8 @@ export interface VaultBackend extends UndecoratedBackend {
 export function buildVaultBackend(opts: {
   vault: MemoryBackendSelection['memoryVault'];
   storage: Storage;
+  /** The wiring's data dir, floored beside `~/.ethos` and `ETHOS_STATE_DIR` (`ethosStateDirs`). */
+  dataDir?: string;
   logger?: Logger;
 }): VaultBackend {
   const vault = opts.vault;
@@ -222,7 +224,8 @@ export function buildVaultBackend(opts: {
   const scoped = new ScopedStorage(opts.storage, {
     read: [`${vaultRoot}/`],
     write: [`${agentRoot}/`],
-    alwaysDeny: defaultAlwaysDeny(),
+    alwaysDeny: defaultAlwaysDeny(opts.dataDir ? [opts.dataDir] : []),
+    ...(opts.dataDir ? { stateDirs: [opts.dataDir] } : {}),
   });
   const base = new VaultMemoryProvider({
     vaultRoot,
@@ -253,6 +256,7 @@ export function createUndecoratedBackend(opts: {
     return buildVaultBackend({
       vault: opts.selection.memoryVault,
       storage: opts.storage,
+      dataDir: opts.dataDir,
       ...(opts.logger ? { logger: opts.logger } : {}),
     });
   }

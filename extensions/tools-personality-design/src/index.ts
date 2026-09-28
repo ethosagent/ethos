@@ -49,6 +49,8 @@ export interface PersonalityDesignDeps {
 export interface TeamDesignDeps {
   personalityRegistry: PersonalityRegistry;
   storage: Storage;
+  /** The Ethos state dir scaffold_team writes under (`WiringContext.dataDir`). Absent → `~/.ethos`. */
+  dataDir?: string;
 }
 
 export type AllDesignDeps = PersonalityDesignDeps & TeamDesignDeps;
@@ -79,7 +81,7 @@ export function createTeamDesignTools(deps: TeamDesignDeps): Tool[] {
   return [
     listPersonalitiesTool(deps.personalityRegistry),
     listTeamPatternsTool(),
-    scaffoldTeamTool(deps.storage),
+    scaffoldTeamTool(deps.storage, deps.dataDir ?? join(homedir(), '.ethos')),
   ];
 }
 
@@ -516,7 +518,7 @@ function yamlScalar(value: string): string {
   return value;
 }
 
-function scaffoldTeamTool(storage: Storage): Tool {
+function scaffoldTeamTool(storage: Storage, dataDir: string): Tool {
   return {
     name: 'scaffold_team',
     description:
@@ -593,8 +595,23 @@ function scaffoldTeamTool(storage: Storage): Tool {
           code: 'input_invalid',
         };
       }
-      const teamsBase = join(homedir(), '.ethos', 'teams');
+      // Creates new teams only (verification round F8): an existing manifest
+      // is refused, compared CASE-INSENSITIVELY because on a case-insensitive
+      // file system `Team.yaml` IS `team.yaml`. Editing a team is an operator
+      // action. Pinned by the scaffold_team cases in
+      // src/__tests__/personality-design-tools.test.ts. Known residual, as for
+      // scaffold_personality: two concurrent scaffolds of one new name can
+      // both pass (check-then-write).
+      const teamsBase = join(dataDir, 'teams');
       const dest = join(teamsBase, fileName);
+      const existing = await storage.list(teamsBase);
+      if (existing.some((name) => name.toLowerCase() === fileName.toLowerCase())) {
+        return {
+          ok: false,
+          error: `scaffold_team creates new teams only: "${args.name}" already exists. Editing a team is an operator action (edit ${dest}).`,
+          code: 'input_invalid',
+        };
+      }
 
       await storage.mkdir(teamsBase);
       await storage.writeAtomic(dest, yaml);

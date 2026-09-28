@@ -50,7 +50,7 @@ import { type DefinitionWriteFloor, personalityDefinitionWriteFloor } from '@eth
  * directory with a `ScopedStorage` over this same floor
  * (`BackupService.reachable`, apps/web-api/src/services/backup.service.ts).
  */
-export function sensitiveDenyPaths(): string[] {
+export function sensitiveDenyPaths(extraStateDirs: readonly string[] = []): string[] {
   const home = homedir();
   return [
     `${home}/.ssh`,
@@ -63,7 +63,9 @@ export function sensitiveDenyPaths(): string[] {
     `${home}/.psql_history`,
     `${home}/.mysql_history`,
     `${home}/.npmrc`,
-    ...ethosStateDirs().flatMap((dir) => STATE_DIR_DENY_ENTRIES.map((entry) => join(dir, entry))),
+    ...ethosStateDirs(extraStateDirs).flatMap((dir) =>
+      STATE_DIR_DENY_ENTRIES.map((entry) => join(dir, entry)),
+    ),
     `${home}/Library/Keychains`,
     '/etc/passwd',
     '/etc/shadow',
@@ -93,14 +95,31 @@ export function sensitiveDenyPaths(): string[] {
  * floor matching it (verification round A2). Pinned by the symlinked-state-dir
  * cases in `state-dir-deny.test.ts`.
  *
+ * `extra` adds the state dirs a caller knows that the environment does not:
+ * wiring passes its `dataDir` (verification round F2), because a host can
+ * hand `createAgentLoop` a data directory that is neither `~/.ethos` nor
+ * `ETHOS_STATE_DIR` — the desktop app's custom data folder — and a floor
+ * computed from the environment alone would leave that directory unguarded.
+ * Every wiring construction of the floors passes it
+ * (`packages/wiring/src/build-infrastructure.ts`, `build-agent-loop.ts`,
+ * `memory-backend.ts`); pinned by the custom-dataDir cases in
+ * `state-dir-deny.test.ts` and `packages/wiring/src/__tests__/scoped-storage-factory.test.ts`.
+ *
  * Also consumed by the terminal and process argv floors
  * (`extensions/tools-terminal/src/guard.ts`, `extensions/tools-process/src/guard.ts`),
- * which refuse a command that names a state dir at all (S16).
+ * which refuse a command that names a state dir at all (S16). Those, and the
+ * `write_file` pre-check, see only `~/.ethos` and `ETHOS_STATE_DIR`: a data
+ * directory known only to wiring reaches them through the environment, which
+ * is why the desktop app also sets `ETHOS_STATE_DIR` to its data folder
+ * (`apps/desktop/src/main/serve.ts`).
  */
-export function ethosStateDirs(): string[] {
+export function ethosStateDirs(extra: readonly string[] = []): string[] {
   const dirs = [join(homedir(), '.ethos')];
   const override = process.env.ETHOS_STATE_DIR;
-  if (override && resolve(override) !== dirs[0]) dirs.push(resolve(override));
+  for (const dir of override ? [override, ...extra] : extra) {
+    const abs = resolve(dir);
+    if (!dirs.includes(abs)) dirs.push(abs);
+  }
   return withRealPaths(dirs);
 }
 
@@ -179,6 +198,18 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  *   run executes on the host.
  * - `sessions.db`, `observability.db`, `memory.db` — every personality's
  *   transcripts, telemetry and vector memory in one file each.
+ * - `constitution.yaml`, `evolve-config.json`, `allowlist.json`,
+ *   `approval-leases.json` — operator policy (verification round F1). The
+ *   constitution bounds every personality's tools, budget and mounts;
+ *   `evolve-config.json`'s `autoApprove` lets the learning pipeline promote
+ *   skills into `personalities/<id>/skills/` unreviewed (`learningPolicyFor`,
+ *   packages/wiring/src/learning-pipeline.ts); the allowlist and the approval
+ *   leases pre-approve dangerous tool calls. READS are denied too: no turn has
+ *   a reason to read them, and every reader holds compose-time Storage —
+ *   `loadConstitution` (packages/wiring/src/build-infrastructure.ts and
+ *   amendments.ts), `loadEvolveConfig` (learning-pipeline.ts, `ethos evolve`,
+ *   `ethos eval`) and the web-api's `AllowlistRepository` / `LeaseRepository`
+ *   / `EvolverRepository`.
  * - `learning` — the learning inbox (candidates, frozen replay cases, its
  *   audit log, and G2's amendment records). A turn that could write there
  *   could plant or edit a candidate the owner later approves; READS are denied
@@ -196,6 +227,10 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   'mcp.json',
   'plugins',
   'scripts',
+  'constitution.yaml',
+  'evolve-config.json',
+  'allowlist.json',
+  'approval-leases.json',
   ...sqliteFiles('sessions.db'),
   ...sqliteFiles('observability.db'),
   ...sqliteFiles('memory.db'),
@@ -205,7 +240,7 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
 /**
  * The personality-definition WRITE floor (plan personality-memory-boundary
  * G2-pre B): under every Ethos state dir ({@link ethosStateDirs}, read when
- * this is called), any `personalities/<any id>/<entry>` for an entry in
+ * this is called, plus `extraStateDirs` — wiring's `dataDir`), any `personalities/<any id>/<entry>` for an entry in
  * `PERSONALITY_DEFINITION_ENTRIES` (`@ethosagent/types`) is refused for write
  * — another personality's `toolset.yaml`, and the definition files of a
  * personality directory created mid-turn, not only the caller's own. A
@@ -225,6 +260,8 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
  * editor and CLI (`FilePersonalityRegistry`), import/restore and claw-migrate
  * all hold compose-time, unscoped Storage.
  */
-export function personalityDefinitionFloor(): DefinitionWriteFloor {
-  return personalityDefinitionWriteFloor(ethosStateDirs());
+export function personalityDefinitionFloor(
+  extraStateDirs: readonly string[] = [],
+): DefinitionWriteFloor {
+  return personalityDefinitionWriteFloor(ethosStateDirs(extraStateDirs));
 }

@@ -6,13 +6,16 @@
 // it. This is the half of `writeDeny` a terminal inside the sandbox cannot
 // route around — `echo x >> toolset.yaml` gets "Read-only file system".
 
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   ExecutionBackendConfig,
   Logger,
   PersonalityConfig,
   SecretsResolver,
 } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DockerExecutionBackend } from '../index';
 
 const ETHOS_HOME = '/home/tester/.ethos';
@@ -178,5 +181,65 @@ describe('mountsFor — case variants', () => {
   it('case-insensitive host: a rw mount beside the state dir is untouched', () => {
     const m = modes({ write: ['/data/out'] }, true);
     expect(m.get('/data/out')).toBe('rw');
+  });
+});
+
+// Verification round F7 — the global `skills/` and `commands/` are definition
+// too: read-only under a write reach that spans the state dir, and a declared
+// rw mount inside one is downgraded.
+describe('mountsFor — global skills/ and commands/ are read-only', () => {
+  it("write: ['${ETHOS_HOME}/'] mounts skills/ and commands/ ro", () => {
+    const m = modes({ write: ['${ETHOS_HOME}/'] });
+    expect(m.get(`${ETHOS_HOME}/skills`)).toBe('ro');
+    expect(m.get(`${ETHOS_HOME}/commands`)).toBe('ro');
+  });
+
+  it('a declared rw mount inside skills/ or commands/ is downgraded', () => {
+    const m = modes({ write: ['${ETHOS_HOME}/skills/mine/', '${ETHOS_HOME}/Commands/'] });
+    expect(m.get(`${ETHOS_HOME}/skills/mine`)).toBe('ro');
+    expect(m.get(`${ETHOS_HOME}/Commands`)).toBe('ro');
+  });
+});
+
+// Verification round F12 — every state dir is judged, not only this backend's
+// `ethosHome`: `ETHOS_STATE_DIR` (and `~/.ethos`) get the same read-only guards
+// and the same case-insensitive downgrade.
+describe('mountsFor — every state dir, not only ethosHome', () => {
+  let tmp: string | undefined;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  });
+
+  function otherStateDir(): { root: string; state: string } {
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), 'ethos-docker-state-')));
+    const state = join(tmp, 'other-state');
+    mkdirSync(join(state, 'personalities'), { recursive: true });
+    mkdirSync(join(state, 'learning'), { recursive: true });
+    vi.stubEnv('ETHOS_STATE_DIR', state);
+    return { root: tmp, state };
+  }
+
+  it('guards an existing ETHOS_STATE_DIR under a rw cwd, and skips guards that do not exist', () => {
+    const { root, state } = otherStateDir();
+    const m = modes(undefined, false, root);
+    expect(m.get(root)).toBe('rw');
+    expect(m.get(join(state, 'personalities'))).toBe('ro');
+    expect(m.get(join(state, 'learning'))).toBe('ro');
+    // Not on the host: not bound (Docker would create it as root).
+    expect(m.has(join(state, 'skills'))).toBe(false);
+  });
+
+  it('case-insensitive host: a rw mount containing ETHOS_STATE_DIR becomes ro', () => {
+    const { root } = otherStateDir();
+    const m = modes(undefined, true, root);
+    expect(m.get(root)).toBe('ro');
+  });
+
+  it('floors a declared rw mount at a definition entry under ETHOS_STATE_DIR', () => {
+    const { state } = otherStateDir();
+    const m = modes({ write: [join(state, 'personalities', 'carol', 'toolset.yaml')] });
+    expect(m.get(join(state, 'personalities', 'carol', 'toolset.yaml'))).toBe('ro');
   });
 });

@@ -10,6 +10,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 // loss: a write ScopedStorage permits but no mount backs is written into the
 // container's ephemeral layer and discarded by `docker run --rm`.
 import {
+  defaultEthosStateDirs,
   deriveFsReachPaths,
   type FsReachVars,
   personalityWriteDeny,
@@ -253,6 +254,16 @@ function realPathOrLexical(hostPath: string): string {
     return realpathSync(hostPath);
   } catch {
     return hostPath;
+  }
+}
+
+/** True when `hostPath` exists on the host (it has a realpath). */
+function hostPathExists(hostPath: string): boolean {
+  try {
+    realpathSync(hostPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1333,11 +1344,16 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * a `ro` mount — so no container can edit another personality's
    * `toolset.yaml` or create `personalities/<new>/toolset.yaml` — and the
    * caller's own `files/` stays rw through the rule above; when a rw mount
-   * covers `${ethosHome}/learning`, `learning` gains a `ro` mount. A rw mount
-   * AT another personality's directory, at or below any personality's
-   * definition entry, or below `learning` is downgraded to `ro`.
+   * covers `${ethosHome}/learning`, `learning` gains a `ro` mount — and so do
+   * the global `skills/` and `commands/` (verification round F7). A rw mount
+   * AT another personality's directory, at or below any definition entry, or
+   * below `learning` is downgraded to `ro`. Every state dir is judged — this
+   * backend's `ethosHome`, `~/.ethos` and `ETHOS_STATE_DIR`, each with its
+   * realpath (verification round F12) — though under a state dir other than
+   * `ethosHome` a guard that does not exist on the host is not mounted.
    * `ensureFsReachDirs` (packages/wiring/src/fs-reach-dirs.ts) pre-creates
-   * `learning` in that case so Docker never auto-creates it as root.
+   * `learning`, `skills` and `commands` under `ethosHome` in that case so
+   * Docker never auto-creates them as root.
    * LIMITATION: `ro` is not "not mounted" — `learning/` and other personalities'
    * directories stay READABLE inside the container, as the state-dir deny
    * entries (`keys.json`, `sessions.db`, …) already do under a reach that
@@ -1387,11 +1403,23 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const withinFolded = (child: string, parent: string): boolean =>
       within(foldForDeny(child), foldForDeny(parent));
     const writeDeny = personalityWriteDeny(ethosHome, p.id).map((d) => resolvePath(d));
-    const home = resolvePath(ethosHome);
-    // The state dir by its lexical name AND its realpath: Docker binds the
-    // real directory, so a rw mount reaching `~/dot/ethos` must be judged
-    // against the real state dir too when `~/.ethos` is a symlink to it.
-    const homes = [...new Set([home, realPathOrLexical(home)])];
+    // Every state dir — this backend's `ethosHome` (wiring's `dataDir`),
+    // `~/.ethos` and `ETHOS_STATE_DIR` (`defaultEthosStateDirs`, the set the
+    // storage floors use; verification round F12) — by its lexical name AND
+    // its realpath: Docker binds the real directory, so a rw mount reaching
+    // `~/dot/ethos` must be judged against the real state dir too when
+    // `~/.ethos` is a symlink to it.
+    const ownHomes = [
+      ...new Set([resolvePath(ethosHome), realPathOrLexical(resolvePath(ethosHome))]),
+    ];
+    const homes = [
+      ...new Set(
+        [resolvePath(ethosHome), ...defaultEthosStateDirs()].flatMap((h) => [
+          h,
+          realPathOrLexical(h),
+        ]),
+      ),
+    ];
     const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
     // G2-pre B — a rw mount AT another personality's directory, at or below
     // ANY personality's definition entry, or at or below `learning`.
@@ -1422,8 +1450,15 @@ export class DockerExecutionBackend implements ExecutionBackend {
     );
     const guards: string[] = [];
     for (const h of homes) {
-      for (const guard of [join(h, 'personalities'), join(h, 'learning')]) {
+      // `skills/` and `commands/` are the global definition entries
+      // (`STATE_DIR_DEFINITION_ENTRIES`, @ethosagent/types; verification round F7).
+      const stateGuards = ['personalities', 'learning', 'skills', 'commands'];
+      for (const guard of stateGuards.map((entry) => join(h, entry))) {
         if (!coveredRw(guard)) continue;
+        // `ensureFsReachDirs` pre-creates the guards under this backend's own
+        // state dir; under another one a missing guard is skipped rather than
+        // bound, because Docker would create the bind source as root.
+        if (!ownHomes.includes(h) && !hostPathExists(guard)) continue;
         byPath.set(guard, { hostPath: guard, containerPath: guard, mode: 'ro' });
         guards.push(guard);
       }

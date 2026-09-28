@@ -265,16 +265,24 @@ function readOnlyMemory(base: MemoryProvider): MemoryProvider {
  * loop builds becomes a `ScopedStorage` over the caller's scope — `denyWhen`
  * (the shared-turn private memory deny, G1-5) and `writeDeny` forwarded by the
  * spread — plus the system-wide `defaultAlwaysDeny()`. The personality-
- * definition floor is `ScopedStorage`'s own and always on. Exported so
- * `packages/wiring/src/__tests__/scoped-storage-factory.test.ts` and
- * `safety-conformance-wiring.test.ts` exercise THIS function rather than a
- * replica of it (verification round B6).
+ * definition floor is `ScopedStorage`'s own and always on. Both floors cover
+ * `dataDir` as well as `~/.ethos` and `ETHOS_STATE_DIR` (verification round
+ * F2): a host may hand wiring a data directory the environment does not name.
+ * Exported so `packages/wiring/src/__tests__/scoped-storage-factory.test.ts`
+ * and `safety-conformance-wiring.test.ts` exercise THIS function rather than
+ * a replica of it (verification round B6).
  */
 export function shippedScopedStorageFactory(
   storageFs: Pick<typeof import('@ethosagent/storage-fs'), 'ScopedStorage' | 'defaultAlwaysDeny'>,
+  dataDir?: string,
 ): import('@ethosagent/types').ScopedStorageFactory {
+  const stateDirs = dataDir ? [dataDir] : [];
   return (base, scope) =>
-    new storageFs.ScopedStorage(base, { ...scope, alwaysDeny: storageFs.defaultAlwaysDeny() });
+    new storageFs.ScopedStorage(base, {
+      ...scope,
+      alwaysDeny: storageFs.defaultAlwaysDeny(stateDirs),
+      stateDirs,
+    });
 }
 
 /**
@@ -607,7 +615,8 @@ export async function buildAgentLoop(
               storage: new ScopedStorage(wiringCtx.storage, {
                 read: [documentsWorkdir],
                 write: [documentsWorkdir],
-                alwaysDeny: defaultAlwaysDeny(),
+                alwaysDeny: defaultAlwaysDeny([dataDir]),
+                stateDirs: [dataDir],
               }),
             }
           : {}),
@@ -779,7 +788,7 @@ export async function buildAgentLoop(
       redactString: redactStringFn,
       detectSecrets: detectSecretsFn,
     },
-    scopedStorageFactory: shippedScopedStorageFactory(storageFs),
+    scopedStorageFactory: shippedScopedStorageFactory(storageFs, dataDir),
     // G4 — this composition root gates tool calls behind the danger predicate
     // (`./danger-predicate`, reached via the `before_tool_call` modifying hooks
     // each surface registers). Declaring it makes core verify the claim at the

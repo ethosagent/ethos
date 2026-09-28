@@ -2013,6 +2013,7 @@ export async function composeAllTools(
   for (const tool of createTeamDesignTools({
     personalityRegistry: personalities,
     storage: designStorage,
+    dataDir: wiringCtx.dataDir,
   })) {
     tools.register(tool);
   }

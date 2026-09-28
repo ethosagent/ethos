@@ -48,6 +48,7 @@ import {
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createCliLearningInbox, createLLM, getStorage } from '../wiring';
+import { clean } from './personality-amendments';
 
 async function ask(question: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -854,10 +855,25 @@ export async function runPersonalityRevert(argv: string[]): Promise<void> {
       return;
     }
 
+    // The snapshot is a file under the personality's directory, and the
+    // Learning Log line is text in SOUL.md: show exactly what a revert writes,
+    // cleaned of terminal control and invisible characters, before asking
+    // (verification round F3).
+    const restored = await reg.readExpressionSnapshot(id, last.prevExpressionRef);
+    if (restored === null) {
+      console.error(`No expression snapshot "${clean(last.prevExpressionRef)}" to restore.`);
+      process.exit(1);
+    }
     console.log(
-      `This will restore the Expression snapshot from before: "${last.summary}" (revision ${last.revisionId}).`,
+      `This will restore the Expression snapshot from before: "${clean(last.summary)}" (revision ${clean(last.revisionId)}).`,
     );
-    console.log(`Restoring snapshot: ${last.prevExpressionRef}`);
+    console.log(`Restoring snapshot: ${clean(last.prevExpressionRef)}`);
+    console.log('');
+    console.log('Current Expression:');
+    for (const line of clean(soul.expression).split('\n')) console.log(`  - ${line}`);
+    console.log('Restored Expression:');
+    for (const line of clean(restored).split('\n')) console.log(`  + ${line}`);
+    console.log('');
 
     const ok = await confirm('Revert to that snapshot? [y/N] ');
     if (!ok) {
@@ -866,7 +882,7 @@ export async function runPersonalityRevert(argv: string[]): Promise<void> {
     }
 
     await reg.revertExpression(id, last.prevExpressionRef);
-    console.log(`✓ Reverted "${id}" to snapshot ${last.prevExpressionRef}.`);
+    console.log(`✓ Reverted "${id}" to snapshot ${clean(last.prevExpressionRef)}.`);
   } catch (err) {
     surface(err);
   }

@@ -386,6 +386,7 @@ export async function buildInfrastructure(
     const { base, history } = buildVaultBackend({
       vault: config.memoryVault,
       storage: wiringCtx.storage,
+      dataDir,
       logger: log,
     });
     return composeGatedMemory({
@@ -530,11 +531,14 @@ export async function buildInfrastructure(
     personalityFsWriteDeny: createPersonalityFsWriteDenyResolver(personalities, dataDir),
     // plan personality-memory-boundary G2-pre B — no `scopedFs` writes ANY
     // personality's definition; the same predicate every `ScopedStorage`
-    // applies on its own (packages/storage-fs/src/sensitive-paths.ts).
-    definitionWriteFloor: personalityDefinitionFloor(),
+    // applies on its own (packages/storage-fs/src/sensitive-paths.ts). Both
+    // floors cover `dataDir` beside `~/.ethos` and `ETHOS_STATE_DIR`
+    // (verification round F2 — the desktop app's custom data folder is
+    // neither).
+    definitionWriteFloor: personalityDefinitionFloor([dataDir]),
     personalityNetworkPolicy: createPersonalityNetworkPolicyResolver(personalities, log),
     safeFetch,
-    alwaysDenyPaths: defaultAlwaysDeny(),
+    alwaysDenyPaths: defaultAlwaysDeny([dataDir]),
     // plan personality-memory-boundary G1-5 — what a shared call's `scopedFs`
     // refuses (`resolveCapabilities`); the turn's scoped Storage gets the same
     // roots through `AgentLoopConfig.privateMemoryRoots` (build-agent-loop).

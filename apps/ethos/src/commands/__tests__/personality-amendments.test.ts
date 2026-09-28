@@ -190,6 +190,43 @@ describe('list and show', () => {
     expect(clean('ok\x1b[2Jgone\nnext')).toBe('ok?[2Jgone\nnext');
   });
 
+  it('every record-derived string is cleaned, not only the rationale (verification round F4)', async () => {
+    const osc = '\x1b]0;owned\x07';
+    const created = await createAmendment(storage, dataDir, {
+      personalityId: 'scout',
+      ops: ADD_TERMINAL,
+      baseHash: hashDefinitionBytes(toolsetOf('scout')),
+      rationale: 'r',
+      evidence: [
+        {
+          sessionId: 's-1',
+          toolCallId: `call${osc}`,
+          toolName: `terminal${osc}\u202E`,
+          messageId: 'm-1',
+          excerpt: 'Unknown tool',
+        },
+      ],
+      provenance: {
+        sessionId: 's-1',
+        sessionKey: `cli:amend${osc}`,
+        platform: `cli${osc}`,
+        initiator: 'user',
+        roomAudience: 'private',
+        executionPosture: 'docker',
+        holdsShellTool: false,
+      },
+      preCheck: 'ok',
+      status: 'pending',
+    });
+    if (created.kind !== 'created') throw new Error(`not created: ${created.kind}`);
+    await runPersonalityAmendmentsCommand(['show', created.record.id], deps());
+    const raw = out.join('\n');
+    expect(raw).not.toContain('\x07');
+    expect(raw).not.toContain('\x1b]');
+    expect(raw).not.toContain('\u202E');
+    expect(printed()).toContain('terminal?]0;owned??');
+  });
+
   it('bidi overrides, isolates and zero-width characters are replaced too', () => {
     expect(clean('a\u202Eb\u2066c\u2069d\u200Be\u200Ff\u2060g\uFEFFh')).toBe('a?b?c?d?e?f?g?h');
     expect(clean('\u202A\u202B\u202C\u202D\u2067\u2068\u200C\u200D\u200E')).toBe('?????????');

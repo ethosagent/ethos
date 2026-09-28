@@ -99,3 +99,26 @@ describe('isPersonalityDefinitionPath — case variants', () => {
     );
   });
 });
+
+// Verification rounds F3/F7 — expression snapshots, per-personality slash
+// commands, and the global skills/ and commands/ are definition too.
+describe('isPersonalityDefinitionPath — snapshots, commands and global entries', () => {
+  it.each([
+    `${HOME}/personalities/a/.expression-history/expr-rev-1.md`,
+    `${HOME}/personalities/a/commands/deploy.md`,
+    `${HOME}/skills/x/SKILL.md`,
+    `${HOME}/skills`,
+    `${ALT}/commands/review.md`,
+    `${HOME}/Skills/x/SKILL.md`,
+    `${HOME}/COMMANDS/x.md`,
+    `${HOME}/personalities/a/.Expression-History/expr-rev-2.md`,
+  ])('%s is a definition entry', (path) => {
+    expect(isPersonalityDefinitionPath(path, DIRS)).toBe(true);
+  });
+
+  it('leaves other state-dir entries to the always-deny floor, not this one', () => {
+    for (const rel of ['cron/jobs.json', 'teams/t.yaml', 'skillsets/x', 'learning/audit.jsonl']) {
+      expect(isPersonalityDefinitionPath(`${HOME}/${rel}`, DIRS)).toBe(false);
+    }
+  });
+});
