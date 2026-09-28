@@ -51,10 +51,71 @@ export interface AnthropicProviderConfig {
    *  honours. Wiring sets `0` on a hop in a provider chain so failover is not
    *  delayed by `retry-after`-honouring retries. Absent → the SDK's own default. */
   maxRetries?: number;
+  /** UBP-033 — the model profile's output cap (`maxOutputTokens`, threaded by
+   *  wiring from the model catalog / `models.<provider>/<model>` config). A
+   *  per-call `CompletionOptions.maxTokens` wins; absent both →
+   *  `DEFAULT_MAX_OUTPUT_TOKENS`. */
+  maxOutputTokens?: number;
   /** Item 7 (D32) — server-side compaction, from `providers.<n>.serverCompaction`
    *  (wiring computes `triggerTokens`: `serverCompactionTriggerTokens`, else
    *  the local compaction gate's own threshold). Absent → never sent. */
   serverCompaction?: { triggerTokens: number };
+}
+
+/** Output cap when neither the call nor the model profile names one. */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 8096;
+
+/**
+ * UBP-037 — bounded retry of an in-stream overloaded/rate-limit error. The SDK
+ * retries a 429/529 HTTP response itself, but an SSE `error` event after HTTP
+ * 200 reaches us as an `APIError` with no status that no SDK retry sees. Up to
+ * 3 attempts, 500ms then 1500ms (+ up to 25% jitter) — the same shape as the
+ * chain's pinned retry (`PINNED_MAX_ATTEMPTS`, packages/core/src/providers/
+ * chained-provider.ts). Only while nothing has been yielded (a second stream
+ * after a chunk would splice two answers), never after an abort, and not on a
+ * chain hop (`maxRetries: 0`), where the chain's failover is the retry policy.
+ */
+const IN_STREAM_MAX_ATTEMPTS = 3;
+const IN_STREAM_BASE_DELAY_MS = 500;
+const IN_STREAM_BACKOFF_FACTOR = 3;
+const IN_STREAM_JITTER_RATIO = 0.25;
+
+/** An SSE `error` event the SDK raised mid-stream: status-less, typed by body. */
+function inStreamErrorType(err: unknown): string | undefined {
+  if (!(err instanceof Anthropic.APIError) || err.status !== undefined) return undefined;
+  if (err.type) return err.type;
+  if (/overloaded_error/.test(err.message)) return 'overloaded_error';
+  if (/rate_limit_error/.test(err.message)) return 'rate_limit_error';
+  return undefined;
+}
+
+function isTransientStreamError(err: unknown): boolean {
+  const type = inStreamErrorType(err);
+  return type === 'overloaded_error' || type === 'rate_limit_error';
+}
+
+function inStreamRetryDelayMs(retry: number): number {
+  const base = IN_STREAM_BASE_DELAY_MS * IN_STREAM_BACKOFF_FACTOR ** (retry - 1);
+  return base + Math.random() * base * IN_STREAM_JITTER_RATIO;
+}
+
+/** Resolves after `ms`, or rejects the moment `signal` fires. */
+function sleepUnlessAborted(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error('aborted'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**
@@ -99,6 +160,11 @@ function classifyError(err: unknown): FailoverReason {
     if (status === 529) return 'overloaded';
     if (status === 401 || status === 403) return 'auth';
     if (status === 429) return 'rate_limit';
+    // UBP-037 — an SSE `error` event mid-stream carries no status, only the
+    // body's type (`inStreamErrorType`).
+    const type = inStreamErrorType(err);
+    if (type === 'overloaded_error') return 'overloaded';
+    if (type === 'rate_limit_error') return 'rate_limit';
   }
   return 'unknown';
 }
@@ -257,8 +323,13 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
+  /** UBP-033 — the profile's output cap, when wiring passed one. */
+  readonly maxOutputTokens: number | undefined;
+
   private readonly client: Anthropic;
   private readonly toolOrder: ToolOrder;
+  /** UBP-037 — 1 on a chain hop (`maxRetries: 0`). */
+  private readonly inStreamAttempts: number;
   private readonly serverCompaction: { triggerTokens: number } | undefined;
 
   constructor(config: AnthropicProviderConfig) {
@@ -290,9 +361,38 @@ export class AnthropicProvider implements LLMProvider {
     this.supportsThinking = isThinkingModel(config.model);
     this.toolOrder = config.toolOrder ?? 'stable';
     this.serverCompaction = config.serverCompaction;
+    this.maxOutputTokens = config.maxOutputTokens;
+    this.inStreamAttempts = config.maxRetries === 0 ? 1 : IN_STREAM_MAX_ATTEMPTS;
   }
 
   async *complete(
+    messages: Message[],
+    tools: ToolDefinitionLite[],
+    options: CompletionOptions,
+  ): AsyncIterable<CompletionChunk> {
+    // UBP-037 — see `IN_STREAM_MAX_ATTEMPTS`. Pinned by
+    // __tests__/output-cap-and-stream-retry.test.ts.
+    for (let attempt = 1; ; attempt++) {
+      let yielded = false;
+      try {
+        for await (const chunk of this.completeOnce(messages, tools, options)) {
+          yielded = true;
+          yield chunk;
+        }
+        return;
+      } catch (err) {
+        const retry =
+          !yielded &&
+          !options.abortSignal?.aborted &&
+          attempt < this.inStreamAttempts &&
+          isTransientStreamError(err);
+        if (!retry) throw err;
+        await sleepUnlessAborted(inStreamRetryDelayMs(attempt), options.abortSignal);
+      }
+    }
+  }
+
+  private async *completeOnce(
     messages: Message[],
     tools: ToolDefinitionLite[],
     options: CompletionOptions,
@@ -358,7 +458,7 @@ export class AnthropicProvider implements LLMProvider {
 
     const buildParams = (serverCompaction: boolean): AnthropicStreamParams => ({
       model: effectiveModel,
-      max_tokens: options.maxTokens ?? 8096,
+      max_tokens: options.maxTokens ?? this.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       messages: buildMessages(serverCompaction),
       ...(systemBlocks ? { system: systemBlocks } : {}),
       ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
@@ -473,6 +573,8 @@ export class AuthRotatingProvider implements LLMProvider {
       toolOrder?: ToolOrder;
       requestTimeoutMs?: number;
       serverCompaction?: { triggerTokens: number };
+      /** UBP-033 — the model profile's output cap, for every pooled key. */
+      maxOutputTokens?: number;
     },
   ) {
     const sorted = [...profiles].sort((a, b) => b.priority - a.priority);
@@ -489,6 +591,7 @@ export class AuthRotatingProvider implements LLMProvider {
             ? { requestTimeoutMs: opts.requestTimeoutMs }
             : {}),
           ...(opts?.serverCompaction ? { serverCompaction: opts.serverCompaction } : {}),
+          ...(opts?.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
         }),
     );
     if (this.providers.length === 0) throw new Error('AuthRotatingProvider: no profiles provided');
@@ -579,6 +682,9 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
     ...(typeof cfg.requestTimeoutMs === 'number' ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     // Retry count threaded from wiring (`0` on a chain hop). Absent → SDK default.
     ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
+    // UBP-033 — the model profile's output cap (`profile.maxOutputTokens`,
+    // `createLLMFromRegistry` in packages/wiring). Absent → 8096.
+    ...(typeof cfg.maxOutputTokens === 'number' ? { maxOutputTokens: cfg.maxOutputTokens } : {}),
     // Lane 2a — tool-ordering escape hatch threaded from config; invalid
     // values fall through to the 'stable' default.
     ...(cfg.toolOrder === 'insertion' || cfg.toolOrder === 'stable'

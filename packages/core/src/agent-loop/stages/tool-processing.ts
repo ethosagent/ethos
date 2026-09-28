@@ -31,6 +31,7 @@ import { recordMemoryWriteIfApplicable } from '../memory-telemetry';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
+import { drainSteerEntries, persistSteer, type SteerVision, steerContentBlocks } from '../steer';
 import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
@@ -126,6 +127,8 @@ export interface ToolProcessingContext {
 
   // Steer
   steerSink?: SteerSink;
+  /** UBP-012 — which steer attachment blocks the turn's model can read. */
+  steerVision?: SteerVision;
 
   /** Set when this turn's text is a transcript of speech — threaded onto every
    *  `before_tool_call` payload so the approval surface can tell a spoken
@@ -846,19 +849,15 @@ export async function* processTools(
   }
 
   // FW-9 — drain SteerSink at the iteration seam. Each entry becomes a
-  // `[USER STEER]: <text>` text block appended to the tool_results user
-  // message. Also persisted as a `user_steer` row for transcript fidelity
-  // so a future getMessages() call replays the steer cleanly.
+  // `[USER STEER]: <text>` text block (plus any UBP-012 attachment blocks the
+  // model can read) appended to the tool_results user message. Also persisted
+  // as a `user_steer` row for transcript fidelity. The text-end seam is
+  // `foldTextEndSteers` (../steer.ts), called from agent-loop.ts.
   if (ctx.steerSink) {
-    const steers = ctx.steerSink.drain();
-    for (const steerText of steers) {
-      toolResultContent.push({ type: 'text', text: `[USER STEER]: ${steerText}` });
-      await deps.session.appendMessage({
-        sessionId: ctx.sessionId,
-        role: 'user_steer',
-        content: steerText,
-        traceId: ctx.traceId,
-      });
+    for (const entry of drainSteerEntries(ctx.steerSink)) {
+      const built = steerContentBlocks(entry, ctx.steerVision);
+      toolResultContent.push(...built.content);
+      await persistSteer(deps.session, ctx.sessionId, ctx.traceId, entry, built.persisted);
     }
   }
 

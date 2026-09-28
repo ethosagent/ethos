@@ -24,10 +24,10 @@ import type {
 import { createApprovalPostureGuard } from './agent-loop/approval-posture';
 import { budgetGuardEvents, checkTurnBudgets, updateDenialStreak } from './agent-loop/budgets';
 import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
-import { applyOverflowRetry, overflowErrorEvent } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
 import { historyLimitFor, withSmallWindow } from './agent-loop/small-window';
 import { assembleContext, type MemoryPrefetchGate } from './agent-loop/stages/context-assembly';
+import { recoverFromOverflow } from './agent-loop/stages/overflow-recovery';
 import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
@@ -36,11 +36,13 @@ import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
+import { settleTextEnd } from './agent-loop/stages/text-end';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
 import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
+import { steerVisionFor } from './agent-loop/steer';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import { isToolPermitted } from './agent-loop/tool-permitted';
 import type { LoopDeps } from './agent-loop/turn-context';
@@ -296,14 +298,13 @@ export interface RunOptions extends MemoryPrefetchGate {
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
   /**
-   * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL) push user-typed text
-   * here while the agent is mid-turn. AgentLoop drains the sink at the
-   * iteration seam (after tool_results land, before the next LLM call) and
-   * folds each entry in as a `[USER STEER]: <text>` text block on the user
-   * message carrying the tool_results.
-   *
-   * Pre-first-iteration (no tool_results yet) and idle (no run in flight)
-   * steering falls back to `queue` at the surface, never reaching AgentLoop.
+   * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL, gateway) push user
+   * text here while the agent is mid-turn. AgentLoop drains the sink at the
+   * tool seam (onto the tool_results message) and, UBP-001, at text-end (as
+   * its own user message, then one more LLM call) — see agent-loop/steer.ts.
+   * A steer left in the sink when the turn ends (last allowed iteration, an
+   * abort, or one pushed after the final drain) is the surface's to report.
+   * Idle steering (no run in flight) falls back to `queue` at the surface.
    */
   steerSink?: SteerSink;
   /** Per-turn inbound attachments from the user message. Persisted as an
@@ -674,8 +675,7 @@ export class AgentLoop {
     // Phase 3 — mutable so the overflow→compact-and-retry path can re-anchor the
     // prompt cache after it shrinks the in-memory history.
     let cacheBreakpoints = initialCacheBreakpoints;
-    // Phase 3 — one emergency compaction per turn on a context-overflow rejection.
-    let overflowRetried = false;
+    const overflowRetry = { iteration: -1 }; // Phase 3 — one compact-and-retry per iteration
 
     // Destructure setup for loop usage
     const {
@@ -686,8 +686,6 @@ export class AgentLoop {
       fsReach,
       obsConfig,
       traceId,
-      turnNumber,
-      lastCompactionTurn,
       activeTier,
       effectiveModel,
       modelOverride: setupModelOverride,
@@ -788,6 +786,11 @@ export class AgentLoop {
     // persisted, flushed by the finalizer (and by the early exits that skip it).
     const turnUsage = createTurnUsage();
 
+    const steerVision = steerVisionFor(this.llm, modelOverride); // UBP-012
+    const endCtx = { sessionId, traceId, steerSink: opts.steerSink, steerVision, abortSignal };
+    const overflowDeps = { ...turnDeps, session: this.session, turnUsage };
+    const overflowCtx = { ...setup, systemPrompt: systemPrompt ?? '', traceId };
+
     const streamDeps: StreamStepDeps = {
       llm: this.llm,
       tools: this.tools,
@@ -884,36 +887,13 @@ export class AgentLoop {
       // Stage: Stream one LLM call
       const stepResult = yield* streamStep(streamDeps, stepCtx(), tierEscalationRef);
 
-      // Phase 3 — a context-overflow rejection is recoverable (the assistant
-      // message was NOT persisted): compact the in-memory history and retry once.
+      // Phase 3 / UBP-021 — compact-and-retry a context overflow (stages/overflow-recovery.ts).
       if (stepResult.outcome === 'overflow') {
-        const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
-        overflowRetried = true;
-        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
-        const retry = canRetry
-          ? await applyOverflowRetry(turnDeps, llmMessages, systemPrompt ?? '', personality, meta)
-          : { retried: false };
-        if (retry.retried) {
-          // A4 — the compact-and-retry is user-visible work, not silence.
-          // `_loop` is a reserved name (DefaultToolRegistry.register refuses
-          // `_`-prefixed tools), so renderers can key on it for notice style.
-          yield {
-            type: 'tool_progress',
-            toolName: '_loop',
-            message: 'context overflow — compacting and retrying',
-            audience: 'user',
-          };
-          cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
-          iteration--; // retry this iteration with the shrunk history
-          continue;
-        }
-        await flushTurnUsage(this.session, sessionId, turnUsage, this.observability);
-        yield { type: 'error', ...overflowErrorEvent(retry, stepResult.error, this.compaction) };
-        if (traceId) {
-          this.observability?.endTrace(traceId, 'error');
-          this.observability?.flush();
-        }
-        return;
+        const recover = { ...overflowCtx, llmMessages, iteration, lastRetry: overflowRetry };
+        if (!(yield* recoverFromOverflow(overflowDeps, recover, stepResult.error))) return;
+        cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
+        iteration--; // retry this iteration with the shrunk history
+        continue;
       }
 
       if (stepResult.outcome === 'fatal') {
@@ -931,7 +911,19 @@ export class AgentLoop {
         }
       }
 
-      if (stepResult.outcome === 'text-end') break;
+      if (stepResult.outcome === 'text-end') {
+        const last = iteration + 1 >= this.maxIterations; // UBP-001/020/033, stages/text-end.ts
+        const end = yield* settleTextEnd(
+          streamDeps,
+          stepResult,
+          { ...endCtx, llmMessages, fullText },
+          last,
+        );
+        if (end.next === 'return') return;
+        fullText = end.fullText;
+        if (end.next === 'break') break;
+        continue;
+      }
 
       const { completedToolCalls } = stepResult;
       const usageSink = stepResult.usageSink;
@@ -1007,6 +999,7 @@ export class AgentLoop {
           dryRunState,
           tierEscalationRef,
           steerSink: opts.steerSink,
+          steerVision,
           ...(opts.voiceOrigin ? { voiceOrigin: opts.voiceOrigin } : {}),
           opts: {
             agentId: opts.agentId,

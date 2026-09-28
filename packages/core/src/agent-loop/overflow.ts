@@ -15,6 +15,7 @@ import {
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
 import { currentTurnStart } from './compaction';
 import { compactWithTimeout } from './compaction-timeout';
+import { rewriteToolResults } from './tool-result-aging';
 import type { LoopDeps } from './turn-context';
 
 // The bare phrases `too many tokens` / `too long for` are context-anchored: a
@@ -116,6 +117,40 @@ export async function emergencyCompact(
   }
 }
 
+/**
+ * UBP-021 — soft-trim the CURRENT turn's own tool results, all but the latest
+ * batch. Emergency compaction never touches the current turn (see
+ * {@link emergencyCompact}), so a single turn whose tool results outgrew the
+ * window — five large reads in a fresh session — had nothing left to shrink
+ * and failed. The latest batch is what the model is about to act on and stays
+ * verbatim; earlier results keep head and tail (`rewriteToolResults`,
+ * ./tool-result-aging.ts, which edits content only, so no tool_use/tool_result
+ * pair can split). Returns `undefined` when nothing shrank.
+ */
+export function trimCurrentTurnToolResults(messages: Message[]): Message[] | undefined {
+  const start = currentTurnStart(messages);
+  let latestBatch = -1;
+  for (let i = messages.length - 1; i >= start; i--) {
+    const m = messages[i];
+    if (m?.role === 'user' && Array.isArray(m.content) && m.content.some(isToolResult)) {
+      latestBatch = i;
+      break;
+    }
+  }
+  const soft = new Set<string>();
+  for (let i = start; i < latestBatch; i++) {
+    const m = messages[i];
+    if (m?.role !== 'user' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) if (b.type === 'tool_result') soft.add(b.tool_use_id);
+  }
+  const { messages: out, cacheBreakpoint } = rewriteToolResults(messages, soft, new Set());
+  return cacheBreakpoint === undefined ? undefined : out;
+}
+
+function isToolResult(b: { type: string }): boolean {
+  return b.type === 'tool_result';
+}
+
 /** Outcome of one compact-and-retry attempt. */
 export interface OverflowRetryResult {
   /** History was shrunk in place — the caller re-runs the current iteration. */
@@ -166,11 +201,21 @@ export async function applyOverflowRetry(
       countTokens: deps.llm.countTokens.bind(deps.llm),
     },
   );
-  if (trimmed.length >= source.length) {
+  // UBP-021 — when this turn's own results are the bulk (or there is no older
+  // history at all), older history cannot free enough on its own: also trim the
+  // turn's earlier results. Not after a THROWN summary under
+  // `abortOnSummaryFailure`, which asks for that failure to surface.
+  const split = currentTurnStart(trimmed);
+  const turnTokens = estimateMessagesTokens(trimmed.slice(split));
+  const turnDominates = split === 0 || turnTokens * 2 > estimateMessagesTokens(source);
+  const mustSurface = summaryError !== undefined && deps.compaction?.abortOnSummaryFailure === true;
+  const turnTrimmed =
+    turnDominates && !mustSurface ? trimCurrentTurnToolResults(trimmed) : undefined;
+  if (trimmed.length >= source.length && !turnTrimmed) {
     return { retried: false, ...(summaryError !== undefined ? { summaryError } : {}) };
   }
   llmMessages.length = 0;
-  llmMessages.push(...trimmed);
+  llmMessages.push(...(turnTrimmed ?? trimmed));
   return { retried: true };
 }
 
