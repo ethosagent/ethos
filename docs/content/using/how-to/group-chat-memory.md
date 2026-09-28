@@ -30,30 +30,7 @@ Put your agent in a Telegram, Slack, Discord or WhatsApp group without it repeat
 
 The [gateway](../../getting-started/glossary.md#gateway) (the process that holds your channel adapters) decides each turn's room audience before the turn runs. A shared turn gets no private memory; a private turn gets it as before.
 
-| Chat | Room audience |
-|---|---|
-| A direct message to the bot from you | private |
-| A group, channel or supergroup | shared |
-| A thread or topic | the same as its parent chat |
-| An email whose sender the mail server did not authenticate | shared (still answered) |
-| A Discord group DM | shared |
-| A WhatsApp status broadcast, `@broadcast` list or `@newsletter` channel | shared |
-| A group listed under `gateway.private_chats.<platform>` | private |
-
-Work that runs later inherits the room it came from. It runs shared when the chat that created it was shared, or when it posts into a shared chat:
-
-| Runs later | Room audience |
-|---|---|
-| A cron job | shared if it was created in a shared chat, delivers to one, or reads a shared job's output through `contextFrom` |
-| A watcher wake | shared if a shared chat created the watcher, it delivers to one, or nothing records who created it |
-| A goal | the room audience of the chat it was set in (`web` and CLI goals are private); a shared turn with no room of its own, such as a delegated sub-agent, cannot create one |
-| A kanban task a shared turn created | shared, including on a team member it is dispatched to; a task created on the web board, from the CLI, or before this release carries no stamp and runs private |
-| An inbound webhook | shared, unless the hook sets `webhooks.<hook-id>.private: true` and every `deliver` target is private |
-| An A2A request, a phone caller, an MCP client (unless `expose_memory` is set) | shared |
-
-A job created before this release carries no stamp and is judged by where it delivers: a group, a Discord channel or an email address runs shared, and a job with no delivery target runs private. The cron runner logs one line for each such job it runs shared.
-
-A direct message from someone else, on a platform with `channel_filter.<platform>.ownerUserId` set, is a middle case. `MEMORY.md` is yours, so it is withheld, and so is everything else a shared turn loses. The sender's own profile, `~/.ethos/users/<their-user-id>/USER.md`, is still read. With no owner configured there is nobody to compare against, and a direct message is private.
+A direct message from you is private. A group, channel, supergroup, thread or topic is shared. Unauthenticated email, Discord group DMs, WhatsApp broadcasts, a direct message from someone other than the configured owner, and work that runs later — cron jobs, watchers, goals, kanban tasks, webhooks — each have their own rule. Look your chat up in [Which rooms are shared](../explanation/memory-model.md#which-rooms-are-shared) before you continue.
 
 ### 2. Upgrade and start fresh sessions in your groups
 
@@ -67,19 +44,7 @@ The new rules apply to every turn after the upgrade. What the agent already said
 ✓ New session started.
 ```
 
-On a shared turn:
-
-- `MEMORY.md`, `USER.md` and the per-user `USER.md` are not read into the prompt.
-- These tools are not offered and are refused if called: `memory_read`, `memory_write`, `session_list_by_date`, `get_session_events`, `get_observability`, the `team_memory_*` tools, `meet_join`, `terminal`, `run_code`, `run_tests`, `lint`, the `process_*` tools, `dashboard_add_panel`, `dashboard_update_panel`, `dashboard_import`, `dashboard_set_params`, `dashboard_export`, `route_to_agent`, `dispatch_team`, `broadcast_to_agents` and the `skills_pending_*` tools. `session_search` stays: it reads the current chat only.
-- The turn-end memory flush does not run.
-- File tools refuse the private memory files — `MEMORY.md`, `USER.md` and the `memory-*.jsonl` files under any personality directory, everything under `~/.ethos/users/`, and `memory.db`. The personality's `files/` and `ui/` folders stay readable.
-- `/learn` answers with a pointer to a private chat instead of running.
-- A `/background` job, a delegated sub-agent and a background job's review turn launched from the group run shared too. A shared review of a job whose chat is a direct message runs in its own session, so it never marks the direct message shared.
-- The `cron` tool lists, shows and reads the runs of only the jobs stamped shared; editing or running a job from the group stamps it shared. `goal_status` shows only goals this personality set in a shared room.
-
-A session that has run one shared turn stays shared for good, whichever surface opens it next. A group session from before the upgrade, opened from the web app or forked, runs shared too, and so does its fork.
-
-After the turn, nothing said in a shared session feeds private learning. Memory capture, the skill-improvement fork, the nightly Judge and Expression evidence, learning cases, `ethos evolve run` and the web Expression draft all skip it, and `get_session_events` refuses it to any other session. The same goes for a direct message from someone other than the owner. Group sessions from before the upgrade, which carry no stamp, are recognised by their session key and skipped too. A listed trusted room (step 3), and a Discord or email direct message the gateway judged private, are not skipped.
+What a shared turn loses — memory, tools, file access, the turn-end flush, `/learn` — and what it keeps out of later learning is listed in [What a shared turn loses](../explanation/memory-model.md#what-a-shared-turn-loses).
 
 ### 3. Trust a room (optional)
 
@@ -98,6 +63,14 @@ The list is read once, at startup. Restart whichever process owns your channels:
 
 ```bash
 ethos gateway start
+```
+
+A healthy start prints one line per bot, then the listening line (excerpt; your bot key, personality and latency differ):
+
+```
+ethos gateway  starting...
+✓ telegram:<bot-key> → personality:<personality-id> (312ms)
+Listening for messages. Press Ctrl+C to stop.
 ```
 
 If the gateway is still running when you save the file, it logs:
@@ -157,12 +130,4 @@ If only your team reads the channel, list it as in step 3 and restart. A shared 
 | A scheduled job logs `predates room-audience stamps and runs without private memory` | It was created before this release and delivers to a chat that cannot be proven private — a group, or any Discord or email chat | List that chat under `gateway.private_chats.<platform>` and restart, or recreate the job from a Telegram, WhatsApp or Slack DM, the CLI or the web app |
 | `/ethos ask` in a Slack DM is now refused or asks for pairing | The command used to be treated as a channel message; it is now a direct message, with the same admission rules as any DM | Allow the sender under `channel_filter.slack`, as for ordinary DMs |
 
-Known limits, where memory is not withheld today:
-
-- A kanban task with no stamp — created on the web board, from the CLI, or before this release — runs private, even if the work came from a group.
-- A dashboard panel added from a group before this release refreshes with private memory. Remove it and add it again from a direct message or the web app.
-- A turn from `ethos chat -q` records no initiator, so it cannot file a personality change request.
-- Plugin `before_prompt_build` hooks and OpenClaw `agent_end` / `agent_done` hook payloads carry no room audience; a plugin cannot tell a group turn from a private one.
-- MCP tools run in the operator's MCP server processes; one that reads files can read `MEMORY.md` on a shared turn. Do not give a personality that talks in groups an MCP server with file access to `~/.ethos`.
-
-The rules are enforced in the agent core, not the channel: `resolveTurnAudience` in [`packages/core/src/agent-loop/audience.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop/audience.ts) and `Gateway.audienceFor` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts), pinned end to end by `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`. The [memory model](../explanation/memory-model.md) explains what `MEMORY.md` and `USER.md` hold.
+Some paths do not withhold memory yet; they are listed in [Known limits](../explanation/memory-model.md#known-limits-of-shared-rooms).

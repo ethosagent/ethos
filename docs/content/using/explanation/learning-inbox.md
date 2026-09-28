@@ -132,7 +132,7 @@ The `learning.*` RPCs behind the Learning page (`apps/web-api/src/rpc/learning.t
 
 ### Definition changes are not candidates
 
-A personality that lists `propose_self_amendment` can ask to add or remove tools in its own `toolset.yaml`. That request is an *amendment*, not a candidate, and nothing on this page promotes it. It lives in its own directory, `~/.ethos/learning/amendments/`, which `listCandidates` never reads (`extensions/learning-inbox/src/paths.ts`), so no replay, nightly pass or `evolution_approval_mode: auto` setting can apply it.
+A personality that lists `propose_self_amendment` can ask to add or remove tools in its own `toolset.yaml`. That request is an *amendment*, not a candidate, and nothing on this page promotes it. It lives in its own directory, `~/.ethos/learning/amendments/`, which `listCandidates` never reads (`extensions/learning-inbox/src/store.ts`), so no replay, nightly pass or `evolution_approval_mode: auto` setting can apply it.
 
 | Surface | What you can do there |
 |---|---|
@@ -190,7 +190,7 @@ These are limitations, written down so nobody reads the scorecard as more than i
 ## See also
 
 - [`ethos learning` CLI reference](../reference/cli.md#ethos-learning) — `list`, `show`, `replay`, `approve`, `reject`, `rollback`.
-- [Review a personality's change request](../how-to/review-personality-change-requests.md) — the amendments a personality files for its own toolset.
 - [Why skills, separate from tools and personalities?](what-is-a-skill.md) — what a skill is and how the evolver drafts one.
+- [What is dreaming, and why does an agent need idle time?](dreaming.md) — the other thing a personality does while you are away.
 - [Approve posts before sending](../how-to/approve-posts-before-sending.md) — the outbox, whose decisions share `ethos audit decisions` with learning.
 - [Glossary: skill evolution](../../getting-started/glossary.md#skill-evolution)

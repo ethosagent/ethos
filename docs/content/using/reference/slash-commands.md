@@ -4,7 +4,7 @@ description: "Every /command available inside ethos chat — session, personalit
 kind: reference
 audience: user
 slug: slash-commands
-updated: 2026-09-25
+updated: 2026-09-28
 ---
 
 Slash commands run synchronously inside `ethos chat` and do not count as a turn. They start with `/` as the first character; anything else is sent to the agent.
@@ -58,6 +58,24 @@ Synopsis: `/sessions`
 Print `~/.ethos/MEMORY.md` and `~/.ethos/USER.md` (markdown mode) or recent chunks (vector mode).
 
 Synopsis: `/memory`
+
+## /learn {#slash-learn}
+
+Run one agent turn that distills something into memory, a skill proposal, or both. With no argument it learns from the current conversation; with text it learns from that text. A `remember:` prefix routes the result to memory only; a `skill:` prefix routes it to a skill proposal only (`parseLearnArgs`, [`packages/core/src/learn.ts`](../../../../packages/core/src/learn.ts)). Available in both surfaces, and in channel chats through the gateway.
+
+Memory learning is private. In a group chat or any other shared room the gateway runs no turn and replies with a pointer to a direct message instead (`LEARN_SHARED_ROOM_REPLY`, [`extensions/gateway/src/index.ts`](../../../../extensions/gateway/src/index.ts)); see [Keep memory out of group chats](../how-to/group-chat-memory.md).
+
+Synopsis: `/learn [remember: | skill:] [<text>]`
+
+```
+> /learn remember: the deploy is on Fridays
+```
+
+In a shared room:
+
+```
+Memory learning works in a private chat with me — send /learn there.
+```
 
 ## /usage {#slash-usage}
 

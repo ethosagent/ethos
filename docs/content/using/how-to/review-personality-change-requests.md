@@ -166,7 +166,23 @@ If you applied several requests to one personality, roll them back newest first.
 
 ## Verify
 
-Run `ethos personality show <personality-id>` and read the toolset. After an apply it lists the new tool, and the next turn is offered it. `ethos audit decisions` records every apply, decline and rollback.
+Print the personality's character sheet and read its toolset:
+
+```bash
+ethos personality show scout
+```
+
+After the apply above, the `## Toolset` section lists the new tool:
+
+```
+## Toolset
+3 tools:
+- think_deeper
+- propose_self_amendment
+- web_extract
+```
+
+The next turn is offered it. `ethos audit decisions` records every apply, decline and rollback.
 
 ## Troubleshoot
 
