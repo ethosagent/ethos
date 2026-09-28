@@ -11,6 +11,7 @@ import {
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
+  type PrivateChatSet,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
   resolveVoicePreferences,
@@ -1147,6 +1148,19 @@ export interface GatewayConfig {
    * (backward compat). Keys are platform identifiers (e.g. 'telegram').
    */
   channelFilter?: ChannelFilterConfig;
+  /**
+   * The operator's trusted rooms, `gateway.private_chats.<platform>` (plan
+   * personality-memory-boundary D9), keyed on platform + chat id across every
+   * bot. Built from config by `buildGateway` (apps/ethos/src/commands/gateway.ts)
+   * for both hosts, `ethos gateway start` and `ethos boot`. Read at
+   * construction only: a change needs a gateway restart, and until then an
+   * unlisted room stays trusted. No filter side effects — unlike a
+   * `channel_filter.<platform>` block, it admits and refuses nothing.
+   *
+   * Plan step 3 wires it in; nothing reads it yet. Step 4 makes `audienceFor`
+   * treat a listed room as private.
+   */
+  privateChats?: PrivateChatSet;
   /**
    * Platforms this deployment has put into observe mode, for the startup check
    * below. Build it with `observeModePlatforms(config)` from

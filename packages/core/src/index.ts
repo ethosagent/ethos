@@ -109,7 +109,12 @@ export type { ChannelModeDecision, ChannelModeInputs } from './channel-mode';
 export { evaluateChannelMode } from './channel-mode';
 export type { ChannelModeParser, ChannelOverrideEntry } from './channel-overrides';
 export { ChannelOverrideStore } from './channel-overrides';
-export { isSharedSession, type PrivateChatSet, targetAudience } from './chat-audience';
+export {
+  isSharedSession,
+  type PrivateChatSet,
+  privateChatSetFrom,
+  targetAudience,
+} from './chat-audience';
 export {
   ClarifyBridge,
   type ClarifyBridgeOptions,

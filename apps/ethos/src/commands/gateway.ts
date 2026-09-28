@@ -34,6 +34,7 @@ import {
   deriveBotKey as deriveBotKeyFromSeed,
   LaneVoiceModeStore,
   laneVoiceModePath,
+  privateChatSetFrom,
 } from '@ethosagent/core';
 import {
   buildCronTriggers,
@@ -5249,6 +5250,11 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
   // `GatewayConfig.observeModePlatforms`.
   const observedPlatforms = observeModePlatforms(config);
   const quietHours = resolveGatewayQuietHours(config.notifications);
+  // Trusted rooms (plan personality-memory-boundary D9), read once here: a
+  // `gateway.private_chats` edit needs a restart (`config-reload.ts` says so).
+  const privateChats = config.gateway?.privateChats
+    ? privateChatSetFrom(config.gateway.privateChats)
+    : undefined;
   const { adapters: adapterMap, botAdapters } = adapterRegistries(adapters);
   return bots.length === 0
     ? // No platform configured — idle gateway. Every configured platform
@@ -5305,6 +5311,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
           : {}),
         ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
         ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
+        ...(privateChats ? { privateChats } : {}),
         ...(pairingDb ? { pairingDb } : {}),
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
@@ -5384,6 +5391,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
         ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
         ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
+        ...(privateChats ? { privateChats } : {}),
         ...(pairingDb ? { pairingDb } : {}),
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),

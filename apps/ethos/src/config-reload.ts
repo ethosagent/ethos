@@ -173,6 +173,15 @@ const UNSUPPORTED_KEYS: ReadonlyArray<{
     read: (c) => c.evolverSchedule,
     warning: 'evolverSchedule changed — restart required to apply',
   },
+  // Trusted rooms (plan personality-memory-boundary D9): read once, when
+  // `buildGateway` builds `GatewayConfig.privateChats`. Until the restart an
+  // UNLISTED room stays trusted, so the warning says so.
+  {
+    key: 'gateway.private_chats',
+    read: (c) => c.gateway?.privateChats,
+    warning:
+      'gateway.private_chats changed — restart required to apply (a room removed from the list stays private until then)',
+  },
 ];
 
 /**

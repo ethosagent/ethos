@@ -22,6 +22,23 @@ export interface PrivateChatSet {
 }
 
 /**
+ * A {@link PrivateChatSet} over the parsed `gateway.private_chats` map
+ * (`EthosConfig.gateway.privateChats`, packages/config): exact platform +
+ * chat id membership, no normalisation. Keyed on platform + chat id only, so
+ * every bot on that platform treats a listed room as trusted. A snapshot —
+ * later changes to `lists` are not seen.
+ */
+export function privateChatSetFrom(
+  lists: Readonly<Record<string, readonly string[]>> | undefined,
+): PrivateChatSet {
+  const byPlatform = new Map<string, ReadonlySet<string>>();
+  for (const [platform, ids] of Object.entries(lists ?? {})) {
+    byPlatform.set(platform, new Set(ids));
+  }
+  return { has: (platform, chatId) => byPlatform.get(platform)?.has(chatId) === true };
+}
+
+/**
  * Platforms whose gateway session keys are channel lane keys
  * (`buildLaneKey(platform, botKey, chatId[, threadId])`, ./lane-key.ts). A key
  * on any other platform (`cli:`, `web:`, `acp:`, …) is not classified by its

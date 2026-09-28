@@ -5,7 +5,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { ROOM_AUDIENCE_METADATA_KEY } from '../agent-loop/audience';
-import { isSharedSession, type PrivateChatSet, targetAudience } from '../chat-audience';
+import {
+  isSharedSession,
+  type PrivateChatSet,
+  privateChatSetFrom,
+  targetAudience,
+} from '../chat-audience';
 import { buildLaneKey } from '../lane-key';
 
 const listed = (platform: string, chatId: string): PrivateChatSet => ({
@@ -85,5 +90,28 @@ describe('isSharedSession', () => {
 
   it('a channel-platform key with a malformed segment fails closed', () => {
     expect(isSharedSession({ key: 'telegram:bot:%E0%A4%A' })).toBe(true);
+  });
+});
+
+describe('privateChatSetFrom', () => {
+  it('matches exact platform + chat id pairs only', () => {
+    const set = privateChatSetFrom({ telegram: ['-1001', '-1002'], slack: ['C0TEAM'] });
+    expect(set.has('telegram', '-1001')).toBe(true);
+    expect(set.has('telegram', '-1002')).toBe(true);
+    expect(set.has('slack', 'C0TEAM')).toBe(true);
+    // Same id on another platform, or an id the list does not name.
+    expect(set.has('discord', '-1001')).toBe(false);
+    expect(set.has('telegram', '-1003')).toBe(false);
+    expect(set.has('slack', 'c0team')).toBe(false);
+  });
+
+  it('an absent map lists nothing', () => {
+    expect(privateChatSetFrom(undefined).has('telegram', '-1001')).toBe(false);
+  });
+
+  it('a listed room is private through targetAudience', () => {
+    const set = privateChatSetFrom({ telegram: ['-1001'] });
+    expect(targetAudience('telegram', '-1001', set)).toBe('private');
+    expect(targetAudience('telegram', '-1002', set)).toBe('shared');
   });
 });

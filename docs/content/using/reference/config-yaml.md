@@ -471,6 +471,33 @@ Notes:
 - If the spend cannot be read, the turn runs, and the gateway records a `gateway.daily_budget_unreadable` event.
 - This is an operator setting, not part of a personality: two deployments of the same personality can set different caps. The per-session cap is [`budgetCapUsd`](./personality-yaml.md#budget-cap-usd).
 
+## gateway.private\_chats.\<platform\> {#gateway-private-chats}
+
+Type: comma-separated chat ids · Default: unset (no trusted rooms)
+
+Group chats on `<platform>` that the operator vouches for as private (trusted rooms). A listed room is treated like a direct message when the gateway decides a turn's room audience.
+
+```yaml
+gateway.private_chats.telegram: -1001234567890,-1009876543210
+gateway.private_chats.slack: C0123TEAM
+```
+
+| Part | Meaning |
+|---|---|
+| `<platform>` | The platform id the chat id belongs to: `telegram`, `slack`, `discord`, `whatsapp`, `email`, or a plugin platform's id. |
+| value | The platform's own chat ids, exactly as the adapter reports them: a negative Telegram group id, a Slack channel id, a WhatsApp `@g.us` JID. |
+
+Notes:
+
+- **Not yet in effect.** This release parses the list and hands it to the gateway (`GatewayConfig.privateChats`, built by `buildGateway` in [`apps/ethos/src/commands/gateway.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts)). Nothing reads it yet, so every group chat still runs as it did before.
+- The list is keyed on platform and chat id only. Every bot on that platform honours it.
+- It has no filter side effects. Unlike a `channel_filter.<platform>` block, listing a room does not turn on the sender allowlist, pairing or mention gating.
+- Read once at gateway startup, by `ethos gateway start` and `ethos boot`. Restart the gateway after editing. An edit made while the gateway runs is logged as `gateway.private_chats changed — restart required to apply`.
+- A room you remove from the list stays trusted until that restart.
+- Ids are trimmed and de-duplicated. An id containing whitespace, or an entry that lists no ids, is dropped with a startup warning. A warning never stops startup.
+- A misspelt platform matches no chat, so the room stays shared.
+- The web UI's config saves keep this key untouched.
+
 ## emailImapHost {#email-imap-host}
 
 Type: string · Default: unset

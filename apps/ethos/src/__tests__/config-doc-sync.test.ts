@@ -114,7 +114,6 @@ const UNDOCUMENTED_ETHOS_FIELDS = new Set([
   'displayStreamingEdits',
   'displayToolPreviewLength',
   'displayVerbosity',
-  'gateway',
   'grounding',
   'idleWatcher',
   'kanban',

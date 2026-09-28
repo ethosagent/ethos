@@ -271,6 +271,28 @@ describe('loadAndDiffConfig — unsupported keys', () => {
   });
 });
 
+describe('loadAndDiffConfig — gateway.private_chats (plan personality-memory-boundary D9)', () => {
+  // Read once when `buildGateway` builds `GatewayConfig.privateChats`, so an
+  // edit is restart-required — and unlisting stays fail-open until then.
+  it('flags a changed trusted-room list as restart-required', async () => {
+    const { diff } = await diffOf(
+      [...BASE, 'gateway.private_chats.telegram: -1001'],
+      [...BASE, 'gateway.private_chats.telegram: -1001,-1002'],
+    );
+    expect(diff.unsupported).toEqual(['gateway.private_chats']);
+    expect(diff.channelFilter).toBeNull();
+    expect(logger.warnings).toEqual([
+      '[config-reload] gateway.private_chats changed — restart required to apply (a room removed from the list stays private until then)',
+    ]);
+  });
+
+  it('reports nothing when the list is unchanged', async () => {
+    const same = [...BASE, 'gateway.private_chats.telegram: -1001'];
+    const { diff } = await diffOf(same, same);
+    expect(diff.unsupported).toEqual([]);
+  });
+});
+
 describe('loadAndDiffConfig — unreadable config', () => {
   it('returns null when there is no config file at all', async () => {
     expect(await loadAndDiffConfig(null, { storage, logger })).toBeNull();

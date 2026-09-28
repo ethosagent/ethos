@@ -3428,6 +3428,7 @@ export interface EthosConfig {
    *   gateway.maxInboundMediaBytes: 52428800
    *   gateway.inboundSpool.maxAttempts: 3
    *   gateway.inboundSpool.maxReplayAgeMs: 86400000
+   *   gateway.private_chats.telegram: -1001234567890,-1009876543210
    */
   gateway?: {
     /** Largest inbound attachment any adapter will download, bytes. 1024–134217728. */
@@ -3442,6 +3443,21 @@ export interface EthosConfig {
       /** Rows older than this at replay are dead-lettered as stale, ms. 60000–2592000000. */
       maxReplayAgeMs?: number;
     };
+    /**
+     * Trusted rooms (plan personality-memory-boundary D9): platform → the
+     * group chat ids the operator vouches for as private, from
+     * `gateway.private_chats.<platform>: <chatId,...>`. Keyed on platform +
+     * chat id, so every bot on that platform honours the list. Deliberately
+     * NOT under `channel_filter.*`: the presence of a `channel_filter.<platform>`
+     * block turns the sender filter on, and listing a room must not do that.
+     *
+     * Read ONCE, when the gateway is built (`buildGateway` in
+     * apps/ethos/src/commands/gateway.ts → `GatewayConfig.privateChats`); a
+     * change needs a gateway restart. `config-reload.ts` reports it as
+     * restart-required (`UNSUPPORTED_KEYS`). Until the restart an UNLISTED room
+     * stays trusted — a documented fail-open window.
+     */
+    privateChats?: Record<string, string[]>;
   };
   /**
    * The decision provider (plan/phases/decision-provider-jev.md §7). Absent =
@@ -4981,6 +4997,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
       `gateway.inboundSpool.maxReplayAgeMs: ${config.gateway.inboundSpool.maxReplayAgeMs}`,
     );
   }
+  for (const [platform, ids] of Object.entries(config.gateway?.privateChats ?? {})) {
+    if (ids.length > 0) lines.push(`gateway.private_chats.${platform}: ${ids.join(',')}`);
+  }
   if (config.decisions) lines.push(...serializeDecisionsLines(config.decisions));
   if (config.teamSupervisor?.restartLoopGuard) {
     const rg = config.teamSupervisor.restartLoopGuard;
@@ -5652,6 +5671,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const browserKv: Record<string, string> = keyUse.track('browser.', {});
   // gateway.<field>: <value> — gateway-wide, non-credential knobs.
   const gatewayKv: Record<string, string> = keyUse.track('gateway.', {});
+  // gateway.private_chats.<platform>: <chatId,...> — trusted rooms (D9).
+  const privateChatsKv: Record<string, string> = keyUse.track('gateway.private_chats.', {});
   // decisions.<field>: <value> — the decision provider, stored under the
   // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
   const decisionsKv: Record<string, string> = keyUse.track('decisions.', {});
@@ -6556,6 +6577,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       browserKv[brw[1]] = parseConfigScalar(brw[2]);
       continue;
     }
+    // gateway.private_chats.<platform>: <chatId,...>  (trusted rooms, D9).
+    const gpc = line.match(/^gateway\.private_chats\.([^.\s:]+):\s*(.+)$/);
+    if (gpc) {
+      privateChatsKv[gpc[1]] = parseConfigScalar(gpc[2]);
+      continue;
+    }
     // gateway.<field>: <value>  (gateway-wide, non-credential knobs).
     const gwy = line.match(
       /^gateway\.(maxInboundMediaBytes|inboundSpool\.maxAttempts|inboundSpool\.maxReplayAgeMs):\s*(.+)$/,
@@ -6784,6 +6811,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   // clock", and plenty of deployments want the first without the second.
   const cronDeprecations: string[] = [];
   const notificationWarnings: string[] = [];
+  const gatewayWarnings: string[] = [];
   const notifications = buildNotificationsConfig(
     notificationsKv,
     notificationBotsKv,
@@ -7248,7 +7276,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     kanban: buildKanban(kanbanKv),
     grounding: groundingResult.grounding,
     browser: browserResult.browser,
-    gateway: buildGateway(gatewayKv),
+    gateway: buildGateway(gatewayKv, privateChatsKv, gatewayWarnings),
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
@@ -7305,6 +7333,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...decisionsWarnings,
     ...storageEncryptionRemovedNotice(kv),
     ...notificationWarnings,
+    ...gatewayWarnings,
     ...keyUse.notices(),
   ]);
   return config;
@@ -10405,7 +10434,11 @@ function buildBrowser(kv: Record<string, string>): {
  * (25 MB) and above every platform's own attachment limit. Out-of-range values
  * are dropped, leaving each adapter on its own platform default.
  */
-function buildGateway(kv: Record<string, string>): EthosConfig['gateway'] | undefined {
+function buildGateway(
+  kv: Record<string, string>,
+  privateChatsKv: Record<string, string>,
+  warnings: string[],
+): EthosConfig['gateway'] | undefined {
   const result: NonNullable<EthosConfig['gateway']> = {};
   const raw = kv.maxInboundMediaBytes;
   if (raw !== undefined) {
@@ -10427,6 +10460,45 @@ function buildGateway(kv: Record<string, string>): EthosConfig['gateway'] | unde
     if (n !== undefined) spool.maxReplayAgeMs = n;
   }
   if (Object.keys(spool).length > 0) result.inboundSpool = spool;
+  const privateChats = buildPrivateChats(privateChatsKv, warnings);
+  if (privateChats) result.privateChats = privateChats;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Trusted rooms from `gateway.private_chats.<platform>: <chatId,...>` (plan
+ * personality-memory-boundary D9). A comma list, trimmed, empties and
+ * duplicates removed. Any platform name is kept, like `channel_toolsets.*`, so
+ * a plugin platform can list rooms too; a misspelt platform matches no chat
+ * and leaves the room shared (fail-closed). Bad values warn and are dropped —
+ * never an error, so a typo cannot stop boot: an id with whitespace inside it
+ * (no platform's chat ids have any), and an entry that lists no ids at all.
+ * Pinned by `__tests__/config-gateway-private-chats.test.ts`.
+ */
+function buildPrivateChats(
+  kv: Record<string, string>,
+  warnings: string[],
+): Record<string, string[]> | undefined {
+  const result: Record<string, string[]> = {};
+  for (const [platform, raw] of Object.entries(kv)) {
+    const ids: string[] = [];
+    for (const id of raw.split(',').map((s) => s.trim())) {
+      if (id === '' || ids.includes(id)) continue;
+      if (/\s/.test(id)) {
+        warnings.push(
+          `gateway.private_chats.${platform}: '${id}' is not a chat id (contains whitespace) — ignored. Separate ids with commas.`,
+        );
+        continue;
+      }
+      ids.push(id);
+    }
+    if (ids.length > 0) result[platform] = ids;
+    else {
+      warnings.push(
+        `gateway.private_chats.${platform}: lists no chat ids — ignored. Expected <chatId,...>.`,
+      );
+    }
+  }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
