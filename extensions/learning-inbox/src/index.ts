@@ -31,6 +31,13 @@
  *      replay, approve, reject, rollback — the one service every human surface
  *      decides through. It owns the override rule (a non-`pass` approval needs
  *      a reason) and the `learning.*` `recordSafetyApproval` rows (X-D11).
+ *   9. The self-amendment store (`amendment-store.ts`, `amendment-ops.ts`; plan
+ *      personality-memory-boundary G2, D28): a personality's request to change
+ *      its own `toolset.yaml`, under `learning/amendments/` — NOT a
+ *      `LearningCandidate`, and in a directory no candidate path reads, so
+ *      nothing automatic can promote one. Its callers (the filing intake and
+ *      the apply service, plan steps 10b–11, not yet wired) belong in
+ *      `packages/wiring`, which can take its lock.
  *
  * The seven learning paths submit here (L-T6); the composition that binds this
  * package to a real loop, registry and config is
@@ -46,6 +53,29 @@
  * cycle.
  */
 
+export {
+  type AmendmentOpsRefusal,
+  applyOps,
+  canonicalizeOps,
+  expectedAfterHash,
+  MAX_AMENDMENT_OPS,
+  opsHash,
+} from './amendment-ops';
+export {
+  type AmendmentFilter,
+  type AmendmentTransition,
+  type CreateAmendmentInput,
+  type CreateAmendmentResult,
+  checkPendingLimits,
+  createAmendment,
+  listAmendments,
+  MAX_AMENDMENT_RATIONALE,
+  MAX_PENDING_AMENDMENTS,
+  newAmendmentId,
+  type PendingLimitCheck,
+  readAmendment,
+  transitionAmendment,
+} from './amendment-store';
 export {
   appendAudit,
   type LearningAuditAction,
@@ -115,6 +145,12 @@ export {
 } from './inbox';
 export { type OverlayShadow, OverlayStorage } from './overlay-storage';
 export {
+  amendmentAppliedPath,
+  amendmentApplyLockPath,
+  amendmentDir,
+  amendmentPriorPath,
+  amendmentProposalPath,
+  amendmentsDir,
   auditPath,
   candidateDir,
   candidatePath,

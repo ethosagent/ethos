@@ -13,6 +13,8 @@ import {
   type PersonalityObservabilityConfig,
   type PersonalityRegistry,
   type PersonalitySafetyConfig,
+  parseToolsetYaml,
+  renderToolsetYaml,
   type Storage,
 } from '@ethosagent/types';
 import {
@@ -63,6 +65,11 @@ export {
   type CharacterSheetMcpExport,
   diffPermissionSurface,
   formatPermissionDiff,
+  HIGH_RISK_TOOLS,
+  isHighRiskTool,
+  KANBAN_CLOSER_TOOLS,
+  notComparedLine,
+  PERMISSION_DIFF_NOT_COMPARED,
   type PermissionChange,
   type PermissionDiff,
   type PermissionDirection,
@@ -282,15 +289,6 @@ function parseConfigYaml(src: string): ParsedConfigYaml {
   }
 
   return { flat, nested };
-}
-
-function parseToolsetYaml(src: string): string[] {
-  return src
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith('- '))
-    .map((l) => l.slice(2).trim())
-    .filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -3355,11 +3353,6 @@ function subBlockLength(lines: string[], idx: number): number {
   let end = idx + 1;
   while (end < lines.length && /^\s{3,}\S/.test(lines[end] ?? '')) end++;
   return end - idx;
-}
-
-function renderToolsetYaml(toolset: string[]): string {
-  if (toolset.length === 0) return '# No tools enabled — agent runs without external action.\n';
-  return `${toolset.map((t) => `- ${t}`).join('\n')}\n`;
 }
 
 async function copyTree(storage: Storage, source: string, dest: string): Promise<void> {

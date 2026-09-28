@@ -21,6 +21,7 @@ import {
   updateCandidate,
   writeReplayRun,
 } from '../store';
+import { expectAmendmentUntouched, plantPendingAmendment } from './amendment-fixture';
 
 const DATA = '/ethos';
 const LIVE = join(DATA, 'skills');
@@ -312,5 +313,28 @@ describe('LearningInbox.get / resolve / replay / list', () => {
     await box.list();
     await box.list();
     expect(importLegacy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): the candidate inbox — the service
+// every learning surface decides through — lists, gets, approves and rejects
+// candidates only. A self-amendment has its own store and its own (CLI) apply.
+describe('LearningInbox never sees a pending self-amendment', () => {
+  it('does not list it, and get/approve/reject answer not_found', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, 'scout');
+    const candidate = await submitSkill();
+    const box = inbox();
+    expect((await box.list()).map((c) => c.id)).toEqual([candidate.id]);
+    expect(await box.get(planted.record.id)).toMatchObject({ ok: false, code: 'not_found' });
+    const decider = { actor: 'cli', decidedBy: 'test' };
+    expect(
+      await box.approve(planted.record.id, { ...decider, override: { reason: 'x' } }),
+    ).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await box.reject(planted.record.id, decider)).toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
+    expect(rows).toEqual([]);
+    await expectAmendmentUntouched(storage, planted);
   });
 });

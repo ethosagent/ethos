@@ -182,6 +182,17 @@ describe('backup scopes: classification', () => {
     expect(classifyPath('learning').scope).toBe('state');
   });
 
+  // Plan personality-memory-boundary G2: a self-amendment waiting on the owner
+  // is the same kind of only-copy decision, under the same `learning` rule. Its
+  // `.apply.lock` names a pid on the machine that wrote it, so the `*.lock`
+  // exclusion keeps it out.
+  it('archives self-amendment records as state and never their apply lock', () => {
+    expect(classifyPath('learning/amendments/a-x-1/proposal.json').scope).toBe('state');
+    expect(classifyPath('learning/amendments/a-x-1/prior.toolset.yaml').scope).toBe('state');
+    expect(classifyPath('learning/amendments/a-x-1/applied.json').scope).toBe('state');
+    expect(classifyPath('learning/amendments/.apply.lock').scope).toBeNull();
+  });
+
   // Its lock is the opposite case, and the `*.lock` exclusion already gets it
   // right: a sentinel naming a pid on the machine that wrote it is meaningless
   // anywhere else, and restoring one would wedge the digest on arrival.

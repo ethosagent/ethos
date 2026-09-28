@@ -25,6 +25,11 @@ import {
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, Session, SessionFilter, StoredMessage } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
+// Relative on purpose: a test fixture, not part of the package's API.
+import {
+  expectAmendmentUntouched,
+  plantPendingAmendment,
+} from '../../../../extensions/learning-inbox/src/__tests__/amendment-fixture';
 import {
   type CaseSessionSource,
   freezeLatestUserTurnCase,
@@ -33,6 +38,7 @@ import {
   learningAuditSink,
   learningPolicyFor,
   learningRegressionTopUp,
+  pendingReplayCandidateIds,
   promoteLearningCandidate,
 } from '../learning-pipeline';
 
@@ -480,5 +486,40 @@ describe('install.scan on promotion (EVO-001 gate, recordSkillScan)', () => {
     expect(row?.details?.redCount).toBeGreaterThan(0);
     expect(row?.details?.rules).toEqual(expect.arrayContaining([expect.any(String)]));
     expect(JSON.stringify(row)).not.toContain('Ignore previous instructions');
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): the nightly replay step asks
+// `pendingReplayCandidateIds` what to replay, and it has no kind filter — so a
+// self-amendment must not be a candidate at all. It lives in
+// `learning/amendments/`, which `listCandidates` never reads.
+describe('a pending self-amendment is never replayed or promoted by the pipeline', () => {
+  it('pendingReplayCandidateIds and promoteLearningCandidate ignore it', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, 'researcher');
+    const c = await submitCandidate(storage, DATA, {
+      kind: 'skill',
+      op: 'create',
+      personalityId: 'researcher',
+      origin: 'nightly',
+      destination: join(DATA, 'skills', 'cite.md'),
+      content: '---\nname: cite\ndescription: "Cite"\n---\n\nCite.\n',
+    });
+    const ctx = { storage, dataDir: DATA, personalities };
+    expect(await pendingReplayCandidateIds(ctx, 'researcher')).toEqual([c.id]);
+
+    const unused = async (): Promise<never> => {
+      throw new Error('unused');
+    };
+    const result = await promoteLearningCandidate(
+      {
+        ...ctx,
+        expressions: { evolveExpression: unused, revertExpression: unused },
+        observability: { recordSafetyApproval: () => {} },
+      },
+      planted.record.id,
+      { actor: 'auto' },
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_found' });
+    await expectAmendmentUntouched(storage, planted);
   });
 });

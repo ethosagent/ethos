@@ -9,6 +9,10 @@ import {
   type CharacterSheetMcpExport,
   diffPermissionSurface,
   formatPermissionDiff,
+  isHighRiskTool,
+  KANBAN_CLOSER_TOOLS,
+  notComparedLine,
+  PERMISSION_DIFF_NOT_COMPARED,
   type PermissionDirection,
   permissionSurface,
 } from '../permission-surface';
@@ -292,6 +296,60 @@ const CASES: ClassificationCase[] = [
     direction: 'changes',
   },
   {
+    name: 'approvalMode manual → off',
+    before: { config: { ...base, safety: { ...base.safety, approvalMode: 'manual' } } },
+    after: { config: { ...base, safety: { ...base.safety, approvalMode: 'off' } } },
+    field: 'safety.approvalMode',
+    direction: 'widens',
+    reverse: 'narrows',
+  },
+  {
+    name: 'approvalMode unset → smart',
+    before: { config: base },
+    after: { config: { ...base, safety: { ...base.safety, approvalMode: 'smart' } } },
+    field: 'safety.approvalMode',
+    direction: 'widens',
+    reverse: 'narrows',
+  },
+  {
+    name: 'approvalMode unset → manual (the default, spelled out)',
+    before: { config: base },
+    after: { config: { ...base, safety: { ...base.safety, approvalMode: 'manual' } } },
+    field: 'safety.approvalMode',
+    direction: 'changes',
+  },
+  {
+    name: 'an added deny rule',
+    before: { config: base },
+    after: { config: { ...base, safety: { ...base.safety, denyRules: ['git push --force'] } } },
+    field: 'safety.denyRules',
+    direction: 'narrows',
+    reverse: 'widens',
+  },
+  {
+    name: 'execution unset → none',
+    before: { config: base },
+    after: { config: { ...base, execution: 'none' } },
+    field: 'execution',
+    direction: 'narrows',
+    reverse: 'widens',
+  },
+  {
+    name: 'execution remote → none',
+    before: { config: { ...base, execution: 'remote' } },
+    after: { config: { ...base, execution: 'none' } },
+    field: 'execution',
+    direction: 'narrows',
+    reverse: 'widens',
+  },
+  {
+    name: 'execution unset → remote',
+    before: { config: base },
+    after: { config: { ...base, execution: 'remote' } },
+    field: 'execution',
+    direction: 'changes',
+  },
+  {
     name: 'an exported declaration changed with no resolved slice',
     before: { config: { ...base, mcp_export: { enabled: true, expose_sessions: false } } },
     after: { config: { ...base, mcp_export: { enabled: true, expose_sessions: true } } },
@@ -366,7 +424,78 @@ describe('diffPermissionSurface — classification table (P-D11, X-D8)', () => {
   });
 });
 
+describe('toolset widening classes (plan personality-memory-boundary D27)', () => {
+  const toolsetDiff = (before: string[], after: string[]) =>
+    classify({ config: { ...base, toolset: before } }, { config: { ...base, toolset: after } });
+
+  for (const tool of [
+    'scaffold_personality',
+    'delegate_task',
+    'terminal',
+    'run_code',
+    'process_start',
+    'process_stop',
+    'write_file',
+    'patch_file',
+  ]) {
+    it(`flags adding ${tool} as a high-risk widening`, () => {
+      expect(isHighRiskTool(tool)).toBe(true);
+      expect(toolsetDiff(['read_file'], ['read_file', tool]).changes).toEqual([
+        {
+          section: 'Toolset',
+          field: 'toolset',
+          direction: 'widens',
+          detail: `+ ${tool}`,
+          flag: 'high-risk',
+        },
+      ]);
+    });
+  }
+
+  it('does not flag an ordinary added tool, or the removal of a high-risk one', () => {
+    expect(isHighRiskTool('web_fetch')).toBe(false);
+    expect(isHighRiskTool('processor')).toBe(false);
+    expect(toolsetDiff(['read_file'], ['read_file', 'web_fetch']).changes[0]?.flag).toBeUndefined();
+    expect(toolsetDiff(['read_file', 'terminal'], ['read_file']).changes).toEqual([
+      { section: 'Toolset', field: 'toolset', direction: 'narrows', detail: '- terminal' },
+    ]);
+  });
+
+  for (const tool of KANBAN_CLOSER_TOOLS) {
+    it(`flags removing ${tool} as breaking team workflow`, () => {
+      expect(toolsetDiff(['read_file', tool], ['read_file']).changes).toEqual([
+        {
+          section: 'Toolset',
+          field: 'toolset',
+          direction: 'narrows',
+          detail: `- ${tool}`,
+          flag: 'team-workflow',
+        },
+      ]);
+    });
+  }
+
+  it('names what the diff does not compare, mcp.yaml included', () => {
+    expect(PERMISSION_DIFF_NOT_COMPARED).toContain('mcp.yaml');
+    expect(notComparedLine()).toBe(`Not compared: ${PERMISSION_DIFF_NOT_COMPARED.join(', ')}`);
+  });
+});
+
 describe('formatPermissionDiff', () => {
+  it('suffixes flagged toolset rows', () => {
+    const diff = classify(
+      { config: { ...base, toolset: ['read_file', 'kanban_complete'] } },
+      { config: { ...base, toolset: ['read_file', 'run_code'] } },
+    );
+    expect(formatPermissionDiff(diff, 'a', 'b')).toBe(
+      [
+        'Permission changes: a → b — 1 widen, 1 narrow, 0 other',
+        '  - narrows  toolset: - kanban_complete [breaks team workflow if this personality is a team member]',
+        '  + WIDENS   toolset: + run_code [high-risk]',
+      ].join('\n'),
+    );
+  });
+
   it('marks widening rows and counts each direction', () => {
     const diff = classify(
       { config: base },
@@ -375,7 +504,7 @@ describe('formatPermissionDiff', () => {
     expect(formatPermissionDiff(diff, 'a', 'b')).toBe(
       [
         'Permission changes: a → b — 1 widen, 0 narrow, 1 other',
-        '  + WIDENS   toolset: + terminal',
+        '  + WIDENS   toolset: + terminal [high-risk]',
         '  ~ changes  model: claude-sonnet-4-6 → claude-opus-4',
       ].join('\n'),
     );

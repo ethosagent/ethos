@@ -3,6 +3,10 @@ import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { createLearningInbox } from '@ethosagent/wiring';
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  expectAmendmentUntouched,
+  plantPendingAmendment,
+} from '../../../../../extensions/learning-inbox/src/__tests__/amendment-fixture';
 // Relative on purpose: web-api reaches the inbox through `@ethosagent/wiring`
 // and has no workspace link to the package; the test seeds the real store.
 import {
@@ -193,5 +197,20 @@ describe('LearningService', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({ origin: 'legacy', personalityId: 'agent' });
     expect(await storage.exists(join(legacy, 'nightly-a.md'))).toBe(false);
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): a self-amendment is not a learning
+// candidate. The web learning list — whose wire enums know two kinds — never
+// includes one, and `get` answers not_found for its id.
+describe('LearningService never shows a self-amendment as a candidate', () => {
+  it('learning.list and learning.get do not see a pending amendment', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, 'agent');
+    const candidate = await submitSkill();
+    const all = await service.list();
+    expect(all.candidates.map((c) => c.id)).toEqual([candidate.id]);
+    expect(await service.list({ personalityId: 'agent' })).toEqual(all);
+    expect(await service.get(planted.record.id)).toMatchObject({ ok: false, code: 'not_found' });
+    await expectAmendmentUntouched(storage, planted);
   });
 });

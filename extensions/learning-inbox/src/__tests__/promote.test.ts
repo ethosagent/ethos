@@ -22,6 +22,7 @@ import {
   type SkillScope,
 } from '../promote';
 import { readCandidate, type SubmitCandidateInput, submitCandidate } from '../store';
+import { expectAmendmentUntouched, plantPendingAmendment } from './amendment-fixture';
 
 const DATA = '/ethos';
 const PERSONALITIES = join(DATA, 'personalities');
@@ -354,5 +355,20 @@ describe('Expression promote and rollback', () => {
       'expr-rev-3',
       'expr-rev-4',
     ]);
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): `promote()` routes every
+// non-skill candidate into SOUL.md, so an amendment reaching it as a candidate
+// would be a definition change nobody reviewed. It never can: `promote` and
+// `rollback` read `candidates/` only, and an amendment id is `not_found` there.
+describe('a pending self-amendment is never promoted or rolled back', () => {
+  it('promote and rollback answer not_found and change nothing', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, 'scout');
+    const promoted = await promote(deps(), planted.record.id, { actor: 'auto' });
+    expect(promoted).toMatchObject({ ok: false, code: 'not_found' });
+    const rolled = await rollback(deps(), planted.record.id);
+    expect(rolled.ok).toBe(false);
+    await expectAmendmentUntouched(storage, planted);
   });
 });

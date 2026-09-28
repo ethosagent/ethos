@@ -25,6 +25,7 @@ import type { LearningObservability } from '../inbox';
 import type { ExpressionRevisions, SkillScope } from '../promote';
 import type { CreateReplayArm } from '../replay';
 import { readCandidate, submitCandidate } from '../store';
+import { expectAmendmentUntouched, plantPendingAmendment } from './amendment-fixture';
 
 const DATA = '/ethos';
 const PID = 'researcher';
@@ -434,5 +435,44 @@ describe('replayAndResolve — the learning.auto_promote audit row', () => {
 
     expect(result.promotion?.ok).toBe(true);
     expect(await storage.read(destination)).toBe(SKILL);
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): with every auto knob on, the one
+// non-human promotion path still never touches a pending self-amendment — it
+// promotes the candidate it was handed and nothing else, and handed an
+// amendment id it finds no candidate at all.
+describe('replayAndResolve never sees a pending self-amendment', () => {
+  it('auto-promotes a candidate beside it and leaves the amendment and toolset.yaml untouched', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, PID);
+    const target = await seedCases();
+    const destination = join(liveSkillDir(DATA, PID, 'personality'), 'cite.md');
+    const c = await submitCandidate(storage, DATA, {
+      kind: 'skill',
+      op: 'create',
+      personalityId: PID,
+      origin: 'fork',
+      destination,
+      content: SKILL,
+      targetCaseIds: [target],
+    });
+    const result = await replayAndResolve(
+      deps({ knobs: { globalAutoApprove: true }, scope: 'personality' }),
+      c.id,
+    );
+    expect(result.promotion?.ok).toBe(true);
+    await expectAmendmentUntouched(storage, planted);
+  });
+
+  it('refuses an amendment id as a candidate and changes nothing', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, PID);
+    await seedCases();
+    await expect(
+      replayAndResolve(
+        deps({ knobs: { globalAutoApprove: true }, scope: 'personality' }),
+        planted.record.id,
+      ),
+    ).rejects.toThrow(/No such learning candidate/);
+    await expectAmendmentUntouched(storage, planted);
   });
 });

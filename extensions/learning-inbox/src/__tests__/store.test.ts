@@ -15,6 +15,7 @@ import {
   updateCandidate,
   writeReplayRun,
 } from '../store';
+import { expectAmendmentUntouched, plantPendingAmendment } from './amendment-fixture';
 
 const DATA = '/ethos';
 
@@ -262,5 +263,36 @@ describe('legacy import', () => {
     expect(candidate?.destination).toBe('/ethos/skills/rewrite-bad.md');
     const audit = await readAudit(storage, DATA, { candidateId: candidate?.id ?? '' });
     expect(audit.at(-1)?.reason).toContain('unusable target_file');
+  });
+});
+
+// Plan personality-memory-boundary G2-1 (a): a self-amendment lives in
+// `learning/amendments/`, a sibling of `candidates/`, and the candidate store
+// never sees it — not in a listing, not by id, not as a status change.
+describe('a pending self-amendment is invisible to the candidate store', () => {
+  it('is never listed, read or updated as a candidate', async () => {
+    const planted = await plantPendingAmendment(storage, DATA, 'researcher');
+    await seed('/ethos/skills/summarise.md', 'live bytes');
+    const candidate = await submitCandidate(
+      storage,
+      DATA,
+      {
+        kind: 'skill',
+        op: 'rewrite',
+        personalityId: 'researcher',
+        origin: 'nightly',
+        destination: '/ethos/skills/summarise.md',
+        content: 'new bytes',
+      },
+      now,
+    );
+
+    expect((await listCandidates(storage, DATA)).map((c) => c.id)).toEqual([candidate.id]);
+    expect(await listCandidates(storage, DATA, { personalityId: 'researcher' })).toHaveLength(1);
+    expect(await readCandidate(storage, DATA, planted.record.id)).toBeNull();
+    await expect(
+      updateCandidate(storage, DATA, planted.record.id, { status: 'promoted' }, now),
+    ).rejects.toThrow(/No such learning candidate/);
+    await expectAmendmentUntouched(storage, planted);
   });
 });

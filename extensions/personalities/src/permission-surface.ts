@@ -92,6 +92,16 @@ export interface PermissionSurface {
     declaration: PersonalityMcpExportConfig | undefined;
     scope: CharacterSheetMcpExport | undefined;
   };
+  /**
+   * `safety.approvalMode`, as declared; `undefined` runs as `manual`
+   * (`PersonalitySafetyConfig.approvalMode`). One of the rows that decide what
+   * an added tool can actually do (plan personality-memory-boundary D27).
+   */
+  approvalMode: 'manual' | 'smart' | 'off' | undefined;
+  /** `safety.denyRules` — each entry denies matching calls outright. */
+  denyRules: readonly string[];
+  /** `execution`, as declared; `undefined` = no requirement (the resolver picks). */
+  execution: 'remote' | 'none' | undefined;
 }
 
 const ENGINE_DEFAULT = '(engine default)';
@@ -149,6 +159,9 @@ export function permissionSurface(
       declaration: config.mcp_export,
       scope: mcpExport,
     },
+    approvalMode: config.safety?.approvalMode,
+    denyRules: config.safety?.denyRules ?? [],
+    execution: config.execution,
   };
 }
 
@@ -346,12 +359,25 @@ export interface PermissionChange {
     | 'Routing'
     | 'Budget'
     | 'Publishing'
-    | 'MCP export';
+    | 'MCP export'
+    | 'Safety'
+    | 'Execution';
   /** The config key that changed, as written in config.yaml (`toolset` for toolset.yaml). */
   field: string;
   direction: PermissionDirection;
   /** One line: `+ web_search`, `- /tmp/`, `true → false`. */
   detail: string;
+  /**
+   * Set on a toolset row the plan names as a class of its own (D27):
+   * - `high-risk` — adding a tool in {@link HIGH_RISK_TOOLS}, which can run
+   *   code, write files, spawn agents or create personalities;
+   * - `team-workflow` — removing a kanban closer tool
+   *   ({@link KANBAN_CLOSER_TOOLS}), which a team member needs to report
+   *   assigned work (`renderTaskPrompt`, extensions/team-supervisor/src/dispatcher.ts).
+   *   The surface cannot tell whether this personality is a team member, so
+   *   the flag is set on every such removal.
+   */
+  flag?: 'high-risk' | 'team-workflow';
 }
 
 export interface PermissionDiff {
@@ -388,10 +414,52 @@ function listLabel(items: readonly string[], empty: string): string {
   return items.length > 0 ? items.join(', ') : empty;
 }
 
+/**
+ * Tools whose ADDITION is a high-risk widening (plan personality-memory-boundary
+ * D27): a shell or code runner (`terminal`, `run_code`, `process_*`), a file
+ * writer (`write_file`, `patch_file`), a sub-agent spawner (`delegate_task`) and
+ * the personality creator (`scaffold_personality`). Matched by
+ * {@link isHighRiskTool}.
+ */
+export const HIGH_RISK_TOOLS: readonly string[] = [
+  'scaffold_personality',
+  'delegate_task',
+  'terminal',
+  'run_code',
+  'process_*',
+  'write_file',
+  'patch_file',
+];
+
+/** True when `tool` is in {@link HIGH_RISK_TOOLS}; a `*` suffix matches a name prefix. */
+export function isHighRiskTool(tool: string): boolean {
+  return HIGH_RISK_TOOLS.some((entry) =>
+    entry.endsWith('*') ? tool.startsWith(entry.slice(0, -1)) : tool === entry,
+  );
+}
+
+/** The tools a team member reports assigned work with (`renderTaskPrompt`, team-supervisor). */
+export const KANBAN_CLOSER_TOOLS: readonly string[] = [
+  'kanban_complete',
+  'kanban_block',
+  'kanban_heartbeat',
+];
+
 function toolsetRows(before: PermissionSurface, after: PermissionSurface): PermissionChange[] {
   const b = before.toolset;
   const a = after.toolset;
-  if (b.declared && a.declared) return membershipRows('Toolset', 'toolset', b.tools, a.tools);
+  if (b.declared && a.declared) {
+    return membershipRows('Toolset', 'toolset', b.tools, a.tools).map((row) => {
+      const tool = row.detail.slice(2);
+      if (row.direction === 'widens' && isHighRiskTool(tool)) {
+        return { ...row, flag: 'high-risk' as const };
+      }
+      if (row.direction === 'narrows' && KANBAN_CLOSER_TOOLS.includes(tool)) {
+        return { ...row, flag: 'team-workflow' as const };
+      }
+      return row;
+    });
+  }
   if (b.declared === a.declared) return [];
   // An undeclared toolset is every registered built-in tool, and a declared
   // one can only name a subset of those (an unregistered name grants nothing),
@@ -684,13 +752,93 @@ function mcpExportRows(before: PermissionSurface, after: PermissionSurface): Per
   return rows;
 }
 
+const APPROVAL_RANK: Record<'manual' | 'smart' | 'off', number> = {
+  manual: 0,
+  smart: 1,
+  off: 2,
+};
+
+function safetyRows(before: PermissionSurface, after: PermissionSurface): PermissionChange[] {
+  const rows: PermissionChange[] = [];
+  const b = before.approvalMode ?? 'manual';
+  const a = after.approvalMode ?? 'manual';
+  if (before.approvalMode !== after.approvalMode) {
+    const label = (v: PermissionSurface['approvalMode']) => v ?? '(default: manual)';
+    // `manual` asks a human about every dangerous call, `smart` lets a model
+    // approve some, `off` approves them all (the hardline floor still binds).
+    // An unset mode runs as `manual`, so declaring `manual` changes nothing.
+    rows.push({
+      section: 'Safety',
+      field: 'safety.approvalMode',
+      direction:
+        APPROVAL_RANK[a] > APPROVAL_RANK[b]
+          ? 'widens'
+          : APPROVAL_RANK[a] < APPROVAL_RANK[b]
+            ? 'narrows'
+            : 'changes',
+      detail: `${label(before.approvalMode)} → ${label(after.approvalMode)}`,
+    });
+  }
+  // A deny rule gates; adding one narrows, removing one widens.
+  rows.push(
+    ...membershipRows(
+      'Safety',
+      'safety.denyRules',
+      before.denyRules,
+      after.denyRules,
+      'narrows',
+      'widens',
+    ),
+  );
+  return rows;
+}
+
+function executionRows(before: PermissionSurface, after: PermissionSurface): PermissionChange[] {
+  const b = before.execution;
+  const a = after.execution;
+  if (b === a) return [];
+  const label = (v: PermissionSurface['execution']) => v ?? '(no requirement)';
+  // `none` runs no execution tool at all, so moving to it narrows and leaving
+  // it widens. `remote` ↔ no requirement is AMBIGUOUS: a different host, not
+  // more or less of one.
+  const direction: PermissionDirection =
+    a === 'none' ? 'narrows' : b === 'none' ? 'widens' : 'changes';
+  return [
+    { section: 'Execution', field: 'execution', direction, detail: `${label(b)} → ${label(a)}` },
+  ];
+}
+
+/**
+ * The config rows `diffPermissionSurface` does NOT compare (plan
+ * personality-memory-boundary D27: v1.1). A review view that prints a
+ * permission diff prints this list beside it (`notComparedLine`), so an empty
+ * diff never reads as "nothing else changed". `mcp.yaml` is a sibling file,
+ * not a config key; its per-server tool subsets are not diffed either.
+ */
+export const PERMISSION_DIFF_NOT_COMPARED: readonly string[] = [
+  'safety.injectionDefense',
+  'safety.allowed_skill_permissions',
+  'safety.observability',
+  'decisions',
+  'skill_evolution',
+  'memory',
+  'capabilities',
+  'platform',
+  'mcp.yaml',
+];
+
+/** `Not compared: …` — the line a review view prints beside a permission diff. */
+export function notComparedLine(): string {
+  return `Not compared: ${PERMISSION_DIFF_NOT_COMPARED.join(', ')}`;
+}
+
 /**
  * Classify every permission change between two surfaces (P-D11).
  *
  * Computed over the structured rows, never the sheet text. Rows come out in
  * sheet order: Toolset, MCP servers, MCP export, Plugins, Filesystem reach,
  * Publishing, then the rows the sheet has no section for (Network, Routing,
- * Budget).
+ * Budget, Safety, Execution).
  */
 export function diffPermissionSurface(
   before: PermissionSurface,
@@ -706,6 +854,8 @@ export function diffPermissionSurface(
     ...networkRows(before, after),
     ...routingRows(before, after),
     ...budgetRows(before, after),
+    ...safetyRows(before, after),
+    ...executionRows(before, after),
   ];
   return { changes, widens: changes.some((change) => change.direction === 'widens') };
 }
@@ -716,9 +866,14 @@ const DIRECTION_MARK: Record<PermissionDirection, string> = {
   changes: '~ changes',
 };
 
+const FLAG_SUFFIX: Record<NonNullable<PermissionChange['flag']>, string> = {
+  'high-risk': ' [high-risk]',
+  'team-workflow': ' [breaks team workflow if this personality is a team member]',
+};
+
 /**
  * Plain-text rendering of a diff: a count line, then one line per change with
- * widening rows marked `+ WIDENS`.
+ * widening rows marked `+ WIDENS` and a flagged row suffixed with its flag.
  */
 export function formatPermissionDiff(diff: PermissionDiff, labelA: string, labelB: string): string {
   if (diff.changes.length === 0) return `No permission changes: ${labelA} → ${labelB}`;
@@ -730,7 +885,8 @@ export function formatPermissionDiff(diff: PermissionDiff, labelA: string, label
     )} narrow, ${count('changes')} other`,
   ];
   for (const change of diff.changes) {
-    lines.push(`  ${DIRECTION_MARK[change.direction]}  ${change.field}: ${change.detail}`);
+    const suffix = change.flag ? FLAG_SUFFIX[change.flag] : '';
+    lines.push(`  ${DIRECTION_MARK[change.direction]}  ${change.field}: ${change.detail}${suffix}`);
   }
   return lines.join('\n');
 }

@@ -3,6 +3,7 @@
 
 export * from './a2a';
 export * from './agent-event';
+export * from './amendment';
 export * from './audience';
 export * from './background-job';
 export * from './call-capture';
@@ -70,6 +71,7 @@ export type {
   ToolResultReducer,
   ToolResultReducerRegistry,
 } from './tool-reducer';
+export * from './toolset-yaml';
 export * from './turn-auditor';
 export * from './vision-limits';
 export * from './voice';

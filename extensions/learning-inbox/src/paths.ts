@@ -68,3 +68,42 @@ export function casePath(dataDir: string, personalityId: string, caseId: string)
 export function legacyImportMarkerPath(dataDir: string): string {
   return join(learningDir(dataDir), 'legacy-import.json');
 }
+
+/**
+ * Self-amendments (plan personality-memory-boundary G2, D28): a SIBLING of
+ * `candidates/`, never under it. `listCandidates` and every candidate path read
+ * `candidatesDir` only, so an amendment is invisible to replay, auto-promotion
+ * and `promote` — the separation IS G2-1 (a). Pinned by the amendment cases in
+ * `__tests__/store.test.ts`, `auto-promotion.test.ts` and `promote.test.ts`.
+ */
+export function amendmentsDir(dataDir: string): string {
+  return join(learningDir(dataDir), 'amendments');
+}
+
+export function amendmentDir(dataDir: string, amendmentId: string): string {
+  assertSafeId(amendmentId, 'amendmentId');
+  return join(amendmentsDir(dataDir), amendmentId);
+}
+
+/** The record itself (`AmendmentRecord`). Written with `Storage.writeAtomic`. */
+export function amendmentProposalPath(dataDir: string, amendmentId: string): string {
+  return join(amendmentDir(dataDir, amendmentId), 'proposal.json');
+}
+
+/** The live `toolset.yaml` bytes an apply replaced — what a rollback restores. */
+export function amendmentPriorPath(dataDir: string, amendmentId: string): string {
+  return join(amendmentDir(dataDir, amendmentId), 'prior.toolset.yaml');
+}
+
+/** Written before an apply's live write (the `promote.ts` snapshot order). */
+export function amendmentAppliedPath(dataDir: string, amendmentId: string): string {
+  return join(amendmentDir(dataDir, amendmentId), 'applied.json');
+}
+
+/**
+ * The sentinel filing, apply, decline and rollback all hold. Its `*.lock` name
+ * keeps it out of backups (`classifyPath`, packages/wiring/src/backup/scopes.ts).
+ */
+export function amendmentApplyLockPath(dataDir: string): string {
+  return join(amendmentsDir(dataDir), '.apply.lock');
+}
