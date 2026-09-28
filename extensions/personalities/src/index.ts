@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import {
   assertSafeId,
@@ -1062,6 +1063,48 @@ export interface PersonalityLoadReport {
   reloaded: Array<{ id: string; changed: string[] }>;
 }
 
+/** The definition files `FilePersonalityRegistry.writeDefinitionBytes` may
+ *  replace (plan personality-memory-boundary G2, prereq C). */
+export type DefinitionBytesFile = 'toolset.yaml' | 'config.yaml';
+
+/** sha256 (hex) of a definition file's text — the hash
+ *  `writeDefinitionBytes`'s `expectedHash` is compared against. One owner, so a
+ *  caller that recorded a hash and the compare-and-swap cannot disagree. */
+export function hashDefinitionBytes(bytes: string): string {
+  return createHash('sha256').update(bytes, 'utf8').digest('hex');
+}
+
+/**
+ * Thrown by `FilePersonalityRegistry.writeDefinitionBytes` when the live file's
+ * hash is not the `expectedHash` the caller wrote against — someone else
+ * changed (or removed) the file since. Nothing was written. `liveHash` is
+ * `null` when the file is missing.
+ */
+export class DefinitionChangedError extends EthosError {
+  readonly personalityId: string;
+  readonly file: DefinitionBytesFile;
+  readonly expectedHash: string;
+  readonly liveHash: string | null;
+
+  constructor(opts: {
+    personalityId: string;
+    file: DefinitionBytesFile;
+    expectedHash: string;
+    liveHash: string | null;
+  }) {
+    super({
+      code: 'CONFIG_CONFLICT',
+      cause: `${opts.file} of personality "${opts.personalityId}" changed since it was read.`,
+      action: 'Re-read the file and review the change against its current contents.',
+    });
+    this.name = 'DefinitionChangedError';
+    this.personalityId = opts.personalityId;
+    this.file = opts.file;
+    this.expectedHash = opts.expectedHash;
+    this.liveHash = opts.liveHash;
+  }
+}
+
 export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly personalities = new Map<string, PersonalityConfig>();
   /** Per-personality MCP policy loaded from mcp.yaml (sibling artifact, NOT
@@ -1587,13 +1630,23 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
             : '';
       }
       const finalConfig = safetyBlock ? `${rendered}${safetyBlock}\n` : rendered;
-      await this.storage.write(join(dir, 'config.yaml'), finalConfig);
+      await this.storage.writeAtomic(join(dir, 'config.yaml'), finalConfig);
     }
+    // Each definition file is replaced with `writeAtomic` (temp file + rename),
+    // so a crash or a concurrent reader never sees a torn config.yaml,
+    // toolset.yaml or SOUL.md (plan personality-memory-boundary G2-6; pinned by
+    // the 'atomic definition writes' cases in update-roundtrip.test.ts).
+    // Atomicity is PER FILE. A patch touching two or three of them lands as up
+    // to three renames, and a reader between two of them (another process's
+    // mtime refresh) sees the new config.yaml beside the old toolset.yaml.
+    // That window is a limitation, not closed here; the self-amendment path
+    // writes one file per amendment (`writeDefinitionBytes`), so it has none.
+    // A rename also replaces a symlinked definition file with a regular file.
     if (patch.toolset !== undefined) {
-      await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(patch.toolset));
+      await this.storage.writeAtomic(join(dir, 'toolset.yaml'), renderToolsetYaml(patch.toolset));
     }
     if (patch.soulMd !== undefined) {
-      await this.storage.write(join(dir, 'SOUL.md'), patch.soulMd);
+      await this.storage.writeAtomic(join(dir, 'SOUL.md'), patch.soulMd);
     }
     // Invalidate the mtime-based fingerprint so a rapid second write within
     // the same millisecond is not silently skipped by loadOne's cache guard.
@@ -1604,6 +1657,60 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       throw new EthosError({
         code: 'INTERNAL',
         cause: `Updated personality "${id}" but registry refresh did not pick it up.`,
+        action: 'Restart the server to recover.',
+      });
+    }
+    return refreshed;
+  }
+
+  /**
+   * Replace one definition file with exactly `bytes` — the writer the
+   * self-amendment apply and rollback use (plan personality-memory-boundary
+   * G2, prereq C). Unlike `update()` nothing is rendered or merged: the bytes a
+   * reviewer approved are the bytes written.
+   *
+   * - Built-ins are refused (`requireMutable`, `PERSONALITY_READ_ONLY`).
+   * - With `expectedHash`, a compare-and-swap: the live file is re-read and
+   *   hashed (`hashDefinitionBytes`) immediately before the write, and a
+   *   mismatch — including a missing file — throws `DefinitionChangedError`
+   *   with nothing written. The residual window is the time between that read
+   *   and the rename; no Storage method can close it.
+   * - The write is `Storage.writeAtomic`, so no reader sees a torn file.
+   * - The fingerprint cache entry is dropped before the refresh, so a rewrite
+   *   inside the same mtime tick is still re-parsed.
+   *
+   * Pinned by `write-definition-bytes.test.ts` and the same-tick case in
+   * `hot-reload.test.ts`.
+   */
+  async writeDefinitionBytes(
+    id: string,
+    file: DefinitionBytesFile,
+    bytes: string,
+    opts: { expectedHash?: string } = {},
+  ): Promise<DescribedPersonality> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+    const path = join(dir, file);
+    if (opts.expectedHash !== undefined) {
+      const live = await this.storage.read(path);
+      const liveHash = live === null ? null : hashDefinitionBytes(live);
+      if (liveHash !== opts.expectedHash) {
+        throw new DefinitionChangedError({
+          personalityId: id,
+          file,
+          expectedHash: opts.expectedHash,
+          liveHash,
+        });
+      }
+    }
+    await this.storage.writeAtomic(path, bytes);
+    this.fingerprintCache.delete(dir);
+    await this.refreshUserDir();
+    const refreshed = this.describe(id);
+    if (!refreshed) {
+      throw new EthosError({
+        code: 'INTERNAL',
+        cause: `Wrote ${file} for personality "${id}" but registry refresh did not pick it up.`,
         action: 'Restart the server to recover.',
       });
     }

@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilePersonalityRegistry } from '../index';
 
 let testDir: string;
@@ -210,5 +210,30 @@ describe('update validation rejects bad inputs', () => {
         registry.update('v-me-builtin', { mcp_export: { enabled: true } }),
       ).rejects.toMatchObject({ code: 'PERSONALITY_READ_ONLY' });
     });
+  });
+
+  // plan personality-memory-boundary G2-6: a refused patch is refused before
+  // any definition file is written, atomically or otherwise.
+  it('a rejected update writes nothing', async () => {
+    await seedPersonality('v-nowrite');
+    const storage = new FsStorage();
+    const registry = new FilePersonalityRegistry(storage, testDir);
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    const writeAtomic = vi.spyOn(storage, 'writeAtomic');
+    const write = vi.spyOn(storage, 'write');
+
+    await expect(
+      registry.update('v-nowrite', {
+        fs_reach: { read: ['..'] },
+        toolset: ['web_search'],
+        soulMd: '# changed\n',
+      }),
+    ).rejects.toThrow(/fs_reach/);
+
+    expect(writeAtomic).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    const dir = join(testDir, 'personalities', 'v-nowrite');
+    expect(await readFile(join(dir, 'toolset.yaml'), 'utf-8')).toBe('- read_file\n');
+    expect(await readFile(join(dir, 'SOUL.md'), 'utf-8')).toBe('# v-nowrite\n\nIdentity.\n');
   });
 });

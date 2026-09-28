@@ -1,11 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
 // literal `${self}` / `${ETHOS_HOME}` / `${CWD}` tokens — not template interpolation.
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderCharacterSheet } from '../character-sheet';
 import { FilePersonalityRegistry } from '../index';
 
@@ -1776,5 +1776,37 @@ describe('decisions round-trip', () => {
       provider: 'typesafe',
       sites: { injection: 'shadow' },
     });
+  });
+});
+
+// plan personality-memory-boundary G2-6 (prereq C): update() replaces every
+// definition file it touches with Storage.writeAtomic, never a plain write.
+describe('atomic definition writes', () => {
+  it('update() writes config.yaml, toolset.yaml and SOUL.md through writeAtomic', async () => {
+    await seedPersonality('atomic', 'name: Atomic\n');
+    const storage = new FsStorage();
+    const registry = new FilePersonalityRegistry(storage, testDir);
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    const writeAtomic = vi.spyOn(storage, 'writeAtomic');
+    const write = vi.spyOn(storage, 'write');
+
+    await registry.update('atomic', {
+      name: 'Atomic v2',
+      toolset: ['read_file', 'web_search'],
+      soulMd: '# Atomic\n\nv2\n',
+    });
+
+    const dir = join(testDir, 'personalities', 'atomic');
+    expect(writeAtomic.mock.calls.map((c) => c[0])).toEqual([
+      join(dir, 'config.yaml'),
+      join(dir, 'toolset.yaml'),
+      join(dir, 'SOUL.md'),
+    ]);
+    expect(write).not.toHaveBeenCalled();
+    // No temp file is left beside the definition files.
+    expect((await readdir(dir)).filter((n) => n.includes('.tmp.'))).toEqual([]);
+    expect(await readFile(join(dir, 'SOUL.md'), 'utf-8')).toBe('# Atomic\n\nv2\n');
+    expect(registry.get('atomic')?.name).toBe('Atomic v2');
+    expect(registry.get('atomic')?.toolset).toEqual(['read_file', 'web_search']);
   });
 });

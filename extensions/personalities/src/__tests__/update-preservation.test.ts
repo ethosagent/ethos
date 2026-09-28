@@ -1,11 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
 // literal `${self}` tokens — not template interpolation.
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilePersonalityRegistry } from '../index';
 
 let testDir: string;
@@ -75,5 +75,31 @@ describe('update preserves unmodified fields', () => {
     expect(after?.plugins).toEqual(['linear', 'jira']);
     expect(after?.fs_reach?.read).toEqual(['/data', '${self}/docs']);
     expect(after?.fs_reach?.write).toEqual(['/data/output']);
+  });
+
+  // plan personality-memory-boundary G2-6: a name-only patch replaces
+  // config.yaml atomically and leaves the other definition files' bytes alone.
+  it('a config-only update rewrites only config.yaml, atomically', async () => {
+    const id = 'preserve-atomic';
+    const dir = join(testDir, 'personalities', id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'config.yaml'), 'name: Original\n');
+    await writeFile(join(dir, 'SOUL.md'), '# Preserve\n\nIdentity.\n');
+    // A hand-written comment the renderer would not reproduce.
+    await writeFile(join(dir, 'toolset.yaml'), '# mine\n- read_file\n');
+
+    const storage = new FsStorage();
+    const registry = new FilePersonalityRegistry(storage, testDir);
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    const writeAtomic = vi.spyOn(storage, 'writeAtomic');
+    const write = vi.spyOn(storage, 'write');
+
+    await registry.update(id, { name: 'New Name' });
+
+    expect(writeAtomic.mock.calls.map((c) => c[0])).toEqual([join(dir, 'config.yaml')]);
+    expect(write).not.toHaveBeenCalled();
+    expect(await readFile(join(dir, 'toolset.yaml'), 'utf-8')).toBe('# mine\n- read_file\n');
+    expect(await readFile(join(dir, 'SOUL.md'), 'utf-8')).toBe('# Preserve\n\nIdentity.\n');
+    expect(registry.get(id)?.name).toBe('New Name');
   });
 });

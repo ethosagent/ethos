@@ -190,6 +190,29 @@ describe('personality hot-reload — refresh-on-resolve', () => {
       sites: { injection: 'shadow' },
     });
   });
+
+  // plan personality-memory-boundary G2 prereq C — writeDefinitionBytes drops
+  // the fingerprint entry before refreshing, so a rewrite whose mtime equals
+  // the cached one (same tick) is still re-parsed.
+  it('writeDefinitionBytes is picked up even when the rewrite keeps the same mtime', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage, '/data');
+    await writePersonality(storage, 'tick', { name: 'Tick' });
+    // Freeze every mtime: each write lands in the "same millisecond".
+    vi.spyOn(storage, 'mtime').mockImplementation(async (p) =>
+      (await storage.exists(p)) ? 1 : null,
+    );
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('tick')?.toolset).toEqual(['read_file']);
+
+    // Control: a plain rewrite is invisible to the mtime cache in that tick.
+    await storage.write(join(DIR, 'tick', 'toolset.yaml'), '- web_search\n');
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('tick')?.toolset).toEqual(['read_file']);
+
+    await registry.writeDefinitionBytes('tick', 'toolset.yaml', '- read_file\n- web_fetch\n');
+    expect(registry.get('tick')?.toolset).toEqual(['read_file', 'web_fetch']);
+  });
 });
 
 // N3 (ux-feedback-and-config-clarity) — resilient loading. One malformed
