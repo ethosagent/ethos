@@ -7,7 +7,7 @@ import type {
   SessionStore,
   StoredMessage,
 } from '@ethosagent/types';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { AcpServer, type AgentRunner } from '../index';
 
@@ -494,5 +494,47 @@ describe('AcpServer /notify — mode branching (Lane C Phase 2)', () => {
     } finally {
       await stopServer(httpServer);
     }
+  });
+});
+
+// plan personality-memory-boundary step 5, D20 — a team dispatcher forwards a
+// shared kanban task's stamp; `/notify` honours only `'shared'` (narrow, never
+// widen) and the turn runs with it.
+describe('AcpServer /notify — room audience', () => {
+  async function audienceFor(body: Record<string, unknown>): Promise<unknown> {
+    const seen: unknown[] = [];
+    const server = new AcpServer({
+      runner: {
+        run: async function* (_text, opts) {
+          seen.push(opts?.roomAudience);
+          yield { type: 'done', text: 'ok', turnCount: 1 };
+        },
+      },
+      session: makeStore(),
+      authToken: 'test-secret-token',
+    });
+    const httpServer = server.startHttp(0);
+    await new Promise<void>((r) => httpServer.on('listening', () => r()));
+    const addr = httpServer.address();
+    const port = addr && typeof addr === 'object' ? addr.port : 0;
+    try {
+      const res = await httpPost(port, '/notify', JSON.stringify({ kind: 'kanban', ...body }), {
+        Authorization: `Bearer ${server.token}`,
+      });
+      expect(res.status).toBe(202);
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      return seen[0];
+    } finally {
+      await new Promise<void>((r) => httpServer.close(() => r()));
+    }
+  }
+
+  it('runs shared when the request says shared', async () => {
+    expect(await audienceFor({ ref: 't', roomAudience: 'shared' })).toBe('shared');
+  });
+
+  it('runs private otherwise — a request cannot widen it', async () => {
+    expect(await audienceFor({ ref: 't' })).toBe('private');
+    expect(await audienceFor({ ref: 't', roomAudience: 'public' })).toBe('private');
   });
 });

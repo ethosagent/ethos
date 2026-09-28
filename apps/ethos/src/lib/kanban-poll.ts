@@ -1,6 +1,6 @@
 import { KanbanStore, renderOperatorContext, type Task } from '@ethosagent/kanban-store';
 import type { SessionLane } from '@ethosagent/session-lane';
-import { type AgentEvent, answerSuffix } from '@ethosagent/types';
+import { type AgentEvent, answerSuffix, type TurnAudience } from '@ethosagent/types';
 
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_STALENESS_THRESHOLD_MS = 1_800_000;
@@ -36,6 +36,9 @@ export interface KanbanPollConfig {
   /**
    * Runner to execute the stimulus prompt. `runId` is the run this loop's claim
    * opened — pass it to `writeRunActivityComments` so it heartbeats only that run.
+   * `roomAudience` is the task's (`Task.roomAudience`, plan
+   * personality-memory-boundary D20; unstamped → private) — pass it to
+   * `AgentLoop.run` so a task a group chat created runs shared.
    */
   runner: (
     prompt: string,
@@ -43,6 +46,7 @@ export interface KanbanPollConfig {
     taskId: string,
     taskTitle: string,
     runId: string,
+    roomAudience: TurnAudience,
   ) => Promise<void>;
   /** Poll interval. Default 5000ms. */
   intervalMs?: number;
@@ -150,9 +154,12 @@ export class KanbanPollLoop {
           (operatorContext ? `\n\n${operatorContext}` : '');
         const sessionKey = `poll:kanban:${task.id}:${Date.now()}`;
         void this.cfg.lane.enqueue(async () => {
-          await this.cfg.runner(prompt, sessionKey, task.id, task.title, runId).catch((err) => {
-            this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
-          });
+          const roomAudience = claimed.roomAudience ?? 'private';
+          await this.cfg
+            .runner(prompt, sessionKey, task.id, task.title, runId, roomAudience)
+            .catch((err) => {
+              this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
+            });
         });
       }
     } finally {

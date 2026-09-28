@@ -72,11 +72,11 @@ import {
   IdentityMap,
   initPairingDb,
   type MessagingSendFn,
+  privateChatSetFrom,
   SQLiteNotifyQueue,
-  sanitize,
   seedAllSystemJobs,
   systemJobProblem,
-  wrapUntrusted,
+  targetAudience,
 } from '@ethosagent/wiring';
 import { runBootReconciliation } from '../boot-reconciliation';
 import {
@@ -135,6 +135,7 @@ import {
 } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { pruneExpiredSessions } from '../lib/session-retention';
+import { callCaptureWake, watcherWakeMessage } from '../lib/watcher-wake';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
@@ -156,7 +157,7 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
-import { runCronTurn } from './cron-turn';
+import { cronFiringAudience, runCronTurn } from './cron-turn';
 import {
   adapterRegistries,
   buildBotSpeakers,
@@ -410,6 +411,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const watcherManager = new WatcherManager({
     storage,
     logger,
+    // Judges a watcher's origin chat and delivery target for its wake
+    // audience (`WatcherManager.wakeAudience`), honouring trusted rooms.
+    targetAudience: (platform, chatId) =>
+      targetAudience(platform, chatId, privateChatSetFrom(cfg.gateway?.privateChats)),
     deliver: async (target, text) => {
       if (watcherDeliverFn) await watcherDeliverFn(target, text);
     },
@@ -490,6 +495,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         prompt: job.prompt ?? '',
         personalityId: job.personalityId,
         webOrigin,
+        roomAudience: await cronFiringAudience(job, {
+          listJobs: () => scheduler.listJobs(),
+          privateChats: privateChatSetFrom(cfg.gateway?.privateChats),
+          warn: (line) => logger.warn(line),
+        }),
         ...(toolsetOverride ? { toolsetOverride } : {}),
         // R10 — the scheduler aborts this at the job's `maxRunMs`.
         ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
@@ -1039,23 +1049,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       );
       return;
     }
-    const wrapped = wrapUntrusted({
-      content: event.summary,
-      toolName: 'watcher',
-      source: `${event.watcherId}:${event.target}`,
-    });
-    const msg: InboundMessage = {
-      platform: 'watcher',
-      chatId: `watcher:${event.watcherId}`,
-      text: sanitize(
-        `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
-      ),
-      isDm: true,
-      isGroupMention: false,
-      botKey: bot.botKey,
-      messageId: `watcher-${event.watcherId}-${Date.now()}`,
-      raw: { watcherId: event.watcherId, target: event.target },
-    };
+    // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
+    const msg = watcherWakeMessage(event, bot.botKey);
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
   };
@@ -1262,7 +1257,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           notificationGate: new NotificationGate(),
           checkDependencies: checkCallCaptureDependencies,
           personalityId: boundPersonalityId,
-          wake: watcherWake,
+          // Private by design: the owner's own call audit trail (`callCaptureWake`).
+          wake: callCaptureWake(watcherWake),
           indicator: new CaptureIndicator({
             onError: (msg) => logger.warn(`call-capture: ${msg}`),
           }),
@@ -1561,6 +1557,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       liveWebhooks,
       createCapturingAdapter,
       runWebhookPrefilter,
+      undefined,
+      {
+        // D12 — a `private: true` hook runs private only when every deliver
+        // target is private too (`webhookAudienceHint`).
+        targetAudience: (platform, chatId) =>
+          targetAudience(platform, chatId, privateChatSetFrom(cfg.gateway?.privateChats)),
+      },
     );
     for (const hookId of Object.keys(liveWebhooks)) {
       console.log(`  webhook: http://${webhookHost}:${webhookPort}/webhook/${hookId}`);

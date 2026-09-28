@@ -251,6 +251,9 @@ export function createWatcherTools(
       const owner: WatcherOwner = {
         personalityId: caller,
         ...(ctx.origin !== undefined ? { origin: ctx.origin } : {}),
+        // A watcher a shared turn creates wakes shared (G1-6,
+        // `WatcherManager.wakeAudience`).
+        ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
       };
 
       const onChange: WatcherOnChange = {};

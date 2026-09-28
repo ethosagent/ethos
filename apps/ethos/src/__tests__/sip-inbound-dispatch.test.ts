@@ -73,7 +73,13 @@ interface Harness {
   callLog: InMemoryCallLog;
   notices: string[];
   inbound: VoiceInboundGates;
-  turns: Array<{ text: string; personalityId?: string; sessionKey?: string; speaker?: string }>;
+  turns: Array<{
+    text: string;
+    personalityId?: string;
+    sessionKey?: string;
+    speaker?: string;
+    roomAudience?: string;
+  }>;
   adapterOptions: Array<{ personality?: PersonalityConfig }>;
 }
 
@@ -122,6 +128,7 @@ function harness(
           personalityId: runOpts?.personalityId,
           sessionKey: runOpts?.sessionKey,
           speaker: runOpts?.voiceOrigin?.speaker,
+          ...(runOpts?.roomAudience ? { roomAudience: runOpts.roomAudience } : {}),
         });
         if (opts.turnCostUsd !== undefined) {
           yield {
@@ -272,6 +279,14 @@ describe('createSipInboundHandler — spend accounting', () => {
 });
 
 describe('createSipInboundHandler — accepted calls', () => {
+  // plan personality-memory-boundary step 5, D14 — the far end is not the
+  // owner: every turn on the call lane is shared.
+  it('D14: runs the far end shared', async () => {
+    const h = harness();
+    await h.handle(call, {});
+    expect(h.turns[0]).toMatchObject({ speaker: 'far_end', roomAudience: 'shared' });
+  });
+
   it('answers an unknown caller as the receptionist, restricted, with no pre-warm', async () => {
     const h = harness();
     const outcome = await h.handle(call, {});

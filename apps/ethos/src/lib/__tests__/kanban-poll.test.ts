@@ -530,3 +530,46 @@ describe('writeRunActivityComments', () => {
     });
   });
 });
+
+// plan personality-memory-boundary step 5, D20 — the poll loop hands its
+// runner the task's room audience (serve.ts passes it to `AgentLoop.run`).
+describe('KanbanPollLoop — room audience', () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kanban-poll-audience-'));
+    dbPath = join(tempDir, 'board.db');
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('a task from a group chat runs shared; an unstamped one runs private', async () => {
+    const store = new KanbanStore(dbPath);
+    const shared = store.createTask({
+      title: 'group',
+      assignee: 'agent-a',
+      roomAudience: 'shared',
+    });
+    const bare = store.createTask({ title: 'bare', assignee: 'agent-a' });
+    store.updateStatus(shared.id, 'ready', undefined, 'test');
+    store.updateStatus(bare.id, 'ready', undefined, 'test');
+    store.close();
+
+    const seen = new Map<string, string>();
+    const pollLoop = new KanbanPollLoop({
+      boardPath: dbPath,
+      personalityId: 'agent-a',
+      lane: new SessionLane(),
+      runner: async (_p, _k, _id, title, _run, roomAudience) => {
+        seen.set(title, roomAudience);
+      },
+    });
+    await pollLoop.tick();
+    await vi.waitFor(() => expect(seen.size).toBe(2));
+    expect(seen.get('group')).toBe('shared');
+    expect(seen.get('bare')).toBe('private');
+  });
+});

@@ -94,6 +94,10 @@ export function createA2aRunner(deps: CreateA2aRunnerDeps): A2aTaskRunner {
 
       yield* deps.loop.run(text, {
         personalityId,
+        // An external A2A peer is not the owner (plan personality-memory-boundary
+        // D13): no private memory.
+        roomAudience: 'shared',
+        initiator: 'system',
         ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
         ...(toolsetNarrow ? { toolsetNarrow } : {}),
         ...(toolsetExclude ? { toolsetExclude } : {}),

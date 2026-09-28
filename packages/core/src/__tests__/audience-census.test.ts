@@ -47,20 +47,6 @@ const RECEIVER_ALIASES: Record<string, readonly string[]> = {
  * — the census fails on a stale count in either direction.
  */
 const PENDING_WIRING: ReadonlyArray<{ file: string; count: number; step: number; what: string }> = [
-  { file: 'apps/ethos/src/commands/gateway.ts', count: 1, step: 5, what: 'cron systemLoop' },
-  { file: 'apps/ethos/src/commands/cron-turn.ts', count: 1, step: 5, what: 'runCronTurn' },
-  { file: 'apps/ethos/src/commands/cron.ts', count: 1, step: 5, what: 'ethos cron run' },
-  {
-    file: 'apps/ethos/src/commands/serve.ts',
-    count: 2,
-    step: 5,
-    what: 'watcher wake + kanban poll',
-  },
-  { file: 'packages/wiring/src/build-agent-loop.ts', count: 2, step: 5, what: 'goal runAttempt' },
-  { file: 'apps/ethos/src/commands/serve-a2a-runner.ts', count: 1, step: 5, what: 'A2A (D13)' },
-  { file: 'apps/ethos/src/sip-inbound-dispatch.ts', count: 1, step: 5, what: 'SIP far end (D14)' },
-  { file: 'apps/mcp-server/src/export-server.ts', count: 1, step: 5, what: 'MCP export (D15)' },
-  { file: 'extensions/tools-voice/src/agent-consult.ts', count: 1, step: 5, what: 'voice consult' },
   {
     file: 'extensions/skill-evolver/src/improvement-fork.ts',
     count: 1,

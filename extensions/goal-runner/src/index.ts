@@ -191,6 +191,9 @@ export interface GoalRunnerConfig {
       maxToolCallsPerTurn?: number;
       maxIdenticalToolCalls?: number;
       allowDangerousToolCalls?: boolean;
+      /** `Goal.origin`, so the wiring can derive the attempt's room audience
+       *  (plan personality-memory-boundary step 5; goals have no stamp column). */
+      origin?: GoalOrigin;
     },
   ) => AsyncGenerator<AgentEvent>;
   /** Read-only planning turn. When wired, every goal runs a planning phase
@@ -207,6 +210,8 @@ export interface GoalRunnerConfig {
       abortSignal: AbortSignal;
       personalityId?: string;
       userId?: string;
+      /** `Goal.origin` — see `runAttempt`. */
+      origin?: GoalOrigin;
     },
   ) => AsyncGenerator<AgentEvent>;
   /** Judge for acceptance checks that carry no `command`. Production wiring
@@ -579,6 +584,7 @@ export class GoalRunner {
       // `__tests__/turn-tail.test.ts`.
       for await (const event of runPlan(sessionKey, this.renderPlanPrompt(goal), {
         abortSignal: controller.signal,
+        origin: goal.origin,
         ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
         ...(goal.userId ? { userId: goal.userId } : {}),
       })) {
@@ -826,6 +832,7 @@ export class GoalRunner {
         for await (const event of runAttempt(sessionKey, currentMessage, {
           abortSignal: controller.signal,
           steerSink,
+          origin: goal.origin,
           ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
           ...(goal.userId ? { userId: goal.userId } : {}),
           ...(goal.maxToolCallsPerTurn != null

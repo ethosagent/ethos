@@ -13,6 +13,7 @@ import {
   type WebhookRejectionReason,
   type WebhookRejectionSink,
   type WebhookServer,
+  webhookAudienceHint,
 } from '../webhook-server';
 
 const webhooks = { hook1: { personalityId: 'researcher', secret: 's3cret' } };
@@ -34,6 +35,7 @@ function start(
     now?: () => number;
     /** `'::'` gives a dual-stack listener, so 127.0.0.1 and ::1 are two sources. */
     host?: string;
+    targetAudience?: (platform: string, chatId: string) => 'private' | 'shared';
   } = {},
 ): Promise<number> {
   return new Promise((resolve) => {
@@ -48,6 +50,7 @@ function start(
       {
         ...(opts.onRejected ? { onRejected: opts.onRejected } : {}),
         ...(opts.now ? { now: opts.now } : {}),
+        ...(opts.targetAudience ? { targetAudience: opts.targetAudience } : {}),
       },
     );
     server = s;
@@ -1457,5 +1460,67 @@ describe('createWebhookServer — rejection sink', () => {
     expect(JSON.parse(res.body)).toEqual({ error: 'unauthorized' });
     // And the server is still serving.
     expect((await post(port, '/webhook/hook1', HI, 'Bearer s3cret')).status).toBe(200);
+  });
+});
+
+// plan personality-memory-boundary D12 — a webhook caller is not provably the
+// owner: its turn is shared unless the hook is `private: true` AND every
+// deliver target is private.
+describe('webhook room audience (D12)', () => {
+  /** Telegram-style: a positive id is a DM, `-100…` a group. */
+  const classify = (_platform: string, chatId: string): 'private' | 'shared' =>
+    /^\d+$/.test(chatId) ? 'private' : 'shared';
+  const dm: WebhookDeliveryTarget = { type: 'platform', adapterId: 'telegram:bot', chatId: '42' };
+  const group: WebhookDeliveryTarget = {
+    type: 'platform',
+    adapterId: 'telegram:bot',
+    chatId: '-100200',
+  };
+
+  it.each([
+    ['no private flag', {}, 'shared'],
+    ['private: false', { private: false }, 'shared'],
+    ['private, no deliver targets', { private: true }, undefined],
+    ['private, log target only', { private: true, deliver: [{ type: 'log' as const }] }, undefined],
+    ['private, DM target', { private: true, deliver: [dm] }, undefined],
+    ['private, a group among the targets', { private: true, deliver: [dm, group] }, 'shared'],
+    ['not private, DM target', { deliver: [dm] }, 'shared'],
+  ])('%s → %s', (_label, hook, expected) => {
+    expect(webhookAudienceHint(hook, classify)).toBe(expected);
+  });
+
+  it('with no classifier wired, a platform target is shared even on a private hook', () => {
+    expect(webhookAudienceHint({ private: true, deliver: [dm] })).toBe('shared');
+  });
+
+  it('the classifier sees the platform from the adapterId, not the bot', () => {
+    const seen: string[] = [];
+    webhookAudienceHint({ private: true, deliver: [dm] }, (platform) => {
+      seen.push(platform);
+      return 'private';
+    });
+    expect(seen).toEqual(['telegram']);
+  });
+
+  it('the synthesized message carries the hint; isDm stays true', async () => {
+    const seen: InboundMessage[] = [];
+    const gateway: WebhookGateway = {
+      handleMessage: async (msg, adapter) => {
+        seen.push(msg);
+        await adapter.send('chat', { text: 'ok' });
+      },
+    };
+    const port = await start(gateway, {
+      webhooks: {
+        open: { personalityId: 'researcher', secret: 's3cret' },
+        mine: { personalityId: 'researcher', secret: 's3cret', private: true },
+      },
+      targetAudience: classify,
+    });
+    await post(port, '/webhook/open', JSON.stringify({ prompt: 'hi' }), 'Bearer s3cret');
+    await post(port, '/webhook/mine', JSON.stringify({ prompt: 'hi' }), 'Bearer s3cret');
+    expect(seen[0]).toMatchObject({ platform: 'webhook', isDm: true, audienceHint: 'shared' });
+    expect(seen[1]?.isDm).toBe(true);
+    expect(seen[1]?.audienceHint).toBeUndefined();
   });
 });

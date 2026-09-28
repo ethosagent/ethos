@@ -10,7 +10,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
-import type { Logger, Storage } from '@ethosagent/types';
+import type { Logger, Storage, TurnAudience } from '@ethosagent/types';
 import {
   createDefaultProcessProbe,
   type DiffOutcome,
@@ -52,6 +52,13 @@ export interface WatcherOwner {
   personalityId: string;
   /** `platform:chatId` of the creating turn (`ToolContext.origin`), when it had one. */
   origin?: string;
+  /**
+   * The creating turn's resolved room audience (`ToolContext.roomAudience`,
+   * plan personality-memory-boundary G1-6), stamped by `watcher_create`.
+   * Absent on owners recorded before the field existed. Read only by
+   * `WatcherManager.wakeAudience`.
+   */
+  roomAudience?: TurnAudience;
 }
 
 /** Why the last change was not delivered, persisted on the record so
@@ -135,6 +142,15 @@ export interface WatcherWakeEvent {
   personalityId: string;
   promptPrefix?: string;
   summary: string;
+  /**
+   * The room audience the woken turn runs under, stamped by the manager
+   * (`WatcherManager.wakeAudience`): shared when the watcher has no owner,
+   * when its creating turn was shared, or when its origin chat or delivery
+   * target is not provably private. Every wake site passes it on — the
+   * gateway-routed ones as `InboundMessage.audienceHint`, `ethos serve`'s as
+   * `RunOptions.roomAudience`.
+   */
+  roomAudience: TurnAudience;
 }
 
 export interface WatcherTickResult {
@@ -174,6 +190,14 @@ export interface WatcherManagerConfig {
    *  `refresh` is awaited first, so an `outbound_policy` edited on disk applies
    *  on the next tick. Absent = every stored `deliver` goes out. */
   deliveryGate?: WatcherDeliveryGate;
+  /**
+   * Whether a message to `platform:chatId` is read by one person — bound at
+   * wiring time to `targetAudience` (packages/core/src/chat-audience.ts) over
+   * the operator's `gateway.private_chats`. Used by `wakeAudience` for a
+   * watcher's origin chat and delivery target. Absent → every chat counts as
+   * shared (fail closed).
+   */
+  targetAudience?: (platform: string, chatId: string) => TurnAudience;
   /** Injected fetch for http/rss differs. Defaults to global fetch. */
   fetchFn?: typeof fetch;
   /** Injected alive-probe for process watchers. Defaults to pid / pid-file /
@@ -237,6 +261,7 @@ export class WatcherManager {
   private readonly logger: Logger;
   private readonly deliver?: (target: WatcherDeliverTarget, text: string) => Promise<void>;
   private readonly wake?: (event: WatcherWakeEvent) => Promise<void>;
+  private readonly targetAudience?: (platform: string, chatId: string) => TurnAudience;
   private readonly fetchFn: typeof fetch;
   private readonly processProbe: ProcessProbe;
   private scheduler: WatcherSchedulerPort | null = null;
@@ -250,6 +275,7 @@ export class WatcherManager {
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.wake = config.wake;
+    this.targetAudience = config.targetAudience;
     this.deliveryGate = config.deliveryGate;
     this.fetchFn = config.fetchFn ?? fetch;
     this.processProbe = config.processProbe ?? createDefaultProcessProbe(config.storage);
@@ -405,6 +431,31 @@ export class WatcherManager {
     }
   }
 
+  /**
+   * The audience a wake from `watcher` runs under (plan
+   * personality-memory-boundary G1-6). `'shared'` if ANY of: the watcher has
+   * no owner (created outside a turn — nothing proves it private); its owner
+   * was stamped shared; its owner predates the stamp and its origin chat is
+   * not provably private; its delivery target is not provably private (the
+   * woken agent writes for that room). `'private'` otherwise. Pinned by
+   * `__tests__/wake-audience.test.ts`.
+   */
+  private wakeAudience(watcher: WatcherRecord): TurnAudience {
+    const owner = watcher.owner;
+    if (!owner || owner.roomAudience === 'shared') return 'shared';
+    const classify = (platform: string, chatId: string): TurnAudience =>
+      this.targetAudience?.(platform, chatId) ?? 'shared';
+    if (owner.roomAudience === undefined && owner.origin !== undefined) {
+      const colon = owner.origin.indexOf(':');
+      if (colon <= 0) return 'shared';
+      const platform = owner.origin.slice(0, colon);
+      if (classify(platform, owner.origin.slice(colon + 1)) === 'shared') return 'shared';
+    }
+    const deliver = watcher.onChange.deliver;
+    if (deliver && classify(deliver.platform, deliver.chatId) === 'shared') return 'shared';
+    return 'private';
+  }
+
   /** Invoke deliver and/or wake (both may be set). Callback failures are
    *  logged, never thrown — a broken channel must not break the tick, and
    *  state still advances (at-least-once alerting is the accepted posture). */
@@ -461,6 +512,7 @@ export class WatcherManager {
             personalityId: wake.personalityId,
             ...(wake.promptPrefix ? { promptPrefix: wake.promptPrefix } : {}),
             summary,
+            roomAudience: this.wakeAudience(watcher),
           });
         } catch (err) {
           this.logger.error(`[watchers] wake failed for "${watcher.id}"`, {

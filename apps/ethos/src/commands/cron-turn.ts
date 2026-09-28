@@ -2,8 +2,16 @@
 // Pure of the serve command's wiring (loop and session store are injected) so
 // the routing rule and the failure path are unit-testable.
 
-import { CronProgressRecorder, type CronRunProgress } from '@ethosagent/cron';
-import { type AgentEvent, answerSuffix, EthosError } from '@ethosagent/types';
+import type { PrivateChatSet } from '@ethosagent/core';
+import { type CronJob, CronProgressRecorder, type CronRunProgress } from '@ethosagent/cron';
+import {
+  type AgentEvent,
+  answerSuffix,
+  EthosError,
+  type TurnAudience,
+  type TurnInitiator,
+} from '@ethosagent/types';
+import { cronRunAudience } from '@ethosagent/wiring';
 
 /** The slice of `AgentLoop` a cron firing needs. */
 interface CronTurnLoop {
@@ -14,6 +22,8 @@ interface CronTurnLoop {
       personalityId: string;
       toolsetOverride?: string[];
       abortSignal?: AbortSignal;
+      roomAudience: TurnAudience;
+      initiator: TurnInitiator;
     },
   ): AsyncIterable<AgentEvent>;
 }
@@ -34,6 +44,9 @@ export interface CronTurnInput {
   webOrigin?: string | null;
   /** From the scheduler's `CronRunJobOptions`: aborted at the job's `maxRunMs`. */
   abortSignal?: AbortSignal;
+  /** The firing's room audience — `cronFiringAudience` below. Required, so a
+   *  runner cannot forget it (plan personality-memory-boundary G1-9). */
+  roomAudience: TurnAudience;
 }
 
 export interface CronTurnResult {
@@ -70,8 +83,12 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
   const boundPersonalityId = webOrigin
     ? ((await sessions.getSessionByKey(webOrigin))?.personalityId ?? null)
     : null;
+  // A shared firing never runs in the owner's web chat: its first turn would
+  // stamp that session shared for good (G1-7). It gets its own session.
   const reusedWebOrigin =
-    webOrigin !== null && (boundPersonalityId === null || boundPersonalityId === personalityId);
+    input.roomAudience === 'private' &&
+    webOrigin !== null &&
+    (boundPersonalityId === null || boundPersonalityId === personalityId);
   const sessionKey =
     reusedWebOrigin && webOrigin !== null ? webOrigin : `cron:${jobId}:${new Date().toISOString()}`;
 
@@ -83,6 +100,8 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
     personalityId,
     ...(toolsetOverride ? { toolsetOverride } : {}),
     ...(abortSignal ? { abortSignal } : {}),
+    roomAudience: input.roomAudience,
+    initiator: 'system',
   })) {
     if (event.type === 'text_delta') output += event.text;
     // A `returnDirect` tool's answer arrives only as `done.text`, after any
@@ -101,4 +120,36 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
   }
 
   return { sessionKey, output, reusedWebOrigin, progress: progress.snapshot() };
+}
+
+/**
+ * The room audience one cron firing runs under: `cronRunAudience`
+ * (packages/wiring/src/cron-audience.ts) over the job, every job in
+ * `jobs.json` (for `contextFrom`) and the operator's trusted rooms. An
+ * unstamped job that resolves shared is logged once per firing (D11) with the
+ * way back. Shared by all three cron runners — `ethos gateway start`, `ethos
+ * serve`/`ethos boot` (through `runCronTurn`) and `ethos cron run` — and pinned
+ * by `apps/ethos/src/__tests__/cron-audience-run.test.ts`.
+ */
+export async function cronFiringAudience(
+  job: CronJob,
+  deps: {
+    listJobs: () => Promise<CronJob[]>;
+    privateChats?: PrivateChatSet;
+    warn: (line: string) => void;
+  },
+): Promise<TurnAudience> {
+  const jobs = job.contextFrom && job.contextFrom.length > 0 ? await deps.listJobs() : [];
+  return cronRunAudience(job, {
+    jobs,
+    ...(deps.privateChats ? { privateChats: deps.privateChats } : {}),
+    onUnstamped: (legacy) => {
+      const target = legacy.origin ? ` (delivers to ${legacy.origin.platform})` : '';
+      deps.warn(
+        `[cron] job "${legacy.id}"${target} predates room-audience stamps and runs without ` +
+          `private memory. To restore it, list its chat in gateway.private_chats.<platform> ` +
+          `and restart, or recreate the job from a DM or the CLI/web app.`,
+      );
+    },
+  });
 }

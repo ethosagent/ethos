@@ -82,6 +82,17 @@ describe('agent_consult', () => {
     expect(runOpts[0]?.personalityId).toBe('ada');
   });
 
+  // plan personality-memory-boundary step 5 (G1-6) — a consult a shared turn
+  // makes is shared; a hand-built context passes nothing (private).
+  it('forwards the calling turn’s room audience', async () => {
+    const { loop, runOpts } = fakeLoop([{ type: 'done', text: '', turnCount: 1 }]);
+    const tool = createAgentConsultTool(loop, { voiceOrigin: OWNER_ORIGIN });
+    await tool.execute({ prompt: 'hi' }, { ...ctx, roomAudience: 'shared' });
+    await tool.execute({ prompt: 'hi' }, ctx);
+    expect(runOpts[0]?.roomAudience).toBe('shared');
+    expect(runOpts[1]).not.toHaveProperty('roomAudience');
+  });
+
   it('stamps the voice origin the spoken-confirmation gate reads', async () => {
     const { loop, runOpts } = fakeLoop([{ type: 'done', text: '', turnCount: 1 }]);
     const tool = createAgentConsultTool(loop, { voiceOrigin: OWNER_ORIGIN });

@@ -200,4 +200,27 @@ describe('Gateway — room audience on lane turns', () => {
     );
     expect(owner.skipPersonalityMemory).toBeUndefined();
   });
+
+  // plan personality-memory-boundary step 5 — a watcher wake and a webhook
+  // are synthesized by Ethos (`initiatorFor`), and a shared one carries the
+  // hint (`watcherWakeMessage` / `webhookAudienceHint` in apps/ethos).
+  it('a synthesized watcher wake or webhook is system-initiated; its hint decides the audience', async () => {
+    const wake = {
+      ...makeMessage('telegram'),
+      platform: 'watcher',
+      chatId: 'watcher:w1',
+    };
+    const privateWake = await optsFor(wake);
+    expect(privateWake.initiator).toBe('system');
+    expect(privateWake.roomAudience).toBe('private');
+    const sharedWake = await optsFor({ ...wake, audienceHint: 'shared' as const });
+    expect(sharedWake.roomAudience).toBe('shared');
+    const hook = await optsFor({
+      ...makeMessage('telegram'),
+      platform: 'webhook',
+      chatId: 'hook-1',
+      audienceHint: 'shared' as const,
+    });
+    expect(hook).toMatchObject({ initiator: 'system', roomAudience: 'shared' });
+  });
 });

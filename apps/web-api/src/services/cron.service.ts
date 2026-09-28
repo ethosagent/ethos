@@ -6,6 +6,7 @@ import type {
   CronJob,
   CronRun,
 } from '@ethosagent/web-contracts';
+import { type PrivateChatSet, targetAudience } from '@ethosagent/wiring';
 import { type DeliveryTargetWorld, resolveDeliveryTargets } from './cron-delivery-targets';
 
 // Cron orchestration. Wraps the CronScheduler — job CRUD + tick loop +
@@ -38,6 +39,12 @@ export interface CronServiceOptions {
    * is no bot to deliver through.
    */
   deliveryWorld?: DeliveryTargetWorld;
+  /**
+   * The operator's trusted rooms (`gateway.private_chats`), read at create time
+   * so a job's `roomAudience` stamp honours the list as it stands then. Absent
+   * → no trusted rooms: a group target is stamped shared.
+   */
+  readPrivateChats?: () => Promise<PrivateChatSet | undefined>;
 }
 
 export class CronService {
@@ -68,6 +75,15 @@ export class CronService {
   async create(input: CronCreateInput): Promise<{ job: CronJob }> {
     const deliverTo = reconcileDeliverTo(input);
     const origin = await this.resolveOrigin(input.personalityId, deliverTo);
+    // The job's room audience (plan personality-memory-boundary G1-6): the
+    // delivery target's (`targetAudience`, packages/core/src/chat-audience.ts),
+    // since the page is the owner's and the target is where the output is read.
+    // No target (file-only) → private; in-app → a `web` target → private. The
+    // runners re-judge the target on every firing (`cronRunAudience`,
+    // packages/wiring/src/cron-audience.ts), so this stamp can only narrow.
+    const roomAudience = origin
+      ? targetAudience(origin.platform, origin.chatId, await this.opts.readPrivateChats?.())
+      : 'private';
     try {
       const job = await this.opts.scheduler.createJob({
         name: input.name,
@@ -77,6 +93,7 @@ export class CronService {
         missedRunPolicy: input.missedRunPolicy ?? 'skip',
         // Absent origin keeps today's default — output saved to file only.
         ...(origin ? { origin } : {}),
+        roomAudience,
       });
       return { job: toWireJob(job) };
     } catch (err) {

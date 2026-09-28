@@ -417,3 +417,19 @@ describe('createA2aRunner — the exclusion complement (B-T6)', () => {
     ]);
   });
 });
+
+// plan personality-memory-boundary step 5, D13 — an external A2A peer is not
+// the owner: every inbound turn is shared, system-initiated.
+describe('createA2aRunner — room audience (D13)', () => {
+  it('runs every inbound A2A turn shared', async () => {
+    const { loop, calls } = stubLoop();
+    const runner = createA2aRunner({
+      loop,
+      personalities: { get: () => personality() },
+      storage: new InMemoryStorage(),
+      reserveOutbound: () => true,
+    });
+    await collect(runner.run('researcher', 'hi', {}));
+    expect(calls[0]?.opts).toMatchObject({ roomAudience: 'shared', initiator: 'system' });
+  });
+});

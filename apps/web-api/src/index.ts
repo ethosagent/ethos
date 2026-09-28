@@ -2,7 +2,12 @@ import { join } from 'node:path';
 import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
 import { AgentMesh, defaultRegistryPath } from '@ethosagent/agent-mesh';
 import { parseConfigYaml, resolveSecretRef, type VoiceBargeInTuning } from '@ethosagent/config';
-import { type AgentLoop, clarifyUnresolvedMessage, satelliteLaneKey } from '@ethosagent/core';
+import {
+  type AgentLoop,
+  clarifyUnresolvedMessage,
+  privateChatSetFrom,
+  satelliteLaneKey,
+} from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import {
   DashboardRefreshScheduler,
@@ -1031,6 +1036,14 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       // targets at all — no channel filter, no pairing row, no lane key.
       discovered: discoveredChats,
     }),
+    // Read per create, like the rest of this app's config reads, so a job's
+    // audience stamp sees `gateway.private_chats` as it stands on disk.
+    readPrivateChats: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null
+        ? undefined
+        : privateChatSetFrom(parseConfigYaml(src).gateway?.privateChats);
+    },
   });
   const skillsService = new SkillsService({
     library: skillsLibrary,

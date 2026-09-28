@@ -31,7 +31,9 @@ import {
 import {
   type AgentLoop,
   type DefaultToolRegistry,
+  privateChatSetFrom,
   scriptCallableFor,
+  targetAudience,
   toolsDeclaringNetwork,
 } from '@ethosagent/core';
 import { buildCronTriggers, CronScheduler, type CronTriggers } from '@ethosagent/cron';
@@ -94,10 +96,8 @@ import {
   resolveOtlpSettings,
   resolvePersonalityModelFit,
   type SmartApproverDecisionSite,
-  sanitize,
   seedAllSystemJobs,
   systemJobProblem,
-  wrapUntrusted,
 } from '@ethosagent/wiring';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
@@ -108,6 +108,7 @@ import { createLateBoundGoals } from '../lib/late-goals';
 import { adoptBootedLoop } from '../lib/onboarding-boot';
 import { createOutboxProposalSide } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
+import { callCaptureWake, runWatcherWakeTurn } from '../lib/watcher-wake';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
@@ -129,7 +130,7 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
-import { runCronTurn } from './cron-turn';
+import { cronFiringAudience, runCronTurn } from './cron-turn';
 import { buildBotSpeakers } from './gateway';
 import { createA2aRunner } from './serve-a2a-runner';
 import {
@@ -573,26 +574,17 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // config below) so the SAME wake path can also drive the call-capture
   // daemon's audit-trail leg further down — the daemon's own
   // `CallCaptureWakeEvent` is structurally identical to `WatcherWakeEvent`
-  // (plan/phases/call-capture-extension.md decision 4), so one closure serves
-  // both without a second copy of this logic.
+  // (plan/phases/call-capture-extension.md decision 4) minus the room
+  // audience, which `callCaptureWake` supplies — so one closure serves both
+  // without a second copy of this logic.
   // `logs.level` — the lowest severity every ConsoleLogger built here prints.
   const logLevel = config.logs?.level;
   const watcherLogger = new ConsoleLogger({}, logLevel);
   const watcherWake = async (event: WatcherWakeEvent): Promise<void> => {
     if (!loop) return;
-    const wrapped = wrapUntrusted({
-      content: event.summary,
-      toolName: 'watcher',
-      source: `${event.watcherId}:${event.target}`,
-    });
-    const prompt = sanitize(
-      `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
-    );
-    const sessionKey = `watcher:${event.watcherId}:${new Date().toISOString()}`;
-    for await (const _event of loop.run(prompt, {
-      sessionKey,
-      personalityId: event.personalityId,
-    })) {
+    // Under the wake's own audience (`WatcherManager.wakeAudience`); a
+    // call-capture wake passes `'private'` (`callCaptureWake`).
+    for await (const _event of runWatcherWakeTurn(loop, event)) {
       // Drain — a woken agent acts through its tools; no surface consumes
       // this stream in `ethos serve`.
     }
@@ -607,6 +599,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const watcherManager = new WatcherManager({
     storage: getStorage(),
     logger: watcherLogger,
+    // Judges a watcher's origin chat and delivery target for its wake
+    // audience (`WatcherManager.wakeAudience`), honouring trusted rooms.
+    targetAudience: (platform, chatId) =>
+      targetAudience(platform, chatId, privateChatSetFrom(config.gateway?.privateChats)),
     deliver: async (target) => {
       watcherLogger.warn(
         `[watcher] deliver to ${target.platform}:${target.chatId} unavailable — 'ethos serve' has no channel adapters; run 'ethos gateway' for channel delivery`,
@@ -710,6 +706,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         prompt: job.prompt ?? '',
         personalityId: pid,
         webOrigin,
+        roomAudience: await cronFiringAudience(job, {
+          listJobs: async () => (cronScheduler ? cronScheduler.listJobs() : []),
+          privateChats: privateChatSetFrom(config.gateway?.privateChats),
+          warn: (line) => console.warn(line),
+        }),
         ...(toolsetOverride ? { toolsetOverride } : {}),
         // R10 — the scheduler aborts this at the job's `maxRunMs`.
         ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
@@ -969,13 +970,19 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         boardPath,
         personalityId: activePersonality,
         lane,
-        runner: async (prompt, sessionKey, taskId, taskTitle, runId) => {
+        runner: async (prompt, sessionKey, taskId, taskTitle, runId, roomAudience) => {
           await writeRunActivityComments(
             boardPath,
             taskId,
             runId,
             activePersonality,
-            loop.run(prompt, { sessionKey, personalityId: activePersonality }),
+            // The task's stamp (D20): a task a group chat created runs shared.
+            loop.run(prompt, {
+              sessionKey,
+              personalityId: activePersonality,
+              roomAudience,
+              initiator: 'system',
+            }),
             (err) => console.warn(`[kanban-poll] comment write failed: ${err.message}`),
           );
           try {
@@ -1171,7 +1178,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           // limitation, documented in the package README: this cannot see a
           // browser-based call (e.g. Meet in Chrome).
           personalityId: boundPersonalityId,
-          wake: watcherWake,
+          // Private by design: the owner's own call audit trail (`callCaptureWake`).
+          wake: callCaptureWake(watcherWake),
           // Floating on-screen recording indicator (plan/phases/
           // call-capture-desktop-ux.md) — the headless-CLI analog of the
           // desktop app's Electron-based pill. Fresh per ownership claim,

@@ -12,10 +12,12 @@ import {
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { answerSuffix, EthosError } from '@ethosagent/types';
+import { privateChatSetFrom } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
 import { gateCronLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
+import { cronFiringAudience } from './cron-turn';
 
 const c = {
   reset: '\x1b[0m',
@@ -99,12 +101,21 @@ function makeScheduler(config: EthosConfig): {
       // start-anchored `[SILENT]` regex. The recorder gates on
       // `audience: 'user'`; internal progress stays internal.
       const progress = new CronProgressRecorder();
+      // The firing's room audience — the same rule every cron runner uses
+      // (`cronFiringAudience`, ./cron-turn.ts).
+      const roomAudience = await cronFiringAudience(job, {
+        listJobs: () => scheduler.listJobs(),
+        privateChats: privateChatSetFrom(config.gateway?.privateChats),
+        warn: (line) => console.warn(line),
+      });
       for await (const event of loop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
         // R10 — the scheduler aborts this at the job's `maxRunMs`.
         abortSignal: runOpts?.abortSignal,
+        roomAudience,
+        initiator: 'system',
       })) {
         if (event.type === 'text_delta') output += event.text;
         // A `returnDirect` tool's answer arrives only as `done.text`, after

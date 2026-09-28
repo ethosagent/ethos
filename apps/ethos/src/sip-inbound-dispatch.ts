@@ -9,7 +9,13 @@ import {
   type VoiceBotIdentity,
   type VoiceChannelAdapter,
 } from '@ethosagent/platform-voice';
-import type { AgentEvent, PersonalityConfig, VoiceTurnOrigin } from '@ethosagent/types';
+import type {
+  AgentEvent,
+  PersonalityConfig,
+  TurnAudience,
+  TurnInitiator,
+  VoiceTurnOrigin,
+} from '@ethosagent/types';
 import {
   FAR_END_VOICE_ORIGIN,
   fenceFarEndSpeech,
@@ -43,6 +49,8 @@ export interface SipCallLoop {
       personalityId?: string;
       voiceOrigin?: VoiceTurnOrigin;
       abortSignal?: AbortSignal;
+      roomAudience?: TurnAudience;
+      initiator?: TurnInitiator;
     },
   ): AsyncGenerator<AgentEvent>;
 }
@@ -328,6 +336,10 @@ export function createSipInboundHandler(
             sessionKey: laneKey,
             ...(personalityId ? { personalityId } : {}),
             voiceOrigin: FAR_END_VOICE_ORIGIN,
+            // Every turn on this lane is the far end speaking (D14): a caller is
+            // not the owner, so no private memory.
+            roomAudience: 'shared',
+            initiator: 'system',
             ...(opts?.abortSignal ? { abortSignal: opts.abortSignal } : {}),
           }),
           (usd) => {

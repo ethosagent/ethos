@@ -40,6 +40,19 @@ The [gateway](../../getting-started/glossary.md#gateway) (the process that holds
 | A WhatsApp status broadcast, `@broadcast` list or `@newsletter` channel | shared |
 | A group listed under `gateway.private_chats.<platform>` | private |
 
+Work that runs later inherits the room it came from. It runs shared when the chat that created it was shared, or when it posts into a shared chat:
+
+| Runs later | Room audience |
+|---|---|
+| A cron job | shared if it was created in a shared chat, delivers to one, or reads a shared job's output through `contextFrom` |
+| A watcher wake | shared if a shared chat created the watcher, it delivers to one, or nothing records who created it |
+| A goal | the room audience of the chat it was set in (`web` and CLI goals are private) |
+| A kanban task a shared turn created | shared, including on a team member it is dispatched to |
+| An inbound webhook | shared, unless the hook sets `webhooks.<hook-id>.private: true` and every `deliver` target is private |
+| An A2A request, a phone caller, an MCP client (unless `expose_memory` is set) | shared |
+
+A job created before this release carries no stamp and is judged by where it delivers: a group, a Discord channel or an email address runs shared, and a job with no delivery target runs private. The cron runner logs one line for each such job it runs shared.
+
 A direct message from someone else, on a platform with `channel_filter.<platform>.ownerUserId` set, is a middle case. `MEMORY.md` is yours, so it is withheld, and so is everything else a shared turn loses. The sender's own profile, `~/.ethos/users/<their-user-id>/USER.md`, is still read. With no owner configured there is nobody to compare against, and a direct message is private.
 
 ### 2. Upgrade and start fresh sessions in your groups
@@ -127,6 +140,7 @@ Delete its id from the line and restart the gateway. Until that restart the room
 | A room you unlisted still gets memory | The gateway has not restarted | Restart it |
 | Someone else's direct message gets no memory | `channel_filter.<platform>.ownerUserId` names you, and they are not you | Nothing to fix. List their chat under `gateway.private_chats` only if you want them to read your `MEMORY.md` |
 | An email conversation gets no memory | The receiving mail server did not authenticate the sender | Set [`emailTrustedAuthservId`](../reference/config-yaml.md#email-trusted-authserv-id) so authenticated mail is recognised |
+| A scheduled job logs `predates room-audience stamps and runs without private memory` | It was created before this release and delivers to a chat that cannot be proven private — a group, or any Discord or email chat | List that chat under `gateway.private_chats.<platform>` and restart, or recreate the job from a Telegram, WhatsApp or Slack DM, the CLI or the web app |
 | `/ethos ask` in a Slack DM is now refused or asks for pairing | The command used to be treated as a channel message; it is now a direct message, with the same admission rules as any DM | Allow the sender under `channel_filter.slack`, as for ordinary DMs |
 
 The rules are enforced in the agent core, not the channel: `resolveTurnAudience` in [`packages/core/src/agent-loop/audience.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop/audience.ts) and `Gateway.audienceFor` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts), pinned end to end by `extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts`. The [memory model](../explanation/memory-model.md) explains what `MEMORY.md` and `USER.md` hold.

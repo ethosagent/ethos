@@ -327,6 +327,13 @@ describe('parseConfigYaml — webhooks deliver targets', () => {
     expect(cfg.webhooks?.h).not.toHaveProperty('deliverOnly');
   });
 
+  it('parses private: true (D12); private: false is the same as absent', async () => {
+    const on = await load([...base, ...hook, 'webhooks.h.private: true'].join('\n'));
+    expect(on.webhooks?.h?.private).toBe(true);
+    const off = await load([...base, ...hook, 'webhooks.h.private: false'].join('\n'));
+    expect(off.webhooks?.h).not.toHaveProperty('private');
+  });
+
   it('leaves deliver/deliverOnly undefined when no keys are present', async () => {
     const cfg = await load([...base, ...hook].join('\n'));
     expect(cfg.webhooks?.h).toEqual({ personalityId: 'researcher', secret: 'x' });
@@ -340,6 +347,11 @@ describe('parseConfigYaml — webhooks deliver validation', () => {
     const result = await loadStrict([...base, ...hook, ...lines].join('\n'));
     return result?.parseErrors ?? [];
   };
+
+  it('rejects a private value other than true/false', async () => {
+    const errors = await errorFor(['webhooks.h.private: yes']);
+    expect(errors.some((e) => e.includes("private must be 'true' or 'false'"))).toBe(true);
+  });
 
   it('rejects an unknown target type', async () => {
     const errors = await errorFor(['webhooks.h.deliver.0.type: carrier-pigeon']);
@@ -427,6 +439,8 @@ describe('writeConfig — webhooks deliver targets', () => {
           personalityId: 'coder',
           secret: 'abc',
           mode: 'ack',
+          // D12 (plan personality-memory-boundary) — round-trips like deliverOnly.
+          private: true,
           deliver: [{ type: 'platform', adapterId: 'slack:sl-a', chatId: 'C123' }],
         },
       },

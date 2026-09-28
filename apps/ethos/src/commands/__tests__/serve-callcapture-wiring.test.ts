@@ -45,8 +45,10 @@ describe('serve.ts — call-capture daemon wiring', () => {
   it('reuses the watcherWake closure for both WatcherManager and the daemon (no duplicate wake logic)', async () => {
     const src = await readServeSource();
     expect(src).toMatch(/const watcherWake = async \(event: WatcherWakeEvent\)/);
-    const wakeUsages = src.match(/wake: watcherWake,/g) ?? [];
-    expect(wakeUsages.length).toBe(2);
+    // The manager binds it directly; the daemon through `callCaptureWake`,
+    // which stamps its wake private (plan personality-memory-boundary step 5).
+    expect(src.match(/wake: watcherWake,/g) ?? []).toHaveLength(1);
+    expect(src.match(/wake: callCaptureWake\(watcherWake\),/g) ?? []).toHaveLength(1);
   });
 
   it('constructs the real detector, notification gate, and preflight check from @ethosagent/platform-callcapture', async () => {

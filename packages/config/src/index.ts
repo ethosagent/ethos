@@ -1816,6 +1816,12 @@ export interface WebhookHookConfig {
    *  instead of) the HTTP response. Written as numbered keys:
    *  `webhooks.<id>.deliver.0.type` etc. */
   deliver?: WebhookDeliveryTargetConfig[];
+  /** The operator vouches that only they can call this hook (plan
+   *  personality-memory-boundary D12). A hook's turn runs private — with the
+   *  personality's memory — only when this is `true` AND every `deliver`
+   *  target is private (`webhookAudienceHint`, apps/ethos/src/webhook-server.ts);
+   *  otherwise it runs shared. Only `true` is carried. */
+  private?: boolean;
   /** Payload-integrity signing, ADDITIVE to the bearer `secret` and never a
    *  replacement for it: when set, both gates must pass. Written as nested
    *  keys: `webhooks.<id>.hmac.secret` etc. */
@@ -2955,6 +2961,7 @@ export interface EthosConfig {
    *   webhooks.<hookId>.eventHeader: x-github-event   (default x-event-type)
    *   webhooks.<hookId>.eventField: meta.event        (default event)
    *   webhooks.<hookId>.deliverOnly: true             (relay only, no turn)
+   *   webhooks.<hookId>.private: true                 (turn may read private memory, D12)
    *   webhooks.<hookId>.deliver.0.type: platform | log
    *   webhooks.<hookId>.deliver.0.adapterId: telegram:tg-a
    *   webhooks.<hookId>.deliver.0.chatId: 12345
@@ -4750,6 +4757,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       // Only `true` is emitted: an explicit `false` and an absent key mean the
       // same thing, and the parser rejects any other spelling on the way back.
       if (hook.deliverOnly === true) lines.push(`webhooks.${hookId}.deliverOnly: true`);
+      if (hook.private === true) lines.push(`webhooks.${hookId}.private: true`);
       for (const [i, target] of (hook.deliver ?? []).entries()) {
         const key = `webhooks.${hookId}.deliver.${i}`;
         lines.push(`${key}.type: ${target.type}`);
@@ -9596,6 +9604,11 @@ function buildWebhooks(kv: Record<string, Record<string, string>>): {
       }
       deliverOnly = entry.deliverOnly === 'true';
     }
+    if (entry.private !== undefined && entry.private !== 'true' && entry.private !== 'false') {
+      errors.push(`webhooks.${hookId}: private must be 'true' or 'false'.`);
+      continue;
+    }
+    const isPrivate = entry.private === 'true';
     const deliverResult = buildWebhookDeliverTargets(entry, hookId);
     if (deliverResult.errors.length > 0) {
       errors.push(...deliverResult.errors);
@@ -9688,6 +9701,8 @@ function buildWebhooks(kv: Record<string, Record<string, string>>): {
       // writer's output lossless without a presence/truthiness distinction the
       // field does not have.
       ...(deliverOnly === true ? { deliverOnly: true } : {}),
+      // Same collapse as `deliverOnly`: absent and `false` both mean shared.
+      ...(isPrivate ? { private: true } : {}),
       ...(deliver.length > 0 ? { deliver } : {}),
       ...(hmac ? { hmac } : {}),
       ...(rateLimit ? { rateLimit } : {}),

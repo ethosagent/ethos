@@ -3,7 +3,13 @@ import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
 import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
-import type { ExecutionBackend, Logger, SecretsResolver, Storage } from '@ethosagent/types';
+import type {
+  ExecutionBackend,
+  Logger,
+  SecretsResolver,
+  Storage,
+  TurnAudience,
+} from '@ethosagent/types';
 import { decideEscalation, type HeartbeatAction } from './heartbeat';
 import { withJobsFileLock } from './jobs-lock';
 import {
@@ -83,6 +89,20 @@ export interface CronJob {
   personalityId: string;
   /** Channel origin captured at create time; absent means file-only. */
   origin?: JobOrigin;
+  /**
+   * The room audience of whatever created the job (plan
+   * personality-memory-boundary G1-6): the creating turn's resolved
+   * `ToolContext.roomAudience` (`cron` tool), or the web Cron page's delivery
+   * target (`CronService.create`, apps/web-api). Top-level, not on `JobOrigin`:
+   * a CLI-created job has no origin but still has an audience. Absent on jobs
+   * written before the field existed. Never read here — the runners resolve a
+   * firing's audience with `cronRunAudience` (packages/wiring/src/cron-audience.ts),
+   * which also judges the delivery target and `contextFrom`, and treats an
+   * absent stamp as shared (D11). `jobs.json` is rewritten whole, so an older
+   * binary that does not know the field keeps it (pinned by
+   * `__tests__/unknown-field-roundtrip.test.ts`).
+   */
+  roomAudience?: TurnAudience;
   status: JobStatus;
   missedRunPolicy: MissedRunPolicy;
   /** Repeat policy — defaults to 'forever' for cron/interval, 'once' for relative/iso. */

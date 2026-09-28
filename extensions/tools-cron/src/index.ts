@@ -374,6 +374,12 @@ async function handleCreate(
       repeat: repeat ?? { kind: 'forever' },
       ...(origin ? { origin } : {}),
       ...(context_from ? { contextFrom: context_from } : {}),
+      // The creating turn's resolved audience, whatever the origin (plan
+      // personality-memory-boundary G1-6): a job scheduled from a group chat
+      // fires shared (`cronRunAudience`, packages/wiring/src/cron-audience.ts).
+      // Absent only on a hand-built context, which the runner then treats as
+      // an unstamped job (shared, D11).
+      ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
     });
 
     const next = nextRunForSchedule(schedule, new Date());

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from '@ethosagent/sqlite';
+import type { TurnAudience } from '@ethosagent/types';
 
 export {
   type AutonomyTier,
@@ -76,6 +77,15 @@ export interface Task {
   /** Consecutive blocks landed with the *same* `blockKind` in a row, with no
    *  successful completion in between. Reset to 0 on `completeRun`. See `blockRun`. */
   blockRecurrenceCount: number;
+  /**
+   * The room audience of the turn that created the task (plan
+   * personality-memory-boundary D20): a task a shared turn creates is run
+   * shared by the poll loop and the team dispatcher. Absent on a task nothing
+   * stamped — created before the column existed, or outside a turn (web
+   * board, CLI) — which has no origin to judge and runs private (the plan's
+   * legacy rule for records with neither a stamp nor a target).
+   */
+  roomAudience?: TurnAudience;
   createdAt: number;
   updatedAt: number;
 }
@@ -126,6 +136,8 @@ export interface CreateTaskInput {
   maxRetries?: number | null;
   /** Optional acceptance criteria. `null`/omitted = none set. */
   acceptanceCriteria?: string | null;
+  /** See `Task.roomAudience`. Omitted = unstamped. */
+  roomAudience?: TurnAudience;
   actor?: string;
 }
 
@@ -156,6 +168,8 @@ export interface CreateSwarmInput {
   verifierPersonality?: string;
   /** Omit to skip the synthesizer tier entirely. */
   synthesizerPersonality?: string;
+  /** Stamped on every task the swarm creates. See `Task.roomAudience`. */
+  roomAudience?: TurnAudience;
 }
 
 /** Ids of every task `createSwarm` created. */
@@ -439,6 +453,7 @@ export class KanbanStore {
         this.migrateV5ToV6();
       }
     }
+    addRoomAudienceColumn(this.db);
   }
 
   /**
@@ -761,6 +776,7 @@ export class KanbanStore {
       throw new Error(`createTask: maxRetries must be a non-negative integer or null`);
     }
     const acceptanceCriteria = input.acceptanceCriteria ?? null;
+    const roomAudience = input.roomAudience ?? null;
     const parents = input.parents ?? [];
     const actor = input.actor ?? 'system';
 
@@ -768,8 +784,8 @@ export class KanbanStore {
       `INSERT INTO tasks
        (id, title, body, assignee, status, priority, workspace_mode, workspace_path,
         scheduled_for, idempotency_key, current_run_id, max_retries, retry_count,
-        acceptance_criteria, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        acceptance_criteria, created_at, updated_at, room_audience)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
 
     const tx = this.db.transaction((): string => {
@@ -803,6 +819,7 @@ export class KanbanStore {
           acceptanceCriteria,
           now,
           now,
+          roomAudience,
         );
       } catch (err) {
         // If we raced another caller with the same idempotency_key, return their row.
@@ -1330,6 +1347,7 @@ export class KanbanStore {
         title: `Swarm goal: ${truncateForTitle(input.goal)}`,
         body: input.goal,
         assignee: null,
+        ...(input.roomAudience ? { roomAudience: input.roomAudience } : {}),
         actor,
       });
       this.updateStatus(root.id, 'done', 'swarm root — shared context', actor);
@@ -1340,6 +1358,7 @@ export class KanbanStore {
           body: w.prompt,
           assignee: w.personality,
           parents: [root.id],
+          ...(input.roomAudience ? { roomAudience: input.roomAudience } : {}),
           actor,
         }),
       );
@@ -1352,6 +1371,7 @@ export class KanbanStore {
           body: `Verify the worker results below against this goal:\n\n${input.goal}`,
           assignee: input.verifierPersonality,
           parents: workerIds,
+          ...(input.roomAudience ? { roomAudience: input.roomAudience } : {}),
           actor,
         });
         verifierId = verifier.id;
@@ -1364,6 +1384,7 @@ export class KanbanStore {
           body: `Synthesize the final result for this goal:\n\n${input.goal}`,
           assignee: input.synthesizerPersonality,
           parents: verifierId !== null ? [verifierId] : workerIds,
+          ...(input.roomAudience ? { roomAudience: input.roomAudience } : {}),
           actor,
         });
         synthesizerId = synthesizer.id;
@@ -1832,6 +1853,7 @@ interface TaskRow {
   block_recurrence_count: number;
   created_at: number;
   updated_at: number;
+  room_audience: string | null;
 }
 
 interface TaskRunRow {
@@ -1918,9 +1940,34 @@ function rowToTask(r: TaskRow): Task {
     acceptanceCriteria: r.acceptance_criteria,
     blockKind: r.block_kind as BlockKind | null,
     blockRecurrenceCount: r.block_recurrence_count,
+    ...parseRoomAudience(r.room_audience),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+}
+
+/**
+ * `room_audience` is written only by `createTask` from a typed value. NULL is
+ * an unstamped task (no key); any other unrecognised value is a hand-edited
+ * row and reads as `'shared'` — shared only narrows, so fail closed.
+ */
+function parseRoomAudience(raw: string | null | undefined): { roomAudience?: TurnAudience } {
+  if (raw === null || raw === undefined) return {};
+  return { roomAudience: raw === 'private' ? 'private' : 'shared' };
+}
+
+/**
+ * The `room_audience` column (plan personality-memory-boundary D20), added
+ * idempotently on every open with NO `user_version` bump — the job-store's
+ * D18(a) rule — so an older build sharing this board still opens it (it would
+ * refuse a higher version) and simply never reads the column. Pinned by the
+ * column cases in `__tests__/room-audience.test.ts`.
+ */
+function addRoomAudienceColumn(db: Database.Database): void {
+  const cols = db.pragma('table_info(tasks)') as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'room_audience')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN room_audience TEXT');
+  }
 }
 
 // ID helpers (exported for tests + potential reuse)

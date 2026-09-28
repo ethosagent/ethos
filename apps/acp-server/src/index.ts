@@ -13,7 +13,7 @@ import type { PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SessionLane } from '@ethosagent/session-lane';
 import { credentialInstruction } from '@ethosagent/surface-kit';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
-import type { JobStore, Logger, SessionStore } from '@ethosagent/types';
+import type { JobStore, Logger, SessionStore, TurnAudience } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -63,6 +63,8 @@ interface RunOptions {
   abortSignal?: AbortSignal;
   /** openclaw-9.5 item 1 — always true here: see `credentialRefusalText`. */
   credentialPrompt?: boolean;
+  /** `RunOptions.roomAudience` (plan personality-memory-boundary G1). */
+  roomAudience?: TurnAudience;
 }
 
 export interface AgentRunner {
@@ -371,9 +373,14 @@ export class AcpServer {
 
     if (req.method === 'POST' && req.url === '/notify') {
       const body = await readBody(req);
-      let parsed: { kind?: unknown; ref?: unknown; mode?: unknown };
+      let parsed: { kind?: unknown; ref?: unknown; mode?: unknown; roomAudience?: unknown };
       try {
-        parsed = JSON.parse(body) as { kind?: unknown; ref?: unknown; mode?: unknown };
+        parsed = JSON.parse(body) as {
+          kind?: unknown;
+          ref?: unknown;
+          mode?: unknown;
+          roomAudience?: unknown;
+        };
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid JSON' }));
@@ -401,8 +408,13 @@ export class AcpServer {
 
       const prompt = renderNotifyPrompt(kind, ref);
       const sessionKey = `notify:${kind}:${Date.now()}`;
+      // A team dispatcher forwards a kanban task's `'shared'` stamp (plan
+      // personality-memory-boundary D20, `defaultDispatchCall` in
+      // @ethosagent/team-supervisor). Honoured only as `'shared'`: a request can
+      // narrow this turn, never widen it.
+      const roomAudience = parsed.roomAudience === 'shared' ? 'shared' : 'private';
       void this.lane.enqueue(async (_signal) => {
-        await this.runBlocking(prompt, sessionKey).catch(() => {});
+        await this.runBlocking(prompt, sessionKey, undefined, roomAudience).catch(() => {});
       });
       res.writeHead(202, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, queued: this.lane.length }));
@@ -551,6 +563,7 @@ export class AcpServer {
             personalityId?: string;
             label?: string;
             maxCostUsd?: number | null;
+            roomAudience?: unknown;
           };
           if (!p.text || typeof p.text !== 'string') {
             return { jsonrpc: '2.0', id, error: { code: -32602, message: 'text is required' } };
@@ -574,7 +587,9 @@ export class AcpServer {
             // An ACP spawn comes from the local owner's editor client, like its
             // `acp:` turns (private by design); stamped so the row never falls to
             // the legacy origin rule (`jobRoomAudience`, extensions/job-runner).
-            roomAudience: 'private',
+            // A team dispatcher may forward a shared kanban task's stamp (D20);
+            // only `'shared'` is honoured — a request can narrow, never widen.
+            roomAudience: p.roomAudience === 'shared' ? 'shared' : 'private',
           });
           this.backgroundExecutor.nudge();
           return { jsonrpc: '2.0', id, result: { jobId: job.id, status: job.status } };
@@ -846,6 +861,7 @@ export class AcpServer {
             personalityId?: string;
             label?: string;
             maxCostUsd?: number | null;
+            roomAudience?: unknown;
           };
           if (!p.text || typeof p.text !== 'string') {
             sendError(-32602, 'text is required');
@@ -871,7 +887,9 @@ export class AcpServer {
             // An ACP spawn comes from the local owner's editor client, like its
             // `acp:` turns (private by design); stamped so the row never falls to
             // the legacy origin rule (`jobRoomAudience`, extensions/job-runner).
-            roomAudience: 'private',
+            // A team dispatcher may forward a shared kanban task's stamp (D20);
+            // only `'shared'` is honoured — a request can narrow, never widen.
+            roomAudience: p.roomAudience === 'shared' ? 'shared' : 'private',
           });
           this.backgroundExecutor.nudge();
           sendResult({ jobId: job.id, status: job.status });
@@ -1024,15 +1042,18 @@ export class AcpServer {
     text: string,
     sessionKey: string,
     personalityId?: string,
+    roomAudience: 'private' | 'shared' = 'private',
   ): Promise<{ text: string; turnCount: number }> {
     let fullText = '';
     let turnCount = 0;
     let failure: string | undefined;
-    // audience: private-by-design (ACP — the local owner editor client)
+    // Private by design (ACP — the local owner editor client), except a
+    // `/notify` carrying a shared kanban task's stamp (D20).
     for await (const event of this.runner.run(text, {
       sessionKey,
       personalityId,
       credentialPrompt: true,
+      roomAudience,
     })) {
       const refusal = credentialRefusalText(event);
       if (refusal !== null) fullText = refusal;

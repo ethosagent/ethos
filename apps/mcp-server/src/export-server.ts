@@ -514,7 +514,14 @@ export class PersonalityExportServer {
           // an `expose_tools: none` specialist could still call every MCP,
           // plugin and `alwaysInclude` tool on the machine (M-D3).
           toolsetExclude: scope.exclude,
-          ...(scope.memory === 'none' ? { skipMemoryPrefetch: true } : {}),
+          // An MCP client is another program, not the owner (plan
+          // personality-memory-boundary D15): unless the operator opted this
+          // personality's memory in (`expose_memory: scoped | full`), the turn
+          // is shared — no prefetch, no memory tools, no memory files — beside
+          // the `skipMemoryPrefetch` it always carried for the same reason.
+          ...(scope.memory === 'none'
+            ? { skipMemoryPrefetch: true, roomAudience: 'shared' as const }
+            : {}),
         }),
       );
     } catch (err) {

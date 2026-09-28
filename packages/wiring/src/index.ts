@@ -158,6 +158,13 @@ export interface WiringConfig {
    */
   memoryCharLimits?: { memory?: number; user?: number };
   /**
+   * `gateway.private_chats` (mapped from `EthosConfig.gateway.privateChats`):
+   * trusted rooms, by platform. Read by the goal runner's audience derivation
+   * (`goalRoomAudience`, ./goal-audience.ts) so a goal set in a listed room
+   * runs private. Absent → none listed.
+   */
+  privateChats?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Execution-backend resource caps (mapped from `EthosConfig.execution`).
    * Forwarded to `ExecutionBackendConfig` when the docker backend is resolved.
    *
@@ -794,6 +801,8 @@ export interface CreateAgentLoopOptions {
 // LLM provider construction
 // ---------------------------------------------------------------------------
 
+// The chat-audience helpers apps need beside it (Law 5: apps reach core through wiring).
+export { type PrivateChatSet, privateChatSetFrom, targetAudience } from '@ethosagent/core';
 // L-T8 — the inbox's own types, re-exported so a surface (web-api) reaches the
 // review inbox through the composition root rather than a second package link.
 export {
@@ -824,7 +833,10 @@ export {
   createA2aPeeringService,
 } from './a2a-peering-service';
 // F06 — the cleanup stack every composition root in this repo registers on.
+// plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
+export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
+export { goalRoomAudience } from './goal-audience';
 export { resolveKanbanDbPath } from './kanban-path';
 // L-T6 — the learning inbox's composition root: every submit, replay, legacy
 // import and promotion binds the inbox to real packages through these.

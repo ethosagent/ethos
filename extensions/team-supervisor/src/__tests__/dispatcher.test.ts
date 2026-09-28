@@ -935,3 +935,54 @@ describe('Dispatcher.tick()', () => {
     });
   });
 });
+
+// plan personality-memory-boundary step 5, D20 — a task a shared turn created
+// is forwarded shared to the peer (`sharedStamp`), on both transports.
+describe('Dispatcher — room audience', () => {
+  let board: KanbanStore;
+
+  beforeEach(() => {
+    board = new KanbanStore(':memory:');
+  });
+
+  afterEach(() => {
+    board.close();
+  });
+
+  it('forwards roomAudience: shared for a shared task, nothing for any other', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const shared = board.createTask({
+      title: 'group',
+      assignee: 'engineer',
+      roomAudience: 'shared',
+    });
+    const priv = board.createTask({ title: 'dm', assignee: 'engineer', roomAudience: 'private' });
+    board.updateStatus(shared.id, 'ready');
+    board.updateStatus(priv.id, 'ready');
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    await new Dispatcher({ board, supervisor: sup, dispatch }).tick();
+    await new Promise((r) => setImmediate(r));
+    const byPrompt = dispatch.mock.calls.map(([args]) => ({
+      group: args.prompt.includes(': group'),
+      roomAudience: args.roomAudience,
+    }));
+    expect(byPrompt).toContainEqual({ group: true, roomAudience: 'shared' });
+    expect(byPrompt).toContainEqual({ group: false, roomAudience: undefined });
+  });
+
+  it('forwards it on the spawn transport too', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'group', assignee: 'engineer', roomAudience: 'shared' });
+    board.updateStatus(t.id, 'ready');
+    const spawnDispatch = vi.fn<SpawnDispatchCall>(async () => ({ jobId: 'j' }));
+    await new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch: vi.fn<DispatchCall>(async () => 'ok'),
+      spawnDispatch,
+      dispatchAsBackgroundJob: true,
+    }).tick();
+    await new Promise((r) => setImmediate(r));
+    expect(spawnDispatch.mock.calls[0]?.[0].roomAudience).toBe('shared');
+  });
+});

@@ -365,3 +365,57 @@ describe('cron read_run progress', () => {
     expect(read.value).not.toContain('## Progress');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Room audience stamp (plan personality-memory-boundary step 5, G1-6)
+// ---------------------------------------------------------------------------
+
+describe('cron tool roomAudience stamp', () => {
+  async function createFrom(ctx: Partial<ToolContext>, name: string): Promise<CronJob | null> {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const result = await tool.execute(
+      { action: 'create', name, schedule: '0 8 * * *', prompt: 'Summarize the news' },
+      makeCtx(ctx),
+    );
+    expect(result.ok).toBe(true);
+    return (await scheduler.listJobs())[0] ?? null;
+  }
+
+  it('a job created in a group chat is stamped shared', async () => {
+    const job = await createFrom(
+      {
+        sessionKey: 'telegram:bot1:-100200',
+        platform: 'telegram',
+        roomAudience: 'shared',
+      },
+      'Group Job',
+    );
+    expect(job?.roomAudience).toBe('shared');
+    expect(job?.origin).toEqual({ platform: 'telegram', chatId: '-100200' });
+  });
+
+  it('a job created from the CLI is stamped private even with no origin', async () => {
+    const job = await createFrom(
+      { sessionKey: 'cli:ethos', platform: 'cli', roomAudience: 'private' },
+      'CLI Job',
+    );
+    expect(job?.roomAudience).toBe('private');
+    expect(job?.origin).toBeUndefined();
+  });
+
+  it('a job created from web chat is stamped with the turn audience', async () => {
+    const job = await createFrom(
+      { sessionKey: 'web:abc', platform: 'web', roomAudience: 'private' },
+      'Web Job',
+    );
+    expect(job?.roomAudience).toBe('private');
+    expect(job?.origin).toEqual({ platform: 'web', chatId: 'web:abc' });
+  });
+
+  it('a hand-built context with no audience leaves the job unstamped', async () => {
+    const job = await createFrom({}, 'Bare Job');
+    expect(job?.roomAudience).toBeUndefined();
+  });
+});

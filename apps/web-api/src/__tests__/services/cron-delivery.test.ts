@@ -1,3 +1,4 @@
+import { privateChatSetFrom } from '@ethosagent/core';
 import type { CronScheduler, CronJob as ExtCronJob } from '@ethosagent/cron';
 import { isEthosError } from '@ethosagent/types';
 import { call } from '@orpc/server';
@@ -365,5 +366,56 @@ describe('cron.create handler — kind:channel is cookie-auth only (rule 4)', ()
     const context = { cron: { create } } as never;
     await call(cronRouter.create, { ...BASE, deliverTo: channel }, { context });
     expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CronService.create — roomAudience stamp (plan personality-memory-boundary step 5)
+// ---------------------------------------------------------------------------
+
+describe('CronService.create — roomAudience', () => {
+  const world = makeWorld({
+    filters: { telegram: { enabled: true, ownerUserId: '900', allowlist: [] } },
+    observed: { 'telegram:bot-a': ['-100200'] },
+  });
+
+  it('a job delivering to a group chat is stamped shared', async () => {
+    const { scheduler, createJob } = makeScheduler();
+    const service = new CronService({ scheduler, deliveryWorld: world });
+    await service.create({
+      ...BASE,
+      deliverTo: { kind: 'channel', platform: 'telegram', botKey: 'bot-a', chatId: '-100200' },
+    });
+    expect(createJob.mock.calls[0]?.[0].roomAudience).toBe('shared');
+  });
+
+  it('a group the operator listed in gateway.private_chats is stamped private', async () => {
+    const { scheduler, createJob } = makeScheduler();
+    const service = new CronService({
+      scheduler,
+      deliveryWorld: world,
+      readPrivateChats: async () => privateChatSetFrom({ telegram: ['-100200'] }),
+    });
+    await service.create({
+      ...BASE,
+      deliverTo: { kind: 'channel', platform: 'telegram', botKey: 'bot-a', chatId: '-100200' },
+    });
+    expect(createJob.mock.calls[0]?.[0].roomAudience).toBe('private');
+  });
+
+  it('a DM target, in-app and file-only jobs are stamped private', async () => {
+    const { scheduler, createJob } = makeScheduler();
+    const service = new CronService({ scheduler, deliveryWorld: world });
+    await service.create({
+      ...BASE,
+      deliverTo: { kind: 'channel', platform: 'telegram', botKey: 'bot-a', chatId: '900' },
+    });
+    await service.create({ ...BASE, deliverTo: { kind: 'inApp' } });
+    await service.create({ ...BASE, deliverTo: { kind: 'none' } });
+    expect(createJob.mock.calls.map((c) => c[0].roomAudience)).toEqual([
+      'private',
+      'private',
+      'private',
+    ]);
   });
 });

@@ -107,3 +107,35 @@ describe('watcher tools', () => {
     if (!result.ok) expect(result.error).toContain('Watcher not found');
   });
 });
+
+describe('watcher_create — roomAudience stamp (plan personality-memory-boundary step 5)', () => {
+  async function ownerAfterCreate(extra: Partial<ToolContext>) {
+    const manager = new WatcherManager({ storage, watchersDir: '/ethos/watchers' });
+    const tool = createWatcherTools(manager).find((t) => t.name === 'watcher_create');
+    if (!tool) throw new Error('watcher_create not registered');
+    const res = await tool.execute(createArgs, { ...ctx, ...extra });
+    expect(res.ok).toBe(true);
+    const [record] = await manager.listWatchers();
+    return record?.owner;
+  }
+
+  it('a watcher created in a group chat records the shared audience on its owner', async () => {
+    const owner = await ownerAfterCreate({
+      roomAudience: 'shared',
+      origin: 'telegram:-100200',
+    });
+    expect(owner).toMatchObject({
+      personalityId: 'ops',
+      origin: 'telegram:-100200',
+      roomAudience: 'shared',
+    });
+  });
+
+  it('a watcher created from a private turn records private', async () => {
+    expect((await ownerAfterCreate({ roomAudience: 'private' }))?.roomAudience).toBe('private');
+  });
+
+  it('a hand-built context leaves the owner unstamped', async () => {
+    expect((await ownerAfterCreate({}))?.roomAudience).toBeUndefined();
+  });
+});

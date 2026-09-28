@@ -492,6 +492,20 @@ interface TurnAudienceOptions {
   skipPersonalityMemory: boolean;
 }
 
+/**
+ * Platforms whose `InboundMessage` is synthesized by Ethos rather than sent by
+ * a person: a watcher wake (`apps/ethos/src/commands/gateway.ts`, `boot.ts`)
+ * and an inbound webhook (`apps/ethos/src/webhook-server.ts`). Their turns are
+ * `initiator: 'system'` (plan personality-memory-boundary, the initiator table).
+ */
+const SYSTEM_INBOUND_PLATFORMS: ReadonlySet<string> = new Set(['watcher', 'webhook']);
+
+/** Who started a turn from `message`: `'system'` for a synthesized wake or
+ *  webhook, `'user'` for anything a person sent. */
+function initiatorFor(message: InboundMessage): TurnInitiator {
+  return SYSTEM_INBOUND_PLATFORMS.has(message.platform) ? 'system' : 'user';
+}
+
 /** Where a spooled turn's notices go: its own bot, chat and thread. */
 interface SpoolTurnTarget {
   botKey: string;
@@ -4259,7 +4273,7 @@ export class Gateway {
         ? { roomAudience: review.roomAudience, initiator: 'system', skipPersonalityMemory: false }
         : {
             roomAudience: this.audienceFor(message),
-            initiator: 'user',
+            initiator: initiatorFor(message),
             skipPersonalityMemory: this.withholdsPersonalityMemory(message),
           };
       const turn = this.runTurn(

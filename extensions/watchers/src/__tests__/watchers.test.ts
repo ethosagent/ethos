@@ -290,7 +290,7 @@ describe('process watcher', () => {
 });
 
 describe('callbacks', () => {
-  it('wake receives watcherId, target, personalityId, promptPrefix, and summary', async () => {
+  it('wake receives watcherId, target, personalityId, promptPrefix, summary and roomAudience', async () => {
     await h.storage.write('/watched/app.log', 'v1');
     await h.manager.createWatcher(
       fileWatcher({
@@ -314,6 +314,8 @@ describe('callbacks', () => {
       personalityId: 'ops',
       promptPrefix: 'Check this.',
       summary: expect.stringContaining('file changed'),
+      // Ownerless: nothing proves it private (G1-6, `wakeAudience`).
+      roomAudience: 'shared',
     });
   });
 });

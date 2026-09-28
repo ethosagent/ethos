@@ -14,6 +14,7 @@ import {
   deriveFsReachPaths,
   EagerPrefetchPolicy,
   parseSmallWindowToolset,
+  privateChatSetFrom,
   resolvePinned,
   resolveSttProvider,
   SimpleCompletionImpl,
@@ -67,6 +68,7 @@ import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
 import type { DisposerStack } from './disposer-stack';
+import { goalRoomAudience } from './goal-audience';
 import type {
   CreateAgentLoopOptions,
   CreateAgentLoopResult,
@@ -1582,6 +1584,8 @@ export async function buildAgentLoop(
     'team_memory_read',
     'team_memory_search',
   ]);
+  // `gateway.private_chats` — a goal set in a listed room runs private.
+  const goalPrivateChats = privateChatSetFrom(config.privateChats);
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
@@ -1609,6 +1613,11 @@ export async function buildAgentLoop(
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
       return loop.run(firstMessage, {
         sessionKey,
+        // Derived from the goal's origin on every attempt (`goalRoomAudience`):
+        // a goal set in a group chat runs shared. Absent origin (a direct
+        // `GoalRunner` caller) is judged as an unknown origin — shared.
+        roomAudience: goalRoomAudience(o.origin ?? '', goalPrivateChats),
+        initiator: 'system',
         abortSignal: o.abortSignal,
         ...(o.steerSink ? { steerSink: o.steerSink } : {}),
         ...(o.personalityId ? { personalityId: o.personalityId } : {}),
@@ -1626,6 +1635,10 @@ export async function buildAgentLoop(
       const readOnlyToolset = (ptoolset ?? []).filter((t) => GOAL_PLAN_READONLY_TOOLS.has(t));
       return loop.run(firstMessage, {
         sessionKey,
+        // Same derivation as `runAttempt`; a shared planning turn also loses
+        // `memory_read`/`session_list_by_date` from its read-only set.
+        roomAudience: goalRoomAudience(o.origin ?? '', goalPrivateChats),
+        initiator: 'system',
         abortSignal: o.abortSignal,
         ...(o.personalityId ? { personalityId: o.personalityId } : {}),
         ...(o.userId ? { userId: o.userId } : {}),

@@ -35,6 +35,7 @@ import {
   LaneVoiceModeStore,
   laneVoiceModePath,
   privateChatSetFrom,
+  targetAudience,
 } from '@ethosagent/core';
 import {
   buildCronTriggers,
@@ -138,10 +139,8 @@ import {
   resolveOtlpSettings,
   type SmartApproverDecisionSite,
   SQLiteNotifyQueue,
-  sanitize,
   seedAllSystemJobs,
   systemJobProblem,
-  wrapUntrusted,
 } from '@ethosagent/wiring';
 import {
   ApprovalCoordinator,
@@ -180,6 +179,7 @@ import {
 } from '../lib/outbox-wiring';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { pruneExpiredSessions } from '../lib/session-retention';
+import { callCaptureWake, watcherWakeMessage } from '../lib/watcher-wake';
 import { resolveLiveKitMedia } from '../livekit-media';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
@@ -214,6 +214,7 @@ import {
   getStorage,
   loadTeamManifest,
 } from '../wiring';
+import { cronFiringAudience } from './cron-turn';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
@@ -769,6 +770,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const watcherManager = new WatcherManager({
     storage: getStorage(),
     logger: new ConsoleLogger({}, logLevel),
+    // Judges a watcher's origin chat and delivery target for its wake
+    // audience (`WatcherManager.wakeAudience`), honouring trusted rooms.
+    targetAudience: (platform, chatId) =>
+      targetAudience(platform, chatId, privateChatSetFrom(config.gateway?.privateChats)),
     deliver: async (target, text) => {
       if (watcherDeliverFn) await watcherDeliverFn(target, text);
     },
@@ -856,12 +861,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       // start-anchored `[SILENT]` regex. The recorder gates on
       // `audience: 'user'`; internal progress stays internal.
       const progress = new CronProgressRecorder();
+      // The firing's room audience: stamp ∨ delivery target ∨ `contextFrom`
+      // (`cronFiringAudience`, ./cron-turn.ts — the same rule every runner uses).
+      const roomAudience = await cronFiringAudience(job, {
+        listJobs: () => scheduler.listJobs(),
+        privateChats: privateChatSetFrom(config.gateway?.privateChats),
+        warn: (line) => console.warn(line),
+      });
       for await (const event of systemLoop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
         // R10 — the scheduler aborts this at the job's `maxRunMs`.
         abortSignal: runOpts?.abortSignal,
+        roomAudience,
+        initiator: 'system',
       })) {
         if (event.type === 'text_delta') output += event.text;
         // A `returnDirect` tool's answer arrives only as `done.text`, after
@@ -1541,23 +1555,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       );
       return;
     }
-    const wrapped = wrapUntrusted({
-      content: event.summary,
-      toolName: 'watcher',
-      source: `${event.watcherId}:${event.target}`,
-    });
-    const msg: InboundMessage = {
-      platform: 'watcher',
-      chatId: `watcher:${event.watcherId}`,
-      text: sanitize(
-        `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
-      ),
-      isDm: true,
-      isGroupMention: false,
-      botKey: bot.botKey,
-      messageId: `watcher-${event.watcherId}-${Date.now()}`,
-      raw: { watcherId: event.watcherId, target: event.target },
-    };
+    // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
+    const msg = watcherWakeMessage(event, bot.botKey);
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
   };
@@ -2015,6 +2014,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
                 cause: reason,
                 details: { hookId },
               }),
+            // D12 — a `private: true` hook runs private only when every
+            // deliver target is private too (`webhookAudienceHint`).
+            targetAudience: (platform, chatId) =>
+              targetAudience(platform, chatId, privateChatSetFrom(config.gateway?.privateChats)),
           },
         )
       : undefined;
@@ -2209,7 +2212,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
           // limitation, documented in the package README: this cannot see a
           // browser-based call (e.g. Meet in Chrome).
           personalityId: boundPersonalityId,
-          wake: watcherWake,
+          // Private by design: the owner's own call audit trail (`callCaptureWake`).
+          wake: callCaptureWake(watcherWake),
           // Floating on-screen recording indicator (plan/phases/
           // call-capture-desktop-ux.md) — the headless-CLI analog of the
           // desktop app's Electron-based pill. Fresh per ownership claim,

@@ -546,6 +546,7 @@ async function wiringConfigFor(
     ...(config.voice ? { voice: config.voice } : {}),
     ...(config.memoryCapture ? { memoryCapture: config.memoryCapture } : {}),
     ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
+    ...(config.gateway?.privateChats ? { privateChats: config.gateway.privateChats } : {}),
     ...(config.memoryApproval ? { memoryApproval: config.memoryApproval } : {}),
     ...(config.nightlyPass ? { nightlyPass: config.nightlyPass } : {}),
     ...(config.displayMemoryNotices !== undefined

@@ -48,6 +48,10 @@ export interface WebhookConfig {
    *  agent's reply — which is what finally gives `mode: 'ack'` somewhere to put
    *  it. Absent or empty → no fan-out, today's behavior exactly. */
   deliver?: WebhookDeliveryTarget[];
+  /** `webhooks.<id>.private: true` — the operator vouches that only they call
+   *  this hook. Necessary but not sufficient for a private turn: see
+   *  {@link webhookAudienceHint} (D12). */
+  private?: boolean;
   /** Payload-integrity signing, ADDITIVE to the bearer `secret` and never a
    *  replacement for it. The two check different things — the signature proves
    *  the body arrived unmodified, the bearer proves who the caller is — so when
@@ -383,6 +387,33 @@ export type WebhookServer = Server & {
 };
 
 /**
+ * The `InboundMessage.audienceHint` a hook's turn carries (plan
+ * personality-memory-boundary D12). A webhook caller is not provably the
+ * owner, so the turn is shared — no private memory — UNLESS the operator set
+ * `private: true` on the hook AND every `deliver` target is private: a `log`
+ * target is the operator's own log; a `platform` target is judged by
+ * `targetAudience` (bound at wiring time to
+ * packages/core/src/chat-audience.ts over `gateway.private_chats`), on the
+ * platform named by its `adapterId` (`telegram:<botKey>` → `telegram`, the
+ * same split `relayToTargets` uses). No `targetAudience` → every platform
+ * target counts as shared. `undefined` means private. Pinned by the D12 cases
+ * in `__tests__/platform-webhook-server.test.ts`.
+ */
+export function webhookAudienceHint(
+  hook: Pick<WebhookConfig, 'private' | 'deliver'>,
+  targetAudience?: (platform: string, chatId: string) => 'private' | 'shared',
+): 'shared' | undefined {
+  if (hook.private !== true) return 'shared';
+  for (const target of hook.deliver ?? []) {
+    if (target.type === 'log') continue;
+    const colon = target.adapterId.indexOf(':');
+    const platform = colon > 0 ? target.adapterId.slice(0, colon) : target.adapterId;
+    if (targetAudience?.(platform, target.chatId) !== 'private') return 'shared';
+  }
+  return undefined;
+}
+
+/**
  * Inbound webhook listener. Exposes `POST /webhook/<hookId>`: an external caller
  * supplies a bearer secret and a prompt; the handler synthesizes an
  * `InboundMessage` and drives the mapped personality through the existing
@@ -415,6 +446,9 @@ export function createWebhookServer(
     onRejected?: WebhookRejectionSink;
     /** Clock seam for the rate limiter, so tests need no wall-clock waiting. */
     now?: () => number;
+    /** Judges a `deliver` target for {@link webhookAudienceHint}. Absent →
+     *  every platform target is shared. */
+    targetAudience?: (platform: string, chatId: string) => 'private' | 'shared';
   },
 ): WebhookServer {
   /** Requests parked on the synchronous reply path. See `inFlightSyncRequests`. */
@@ -702,6 +736,10 @@ export function createWebhookServer(
       messageId: `${Date.now()}-${requestCounter++}`,
       raw: msgRaw,
     };
+    // `isDm` keeps a hook routed like a DM; the hint makes its turn shared
+    // unless the operator vouched for it (D12, `webhookAudienceHint`).
+    const audienceHint = webhookAudienceHint(hook, opts?.targetAudience);
+    if (audienceHint) msg.audienceHint = audienceHint;
 
     const { adapter, getReply } = createCapturingAdapter();
 

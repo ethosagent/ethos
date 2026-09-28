@@ -8,7 +8,14 @@ import type {
   TaskStatus,
   WorkspaceMode,
 } from '@ethosagent/kanban-store';
-import type { HookRegistry, LLMProvider, Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type {
+  HookRegistry,
+  LLMProvider,
+  Tool,
+  ToolContext,
+  ToolResult,
+  TurnAudience,
+} from '@ethosagent/types';
 
 export { type PostmortemHandlerOptions, registerPostmortemHandler } from './postmortem';
 export {
@@ -67,6 +74,24 @@ function errorResult(error: string, code: ErrorCode): ToolResult {
 
 function actorOf(ctx: ToolContext): string {
   return ctx.personalityId ?? 'system';
+}
+
+/**
+ * The `roomAudience` stamp for a task this turn creates (plan
+ * personality-memory-boundary D20): the creating turn's resolved audience, or
+ * `'shared'` when the task derives from a shared task (`kanban_decompose`'s
+ * children). The poll loop and the team dispatcher run a shared task shared.
+ * Nothing to stamp on a hand-built context with no parent: the task stays
+ * unstamped (`Task.roomAudience`). Pinned by `__tests__/task-audience.test.ts`.
+ */
+function audienceStamp(
+  ctx: ToolContext,
+  parent?: { roomAudience?: TurnAudience },
+): { roomAudience?: TurnAudience } {
+  if (ctx.roomAudience === 'shared' || parent?.roomAudience === 'shared') {
+    return { roomAudience: 'shared' };
+  }
+  return ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {};
 }
 
 const STATUS_VALUES: TaskStatus[] = [
@@ -317,6 +342,7 @@ function createKanbanCreate(store: KanbanStore): Tool {
           ...(args.acceptance_criteria !== undefined
             ? { acceptanceCriteria: args.acceptance_criteria }
             : {}),
+          ...audienceStamp(ctx),
           actor: actorOf(ctx),
         });
         return jsonResult({ task_id: task.id, status: task.status });
@@ -392,6 +418,7 @@ function createKanbanCreateGoal(store: KanbanStore): Tool {
           ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
           // assignee stays null — that's what makes this a goal vs a regular task.
           assignee: null,
+          ...audienceStamp(ctx),
           actor: actorOf(ctx),
         });
         return jsonResult({ task_id: task.id, status: task.status });
@@ -550,6 +577,7 @@ function createKanbanCreateSwarm(store: KanbanStore): Tool {
             workers,
             ...(verifierPersonality !== undefined ? { verifierPersonality } : {}),
             ...(synthesizerPersonality !== undefined ? { synthesizerPersonality } : {}),
+            ...audienceStamp(ctx),
           },
           actorOf(ctx),
         );
@@ -768,6 +796,7 @@ function createKanbanDecompose(store: KanbanStore, decomposerProvider?: LLMProvi
             ...(child.body !== undefined ? { body: child.body } : {}),
             assignee: child.assignee ?? null,
             parents: [taskId],
+            ...audienceStamp(ctx, task),
             actor: actorOf(ctx),
           });
           created.push({ task_id: childTask.id, title: childTask.title });

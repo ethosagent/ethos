@@ -215,6 +215,9 @@ describe('PersonalityExportServer ask', () => {
     expect(run?.options?.toolsetExclude).not.toContain('read_file');
     // `expose_memory` defaults to none → no prefetch (M-D5).
     expect(run?.options?.skipMemoryPrefetch).toBe(true);
+    // D15 (plan personality-memory-boundary): an MCP client is not the owner —
+    // the turn is shared, which also withholds the memory tools and files.
+    expect(run?.options?.roomAudience).toBe('shared');
     await h.close();
   });
 
@@ -226,6 +229,8 @@ describe('PersonalityExportServer ask', () => {
     });
     await callAsk(h.client, { prompt: 'hi' });
     expect(h.runs[0]?.options?.skipMemoryPrefetch).toBeUndefined();
+    // The operator opted this personality's memory in, so the turn is not shared (D15).
+    expect(h.runs[0]?.options?.roomAudience).toBeUndefined();
     // `scoped` is read-only: memory_write is stripped even though it is in reach.
     expect(h.runs[0]?.options?.toolsetNarrow).toEqual(['memory_read', 'read_file', 'web_search']);
     await h.close();

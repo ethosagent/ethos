@@ -51,6 +51,12 @@ export type DispatchCall = (args: {
    * explicitly opts in to a different mode.
    */
   mode?: NotifyMode;
+  /**
+   * `'shared'` when the task was created by a shared turn (`Task.roomAudience`,
+   * plan personality-memory-boundary D20). Forwarded to the peer's `/notify`,
+   * which runs the turn shared. Absent = the peer's default (private).
+   */
+  roomAudience?: 'shared';
 }) => Promise<string>;
 
 /**
@@ -68,6 +74,8 @@ export type SpawnDispatchCall = (args: {
   signal: AbortSignal;
   /** Bearer token for the target `AcpServer`, resolved via `SecretsResolver`. Omitted when the target has no configured `authTokenRef`. */
   authToken?: string;
+  /** See {@link DispatchCall}'s `roomAudience`; forwarded as the `spawn` job's stamp. */
+  roomAudience?: 'shared';
 }) => Promise<{ jobId: string }>;
 
 export interface DispatcherOptions {
@@ -565,6 +573,7 @@ export class Dispatcher {
         signal: controller.signal,
         ...(authToken ? { authToken } : {}),
         ...(mode !== undefined ? { mode } : {}),
+        ...sharedStamp(task),
       });
       // We do not auto-complete here — the assignee is responsible for calling
       // `kanban_complete` / `kanban_block` to record the outcome on the board.
@@ -626,6 +635,7 @@ export class Dispatcher {
         personalityId: assignee,
         signal: controller.signal,
         ...(authToken ? { authToken } : {}),
+        ...sharedStamp(task),
       });
       // Job accepted and durably recorded on the peer (jobId). We intentionally
       // do not await completion: the assignee heartbeats and calls
@@ -651,6 +661,16 @@ export class Dispatcher {
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * A task's shared stamp, as the transport field (plan
+ * personality-memory-boundary D20): the peer runs a task a shared turn created
+ * shared (`/notify` and `spawn` in apps/acp-server honour only `'shared'`).
+ * Pinned by the room-audience cases in `__tests__/dispatcher.test.ts`.
+ */
+function sharedStamp(task: Task): { roomAudience?: 'shared' } {
+  return task.roomAudience === 'shared' ? { roomAudience: 'shared' } : {};
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +716,7 @@ export const defaultDispatchCall: DispatchCall = async ({
   signal,
   authToken,
   mode = 'notify+wake',
+  roomAudience,
 }) => {
   const url = `http://${host}:${port}/notify`;
   const res = await fetch(url, {
@@ -704,7 +725,12 @@ export const defaultDispatchCall: DispatchCall = async ({
       'Content-Type': 'application/json',
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
-    body: JSON.stringify({ kind: 'kanban', ref: prompt, mode }),
+    body: JSON.stringify({
+      kind: 'kanban',
+      ref: prompt,
+      mode,
+      ...(roomAudience ? { roomAudience } : {}),
+    }),
     signal,
   });
   if (!res.ok) {
@@ -728,6 +754,7 @@ export const defaultSpawnDispatchCall: SpawnDispatchCall = async ({
   personalityId,
   signal,
   authToken,
+  roomAudience,
 }) => {
   const url = `http://${host}:${port}/rpc`;
   const res = await fetch(url, {
@@ -740,7 +767,7 @@ export const defaultSpawnDispatchCall: SpawnDispatchCall = async ({
       jsonrpc: '2.0',
       id: 1,
       method: 'spawn',
-      params: { text: prompt, personalityId },
+      params: { text: prompt, personalityId, ...(roomAudience ? { roomAudience } : {}) },
     }),
     signal,
   });

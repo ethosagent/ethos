@@ -335,6 +335,9 @@ function runConsult(
         abortSignal: ctx.abortSignal,
         agentId: CONSULT_AGENT_ID,
         voiceOrigin: opts.voiceOrigin,
+        // A consult a shared turn makes is shared (G1-6). Absent on a
+        // hand-built context, which means private.
+        ...(ctx.roomAudience !== undefined ? { roomAudience: ctx.roomAudience } : {}),
       })) {
         // Past the terminal event: drained, not read.
         if (answered) continue;
