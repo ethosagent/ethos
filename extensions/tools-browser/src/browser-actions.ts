@@ -16,7 +16,7 @@ import {
   isPlaywrightInstalled,
   takeoverRefusalResult,
 } from './sessions';
-import { snapshotPage } from './snapshot';
+import { type ScrollMetrics, snapshotPage, windowSnapshotAtScroll } from './snapshot';
 import type { BrowserTimeouts } from './timeouts';
 
 async function resolveHost(host: string): Promise<string[]> {
@@ -98,7 +98,7 @@ export const browserPressTool: Tool = {
 export const browserScrollTool: Tool = {
   name: 'browser_scroll',
   description:
-    'Scroll the page in a given direction. Useful for viewing content below the fold or navigating long pages.',
+    'Scroll the page in a given direction. Useful for viewing content below the fold or navigating long pages. On a long page the result is the part of the page around the new scroll position, with markers counting the lines above and below it.',
   toolset: 'browser',
   // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
   // __tests__/untrusted-roster.test.ts).
@@ -167,12 +167,22 @@ export const browserScrollTool: Tool = {
       ] as [number, number]);
       await session.page.waitForTimeout(300);
 
+      // Read the position AFTER the wait, so content a lazy loader appended
+      // is part of the page height the window is measured against.
+      const pos = await session.page.evaluate(
+        (): ScrollMetrics => ({
+          scrollY: window.scrollY,
+          innerHeight: window.innerHeight,
+          scrollHeight: document.documentElement.scrollHeight,
+        }),
+      );
       const { text, refs, title, url } = await snapshotPage(session.page);
+      // Every ref stays resolvable; only the TEXT is windowed (UBP-039).
       session.refs = refs;
       session.lastUrl = url;
 
       const header = `[${title}] ${url}\n\n`;
-      return { ok: true, value: header + text };
+      return { ok: true, value: header + windowSnapshotAtScroll(text, pos) };
     } catch (err) {
       return {
         ok: false,

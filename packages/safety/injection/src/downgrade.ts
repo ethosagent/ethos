@@ -18,6 +18,13 @@ const DEFAULT_DOWNGRADED_TOOLS: ReadonlyArray<string> = [
   'browser_type',
   'process_start',
   'process_stop',
+  // UBP-049: tools whose output is text a FUTURE system prompt carries.
+  // Untrusted content written here outlives the downgrade window and steers
+  // every later session, so a write waits until the window has passed. Pinned
+  // by packages/core/src/__tests__/downgrade-memory-writes.test.ts.
+  'memory_write',
+  'team_memory_write',
+  'skill_propose',
 ];
 
 export function resolveDowngradedTools(spec: 'auto' | string[] | undefined): Set<string> {

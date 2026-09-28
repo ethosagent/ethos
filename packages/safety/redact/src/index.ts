@@ -1,17 +1,39 @@
+// `(?<![A-Za-z0-9_-])` — used as the LEFT BOUNDARY of every prefixed vendor
+// pattern below (UBP-045). Without it a prefix matched mid-identifier:
+// `disk-usage-report-…` became `di[REDACTED:openai-key]`, and the model then
+// asked for a path that does not exist. Pinned by the 'UBP-045' cases in
+// __tests__/redact-roster-s13.test.ts.
 const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
-  { label: 'GitHub PAT', tag: '[REDACTED:github-pat]', regex: /ghp_[A-Za-z0-9]{36}/g },
-  { label: 'GitHub PAT', tag: '[REDACTED:github-pat]', regex: /github_pat_[A-Za-z0-9_]{82}/g },
+  {
+    label: 'GitHub PAT',
+    tag: '[REDACTED:github-pat]',
+    regex: /(?<![A-Za-z0-9_-])ghp_[A-Za-z0-9]{36}/g,
+  },
+  {
+    label: 'GitHub PAT',
+    tag: '[REDACTED:github-pat]',
+    regex: /(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{82}/g,
+  },
   {
     label: 'Anthropic API key',
     tag: '[REDACTED:anthropic-key]',
-    regex: /sk-ant-[A-Za-z0-9_-]{93,}/g,
+    regex: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{93,}/g,
   },
+  // The left boundary is what keeps `disk-…`, `risk-…` and `task-…` out: each
+  // contains `sk-` mid-word. The body is deliberately NOT required to look
+  // mixed-case — an identifier that literally STARTS with `sk-` and runs 40+
+  // chars is rare, and a lowercase synthetic key is how several callers' tests
+  // (packages/wiring decision-site/decision-tool) exercise redaction.
   {
     label: 'OpenAI API key',
     tag: '[REDACTED:openai-key]',
-    regex: /sk-(?:proj-)?[A-Za-z0-9_-]{40,}/g,
+    regex: /(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{40,}/g,
   },
-  { label: 'AWS access key', tag: '[REDACTED:aws-key]', regex: /AKIA[0-9A-Z]{16}/g },
+  {
+    label: 'AWS access key',
+    tag: '[REDACTED:aws-key]',
+    regex: /(?<![A-Za-z0-9_-])AKIA[0-9A-Z]{16}/g,
+  },
   // S13 additions (plan openclaw-2026.9.6-gaps). Each is pinned, with a
   // near-miss that must NOT redact, by __tests__/redact-roster-s13.test.ts.
   // STS session credentials: same shape as AKIA, `ASIA` prefix.
@@ -64,26 +86,71 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
   {
     label: 'Slack token',
     tag: '[REDACTED:slack-token]',
-    regex: /xox[bpoa]-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24,}/g,
+    regex: /(?<![A-Za-z0-9_-])xox[bpoa]-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24,}/g,
   },
   {
     label: 'Slack app token',
     tag: '[REDACTED:slack-token]',
-    regex: /xapp-[0-9]+-[A-Za-z0-9]+-[A-Za-z0-9]+/g,
+    regex: /(?<![A-Za-z0-9_-])xapp-[0-9]+-[A-Za-z0-9]+-[A-Za-z0-9]+/g,
   },
-  { label: 'Stripe key', tag: '[REDACTED:stripe-key]', regex: /sk_live_[A-Za-z0-9]{24,}/g },
-  { label: 'Groq API key', tag: '[REDACTED:groq-key]', regex: /gsk_[A-Za-z0-9]{20,}/g },
+  {
+    label: 'Stripe key',
+    tag: '[REDACTED:stripe-key]',
+    regex: /(?<![A-Za-z0-9_-])sk_live_[A-Za-z0-9]{24,}/g,
+  },
+  {
+    label: 'Groq API key',
+    tag: '[REDACTED:groq-key]',
+    regex: /(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}/g,
+  },
   // xAI documents keys only as "xai- followed by a long alphanumeric string" and
   // publishes no fixed length, so the floor is a conservative 20 (same as Groq's)
   // rather than a guessed exact width: long enough that prose cannot trip it,
   // short enough that no real key is missed. Confidence: MED on the body length,
   // HIGH on the `xai-` prefix.
-  { label: 'xAI API key', tag: '[REDACTED:xai-key]', regex: /xai-[A-Za-z0-9]{20,}/g },
+  {
+    label: 'xAI API key',
+    tag: '[REDACTED:xai-key]',
+    regex: /(?<![A-Za-z0-9_-])xai-[A-Za-z0-9]{20,}/g,
+  },
+  // UBP-044. `<base64 bot id>.<6-char timestamp>.<27+ char HMAC>`; the first
+  // segment of every bot id Discord issues today begins M, N or O. Matching all
+  // three segments here, before the generic rules, is what keeps
+  // `token=<discord>` from leaving the 2nd and 3rd segments behind.
+  {
+    label: 'Discord bot token',
+    tag: '[REDACTED:discord-token]',
+    // biome-ignore format: long regex must stay on one line
+    regex: /(?<![A-Za-z0-9_-])[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}(?![A-Za-z0-9_-])/g,
+  },
   {
     label: 'Generic secret',
     tag: '[REDACTED:generic-secret]',
     // biome-ignore format: long regex must stay on one line
     regex: /(?<=^|[\s,{;(])(?:key|token|password|secret)=["']?[A-Za-z0-9+/=_-]{20,}["']?/gi,
+  },
+  // UBP-044. A value assigned to an UPPER_SNAKE name that says it is a secret
+  // (`DISCORD_BOT_TOKEN=`, `export ELEVENLABS_API_KEY=`, `DB_PASSWORD: `) — the
+  // shape `env`, a `.env` file and YAML config print. Only the value is
+  // replaced, so the model still sees which variable was set. Case-sensitive on
+  // purpose: `MAX_TOKENS=4096` (suffix is TOKENS) and `tokenizer=` do not match.
+  // A value already tagged by a vendor pattern above, or a `$VAR` / `${{ … }}`
+  // reference, is left as it is.
+  {
+    label: 'Secret-named value',
+    tag: '[REDACTED:secret-value]',
+    // biome-ignore format: long regex must stay on one line
+    regex: /(?<=\b[A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_KEY|TOKEN|SECRET|PASSWORD|PASSWD)[ \t]*[=:][ \t]*["']?)(?![$[])[^\s"'`]{8,}/g,
+  },
+  // UBP-044. The JSON-key form, `"elevenlabs_api_key": "…"` / `"apiKey":"…"`.
+  // A bare `"key"` (an S3 object key, a map key) is NOT a secret name, and a
+  // pagination `"nextPageToken"` / `"page_token"` is a cursor the model must be
+  // able to pass back, so both are excluded.
+  {
+    label: 'Secret-named value',
+    tag: '[REDACTED:secret-value]',
+    // biome-ignore format: long regex must stay on one line
+    regex: /(?<="[A-Za-z0-9_-]*(?:(?:api|access|secret|private|auth)[_-]?key|(?<![Pp]age_?)token|secret|password|passwd)"\s*:\s*")(?!\[REDACTED:)[^"\\]{8,}(?=")/gi,
   },
 ];
 

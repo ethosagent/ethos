@@ -129,3 +129,114 @@ describe('redactString — S13 roster additions', () => {
     expect(redactString(first)).toBe(first);
   });
 });
+
+// UBP-044 (plan upstream-bug-parity): a Discord bot token, and a secret carried
+// under a NAME that says so (`DISCORD_BOT_TOKEN=`, `export ELEVENLABS_API_KEY=`,
+// the JSON-key form), passed through with no detection. Synthetic fixtures.
+const DISCORD = 'MTIzNDU2Nzg5MDEyMzQ1Njc4.GAbCdE.abcdefghijklmnopqrstuvwxyz0123';
+const HEX32 = '0123456789abcdef0123456789abcdef';
+
+describe('redactString — UBP-044 Discord token and secret-named values', () => {
+  it('redacts a Discord bot token in prose, all three segments', () => {
+    const result = redactString(`my bot token is ${DISCORD} ok`);
+    expect(result).toBe('my bot token is [REDACTED:discord-token] ok');
+    expect(detectSecrets(DISCORD).map((d) => d.label)).toContain('Discord bot token');
+  });
+
+  it('fully masks a Discord token behind token= (no trailing segments left)', () => {
+    const result = redactString(`token=${DISCORD}`);
+    expect(result).not.toContain('GAbCdE');
+    expect(result).not.toContain('abcdefghij');
+  });
+
+  it.each([
+    ['DISCORD_BOT_TOKEN=', DISCORD],
+    ['ELEVENLABS_API_KEY=', HEX32],
+    ['DEEPGRAM_API_KEY=', `dg${HEX32}`],
+    ['export API_KEY=', HEX32],
+    ['export OPENROUTER_API_KEY="', `${HEX32}"`],
+    ['DB_PASSWORD: ', 'correcthorsebattery'],
+    ['CLIENT_SECRET=', HEX32],
+  ])('redacts the value of %s', (prefix, value) => {
+    const result = redactString(`${prefix}${value}`);
+    expect(result).not.toContain(value.replace(/"$/, ''));
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(result).toContain('[REDACTED:');
+    expect(detectSecrets(`${prefix}${value}`).length).toBeGreaterThan(0);
+  });
+
+  it('redacts the value of a secret-named JSON key and keeps the key', () => {
+    expect(redactString(`{"DISCORD_BOT_TOKEN": "${DISCORD}"}`)).not.toContain('GAbCdE');
+    expect(redactString(`{"elevenlabs_api_key": "${HEX32}", "voice": "rachel"}`)).toBe(
+      '{"elevenlabs_api_key": "[REDACTED:secret-value]", "voice": "rachel"}',
+    );
+    expect(redactString(`{"apiKey":"${HEX32}"}`)).toBe('{"apiKey":"[REDACTED:secret-value]"}');
+    expect(redactString(`{"password": "${HEX32}"}`)).toBe(
+      '{"password": "[REDACTED:secret-value]"}',
+    );
+  });
+
+  it('keeps the tag of a vendor pattern that matched first', () => {
+    const xai = `xai-${'A1b2C3d4E5f6G7h8I9j0'.repeat(4)}`;
+    expect(redactString(`XAI_API_KEY=${xai}`)).toBe('XAI_API_KEY=[REDACTED:xai-key]');
+  });
+
+  it.each([
+    'tokenizer=bert-base-uncased-whole-word',
+    'MAX_TOKENS=4096',
+    'max_tokens: 4096',
+    'OLDPWD=/home/someone/projects/long-directory-name',
+    'GITHUB_TOKEN: $GITHUB_TOKEN_FROM_THE_RUNNER',
+    `GITHUB_TOKEN: ${'$'}{{ secrets.GITHUB_TOKEN }}`,
+    '{"key": "uploads/2026/09/profile-photo-large.png"}',
+    '{"nextPageToken": "CAUQAAabcdefghijklmnop"}',
+    '{"max_tokens": 4096, "token_count": 1234567890123456}',
+    'DISCORD_BOT_TOKEN=short',
+    'host mnopqrstuvwxyzabcdefghijkl.abc.def is fine',
+  ])('leaves %s alone', (text) => {
+    expect(redactString(text)).toBe(text);
+    expect(detectSecrets(text)).toEqual([]);
+  });
+
+  it('is idempotent over the new tags', () => {
+    const first = redactString(
+      `DISCORD_BOT_TOKEN=${DISCORD} {"api_key": "${HEX32}"} prose ${DISCORD}`,
+    );
+    expect(redactString(first)).toBe(first);
+  });
+});
+
+// UBP-045 (plan upstream-bug-parity): the OpenAI pattern had no left boundary
+// and accepted any 40 kebab chars, so long lowercase identifiers and paths
+// were masked into names that do not exist.
+describe('redactString — UBP-045 OpenAI-key near-misses', () => {
+  it.each([
+    '/data/disk-usage-report-for-production-cluster-2026-09.csv',
+    'git checkout fix/risk-assessment-for-payment-gateway-migration-v2',
+    'task-runner-configuration-for-the-nightly-build-pipeline.yaml',
+  ])('leaves %s unchanged', (text) => {
+    expect(redactString(text)).toBe(text);
+    expect(detectSecrets(text)).toEqual([]);
+  });
+
+  it.each([
+    `sk-proj-${'Ab3dEf6hIj9lMn2pQr5tUv8xYz1bCd4fGh7jKl0nOp3r'}`,
+    `sk-${'T3BlbkFJa1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6'}`,
+    `sk-svcacct-${'Ab3dEf6hIj9lMn2pQr5tUv8xYz1bCd4fGh7jKl0n'}`,
+  ])('still redacts a real-shape key %#', (key) => {
+    expect(redactString(`OPENAI=${key} and "${key}" and (${key})`)).toBe(
+      'OPENAI=[REDACTED:openai-key] and "[REDACTED:openai-key]" and ([REDACTED:openai-key])',
+    );
+  });
+
+  it.each([
+    ['xai-', `xai-${'A1b2C3d4E5f6G7h8I9j0'}`],
+    ['gsk_', `gsk_${'B1c2D3e4F5g6H7i8J9k0'}`],
+    ['AKIA', 'AKIAQX7EXAMPLE4ZK2M9'],
+    ['ghp_', `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`],
+  ])('does not match a %s key glued to a preceding identifier', (_name, key) => {
+    const glued = `prefix${key}`;
+    expect(redactString(glued)).toBe(glued);
+    expect(redactString(`x ${key} y`)).not.toContain(key);
+  });
+});

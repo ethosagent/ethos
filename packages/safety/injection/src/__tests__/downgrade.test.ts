@@ -9,6 +9,14 @@ describe('resolveDowngradedTools', () => {
     expect(tools.has('browse_url')).toBe(true);
   });
 
+  // UBP-049: a write that persists into a later system prompt is downgraded too.
+  it('covers the memory- and skill-persisting tools', () => {
+    const tools = resolveDowngradedTools('auto');
+    expect(tools.has('memory_write')).toBe(true);
+    expect(tools.has('team_memory_write')).toBe(true);
+    expect(tools.has('skill_propose')).toBe(true);
+  });
+
   it('returns the default set for undefined (no config)', () => {
     expect(resolveDowngradedTools(undefined).has('terminal')).toBe(true);
   });
