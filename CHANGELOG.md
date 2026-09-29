@@ -1,8 +1,12 @@
 # Changelog
 
-Material changes to `@ethosagent/cli` and its workspace packages. Release-versioned history lives in `docs/content/changelog.md`; this file tracks unreleased schema-governance changes that require a justification per CONTRIBUTING.md.
+Material changes to `@ethosagent/cli` and its workspace packages. Release-versioned history lives in `docs/content/changelog.md`; this file tracks schema-governance changes that require a justification per CONTRIBUTING.md — under Unreleased until a release retitles them into a versioned section.
 
 ## Unreleased
+
+Nothing yet.
+
+## 0.9.0 — 2026-09-29
 
 ### Fixed
 

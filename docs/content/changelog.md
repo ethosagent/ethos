@@ -4,7 +4,7 @@ description: "Ethos version history — material changes and breaking notes per 
 kind: reference
 audience: shared
 slug: changelog
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 Version history for the `@ethosagent/cli` and its workspace packages. The current version lives in the [`VERSION`](https://github.com/ethosagent/ethos/blob/main/VERSION) file at the repo root. Entries are newest first.
@@ -26,6 +26,8 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 
 | Version | Date | Status | Commits |
 |---|---|---|---|
+| [0.9.0](#v0-9-0) | 2026-09-29 | — | 463 |
+| [0.8.0](#v0-8-0) | 2026-09-09 | — | 56 |
 | [0.7.3](#v0-7-3) | 2026-09-03 | — | 17 |
 | [0.7.2](#v0-7-2) | 2026-08-31 | — | 3 |
 | [0.7.1](#v0-7-1) | 2026-08-30 | — | 9 |
@@ -47,6 +49,184 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 | [0.2.7](#v0-2-7) | 2026-05-11 | beta | — |
 | [0.2.6](#v0-2-6) | 2026-04-28 | beta | — |
 | [0.2.5](#v0-2-5) | 2026-04-10 | beta | — |
+
+## 0.9.0 {#v0-9-0}
+
+Date · 2026-09-29
+Commits · 463 since 0.8.0 (`git log --oneline --no-merges v0.8.0..v0.9.0`)
+
+Features (120)
+
+- **web** · claim-based auth with bootstrap token, sessions, and lock screen
+- **helm** · first-party chart for single-pod Kubernetes deployment
+- **personality** · presence and initiative — birth ritual, emoji, channel identity, effort, bounded watchers, heartbeat hours, consent-first profiling
+- **models** · refresh model catalog against vendor model lists (2026-09-28)
+- **providers** · documented Claude output caps in the model catalog
+- **learning** · self-amendment CLI, tool-process tripwire, read-only web view (plan step 12)
+- **learning** · amendment review service — list, show, apply, decline, rollback (plan step 11)
+- **learning** · propose_self_amendment tool and filing intake (plan step 10b)
+- **learning** · permission-diff D27 rows, amendment types and store (plan step 10a)
+- **storage** · definition write floor for every personality, learning/ denied (plan step 9)
+- **learning** · post-turn filters keep shared rooms out of private learning (plan step 6)
+- **schedules** · cron, watchers, webhooks, goals, kanban and off-gateway turns inherit the room audience (plan step 5)
+- **personalities** · atomic definition writes and writeDefinitionBytes (plan step 8)
+- **gateway** · group chats withhold private memory; audienceFor, audienceHint, D8, /learn (plan step 4)
+- **config** · gateway.private_chats trusted rooms, parsed and wired, not yet read (plan step 3)
+- **delegation** · children and background jobs inherit the room audience (plan step 2)
+- **core** · shared-turn private-memory deny in both file boundaries, census, G-MEM (plan step 1b)
+- **core** · shared-audience turns, transport threading and flush guard (plan step 1a)
+- **export-otlp** · ship turn traces to any OTLP/HTTP collector
+- **keys** · credential surfaces for the grok, gemini and microsoft engines
+- **engine_ask** · grok, gemini and microsoft answer engines
+- **tool-settings** · per-engine pickers on the Tools tab, recipes and docs
+- **engine_ask** · bind one key per answer engine per personality
+- **tool-settings** · store a binding as a field map in every persistence layer
+- **tool-settings** · scope a secret-binding to one provider namespace
+- **arch** · adopt archcheck as the architecture checker
+- **ux** · implement ux-feedback-and-config-clarity — review fixes and remaining surface work
+- **docs** · adopt the Option C "refined classic" docs theme
+- **docs** · redesign landing page — "Alive" direction
+- **web** · show a goal's checks and verify commands on the goal detail page
+- **web** · per-check verify command field in the goal intake form
+- **goals** · opt-in host shell commands in web-created goal checks
+- **config** · execution.docker.image threads the sandbox image to the docker backend
+- **cli** · refuse flagged calls on every non-interactive CLI loop
+- **cli** · approval prompt for ethos chat; fail closed for -q, piped stdin and ACP
+- **tui** · tool-approval modal fed through an AgentBridge approval source
+- **redact** · recognise GitHub refresh tokens (ghr_)
+- **gateway** · slash commands on WhatsApp and Email, Telegram menu from the registry (U2)
+- **web** · usage.summary RPC, Activity Usage and Deliveries views, session cost in chat header (U3, U5)
+- **gateway** · quiet hours and per-lane /mute for unprompted notices (U11)
+- **gateway** · per-bot daily spend cap, budget.dailyUsd (D5)
+- **web** · trust tier column in the Plugins matrix (U10)
+- **health** · /readyz, event-loop lag and process memory on /metrics, gateway rss in ethos status (R6, U9)
+- **gateway** · /budget on channel lanes, reset owner-gated in groups (S4/U1)
+- **budget** · render budget halts on gateway, CLI chat and TUI (S4/U1)
+- **docker** · default compose state to a named volume; doctor warns on FUSE/network state dirs (R4)
+- **wiring** · flag shell tools under a host-local posture; gate run_tests/lint (S6 D1a, EXE-001)
+- **config** · warn on config.yaml keys the parser never reads, with a nearest-key suggestion (U4)
+- **personalities** · character sheet shows the decide tool (decision-tool D15)
+- **decisions** · wire the decide tool on the sites' provider handle (decision-tool D4–D8, D12–D14)
+- **tools-decision** · the decide tool package (decision-tool D2, D3, D9–D11)
+- **upgrade** · --version `<spec>`, a what-changed line, and a changelog through 0.7.3 (U7)
+- **chat** · decision rows in the trail, footer, status line and CLI (N7d)
+- **sessions** · persist decision rows with the turn (N7c)
+- **decisions** · emit decision events into the turn stream (N7b)
+- **types** · decision AgentEvent variant and DecisionSink (N7a)
+- **web** · decision model and per-site controls in personality Edit → Config (N5)
+- **decisions** · doctor and character sheet show per-personality decision sites (N4)
+- **decisions** · resolve decision sites per personality at call time (N3)
+- **decisions** · per-personality site resolution (N2)
+- **personality** · decisions field on PersonalityConfig (N1)
+- **wiring** · tool-result budget per personality
+- **bench,personalities** · project context in bench context and the character sheet
+- **wiring** · small-window mode per personality and workdir
+- **web** · decision models as an extensible list with an add-drawer
+- **web** · decision models settings section with Jev key and test
+- **decisions** · downgrade-only tier router decision site (M4b)
+- **decisions** · smart approver decision site (M4a)
+- **decisions** · calibration harness for decision sites (M3)
+- **decisions** · DecisionProvider contract in @ethosagent/types (M2)
+- **decisions** · runDecisionSite and Jev injection classifier wiring (M1c)
+- **decisions** · M0 governance, decision-typesafe adapter, decisions config/pricing/doctor (M0, M1a, M1b)
+- **web** · branch switcher in the chat header
+- **gateway** · /fork, /branches, /branch and a durable lane -> session map
+- **web** · masked credential prompt in chat and a deep-linked Plugins page
+- **gateway** · answer credential_required with a web link, never in chat
+- **tui** · masked modal for credential_required
+- **cli,tui** · /fork, /branches, /branch `<n>`
+- **cli,acp** · answer credential_required on chat, -z and ACP
+- **core,wiring** · wire the pre-turn plugin credential check, gated per run
+- **core** · forkSession, one shared session fork, plus SessionFilter.parentSessionId
+- **gateway** · parent reviews a background result before the user sees it
+- **llm** · opt-in Anthropic server-side compaction, one compactor per turn
+- **upgrade** · baseline doctor, backup and health-gated rollback
+- **memory** · evidence-gated memory promotion (openclaw-9.5 item 3)
+- **types** · compaction CompletionChunk variant (§VI Substantive amendment)
+- **types** · optional sender on SlashCommandContext (L-b)
+- **boot** · gateway lock and inbound spool for ethos boot
+- **desktop** · attach to a running gateway instead of spawning a second
+- **run-all** · gateway exit 3 is terminal, not a crash
+- **web** · Inbound — dead table with Replay / Discard
+- **cli** · doctor Inbound spool block and retention listing
+- **cli** · ethos gateway status [--json] and gateway spool replay|discard
+- **containment** · one-hour approval leases for always-ask tools (3b)
+- **gateway** · spool-before-ack webhook ordering
+- **gateway** · singleton lock, spool wiring in gateway start, spool config
+- **cli,personalities** · tool_loading_chars in bench context; engineer pins
+- **config,wiring** · tool_loading auto|on|off operator setting
+- **core** · on-demand tool loading with a loop-native tool_search
+- **web** · Logins section on Settings › Security
+- **web-api** · CredentialsService + credentials.* oRPC router
+- **gateway** · inbound spool integration and boot replay
+- **containment** · a personality cannot edit its own definition (3a)
+- **cli** · ethos secrets credential add|list|rm|grant|revoke
+- **tools-browser** · browser_fill_credential — password-blind login fill
+- **delivery-ledger** · schema v4 inbound_ref + hasObligationFor
+- **inbound-spool** · durable write-ahead spool for owed inbound turns
+- **cli** · ethos -z --format text|json|stream-json
+- **tools** · ask Perplexity through engine_ask, on the Agent API
+- **models** · providers & models settings — registry CRUD, test, import chain models, ethos migrate models
+- **web** · set up, edit and turn off a personality's MCP export from its page
+- **sessions** · page chat history by turns instead of loading it whole
+- **learning** · route every learned change through replay or a human — Part 4
+- **learning** · replay candidates before promoting them — Part 4 wave B
+- **mcp** · export one bounded personality over MCP — Part 3
+- **outbox** · the approval pane, the docs, and four honesty fixes — Part 2 complete
+- **outbox** · resolve, review, approve and deliver — Part 2 wave 2
+- **outbox** · gate send_message on outbound_policy — Part 2 wave 1
+- **models** · model registry phase 1 — personalities name aliases and roles, not vendor ids
+- **timeouts** · raise the three 10-minute request bounds to 20 minutes
+
+Commits without a conventional type (1)
+
+- fix(storage-fs,wiring,docker,cli)/docs: operator policy floored, custom dataDir floored, definition entries widened, amendment output cleaned (verification round F)
+
+Other commits · 241 `fix`, 52 `docs`, 22 `test`, 8 `chore`, 8 `ci`, 5 `refactor`, 4 `checkpoint`.
+
+Breaking
+
+- fix(storage)!: remove storage.encryption, which encrypted none of what it promised (SEC-001)
+- feat(docker)!: default compose state to a named volume; doctor warns on FUSE/network state dirs (R4)
+
+## 0.8.0 {#v0-8-0}
+
+Date · 2026-09-09
+Commits · 56 since 0.7.3 (`git log --oneline --no-merges v0.7.3..v0.8.0`)
+
+Features (25)
+
+- **search-console** · gsc_sites and gsc_queries, plus the binding fixes they needed
+- **search,cron** · reddit_web_search, recency filtering, credential disclosure, cron progress
+- **tools-browser** · add browser_computed_style
+- **social-search** · add youtube_search, youtube_comments, quora_search, linkedin_search tools
+- answer-engine tool, tool-loop hard caps, and skills updates
+- **web** · team-scoped documents, x_search secret bindings, and named-secret kinds
+- **browser** · hand the live browser to a human instead of guessing
+- **execution** · make `execution: ssh` actually run remotely
+- **ambient** · observe group chats without answering them
+- **grounding** · check what the agent claims against what its tools did
+- **models** · refresh model catalogs to current line-ups; validate Codex model at startup
+- **backup** · one-command migration, and docs that match the code
+- **backup** · Settings › Backup, and the RPC behind it
+- **web** · teams as a scope — third altitude, team chat via coordinator, structure canvas
+- **backup** · scheduled backups, and a cron seeder that actually reconciles
+- **backup** · rewire the CLI onto the core, and close a paste-line class
+- **backup** · programmatic backup/restore core
+- **tools-reddit** · reddit_thread reads a post and its comment tree
+- **sqlite** · expose node:sqlite's async backup(), type the downgrade refusal
+- **sessions** · persist whether a tool call failed
+- **recipes** · add attach and both install modes; Obsidian, link-archiver and web-watchdog bundles
+- **web** · the feedback & activity contract — actions leave the answer
+- **recipes** · one-click use-case bundles, plus the fixes they surfaced
+- **providers** · xAI provider, pricing table, and Codex transport work
+- **desktop** · connect to a remote Ethos backend
+
+Other commits · 27 `fix`, 2 `docs`, 1 `chore`, 1 `refactor`.
+
+Breaking
+
+- refactor(execution)!: a personality states what it needs, not how to get it
 
 ## 0.7.3 {#v0-7-3}
 

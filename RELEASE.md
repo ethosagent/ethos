@@ -4,14 +4,14 @@
 
 ## Version source of truth
 
-**`VERSION`** (at the repo root) is the single source of truth. Every `package.json` version field, the binary's `ethos --version` output, and the git tag must all match it.
+**`VERSION`** (at the repo root) is the single source of truth. The seven published packages' `package.json` version fields, the binary's `ethos --version` output, and the git tag must all match it. Private workspace packages (`extensions/*`, the private `packages/*` and apps) are bundled, never published, and are not version-synced.
 
 ```
 ethos/
 ├── VERSION                       ← source of truth: just "1.0.0\n"
 ├── apps/ethos/package.json       ← version field MUST match VERSION
-├── packages/*/package.json       ← all match VERSION
-└── extensions/*/package.json     ← all match VERSION
+└── packages/{types,core,plugin-contract,plugin-sdk,
+    web-contracts,sdk}/package.json  ← the other six published packages, all match VERSION
 ```
 
 **Never edit `package.json` versions directly.** Use `make version-set` or `make version-bump-*`. Running any other tool that touches `version` fields will cause CI to fail on the G1 gate.
@@ -96,7 +96,7 @@ make version-bump-minor    # 0.2.5 → 0.3.0
 make version-bump-major    # 0.2.5 → 1.0.0
 ```
 
-`make version-bump-*` writes the new version to `VERSION` and syncs every `package.json` in `apps/`, `packages/`, and `extensions/` to the same number. All packages move to the same version — when a customer pastes `node_modules/@ethosagent/core/package.json` in a bug report, that version will match `ethos --version`.
+`make version-bump-*` writes the new version to `VERSION` and runs `scripts/sync-version.js`, which syncs exactly the seven published packages' `package.json` files (`apps/ethos` plus `packages/{types,core,plugin-contract,plugin-sdk,web-contracts,sdk}`) to the same number. All published packages move to the same version — when a customer pastes `node_modules/@ethosagent/core/package.json` in a bug report, that version will match `ethos --version`.
 
 Eyeball the diff:
 
@@ -141,7 +141,7 @@ make release
 - The **Releases** page on GitHub should have the new entry (CI path) or be missing (local path — create it manually with `gh release create`).
 - `git fetch --tags && git tag | tail` should show the new tag.
 
-You can also run the smoke test, which installs the published package in a fresh temp directory, checks `ethos --version` against `VERSION`, and (if `ANTHROPIC_API_KEY` is set) does a real LLM round-trip:
+You can also run the smoke test, which asks the npm registry for each of the seven published packages at `VERSION` and fails if any is missing or at another version (it installs nothing and makes no LLM call):
 
 ```bash
 make smoke
@@ -161,7 +161,7 @@ make smoke
 
 If any step fails, subsequent steps do not run. Already-published packages stay published (no rollback), but the tag and GH release may be missing — see [Recovery runbook](#recovery-runbook).
 
-Release notes on the GitHub Release page are auto-generated from Conventional Commit PR titles (`feat:`, `fix:`, etc.) since the previous tag — that's the de-facto changelog. There is no `CHANGELOG.md` in the repo.
+Release notes on the GitHub Release page are auto-generated from Conventional Commit PR titles (`feat:`, `fix:`, etc.) since the previous tag. The curated history lives in the repo in two files: [`docs/content/changelog.md`](docs/content/changelog.md) is the release-versioned changelog (`ethos upgrade` deep-links its `#v<version>` anchors), and the root [`CHANGELOG.md`](CHANGELOG.md) tracks schema-governance changes under Unreleased until a release retitles them into a versioned section.
 
 ---
 

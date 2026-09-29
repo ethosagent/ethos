@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Pre-flight gates for releasing Ethos.
-// G1  version sync  — all five public package.json versions == VERSION
-// G2  no 0.0.0      — none of the five public packages at the placeholder version
+// G1  version sync  — all seven public package.json versions == VERSION
+// G2  no 0.0.0      — none of the seven public packages at the placeholder version
 // G3  clean tree    — git status --porcelain is empty
 // G4  on main       — HEAD == origin/main
 // G5  no tag yet    — v{VERSION} doesn't exist locally or on remote
