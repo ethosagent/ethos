@@ -57,7 +57,8 @@ jobs:
         run: helm lint helm/ethos
 
       - name: Install helm-unittest plugin
-        run: helm plugin install https://github.com/helm-unittest/helm-unittest.git --version "$HELM_UNITTEST_VERSION"
+        # Helm 4 requires verification metadata for git-sourced plugins; helm-unittest ships none, so opt out.
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest.git --version "$HELM_UNITTEST_VERSION" --verify=false
 
       - name: helm unittest (all template branches, plan D10/R7)
         run: helm unittest helm/ethos
