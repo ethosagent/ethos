@@ -1,0 +1,26 @@
+# R7 branches covered here: 7 (headless governing service: clusterIP None,
+# name matches the StatefulSet's spec.serviceName).
+suite: service-headless
+templates:
+  - templates/service-headless.yaml
+tests:
+  - it: renders a headless service with clusterIP None
+    asserts:
+      - equal:
+          path: spec.clusterIP
+          value: None
+
+  - it: is named <fullname>-headless to match the StatefulSet serviceName
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-ethos-headless
+
+  - it: selects the chart's pods
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/name"]
+          value: ethos
+      - equal:
+          path: spec.selector["app.kubernetes.io/instance"]
+          value: RELEASE-NAME

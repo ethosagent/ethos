@@ -1,0 +1,139 @@
+# R7 branches covered here: 11 (networkpolicy: rendered by default with an
+# ingress rule for 3000 only — no 3001/3002 anywhere; absent when
+# enabled=false; webhook ports when webhooks.enabled; monitoring.from opens
+# 3000+3002 to the selector; ingress.from restricts 3000; egress open = no
+# Egress policyType; restricted = DNS 53 UDP+TCP + TCP 443 per cidr).
+suite: networkpolicy
+templates:
+  - templates/networkpolicy.yaml
+tests:
+  - it: renders by default with a single ingress rule opening only port 3000 (plan D15)
+    asserts:
+      - hasDocuments:
+          count: 1
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 3000
+              protocol: TCP
+      - notExists:
+          path: spec.ingress[0].from
+
+  - it: gives 3001 and 3002 no rule anywhere by default
+    asserts:
+      - notContains:
+          path: spec.ingress[0].ports
+          content:
+            port: 3001
+            protocol: TCP
+      - notContains:
+          path: spec.ingress[0].ports
+          content:
+            port: 3002
+            protocol: TCP
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+
+  - it: renders nothing when networkPolicy.enabled is false
+    set:
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: opens the webhook ports in a second rule when webhooks.enabled
+    set:
+      webhooks.enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - equal:
+          path: spec.ingress[1].ports
+          value:
+            - port: 3003
+              protocol: TCP
+            - port: 3006
+              protocol: TCP
+
+  - it: opens 3000 and 3002 to the monitoring selector when monitoring.from is set
+    set:
+      networkPolicy.monitoring.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 3000
+                protocol: TCP
+              - port: 3002
+                protocol: TCP
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+
+  - it: restricts port 3000 to networkPolicy.ingress.from when set
+    set:
+      networkPolicy.ingress.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 3000
+              protocol: TCP
+      - equal:
+          path: spec.ingress[0].from
+          value:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: ingress-nginx
+
+  - it: declares no Egress policyType in open egress mode (plan D17)
+    asserts:
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+      - notExists:
+          path: spec.egress
+
+  - it: allows DNS anywhere plus TCP 443 to each cidr in restricted egress mode
+    set:
+      networkPolicy.egress.mode: restricted
+      networkPolicy.egress.cidrs:
+        - 160.79.104.0/23
+        - 104.18.0.0/16
+    asserts:
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+      - equal:
+          path: spec.egress[0].ports
+          value:
+            - port: 53
+              protocol: UDP
+            - port: 53
+              protocol: TCP
+      - equal:
+          path: spec.egress[1].to
+          value:
+            - ipBlock:
+                cidr: 160.79.104.0/23
+            - ipBlock:
+                cidr: 104.18.0.0/16
+      - equal:
+          path: spec.egress[1].ports
+          value:
+            - port: 443
+              protocol: TCP

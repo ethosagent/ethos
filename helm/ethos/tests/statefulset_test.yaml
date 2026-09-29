@@ -1,0 +1,365 @@
+# R7 branches covered here: 1 (statefulset base: replicas, token mount, image
+# tag fallback/override, securityContext, grace period, core env, probes, PVC
+# retention + keep annotation, storageClassName absent/present),
+# 2 (workspace emptyDir vs second volumeClaimTemplate),
+# 3 (extraEnvVars scalar vs valueFrom map),
+# 4 (preStop absent by default / present when preStopSleepSeconds > 0),
+# 5 (ingress-gated ETHOS_TRUST_PROXY / ETHOS_ALLOWED_ORIGINS),
+# 9 (envFrom: existingSecret name vs chart fullname vs absent),
+# 10 (serviceAccountName when serviceAccount.create=false).
+suite: statefulset
+templates:
+  - templates/statefulset.yaml
+tests:
+  - it: pins replicas to 1 and never mounts the service account token
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: names the governing headless service <fullname>-headless
+    asserts:
+      - equal:
+          path: spec.serviceName
+          value: RELEASE-NAME-ethos-headless
+
+  - it: defaults the image tag to Chart.AppVersion when image.tag is empty
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ethosagent/ethos:0.8.0
+
+  - it: lets an explicit image.tag override win over the appVersion fallback
+    set:
+      image.tag: 0.9.9-rc1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ethosagent/ethos:0.9.9-rc1
+
+  - it: runs as uid 1000 with a read-only root filesystem and all capabilities dropped
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 1000
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 1000
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          value:
+            - ALL
+
+  - it: gives the SIGTERM drain 60 seconds of termination grace
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 60
+
+  - it: sets the boot-mode and bind-address env contract
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_MODE
+            value: boot
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_PROVISION_FROM_ENV
+            value: "1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_SERVE_HOST
+            value: 0.0.0.0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_WEB_HOST
+            value: 0.0.0.0
+
+  - it: points all three probes at httpGet /healthz on the health port (review D4)
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: health
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: health
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: health
+
+  - it: retains the PVC on delete and scale-down and marks the state claim helm.sh/resource-policy keep
+    asserts:
+      - equal:
+          path: spec.persistentVolumeClaimRetentionPolicy.whenDeleted
+          value: Retain
+      - equal:
+          path: spec.persistentVolumeClaimRetentionPolicy.whenScaled
+          value: Retain
+      - equal:
+          path: spec.volumeClaimTemplates[0].metadata.name
+          value: state
+      - equal:
+          path: spec.volumeClaimTemplates[0].metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 10Gi
+
+  - it: omits storageClassName when persistence.storageClass is empty (cluster default)
+    asserts:
+      - notExists:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+
+  - it: sets storageClassName when persistence.storageClass is given
+    set:
+      persistence.storageClass: gp3
+    asserts:
+      - equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: gp3
+
+  - it: mounts the workspace as an emptyDir by default with only the state claim template
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: workspace
+            emptyDir: {}
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+
+  - it: adds a second workspace volumeClaimTemplate when workspace.persistence.enabled
+    set:
+      workspace.persistence.enabled: true
+      workspace.persistence.storageClass: gp3
+    asserts:
+      - lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 2
+      - equal:
+          path: spec.volumeClaimTemplates[1].metadata.name
+          value: workspace
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.storageClassName
+          value: gp3
+      - equal:
+          path: spec.volumeClaimTemplates[1].spec.resources.requests.storage
+          value: 5Gi
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: workspace
+            emptyDir: {}
+
+  - it: renders a scalar extraEnvVars entry as a quoted name/value pair
+    set:
+      extraEnvVars:
+        ETHOS_LOG_LEVEL: debug
+        ETHOS_MAX_TURNS: 25
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_LOG_LEVEL
+            value: debug
+      # the numeric scalar is quoted into a string by the template
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_MAX_TURNS
+            value: "25"
+
+  - it: renders a map-valued extraEnvVars entry as valueFrom
+    set:
+      extraEnvVars:
+        MY_TOKEN:
+          secretKeyRef:
+            name: some-secret
+            key: token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: some-secret
+                key: token
+
+  - it: renders no preStop lifecycle hook by default
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].lifecycle
+
+  - it: renders a preStop sleep when preStopSleepSeconds is positive
+    set:
+      preStopSleepSeconds: 15
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value:
+            - sleep
+            - "15"
+
+  - it: sets neither ETHOS_TRUST_PROXY nor ETHOS_ALLOWED_ORIGINS without ingress (plan D16)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_TRUST_PROXY
+            value: "1"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ETHOS_ALLOWED_ORIGINS
+
+  - it: derives ETHOS_TRUST_PROXY=1 and the exact comma-joined https origins from ingress hosts
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - a.example.com
+        - b.example.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_TRUST_PROXY
+            value: "1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_ALLOWED_ORIGINS
+            value: https://a.example.com,https://b.example.com
+
+  - it: renders no envFrom when neither existingSecret nor secrets is set
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].envFrom
+
+  - it: points envFrom at the chart's own Secret when inline secrets are given
+    set:
+      secrets:
+        ANTHROPIC_API_KEY: sk-ant-test
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value:
+            - secretRef:
+                name: RELEASE-NAME-ethos
+
+  - it: points envFrom at existingSecret when one is named
+    set:
+      existingSecret: my-keys
+      secrets:
+        ANTHROPIC_API_KEY: sk-ant-test
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value:
+            - secretRef:
+                name: my-keys
+
+  - it: sets no ETHOS_WEB_TOKEN env by default (webAuth off — token file as today)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: ETHOS_WEB_TOKEN
+
+  - it: injects ETHOS_WEB_TOKEN via secretKeyRef when webAuth.bootstrapToken.existingSecret is set
+    set:
+      webAuth.bootstrapToken.existingSecret: ethos-web-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_WEB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: ethos-web-token
+                key: ETHOS_WEB_TOKEN
+
+  - it: honors a custom webAuth.bootstrapToken.key within the Secret
+    set:
+      webAuth.bootstrapToken.existingSecret: ethos-web-token
+      webAuth.bootstrapToken.key: bootstrap-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ETHOS_WEB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: ethos-web-token
+                key: bootstrap-token
+
+  - it: uses the chart-managed service account name when serviceAccount.create is true
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: RELEASE-NAME-ethos
+
+  - it: falls back to the default service account when serviceAccount.create is false
+    set:
+      serviceAccount.create: false
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: default
+
+  - it: uses a named pre-existing service account when create is false and a name is given
+    set:
+      serviceAccount.create: false
+      serviceAccount.name: preexisting-sa
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: preexisting-sa
+
+  - it: exposes webhook container ports only when webhooks.enabled
+    set:
+      webhooks.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: webhook
+            containerPort: 3003
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: plat-webhook
+            containerPort: 3006
+            protocol: TCP
+
+  - it: exposes only http and health container ports by default
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].ports
+          count: 2

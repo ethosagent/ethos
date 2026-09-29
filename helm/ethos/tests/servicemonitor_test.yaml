@@ -1,0 +1,94 @@
+# R7 branches covered here: 12 (servicemonitor: absent by default; renders
+# with prom-metrics-port//metrics when enabled + monitoring.coreos.com/v1
+# capability + monitoring.from set; absent without the capability, no error;
+# the scrape-conflict guard fails the render when enabled + networkPolicy on +
+# empty monitoring.from; authorization.credentials when auth.existingSecret).
+suite: servicemonitor
+templates:
+  - templates/servicemonitor.yaml
+tests:
+  - it: renders no ServiceMonitor by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a ServiceMonitor scraping prom-metrics-port /metrics when enabled with the CRD capability
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      networkPolicy.monitoring.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ServiceMonitor
+      - equal:
+          path: apiVersion
+          value: monitoring.coreos.com/v1
+      - equal:
+          path: spec.endpoints[0].port
+          value: prom-metrics-port
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 30s
+
+  - it: renders nothing (without erroring) when enabled but the cluster lacks monitoring.coreos.com/v1 (plan D11)
+    set:
+      metrics.serviceMonitor.enabled: true
+      networkPolicy.monitoring.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails the render when enabled with networkPolicy on and empty monitoring.from (plan D6/R3)
+    set:
+      metrics.serviceMonitor.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: metrics.serviceMonitor.enabled with networkPolicy.enabled requires networkPolicy.monitoring.from — otherwise the chart's own NetworkPolicy silently blocks every scrape
+
+  - it: renders authorization.credentials when auth.existingSecret is set
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.auth.existingSecret: metrics-key
+      metrics.serviceMonitor.auth.key: token
+      networkPolicy.monitoring.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - equal:
+          path: spec.endpoints[0].authorization.credentials.name
+          value: metrics-key
+      - equal:
+          path: spec.endpoints[0].authorization.credentials.key
+          value: token
+
+  - it: renders no authorization block when auth.existingSecret is empty
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      networkPolicy.monitoring.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - notExists:
+          path: spec.endpoints[0].authorization

@@ -1,0 +1,41 @@
+Ethos {{ .Values.image.tag | default .Chart.AppVersion }} is deploying as a single-pod StatefulSet: {{ include "ethos.fullname" . }}
+
+1. Access the web UI:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+
+     https://{{ . }}
+{{- end }}
+{{- else }}
+
+     kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "ethos.fullname" . }} 3000:{{ .Values.service.port }}
+
+   then open http://localhost:3000
+{{- end }}
+{{- if .Values.webAuth.bootstrapToken.existingSecret }}
+
+   Web auth bootstrap token supplied via Secret ({{ .Values.webAuth.bootstrapToken.existingSecret }}) — auth URL not printed to logs.
+{{- end }}
+
+2. First boot: a fresh volume self-provisions from the provider API key in
+   the injected Secret ({{ .Values.existingSecret | default (printf "%s, rendered from .Values.secrets" (include "ethos.fullname" .)) }}).
+   If no provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) is present,
+   the pod CrashLoops with a named error in its logs:
+
+     kubectl --namespace {{ .Release.Namespace }} logs {{ include "ethos.fullname" . }}-0
+
+   Later boots keep the volume's config.yaml; secrets re-sync from env on
+   every start.
+
+3. Backups: Ethos's built-in scheduler archives daily at 4am onto the state
+   volume (keep 7). For disaster recovery, restore an archive with
+   `ethos import`; take off-volume snapshots with your storage provider
+   (see examples/ for the EKS/DLM pattern).
+
+WARNINGS
+  - Webhook mode (webhooks.enabled) needs a PUBLIC host with TLS at the
+    edge: enable ingress with a reachable host, or the platform's calls
+    never arrive.
+  - Metrics scraping requires networkPolicy.monitoring.from to name your
+    Prometheus — with it unset the chart refuses to render a ServiceMonitor
+    rather than deploy a target its own NetworkPolicy blocks.

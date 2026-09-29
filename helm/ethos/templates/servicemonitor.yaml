@@ -1,0 +1,27 @@
+{{- /* Guard before the capability check (plan D6/R3): this combination deploys a scrape target the chart's own NetworkPolicy then drops, and must fail loudly even on clusters without the CRD. */}}
+{{- if and .Values.metrics.serviceMonitor.enabled .Values.networkPolicy.enabled (not .Values.networkPolicy.monitoring.from) }}
+{{- fail "metrics.serviceMonitor.enabled with networkPolicy.enabled requires networkPolicy.monitoring.from — otherwise the chart's own NetworkPolicy silently blocks every scrape" }}
+{{- end }}
+{{- if and .Values.metrics.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ethos.fullname" . }}
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ethos.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: prom-metrics-port
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      {{- if .Values.metrics.serviceMonitor.auth.existingSecret }}
+      # Ethos's /metrics needs a bearer key with scope metrics:read.
+      authorization:
+        credentials:
+          name: {{ .Values.metrics.serviceMonitor.auth.existingSecret }}
+          key: {{ .Values.metrics.serviceMonitor.auth.key }}
+      {{- end }}
+{{- end }}

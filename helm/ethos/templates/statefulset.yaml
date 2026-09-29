@@ -1,0 +1,190 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ethos.fullname" . }}
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+spec:
+  # replicas hardcoded: gateway singleton lock exits 3 on a second pod, and
+  # SQLite state is single-writer (plan D3) — the chart does not offer the
+  # footgun.
+  replicas: 1
+  serviceName: {{ include "ethos.fullname" . }}-headless
+  # State outlives chart operations (plan D5).
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "ethos.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "ethos.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ethos.serviceAccountName" . }}
+      # Ethos never calls the Kubernetes API (plan D14).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: ethos
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: ETHOS_MODE
+              value: boot
+            # Fresh PVC self-provisions from the provider key env var;
+            # subsequent boots keep the PVC's config.yaml (plan D7).
+            - name: ETHOS_PROVISION_FROM_ENV
+              value: "1"
+            # 0.0.0.0 binds required for pod-IP kubelet probes and the
+            # Service (plan D8).
+            - name: ETHOS_SERVE_HOST
+              value: 0.0.0.0
+            - name: ETHOS_WEB_HOST
+              value: 0.0.0.0
+            {{- if .Values.ingress.enabled }}
+            # Set only when ingress fronts the pod (plan D16).
+            - name: ETHOS_TRUST_PROXY
+              value: "1"
+            {{- $origins := list }}
+            {{- range .Values.ingress.hosts }}
+            {{- $origins = append $origins (printf "https://%s" .) }}
+            {{- end }}
+            - name: ETHOS_ALLOWED_ORIGINS
+              value: {{ join "," $origins | quote }}
+            {{- end }}
+            {{- if .Values.webAuth.bootstrapToken.existingSecret }}
+            # Web-auth bootstrap token from a pre-created Secret (plan
+            # web-auth-bootstrap D2/D12); when set the app does not print
+            # the auth URL to logs.
+            - name: ETHOS_WEB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.webAuth.bootstrapToken.existingSecret }}
+                  key: {{ .Values.webAuth.bootstrapToken.key }}
+            {{- end }}
+            {{- range $key, $value := .Values.extraEnvVars }}
+            - name: {{ $key }}
+              {{- if kindIs "map" $value }}
+              valueFrom:
+                {{- toYaml $value | nindent 16 }}
+              {{- else }}
+              value: {{ $value | quote }}
+              {{- end }}
+            {{- end }}
+          {{- if or .Values.existingSecret .Values.secrets }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret | default (include "ethos.fullname" .) }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: health
+              containerPort: 3002
+              protocol: TCP
+            {{- if .Values.webhooks.enabled }}
+            - name: webhook
+              containerPort: {{ .Values.webhooks.webhookPort }}
+              protocol: TCP
+            # "plat-webhook": container port names are capped at 15 chars;
+            # the Service exposes it as "platform-webhook".
+            - name: plat-webhook
+              containerPort: {{ .Values.webhooks.platformWebhookPort }}
+              protocol: TCP
+            {{- end }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- if gt (int .Values.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.preStopSleepSeconds }}"]
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /home/ethos/.ethos
+            - name: workspace
+              mountPath: /home/ethos/workspace
+            # readOnlyRootFilesystem needs a writable /tmp (plan D9).
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.workspace.persistence.enabled }}
+        - name: workspace
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+    {{- if .Values.workspace.persistence.enabled }}
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.workspace.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.workspace.persistence.size }}
+    {{- end }}

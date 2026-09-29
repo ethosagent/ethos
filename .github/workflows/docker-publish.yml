@@ -13,6 +13,8 @@ name: docker-publish
 # single-service profile, poll /healthz, assert a web-UI reply via RPC and an
 # `ethos -z` CLI reply, SIGTERM clean stop) → only then promote `latest`.
 # A smoke failure marks the tag (`<version>-smoke-failed`) and fails the run.
+# After a non-prerelease promotion, a chart-bump PR points helm/ethos at the
+# released image (appVersion + chart patch bump — helm-chart plan D8/R5).
 #
 # Non-prerelease versions are promoted to `latest`; prereleases (vX.Y.Z-...) are not.
 
@@ -322,3 +324,81 @@ jobs:
         run: |
           docker buildx imagetools create "ethosagent/ethos:${VERSION}" \
             --tag "ethosagent/ethos:latest"
+
+  # Keep the Helm chart's default image pin current (helm-chart plan, D8/R5):
+  # the chart ships `image.tag: ""` falling back to Chart.AppVersion, so
+  # bumping appVersion here — after the smoke gate proved the image boots and
+  # `latest` was promoted — is what makes fresh `helm install`s track released
+  # images. Opens a PR (never pushes to main); same non-prerelease guard as
+  # the `latest` promotion.
+  chart-bump:
+    needs: [docker-publish, promote-latest]
+    if: needs.docker-publish.outputs.published == 'true' && needs.docker-publish.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The bump PR targets current main, not the released commit — the
+          # chart lives on main and the PR should carry only the two-line diff.
+          ref: main
+
+      - name: Bump chart appVersion to the released image
+        id: bump
+        env:
+          VERSION: ${{ needs.docker-publish.outputs.version }}
+        run: |
+          CHART=helm/ethos/Chart.yaml
+          if [ ! -f "$CHART" ]; then
+            echo "no $CHART on main — skipping chart bump"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          APP_VERSION="$(sed -n 's/^appVersion:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CHART")"
+          if [ "$APP_VERSION" = "$VERSION" ]; then
+            # Manual republish of an already-charted version — nothing to bump.
+            echo "appVersion already ${VERSION} — skipping chart bump"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHART_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$CHART")"
+          NEW_CHART_VERSION="$(echo "$CHART_VERSION" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')"
+          sed -i "s/^version:[[:space:]].*/version: ${NEW_CHART_VERSION}/" "$CHART"
+          sed -i "s/^appVersion:[[:space:]].*/appVersion: \"${VERSION}\"/" "$CHART"
+          echo "chart ${CHART_VERSION} -> ${NEW_CHART_VERSION}, appVersion -> ${VERSION}"
+          echo "bumped=true" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$NEW_CHART_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Open chart-bump PR
+        if: steps.bump.outputs.bumped == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chart-bump/${{ needs.docker-publish.outputs.version }}
+          delete-branch: true
+          commit-message: |
+            chore(helm): bump chart appVersion to ${{ needs.docker-publish.outputs.version }}
+
+            ethosagent/ethos:${{ needs.docker-publish.outputs.version }} passed the
+            docker-publish smoke gate and was promoted to latest; point the chart's
+            default image pin (image.tag "" -> Chart.AppVersion) at it.
+          title: 'chore(helm): bump chart appVersion to ${{ needs.docker-publish.outputs.version }}'
+          body: |
+            Automated chart bump from the docker-publish workflow.
+
+            `ethosagent/ethos:${{ needs.docker-publish.outputs.version }}` passed the
+            post-publish smoke gate and was promoted to `latest`. This PR points the
+            chart's default image pin at it (`image.tag: ""` falls back to
+            `Chart.AppVersion` — helm-chart plan D8/R5):
+
+            - `appVersion` → `${{ needs.docker-publish.outputs.version }}`
+            - `version` → `${{ steps.bump.outputs.chart_version }}` (patch bump)
+
+            Note: PRs opened with the default `GITHUB_TOKEN` do not trigger other
+            workflows — re-run the `helm` workflow manually if you want its checks
+            on this branch before merging.
+
+            🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ethos.fullname" . }}
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ethos.fullname" $ }}
+                port:
+                  name: http
+          {{- if $.Values.webhooks.enabled }}
+          {{- /* Webhook routes render only when BOTH toggles are on (plan D5/R2). */}}
+          {{- range $.Values.webhooks.ingressPaths }}
+          - path: {{ .path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ethos.fullname" $ }}
+                port:
+                  name: {{ .portName }}
+          {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

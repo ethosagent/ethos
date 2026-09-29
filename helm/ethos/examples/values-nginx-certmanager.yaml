@@ -1,0 +1,44 @@
+# values-nginx-certmanager.yaml — any-cloud overlay for the Ethos chart
+# (plan/phases/helm-chart.md D2/D16; the generic core assumes none of this)
+#
+# Cluster prerequisites:
+#   - ingress-nginx controller (renders the Ingress)
+#   - cert-manager
+#   - A ClusterIssuer (e.g. letsencrypt-prod) for the host below
+#
+# Install:
+#   kubectl create secret generic ethos-keys \
+#     --from-literal=ANTHROPIC_API_KEY=sk-ant-...   # add channel tokens as needed
+#   helm install ethos ./helm/ethos -f examples/values-nginx-certmanager.yaml
+#
+# Replace every <PLACEHOLDER> before installing.
+
+# ── Secrets: provider + channel keys as env ──────────────────────────────────
+# Ethos's resolver reads env first, so a plain Kubernetes Secret works with
+# zero code change. Created out-of-band (see Install above) so no key ever
+# lives in a values file.
+existingSecret: ethos-keys
+
+# ── Ingress: nginx, TLS at the edge (cert-manager) ───────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    # cert-manager watches this annotation, requests a certificate for the
+    # host below, and writes it into tls.secretName.
+    cert-manager.io/cluster-issuer: <letsencrypt-prod>
+    # SSE: the Ethos web UI streams responses; nginx's default 60s
+    # proxy_read_timeout kills quiet streams mid-answer.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  hosts:
+    - <ethos.yourdomain.com>
+  tls:
+    # cert-manager populates this Secret — do not create it yourself.
+    - secretName: ethos-tls
+      hosts:
+        - <ethos.yourdomain.com>
+
+# TLS terminates at nginx; the pod speaks plain HTTP behind it. The chart
+# derives ETHOS_ALLOWED_ORIGINS (exactly the host above) and
+# ETHOS_TRUST_PROXY=1 from this ingress block (D16) — nothing to set here.

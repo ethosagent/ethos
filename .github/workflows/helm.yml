@@ -1,0 +1,207 @@
+name: helm
+
+# CI for the first-party Helm chart at helm/ethos/ (helm-chart plan, D13).
+#
+# Job graph:
+#
+#   lint-test ──────────────────────────────► kind-smoke
+#   (helm lint → helm-unittest → kubeconform)   (kind install → provision →
+#                                                pod kill → PVC survival)
+#
+# The kind smoke provisions with a dummy ANTHROPIC_API_KEY and
+# ETHOS_SKIP_VALIDATION=1 (plan D7/R4: hermetic, no live credential in CI —
+# setup-from-env.ts's documented air-gapped escape hatch). It asserts chart
+# mechanics only: first-boot provisioning, state survival across a pod kill,
+# clean restart. No LLM call is asserted; the real-turn proof is the live
+# EKS release gate (plan §5).
+
+on:
+  pull_request:
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v4.3.0
+  HELM_UNITTEST_VERSION: '1.1.2'
+  KUBECONFORM_VERSION: v0.8.0
+
+jobs:
+  lint-test:
+    name: lint-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm lint
+        run: helm lint helm/ethos
+
+      - name: Install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest.git --version "$HELM_UNITTEST_VERSION"
+
+      - name: helm unittest (all template branches, plan D10/R7)
+        run: helm unittest helm/ethos
+
+      - name: Install kubeconform
+        run: |
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: kubeconform (default values)
+        run: helm template helm/ethos | kubeconform -strict -summary
+
+      - name: kubeconform (values-minimal overlay)
+        run: |
+          helm template helm/ethos -f helm/ethos/examples/values-minimal.yaml \
+            | kubeconform -strict -summary
+
+  # Install smoke on a throwaway kind cluster: prove the chart's mechanics —
+  # first-boot provisioning from env (D7), PVC state survival across a pod
+  # kill (D5), clean container restart. Mirrors docker-publish.yml's
+  # post-publish smoke gate in spirit, minus anything needing a real key.
+  kind-smoke:
+    name: kind-smoke
+    needs: lint-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Create kind cluster
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+
+      # R7 accepted scope: the clean no-provider-key first-boot failure. With
+      # no secrets at all the chart still sets ETHOS_PROVISION_FROM_ENV=1, so
+      # the entrypoint's `ethos setup --from-env` must fail by NAME and exit
+      # non-zero — a crash-loop with a readable error, never a silent hang.
+      # Runs BEFORE the happy-path install, in its own namespace, so it can
+      # be torn down without disturbing the main release.
+      - name: Install no-key release (no secrets, no skip — plan R7)
+        run: |
+          helm install ethos-nokey helm/ethos \
+            --namespace ethos-nokey --create-namespace \
+            -f helm/ethos/examples/values-minimal.yaml \
+            --wait=false
+
+      - name: Assert named no-provider-key failure (plan R7)
+        run: |
+          # The pod must ATTEMPT startup and crash — poll until the container
+          # has restarted at least once (proof the entrypoint ran and exited).
+          # Up to 5m: this is the node's FIRST pull of the image, so the pull
+          # dominates the wait (the happy-path install gets the same budget).
+          for i in $(seq 1 150); do
+            RESTARTS="$(kubectl get pod ethos-nokey-0 -n ethos-nokey -o jsonpath='{.status.containerStatuses[0].restartCount}' 2> /dev/null || echo '')"
+            [ -n "$RESTARTS" ] && [ "$RESTARTS" -ge 1 ] && break
+            [ "$i" = 150 ] && { echo "::error::ethos-nokey-0 never crash-looped without a provider key"; exit 1; }
+            sleep 2
+          done
+          # A keyless boot must never come up healthy.
+          READY="$(kubectl get pod ethos-nokey-0 -n ethos-nokey -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+          if [ "$READY" = "True" ]; then
+            echo "::error::ethos-nokey-0 became Ready with no provider key"; exit 1
+          fi
+          # The NAMED error, not a silent hang: setup --from-env's "No provider
+          # API key found" (apps/ethos/src/commands/setup-from-env.ts), or
+          # boot's "Run ethos setup first." should the entrypoint's
+          # provisioning gate ever change.
+          LOGS="$(kubectl logs ethos-nokey-0 -n ethos-nokey 2> /dev/null || true)
+          $(kubectl logs ethos-nokey-0 -n ethos-nokey --previous 2> /dev/null || true)"
+          if echo "$LOGS" | grep -Eq 'No provider API key|Run ethos setup first'; then
+            echo "keyless first boot failed with a named error (restarts: $RESTARTS)"
+          else
+            echo "::error::no named provisioning error in ethos-nokey-0 logs"; exit 1
+          fi
+
+      - name: Dump no-key pod state and logs
+        if: failure()
+        run: |
+          kubectl describe pod ethos-nokey-0 -n ethos-nokey || true
+          kubectl logs ethos-nokey-0 -n ethos-nokey --previous 2> /dev/null | tail -200 || true
+          kubectl logs ethos-nokey-0 -n ethos-nokey 2> /dev/null | tail -200 || true
+
+      - name: Remove no-key release
+        run: |
+          helm uninstall ethos-nokey -n ethos-nokey
+          kubectl delete namespace ethos-nokey --wait=false
+
+      - name: Install chart (dummy key, validation skipped — plan D7)
+        run: |
+          # --set-string keeps "1" a string: env values and Secret stringData
+          # must be strings, and plain --set would parse it as an integer.
+          helm install ethos helm/ethos \
+            -f helm/ethos/examples/values-minimal.yaml \
+            --set-string secrets.ANTHROPIC_API_KEY=dummy \
+            --set-string extraEnvVars.ETHOS_SKIP_VALIDATION=1 \
+            --wait --timeout 5m
+          kubectl wait --for=condition=Ready pod/ethos-0 --timeout=120s
+
+      - name: Assert first-boot provisioning (config.yaml on the PVC)
+        run: |
+          # ETHOS_PROVISION_FROM_ENV ran `ethos setup --from-env` on the fresh
+          # PVC; config.yaml existing under $HOME/.ethos proves it.
+          kubectl exec ethos-0 -- test -f /home/ethos/.ethos/config.yaml
+          echo "first-boot provisioning wrote config.yaml"
+
+      - name: Kill the pod, assert state survives on the PVC
+        run: |
+          kubectl delete pod ethos-0 --wait
+          # The StatefulSet recreates ethos-0; wait for the new pod to exist,
+          # then to become Ready.
+          for i in $(seq 1 60); do
+            kubectl get pod ethos-0 > /dev/null 2>&1 && break
+            [ "$i" = 60 ] && { echo "::error::ethos-0 was never recreated"; exit 1; }
+            sleep 2
+          done
+          kubectl wait --for=condition=Ready pod/ethos-0 --timeout=300s
+          # The volumeClaimTemplate PVC re-attached: first boot's config.yaml
+          # must still be there (not re-provisioned onto an empty volume).
+          kubectl exec ethos-0 -- test -f /home/ethos/.ethos/config.yaml
+          echo "config.yaml survived the pod kill"
+
+      - name: Assert clean container restart
+        run: |
+          # If the container has a recorded last termination, it must have been
+          # a clean SIGTERM exit: 0 (handled shutdown) or 143 (default SIGTERM).
+          LAST_EXIT="$(kubectl get pod ethos-0 -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}')"
+          if [ -z "$LAST_EXIT" ]; then
+            echo "no prior termination recorded on the fresh pod — nothing to assert"
+            exit 0
+          fi
+          case "$LAST_EXIT" in
+            0|143) echo "clean restart (last terminated exit $LAST_EXIT)" ;;
+            *) echo "::error::container's last termination was not clean (exit $LAST_EXIT)"; exit 1 ;;
+          esac
+
+      - name: Dump pod state and logs
+        if: failure()
+        run: |
+          kubectl describe pod ethos-0 || true
+          kubectl logs ethos-0 --previous 2> /dev/null | tail -200 || true
+          kubectl logs ethos-0 2> /dev/null | tail -200 || true

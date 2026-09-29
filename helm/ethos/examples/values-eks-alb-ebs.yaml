@@ -1,0 +1,138 @@
+# values-eks-alb-ebs.yaml — EKS overlay for the Ethos chart
+# (plan/phases/helm-chart.md D2/D5/D15–D17; the generic core assumes none of this)
+#
+# Cluster prerequisites:
+#   - EBS CSI driver with a gp3 StorageClass (here: ebs-sc, encrypted, WaitForFirstConsumer)
+#   - aws-load-balancer-controller (renders the Ingress as an ALB)
+#   - external-dns (publishes the Ingress host into Route 53)
+#   - An ACM certificate for the host below
+#   - Cluster OIDC provider (IRSA) if you use the role-arn annotation below
+#
+# Install:
+#   kubectl create secret generic ethos-keys \
+#     --from-literal=ANTHROPIC_API_KEY=sk-ant-...   # add channel tokens as needed
+#   helm install ethos ./helm/ethos -f examples/values-eks-alb-ebs.yaml
+#
+# Replace every <PLACEHOLDER> before installing.
+
+# ── Identity: IRSA via the cluster's OIDC provider ───────────────────────────
+# The chart never mounts a Kubernetes API token (automountServiceAccountToken
+# is false, D14). This annotation is the ONLY identity hook: the pod assumes
+# the IAM role through EKS's OIDC provider — no static AWS keys in the pod.
+# Grant the role only what Ethos actually uses (see the Secrets Manager note
+# at the bottom).
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<ETHOS_IRSA_ROLE>
+
+# ── State: EBS gp3 via the EBS CSI driver ────────────────────────────────────
+# One RWO volume carries everything (~/.ethos: config, secret vault,
+# personalities, all SQLite databases, OAuth tokens, daily backups).
+# WaitForFirstConsumer binds it in the scheduled pod's AZ; the pod is pinned
+# to that AZ afterwards — an AZ outage means downtime until you restore a
+# snapshot elsewhere (recorded limitation, D5).
+persistence:
+  storageClass: ebs-sc          # gp3, encrypted: true in the cluster's CSI values
+  size: 10Gi
+  # Off-volume backup: opt this volume into your DLM daily-snapshot policy
+  # (tag Snapshot=true — via a tagging StorageClass or the CSI volume-tag
+  # annotation). In-app backups already run daily at 4am onto the volume.
+
+# ── Secrets: provider + channel keys as env ──────────────────────────────────
+# Ethos's resolver reads env first, so a plain Kubernetes Secret works with
+# zero code change. Created out-of-band (see Install above) so no key ever
+# lives in a values file.
+existingSecret: ethos-keys
+
+# ── Ingress: internal ALB, TLS at the edge (ACM) ─────────────────────────────
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    # internal = reachable via VPC/VPN only (D16 default). Switching to
+    # internet-facing is a deliberate edit of this line.
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<REGION>:<ACCOUNT_ID>:certificate/<CERT_ID>
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+    # SSE: the Ethos web UI streams responses over SSE; the ALB's 60s default
+    # idle timeout kills quiet streams. Also drop malformed headers.
+    alb.ingress.kubernetes.io/load-balancer-attributes: >-
+      idle_timeout.timeout_seconds=3600,
+      routing.http.drop_invalid_header_fields.enabled=true
+    # ALB target health check. Deliberately NOT the web port's /healthz —
+    # that endpoint 503s whenever the gateway heartbeat is stale, and with a
+    # single pod the ALB would pull the only target during an adapter hiccup
+    # (same coupling the readiness probe avoids, review D4). The SPA root
+    # returns 200 whenever the process serves traffic.
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    # /metrics is bearer-key-protected AND unrouted by the chart; this 404
+    # action is defense in depth at the ALB (D16).
+    alb.ingress.kubernetes.io/actions.metrics-404: >-
+      {"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"not found"}}
+    external-dns.alpha.kubernetes.io/hostname: <ethos.internal.yourdomain.com>
+  hosts:
+    - <ethos.internal.yourdomain.com>
+  # TLS terminates at the ALB via ACM — no cert-manager, no k8s tls block.
+  tls: []
+
+# The chart derives ETHOS_ALLOWED_ORIGINS (exactly the host above) and
+# ETHOS_TRUST_PROXY=1 from this ingress block (D16) — nothing to set here.
+
+# ── Network policy ───────────────────────────────────────────────────────────
+# Enabled by default in the core chart: only :3000 is reachable from pods;
+# :3001 (ACP) and :3002 (health/metrics) are closed (kubelet probes bypass
+# NetworkPolicy). Uncomment monitoring.from when Prometheus scrapes — the
+# chart REFUSES to render a ServiceMonitor while this is empty (D6).
+networkPolicy:
+  enabled: true
+  # monitoring:
+  #   from:
+  #     - namespaceSelector:
+  #         matchLabels:
+  #           kubernetes.io/metadata.name: monitoring
+  # Egress is open by default: the agent must reach LLM APIs, chat platforms
+  # and OAuth endpoints, and per-tool egress is enforced in-app by scoped
+  # fetch allowlists (D17). Restricted mode (DNS + 443 to listed CIDRs) is
+  # brittle for SaaS IPs — opt in knowingly:
+  # egress:
+  #   mode: restricted
+  #   cidrs: ["0.0.0.0/0"]   # tighten to your egress proxy / NAT ranges
+  #
+  # FQDN-based egress needs a CNI CRD; on Cilium you can pin domains instead
+  # of CIDRs with a CiliumNetworkPolicy alongside this chart, e.g.:
+  #   apiVersion: cilium.io/v2
+  #   kind: CiliumNetworkPolicy
+  #   spec:
+  #     endpointSelector: {matchLabels: {app.kubernetes.io/name: ethos}}
+  #     egress:
+  #       - toFQDNs:
+  #           - {matchName: api.anthropic.com}
+  #           - {matchName: api.telegram.org}
+  #         toPorts: [{ports: [{port: "443", protocol: TCP}]}]
+
+# ── Metrics (optional) ───────────────────────────────────────────────────────
+# Requires the kube-prometheus-stack CRDs, networkPolicy.monitoring.from set
+# above, and an Ethos API key with scope metrics:read
+# (ethos api-key create --scopes metrics:read).
+metrics:
+  serviceMonitor:
+    enabled: false
+
+# ── Sizing ───────────────────────────────────────────────────────────────────
+# Chart defaults (250m/512Mi requests, 1Gi memory limit, no CPU limit) are
+# validated against gateway RSS in the live smoke (D11). Override here for
+# heavier multi-bot deployments.
+# resources:
+#   requests: {cpu: 500m, memory: 1Gi}
+#   limits: {memory: 2Gi}
+
+# ── AWS Secrets Manager instead of a K8s Secret (optional, uses the IRSA
+# role above) ────────────────────────────────────────────────────────────────
+# Ethos's secrets resolver supports env → AWS Secrets Manager → file when
+# config.aws.secrets.enabled is set in ~/.ethos/config.yaml (on the volume).
+# With that enabled, drop existingSecret above, grant the IRSA role
+# secretsmanager:GetSecretValue on your Ethos secrets, and keys never touch
+# Kubernetes at all. See the chart README's "Secrets" section.

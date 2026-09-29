@@ -1,0 +1,226 @@
+# Default values for the Ethos chart.
+#
+# The core chart is provider-agnostic (plan D2): it assumes only a default
+# StorageClass with RWO and standard networking.k8s.io/v1 Ingress. Cloud
+# specifics live in documented overlays under examples/.
+
+# ── Image ────────────────────────────────────────────────────────────────────
+image:
+  repository: ethosagent/ethos
+  # Empty tag defaults to Chart.AppVersion — the one pinned literal the
+  # release flow bumps (review D8).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Names of image-pull Secrets in the release namespace, e.g.
+#   imagePullSecrets: [{name: regcred}]
+imagePullSecrets: []
+
+# Override the chart name / the fully qualified app name.
+nameOverride: ""
+fullnameOverride: ""
+
+# ── ServiceAccount ───────────────────────────────────────────────────────────
+# The ServiceAccount exists for workload-identity annotations (IRSA on EKS —
+# see examples/values-eks-alb-ebs.yaml). Its API token is NEVER mounted:
+# automountServiceAccountToken is hardcoded false on both the ServiceAccount
+# and the pod spec — Ethos never calls the Kubernetes API (plan D14).
+serviceAccount:
+  create: true
+  annotations: {}
+
+# Extra annotations / labels for the pod.
+podAnnotations: {}
+podLabels: {}
+
+# Extra environment variables for the container, as a map of NAME: value.
+# A map-valued entry renders as valueFrom, e.g.
+#   extraEnvVars:
+#     ETHOS_LOG_LEVEL: debug
+#     MY_TOKEN:
+#       secretKeyRef:
+#         name: some-secret
+#         key: token
+extraEnvVars: {}
+
+# ── Service ──────────────────────────────────────────────────────────────────
+# Publishes ONLY :3000 (web UI + API) by default. :3002 (health/metrics) is
+# added only when metrics.serviceMonitor.enabled; webhook ports only when
+# webhooks.enabled (plan D16). Set type to LoadBalancer/NodePort for
+# ingress-less clusters.
+service:
+  type: ClusterIP
+  port: 3000
+
+# ── Webhooks ─────────────────────────────────────────────────────────────────
+# Channel platforms in webhook mode call Ethos FROM the internet. Enabling
+# this opens the webhook ports on the container, Service and NetworkPolicy;
+# with ingress.enabled also set, the Ingress routes ingressPaths to them
+# (plan D5/R2 — with either toggle off, no webhook route renders).
+# Webhook mode needs a public host + TLS at the edge.
+webhooks:
+  enabled: false
+  webhookPort: 3003
+  platformWebhookPort: 3006
+  ingressPaths:
+    - path: /webhooks
+      portName: webhook
+    - path: /platform-webhooks
+      portName: platform-webhook
+
+# ── Ingress ──────────────────────────────────────────────────────────────────
+# Standard networking.k8s.io/v1 shape — works unmodified under ALB, nginx and
+# traefik (see examples/). Hosts are plain strings. When enabled, the chart
+# derives ETHOS_TRUST_PROXY=1 and ETHOS_ALLOWED_ORIGINS=https://<host>,...
+# from this block; without ingress neither is set (plan D16).
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+# ── NetworkPolicy ────────────────────────────────────────────────────────────
+# Enabled by default (plan D15). Only the declared Service ports are
+# reachable from other pods: :3000 always, webhook ports when
+# webhooks.enabled. :3001 (ACP) and :3002 (health/metrics) get no rule —
+# unreachable from pods; kubelet probes are not subject to NetworkPolicy, so
+# the :3002 probes keep working. On a CNI that does not enforce
+# NetworkPolicy the object is inert.
+networkPolicy:
+  enabled: true
+  ingress:
+    # Optional peer selectors restricting :3000 (and webhook ports) to e.g.
+    # the ingress controller's namespace. Empty = that port is open to all
+    # pods (the generic chart cannot know your controller's labels).
+    from: []
+  monitoring:
+    # Peer selectors allowed to scrape metrics (:3000 and :3002), e.g.
+    #   from:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: monitoring
+    # REQUIRED when metrics.serviceMonitor.enabled — otherwise the chart's
+    # own policy would silently block every scrape, so the render fails
+    # instead (plan D6/R3).
+    from: []
+  egress:
+    # open       — no Egress rules: the agent must reach LLM providers, chat
+    #              platforms, OAuth endpoints and tool-fetched URLs (plan D17).
+    # restricted — allow DNS (53 UDP+TCP) anywhere plus TCP 443 to the CIDRs
+    #              below. CIDR allowlists for SaaS APIs are brittle
+    #              (rotating IPs) — opt in knowingly.
+    mode: open
+    cidrs: []
+
+# ── Metrics ──────────────────────────────────────────────────────────────────
+# The ServiceMonitor renders only when enabled AND the cluster has the
+# monitoring.coreos.com/v1 CRDs (plan D11). Ethos's /metrics is
+# bearer-key-protected: create a key with `ethos api-key create --scopes
+# metrics:read` and reference it via auth below.
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    auth:
+      # Secret carrying the metrics:read API key, and the key within it.
+      existingSecret: ""
+      key: ""
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# Ethos's EnvSecretsResolver reads standard env names (ANTHROPIC_API_KEY,
+# OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, ...) first, so a plain Secret injected
+# as env works with zero code change (plan D6).
+#
+# Name of a pre-created Secret injected wholesale as env. Preferred: no key
+# ever lives in a values file.
+existingSecret: ""
+# OR inline key/values the chart renders into its own Secret — a map of
+# ENV-NAME: value, e.g.
+#   secrets:
+#     ANTHROPIC_API_KEY: sk-ant-...
+# Ignored when existingSecret is set.
+secrets: {}
+
+# ── Web auth bootstrap ───────────────────────────────────────────────────────
+# Sets the web-auth bootstrap token from a pre-created Secret (env
+# ETHOS_WEB_TOKEN), so operators never need pod exec to retrieve it. The
+# token must be ≥24 chars — generate one with `openssl rand -hex 32`. When
+# set, the app does not print the auth URL to its logs (the operator already
+# holds the token). Default empty = off: the app generates its token file on
+# the state volume as today.
+webAuth:
+  bootstrapToken:
+    existingSecret: ""
+    key: ETHOS_WEB_TOKEN
+
+# ── State persistence ────────────────────────────────────────────────────────
+# One RWO volume mounted at /home/ethos/.ethos carries everything: config,
+# secret vault, personalities, all SQLite databases, OAuth tokens, in-app
+# daily backups. The PVC outlives `helm uninstall` (keep policy + Retain
+# retention — plan D5): an agent's memory is not collateral of a chart
+# operation.
+persistence:
+  # "" = the cluster's default StorageClass.
+  storageClass: ""
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+  annotations:
+    "helm.sh/resource-policy": keep
+
+# ── Workspace ────────────────────────────────────────────────────────────────
+# /home/ethos/workspace is an emptyDir by default (scratch — lost on
+# reschedule). Enable persistence for a second PVC if agents keep durable
+# work there.
+workspace:
+  persistence:
+    enabled: false
+    storageClass: ""
+    size: 5Gi
+
+# ── Sizing ───────────────────────────────────────────────────────────────────
+# Modest request + memory-only limit (review D11): a sane scheduling class
+# and OOM protection by default; no CPU limit (throttling a streaming agent
+# buys nothing). Heavy multi-bot deployments override upward.
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# ── Probes ───────────────────────────────────────────────────────────────────
+# All three default to :3002/healthz (process up). Readiness deliberately
+# does NOT use /readyz: with one replica a readiness failure removes the
+# only Service endpoint, turning any platform-adapter outage into a UI
+# outage (review D4). /readyz stays the operator diagnostic surface; each
+# probe is a full object passed through verbatim, so strict-readyz operators
+# can override.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: health
+  failureThreshold: 30
+  periodSeconds: 5
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: health
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: health
+  periodSeconds: 10
+
+# ── Lifecycle ────────────────────────────────────────────────────────────────
+# Optional preStop sleep (seconds) for load balancers that need drain time
+# before SIGTERM; 0 renders no hook.
+preStopSleepSeconds: 0
+# Ethos's SIGTERM drain sequence is ~37s worst case (plan D8).
+terminationGracePeriodSeconds: 60
+
+# ── Scheduling ───────────────────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}

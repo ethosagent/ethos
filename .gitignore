@@ -58,3 +58,6 @@ packages/ui-components/src/**/*.js.map
 
 # vitest JSON-report artifact written by `pnpm test --reporter=json` (test-validator skills).
 .vitest/
+
+# Local-only deploy overlays (never committed)
+helm/ethos/examples/values.*.dev.yaml

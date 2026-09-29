@@ -1,0 +1,93 @@
+# R7 branches covered here: 6 (service: type ClusterIP default + NodePort
+# override, only http:3000 by default, prom-metrics-port only when
+# metrics.serviceMonitor.enabled, webhook + platform-webhook ports only when
+# webhooks.enabled).
+suite: service
+templates:
+  - templates/service.yaml
+tests:
+  - it: is a ClusterIP service by default
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: honours a service.type override to NodePort
+    set:
+      service.type: NodePort
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+
+  - it: publishes only http:3000 by default
+    asserts:
+      - lengthEqual:
+          path: spec.ports
+          count: 1
+      - equal:
+          path: spec.ports[0].name
+          value: http
+      - equal:
+          path: spec.ports[0].port
+          value: 3000
+      - equal:
+          path: spec.ports[0].targetPort
+          value: http
+
+  - it: adds prom-metrics-port only when metrics.serviceMonitor.enabled (plan D16)
+    set:
+      metrics.serviceMonitor.enabled: true
+      # keep the servicemonitor scrape-conflict guard from failing the render
+      networkPolicy.enabled: false
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: prom-metrics-port
+            port: 3002
+            targetPort: health
+            protocol: TCP
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+
+  - it: does not publish prom-metrics-port when metrics are disabled
+    asserts:
+      - notContains:
+          path: spec.ports
+          any: true
+          content:
+            name: prom-metrics-port
+
+  - it: publishes webhook and platform-webhook ports only when webhooks.enabled
+    set:
+      webhooks.enabled: true
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: webhook
+            port: 3003
+            targetPort: 3003
+            protocol: TCP
+      - contains:
+          path: spec.ports
+          content:
+            name: platform-webhook
+            port: 3006
+            targetPort: 3006
+            protocol: TCP
+
+  - it: publishes no webhook ports by default
+    asserts:
+      - notContains:
+          path: spec.ports
+          any: true
+          content:
+            name: webhook
+      - notContains:
+          path: spec.ports
+          any: true
+          content:
+            name: platform-webhook

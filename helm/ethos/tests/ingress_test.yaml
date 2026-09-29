@@ -1,0 +1,128 @@
+# R7 branches covered here: 8 (ingress: absent by default, nginx-style render,
+# tls block, multi-host, webhook paths only when webhooks.enabled AND
+# ingress.enabled — absent in both single-toggle directions).
+suite: ingress
+templates:
+  - templates/ingress.yaml
+tests:
+  - it: renders no ingress by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no ingress when only webhooks.enabled is on (webhooks-without-ingress direction)
+    set:
+      webhooks.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders an nginx-style ingress with className and a root path to the http port
+    set:
+      ingress.enabled: true
+      ingress.className: nginx
+      ingress.hosts:
+        - a.example.com
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: spec.rules[0].host
+          value: a.example.com
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: RELEASE-NAME-ethos
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.name
+          value: http
+
+  - it: renders the tls block when ingress.tls is set
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - a.example.com
+      ingress.tls:
+        - secretName: ethos-tls
+          hosts:
+            - a.example.com
+    asserts:
+      - equal:
+          path: spec.tls
+          value:
+            - secretName: ethos-tls
+              hosts:
+                - a.example.com
+
+  - it: renders one rule per host for multi-host ingress
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - a.example.com
+        - b.example.com
+    asserts:
+      - lengthEqual:
+          path: spec.rules
+          count: 2
+      - equal:
+          path: spec.rules[0].host
+          value: a.example.com
+      - equal:
+          path: spec.rules[1].host
+          value: b.example.com
+
+  - it: routes /webhooks and /platform-webhooks only when BOTH ingress and webhooks are enabled (plan D5/R2)
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - a.example.com
+      webhooks.enabled: true
+    asserts:
+      - contains:
+          path: spec.rules[0].http.paths
+          content:
+            path: /webhooks
+            pathType: Prefix
+            backend:
+              service:
+                name: RELEASE-NAME-ethos
+                port:
+                  name: webhook
+      - contains:
+          path: spec.rules[0].http.paths
+          content:
+            path: /platform-webhooks
+            pathType: Prefix
+            backend:
+              service:
+                name: RELEASE-NAME-ethos
+                port:
+                  name: platform-webhook
+
+  - it: renders no webhook paths when ingress is enabled but webhooks are not (ingress-without-webhooks direction)
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - a.example.com
+    asserts:
+      - lengthEqual:
+          path: spec.rules[0].http.paths
+          count: 1
+      - notContains:
+          path: spec.rules[0].http.paths
+          any: true
+          content:
+            path: /webhooks
+      - notContains:
+          path: spec.rules[0].http.paths
+          any: true
+          content:
+            path: /platform-webhooks

@@ -1,0 +1,68 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ethos.fullname" . }}
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ethos.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if eq .Values.networkPolicy.egress.mode "restricted" }}
+    - Egress
+    {{- end }}
+  # Only the declared Service ports get a rule. :3001 (ACP) and :3002
+  # (health/metrics) have none — unreachable from pods; kubelet probes
+  # bypass NetworkPolicy (plan D15).
+  ingress:
+    - ports:
+        - port: 3000
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.webhooks.enabled }}
+    - ports:
+        - port: {{ .Values.webhooks.webhookPort }}
+          protocol: TCP
+        - port: {{ .Values.webhooks.platformWebhookPort }}
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.monitoring.from }}
+    # Metrics scrape: :3000 and :3002 open only to these peers.
+    - ports:
+        - port: 3000
+          protocol: TCP
+        - port: 3002
+          protocol: TCP
+      from:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+  {{- if eq .Values.networkPolicy.egress.mode "restricted" }}
+  egress:
+    # DNS anywhere; TCP 443 only to the listed CIDRs (plan D17).
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.egress.cidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
+  {{- end }}
+{{- end }}

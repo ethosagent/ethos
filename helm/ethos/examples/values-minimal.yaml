@@ -1,0 +1,26 @@
+# values-minimal.yaml — kind / k3s / minikube overlay for the Ethos chart
+# (plan/phases/helm-chart.md D2; this is also the overlay the kind CI smoke
+# installs in .github/workflows/helm.yml)
+#
+# Deliberately empty: the chart's defaults are the deployment. The PVC uses
+# the cluster's default StorageClass (local-path on k3s and kind), the
+# NetworkPolicy is on (inert until the CNI enforces it), and no Ingress
+# renders — reach the web UI with a port-forward:
+#
+#   kubectl port-forward svc/ethos 3000:3000
+#
+# then open the `auth/exchange` URL from `kubectl logs ethos-0`, not the
+# bare http://localhost:3000 (first visit only).
+#
+# Supply the provider key at install time instead of writing it into a
+# values file:
+#
+#   # real key — first boot validates it against the provider:
+#   helm install ethos ./helm/ethos -f examples/values-minimal.yaml \
+#     --set-string secrets.ANTHROPIC_API_KEY=sk-ant-...
+#
+#   # CI-style dummy key (what the kind smoke does) — provisions without an
+#   # LLM call, validation skipped:
+#   helm install ethos ./helm/ethos -f examples/values-minimal.yaml \
+#     --set-string secrets.ANTHROPIC_API_KEY=dummy \
+#     --set-string extraEnvVars.ETHOS_SKIP_VALIDATION=1

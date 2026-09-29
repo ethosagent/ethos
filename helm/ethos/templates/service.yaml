@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ethos.fullname" . }}
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "ethos.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.metrics.serviceMonitor.enabled }}
+    # :3002 is published only for the ServiceMonitor, which needs a named
+    # port (plan D16).
+    - name: prom-metrics-port
+      port: 3002
+      targetPort: health
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.webhooks.enabled }}
+    - name: webhook
+      port: {{ .Values.webhooks.webhookPort }}
+      targetPort: {{ .Values.webhooks.webhookPort }}
+      protocol: TCP
+    - name: platform-webhook
+      port: {{ .Values.webhooks.platformWebhookPort }}
+      targetPort: {{ .Values.webhooks.platformWebhookPort }}
+      protocol: TCP
+    {{- end }}

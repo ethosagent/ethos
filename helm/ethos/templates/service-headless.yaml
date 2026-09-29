@@ -1,0 +1,16 @@
+# Governing headless Service for the StatefulSet (spec.serviceName).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ethos.fullname" . }}-headless
+  labels:
+    {{- include "ethos.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ethos.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
