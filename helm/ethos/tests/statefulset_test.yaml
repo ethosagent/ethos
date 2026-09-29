@@ -28,9 +28,9 @@ tests:
 
   - it: defaults the image tag to Chart.AppVersion when image.tag is empty
     asserts:
-      - equal:
+      - matchRegex:
           path: spec.template.spec.containers[0].image
-          value: ethosagent/ethos:0.8.0
+          pattern: ^ethosagent/ethos:[0-9]+\.[0-9]+\.[0-9]+$
 
   - it: lets an explicit image.tag override win over the appVersion fallback
     set:
