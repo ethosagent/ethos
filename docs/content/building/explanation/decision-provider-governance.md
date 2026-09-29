@@ -4,7 +4,7 @@ description: "RFC for the Structural amendment adding DecisionProvider: a typed-
 kind: explanation
 audience: developer
 slug: decision-provider-governance
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 ## Context
@@ -153,7 +153,7 @@ personality's. The field is parsed and round-tripped by
 `buildDecisionsConfig` in `extensions/personalities/src/index.ts`, and every
 site resolves its mode per call with `resolvePersonalityDecisionSite` in
 `packages/config/src/decisions.ts`. A global `decisions.sites.*` line is
-warned about at load and never read.
+never read.
 
 **Migration: none required.** No existing module becomes non-compliant.
 With no `decisions.*` keys, or with a site set to `off`, every site behaves

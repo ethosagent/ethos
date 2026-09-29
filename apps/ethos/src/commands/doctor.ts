@@ -1081,12 +1081,6 @@ export function providerChainLines(config: EthosConfig): string[] {
  * nothing (today's behaviour).
  *
  * Known limitations, stated rather than implied:
- * - A global `decisions.sites.*` line is warned about by the config-notice
- *   warnings doctor prints right below these lines
- *   (`describeLegacyDecisionSite`, packages/config/src/decisions.ts) — not
- *   repeated here. `legacySites` in the JSON is read from
- *   `DecisionsConfig.legacySites`, which `buildDecisionsConfig` only keeps
- *   when `decisions.provider` is set; without one the notice is the only trace.
  * - An invalid site mode in a personality's config.yaml (PD12) is NOT
  *   reported: the personality loader (`buildDecisionsConfig` in
  *   extensions/personalities/src/index.ts) drops it silently, so the site
@@ -1103,8 +1097,6 @@ export interface DecisionLayerReport {
   apiKeyPresent?: boolean;
   /** One row per personality that declares a `decisions` block, sorted by id. */
   personalities: DecisionPersonalityReport[];
-  /** Global `decisions.sites.<site>` lines, no longer read (PD5). */
-  legacySites: Array<{ site: string; value: string }>;
   /** The ⚠ lines, uncoloured, in the order the text form prints them. */
   warnings: string[];
 }
@@ -1132,10 +1124,6 @@ export async function checkDecisionLayer(
   secrets: Pick<SecretsResolver, 'get'>,
   personalities: readonly PersonalityConfig[] = [],
 ): Promise<DecisionLayerReport> {
-  const legacySites = Object.entries(config?.decisions?.legacySites ?? {}).map(([site, value]) => ({
-    site,
-    value: String(value),
-  }));
   const warnings: string[] = [];
   const rows: DecisionPersonalityReport[] = [];
   const globalProvider = config?.decisions?.provider;
@@ -1172,7 +1160,7 @@ export async function checkDecisionLayer(
   }
 
   if (!config?.decisions) {
-    return { configured: false, personalities: rows, legacySites, warnings };
+    return { configured: false, personalities: rows, warnings };
   }
   const r = resolveDecisionsConfig(config.decisions);
   const key = await secrets.get(DECISIONS_API_KEY_REF).catch(() => null);
@@ -1192,7 +1180,6 @@ export async function checkDecisionLayer(
     apiKeyRef: DECISIONS_API_KEY_REF,
     apiKeyPresent,
     personalities: rows,
-    legacySites,
     warnings,
   };
 }

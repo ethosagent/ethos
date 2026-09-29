@@ -1,10 +1,11 @@
 // Plan decision-provider-jev §14 "Config": the `decisions.*` keys round-trip,
 // absent keys mean no decision layer, `decisions.provider` accepts only
 // `typesafe`, and per-site budgets default per R9.
-// Plan decision-provider-personality §11 "Config": a global
-// `decisions.sites.*` line is warned about, never read, and kept on write
-// (PD5); `resolvePersonalityDecisionSite` covers every row of §4.3, R6
-// included.
+// Plan decision-provider-personality §11 "Config", amended after 0.8.0: a
+// global `decisions.sites.*` line is an unknown key — never read, kept
+// verbatim on write by the generic passthrough (PD5's tailored migration
+// warning was removed); `resolvePersonalityDecisionSite` covers every row of
+// §4.3, R6 included.
 
 import { join } from 'node:path';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
@@ -56,10 +57,12 @@ describe('decisions.* parsing', () => {
 
   it('absent keys mean no decision layer', () => {
     expect(parse().decisions).toBeUndefined();
-    // Site keys without a provider do not create a layer either (and are warned about).
+    // Site keys without a provider do not create a layer either: a global
+    // `decisions.sites.*` line is an unknown key, so the only notice is the
+    // generic has-no-effect one — no tailored migration warning.
     expect(parse('decisions.sites.injection: shadow').decisions).toBeUndefined();
     expect(warningsOf('decisions.sites.injection: shadow')).toEqual([
-      expect.stringContaining('decisions.sites.injection: shadow is no longer read'),
+      expect.stringContaining("'decisions.sites.injection' has no effect"),
     ]);
   });
 
@@ -111,8 +114,8 @@ describe('decisions.* parsing', () => {
   });
 });
 
-describe('PD5 — global `decisions.sites.*` lines are warned about and never read', () => {
-  it('warns once per line, keeps the raw value, and resolves nothing from it', () => {
+describe('PD5 — global `decisions.sites.*` lines are unknown keys, never read', () => {
+  it('resolves nothing from them and keeps them off DecisionsConfig', () => {
     const lines = [
       'decisions.provider: typesafe',
       'decisions.sites.injection: shadow',
@@ -120,22 +123,19 @@ describe('PD5 — global `decisions.sites.*` lines are warned about and never re
       'decisions.sites.router: maybe',
     ];
     const cfg = parse(...lines);
-    expect(cfg.decisions).toEqual({
-      provider: 'typesafe',
-      legacySites: { injection: 'shadow', approver: 'on', router: 'maybe' },
-    });
+    expect(cfg.decisions).toEqual({ provider: 'typesafe' });
     const { errors, warnings } = configParseNotices(cfg);
     expect(errors).toEqual([]);
-    expect(warnings).toHaveLength(3);
-    expect(warnings[0]).toBe(
-      'decisions.sites.injection: shadow is no longer read — decision sites are enabled per ' +
-        'personality. Move it to ~/.ethos/personalities/<id>/config.yaml as ' +
-        '"decisions.provider: typesafe" and "decisions.sites.injection: shadow".',
-    );
+    // The tailored migration warning was removed after 0.8.0: each line gets
+    // only the generic has-no-effect notice any unknown `decisions.*` key gets.
+    expect(warnings).toEqual([
+      expect.stringContaining("'decisions.sites.injection' has no effect"),
+      expect.stringContaining("'decisions.sites.approver' has no effect"),
+      expect.stringContaining("'decisions.sites.router' has no effect"),
+    ]);
     // Nothing on the resolved form carries a site mode.
     const r = resolveDecisionsConfig(cfg.decisions as DecisionsConfig);
     expect(r).not.toHaveProperty('sites');
-    expect(r).not.toHaveProperty('legacySites');
     // A personality that declares nothing stays off despite the global line.
     expect(resolvePersonalityDecisionSite(undefined, 'injection', r).effective).toBe('off');
   });
@@ -318,7 +318,7 @@ describe('decisions.* round-trip through writeConfig', () => {
     for (const line of ALL_KEYS) expect(text).toContain(line);
   });
 
-  it('keeps global `decisions.sites.*` lines verbatim on write (PD5)', async () => {
+  it('keeps global `decisions.sites.*` lines verbatim on write, as unknown-key passthrough (PD5)', async () => {
     const legacy = [
       'decisions.sites.injection: shadow',
       'decisions.sites.approver: on',

@@ -13,8 +13,10 @@
 // §3, §6, PD5): which sites run, and in which mode, is declared per
 // personality (`PersonalityConfig.decisions`) and decided per call by
 // `resolvePersonalityDecisionSite` below — the one resolver wiring, doctor and
-// web-api share. A global `decisions.sites.<site>` line is claimed, warned
-// about and kept verbatim on write (`legacySites`), and never read.
+// web-api share. A global `decisions.sites.<site>` line is not modelled here
+// at all (the PD5 migration warning was removed after 0.8.0): it is an unknown
+// key, kept verbatim on write by `writeConfig`'s `unexpressibleLines` like any
+// other unclaimed `decisions.*` line.
 //
 // Nothing here throws. A bad value is dropped with a warning, the posture of
 // `retentionDuration` in ./index: a decisions line must never stop the gateway
@@ -58,14 +60,6 @@ export interface DecisionsConfig {
   timeoutMs?: number;
   /** `decisions.timeouts.<site>`, positive integer ms. */
   timeouts?: Partial<Record<DecisionSiteId, number>>;
-  /**
-   * `decisions.sites.<site>` lines as written, value verbatim. NOT READ by any
-   * resolver: sites are enabled per personality (plan
-   * decision-provider-personality §6, PD5). Kept only so `serializeDecisionsLines`
-   * writes the operator's line back and the load warning keeps naming it until
-   * it is moved. Remove one minor after 0.8.0.
-   */
-  legacySites?: Partial<Record<DecisionSiteId, string>>;
   /** `decisions.thresholds.*`, each a number in [0, 1]. */
   thresholds?: {
     injection?: number;
@@ -264,19 +258,7 @@ export function describeDecisionSiteDowngrade(missingThresholds: readonly string
 
 /** Matches one `decisions.*` line the codec models; field path in group 1, value in 2. */
 export const DECISIONS_LINE_RE =
-  /^decisions\.(provider|model|baseUrl|timeoutMs|timeouts\.(?:injection|approver|router)|sites\.(?:injection|approver|router)|thresholds\.(?:injection|router|approver\.approve|approver\.deny)):\s*(.+)$/;
-
-/**
- * The PD5 load warning for one global `decisions.sites.<site>` line. Shared by
- * the config warning and (N4) `ethos doctor`.
- */
-export function describeLegacyDecisionSite(site: DecisionSiteId, value: string): string {
-  return (
-    `decisions.sites.${site}: ${value} is no longer read — decision sites are enabled per ` +
-    'personality. Move it to ~/.ethos/personalities/<id>/config.yaml as ' +
-    `"decisions.provider: typesafe" and "decisions.sites.${site}: ${value}".`
-  );
-}
+  /^decisions\.(provider|model|baseUrl|timeoutMs|timeouts\.(?:injection|approver|router)|thresholds\.(?:injection|router|approver\.approve|approver\.deny)):\s*(.+)$/;
 
 function positiveInt(raw: string): number | undefined {
   if (raw.trim() === '') return undefined;
@@ -315,16 +297,6 @@ export function buildDecisionsConfig(
   kv: Record<string, string>,
   warnings: string[],
 ): DecisionsConfig | undefined {
-  // PD5 — a global site line is claimed (so it is not dumped to passthrough),
-  // warned about, and never read. Warned whether or not a provider is set:
-  // either way it no longer does anything.
-  let legacySites: DecisionsConfig['legacySites'];
-  for (const site of DECISION_SITES) {
-    const m = kv[`sites.${site}`];
-    if (m === undefined) continue;
-    warnings.push(describeLegacyDecisionSite(site, m));
-    legacySites = { ...legacySites, [site]: m };
-  }
   const providerRaw = kv.provider;
   if (providerRaw === undefined) return undefined;
   if (!isOneOf(DECISION_PROVIDERS, providerRaw)) {
@@ -335,7 +307,6 @@ export function buildDecisionsConfig(
     return undefined;
   }
   const d: DecisionsConfig = { provider: providerRaw };
-  if (legacySites) d.legacySites = legacySites;
   const drop = (key: string, raw: string, expected: string) =>
     warnings.push(
       `decisions.${key}: "${raw}" is not ${expected}. Ignoring it; the default applies.`,
@@ -399,12 +370,6 @@ export function serializeDecisionsLines(d: DecisionsConfig): string[] {
   for (const site of DECISION_SITES) {
     const t = d.timeouts?.[site];
     if (t !== undefined) lines.push(`decisions.timeouts.${site}: ${t}`);
-  }
-  // PD5 — written back verbatim so a config save never deletes a line the
-  // operator wrote; the load warning keeps naming it until it is moved.
-  for (const site of DECISION_SITES) {
-    const m = d.legacySites?.[site];
-    if (m !== undefined) lines.push(`decisions.sites.${site}: ${m}`);
   }
   const t = d.thresholds;
   if (t?.injection !== undefined) lines.push(`decisions.thresholds.injection: ${t.injection}`);

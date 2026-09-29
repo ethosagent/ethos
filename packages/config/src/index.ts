@@ -54,7 +54,6 @@ export {
   type DecisionsConfig,
   decisionToolEnabled,
   describeDecisionSiteDowngrade,
-  describeLegacyDecisionSite,
   missingThresholdKeys,
   type PersonalityDecisionSiteReason,
   type PersonalityDecisionsInput,

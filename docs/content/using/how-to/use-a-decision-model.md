@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-a-decision-model
 time: 15 min
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 Some of the checks an agent runs are yes-or-no questions: is this tool result trying to instruct the agent, should this risky call run, does this message need the big model? A decision model answers those questions directly, with a probability, in tens of milliseconds, instead of asking an LLM to write a paragraph that Ethos then parses. The chat shows every answer, with how long it took.
@@ -221,7 +221,7 @@ In **Settings → Models & providers → decision models**, **Used by** lists th
 | `⚠ decisions: <id> names decision model "typesafe", but ~/.ethos/config.yaml has no decisions.provider` | The personality asks for a model this machine has not added. Every site runs `off`. | Add the model in Settings (step 1). |
 | `⚠ decisions: <id> enables injection but names no decisions.provider` | The personality sets sites but picks no decision model. Its sites run `off`. | Add `decisions.provider: typesafe` to its `config.yaml`, or pick the model in the Config tab. |
 | `⚠ decisions: no key at vault ref providers/typesafe/apiKey` | The provider is set but the key is missing. Every site runs today's path. | `ethos secrets set providers/typesafe/apiKey <your-api-key>` |
-| `decisions.sites.injection: shadow is no longer read` | A site line sits in `~/.ethos/config.yaml`. Sites are enabled per personality. | Move it to the personality's `config.yaml` with `decisions.provider: typesafe`. |
+| `config.yaml: 'decisions.sites.injection' has no effect` | A site line sits in `~/.ethos/config.yaml`. Sites are enabled per personality. | Move it to the personality's `config.yaml` with `decisions.provider: typesafe`. |
 | `⚠ decisions: <id> enables the approver site, but approvalMode is manual` | The approver is consulted only under Smart approval. | Set `safety.approvalMode: smart`, or turn the site off. |
 | No decision rows in chat | The site is `off`, or the router's two tiers resolve to the same model, so it made no call. | Check `ethos personality show <id>`. |
 | Rows read `✗ skipped` | The provider failed repeatedly and is paused. | Check the key and endpoint with **Test**. |

@@ -26,7 +26,7 @@ async function withKey(): Promise<InMemorySecretsResolver> {
 
 describe('ethos doctor — decision layer', () => {
   it('prints nothing when no decisions provider is configured', async () => {
-    const empty = { configured: false, personalities: [], legacySites: [], warnings: [] };
+    const empty = { configured: false, personalities: [], warnings: [] };
     const report = await checkDecisionLayer(cfg(), await withKey(), [
       { id: 'plain', name: 'Plain' },
     ]);
@@ -35,7 +35,7 @@ describe('ethos doctor — decision layer', () => {
     expect(await checkDecisionLayer(null, await withKey())).toEqual(empty);
   });
 
-  it('names the provider, host and model; a global site line is legacy only', async () => {
+  it('names the provider, host and model; a global site line resolves nothing', async () => {
     const report = await checkDecisionLayer(
       cfg(
         'decisions.provider: typesafe',
@@ -52,12 +52,10 @@ describe('ethos doctor — decision layer', () => {
       apiKeyRef: 'providers/typesafe/apiKey',
       apiKeyPresent: true,
       personalities: [],
-      legacySites: [{ site: 'injection', value: 'shadow' }],
       warnings: [],
     });
     const out = plain(decisionLayerLines(report));
-    // The legacy line's warning is the config notice doctor prints next
-    // (`describeLegacyDecisionSite`), not repeated here.
+    // A global `decisions.sites.*` line is an unknown key: nothing here reads it.
     expect(out).toBe('     decisions:   typesafe → api.typesafe.ai · model jev-latest');
     expect(out).not.toContain('injection');
     expect(out).not.toContain('/v1');
