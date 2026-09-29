@@ -59,7 +59,13 @@ describe('SCOPE_MAP drift — router methods ⊆ SCOPE_MAP per mapped namespace'
 // route that is neither fails here instead of shipping open.
 const PUBLIC_ROUTES: Record<string, string> = {
   'GET /healthz': 'container liveness probe; reports health only',
+  'GET /auth/state':
+    'web-auth-bootstrap D8 — the pre-cookie claimed/env probe; two booleans, no secrets',
   'GET /auth/exchange': 'how the auth cookie gets set — cannot require it',
+  'POST /auth/login':
+    'how a session cookie gets set — credentials are validated from the body; the ' +
+    'unauthenticated probe hits an unclaimed instance and gets 409 NOT_CLAIMED ' +
+    '(claimed + bad credentials is a uniform 401). Rate-limited + Origin-checked.',
   'GET /auth/callback':
     'OAuth redirect target; only completes a flow the coordinator started, by its state',
   'GET /oauth/callback':

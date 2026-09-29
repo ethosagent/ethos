@@ -5,8 +5,10 @@ import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createCookieVerifier } from '../../middleware/cookie-verifier';
 import { dualAuth, resolveScope } from '../../middleware/dual-auth';
 import { errorHandler } from '../../middleware/error-envelope';
+import { WebSessionStore } from '../../repositories/web-session.store';
 import { WebTokenRepository } from '../../repositories/web-token.repository';
 
 // WEB-001 — bearer scope enforcement must FAIL CLOSED for unmapped methods in a
@@ -39,7 +41,12 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     app.onError(errorHandler);
     const dir = mkdtempSync(join(tmpdir(), 'ethos-scope-'));
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
-    const dual = dualAuth({ tokens, apiKeys: store, scopeForPath: resolveScope });
+    const sessions = new WebSessionStore({ dataDir: dir, storage: new FsStorage() });
+    const dual = dualAuth({
+      verifyCookie: createCookieVerifier({ tokens, sessions }),
+      apiKeys: store,
+      scopeForPath: resolveScope,
+    });
     app.use('/rpc/*', dual);
     app.use('/sse/*', dual);
     // Stub handlers — reachable only if middleware passes.

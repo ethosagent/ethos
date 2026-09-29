@@ -9,11 +9,14 @@ import type { ChatService } from '../features/chat/service';
 import type { SessionsService } from '../features/sessions/service';
 import { authMiddleware } from '../middleware/auth';
 import { type ApiKeyAuthStore, bearerAuth } from '../middleware/bearer-auth';
+import type { CookieVerifier } from '../middleware/cookie-verifier';
 import { cspMiddleware } from '../middleware/csp';
 import { csrfMiddleware } from '../middleware/csrf';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth';
 import { errorHandler } from '../middleware/error-envelope';
 import { rateLimitMiddleware } from '../middleware/rate-limit';
+import type { WebAdminRepository } from '../repositories/web-admin.repository';
+import type { WebSessionStore } from '../repositories/web-session.store';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import { authRoutes } from './auth';
 import { codexAuthRoutes } from './codex-auth';
@@ -36,6 +39,14 @@ import { systemSseRoutes } from './system-sse';
 
 export interface CreateRoutesOptions {
   tokens: WebTokenRepository;
+  /** Single web-admin account record (web-auth-bootstrap D3). */
+  admin: WebAdminRepository;
+  /** Server-side web sessions minted by setup/login/reset (D4). */
+  webSessions: WebSessionStore;
+  /** THE cookie check (session id OR raw token) — built by `createWebApi`
+   *  from the same `tokens` + `webSessions` and shared with the WS lanes so
+   *  the dual-accept lives in exactly one function (D4). */
+  verifyCookie: CookieVerifier;
   services: ServiceContainer;
   /** Bearer-token store for the OpenAI-compat surface. When omitted, `/v1/*`
    *  is not mounted (deployments without the API need no api_keys table). */
@@ -351,11 +362,20 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     return appCors(c, next);
   });
 
-  // Auth exchange is unauthenticated by definition — it's how cookies get set.
-  // Mounted BEFORE the auth middleware below.
+  // Auth bootstrap routes are unauthenticated by definition — they are how
+  // cookies get set, and `/auth/state` is the SPA's pre-cookie status probe
+  // (D8, mounted before the auth middleware like /healthz above). The POSTs
+  // carry their own rate limit + Origin check inside `authRoutes`.
   app.route(
     '/auth',
-    authRoutes({ tokens: opts.tokens, ...(opts.secureCookie ? { secureCookie: true } : {}) }),
+    authRoutes({
+      tokens: opts.tokens,
+      admin: opts.admin,
+      sessions: opts.webSessions,
+      ...(opts.secureCookie ? { secureCookie: true } : {}),
+      ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
+      ...(opts.trustProxy !== undefined ? { trustProxy: opts.trustProxy } : {}),
+    }),
   );
 
   // Codex device auth. S8: the flow ends in `CodexTokenStore.save`, which
@@ -375,7 +395,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // UI polls repeatedly, so it gets a poll-tolerant limiter (1 token per 4s
   // sustains the UI's polling; short lockout for genuine hammering).
   const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
-  app.use('/auth/codex/*', authMiddleware({ tokens: opts.tokens }));
+  app.use('/auth/codex/*', authMiddleware({ verify: opts.verifyCookie }));
   app.use('/auth/codex/*', csrf);
   app.use('/auth/codex/device-code', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
   app.use(
@@ -393,7 +413,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // is wired; cookie-only otherwise (backward-compatible default).
   if (opts.apiKeys) {
     const dual = dualAuth({
-      tokens: opts.tokens,
+      verifyCookie: opts.verifyCookie,
       apiKeys: opts.apiKeys,
       scopeForPath: resolveScope,
     });
@@ -402,12 +422,12 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     // apiKeys namespace rejects bearer auth — cookie only.
     app.use('/rpc/apiKeys/*', cookieOnlyGuard());
   } else {
-    app.use('/rpc/*', authMiddleware({ tokens: opts.tokens }));
-    app.use('/sse/*', authMiddleware({ tokens: opts.tokens }));
+    app.use('/rpc/*', authMiddleware({ verify: opts.verifyCookie }));
+    app.use('/sse/*', authMiddleware({ verify: opts.verifyCookie }));
   }
 
   // OpenAPI surface always requires cookie auth (browseable docs).
-  app.use('/openapi/*', authMiddleware({ tokens: opts.tokens }));
+  app.use('/openapi/*', authMiddleware({ verify: opts.verifyCookie }));
 
   // Origin / CSRF check on state-changing methods. Localhost-default; pass an
   // explicit list when the server binds beyond localhost. Skipped for
@@ -487,7 +507,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // WhatsApp QR-pairing SSE stream. Gated behind auth — the QR string is
   // a live WhatsApp account-linking credential and must not be publicly
   // accessible. Must be before the static SPA mount (which owns `/*`).
-  app.use('/setup/whatsapp/*', authMiddleware({ tokens: opts.tokens }));
+  app.use('/setup/whatsapp/*', authMiddleware({ verify: opts.verifyCookie }));
   app.route('/setup/whatsapp', setupWhatsAppRoutes());
 
   // MCP OAuth callback — server-side handler so the popup never needs to load
@@ -595,7 +615,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
       });
     }
     if (mod.auth === 'cookie') {
-      app.use(wildcard, authMiddleware({ tokens: opts.tokens }));
+      app.use(wildcard, authMiddleware({ verify: opts.verifyCookie }));
       // S8: a cookie module is a browser surface, so its writes get the same
       // Origin check as `/rpc` — `POST /documents/upload` and the avatar
       // routes had none, and a page on another localhost port is same-site,
@@ -610,8 +630,12 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
       app.use(
         wildcard,
         opts.apiKeys
-          ? dualAuth({ tokens: opts.tokens, apiKeys: opts.apiKeys, scopeForPath: resolveScope })
-          : authMiddleware({ tokens: opts.tokens }),
+          ? dualAuth({
+              verifyCookie: opts.verifyCookie,
+              apiKeys: opts.apiKeys,
+              scopeForPath: resolveScope,
+            })
+          : authMiddleware({ verify: opts.verifyCookie }),
       );
     }
     // 'public' — no auth middleware; the module owns its own access control.

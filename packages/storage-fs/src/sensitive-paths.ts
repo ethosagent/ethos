@@ -295,6 +295,9 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  * - `config.yaml`, `web-token` — operator config and the web API bearer; a
  *   write to `config.yaml` could flip an operator opt-in such as
  *   `execution.allowLocalFallback`.
+ * - `web-admin.json`, `web-sessions.json` — the web admin's argon2id password
+ *   hash and the live web session ids (web-auth-bootstrap D3/D4); a read leaks
+ *   a credential, a write forges one.
  * - `mcp.json`, `plugins`, `scripts` — each is code the next boot or cron
  *   run executes on the host.
  * - `sessions.db`, `observability.db`, `memory.db` — every personality's
@@ -325,6 +328,8 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   'secrets',
   'config.yaml',
   'web-token',
+  'web-admin.json',
+  'web-sessions.json',
   'mcp.json',
   'plugins',
   'scripts',

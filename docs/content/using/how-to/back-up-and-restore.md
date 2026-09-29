@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: back-up-and-restore
 time: "10 min"
-updated: 2026-09-24
+updated: 2026-09-29
 ---
 
 ## Task
@@ -44,7 +44,9 @@ ethos backup
 
 With no path, the archive lands in `~/.ethos/backups/`. Pass a path (or `--out`) to write it somewhere else.
 
-Two things are deliberately not in it. Secrets — `secrets/`, `keys.json`, `web-token`, MCP OAuth tokens — are excluded, and the archive carries a `secrets.manifest.yaml` naming what a restore has to refill. Machine-local queues — the delivery ledger, the inbound-dedup window, the notify queue — are excluded because replaying them on a second machine would resend real messages to real people.
+Two things are deliberately not in it. Secrets — `secrets/`, `keys.json`, `web-token`, `web-admin.json`, `web-sessions.json`, MCP OAuth tokens — are excluded, and the archive carries a `secrets.manifest.yaml` naming what a restore has to refill. Machine-local queues — the delivery ledger, the inbound-dedup window, the notify queue — are excluded because replaying them on a second machine would resend real messages to real people.
+
+`web-admin.json` and `web-sessions.json` — the web UI's password hash and browser sessions — are deliberately never archived. On a restored machine the web UI is unclaimed again: the token-holder claims it afresh at `/welcome`, and the web token keeps working for machine clients throughout.
 
 A third thing is not in it under one setting: see [Vault memory is not archived](#vault-memory).
 

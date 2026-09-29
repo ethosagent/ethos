@@ -25,6 +25,8 @@ import {
 const BLOCKED_WRITE_PATHS = [
   join(homedir(), '.ethos', 'config.yaml'),
   join(homedir(), '.ethos', 'web-token'),
+  join(homedir(), '.ethos', 'web-admin.json'),
+  join(homedir(), '.ethos', 'web-sessions.json'),
   join(homedir(), '.ethos', 'pairing.db'),
 ];
 const BLOCKED_WRITE_PREFIXES = [

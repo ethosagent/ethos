@@ -23,6 +23,8 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
   it.each([
     'config.yaml',
     'web-token',
+    'web-admin.json',
+    'web-sessions.json',
     'mcp.json',
     'scripts',
     'plugins',

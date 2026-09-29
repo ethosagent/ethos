@@ -60,6 +60,7 @@ import {
   useToolSettingsDefault,
   useToolSettingsSchemas,
 } from '../../../features/settings/api/queries';
+import { fetchAuthState, resolveAccessSection } from '../../../lib/auth/auth-flow';
 import { rpc } from '../../../rpc';
 import { AdvancedBlock } from '../components/advanced';
 import { SectionHeading } from '../components/section-heading';
@@ -150,6 +151,9 @@ export function SecurityPane() {
           </Form.Item>
         </SettingRow>
       </AdvancedBlock>
+
+      <SectionHeading id="access">access</SectionHeading>
+      <AccessSection />
 
       <SectionHeading id="api-keys">API keys</SectionHeading>
       <ApiKeysSection />
@@ -493,6 +497,59 @@ function A2aSection() {
             : 'Enabling exposes the A2A discovery and peering surface. Peers are still default-deny.'}
         </Typography.Text>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Access — who signs in to this web UI (web-auth-bootstrap D18). Read-only
+// view of `GET /auth/state` plus the reset entry point: claimed → "Reset
+// credentials…" navigating to /welcome/reset (the bootstrap token is still
+// required there, D6); unclaimed → token access is active and the claim
+// wizard link (D16). The mode selection is `resolveAccessSection` in
+// lib/auth/auth-flow.ts, pinned by lib/auth/__tests__/auth-flow.test.ts.
+// ---------------------------------------------------------------------------
+
+function AccessSection() {
+  const navigate = useNavigate();
+  const stateQuery = useQuery({
+    queryKey: ['auth', 'state'],
+    queryFn: () => fetchAuthState(),
+  });
+
+  if (!stateQuery.data) {
+    return (
+      <div style={{ maxWidth: 640, marginBottom: 16 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Reading auth state…
+        </Typography.Text>
+      </div>
+    );
+  }
+
+  const view = resolveAccessSection(stateQuery.data);
+  return (
+    <div style={{ maxWidth: 640, marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+        {view.statusLine}
+      </Typography.Paragraph>
+      {view.tokenLine !== null ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {view.tokenLine}
+        </Typography.Text>
+      ) : null}
+      {view.action !== null ? (
+        <div style={{ marginTop: 8 }}>
+          <Button onClick={() => navigate(view.action.target)}>{view.action.label}</Button>
+        </div>
+      ) : null}
+      {view.warningLine !== null ? (
+        <div style={{ marginTop: 8 }}>
+          <Typography.Text type="warning" style={{ fontSize: 12 }}>
+            {view.warningLine}
+          </Typography.Text>
+        </div>
+      ) : null}
     </div>
   );
 }

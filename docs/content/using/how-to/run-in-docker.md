@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 Run Ethos via Docker Compose. Set one provider API key, run one command, and get a web UI you can talk to. Config is provisioned by the CLI (`ethos setup --from-env`), which validates your key before writing it — no interactive setup, no hand-edited YAML.
@@ -43,6 +43,8 @@ Watch for two lines in the boot output: `✓ Config validated` from provisioning
 ```
 
 Open that `auth/exchange` URL first, not the bare `http://localhost:3000`. `docker-compose.single.yml` binds the web server to `0.0.0.0`, which marks the auth cookie `Secure` — the browser can only get it by exchanging the token. This is one-time: the exchange sets the cookie and redirects to `/`, and the bare URL works on every visit after that as long as the volume and cookie aren't cleared.
+
+Token mode is the default steady state — nothing forces you past it. Optionally, claim the instance at `http://localhost:3000/welcome` (enter the token, set a username and password); after that the exchange URL stops signing browsers in and instead opens the reset form at `/welcome/reset` with the token prefilled, and the web UI asks for the username and password.
 
 The provider key from `.env` is never re-asked once validated and written — but that's separate from the token exchange above, which is still required on the first visit. Type a message and the first reply streams back.
 
@@ -216,70 +218,25 @@ The image's default when `ETHOS_MODE` is unset — as in Option A/B's commands a
 
 ## Kubernetes
 
-The same pattern translates to a Deployment + ConfigMap (`config.yaml` and `mcp.json`) + Secret (`.env`) + PersistentVolumeClaim (session DB and personalities). Ethos does not ship a Helm chart today; the manifests below are the minimum a chart would template.
+Ethos ships a first-party Helm chart at [`helm/ethos`](https://github.com/ethosagent/ethos/tree/main/helm/ethos) in the repo. It is the supported Kubernetes path — do not hand-write manifests. The chart is not yet published to a chart registry; install it from a clone of the repo.
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ethos-config
-data:
-  config.yaml: |
-    schemaVersion: 1
-    provider: anthropic
-    model: claude-opus-4-7
-    apiKey: ${secrets:providers/anthropic/apiKey}
-    personality: researcher
-    telegram.bots.0.token: ${secrets:channels/telegram/default/botToken}
-    telegram.bots.0.bind.type: personality
-    telegram.bots.0.bind.name: researcher
-  mcp.json: |
-    [{"name":"filesystem","transport":"stdio","command":"npx","args":["@modelcontextprotocol/server-filesystem","/data"]}]
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ethos-secrets
-type: Opaque
-stringData:
-  .env: |
-    ANTHROPIC_API_KEY=sk-ant-...
-    TELEGRAM_BOT_TOKEN=123:ABC...
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ethos
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: ethos } }
-  template:
-    metadata: { labels: { app: ethos } }
-    spec:
-      securityContext: { fsGroup: 1000 }
-      containers:
-        - name: ethos
-          image: ethos:local
-          env:
-            - { name: ETHOS_MANAGED, value: "1" }
-          ports: [{ containerPort: 3000 }]
-          livenessProbe:
-            httpGet: { path: /healthz, port: 3000 }
-            initialDelaySeconds: 10
-          volumeMounts:
-            - { name: config,  mountPath: /home/ethos/.ethos/config.yaml, subPath: config.yaml }
-            - { name: config,  mountPath: /home/ethos/.ethos/mcp.json,    subPath: mcp.json }
-            - { name: secrets, mountPath: /home/ethos/.ethos/.env,        subPath: .env }
-            - { name: state,   mountPath: /home/ethos/.ethos }
-      volumes:
-        - { name: config,  configMap: { name: ethos-config } }
-        - { name: secrets, secret:    { secretName: ethos-secrets, defaultMode: 0o600 } }
-        - { name: state,   persistentVolumeClaim: { claimName: ethos-state } }
+Create a Secret holding your provider key, install the chart against it, then port-forward to reach the UI:
+
+```bash
+kubectl create secret generic ethos-keys --from-literal=ANTHROPIC_API_KEY=sk-ant-…
+helm install ethos ./helm/ethos --set existingSecret=ethos-keys
+kubectl port-forward svc/ethos 3000
 ```
 
-Build the image with `docker build -t ethos:local -f docker/Dockerfile docker/` (note: `docker/Dockerfile`, not the old `apps/ethos/Dockerfile` path).
+```
+Forwarding from 127.0.0.1:3000 -> 3000
+```
 
-To wrap this as a Helm chart, move the per-environment values (provider, model, image tag, channel bot lists, MCP server list) into `values.yaml` and templatise the ConfigMap and Secret bodies.
+Open `http://localhost:3000`. The same first-visit token exchange from [Quick start](#quick-start-single-service) applies — watch `kubectl logs ethos-0` for the `open: .../auth/exchange?t=<token>` line. To keep the token out of pod logs, set the chart's `webAuth.bootstrapToken.existingSecret` (and optionally `key`) values: they inject the token from a pre-created Secret as `ETHOS_WEB_TOKEN` (at least 24 characters), the URL is then never printed, and you sign in by pasting the token — or claim the instance at `/welcome` with a username and password.
+
+The chart handles what the raw-manifest approach gets wrong. It deploys a single-replica StatefulSet — the gateway singleton lock means a second pod exits with code 3, so there is no scaling knob to misuse. A persistent volume at `/home/ethos/.ethos` holds `config.yaml` and the databases; `config.yaml` is rewritten at runtime (secret re-sync, web UI settings), which is why it must **not** be mounted from a ConfigMap — earlier versions of this page advised exactly that, and it breaks every runtime write. First boot self-provisions from env (`ethos setup --from-env`, the same provisioning the Compose files run), health probes hit the gateway's health server on `:3002`, a NetworkPolicy is on by default, and no Kubernetes API token is mounted into the pod.
+
+For real clusters, start from the overlays in [`helm/ethos/examples/`](https://github.com/ethosagent/ethos/tree/main/helm/ethos/examples): EKS (ALB + EBS + IRSA), nginx + cert-manager, and a minimal profile. The [chart README](https://github.com/ethosagent/ethos/tree/main/helm/ethos) covers the full values reference, network security notes, and the backup/restore (`ethos import`) runbook.
 
 ## Troubleshoot
 
@@ -293,7 +250,7 @@ To wrap this as a Helm chart, move the per-environment values (provider, model, 
 
 **`ethos doctor` warns the state directory is on fuse, 9p, nfs or smb.** The state directory is a bind mount on a filesystem where SQLite locking is unsafe. Unset `ETHOS_DATA_DIR` to use the `ethos-data` named volume, and move the data with the command in [Move an existing `ethos-data/` folder into the volume](#move-an-existing-ethos-data-folder-into-the-volume).
 
-**Web UI loads but API calls return 401 Unauthorized.** You opened the bare `http://localhost:3000` before ever visiting the `open: .../auth/exchange?t=<token>` URL from the boot output. Open that exact URL once — it sets the auth cookie — then the bare URL works normally on subsequent visits.
+**Web UI loads but API calls return 401 Unauthorized.** You opened the bare `http://localhost:3000` before ever visiting the `open: .../auth/exchange?t=<token>` URL from the boot output. Open that exact URL once — it sets the auth cookie — then the bare URL works normally on subsequent visits. If you have claimed the instance (set a username and password), that URL no longer signs you in — use the login screen, or `/welcome/reset` with the token if the password is lost.
 
 ## See also
 

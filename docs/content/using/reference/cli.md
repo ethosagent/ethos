@@ -278,7 +278,7 @@ Synopsis: `ethos serve [--port <n>] [--bind <addr>] [--team <name>] [--mesh <nam
 | `--team <name>` | off | Resolve the agent against a [team](../../getting-started/glossary.md#mesh) coordinator and mesh. |
 | `--mesh <name>` | `default` | Explicit mesh name when `--team` is not set. |
 
-On first run, prints `http://localhost:3000?t=<token>`; the token rotates into an httpOnly cookie on first browser visit.
+Prints a sign-in URL of the form `http://localhost:3000/auth/exchange?t=<token>`. On an unclaimed instance, opening it sets the `ethos_auth` cookie and signs the browser in. On a claimed instance (username and password set at `/welcome`), the same URL opens `/welcome/reset` with the token prefilled instead of granting a session. With `ETHOS_WEB_TOKEN` set in the environment (at least 24 characters — a shorter value stops the boot), the URL is not printed at all.
 
 ## ethos status {#ethos-status}
 

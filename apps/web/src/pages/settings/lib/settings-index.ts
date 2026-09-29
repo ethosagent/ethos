@@ -991,6 +991,25 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       advanced: true,
     },
   ]),
+  ...group('security', 'access', [
+    {
+      // Like execution/status's probe, deliberately NOT `saves: 'self'`: the
+      // section reads `GET /auth/state` and navigates — it writes nothing, so
+      // a "saves on its own" marker would claim a write that never happens.
+      key: null,
+      label: 'Web sign-in (auth state)',
+      stateBacked: true,
+      keyUnresolved:
+        'Read-only view of GET /auth/state (claimed + bootstrap-token source); not a config.yaml key.',
+    },
+    {
+      key: null,
+      label: 'Reset credentials / Set up username & password',
+      stateBacked: true,
+      keyUnresolved:
+        "Navigation button (navigate('/welcome/reset') when claimed, '/welcome' when not — web-auth-bootstrap D18); writes nothing.",
+    },
+  ]),
   ...group('security', 'api-keys', [
     {
       key: null,

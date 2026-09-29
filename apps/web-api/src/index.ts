@@ -61,6 +61,7 @@ import { lateDelegate, lateFn } from './lib/late-slot';
 import { createPendingLoop } from './lib/pending-loop';
 import { AUTH_COOKIE } from './middleware/auth';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
+import { createCookieVerifier } from './middleware/cookie-verifier';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import {
   ConfigRepository,
@@ -72,7 +73,9 @@ import {
 import { EvolverRepository } from './repositories/evolver.repository';
 import { LeaseRepository } from './repositories/lease.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
-import { WebTokenRepository } from './repositories/web-token.repository';
+import { WebAdminRepository } from './repositories/web-admin.repository';
+import { WebSessionStore } from './repositories/web-session.store';
+import { resolveWebTokenEnv, WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
 import { backupRoutes } from './routes/backup';
 import { documentsRoutes } from './routes/documents';
@@ -876,7 +879,21 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   let live = true;
 
   // --- Repositories (data access only) ---
-  const tokens = new WebTokenRepository({ dataDir: opts.dataDir, storage });
+  // D2 — `ETHOS_WEB_TOKEN` override, validated (fail-closed on a short value)
+  // where the repository is constructed. When set, the file is never consulted.
+  const envWebToken = resolveWebTokenEnv();
+  const tokens = new WebTokenRepository({
+    dataDir: opts.dataDir,
+    storage,
+    ...(envWebToken !== undefined ? { envToken: envWebToken } : {}),
+  });
+  // D3/D4 — the single admin record and the server-side session store behind
+  // the setup wizard / login / reset endpoints.
+  const webAdmin = new WebAdminRepository({ dataDir: opts.dataDir, storage });
+  const webSessions = new WebSessionStore({ dataDir: opts.dataDir, storage });
+  // THE cookie check (session id OR raw token, D4). Shared by every HTTP auth
+  // middleware and the three WebSocket lanes — no other site compares cookies.
+  const verifyAuthCookie = createCookieVerifier({ tokens, sessions: webSessions });
   const sessionsRepo = new SessionsRepository(opts.sessionStore, opts.contextLog);
   const chatRepo = new ChatRepository(opts.sessionStore);
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
@@ -1459,7 +1476,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       : {}),
     authenticate: async (req) => {
       const cookie = readCookie(req.headers.cookie, AUTH_COOKIE);
-      return cookie ? tokens.matches(cookie) : false;
+      return cookie ? verifyAuthCookie(cookie) : false;
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
   });
@@ -1523,7 +1540,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     }),
     authenticate: async (req) => {
       const cookie = readCookie(req.headers.cookie, AUTH_COOKIE);
-      return cookie ? tokens.matches(cookie) : false;
+      return cookie ? verifyAuthCookie(cookie) : false;
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
   });
@@ -1908,7 +1925,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     },
     authenticate: async (req) => {
       const cookie = readCookie(req.headers.cookie, AUTH_COOKIE);
-      return cookie ? tokens.matches(cookie) : false;
+      return cookie ? verifyAuthCookie(cookie) : false;
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
   });
@@ -2029,6 +2046,9 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
 
   const app = createRoutes({
     tokens,
+    admin: webAdmin,
+    webSessions,
+    verifyCookie: verifyAuthCookie,
     services: {
       sessions: sessionsService,
       chat: chatService,
@@ -2303,9 +2323,16 @@ function createPassiveMcpManager(): McpManager {
 
 export { type ChatDefaults, ChatService } from './features/chat/service';
 export { type TeamLoopHandle, TeamLoopRegistry } from './features/chat/team-loops';
+export { type CookieVerifier, createCookieVerifier } from './middleware/cookie-verifier';
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.
 export type { WakeRoute, WakeRoutingTable } from './repositories/config.repository';
-export { WebTokenRepository } from './repositories/web-token.repository';
+export { WebAdminRepository } from './repositories/web-admin.repository';
+export { WebSessionStore } from './repositories/web-session.store';
+export {
+  resolveWebTokenEnv,
+  WebTokenEnvError,
+  WebTokenRepository,
+} from './repositories/web-token.repository';
 export type { RouteModule } from './routes/route-module';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
 export type { AmendmentReader } from './services/amendments.service';

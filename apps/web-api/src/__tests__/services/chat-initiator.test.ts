@@ -82,7 +82,7 @@ describe('web chat initiator (cookie → user, bearer → system)', () => {
 
   it('the cookie-only authMiddleware records a positive cookie, so its turns stay user', async () => {
     const app = new Hono();
-    app.use('*', authMiddleware({ tokens: { matches: async () => true } as never }));
+    app.use('*', authMiddleware({ verify: async () => true }));
     app.get('/probe', (c) => c.text(String(c.get('authMethod'))));
     const res = await app.request('/probe', { headers: { cookie: `${AUTH_COOKIE}=t` } });
     expect(await res.text()).toBe('cookie');

@@ -120,56 +120,38 @@ export async function closeListener(
   await closed;
 }
 
-const c = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  yellow: '\x1b[33m',
-};
-
 export function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1';
 }
 
-// Startup banner for a non-loopback web bind. Returns null for loopback —
-// the caller prints nothing extra in the normal local case.
-//
-// Two things the operator needs at once: the surfaces that just became
-// network-reachable, and the fact that `secureCookie` flips on for a
-// non-loopback bind (serve.ts), which breaks web-UI login over plain http.
-// Without the second line the symptom reads as a broken login, not a
-// deliberate posture.
-export function formatNonLoopbackWarning(host: string, port: number): string | null {
+// TLS-fronted: the operator has already put a TLS terminator in front of this
+// process — signalled either by ETHOS_TRUST_PROXY (the reverse-proxy opt-in,
+// same parse as serve.ts's WEB-006 `trustProxy`) or by `webBaseUrl` pointing
+// at an https:// URL. The one shared predicate for every web-bind announce
+// site (serve onboarding, serve, boot) — do not re-derive it per call site.
+export function isTlsFronted(webBaseUrl?: string): boolean {
+  const trustProxy = process.env.ETHOS_TRUST_PROXY;
+  if (trustProxy === '1' || trustProxy === 'true') return true;
+  return webBaseUrl?.startsWith('https://') === true;
+}
+
+// One-line startup notice for a non-loopback web bind (decision 2026-09-29:
+// no default mode prints the old multi-line warning box). Returns null when
+// nothing should print: a loopback bind (the normal local case), or a
+// non-loopback bind that is TLS-fronted — the deployment already terminates
+// TLS upstream, so the notice would be noise. The secureCookie posture in
+// serve.ts is independent of this and unchanged.
+export function formatNonLoopbackNotice(
+  host: string,
+  port: number,
+  webBaseUrl?: string,
+): string | null {
   if (isLoopbackHost(host)) return null;
-
-  const body = [
-    'SECURITY: the web server is bound to a NON-LOOPBACK address.',
-    '',
-    `  bind: ${host}:${port}`,
-    '',
-    'These surfaces are now reachable from other hosts on the network:',
-    '  - /v1/*   OpenAI-compatible API',
-    '  - /rpc/*  Mission Control RPC',
-    '  - the web UI',
-    'Any personality whose toolset includes `bash` therefore exposes command',
-    'execution on this host to whoever can reach this port.',
-    '',
-    'The auth cookie is marked Secure on a non-loopback bind, so the web UI',
-    'WILL NOT LOG IN over plain http. Front this port with a TLS-terminating',
-    'reverse proxy and set `webBaseUrl` to its https:// URL rather than',
-    'exposing the port directly.',
-    '',
-    'How-to: docs/content/building/how-to/deploy-mission-control-remote.md',
-  ];
-
-  // Width is derived from the content so a long hostname can't overflow the
-  // box. Every line is plain ASCII, so `.length` is the printed width.
-  const inner = body.reduce((max, line) => Math.max(max, line.length), 0) + 2;
-  const paint = (line: string, weight = '') => `${c.yellow}${weight}${line}${c.reset}`;
-  return [
-    paint(`┌${'─'.repeat(inner)}┐`, c.bold),
-    ...body.map((line) => paint(`│ ${line.padEnd(inner - 2)} │`)),
-    paint(`└${'─'.repeat(inner)}┘`, c.bold),
-  ].join('\n');
+  if (isTlsFronted(webBaseUrl)) return null;
+  return (
+    `⚠ web bound to ${host}:${port} — reachable from the network without TLS; ` +
+    'see docs/content/building/how-to/deploy-mission-control-remote.md'
+  );
 }
 
 function tryListen(app: FetchApp, port: number, hostname: string): Promise<ListenResult> {

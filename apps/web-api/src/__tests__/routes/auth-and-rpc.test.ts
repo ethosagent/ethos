@@ -57,7 +57,10 @@ describe('createWebApi — auth + rpc happy path', () => {
     expect(setCookie).toMatch(/SameSite=Strict/i);
   });
 
-  it('exchange rotates the token — replaying the URL fails the second time', async () => {
+  // D7/D16 (web-auth-bootstrap): exchange no longer rotates the token. On an
+  // UNCLAIMED instance it stays a supported steady state — the printed URL
+  // keeps working, and the cookie it grants is the raw token.
+  it('exchange does not rotate — the URL keeps granting while unclaimed', async () => {
     const first = await app.request(`/auth/exchange?t=${token}`, {
       headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
@@ -66,7 +69,8 @@ describe('createWebApi — auth + rpc happy path', () => {
     const replay = await app.request(`/auth/exchange?t=${token}`, {
       headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
-    expect(replay.status).toBe(401);
+    expect(replay.status).toBe(302);
+    expect(parseSetCookieValue(replay.headers.get('set-cookie'))).toBe(`ethos_auth=${token}`);
   });
 
   it('GET /rpc/* without cookie returns 401 (unauthorized envelope)', async () => {

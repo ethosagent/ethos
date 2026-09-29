@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 Most controls on this page are shipped: code in `packages/` and `extensions/`, tests next to it, and an audit event in `observability.db` where the entry names an audit category. Some are **partial** or **not shipped**, and each entry says so in its status line. Where a control has no enforcer, the entry states that as a limitation rather than as a guarantee.
@@ -606,8 +606,10 @@ The web API accepts two credentials. There is no `ethos token create` command an
 
 | Credential | How it is issued | Where it is accepted | Enforced by |
 |---|---|---|---|
-| `ethos_auth` cookie | `ethos serve` prints a one-time `?t=<token>` URL. `GET /auth/exchange` checks it, rotates the stored token, and sets the cookie (`HttpOnly`, `SameSite=Strict`) | `/rpc/*`, `/sse/*`, `/openapi/*`, `/setup/whatsapp/*`, and the voice, satellite and takeover WebSockets | `authRoutes` in `apps/web-api/src/routes/auth.ts`; `authMiddleware` in `apps/web-api/src/middleware/auth.ts`; `dualAuth` in `apps/web-api/src/middleware/dual-auth.ts` |
+| `ethos_auth` cookie | Unclaimed instance: `ethos serve` prints a `?t=<token>` URL; `GET /auth/exchange` (or a token pasted into `POST /auth/token-login`) sets the cookie (`HttpOnly`, `SameSite=Strict`). Claimed instance: `POST /auth/login` (username + password, argon2id hash in `<dataDir>/web-admin.json`) issues a server-side session id. Machine clients mint the cookie from `<dataDir>/web-token` directly; one shared verifier accepts a session id or the raw token | `/rpc/*`, `/sse/*`, `/openapi/*`, `/setup/whatsapp/*`, and the voice, satellite and takeover WebSockets | `authRoutes` in `apps/web-api/src/routes/auth.ts`; `authMiddleware` in `apps/web-api/src/middleware/auth.ts`; `dualAuth` in `apps/web-api/src/middleware/dual-auth.ts` |
 | Bearer API key (`sk-ethos-…`) | `ethos api-key create --name <label> [--scopes <a,b>]` (default scope `chat`), or the web Settings page through the `apiKeys.create` RPC. Stored hashed in `sessions.db` by `SqliteApiKeyStore` (`extensions/session-sqlite/src/api-key-store.ts`) | `/rpc/*` and `/sse/*` methods whose namespace maps to the key's scope in `SCOPE_MAP`, plus the OpenAI-compatible `/v1/*` surface (scope `chat`), `/metrics` (`metrics:read`) and `/cron/fire` (`cron`) | `dualAuth` and `resolveScope` in `apps/web-api/src/middleware/dual-auth.ts`; `bearerAuth` in `apps/web-api/src/middleware/bearer-auth.ts` |
+
+Claiming is opt-in. An instance with no `web-admin.json` is unclaimed and stays in token mode indefinitely. Claiming it at `/welcome` (bootstrap token + username + password) is what retires browser token login: from then on the exchange URL redirects to `/welcome/reset` with the token prefilled and grants no session, while the raw token stays cookie-valid for machine clients. `ETHOS_WEB_TOKEN` in the environment replaces the generated token file — at least 24 characters, checked at boot — and suppresses the printed URL. Reset lives at `/welcome/reset`, gated by the bootstrap token; the login screen carries no reset link, and a successful reset invalidates all human sessions. All the `/auth` POSTs are rate-limited and Origin-checked.
 
 A request with neither credential receives `401 Unauthorized`. A bearer key is refused with `403 Forbidden` in these cases:
 
@@ -620,7 +622,7 @@ The `admin` namespace has a second gate. Every admin procedure calls `requireAdm
 
 When `ethos serve` is not given an API-key store, `/rpc/*` and `/sse/*` fall back to `authMiddleware`, which accepts the cookie only (`apps/web-api/src/routes/index.ts`).
 
-- Pinned by: `apps/web-api/src/__tests__/routes/auth-and-rpc.test.ts` (cookie exchange, rotation, `401` without a cookie), `apps/web-api/src/__tests__/middleware/dual-auth-scope.test.ts` (fail-closed and cookie-only methods), `apps/web-api/src/__tests__/middleware/apikeys-auth-bypass.test.ts` (`apiKeys` namespace), `apps/web-api/src/__tests__/routes/admin.test.ts` (`admin.enabled` gate)
+- Pinned by: `apps/web-api/src/__tests__/routes/auth-and-rpc.test.ts` (cookie exchange, `401` without a cookie), `apps/web-api/src/__tests__/middleware/dual-auth-scope.test.ts` (fail-closed and cookie-only methods), `apps/web-api/src/__tests__/middleware/apikeys-auth-bypass.test.ts` (`apiKeys` namespace), `apps/web-api/src/__tests__/routes/admin.test.ts` (`admin.enabled` gate)
 - Limitation: no test sends a bearer key to an `admin` procedure. The refusal comes from the generic unmapped-namespace branch in `dualAuth`, which `dual-auth-scope.test.ts` exercises through `outbox`.
 - Cross-ref: [Authenticate your dashboard users](../building/how-to/authenticate-dashboard-users.md)
 
@@ -650,7 +652,7 @@ Registration itself is not validated. `registerDataSource(id, path)` (`PluginApi
 
 *Status: Shipped.*
 
-When Mission Control connects to a remote Ethos instance, the web token is encrypted with Electron `safeStorage` (whose key the OS keychain holds) and stored in the app's `keychain.json`, not in plaintext config (`apps/desktop/src/main/keychain.ts`). The main process writes it onto the remote origin as the `ethos_auth` cookie before navigating; the window then loads the remote server's own SPA same-origin, so there is no cross-origin request to authorize. `/auth/exchange` is deliberately not used — it rotates the token, which would invalidate the stored value on every launch.
+When Mission Control connects to a remote Ethos instance, the web token is encrypted with Electron `safeStorage` (whose key the OS keychain holds) and stored in the app's `keychain.json`, not in plaintext config (`apps/desktop/src/main/keychain.ts`). The main process writes it onto the remote origin as the `ethos_auth` cookie before navigating; the window then loads the remote server's own SPA same-origin, so there is no cross-origin request to authorize. `/auth/exchange` is deliberately not used — the app already holds the token, and the token stays cookie-valid whether or not the instance is claimed, so the desktop flow is unchanged by web claiming.
 
 The renderer never receives the token itself. The `keychain:preview` IPC returns a masked preview — the first 3 and last 4 characters — for display (`maskApiKey` in `apps/desktop/src/main/ipc.ts`).
 

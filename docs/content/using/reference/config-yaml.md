@@ -714,6 +714,7 @@ web.corsOrigins: "https://chat.example.com"
 Notes:
 
 - See [Serve Ethos as an OpenAI-compatible backend](../../building/how-to/openai-server-chat.md#1-boot-the-server) for these keys in practice, including the CORS caveat for server-side clients.
+- `ETHOS_WEB_TOKEN` (env var only, no config key) supplies the web UI's bootstrap token instead of the generated `<dataDir>/web-token` file. The value must be at least 24 characters — a shorter one stops the boot with an error suggesting `openssl rand -hex 32`. While it is set, `ethos serve` does not print the sign-in URL; the operator already holds the token.
 
 ## execution.docker.\* {#execution-docker}
 
@@ -927,7 +928,7 @@ Notes:
 - `${ETHOS_HOME}` is not a token this file expands. The `<ethosDir>/backups` default is computed in code by `backupDirectory` in [`packages/wiring/src/backup-schedule.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/backup-schedule.ts); write a literal path if you want one.
 - The schedule only fires while a serving process is running. `ethos chat` alone runs no cron.
 - A `state` archive holds conversation history — sessions, session cards, memory. Treat the backup directory as sensitive as `~/.ethos/` itself.
-- Secrets are never archived. `secrets/`, `keys.json`, `web-token` and MCP OAuth token files are excluded; the archive lists what is missing so a restore can prompt for it.
+- Secrets are never archived. `secrets/`, `keys.json`, `web-token`, `web-admin.json`, `web-sessions.json` and MCP OAuth token files are excluded; the archive lists what is missing so a restore can prompt for it.
 - See [Back up and restore an Ethos install](../how-to/back-up-and-restore.md) for these keys in practice, and [`ethos backup`](./cli.md#ethos-backup) for the manual command.
 
 ## security.trusted_github_orgs {#security-trusted-github-orgs}

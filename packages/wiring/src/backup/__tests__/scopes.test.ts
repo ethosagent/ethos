@@ -218,6 +218,8 @@ describe('backup scopes: classification', () => {
       'secrets/ANTHROPIC_API_KEY',
       'keys.json',
       'web-token',
+      'web-admin.json',
+      'web-sessions.json',
       'cron/jobs.json.lock',
       'skills/.tmp/half-written',
       'blobs/ab/cd',

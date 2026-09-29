@@ -177,6 +177,11 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // The ceiling on bytes an untrusted sender can push through a channel.
       // Not a secret, not an approval, not a search default.
       section('inbound-media', 'inbound media'),
+      // Who signs in to THIS web UI (web-auth-bootstrap D18): the instance's
+      // auth state and the reset entry point. Next to api-keys because both
+      // are about access to the instance, and not merged into it: api-keys
+      // are bearer credentials for external clients, this is the human one.
+      section('access', 'access'),
       section('api-keys', 'API keys'),
       section('a2a', 'A2A'),
     ],

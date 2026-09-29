@@ -1,6 +1,6 @@
 import { createServer } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
-import { formatNonLoopbackWarning, listenWithFallback } from '../serve-listen';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { formatNonLoopbackNotice, isTlsFronted, listenWithFallback } from '../serve-listen';
 
 // Minimal stub that satisfies the `{ fetch }` shape `listenWithFallback`
 // expects. Avoids dragging Hono into the CLI app's direct deps just for
@@ -100,39 +100,89 @@ describe('listenWithFallback', () => {
   });
 });
 
-describe('formatNonLoopbackWarning', () => {
-  it('warns with the bind address, exposed surfaces, and the Secure-cookie trap', () => {
-    const banner = formatNonLoopbackWarning('0.0.0.0', 3000);
-    expect(banner).not.toBeNull();
-    const text = banner ?? '';
+describe('formatNonLoopbackNotice', () => {
+  const savedTrustProxy = process.env.ETHOS_TRUST_PROXY;
+
+  beforeEach(() => {
+    delete process.env.ETHOS_TRUST_PROXY;
+  });
+
+  afterEach(() => {
+    if (savedTrustProxy === undefined) delete process.env.ETHOS_TRUST_PROXY;
+    else process.env.ETHOS_TRUST_PROXY = savedTrustProxy;
+  });
+
+  it('prints one line naming the bind, the missing TLS, and the how-to doc', () => {
+    const notice = formatNonLoopbackNotice('0.0.0.0', 3000);
+    expect(notice).not.toBeNull();
+    const text = notice ?? '';
+    // Decision 2026-09-29: a single line, never the old multi-line box.
+    expect(text).not.toContain('\n');
     expect(text).toContain('0.0.0.0:3000');
-    expect(text).toContain('/v1/*');
-    expect(text).toContain('/rpc/*');
-    expect(text).toContain('web UI');
-    expect(text).toContain('bash');
-    expect(text).toContain('WILL NOT LOG IN over plain http');
-    expect(text).toContain('webBaseUrl');
-    expect(text).toContain('reverse proxy');
+    expect(text).toContain('without TLS');
     expect(text).toContain('deploy-mission-control-remote.md');
   });
 
   it('reports the port it was given, not the requested one', () => {
-    expect(formatNonLoopbackWarning('192.168.1.20', 3002)).toContain('192.168.1.20:3002');
+    expect(formatNonLoopbackNotice('192.168.1.20', 3002)).toContain('192.168.1.20:3002');
   });
 
   it('stays silent for loopback binds', () => {
-    expect(formatNonLoopbackWarning('127.0.0.1', 3000)).toBeNull();
-    expect(formatNonLoopbackWarning('localhost', 3000)).toBeNull();
-    expect(formatNonLoopbackWarning('::1', 3000)).toBeNull();
+    expect(formatNonLoopbackNotice('127.0.0.1', 3000)).toBeNull();
+    expect(formatNonLoopbackNotice('localhost', 3000)).toBeNull();
+    expect(formatNonLoopbackNotice('::1', 3000)).toBeNull();
   });
 
-  it('keeps the box square regardless of hostname length', () => {
-    const banner = formatNonLoopbackWarning('a-very-long-internal-hostname.example.internal', 8080);
-    const widths = new Set(
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI SGR codes
-      (banner ?? '').split('\n').map((l) => l.replace(/\x1b\[[0-9;]*m/g, '').length),
-    );
-    expect(widths.size).toBe(1);
+  it('stays silent when ETHOS_TRUST_PROXY marks the bind TLS-fronted', () => {
+    process.env.ETHOS_TRUST_PROXY = '1';
+    expect(formatNonLoopbackNotice('0.0.0.0', 3000)).toBeNull();
+    process.env.ETHOS_TRUST_PROXY = 'true';
+    expect(formatNonLoopbackNotice('0.0.0.0', 3000)).toBeNull();
+  });
+
+  it('still prints when ETHOS_TRUST_PROXY is set but not truthy', () => {
+    process.env.ETHOS_TRUST_PROXY = '0';
+    expect(formatNonLoopbackNotice('0.0.0.0', 3000)).not.toBeNull();
+  });
+
+  it('stays silent when webBaseUrl says a TLS terminator fronts the deployment', () => {
+    expect(formatNonLoopbackNotice('0.0.0.0', 3000, 'https://ethos.example.com')).toBeNull();
+  });
+
+  it('still prints for an http webBaseUrl', () => {
+    const notice = formatNonLoopbackNotice('0.0.0.0', 3000, 'http://ethos.example.com');
+    expect(notice).toContain('0.0.0.0:3000');
+  });
+});
+
+describe('isTlsFronted', () => {
+  const savedTrustProxy = process.env.ETHOS_TRUST_PROXY;
+
+  beforeEach(() => {
+    delete process.env.ETHOS_TRUST_PROXY;
+  });
+
+  afterEach(() => {
+    if (savedTrustProxy === undefined) delete process.env.ETHOS_TRUST_PROXY;
+    else process.env.ETHOS_TRUST_PROXY = savedTrustProxy;
+  });
+
+  it('is false by default', () => {
+    expect(isTlsFronted()).toBe(false);
+    expect(isTlsFronted('http://ethos.example.com')).toBe(false);
+  });
+
+  it('honours ETHOS_TRUST_PROXY with the same parse serve.ts uses', () => {
+    process.env.ETHOS_TRUST_PROXY = '1';
+    expect(isTlsFronted()).toBe(true);
+    process.env.ETHOS_TRUST_PROXY = 'true';
+    expect(isTlsFronted()).toBe(true);
+    process.env.ETHOS_TRUST_PROXY = '0';
+    expect(isTlsFronted()).toBe(false);
+  });
+
+  it('honours an https webBaseUrl', () => {
+    expect(isTlsFronted('https://ethos.example.com')).toBe(true);
   });
 });
 

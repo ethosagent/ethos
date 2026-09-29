@@ -364,6 +364,11 @@ const ALWAYS_EXCLUDED: readonly string[] = [
   'secrets',
   'keys.json',
   'web-token',
+  // web-auth-bootstrap D3: excluded DELIBERATELY. A restore re-opens the gated
+  // wizard, which the token-holder can always pass — safer than porting
+  // password hashes (and live session ids) across machines.
+  'web-admin.json',
+  'web-sessions.json',
   'blobs',
   'cas',
   'plugins/node_modules',

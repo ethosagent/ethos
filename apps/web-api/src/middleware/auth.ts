@@ -1,17 +1,18 @@
 import { EthosError } from '@ethosagent/types';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { WebTokenRepository } from '../repositories/web-token.repository';
+import type { CookieVerifier } from './cookie-verifier';
 
-// Cookie auth. Single-user posture (CEO finding 3.1): the URL-exchange flow
-// (see routes/auth.ts) sets `etos_auth=<token>` httpOnly + SameSite=Strict
-// after validating + rotating the URL token. Every subsequent request
-// re-validates against the stored token; rotation breaks any stolen URL.
+// Cookie auth. Single-user posture (CEO finding 3.1, amended by
+// web-auth-bootstrap D4): the cookie value is EITHER a server-side session id
+// (human login) OR the raw bootstrap token (machine clients). The dual-accept
+// lives in ONE place — `createCookieVerifier` (./cookie-verifier.ts) — and
+// this middleware only routes through it.
 
 export const AUTH_COOKIE = 'ethos_auth';
 
 export interface AuthMiddlewareOptions {
-  tokens: WebTokenRepository;
+  verify: CookieVerifier;
 }
 
 export function authMiddleware(opts: AuthMiddlewareOptions): MiddlewareHandler {
@@ -21,15 +22,15 @@ export function authMiddleware(opts: AuthMiddlewareOptions): MiddlewareHandler {
       throw new EthosError({
         code: 'UNAUTHORIZED',
         cause: 'Missing auth cookie',
-        action: 'Visit `?t=<token>` printed by `ethos serve` to sign in.',
+        action: 'Sign in via the web UI (or the URL printed by `ethos serve`).',
       });
     }
-    const ok = await opts.tokens.matches(cookie);
+    const ok = await opts.verify(cookie);
     if (!ok) {
       throw new EthosError({
         code: 'UNAUTHORIZED',
-        cause: 'Auth cookie does not match the active token',
-        action: 'Re-open the URL printed by `ethos serve`. Token may have rotated.',
+        cause: 'Auth cookie is not a live session or the active token',
+        action: 'Sign in again via the web UI.',
       });
     }
     // Recorded like `dualAuth` does, so a handler that needs a POSITIVE cookie

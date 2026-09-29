@@ -2,8 +2,8 @@ import { hashApiKey } from '@ethosagent/session-sqlite';
 import { EthosError } from '@ethosagent/types';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { WebTokenRepository } from '../repositories/web-token.repository';
 import type { ApiKeyAuthStore } from './bearer-auth';
+import type { CookieVerifier } from './cookie-verifier';
 
 // Dual-auth middleware for the `/rpc/*` and `/sse/*` surfaces. Accepts
 // EITHER a cookie (existing single-origin path) OR a bearer token (new
@@ -15,7 +15,8 @@ import type { ApiKeyAuthStore } from './bearer-auth';
 export type AuthMethod = 'cookie' | 'bearer';
 
 export interface DualAuthOptions {
-  tokens: WebTokenRepository;
+  /** THE cookie check (session id OR raw token) — see ./cookie-verifier.ts. */
+  verifyCookie: CookieVerifier;
   apiKeys: ApiKeyAuthStore;
   scopeForPath: (path: string) => string | null;
 }
@@ -128,7 +129,7 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
   return async (c, next) => {
     const cookie = getCookie(c, AUTH_COOKIE);
     if (cookie) {
-      const ok = await opts.tokens.matches(cookie);
+      const ok = await opts.verifyCookie(cookie);
       if (ok) {
         c.set('authMethod', 'cookie' as AuthMethod);
         return next();

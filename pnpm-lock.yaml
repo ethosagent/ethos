@@ -770,6 +770,9 @@ importers:
       '@orpc/server':
         specifier: ^1.14.6
         version: 1.14.14(ws@8.21.0)
+      argon2:
+        specifier: ^0.43.0
+        version: 0.43.1
       hono:
         specifier: ^4.12.15
         version: 4.12.23

@@ -76,6 +76,7 @@ import {
   createWebApi,
   IdempotencyStore,
   type RouteModule,
+  resolveWebTokenEnv,
   type TeamLoopHandle,
   WebTokenRepository,
 } from '@ethosagent/web-api';
@@ -144,7 +145,7 @@ import {
 } from './serve-helpers';
 import {
   closeListener,
-  formatNonLoopbackWarning,
+  formatNonLoopbackNotice,
   isLoopbackHost,
   listenWithFallback,
 } from './serve-listen';
@@ -369,7 +370,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       ...(webDist ? { webDist } : {}),
     });
     const webApp = created.app;
-    const tokens = new WebTokenRepository({ dataDir: dir, storage: getStorage() });
+    const envToken = resolveWebTokenEnv();
+    const tokens = new WebTokenRepository({
+      dataDir: dir,
+      storage: getStorage(),
+      ...(envToken !== undefined ? { envToken } : {}),
+    });
     const token = await tokens.getOrCreate();
     const { server, port } = await listenWithFallback(
       webApp,
@@ -380,7 +386,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
     console.log(`ethos web UI (onboarding mode) listening on http://${displayHost}:${port}`);
     console.log(`  admin: http://${displayHost}:${port}/admin`);
-    if (webDist) {
+    if (tokens.fromEnv) {
+      // D2 — the operator already holds the token; never print it or a
+      // granting URL to logs.
+      console.log('  web token: from ETHOS_WEB_TOKEN');
+    } else if (webDist) {
       console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
     } else {
       console.log(`  auth token: ${token}`);
@@ -388,9 +398,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
     }
     // Reported against the bound port, not the requested one — listenWithFallback
-    // may have walked forward on EADDRINUSE.
-    const exposureWarning = formatNonLoopbackWarning(webHost, port);
-    if (exposureWarning) console.warn(`\n${exposureWarning}`);
+    // may have walked forward on EADDRINUSE. Onboarding runs before a config
+    // exists, so no `webBaseUrl` to pass; ETHOS_TRUST_PROXY still suppresses.
+    const exposureNotice = formatNonLoopbackNotice(webHost, port);
+    if (exposureNotice) console.warn(exposureNotice);
 
     emitReady('serve');
     notifyReady();
@@ -1404,7 +1415,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   });
   chatService = created.chatService;
   const webApp = created.app;
-  const tokens = new WebTokenRepository({ dataDir: dir, storage: getStorage() });
+  const envToken = resolveWebTokenEnv();
+  const tokens = new WebTokenRepository({
+    dataDir: dir,
+    storage: getStorage(),
+    ...(envToken !== undefined ? { envToken } : {}),
+  });
   const token = await tokens.getOrCreate();
   const { server, port } = await listenWithFallback(
     webApp,
@@ -1427,21 +1443,24 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
   console.log(`ethos web UI listening on http://${displayHost}:${port}`);
   console.log(`  admin: http://${displayHost}:${port}/admin`);
-  if (webDist) {
+  if (tokens.fromEnv) {
+    // D2 — the operator already holds the token; never print it or a granting
+    // URL to logs.
+    console.log('  web token: from ETHOS_WEB_TOKEN');
+    if (webDist) console.log(`  serving SPA from: ${webDist}`);
+  } else if (webDist) {
     console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
-    console.log('  (token rotates on first use; cookie remains the steady-state credential)');
     console.log(`  serving SPA from: ${webDist}`);
   } else {
     console.log(`  auth token: ${token}`);
-    console.log('  (token rotates on first use; cookie remains the steady-state credential)');
     console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
     console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
     console.log('  or `pnpm --filter @ethosagent/web build` to bundle into this server.');
   }
   // Reported against the bound port, not the requested one — listenWithFallback
   // may have walked forward on EADDRINUSE.
-  const exposureWarning = formatNonLoopbackWarning(webHost, port);
-  if (exposureWarning) console.warn(`\n${exposureWarning}`);
+  const exposureNotice = formatNonLoopbackNotice(webHost, port, config.webBaseUrl);
+  if (exposureNotice) console.warn(exposureNotice);
   webShutdown = () =>
     Promise.all([
       created.voiceSocket.close(),

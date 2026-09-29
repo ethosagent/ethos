@@ -5,8 +5,10 @@ import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createCookieVerifier } from '../../middleware/cookie-verifier';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../../middleware/dual-auth';
 import { errorHandler } from '../../middleware/error-envelope';
+import { WebSessionStore } from '../../repositories/web-session.store';
 import { WebTokenRepository } from '../../repositories/web-token.repository';
 
 // Regression tests for the apiKeys namespace auth bypass (CRITICAL).
@@ -36,8 +38,9 @@ describe('apiKeys namespace — bearer token rejection', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     cookieToken = await tokens.getOrCreate();
 
+    const sessions = new WebSessionStore({ dataDir: dir, storage: new FsStorage() });
     const dual = dualAuth({
-      tokens,
+      verifyCookie: createCookieVerifier({ tokens, sessions }),
       apiKeys: store,
       scopeForPath: resolveScope,
     });
@@ -85,8 +88,8 @@ describe('apiKeys namespace — bearer token rejection', () => {
   });
 
   it('allows cookie auth on /rpc/apiKeys/create (not blocked by guard)', async () => {
-    // dualAuth checks getCookie(c, 'ethos_auth') against tokens.matches().
-    // The stored token IS the cookie value before exchange rotates it.
+    // dualAuth checks getCookie(c, 'ethos_auth') through the shared cookie
+    // verifier; the raw stored token stays cookie-valid (D4).
     const res = await app.request('/rpc/apiKeys/create', {
       method: 'POST',
       headers: {

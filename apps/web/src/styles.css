@@ -9302,6 +9302,213 @@ a.stage-header-scope:hover {
   }
 }
 
+/* Auth surfaces — web-auth-bootstrap Phase 2 (AuthGate lock screen,
+   /welcome claim wizard, /welcome/reset). Per the approved Phase 0 mockup
+   and DESIGN.md: centered bg-elevated card at md (8px) radius, sm (4px)
+   controls, accent focus ring, glyph + word status — never color alone. */
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 16px;
+  background: var(--ethos-bg);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 340px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  padding: 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-wordmark {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--ethos-text);
+}
+
+.auth-wordmark span {
+  color: var(--ethos-text-tertiary);
+  font-weight: 400;
+}
+
+.auth-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--ethos-text);
+}
+
+.auth-sub {
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+  margin: 0;
+  line-height: 1.55;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.auth-field label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ethos-text-tertiary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-input {
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  background: var(--ethos-bg);
+  padding: 8px 10px;
+  font-size: 13.5px;
+  color: var(--ethos-text);
+  font-family: inherit;
+}
+
+.auth-input::placeholder {
+  color: var(--ethos-text-tertiary);
+}
+
+.auth-input:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+.auth-input--mono {
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+}
+
+.auth-btn {
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent, var(--ethos-info));
+  color: #fff;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auth-btn:hover {
+  opacity: 0.92;
+}
+
+.auth-btn:disabled {
+  background: var(--ethos-bg-overlay);
+  color: var(--ethos-text-tertiary);
+  cursor: default;
+  opacity: 1;
+}
+
+.auth-btn:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 2px;
+}
+
+.auth-err {
+  font-size: 12.5px;
+  color: var(--ethos-warning);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.auth-foot {
+  font-size: 11.5px;
+  color: var(--ethos-text-tertiary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.auth-link {
+  color: var(--accent, var(--ethos-info));
+  text-decoration: none;
+}
+
+.auth-link:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+.auth-glyph-warn {
+  color: var(--ethos-warning);
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+}
+
+.auth-prefilled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ethos-text-tertiary);
+}
+
+.auth-chip {
+  background: var(--ethos-bg-overlay);
+  border-radius: 9999px;
+  padding: 1px 9px;
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--ethos-text-dim);
+}
+
+.auth-statusrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
+.auth-mono {
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.auth-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid var(--ethos-border-strong);
+  border-top-color: var(--accent, var(--ethos-info));
+  animation: auth-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-spinner {
+    animation: none;
+  }
+}
+
 /* ── Outbox — the personality approval queue (plan trust-before-reach.md
    Part 2, O-T10) ──────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: connect-open-webui
 time: "10 min"
-updated: 2026-08-19
+updated: 2026-09-29
 ---
 
 ## Task
@@ -58,26 +58,10 @@ ethos serve --web-host 0.0.0.0 --web-port 3000
 ```
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ SECURITY: the web server is bound to a NON-LOOPBACK address.            │
-│                                                                         │
-│   bind: 0.0.0.0:3000                                                    │
-│                                                                         │
-│ These surfaces are now reachable from other hosts on the network:       │
-│   - /v1/*   OpenAI-compatible API                                       │
-│   - /rpc/*  Mission Control RPC                                         │
-│   - the web UI                                                          │
-│ Any personality whose toolset includes `bash` therefore exposes command │
-│ execution on this host to whoever can reach this port.                  │
-│                                                                         │
-│ The auth cookie is marked Secure on a non-loopback bind, so the web UI  │
-│ WILL NOT LOG IN over plain http. Front this port with a TLS-terminating │
-│ reverse proxy and set `webBaseUrl` to its https:// URL rather than      │
-│ exposing the port directly.                                             │
-└─────────────────────────────────────────────────────────────────────────┘
+⚠ web bound to 0.0.0.0:3000 — reachable from the network without TLS; see docs/content/building/how-to/deploy-mission-control-remote.md
 ```
 
-That banner is expected — it confirms the non-loopback bind, not a misconfiguration. `--web-port` defaults to `3000` either way.
+That one-line notice is expected — it confirms the non-loopback bind, not a misconfiguration. It is suppressed when the deployment is already TLS-fronted: `ETHOS_TRUST_PROXY=1` (or `true`) in the environment, or `webBaseUrl` set to an `https://` URL in `~/.ethos/config.yaml`. `--web-port` defaults to `3000` either way.
 
 **This trade-off breaks the Ethos web UI login, not `/v1/*`.** Ethos marks its dashboard's `ethos_auth` cookie `Secure` whenever the bind is non-loopback, and a browser will not send a `Secure` cookie over plain `http://`. Bearer tokens are unaffected — Open WebUI keeps working over `http://host:3000/v1` — but you lose the Ethos web dashboard at `http://<host>:3000` until you either put TLS in front of it (set `webBaseUrl: https://…` in `~/.ethos/config.yaml`) or accept that the dashboard is loopback-only. This is a deliberate security rule; it is not something to configure around.
 

@@ -64,7 +64,7 @@ import {
   type PlatformAdapter,
 } from '@ethosagent/types';
 import { WatcherManager, type WatcherWakeEvent } from '@ethosagent/watchers';
-import { IdempotencyStore, WebTokenRepository } from '@ethosagent/web-api';
+import { IdempotencyStore, resolveWebTokenEnv, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createLazyProvider,
   createOutboundPolicyGate,
@@ -206,7 +206,7 @@ import {
 } from './serve-helpers';
 import {
   closeListener,
-  formatNonLoopbackWarning,
+  formatNonLoopbackNotice,
   isLoopbackHost,
   listenWithFallback,
 } from './serve-listen';
@@ -1761,7 +1761,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // later, and a web server that had meanwhile settled on that port would turn
   // the operator's first webhook route into an EADDRINUSE warning.
   const reservedPorts = new Set<number>([acpPort, healthPort, webhookPort, platformWebhookPort]);
-  const tokens = new WebTokenRepository({ dataDir: dir, storage });
+  const envToken = resolveWebTokenEnv();
+  const tokens = new WebTokenRepository({
+    dataDir: dir,
+    storage,
+    ...(envToken !== undefined ? { envToken } : {}),
+  });
   const token = await tokens.getOrCreate();
   //
   // The ladder is also what a Phase D rebind re-runs (§0 row 9), so it is a
@@ -1790,18 +1795,22 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const firstBind = await listenWeb(webRequested);
   let webServer = firstBind.server;
   attachWebSockets(webServer);
-  /** Print where the web UI now is, plus the non-loopback exposure box when
-   *  the bind is network-reachable. Called at cold boot and again after a
-   *  Phase D rebind — a rebind onto `0.0.0.0` is exactly as exposing as a cold
-   *  boot onto it, so it owes the operator the same warning. */
+  /** Print where the web UI now is, plus the one-line non-loopback notice
+   *  when the bind is network-reachable and not TLS-fronted. Called at cold
+   *  boot and again after a Phase D rebind — a rebind onto `0.0.0.0` is
+   *  exactly as exposing as a cold boot onto it, so it owes the operator the
+   *  same notice. */
   const announceWebBind = (host: string, boundPort: number): string | null => {
     const displayHost = host === '0.0.0.0' ? 'localhost' : host;
     console.log(`  web:     http://${displayHost}:${boundPort}`);
-    return formatNonLoopbackWarning(host, boundPort);
+    return formatNonLoopbackNotice(host, boundPort, cfg.webBaseUrl);
   };
   const exposureWarning = announceWebBind(webHost, firstBind.port);
-  if (!webDist) console.log(`  auth token: ${token}`);
-  if (exposureWarning) console.warn(`\n${exposureWarning}`);
+  // D2 — with ETHOS_WEB_TOKEN set the operator already holds the token; never
+  // print it to logs.
+  if (tokens.fromEnv) console.log('  web token: from ETHOS_WEB_TOKEN');
+  else if (!webDist) console.log(`  auth token: ${token}`);
+  if (exposureWarning) console.warn(exposureWarning);
 
   // -------------------------------------------------------------------------
   // §3b step 11 — watchdog / heartbeat timers
@@ -2397,7 +2406,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     webRequested = outcome.requested;
     webRebindRefused = outcome.fellBack ? wanted : null;
     const warning = announceWebBind(outcome.requested.host, outcome.port);
-    if (warning) console.warn(`\n${warning}`);
+    if (warning) console.warn(warning);
     return 'rebound';
   };
 

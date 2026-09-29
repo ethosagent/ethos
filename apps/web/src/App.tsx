@@ -11,6 +11,7 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import { AltitudeRail } from './components/AltitudeRail';
+import { AuthGate } from './components/AuthGate';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabBar } from './components/MobileTabBar';
 import { NewAgentDialog } from './components/NewAgentDialog';
@@ -105,6 +106,8 @@ import { TeamMemory } from './pages/team/TeamMemory';
 import { TeamOverview } from './pages/team/TeamOverview';
 import { TeamSettings } from './pages/team/TeamSettings';
 import { TeamStructure } from './pages/team/TeamStructure';
+import { Welcome } from './pages/Welcome';
+import { WelcomeReset } from './pages/WelcomeReset';
 import { rpc } from './rpc';
 
 // Top-level route map. v0 ships only Talk-group routes (Chat + Sessions)
@@ -155,7 +158,27 @@ const DRAWER_BREAKPOINT = 1280; // px — plan IA: drawer "default visible ≥12
 // remains as personality switcher) is explicit P6 scope in the plan, not
 // this phase. The old Sidebar's collapse toggle is dropped along with it.
 
+/**
+ * web-auth-bootstrap Phase 2: the auth pages render OUTSIDE the shell and
+ * outside the gate — they are exactly the screens an unauthenticated visitor
+ * must reach (claim D1, reset D6), and the approved mockup gives them no app
+ * chrome. Everything else sits behind AuthGate, which swaps the whole app
+ * for the lock screen on a 401 and for the reconnecting panel while the
+ * backend is unreachable (D9).
+ */
 export function App() {
+  const { pathname } = useLocation();
+  const path = pathname.replace(/\/+$/, '') || '/';
+  if (path === '/welcome') return <Welcome />;
+  if (path === '/welcome/reset') return <WelcomeReset />;
+  return (
+    <AuthGate>
+      <AppShell />
+    </AuthGate>
+  );
+}
+
+function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(() =>
     typeof window === 'undefined' ? false : window.innerWidth >= DRAWER_BREAKPOINT,
   );
@@ -534,7 +557,11 @@ function useOnboardingRedirect(): void {
       pathname === '/onboarding' ||
       pathname.startsWith('/setup') ||
       pathname === '/signing-in' ||
-      pathname === '/oauth/callback'
+      pathname === '/oauth/callback' ||
+      // Auth pages (web-auth-bootstrap Phase 2). They render outside the
+      // shell today, so this hook never runs there — the entries keep that
+      // true even if they are ever mounted as ordinary routes.
+      pathname.startsWith('/welcome')
     )
       return;
     navigate('/onboarding', { replace: true });

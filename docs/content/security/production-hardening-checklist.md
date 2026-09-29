@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: production-hardening-checklist
 time: "30 min"
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 ## Task
@@ -244,8 +244,11 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 
 ### 11. Scope API keys and keep the admin panel off
 
-The web API always requires a credential on `/rpc/*`: the `ethos_auth` cookie from the sign-in URL `ethos serve` prints, or a bearer API key. There is nothing to switch on. Harden what is already there:
+The web API always requires a credential on `/rpc/*`: the `ethos_auth` cookie (a login session on a claimed instance, or the web token on an unclaimed one), or a bearer API key. There is nothing to switch on. Harden what is already there:
 
+- Set `ETHOS_WEB_TOKEN` from your secret manager instead of letting `ethos serve` generate a token file. The value must be at least 24 characters — a shorter one stops the boot with an error suggesting `openssl rand -hex 32` — and while the variable is set, the sign-in URL is never printed to logs.
+- Claim the instance: open `/welcome`, enter the bootstrap token, and set a username and password. After claiming, a token in a URL no longer signs a browser in — the printed URL only prefills the reset form at `/welcome/reset` — while machine clients keep minting the token cookie unchanged.
+- Record the recovery path in your runbook: `/welcome/reset`, gated by the bootstrap token. The login screen has no reset link, and a successful reset signs out every browser session.
 - If you do not use the admin panel, leave `admin.enabled` unset. Admin procedures then refuse every caller with `403`.
 - Mint each API key with the narrowest scope it needs: `ethos api-key create --name <label> --scopes sessions:read`.
 - Revoke keys nobody uses. List them with `ethos api-key list`, then run `ethos api-key revoke <prefix>`.
@@ -358,7 +361,7 @@ If every step above passes, the deployment is hardened.
 | `observability.db` is empty | Database path misconfigured or the process lacks write permission | Check `observability.db` path in config; confirm the process user can write to it |
 | Container crashes on startup with read-only FS | `~/.ethos/` not mounted as a writable volume | Mount a persistent volume at the `~/.ethos/` path |
 | `ethos config validate --strict` reports missing personality | Bot binding references a personality ID that does not exist | Create the personality directory or fix the `botKey` mapping |
-| Web UI returns `401` for every request | No `ethos_auth` cookie, or the cookie no longer matches the stored token | Open the sign-in URL `ethos serve` prints (`?t=<token>`) again |
+| Web UI returns `401` for every request | No `ethos_auth` cookie, or the session or token it holds is no longer valid | Claimed instance: sign in with username + password, or reset at `/welcome/reset` with the bootstrap token. Unclaimed: open the sign-in URL `ethos serve` prints (`?t=<token>`) again |
 | Admin panel returns `403` | `admin.enabled: true` is not set, or the request used an API key | Set `admin.enabled: true` in `config.yaml` and use the web UI; API keys cannot reach admin procedures |
 | CORS error in a browser dashboard served from another origin | Its origin is not in `ETHOS_ALLOWED_ORIGINS` (a `*.domain` wildcard does not count for CORS) | Add the exact origin to `ETHOS_ALLOWED_ORIGINS` in the `ethos serve` environment and restart |
 | Dashboard query returns data from a write statement | Plugin bypasses `registerDataSource` with direct DB access | Audit plugin code; route all queries through `registerDataSource` |
