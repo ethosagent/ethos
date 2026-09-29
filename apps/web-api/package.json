@@ -58,7 +58,7 @@
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/wiring": "workspace:*",
     "argon2": "^0.43.0",
-    "@hono/node-server": "^2.0.0",
+    "@hono/node-server": "^2.1.1",
     "@orpc/openapi": "^1.14.0",
     "@orpc/server": "^1.14.6",
     "hono": "^4.12.15",
