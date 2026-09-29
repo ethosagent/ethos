@@ -283,8 +283,9 @@ describe('inbound spool — a real SIGKILL of `ethos gateway start`', () => {
         'contextWindow: 200000',
         // One configured bot, so the gateway runs a bot loop rather than
         // idling: the fake channel's messages carry no botKey and route to
-        // the sole bot. The token is fake — the Telegram adapter's `getMe`
-        // fails and its polling stops; nothing else depends on it.
+        // the sole bot. The token is fake — Telegram refuses it at `getMe`
+        // and the adapter is abandoned; the gateway keeps running because
+        // the fake channel still serves (`gatewayAllFailedPolicy`).
         `telegram.bots.0.token: "\${secrets:telegram_token}"`,
         'telegram.bots.0.bind.type: personality',
         'telegram.bots.0.bind.name: smoker',

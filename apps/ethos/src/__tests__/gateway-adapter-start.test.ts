@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   adapterStartFailureExitCode,
   adapterStartRetryDelayMs,
+  gatewayAllFailedPolicy,
   isPermanentAdapterStartError,
   startAdaptersIsolated,
 } from '../commands/gateway';
@@ -319,5 +320,21 @@ describe('startAdaptersIsolated', () => {
   it('gateway start exits with the refusal code when every credential was refused', () => {
     const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'gateway.ts'), 'utf-8');
     expect(src).toContain('const refusal = adapterStartFailureExitCode(err);');
+  });
+
+  // A plugin channel is started by the Gateway constructor, not from the
+  // built-in list `startAdaptersIsolated` sees. Every built-in refusing its
+  // token must not exit a gateway that is still serving that channel.
+  it('gateway start keeps serving a plugin channel when every built-in adapter failed', () => {
+    type Listed = Parameters<typeof gatewayAllFailedPolicy>[0][number];
+    const telegram = { id: 'telegram:ops' } as unknown as Listed;
+    const plugin = { id: 'fakechan/chan' } as unknown as Listed;
+    expect(gatewayAllFailedPolicy([telegram], { listAdapters: () => [telegram] })).toBe('throw');
+    expect(gatewayAllFailedPolicy([], { listAdapters: () => [] })).toBe('throw');
+    expect(gatewayAllFailedPolicy([telegram], { listAdapters: () => [telegram, plugin] })).toBe(
+      'continue',
+    );
+    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'gateway.ts'), 'utf-8');
+    expect(src).toContain('allFailed: gatewayAllFailedPolicy(adapters, gateway),');
   });
 });

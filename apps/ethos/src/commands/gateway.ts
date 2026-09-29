@@ -1696,6 +1696,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     await startAdaptersIsolated(adapters, {
       observability: gatewayObservability(),
       warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+      // `adapters` is the built-ins only; a plugin channel the Gateway
+      // started itself still serves when every one of them failed.
+      allFailed: gatewayAllFailedPolicy(adapters, gateway),
       retry: {
         signal: adapterStartRetry.signal,
         onStarted: (a) => onAdapterRecovered(a),
@@ -5082,6 +5085,27 @@ export function everyStartedAdapter(
   return [...new Set([...builtIn, ...gateway.listAdapters()])].filter(
     (a) => !gateway.hasStopped(a),
   );
+}
+
+/**
+ * `startAdaptersIsolated`'s `allFailed` for `ethos gateway start`. Its adapter
+ * list is `buildGatewayAdapters`' built-ins only; a plugin-registered channel
+ * (`GatewayConfig.pluginAdapters`) is constructed and started inside the
+ * `Gateway` constructor and never appears in it. When the gateway serves such
+ * an adapter it has something to serve, so an all-failed built-in start
+ * continues — refused credentials abandoned, transient failures retried —
+ * instead of exiting 78 over a dead token while the plugin channel is live.
+ * With no adapter beyond the built-ins it throws, as before (V2-RT-5). Pinned
+ * by `__tests__/gateway-adapter-start.test.ts` and, end to end, by
+ * `__tests__/integration/gateway-sigkill-spool.integration.test.ts` (a fake
+ * Telegram token beside a plugin channel).
+ */
+export function gatewayAllFailedPolicy(
+  builtIn: readonly PlatformAdapter[],
+  gateway: Pick<Gateway, 'listAdapters'>,
+): 'throw' | 'continue' {
+  const own = new Set(builtIn);
+  return gateway.listAdapters().some((a) => !own.has(a)) ? 'continue' : 'throw';
 }
 
 /** First background retry of a failed adapter start (V-CC-4). */
