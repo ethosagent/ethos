@@ -77,6 +77,7 @@ describe('amendments contract', () => {
   it('round-trips a review, including a constitution pre-check refusal', () => {
     const review = {
       record: { ...record, status: 'auto_rejected', preCheck: { reason: 'forbidden tool' } },
+      file: 'toolset.yaml',
       personality: 'ok',
       liveHash: 'l'.repeat(64),
       stale: false,
@@ -101,5 +102,37 @@ describe('amendments contract', () => {
     };
     const out = schemaOf(contract.amendments.get, 'outputSchema');
     expect(out.parse({ review })).toEqual({ review });
+  });
+
+  // plan personality-presence-and-initiative §1 — the birth ritual's identity
+  // request: its ops carry a `value`, and the review names config.yaml.
+  it('round-trips an identity record and its review', () => {
+    const identity: AmendmentRecord = {
+      ...record,
+      target: 'identity',
+      ops: [
+        { op: 'set_name', value: 'Ledger' },
+        { op: 'set_description', value: 'Precise, patient.' },
+        { op: 'set_display_emoji', value: '🧾' },
+        { op: 'set_display_avatar', value: 'upload' },
+      ],
+    };
+    const list = schemaOf(contract.amendments.list, 'outputSchema');
+    expect(list.parse({ amendments: [identity] })).toEqual({ amendments: [identity] });
+    const review = {
+      record: identity,
+      file: 'config.yaml',
+      personality: 'ok',
+      liveHash: null,
+      stale: false,
+      interruptedApply: false,
+      expectedAfterHash: 'e'.repeat(64),
+      textDiff: ['-name: nova', '+name: Ledger'],
+      permissionDiff: null,
+      notCompared: 'Not compared: SOUL.md',
+      flags: [],
+    };
+    const get = schemaOf(contract.amendments.get, 'outputSchema');
+    expect(get.parse({ review })).toEqual({ review });
   });
 });

@@ -34,6 +34,7 @@ import { rpc } from '../rpc';
 import { SessionContextMenu } from './SessionContextMenu';
 import { NavIcon, type NavIconKey } from './ui/NavIcon';
 import { PersonalityMark } from './ui/PersonalityMark';
+import { PersonalityName } from './ui/PersonalityName';
 import { PersonalityRingAvatar } from './ui/PersonalityRingAvatar';
 import { TeamRing } from './ui/TeamRing';
 
@@ -220,6 +221,8 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
   const identityLabel = personalityId
     ? (activePersonality?.name ?? capitalize(personalityId))
     : 'Library';
+  // `display.emoji` beside the name — text in the identity line, never a nav icon.
+  const identityEmoji = personalityId ? activePersonality?.display?.emoji : undefined;
 
   // `/p/:id` or `/t/:teamId/p/:id` — the one place the workspace rows'
   // prefix is spelled here (the builders in workspaceRoutes.ts do the same).
@@ -262,7 +265,9 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
             avatarUrl={activePersonality?.display?.avatar_url}
           />
           <span className="scope-nav-identity-text">
-            <span className="scope-nav-identity-label">{identityLabel}</span>
+            <span className="scope-nav-identity-label">
+              <PersonalityName name={identityLabel} emoji={identityEmoji} />
+            </span>
             <span className="scope-nav-identity-sub">
               {teamMember.role} · {teamMember.tier ?? 'no tier'}
             </span>
@@ -277,7 +282,9 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
               avatarUrl={activePersonality?.display?.avatar_url}
             />
           ) : null}
-          <span className="scope-nav-identity-label">{identityLabel}</span>
+          <span className="scope-nav-identity-label">
+            <PersonalityName name={identityLabel} emoji={identityEmoji} />
+          </span>
         </div>
       )}
 

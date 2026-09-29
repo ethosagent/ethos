@@ -778,6 +778,37 @@ describe('voice block', () => {
   });
 });
 
+// plan personality-presence-and-initiative §2 — the `display` identity block
+// made visible: emoji and avatar, each unset one naming its fallback.
+describe('display block', () => {
+  const base: PersonalityConfig = { id: 'owl', name: 'Owl' };
+
+  it('is omitted entirely when the personality declares no display', () => {
+    expect(renderCharacterSheet(base, '')).not.toContain('## Display');
+  });
+
+  it('prints the emoji and the avatar', () => {
+    const sheet = renderCharacterSheet(
+      { ...base, display: { emoji: '🦉', avatar_url: '/avatars/nova.svg' } },
+      '',
+    );
+    const section = sheet.slice(sheet.indexOf('## Display'));
+    expect(section.slice(0, section.indexOf('\n\n'))).toBe(
+      '## Display\n- Emoji: 🦉\n- Avatar: /avatars/nova.svg',
+    );
+  });
+
+  it('names the generated mark when only the emoji is set', () => {
+    const sheet = renderCharacterSheet({ ...base, display: { emoji: '🦉' } }, '');
+    expect(sheet).toContain('- Emoji: 🦉\n- Avatar: (generated mark)');
+  });
+
+  it('says (none) for an unset emoji', () => {
+    const sheet = renderCharacterSheet({ ...base, display: { avatar_url: '/a.png' } }, '');
+    expect(sheet).toContain('- Emoji: (none)\n- Avatar: /a.png');
+  });
+});
+
 // §4.7 — the register-status section. The register (published in
 // docs/content/security/security-boundary.md) says what Ethos guarantees in
 // general; this section says which of those thirteen guarantees are enforced,

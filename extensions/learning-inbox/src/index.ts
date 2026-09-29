@@ -56,8 +56,13 @@
 export {
   type AmendmentOpsRefusal,
   applyOps,
+  canonicalizeAmendmentOps,
+  canonicalizeIdentityOps,
   canonicalizeOps,
+  describeIdentityOpsRefusal,
   expectedAfterHash,
+  IDENTITY_VALUE_LIMITS,
+  type IdentityOpsRefusal,
   MAX_AMENDMENT_OPS,
   opsHash,
 } from './amendment-ops';

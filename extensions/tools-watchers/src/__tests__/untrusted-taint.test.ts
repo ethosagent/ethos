@@ -75,7 +75,7 @@ async function runWith(readFirst: boolean) {
   ];
   const loop = new AgentLoop({ llm: scriptedLLM(steps), tools, safety: createTestSafety() });
   const events: AgentEvent[] = [];
-  for await (const e of loop.run('go')) events.push(e);
+  for await (const e of loop.run('go', { initiator: 'user' })) events.push(e);
   const end = events.find(
     (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
       e.type === 'tool_end' && e.toolName === 'watcher_create',

@@ -12,6 +12,7 @@ import {
   type MessageContent,
   orderToolDefinitions,
   type ProviderCapabilities,
+  type ReasoningEffort,
   SERVER_COMPACTION_REJECTED_WARNING,
   type ToolDefinitionLite,
   type ToolOrder,
@@ -171,12 +172,294 @@ export function anthropicContextTokens(_model: string): number {
   return 200_000;
 }
 
-function isThinkingModel(model: string): boolean {
+/**
+ * Presence §4 — `CompletionOptions.effort` → `thinking.budget_tokens` for a
+ * `budget`-mode model (`anthropicModelCapabilities`). `off` is 0: no thinking
+ * block. An explicit `thinkingBudget` wins over it.
+ */
+export const EFFORT_THINKING_BUDGET: Readonly<Record<ReasoningEffort, number>> = {
+  off: 0,
+  low: 1024,
+  medium: 4096,
+  high: 16_384,
+};
+
+/** Anthropic refuses a `budget_tokens` below this. */
+const MIN_THINKING_BUDGET = 1024;
+
+/** The `output_config.effort` levels this provider sends (the SDK's
+ *  `OutputConfig.effort` also has `xhigh`/`max`, which `ReasoningEffort` never
+ *  asks for). */
+export type AnthropicEffortLevel = 'low' | 'medium' | 'high';
+
+/**
+ * How one Claude model takes thinking and sampling params. The ONE table the
+ * request builder reads (`thinkingParamsFor`, `samplingParamsFor`); pinned by
+ * `__tests__/thinking-capabilities.test.ts`.
+ *
+ * - `adaptive` — `thinking: {type:'adaptive'}` + `output_config.effort`.
+ *   `budget_tokens` is refused (400) on 4.7 and later and deprecated on 4.6.
+ * - `budget` — `thinking: {type:'enabled', budget_tokens}` (≥ 1024, < max_tokens).
+ * - `none` — an id not in the table: no thinking and no effort (fail safe).
+ */
+export interface AnthropicModelCapabilities {
+  /** The normalized table key, or `null` for an unknown model. */
+  id: string | null;
+  mode: 'adaptive' | 'budget' | 'none';
+  /** The `output_config.effort` values this provider sends to the model.
+   *  Empty for `budget` models: effort becomes a budget instead. (Opus 4.5
+   *  accepts low/medium/high effort, but it is not sent: its budget-thinking
+   *  path is the one the effort vocabulary already maps.) */
+  effortLevels: readonly AnthropicEffortLevel[];
+  /** Whether the model thinks when the request carries no `thinking` param. */
+  thinksByDefault: boolean;
+  /** Whether `thinking: {type:'disabled'}` is accepted. */
+  canDisable: boolean;
+  /** Whether `temperature`/`top_p`/`top_k` are accepted at all. */
+  samplingAllowed: boolean;
+}
+
+const ADAPTIVE_EFFORT: readonly AnthropicEffortLevel[] = ['low', 'medium', 'high'];
+
+type CapabilityRow = Omit<AnthropicModelCapabilities, 'id'>;
+
+const adaptive = (
+  row: Pick<CapabilityRow, 'thinksByDefault' | 'canDisable' | 'samplingAllowed'>,
+): CapabilityRow => ({
+  mode: 'adaptive',
+  effortLevels: ADAPTIVE_EFFORT,
+  ...row,
+});
+const budget: CapabilityRow = {
+  mode: 'budget',
+  effortLevels: [],
+  thinksByDefault: false,
+  canDisable: true,
+  samplingAllowed: true,
+};
+
+/**
+ * Keyed by the base id `normalizeClaudeModelId` produces. Sources: Anthropic's
+ * API reference as of 2026-09 (adaptive thinking, effort, the sampling-param
+ * removals). Sonnet 5's disable/default behaviour is not documented to us, so
+ * it takes the row that is safe either way: never send `disabled`, and for
+ * `off` send `effort: low` with no `thinking` param.
+ */
+export const ANTHROPIC_MODEL_CAPABILITIES: Readonly<Record<string, CapabilityRow>> = {
+  // Thinking cannot be disabled (`disabled` → 400).
+  'claude-fable-5-1': adaptive({
+    thinksByDefault: true,
+    canDisable: false,
+    samplingAllowed: false,
+  }),
+  'claude-fable-5': adaptive({
+    thinksByDefault: true,
+    canDisable: false,
+    samplingAllowed: false,
+  }),
+  'claude-opus-5-5': adaptive({
+    thinksByDefault: true,
+    canDisable: false,
+    samplingAllowed: false,
+  }),
+  'claude-sonnet-5': adaptive({
+    thinksByDefault: true,
+    canDisable: false,
+    samplingAllowed: false,
+  }),
+  // Thinks by default; `disabled` accepted only at effort ≤ high.
+  'claude-opus-5': adaptive({ thinksByDefault: true, canDisable: true, samplingAllowed: false }),
+  // No thinking when omitted; `disabled` accepted.
+  'claude-opus-4-8': adaptive({
+    thinksByDefault: false,
+    canDisable: true,
+    samplingAllowed: false,
+  }),
+  'claude-opus-4-7': adaptive({
+    thinksByDefault: false,
+    canDisable: true,
+    samplingAllowed: false,
+  }),
+  // `budget_tokens` still works but is deprecated; adaptive is the current form.
+  'claude-opus-4-6': adaptive({
+    thinksByDefault: false,
+    canDisable: true,
+    samplingAllowed: true,
+  }),
+  'claude-sonnet-4-6': adaptive({
+    thinksByDefault: false,
+    canDisable: true,
+    samplingAllowed: true,
+  }),
+  'claude-haiku-4-5': budget,
+  'claude-sonnet-4-5': budget,
+  'claude-opus-4-5': budget,
+  'claude-opus-4-1': budget,
+  'claude-opus-4': budget,
+  'claude-sonnet-4': budget,
+  'claude-3-7-sonnet': budget,
+};
+
+const UNKNOWN_MODEL: AnthropicModelCapabilities = {
+  id: null,
+  mode: 'none',
+  effortLevels: [],
+  thinksByDefault: false,
+  canDisable: false,
+  // Unknown ids keep the pre-table behaviour (top_p forwarded as given).
+  samplingAllowed: true,
+};
+
+/**
+ * The table key for any form a Claude id takes in this repo: dated snapshots
+ * (`claude-sonnet-4-5-20250929`), `-latest`, Bedrock (`us.anthropic.…-v1:0`,
+ * `global.anthropic.…-v1`), Vertex (`…@20250805`), OpenRouter's dotted
+ * versions (`anthropic/claude-opus-4.8`, same rewrite as `normalizeClaudeVersion`
+ * in packages/pricing/src/table.ts) and a `[1m]` context suffix. Matched
+ * EXACTLY after that, never by substring, so `claude-opus-4` cannot swallow
+ * `claude-opus-4-8`.
+ */
+function normalizeClaudeModelId(model: string): string | null {
+  const lower = model.toLowerCase();
+  const at = lower.indexOf('claude-');
+  if (at < 0) return null;
+  return lower
+    .slice(at)
+    .replace(/(\d)\.(\d)/g, '$1-$2')
+    .replace(/\[[^\]]*\]$/, '')
+    .replace(/@.*$/, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
+    .replace(/-latest$/, '')
+    .replace(/-\d{8}$/, '');
+}
+
+export function anthropicModelCapabilities(model: string): AnthropicModelCapabilities {
+  const id = normalizeClaudeModelId(model);
+  const row = id ? ANTHROPIC_MODEL_CAPABILITIES[id] : undefined;
+  return id && row ? { id, ...row } : UNKNOWN_MODEL;
+}
+
+/**
+ * The effort-derived budget for a `budget` model, or `undefined` for no
+ * thinking block.
+ *
+ * An explicit `thinkingBudget` is sent as it always was. An effort-derived
+ * budget must stay below `max_tokens` (the API refuses otherwise, and thinking
+ * counts against it), so it is capped at `max_tokens - 1024`, leaving at least
+ * that much for the answer; under the API's 1024 minimum it is dropped. `high`
+ * on the 8096 default cap therefore thinks with 7072 — raise the model's
+ * `maxOutputTokens` to give it the full budget. Pinned by
+ * `__tests__/effort.test.ts`.
+ */
+function thinkingBudgetFor(options: CompletionOptions, maxTokens: number): number | undefined {
+  if (options.thinkingBudget !== undefined) {
+    return options.thinkingBudget > 0 ? options.thinkingBudget : undefined;
+  }
+  if (options.effort === undefined) return undefined;
+  const budget = Math.min(EFFORT_THINKING_BUDGET[options.effort], maxTokens - MIN_THINKING_BUDGET);
+  return budget >= MIN_THINKING_BUDGET ? budget : undefined;
+}
+
+/**
+ * True when `messages` continue an assistant turn that called a tool: the last
+ * message is the user's `tool_result` reply to an assistant `tool_use`.
+ *
+ * This provider cannot replay thinking blocks — `MessageContent` has no
+ * thinking variant, the transport streams thinking only as `thinking_delta`
+ * and drops its `signature`, so the assistant turn goes back without the
+ * thinking block it started with. For budget thinking the API requires a
+ * continued assistant turn that used tools to start with its thinking block,
+ * so `thinkingParamsFor` sends no budget thinking here, and no adaptive
+ * thinking on a model that does not think by default. Pinned by the
+ * 'budget thinking across a tool loop' cases in
+ * `__tests__/thinking-capabilities.test.ts`.
+ */
+function continuesToolUseTurn(messages: Message[]): boolean {
+  const last = messages[messages.length - 1];
+  const prev = messages[messages.length - 2];
+  if (!last || !prev || last.role !== 'user' || prev.role !== 'assistant') return false;
+  if (typeof last.content === 'string' || typeof prev.content === 'string') return false;
   return (
-    model.includes('claude-3-7') ||
-    model.includes('claude-opus-4') ||
-    model.includes('claude-sonnet-4')
+    last.content.some((b) => b.type === 'tool_result') &&
+    prev.content.some((b) => b.type === 'tool_use')
   );
+}
+
+interface ThinkingParams {
+  thinking?: Anthropic.ThinkingConfigParam;
+  output_config?: { effort: AnthropicEffortLevel };
+}
+
+/**
+ * The `thinking` / `output_config` a request sends for `caps`.
+ *
+ * - `none` → nothing, whatever the options say.
+ * - `budget` → `budget_tokens` from `thinkingBudgetFor`, withheld while
+ *   continuing a tool-use turn (`continuesToolUseTurn`).
+ * - `adaptive` → an explicit `thinkingBudget > 0` is MAPPED to
+ *   `{type:'adaptive'}` (a budget cannot be expressed and `budget_tokens` is a
+ *   400 on these models); `effort` low/medium/high sends `{type:'adaptive'}` +
+ *   `output_config.effort`; `off` sends nothing where the model does not think
+ *   by default, `{type:'disabled'}` + `low` where it does and can be disabled
+ *   (Opus 5 accepts `disabled` only at effort ≤ high), and just `low` where it
+ *   cannot be disabled.
+ * - Tool loops on `adaptive` models. The prior turn's thinking blocks are not
+ *   replayed here either (see `continuesToolUseTurn`), and whether the API
+ *   accepts that is not something this code can assert. So where the model
+ *   does NOT think by default (`thinksByDefault: false`: Opus 4.6/4.7/4.8,
+ *   Sonnet 4.6), effort must not newly turn thinking on mid tool loop: the
+ *   `thinking` param is omitted and `output_config.effort` alone is sent
+ *   (effort is valid without thinking and still sets token spend). Where the
+ *   model thinks by default (Opus 5/5.5, Fable 5/5.1, Sonnet 5) the request is
+ *   unchanged: those tool loops already ran without replayed blocks before
+ *   effort existed, so this mapping adds no new risk there.
+ * Pinned by the 'thinking across a tool loop' cases in
+ * `__tests__/thinking-capabilities.test.ts`.
+ */
+function thinkingParamsFor(
+  caps: AnthropicModelCapabilities,
+  options: CompletionOptions,
+  maxTokens: number,
+  messages: Message[],
+): ThinkingParams {
+  if (caps.mode === 'budget') {
+    const budget = thinkingBudgetFor(options, maxTokens);
+    if (budget === undefined || continuesToolUseTurn(messages)) return {};
+    return { thinking: { type: 'enabled', budget_tokens: budget } };
+  }
+  if (caps.mode !== 'adaptive') return {};
+  const effort = options.effort;
+  const explicit = options.thinkingBudget !== undefined && options.thinkingBudget > 0;
+  const holdThinking = !caps.thinksByDefault && continuesToolUseTurn(messages);
+  if (effort === undefined || (effort === 'off' && explicit)) {
+    return explicit && !holdThinking ? { thinking: { type: 'adaptive' } } : {};
+  }
+  if (effort === 'off') {
+    if (!caps.thinksByDefault) return {};
+    return caps.canDisable
+      ? { thinking: { type: 'disabled' }, output_config: { effort: 'low' } }
+      : { output_config: { effort: 'low' } };
+  }
+  return holdThinking
+    ? { output_config: { effort } }
+    : { thinking: { type: 'adaptive' }, output_config: { effort } };
+}
+
+/**
+ * `top_p` as the request sends it. Dropped where the model refuses sampling
+ * params (`samplingAllowed`), and — with thinking on — when below 0.95, the
+ * lowest `top_p` the API accepts alongside thinking. `temperature` and
+ * `top_k` are never forwarded by this provider (the request builder has no
+ * path for them), so there is nothing to drop.
+ */
+function topPFor(
+  caps: AnthropicModelCapabilities,
+  topP: number | undefined,
+  thinking: Anthropic.ThinkingConfigParam | undefined,
+): number | undefined {
+  if (topP === undefined || !caps.samplingAllowed) return undefined;
+  const thinkingOn = thinking !== undefined && thinking.type !== 'disabled';
+  return thinkingOn && topP < 0.95 ? undefined : topP;
 }
 
 function classifyError(err: unknown): FailoverReason {
@@ -399,7 +682,7 @@ export class AnthropicProvider implements LLMProvider {
         ? config.maxContextTokens
         : anthropicContextTokens(config.model);
     this.maxContextTokensFor = config.maxContextTokensFor;
-    this.supportsThinking = isThinkingModel(config.model);
+    this.supportsThinking = anthropicModelCapabilities(config.model).mode !== 'none';
     this.toolOrder = config.toolOrder ?? 'stable';
     this.serverCompaction = config.serverCompaction;
     this.maxOutputTokens = config.maxOutputTokens;
@@ -526,17 +809,20 @@ export class AnthropicProvider implements LLMProvider {
         ? this.maxOutputTokens
         : this.maxOutputTokensFor?.(effectiveModel);
 
+    const maxTokens = options.maxTokens ?? profileCap ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const caps = anthropicModelCapabilities(effectiveModel);
+    const thinkingParams = thinkingParamsFor(caps, options, maxTokens, messages);
+    const topP = topPFor(caps, options.topP, thinkingParams.thinking);
+
     const buildParams = (serverCompaction: boolean): AnthropicStreamParams => ({
       model: effectiveModel,
-      max_tokens: options.maxTokens ?? profileCap ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: maxTokens,
       messages: buildMessages(serverCompaction),
       ...(systemBlocks ? { system: systemBlocks } : {}),
       ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       ...(options.stopSequences ? { stop_sequences: options.stopSequences } : {}),
-      ...(options.topP !== undefined ? { top_p: options.topP } : {}),
-      ...(isThinkingModel(effectiveModel) && options.thinkingBudget && options.thinkingBudget > 0
-        ? { thinking: { type: 'enabled' as const, budget_tokens: options.thinkingBudget } }
-        : {}),
+      ...(topP !== undefined ? { top_p: topP } : {}),
+      ...thinkingParams,
       ...(serverCompaction && this.serverCompaction
         ? {
             betas: [SERVER_COMPACTION_BETA],

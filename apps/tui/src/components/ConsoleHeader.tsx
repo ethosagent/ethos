@@ -6,9 +6,17 @@ interface ConsoleHeaderProps {
   personality: string;
   sessionKey: string;
   accentColor: string;
+  /** `display.emoji` — shown before the name; unset changes nothing. */
+  emoji?: string;
 }
 
-export function ConsoleHeader({ model, personality, sessionKey, accentColor }: ConsoleHeaderProps) {
+export function ConsoleHeader({
+  model,
+  personality,
+  sessionKey,
+  accentColor,
+  emoji,
+}: ConsoleHeaderProps) {
   const workspace = process.cwd();
   const workspaceName = basename(workspace);
 
@@ -21,7 +29,7 @@ export function ConsoleHeader({ model, personality, sessionKey, accentColor }: C
         <Text dimColor> · model </Text>
         <Text>{model}</Text>
         <Text dimColor> · role </Text>
-        <Text>{personality}</Text>
+        <Text>{emoji ? `${emoji} ${personality}` : personality}</Text>
       </Text>
       <Text>
         <Text dimColor>workspace </Text>

@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Task
@@ -34,6 +34,8 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 - Clarify questions surface as buttons + modals, with the handler split across two modules — `extensions/platform-discord/src/clarify-blocks.ts` (component builders) and `extensions/platform-discord/src/clarify-interactions.ts` (button + modal callback handlers).
 - Inbound attachments are downloaded from the Discord CDN into the attachment cache and surfaced on `InboundMessage.attachments`. Images become `type: 'image'`, audio uploads become `type: 'audio'` so the gateway transcribes them, executables are skipped, and anything over 25 MB is dropped.
 - Outbound dedup via the shared `MessageDedupCache` (30s TTL).
+- Receipt reaction: the bot reacts to an inbound message with the bound personality's [`display.emoji`](../using/reference/personality-yaml.md#display), else 👀, and clears it when the reply lands. See [Receipt reaction](../using/reference/config-yaml.md#receipt-reaction).
+- Personality presence: [`discord.replyPrefix`](../using/reference/config-yaml.md#reply-prefix) puts the personality's name or emoji in front of every reply, and [`discord.mentionByName`](../using/reference/config-yaml.md#mention-by-name) counts a message that names the personality as a mention.
 - Plugin commands registered via `registerSlashCommand()` are registered as Discord application commands at startup. They appear in the Discord command picker alongside built-in commands.
 
 **Tracked on the parity plan, not yet shipped**
@@ -42,7 +44,6 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 |---|---|---|
 | `botKey` on `InboundMessage` | Stamped by the adapter; gateway routes by `${platform}:${botKey}:${chatId}`. | Not populated. Multi-bot Discord deployments collapse to one lane. See [Run multiple bots](../using/how-to/run-multiple-bots.md). |
 | Thread routing | Slack uses `thread_ts`; Telegram uses forum topics. Each gets a distinct `threadId`. | Discord threads are flattened into the parent channel; replies land in the parent, not the thread. |
-| Receipt reaction | Slack sets 👀 on inbound and clears it on first response; Telegram does the same with 👀. | Not implemented — users have no visual ack until the first streamed chunk lands. |
 | Per-channel mode command | Slack's `/ethos channel-mode <mode>` writes a per-channel override. | No writer. The mode is server-wide via `discord.defaultChannelMode`; `/ethos help` reads the effective mode but nothing sets it. See [step 4a](#4a-set-the-default-channel-mode). |
 | Approval surface | Slack renders the `before_ticket_complete` hook as an approval card. | Not implemented — Discord users can't participate in `kanban_complete` approvals. |
 
@@ -177,7 +178,7 @@ Invite the bot with these permissions (combined as the integer in the OAuth URL 
 | `Send Messages in Threads` | Replies in threads when the source message was in a thread. |
 | `Read Message History` | Lets the bot inspect the message it is replying to. |
 | `Embed Links` | Discord auto-embeds links the agent emits. |
-| `Add Reactions` | Currently unused but reserved by `canReact = true` on the adapter. |
+| `Add Reactions` | The receipt reaction on inbound messages. Without it the reaction fails silently and replies are unaffected. |
 | `Use Application Commands` | Required for plugin slash commands registered as Discord application commands. |
 
 Skip `Administrator`. The gateway has no need for moderation or member-management permissions; granting them widens the blast radius for nothing.

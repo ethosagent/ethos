@@ -1009,6 +1009,15 @@ export function renderCharacterSheet(
     lines.push('');
   }
 
+  // Display — same rule as Voice: a personality with no `display` block shows
+  // the generated mark and no emoji, and saying so on every sheet is noise.
+  if (config.display) {
+    lines.push('## Display');
+    lines.push(`- Emoji: ${config.display.emoji ?? '(none)'}`);
+    lines.push(`- Avatar: ${config.display.avatar_url ?? '(generated mark)'}`);
+    lines.push('');
+  }
+
   // Decisions — same rule as Voice: a personality that declares no
   // `decisions` block runs every site `off`, and saying so on every sheet
   // would be noise (plan decision-provider-personality §4.5).

@@ -23,6 +23,13 @@ export interface TriageContext {
   /** `users.info` display-name resolver. Absent (or unable to resolve) leaves
    *  `InboundMessage.username` unset. */
   users?: UsernameResolver;
+  /**
+   * `mentionByName` (plan personality-presence-and-initiative §3): does this
+   * non-DM message name the personality bound to its lane? Supplied by the
+   * adapter (`SlackAdapter.mentionsByName`); absent = never, today's
+   * behaviour. A match makes the message a group mention.
+   */
+  mentionsByName?: (channel: string, threadTs: string | undefined, text: string) => boolean;
 }
 
 /**
@@ -91,6 +98,13 @@ export interface TriageResult {
    * about a bad override — the same value reaches `/ethos help`.
    */
   effectiveMode: string;
+  /**
+   * `true` when the message reaches the agent ONLY because it names the bound
+   * personality (`mentionByName`): without the name it would not be answered.
+   * The adapter places no receipt reaction on it — the channel filter may still
+   * drop it (a non-allowlisted member), and nothing would clear the reaction.
+   */
+  nameOnly?: true;
 }
 
 export async function triageMessage(
@@ -117,11 +131,16 @@ export async function triageMessage(
   // Note what it can now answer that a boolean could not: `observe` says do
   // NOT reply but DO record.
   //
-  // app_mention has its own handler; the message handler is mention-blind, so
-  // `isGroupMention` is false here on purpose.
+  // app_mention has its own handler; the message handler is blind to
+  // @mentions, so `isGroupMention` is false here on purpose — unless the
+  // operator opted into `mentionByName` and the message names the bound
+  // personality. A message carrying both an @mention and the name reaches
+  // the gateway twice under one `ts`; inbound dedup (`Gateway.acceptInbound`)
+  // keeps one, as it already does for an @mention in an `all` channel.
+  const namedInGroup = !isDm && ctx.mentionsByName?.(msg.channel, threadTs, text) === true;
   const decision = evaluateChannelMode({
     isDm,
-    isGroupMention: false,
+    isGroupMention: namedInGroup,
     channelMode,
     supportedModes: CHANNEL_MODES,
     hasBotPosted,
@@ -130,7 +149,19 @@ export async function triageMessage(
   // Only a message that is neither answered nor recorded is dropped here.
   if (!decision.shouldRecord) return { drop: 'channel_mode', effectiveMode: channelMode };
 
+  const nameOnly =
+    namedInGroup &&
+    decision.shouldReply &&
+    !evaluateChannelMode({
+      isDm,
+      isGroupMention: false,
+      channelMode,
+      supportedModes: CHANNEL_MODES,
+      hasBotPosted,
+    }).shouldReply;
+
   return {
+    ...(nameOnly ? { nameOnly: true as const } : {}),
     envelope: buildEnvelope({
       botKey: ctx.botKey,
       channel: msg.channel,
@@ -144,7 +175,7 @@ export async function triageMessage(
       threadTs,
       parentUserId: msg.parent_user_id,
       isDm,
-      isGroupMention: false,
+      isGroupMention: namedInGroup,
       // Recorded, not answered. The gateway reads this flag, writes the
       // transcript row and returns before the channel filter ever runs.
       recordOnly: !decision.shouldReply,

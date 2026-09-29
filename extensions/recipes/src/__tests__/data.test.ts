@@ -4,8 +4,8 @@
 // deviations actually landed.
 
 import { describe, expect, it } from 'vitest';
-import { linkArchiver, obsidianSecondBrain, RECIPES, webWatchdog } from '../data';
-import { projectBundle } from '../schema';
+import { heartbeat, linkArchiver, obsidianSecondBrain, RECIPES, webWatchdog } from '../data';
+import { projectBundle, RecipeBundleSchema } from '../schema';
 import { renderRecipe } from '../template';
 
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config.yaml substitution token
@@ -98,5 +98,59 @@ describe('web-watchdog', () => {
     expect(webWatchdog.cronJobs.map((j) => j.deliverTo)).toEqual(['channel']);
     const chatTarget = webWatchdog.requires.inputs.find((i) => i.kind === 'chatTarget');
     expect(chatTarget?.required).toBe(true);
+  });
+});
+
+describe('heartbeat', () => {
+  it('is in the catalog and validates against the schema', () => {
+    expect(RECIPES.map((r) => r.id)).toContain('heartbeat');
+    expect(RecipeBundleSchema.safeParse(heartbeat).success).toBe(true);
+  });
+
+  it('attaches to an existing personality — the check-in is that personality’s own', () => {
+    expect(heartbeat.personality.mode).toBe('attach');
+  });
+
+  it('carries active hours on by default and a prompt that falls silent', () => {
+    const [job] = heartbeat.cronJobs;
+    expect(heartbeat.cronJobs).toHaveLength(1);
+    expect(job?.activeHours).toBe('09:00-21:00');
+    // `decideEscalation` (extensions/cron/src/heartbeat.ts) holds back output
+    // that BEGINS with [SILENT]; the prompt must ask for exactly that.
+    expect(job?.prompt).toMatch(/begin.*\[SILENT\]/i);
+  });
+
+  it('names the clock the window is read on — the server’s, the schedule’s own', () => {
+    // `CronScheduler.outsideActiveHours` reads the window on the host zone,
+    // the zone croner reads the schedule in; `notifications.timezone` moves
+    // quiet hours only.
+    const text = [...heartbeat.notes, ...heartbeat.requires.inputs.map((i) => i.help ?? '')].join(
+      '\n',
+    );
+    expect(text).not.toMatch(/in `notifications\.timezone`/);
+    expect(text).toMatch(/server.s clock/);
+    // `0 */3 * * *` in 09:00-21:00 (end exclusive) fires 09, 12, 15, 18.
+    expect(text).toContain('09:00, 12:00, 15:00 and 18:00');
+  });
+
+  it('keeps activeHours through templating', () => {
+    const values = Object.fromEntries(
+      heartbeat.requires.inputs.map((i) => [i.key, i.default ?? 'x']),
+    );
+    const resolved = renderRecipe(projectBundle(heartbeat, 'attach'), values);
+    expect(resolved.cronJobs[0]?.activeHours).toBe('09:00-21:00');
+  });
+});
+
+describe('RecipeBundleSchema — cron activeHours', () => {
+  it('accepts a job without activeHours and rejects a non-string one', () => {
+    const job = heartbeat.cronJobs[0];
+    if (!job) throw new Error('expected a job');
+    const { activeHours: _drop, ...without } = job;
+    expect(RecipeBundleSchema.safeParse({ ...heartbeat, cronJobs: [without] }).success).toBe(true);
+    expect(
+      RecipeBundleSchema.safeParse({ ...heartbeat, cronJobs: [{ ...job, activeHours: 9 }] })
+        .success,
+    ).toBe(false);
   });
 });

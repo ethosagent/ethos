@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { hostTimeZone } from '@ethosagent/config';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
 import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
@@ -11,6 +12,7 @@ import type {
   Storage,
   TurnAudience,
 } from '@ethosagent/types';
+import { isActiveAt, parseActiveHours } from './active-hours';
 import { decideEscalation, type HeartbeatAction } from './heartbeat';
 import { currentBootId, isPidAlive, withJobsFileLock } from './jobs-lock';
 import {
@@ -21,6 +23,7 @@ import {
 } from './progress';
 import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
 
+export { type ActiveHoursWindow, isActiveAt, parseActiveHours } from './active-hours';
 export {
   CronProgressRecorder,
   type CronRunProgress,
@@ -102,6 +105,24 @@ export interface CronJob {
    *  'precheck-skip'); any other exit / timeout → fail-open (turn runs
    *  without the context). Only allowed on user prompt jobs. */
   precheck?: ScriptRef;
+  /**
+   * Daily window, `HH:MM-HH:MM`, in which a scheduled run may happen at all
+   * (plan personality-presence-and-initiative §6). A start later than the end
+   * crosses midnight (`22:00-06:00`). Read on the host's clock — the clock
+   * croner reads `schedule` on (`nextRunFromParsed` passes no `timezone`) —
+   * so a window and the schedule it gates always agree; NOT
+   * `notifications.timezone`. Outside it the tick skips the occurrence before
+   * the turn — zero LLM calls, audited as 'inactive-hours-skip'
+   * (`CronScheduler.tick`). The skip consumes the occurrence (`missedRunPolicy`
+   * never fires it later) but is not a run: `runCount`, `lastRunAt` and the
+   * run history are untouched, so a once/count job is not retired by it. A
+   * manual `runJobNow` ignores the window. Refused unless `parseActiveHours`
+   * accepts it, and refused on a one-shot schedule, at `createJob` and
+   * `updateJob` (`assertActiveHours`). Absent = always active. Distinct from
+   * quiet hours, which hold delivery only. Pinned by
+   * `__tests__/active-hours.test.ts`.
+   */
+  activeHours?: string;
   personalityId: string;
   /** Channel origin captured at create time; absent means file-only. */
   origin?: JobOrigin;
@@ -197,6 +218,8 @@ export interface CronJobUpdate {
   script?: ScriptRef | null;
   /** An object sets the precheck gate; `null` clears it. */
   precheck?: ScriptRef | null;
+  /** A window sets `activeHours`; `null` clears it (always active). */
+  activeHours?: string | null;
 }
 
 export interface CronRunResult {
@@ -351,13 +374,15 @@ export interface CronSchedulerConfig {
 
 /**
  * Audit actions: heartbeat escalate/silent, the script-job outcomes, and the
- * two occurrences that did not run — `missed` (`skipMissed`, the `skip`
- * policy) and `overlap-skip` (the previous run still executing, UBP-026).
+ * occurrences that did not run — `missed` (`skipMissed`, the `skip`
+ * policy), `overlap-skip` (the previous run still executing, UBP-026) and
+ * `inactive-hours-skip` (outside the job's `activeHours`, `tick`).
  */
 export type CronDecisionAction =
   | HeartbeatAction
   | 'script-silent'
   | 'precheck-skip'
+  | 'inactive-hours-skip'
   | 'missed'
   | 'overlap-skip';
 
@@ -718,6 +743,8 @@ export class CronScheduler {
       );
     }
 
+    if (params.activeHours !== undefined) assertActiveHours(params.activeHours, params.schedule);
+
     if (params.script) await this.validateScriptRef(params.script, 'script');
     if (params.precheck) await this.validateScriptRef(params.precheck, 'precheck');
 
@@ -808,10 +835,14 @@ export class CronScheduler {
       !patch.schedule &&
       patch.prompt === undefined &&
       patch.script === undefined &&
-      patch.precheck === undefined
+      patch.precheck === undefined &&
+      patch.activeHours === undefined
     ) {
-      throw new Error('At least one of name, schedule, prompt, script, or precheck is required');
+      throw new Error(
+        'At least one of name, schedule, prompt, script, precheck, or activeHours is required',
+      );
     }
+    if (typeof patch.activeHours === 'string') assertActiveHours(patch.activeHours);
 
     // Path/extension/existence guards run before the lock — same rules as create.
     if (patch.script) await this.validateScriptRef(patch.script, 'script');
@@ -847,6 +878,11 @@ export class CronScheduler {
       if (existing.source !== 'system' && !nextPrompt && !nextScript) {
         throw new Error('user jobs require a prompt or a script');
       }
+      const nextActiveHours =
+        patch.activeHours !== undefined ? (patch.activeHours ?? undefined) : existing.activeHours;
+      if (nextActiveHours !== undefined) {
+        assertActiveHours(nextActiveHours, patch.schedule ?? existing.schedule);
+      }
 
       if (patch.schedule) {
         if (!isValidSchedule(patch.schedule)) {
@@ -881,6 +917,10 @@ export class CronScheduler {
       if (patch.precheck !== undefined) {
         if (patch.precheck === null) delete existing.precheck;
         else existing.precheck = patch.precheck;
+      }
+      if (patch.activeHours !== undefined) {
+        if (patch.activeHours === null) delete existing.activeHours;
+        else existing.activeHours = patch.activeHours;
       }
 
       jobs[idx] = existing;
@@ -1240,6 +1280,38 @@ export class CronScheduler {
         continue;
       }
 
+      const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
+
+      // Active hours: outside the job's window the occurrence is skipped here,
+      // before the claim — no handler, script, precheck or turn. Only the
+      // `nextRunAt` advance is written (through the same compare-and-swap, so
+      // racing ticks audit it once): no `lastRunAt`, no `runCount`, no
+      // run-history entry, and no retirement, so a once/count job waits for an
+      // occurrence inside the window. A one-shot has no later occurrence to
+      // wait for; `createJob`/`updateJob` refuse the combination
+      // (`assertActiveHours`), and one stored anyway runs (fail-open), as does
+      // an unparseable window. `runJobNow` never comes through here.
+      if (upcoming && this.outsideActiveHours(job, nowMs)) {
+        let skip: ClaimOutcome;
+        try {
+          skip = await this.claimDueJob(job.id, job.nextRunAt, {
+            nextRunAt: upcoming.toISOString(),
+          });
+        } catch {
+          continue;
+        }
+        this.deferred.delete(job.id);
+        if (skip.kind !== 'lost') {
+          this.notifyDecision(
+            job,
+            { action: 'inactive-hours-skip', output: '' },
+            now.toISOString(),
+            false,
+          );
+        }
+        continue;
+      }
+
       // Claim the job by advancing nextRunAt BEFORE executing so a crash
       // mid-run doesn't double-fire on the next tick. `claimDueJob` re-checks
       // `nextRunAt` against this tick's snapshot INSIDE the jobs lock — a
@@ -1247,7 +1319,6 @@ export class CronScheduler {
       // calls racing on the same due job (a local interval and an externally
       // fired `POST /cron/fire` landing close together) can't both win the
       // claim and both execute it.
-      const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
       // Stamped inside the CAS below, so a losing claimant never writes it.
       const runningStamp = Date.now();
       let claim: ClaimOutcome;
@@ -1399,6 +1470,26 @@ export class CronScheduler {
     }
     if (noLaterRun) failurePatch.status = 'paused';
     await this.patchJob(job.id, failurePatch).catch(() => {});
+  }
+
+  /**
+   * Whether `job` has an `activeHours` window that `nowMs` falls outside, on
+   * the host's clock (`hostTimeZone`, read per call so it is always the zone
+   * croner reads the schedule in). An unparseable window — stored before
+   * `createJob` validated it — fails open with a warning.
+   */
+  private outsideActiveHours(job: CronJob, nowMs: number): boolean {
+    if (!job.activeHours) return false;
+    const window = parseActiveHours(job.activeHours);
+    if (!window) {
+      this.logger.warn(`[cron] Job "${job.id}" has an invalid activeHours — running anyway`, {
+        component: 'cron',
+        jobId: job.id,
+        activeHours: job.activeHours,
+      });
+      return false;
+    }
+    return !isActiveAt(window, hostTimeZone(), nowMs);
   }
 
   // ---------------------------------------------------------------------------
@@ -1968,6 +2059,25 @@ function findOwnedRef(
   personalityId: string,
 ): CronJob | undefined {
   return jobs.find((j) => (j.id === ref || j.name === ref) && j.personalityId === personalityId);
+}
+
+/**
+ * Refuses an `activeHours` that `parseActiveHours` does not accept, and — when
+ * `schedule` is given — one on a one-shot schedule: a one-shot has no later
+ * occurrence, so a skip outside the window would retire it unrun, and a
+ * person who named the exact time has already chosen when it runs.
+ */
+function assertActiveHours(spec: string, schedule?: string): void {
+  if (!parseActiveHours(spec)) {
+    throw new Error(
+      `Invalid activeHours: "${spec}" — use HH:MM-HH:MM with different start and end (e.g. "09:00-21:00", or "22:00-06:00" across midnight)`,
+    );
+  }
+  if (schedule !== undefined && isOneShotSchedule(schedule)) {
+    throw new Error(
+      `activeHours is not allowed on a one-shot schedule ("${schedule}") — it runs once at the time it names; clear activeHours or use a recurring schedule`,
+    );
+  }
 }
 
 /**

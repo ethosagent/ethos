@@ -12,7 +12,9 @@ export interface AnthropicStreamParams {
   system?: Anthropic.TextBlockParam[];
   max_tokens: number;
   tools?: Anthropic.Tool[];
-  thinking?: { type: 'enabled'; budget_tokens: number };
+  thinking?: Anthropic.ThinkingConfigParam;
+  /** Presence §4 — adaptive-thinking effort (`anthropicModelCapabilities`). */
+  output_config?: { effort: 'low' | 'medium' | 'high' };
   betas?: string[];
   /** Item 7 — server-side compaction (`compact_20260112`). Sent only with the
    *  `compact-2026-01-12` beta; its presence routes the call to the beta
@@ -83,6 +85,7 @@ export async function* streamAnthropicMessages(
   if (!streamParams.system) delete streamParams.system;
   if (!streamParams.tools || streamParams.tools.length === 0) delete streamParams.tools;
   if (!streamParams.thinking) delete streamParams.thinking;
+  if (!streamParams.output_config) delete streamParams.output_config;
   if (!streamParams.betas) delete streamParams.betas;
   if (!streamParams.context_management) delete streamParams.context_management;
   if (!streamParams.stop_sequences) delete streamParams.stop_sequences;

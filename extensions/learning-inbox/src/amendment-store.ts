@@ -23,9 +23,10 @@ import type {
   AmendmentProvenance,
   AmendmentRecord,
   AmendmentStatus,
+  AmendmentTarget,
   Storage,
 } from '@ethosagent/types';
-import { canonicalizeOps, opsHash } from './amendment-ops';
+import { canonicalizeAmendmentOps, opsHash } from './amendment-ops';
 import { amendmentDir, amendmentProposalPath, amendmentsDir } from './paths';
 
 /** At most this many `pending` amendments per personality. */
@@ -50,11 +51,21 @@ const STATUSES: ReadonlySet<string> = new Set<AmendmentStatus>([
   'rolled_back',
 ]);
 
-/** One stored op: `{ op: 'add_tool' | 'remove_tool', tool: string }`, nothing looser. */
-function isOpShape(value: unknown): value is AmendmentOp {
+const TARGETS: ReadonlySet<string> = new Set<AmendmentTarget>(['toolset', 'identity']);
+
+/**
+ * One stored op of `target`'s kind, nothing looser: `{ op: 'add_tool' |
+ * 'remove_tool', tool: string }` for a toolset record, `{ op: 'set_…', value:
+ * string }` for an identity record (the op names and values are then checked by
+ * `canonicalizeAmendmentOps`).
+ */
+function isOpShape(target: AmendmentTarget, value: unknown): value is AmendmentOp {
   if (!value || typeof value !== 'object') return false;
-  const { op, tool } = value as Record<string, unknown>;
-  return (op === 'add_tool' || op === 'remove_tool') && typeof tool === 'string';
+  const o = value as Record<string, unknown>;
+  if (target === 'toolset') {
+    return (o.op === 'add_tool' || o.op === 'remove_tool') && typeof o.tool === 'string';
+  }
+  return typeof o.op === 'string' && o.op.startsWith('set_') && typeof o.value === 'string';
 }
 
 /**
@@ -83,10 +94,11 @@ export async function readAmendment(
     r.schemaVersion !== 1 ||
     r.id !== amendmentId ||
     typeof r.personalityId !== 'string' ||
-    r.target !== 'toolset' ||
+    typeof r.target !== 'string' ||
+    !TARGETS.has(r.target) ||
     !Array.isArray(r.ops) ||
-    !r.ops.every(isOpShape) ||
-    !canonicalizeOps(r.ops).ok ||
+    !r.ops.every((op) => isOpShape(r.target as AmendmentTarget, op)) ||
+    !canonicalizeAmendmentOps(r.target as AmendmentTarget, r.ops).ok ||
     typeof r.opsHash !== 'string' ||
     typeof r.baseHash !== 'string' ||
     typeof r.status !== 'string' ||
@@ -160,6 +172,8 @@ export async function checkPendingLimits(
 
 export interface CreateAmendmentInput {
   personalityId: string;
+  /** Absent → `'toolset'`. */
+  target?: AmendmentTarget;
   /** Raw ops; canonicalised here, so a record's `ops`/`opsHash` are canonical by construction. */
   ops: readonly AmendmentOp[];
   baseHash: string;
@@ -192,7 +206,8 @@ export async function createAmendment(
   input: CreateAmendmentInput,
   now: () => number = Date.now,
 ): Promise<CreateAmendmentResult> {
-  const canonical = canonicalizeOps(input.ops);
+  const target = input.target ?? 'toolset';
+  const canonical = canonicalizeAmendmentOps(target, input.ops);
   if (!canonical.ok) throw new Error(`Amendment ops refused: ${canonical.reason}`);
   if (input.rationale.length > MAX_AMENDMENT_RATIONALE) {
     throw new Error(`Amendment rationale exceeds ${MAX_AMENDMENT_RATIONALE} characters`);
@@ -226,7 +241,7 @@ export async function createAmendment(
     schemaVersion: 1,
     id,
     personalityId: input.personalityId,
-    target: 'toolset',
+    target,
     ops: canonical.ops,
     opsHash: hashOfOps,
     baseHash: input.baseHash,

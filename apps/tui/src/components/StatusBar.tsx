@@ -16,6 +16,8 @@ export interface BudgetState {
 interface StatusBarProps {
   model: string;
   personality: string;
+  /** `display.emoji` — shown before the name; unset changes nothing. */
+  emoji?: string;
   accentColor?: string;
   inputTokens: number;
   outputTokens: number;
@@ -87,6 +89,7 @@ function BudgetIndicator({ budgetState }: { budgetState: BudgetState }) {
 export function StatusBar({
   model,
   personality,
+  emoji,
   accentColor,
   inputTokens,
   outputTokens,
@@ -106,7 +109,7 @@ export function StatusBar({
         ethos
       </Text>
       <Text color={tokens.surface.textSecondary}> {model} ·</Text>
-      <Text color={accentColor}>{` ${personality}`}</Text>
+      <Text color={accentColor}>{emoji ? ` ${emoji} ${personality}` : ` ${personality}`}</Text>
       {readonlyMode && <Text color={tokens.semantic.success}> [READ-ONLY]</Text>}
       <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
       <Text color={tokens.surface.textSecondary}>

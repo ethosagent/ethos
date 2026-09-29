@@ -4,7 +4,7 @@
 // the chat header), and a second spelling here is exactly the drift the shared
 // constant exists to prevent. `@ethosagent/types` is zero-dep, so importing it
 // costs the published contract nothing.
-import { VOICE_MODES } from '@ethosagent/types';
+import { isSingleEmojiGrapheme, VOICE_MODES } from '@ethosagent/types';
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { SessionCardSchema } from './cards';
@@ -703,11 +703,23 @@ const PersonalityUpdateInput = z.object({
     .optional(),
   /** Per-personality memory backend. Built-ins: 'markdown', 'vector'. */
   memory: z.object({ provider: z.string().optional() }).optional(),
-  /** Avatar sub-key of the `display` identity block. `''` clears
-   *  `avatar_url` back to unset; the avatar upload/delete routes are the
-   *  usual way to change it, but a curated-icon pick goes through here
-   *  directly (it's just a static URL, no bytes to upload). */
-  display: z.object({ avatar_url: z.string().optional() }).optional(),
+  /** Sub-keys of the `display` identity block; `''` clears one back to unset.
+   *  `avatar_url`: the avatar upload/delete routes are the usual way to change
+   *  it, but a curated-icon pick goes through here directly (it's just a
+   *  static URL, no bytes to upload). `emoji`: exactly one emoji grapheme
+   *  (`isSingleEmojiGrapheme`), refused here with a 400 before the registry's
+   *  own check in `FilePersonalityRegistry.update` would. */
+  display: z
+    .object({
+      avatar_url: z.string().optional(),
+      emoji: z
+        .string()
+        .refine((v) => v === '' || isSingleEmojiGrapheme(v), {
+          message: "display.emoji must be exactly one emoji, or '' to clear it",
+        })
+        .optional(),
+    })
+    .optional(),
   /** Nightly governed-learning gates. The UI sends the FULL nightly object
    *  (including the full judge sub-object); the registry one-level-merges it. */
   nightly: PersonalityNightlyInput,
@@ -2645,6 +2657,9 @@ const CronCreateInput = z.object({
   notifyInApp: z.boolean().optional(),
   /** Where run output goes. See `CronDeliverToSchema`. */
   deliverTo: CronDeliverToSchema.optional(),
+  /** `HH:MM-HH:MM`; refused as CRON_INVALID by `CronScheduler.createJob` when
+   *  malformed or on a one-shot schedule. */
+  activeHours: z.string().optional(),
 });
 const CronCreateOutput = z.object({ job: CronJobSchema });
 
@@ -2665,6 +2680,8 @@ const CronUpdateInput = z.object({
   schedule: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
   personalityId: z.string().min(1).optional(),
+  /** `HH:MM-HH:MM` sets the window; `null` clears it (`CronScheduler.updateJob`). */
+  activeHours: z.string().nullable().optional(),
 });
 const CronUpdateOutput = z.object({ job: CronJobSchema });
 

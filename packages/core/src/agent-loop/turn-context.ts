@@ -237,6 +237,8 @@ export interface TurnSetup {
   modelOverride: string | undefined;
   /** Which provider entry `modelOverride` belongs to — `routeTurnModel` (`agent-loop/model-route.ts`). */
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /** The resolved alias's reasoning effort (presence §4) — `routeTurnModel`. */
+  effort?: import('@ethosagent/types').ReasoningEffort;
   /**
    * openclaw-9.5-adoption item 7 (D32) — exactly one compactor per turn.
    * `active` is true when the provider this turn resolves to compacts

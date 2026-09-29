@@ -313,6 +313,7 @@ function toResolved(
     providerKey: entry.provider,
     modelId: entry.modelId,
     ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+    ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
     ...(cost ? { cost } : {}),
     source,
     pinned,

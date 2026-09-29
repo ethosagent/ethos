@@ -1,4 +1,8 @@
-import type { ChannelOverrideStore } from '@ethosagent/core';
+import {
+  type ChannelOverrideStore,
+  type ChannelPresenceResolver,
+  mentionsPersonalityName,
+} from '@ethosagent/core';
 import type {
   Attachment,
   AttachmentCache,
@@ -54,7 +58,11 @@ interface MessageContext {
   client: Client;
   botKey: string;
   defaultChannelMode: ChannelMode;
+  /** The reaction when no personality emoji applies (`''` = no reaction). */
   receiptReaction: string;
+  /** The operator configured `receiptReaction` explicitly: it then wins over
+   *  the bound personality's `display.emoji`. */
+  receiptReactionExplicit?: boolean;
   cache?: AttachmentCache;
   channelOverrides?: ChannelOverrideStore<ChannelMode>;
   threadState?: ThreadStateStore;
@@ -67,16 +75,28 @@ interface MessageContext {
    * fields fall back to {@link BACKFILL_FETCH_LIMIT} and no age bound.
    */
   backfill?: { enabled?: boolean; windowSeconds?: number; limit?: number };
+  /**
+   * Who the bot speaks as per chat (plan personality-presence-and-initiative
+   * §3) — the gateway's resolver, read at event time. Absent = the plain
+   * receipt reaction and no mention-by-name.
+   */
+  presence?: ChannelPresenceResolver;
+  /** Count a guild message naming the bound personality as a mention. */
+  mentionByName?: boolean;
   onMessage: (msg: InboundMessage) => void;
-  onReceipt: (channelId: string, messageId: string) => void;
+  /** A receipt reaction was attempted on `messageId`. `reactions` lists every
+   *  emoji that may have landed (the chosen one, then its fallback), so the
+   *  clear can remove whichever did. */
+  onReceipt: (channelId: string, messageId: string, reactions: string[]) => void;
 }
 
 export function registerMessageHandler(ctx: MessageContext): void {
   ctx.client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
 
-    const envelope = await buildMessageEnvelope(message, ctx, false);
-    if (!envelope) return;
+    const built = await buildMessageEnvelope(message, ctx, false);
+    if (!built) return;
+    const { envelope, nameOnly } = built;
 
     // Channel history backfill — first encounter in this lane
     if (ctx.backfillState && ctx.backfill?.enabled !== false) {
@@ -100,9 +120,32 @@ export function registerMessageHandler(ctx: MessageContext): void {
     // operator told the agent to be silent in, and a 👀 landing on every
     // message in it is the bot answering — visibly, to everyone in the room —
     // several hundred times a day. Silent means silent (R11).
-    if (ctx.receiptReaction && !envelope.recordOnly) {
-      message.react(ctx.receiptReaction).catch(() => {});
-      ctx.onReceipt(message.channelId, message.id);
+    //
+    // Nor on a message that reaches the bot ONLY because it names the
+    // personality (`TriageResult.nameOnly`): the channel filter may still drop
+    // it — a non-allowlisted member saying the name — and nothing would clear
+    // the reaction.
+    //
+    // An explicitly configured `receiptReaction` wins; else the bound
+    // personality's `display.emoji` (Discord takes unicode as-is); else
+    // `receiptReaction`'s default. A refused emoji is retried once with
+    // `receiptReaction`, so the reaction is never dropped for the
+    // personality's sake (plan personality-presence-and-initiative §3).
+    if (ctx.receiptReaction && !envelope.recordOnly && !nameOnly) {
+      const personalityEmoji = ctx.receiptReactionExplicit
+        ? undefined
+        : ctx.presence?.(envelope.chatId, envelope.threadId)?.emoji;
+      const emoji = personalityEmoji ?? ctx.receiptReaction;
+      const fallback = ctx.receiptReaction;
+      message
+        .react(emoji)
+        .catch(() => (emoji !== fallback ? message.react(fallback) : undefined))
+        .catch(() => {});
+      ctx.onReceipt(
+        message.channelId,
+        message.id,
+        emoji !== fallback ? [emoji, fallback] : [fallback],
+      );
     }
 
     // `recordOnly` skips the download: the gateway's transcript row is TEXT,
@@ -161,9 +204,9 @@ export function registerEditHandler(ctx: MessageContext): void {
       pending.delete(debounceKey);
       void (async () => {
         try {
-          const envelope = await buildMessageEnvelope(newMessage as Message, ctx, true);
-          if (!envelope) return;
-          ctx.onMessage(envelope);
+          const built = await buildMessageEnvelope(newMessage as Message, ctx, true);
+          if (!built) return;
+          ctx.onMessage(built.envelope);
         } catch {
           // Best-effort — matches adapter error policy for messageCreate
         }
@@ -186,14 +229,27 @@ async function buildMessageEnvelope(
   message: Message,
   ctx: MessageContext,
   isEdit: boolean,
-): Promise<InboundMessage | undefined> {
+): Promise<{ envelope: InboundMessage; nameOnly: boolean } | undefined> {
   const isDm = message.channel.isDMBased();
   // A group DM is DM-based (so routed as a DM) but read by several people.
   const isGroupDm = isDm && message.channel.type !== DM_CHANNEL_TYPE;
-  const isMention = ctx.client.user
+  const isThread = message.channel.isThread();
+  const mentionsBot = ctx.client.user
     ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
     : false;
-  const isThread = message.channel.isThread();
+  // `mentionByName` (plan personality-presence-and-initiative §3): a guild
+  // message naming the personality bound to its lane counts as a mention.
+  // The lane is addressed exactly as `triageMessage` addresses it.
+  const laneChatId = isThread ? (message.channel.parentId ?? message.channelId) : message.channelId;
+  const presenceName =
+    ctx.mentionByName && !isDm
+      ? ctx.presence?.(laneChatId, isThread ? message.channelId : undefined)?.name
+      : undefined;
+  const namedOnly =
+    !mentionsBot &&
+    presenceName !== undefined &&
+    mentionsPersonalityName(message.content, presenceName);
+  const isMention = mentionsBot || namedOnly;
 
   let text = message.content;
   if (ctx.client.user) {
@@ -220,6 +276,7 @@ async function buildMessageEnvelope(
       threadId: isThread ? message.channelId : undefined,
       parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
       isMention: isMention && !isDm,
+      mentionIsNameOnly: namedOnly,
       reference: {
         messageId: message.reference?.messageId ?? undefined,
         userId: message.mentions.repliedUser?.id ?? undefined,
@@ -248,7 +305,7 @@ async function buildMessageEnvelope(
     envelope.replyToUserId = message.mentions.repliedUser.id;
   }
 
-  return envelope;
+  return { envelope, nameOnly: result.nameOnly === true };
 }
 
 /** Exported for testing — the classification the STT gate depends on. */

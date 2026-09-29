@@ -22,6 +22,7 @@ function ctxFor(personalityId: string | undefined): ToolContext {
     abortSignal: new AbortController().signal,
     emit: () => {},
     resultBudgetChars: 80_000,
+    initiator: 'user',
   };
 }
 

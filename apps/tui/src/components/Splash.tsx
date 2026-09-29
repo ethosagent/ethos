@@ -20,12 +20,21 @@ interface SplashProps {
   sessionKey: string;
   accentColor: string;
   inventory: SplashInventory;
+  /** `display.emoji` — shown before the name; unset changes nothing. */
+  emoji?: string;
 }
 
 const MAX_VISIBLE_TOOLSETS = 4;
 const MAX_NAMES_PER_TOOLSET = 5;
 
-export function Splash({ model, personality, sessionKey, accentColor, inventory }: SplashProps) {
+export function Splash({
+  model,
+  personality,
+  sessionKey,
+  accentColor,
+  inventory,
+  emoji,
+}: SplashProps) {
   const tokens = useSkin();
   const visibleToolsets = inventory.tools.slice(0, MAX_VISIBLE_TOOLSETS);
   const hiddenToolsets = Math.max(0, inventory.tools.length - MAX_VISIBLE_TOOLSETS);
@@ -38,7 +47,7 @@ export function Splash({ model, personality, sessionKey, accentColor, inventory 
           ethos
         </Text>
         <Text color={tokens.surface.textSecondary}> · {model} · </Text>
-        <Text color={accentColor}>{personality}</Text>
+        <Text color={accentColor}>{emoji ? `${emoji} ${personality}` : personality}</Text>
         <Text color={tokens.surface.textTertiary}>{'  workspace '}</Text>
         <Text color={tokens.surface.textSecondary}>
           {sessionKey.replace(/^cli:/, '').replace(/:.*$/, '')}

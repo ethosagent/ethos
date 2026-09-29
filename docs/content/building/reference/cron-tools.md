@@ -1,10 +1,10 @@
 ---
 title: Cron tool
-description: "Action-dispatch cron tool — create, list, get, read_run, update, pause, resume, run, remove. Wiring contract, scheduler sharing, and personality opt-in."
+description: "Action-dispatch cron tool — create, list, get, read_run, update, pause, resume, run, remove. Active hours, wiring contract, and personality opt-in."
 kind: reference
 audience: developer
 slug: cron-tools
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 # Cron tool
@@ -46,6 +46,7 @@ Add the tool to the personality's `toolset.yaml`:
 | `schedule` | string | yes | Standard 5-field cron expression — minute hour day month weekday. All times are local. Validated via `isValidCronExpression`. |
 | `prompt` | string | yes | The prompt the agent runs on each firing. |
 | `missed_run_policy` | `'run-once' \| 'skip'` | no | What to do if the scheduler was down when the job's scheduled time passed. `run-once` fires the missed slot on next start; `skip` (default) waits for the next normal occurrence and records the skip in the run history. A slot is missed only when it fell due before the scheduler's previous tick or before the process started (`CronScheduler.tick`). |
+| `active_hours` | string | no | Daily window `HH:MM-HH:MM` (e.g. `09:00-21:00`; `22:00-06:00` crosses midnight) on the host clock the schedule uses. An occurrence outside it is skipped before the turn, audited as `inactive-hours-skip`, and not counted as a run. `run` ignores it. Refused (`input_invalid`) when malformed or on a one-shot schedule. Default: always active. |
 
 Always pins the job to the caller's personality (`ctx.personalityId`). Returns an error if no personality context is available.
 
@@ -82,8 +83,11 @@ Reads the output of a specific historical run, identified by the ISO-8601 timest
 | `name` | string | no |
 | `schedule` | string | no |
 | `prompt` | string | no |
+| `script_file` / `timeout_seconds` | string / number | no |
+| `precheck_file` / `precheck_timeout_seconds` | string / number | no |
+| `active_hours` | string | no |
 
-At least one of `name`, `schedule`, or `prompt` must be provided. **Not yet implemented** — returns `not_available`. Will be wired in Phase C.
+At least one of `name`, `schedule`, `prompt`, `script_file`, `precheck_file` or `active_hours` must be provided. `active_hours: "off"` clears the window. A window is refused when the job's schedule, after the update, is a one-shot.
 
 ### `pause` {#pause}
 
@@ -143,7 +147,8 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 | `code` | When | Operator fix |
 |---|---|---|
 | `not_available` | Tool listed in toolset but no scheduler wired (e.g. `ethos chat` profile) | Run from `ethos gateway` or `ethos serve` |
-| `not_available` | `update` action called (not yet implemented) | Wait for Phase C |
+| `input_invalid` | `active_hours` is not `HH:MM-HH:MM` or has equal start and end, or `create` sets it on a one-shot schedule | Use a window like `09:00-21:00`, or a recurring schedule |
+| `execution_failed` | `update` leaves a window on a one-shot schedule (the scheduler refuses it) | Clear the window with `active_hours: "off"`, or keep a recurring schedule |
 | `input_invalid` | Cron expression failed `isValidCronExpression` | Fix the 5-field syntax |
 | `input_invalid` | Missing required field for the action | Provide it |
 | `input_invalid` | Any action called without personality context | Ensure a personality is active |
@@ -205,4 +210,5 @@ cron({ action: "remove", id: "morning-briefing" })
 
 - [`@ethosagent/cron` package](https://github.com/ethosagent/ethos/tree/main/packages/cron) — the scheduler implementation.
 - [`send_message` reference](messaging-tools.md) — pair with `cron` to schedule cross-channel notifications.
+- [Watcher tools](watcher-tools.md) — act on a change instead of a timer, with a fire budget and expiry.
 - [CLI reference](../../using/reference/cli.md) — `ethos cron list / pause / resume / delete / run / create` for the operator-driven side of the same store.

@@ -431,6 +431,9 @@ try {
       } else if (sub === 'amendments') {
         const { runPersonalityAmendments } = await import('./commands/personality-amendments');
         await runPersonalityAmendments(args.slice(2));
+      } else if (sub === 'birth') {
+        const { runPersonalityBirth } = await import('./commands/personality-birth');
+        await runPersonalityBirth(args.slice(2));
       } else if (sub === 'export') {
         const { runPersonalityExport } = await import('./commands/personality-export');
         await runPersonalityExport(args.slice(2));
@@ -513,7 +516,7 @@ try {
         console.log(`✓ Personality "${retireId}" retired. History preserved.`);
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | fork <id> [<new-id>] | retire <id> | amendments [list | show <id> | apply <id> | decline <id> --reason <r> | rollback <id>] | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | fork <id> [<new-id>] | retire <id> | amendments [list | show <id> | apply <id> | decline <id> --reason <r> | rollback <id>] | birth skip <id> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -1450,6 +1453,9 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       decisions,
     )}`,
   );
+  // config.yaml values the loader dropped instead of failing the load (an
+  // invalid `display.emoji` — `buildDisplayConfig` in @ethosagent/personalities).
+  for (const warning of described.configWarnings ?? []) console.error(`⚠ ${warning}`);
 
   // Loop construction leaves live handles (MCP children, background executors,
   // SQLite); release them (G4) and then still exit explicitly, because anything

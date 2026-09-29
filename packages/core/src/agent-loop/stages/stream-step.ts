@@ -109,6 +109,8 @@ export interface StreamStepContext {
   /** `TurnSetup.gateWindowTokens` — the context-fit preflight's window. */
   gateWindowTokens?: number | undefined;
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /** `TurnSetup.effort` — the resolved alias's reasoning effort (presence §4). */
+  effort?: import('@ethosagent/types').ReasoningEffort | undefined;
   /** Item 7 — `TurnSetup.serverCompaction`; cleared here when the provider
    *  reports `SERVER_COMPACTION_REJECTED_WARNING`. */
   serverCompaction?: { active: boolean };
@@ -295,6 +297,7 @@ export async function* streamStep(
   // business.
   let iterModelOverride = ctx.modelOverride;
   let iterProviderEntry = ctx.providerEntry;
+  let iterEffort = ctx.effort;
   if (pendingTierEscalation.value) {
     const tier = pendingTierEscalation.value as ModelTierName;
     pendingTierEscalation.value = undefined;
@@ -317,6 +320,9 @@ export async function* streamStep(
     if (route?.ok) {
       iterModelOverride = route.modelOverride;
       iterProviderEntry = route.providerEntry;
+      // The escalated alias's effort, or none — never the turn's alias's effort
+      // on the escalated alias's model.
+      iterEffort = route.effort;
       deps.observability?.recordTierEscalation({
         traceId: ctx.traceId ?? '',
         from: ctx.activeTier,
@@ -360,6 +366,7 @@ export async function* streamStep(
       requestId,
       ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
       ...(iterProviderEntry ? { providerEntry: iterProviderEntry } : {}),
+      ...(iterEffort !== undefined ? { effort: iterEffort } : {}),
       ...(ctx.cacheBreakpoints ? { cacheBreakpoints: ctx.cacheBreakpoints } : {}),
       ...(ctx.opts.temperature !== undefined ? { temperature: ctx.opts.temperature } : {}),
       ...(ctx.opts.topP !== undefined ? { topP: ctx.opts.topP } : {}),

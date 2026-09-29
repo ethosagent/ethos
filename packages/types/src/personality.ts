@@ -884,15 +884,25 @@ export interface PersonalityConfig {
    * How a personality LOOKS across identity surfaces (the rail, the picker,
    * the chat header, …) — the visual sibling of `voice`, granted by the same
    * personality-presentation amendment: a personality is not only its tools
-   * and its plugins, it is also how it looks and feels. First field:
-   * `avatar_url`, a URL to a served or uploaded avatar image. Absent, or an
-   * image that fails to load, falls back to the generated mark
-   * (`PersonalityRingAvatar` / `PersonalityMark`) every identity surface
-   * already renders — no other behavior changes.
+   * and its plugins, it is also how it looks and feels. Two sub-keys:
+   *
+   *   - `avatar_url` — a URL to a served or uploaded avatar image. Absent, or
+   *     an image that fails to load, falls back to the generated mark
+   *     (`PersonalityRingAvatar` / `PersonalityMark`) every identity surface
+   *     already renders.
+   *   - `emoji` — exactly one emoji grapheme, shown beside the name where a
+   *     name is shown (CLI header, TUI, character sheet, web identity rows).
+   *     It never replaces the generated mark or the accent. Validated by
+   *     `isSingleEmojiGrapheme` (./display-emoji.ts): the loader drops an
+   *     invalid value with a load warning (`buildDisplayConfig`,
+   *     extensions/personalities), and `FilePersonalityRegistry.update`
+   *     refuses one.
+   *
+   * Unset changes nothing anyone sees.
    * Counts as ONE field for the schema-freeze gate (the nested shape is a
    * leaf type — same precedent as `fs_reach`).
    */
-  display?: { avatar_url?: string };
+  display?: { avatar_url?: string; emoji?: string };
   /**
    * Execution REQUIREMENT — what this personality demands of wherever its
    * execution tools run. Two values, and both are identity under the content

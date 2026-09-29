@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { AgentLoop } from '@ethosagent/core';
+import type { AgentLoop, ChannelPresence, ChannelPresenceResolver } from '@ethosagent/core';
 import {
   buildLaneKey,
   type ClarifyNoticeTarget,
@@ -121,6 +121,7 @@ import {
   parseMuteDuration,
   quietWindowFor,
 } from './quiet-hours';
+import { applyReplyPrefix } from './reply-prefix';
 import { createSteerSink, type GatewaySteerSink, steerAttachmentBlocks } from './steer-sink';
 import { DraftStreamer } from './streaming';
 import type { TranscodeResult, Transcoder } from './transcode';
@@ -988,6 +989,15 @@ export interface GatewayBotConfig {
    *  plan openclaw-2026.9.6-gaps D5). Enforced by `Gateway.enqueueTurn` when
    *  `GatewayConfig.botSpendSince` is wired; absent = no daily cap. */
   dailyBudgetUsd?: number;
+  /**
+   * Reply-prefix template (`telegram.bots.N.replyPrefix`,
+   * `slack.apps.N.replyPrefix`, `discord.replyPrefix`; plan
+   * personality-presence-and-initiative §3). Placeholders `{name}` and
+   * `{emoji}` resolve to the personality bound to the lane. Applied by
+   * `applyReplyPrefix` (./reply-prefix.ts) before dedup and the ledger.
+   * Absent = replies are byte-identical to a bot without the key.
+   */
+  replyPrefix?: string;
 }
 
 /**
@@ -1444,6 +1454,13 @@ export interface GatewayConfig {
      * restart, exactly like the rest of the directory.
      */
     voice?(id: string): PersonalityVoiceConfig | undefined;
+    /**
+     * The personality's display identity — its `name` and `display.emoji` —
+     * for the channel presence (`Gateway.presenceFor`): the reply prefix, the
+     * receipt reaction and mention-by-name. Optional; absent → the presence
+     * names the personality by its id and has no emoji.
+     */
+    identity?(id: string): ChannelPresence | undefined;
   };
   /**
    * Optional attachment cache for cleaning up cached files on session reset
@@ -2220,6 +2237,7 @@ export class Gateway {
       const botKey = servedBotKey(adapter, botKeyOfAdapterId(adapter.id));
       if (!this.botAdapters.has(botKey)) this.botAdapters.set(botKey, adapter);
     }
+    for (const [botKey, adapter] of this.botAdapters) this.bindPresence(adapter, botKey);
     this.resolveUserIdFn = config.resolveUserId;
     this.pluginLoader = config.pluginLoader;
     this.notificationRouter = config.notificationRouter;
@@ -2491,6 +2509,7 @@ export class Gateway {
     // DECLARES wins (it is what it stamps on every inbound), falling back to
     // the bot it is being registered for. See `servedBotKey`.
     this.botAdapters.set(servedBotKey(adapter, bot.botKey), adapter);
+    this.bindPresence(adapter, servedBotKey(adapter, bot.botKey));
     // First-adapter-per-platform, matching how the wiring builds
     // `GatewayConfig.adapters`. A hot-added second Telegram bot must not
     // repoint every agent-initiated `send_message` at itself.
@@ -4176,12 +4195,18 @@ export class Gateway {
         const reply = claim.reply;
         if (typeof reply === 'string' && reply.length > 0) {
           // Same outbound path as normal turn replies: session-keyed dedup
-          // gate, then the ledger-wrapped adapter send.
+          // gate, then the ledger-wrapped adapter send — on the prefixed text
+          // (plan personality-presence-and-initiative §3), which is what the
+          // chat receives. The voice decision below speaks the bare reply.
           const claimSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+          const claimPersonalityId = this.turnPersonalityFor(laneKey, bot);
+          const prefixedReply = bot.replyPrefix
+            ? applyReplyPrefix(reply, bot.replyPrefix, this.presenceOf(claimPersonalityId, bot))
+            : reply;
           if (
             this.outboundDedup.shouldSend(
               claimSessionKey,
-              reply,
+              prefixedReply,
               replyDedupScope(spoolId, message, this.localInboundId(message)),
             )
           ) {
@@ -4193,7 +4218,7 @@ export class Gateway {
                 chatId: message.chatId,
                 sessionKey: claimSessionKey,
               },
-              { text: reply, threadId },
+              { text: prefixedReply, threadId },
             );
             // A claimed reply is still a reply, so it goes through the SAME
             // voice decision the agent path does — otherwise a lane in `all`
@@ -4217,8 +4242,7 @@ export class Gateway {
                 threadId,
                 sessionKey: claimSessionKey,
                 text: reply,
-                personalityId:
-                  bot.binding.type === 'team' ? undefined : this.activePersonalityFor(laneKey, bot),
+                personalityId: claimPersonalityId,
                 language: undefined,
               });
             }
@@ -5558,10 +5582,15 @@ export class Gateway {
     // abort the turn — the seam impl logs; we proceed with the last-good
     // registry (stale-but-alive beats a dead turn).
     await this.personalityDirectory?.refresh().catch(() => {});
-    const personalityId =
-      bot.binding.type === 'team'
-        ? undefined
-        : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+    const personalityId = this.turnPersonalityFor(laneKey, bot);
+    // The bot's reply prefix, rendered for the personality THIS turn runs as
+    // (plan personality-presence-and-initiative §3). Applied to the answer, an
+    // interrupted answer and the streamed draft BEFORE dedup and the ledger see
+    // them; never to gateway notices (the error note, both empty-reply notices,
+    // the credential link), and never to a voice note's spoken text.
+    const replyPresence = bot.replyPrefix ? this.presenceOf(personalityId, bot) : undefined;
+    const prefixReply = (reply: string): string =>
+      applyReplyPrefix(reply, bot.replyPrefix, replyPresence);
 
     // Activity signal, fired at turn START so a listener can cancel background
     // work before the turn runs — not at completion, which would be too late.
@@ -5725,6 +5754,7 @@ export class Gateway {
               dedup: this.outboundDedup,
               inboundId: replyScope.inboundId,
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
+              ...(bot.replyPrefix ? { prefixBody: prefixReply } : {}),
               minEditIntervalMs: this.streamingEditIntervalMs,
               onFloodDisable: () => {
                 this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
@@ -5887,12 +5917,18 @@ export class Gateway {
           // UBP-020 — a turn that wrote no reply at all says so, with its cause.
           const empty = errored.code === EMPTY_COMPLETION_CODE && responseText.trim().length === 0;
           if (empty) this.recordEmptyReply(message, bot, errored.error);
+          // Only an interrupted ANSWER is the personality speaking, so only it
+          // carries the reply prefix; the empty-completion notice and the bare
+          // error note are gateway notices, like EMPTY_REPLY_NOTICE below.
+          const interrupted = !empty && responseText.trim().length > 0;
           const note = empty
             ? emptyCompletionNotice(errored.error)
-            : responseText.trim().length > 0
+            : interrupted
               ? `${responseText}\n\n⚠ Response interrupted: ${describeChatError(errored.code, errored.error).title}`
               : `⚠ Error: ${errored.error}`;
-          const sanitizedNote = stripAnsiEscapes(note);
+          const sanitizedNote = interrupted
+            ? prefixReply(stripAnsiEscapes(note))
+            : stripAnsiEscapes(note);
           if (streamer && streamed) {
             // Fold the interruption into the existing draft rather than sending
             // a second message that duplicates the streamed text.
@@ -5920,14 +5956,18 @@ export class Gateway {
           }
         } else if (responseText) {
           const sanitized = stripAnsiEscapes(responseText);
+          // What the chat receives. The voice note below speaks `sanitized`:
+          // a prefix read aloud is noise, and the voice is already the
+          // personality's own (`voice.tts_voice`).
+          const reply = prefixReply(sanitized);
           // Streaming path lands the final via editMessage; non-streaming path
           // gates a fresh send on dedup. `delivered` decides whether the voice
           // pipeline runs (it runs on either delivery route).
           let delivered = false;
           if (streamer && streamed) {
-            await streamer.finalize(sanitized);
+            await streamer.finalize(reply);
             delivered = true;
-          } else if (this.outboundDedup.shouldSend(sessionKey, sanitized, replyScope)) {
+          } else if (this.outboundDedup.shouldSend(sessionKey, reply, replyScope)) {
             // `delivered` is now the adapter's own verdict, not "we called
             // send()". An unconfirmed reply leaves a pending obligation AND
             // skips the voice pipeline — synthesising audio for a message the
@@ -5941,7 +5981,7 @@ export class Gateway {
                 sessionKey,
                 inboundRef,
               },
-              { text: sanitized, parseMode: 'markdown', threadId },
+              { text: reply, parseMode: 'markdown', threadId },
             );
           } else {
             // Suppressed by the dedup cache: this exact text already answered
@@ -8332,6 +8372,66 @@ export class Gateway {
         ...(codePlatform ? { codePlatform } : {}),
       },
     });
+  }
+
+  /**
+   * Who bot `botKey` speaks as in one chat of `platform` (plan
+   * personality-presence-and-initiative §3): the personality bound to that
+   * lane — after any `/personality` switch — and its `display.emoji`. Read by
+   * the adapters' receipt reaction and mention-by-name through the resolver
+   * {@link bindPresence} hands them. `undefined` for a bot this gateway does
+   * not route.
+   */
+  presenceFor(
+    botKey: string,
+    platform: string,
+    chatId: string,
+    threadId?: string,
+  ): ChannelPresence | undefined {
+    const bot = this.bots.get(botKey);
+    if (!bot) return undefined;
+    const laneKey = laneKeyOf(platform, botKey, chatId, threadId);
+    return this.presenceOf(this.turnPersonalityFor(laneKey, bot), bot);
+  }
+
+  /**
+   * The personality a turn on `laneKey` RUNS as (`runTurn`) — and therefore
+   * the one every presence surface names (`presenceFor`, the reply prefix, the
+   * hook-claimed reply). `undefined` for a team bot. Unlike
+   * {@link activePersonalityFor} it honours a stored lane override whether or
+   * not the bot allows `/personality` now: `restoreLaneSessions` and a branch
+   * switch write overrides without that check, and the loop runs them.
+   * Pinned by the 'names the personality the turn runs as' case in
+   * `__tests__/reply-prefix.test.ts`.
+   */
+  private turnPersonalityFor(laneKey: string, bot: GatewayBotConfig): string | undefined {
+    if (bot.binding.type === 'team') return undefined;
+    return this.personalityIds.get(laneKey) ?? bot.binding.name;
+  }
+
+  /** The presence of `personalityId` on `bot` — a team bot speaks as its
+   *  team's name; a personality without a directory identity as its id. */
+  private presenceOf(personalityId: string | undefined, bot: GatewayBotConfig): ChannelPresence {
+    if (personalityId === undefined) return { name: bot.binding.name };
+    return this.personalityDirectory?.identity?.(personalityId) ?? { name: personalityId };
+  }
+
+  /**
+   * Hand `adapter` a presence resolver for its own bot, when it asks for one.
+   * A structural `setPresenceResolver` read — deliberately NOT a
+   * `PlatformAdapter` contract field, the same shape as
+   * `postsThinkingPlaceholder`. Called for every adapter the constructor seeds
+   * and for every hot-added one (`addAdapter`), so the two paths cannot drift.
+   */
+  private bindPresence(adapter: PlatformAdapter, botKey: string): void {
+    const bindable = adapter as PlatformAdapter & {
+      setPresenceResolver?: (resolve: ChannelPresenceResolver) => void;
+    };
+    if (typeof bindable.setPresenceResolver !== 'function') return;
+    const platform = platformOfAdapterId(adapter.id);
+    bindable.setPresenceResolver((chatId, threadId) =>
+      this.presenceFor(botKey, platform, chatId, threadId),
+    );
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and

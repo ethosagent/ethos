@@ -495,3 +495,73 @@ describe('arguments', () => {
     );
   });
 });
+
+// plan personality-presence-and-initiative §1 — identity amendments (the birth
+// ritual's filing) through the same commands: listed and shown readably,
+// applied to config.yaml only on `apply`, which clears the birth marker.
+describe('identity amendments', () => {
+  const configPath = () => join(dataDir, 'personalities', 'scout', 'config.yaml');
+
+  async function fileIdentity(): Promise<AmendmentRecord> {
+    const created = await createAmendment(storage, dataDir, {
+      personalityId: 'scout',
+      target: 'identity',
+      ops: [
+        { op: 'set_name', value: 'Ledger' },
+        { op: 'set_description', value: 'Precise, patient.' },
+        { op: 'set_display_emoji', value: '🧾' },
+        { op: 'set_display_avatar', value: 'upload' },
+      ],
+      baseHash: hashDefinitionBytes(readFileSync(configPath(), 'utf-8')),
+      rationale: 'chosen during my birth ritual',
+      evidence: [],
+      provenance: {
+        sessionId: 's-1',
+        sessionKey: 'cli:amend',
+        platform: 'cli',
+        initiator: 'user',
+        roomAudience: 'private',
+        executionPosture: 'docker',
+        holdsShellTool: false,
+      },
+      preCheck: 'ok',
+      status: 'pending',
+    });
+    if (created.kind !== 'created') throw new Error(`not created: ${created.kind}`);
+    return created.record;
+  }
+
+  it('list and show render the identity ops readably, with the config.yaml diff', async () => {
+    const record = await fileIdentity();
+    await runPersonalityAmendmentsCommand(['list'], deps());
+    expect(printed()).toContain(
+      'name → "Ledger", vibe → "Precise, patient.", emoji → 🧾, avatar → upload after applying',
+    );
+    out = [];
+    await runPersonalityAmendmentsCommand(['show', record.id], deps());
+    const text = printed();
+    expect(text).toContain('config.yaml');
+    expect(text).toContain('+name: Ledger');
+    expect(text).toContain('-name: scout');
+    expect(text).not.toContain('no-recorded-refusal');
+  });
+
+  it('apply writes config.yaml, clears the birth marker and names the avatar step', async () => {
+    const { birthMarkerPath, hasBirthMarker, writeBirthMarker } = await import(
+      '@ethosagent/personalities'
+    );
+    await writeBirthMarker(storage, dataDir, 'scout');
+    const before = readFileSync(configPath(), 'utf-8');
+    const record = await fileIdentity();
+    expect(readFileSync(configPath(), 'utf-8')).toBe(before);
+    await runPersonalityAmendmentsCommand(['apply', record.id], deps());
+    const after = readFileSync(configPath(), 'utf-8');
+    expect(after).toContain('name: Ledger\n');
+    expect(after).toContain('display.emoji: 🧾\n');
+    expect(printed()).toContain('Applied');
+    expect(printed()).toContain('config.yaml');
+    expect(printed()).toContain('upload');
+    expect(await hasBirthMarker(storage, dataDir, 'scout')).toBe(false);
+    expect(birthMarkerPath(dataDir, 'scout')).toContain(join('learning', 'birth'));
+  });
+});

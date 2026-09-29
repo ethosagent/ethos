@@ -24,6 +24,7 @@ import {
   type ModelRoleName,
   type PersonalityConfig,
   parseModelDeclaration,
+  type ReasoningEffort,
 } from '@ethosagent/types';
 import { mapLegacyModelDeclaration, resolveModel } from '../model-resolution';
 
@@ -41,6 +42,9 @@ export interface TurnModel {
    * override is pinned and the deployment default is not.
    */
   pinned: boolean;
+  /** `ResolvedModel.effort` — the winning alias's reasoning effort (presence
+   *  §4). Never set on the D11b legacy path: there is no alias to carry one. */
+  effort?: ReasoningEffort;
   deviation?: ModelDeviation;
 }
 
@@ -133,6 +137,7 @@ export function resolveTurnModel(input: {
     model: resolved.modelId,
     source: resolved.source,
     pinned: resolved.pinned,
+    ...(resolved.effort !== undefined ? { effort: resolved.effort } : {}),
     ...(resolved.deviation ? { deviation: resolved.deviation } : {}),
   };
 }

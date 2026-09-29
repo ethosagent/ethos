@@ -223,10 +223,10 @@ export const PersonalitySchema = z.object({
   /** Per-personality memory backend. Optional (omitted when unset) so the
    *  editor can read the current provider to populate its form. */
   memory: z.object({ provider: z.string().optional() }).optional(),
-  /** How this personality looks across identity surfaces — currently just a
-   *  custom avatar image URL. Optional (omitted when unset) so surfaces fall
-   *  back to the generated mark. */
-  display: z.object({ avatar_url: z.string().optional() }).optional(),
+  /** How this personality looks across identity surfaces — a custom avatar
+   *  image URL and one emoji shown beside the name. Each optional (omitted
+   *  when unset) so surfaces fall back to the generated mark and a bare name. */
+  display: z.object({ avatar_url: z.string().optional(), emoji: z.string().optional() }).optional(),
   /** Nightly governed-learning gates. Optional (omitted when unset) so the
    *  editor can read the current toggles to populate its form. */
   nightly: z
@@ -408,6 +408,9 @@ export const CronJobSchema = z.object({
   /** ISO-8601 of next scheduled run, or null when paused / unscheduled. */
   nextRunAt: z.string().nullable(),
   createdAt: z.string(),
+  /** `HH:MM-HH:MM` window scheduled runs are limited to (`CronJob.activeHours`
+   *  in @ethosagent/cron), or null when always active. */
+  activeHours: z.string().nullable().optional(),
 });
 export type CronJob = z.infer<typeof CronJobSchema>;
 
@@ -2631,8 +2634,10 @@ export type LearningTimelineEntryView = z.infer<typeof LearningTimelineEntryView
 
 // ---------------------------------------------------------------------------
 // Amendments — a personality's request to change its own toolset (plan
-// personality-memory-boundary-and-self-amendment G2). Read-only on the web in
-// v1 (D30): the owner applies, declines and rolls back from the CLI.
+// personality-memory-boundary-and-self-amendment G2), or its identity lines —
+// name, vibe, emoji, avatar choice — in config.yaml (plan
+// personality-presence-and-initiative §1, the birth ritual). Read-only on the
+// web in v1 (D30): the owner applies, declines and rolls back from the CLI.
 //
 // These mirror `AmendmentRecord` and `AmendmentReview` from
 // `@ethosagent/types` / `@ethosagent/wiring` field for field. Zod strips
@@ -2664,8 +2669,19 @@ export const AmendmentRecordViewSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string(),
   personalityId: z.string(),
-  target: z.literal('toolset'),
-  ops: z.array(z.object({ op: z.enum(['add_tool', 'remove_tool']), tool: z.string() })),
+  target: z.enum(['toolset', 'identity']),
+  /** Toolset ops carry `tool`; identity ops carry `value` (`AmendmentOp`). */
+  ops: z.array(
+    z.union([
+      z.object({ op: z.enum(['add_tool', 'remove_tool']), tool: z.string() }),
+      z.object({
+        op: z.enum(['set_name', 'set_description', 'set_display_emoji']),
+        /** Written by the personality. Untrusted: render as text. */
+        value: z.string(),
+      }),
+      z.object({ op: z.literal('set_display_avatar'), value: z.enum(['generated', 'upload']) }),
+    ]),
+  ),
   opsHash: z.string(),
   baseHash: z.string(),
   /** Written by the personality. Untrusted: render as text, never as markup. */
@@ -2725,13 +2741,15 @@ export const AmendmentPermissionChangeViewSchema = z.object({
  */
 export const AmendmentReviewViewSchema = z.object({
   record: AmendmentRecordViewSchema,
+  /** The definition file the record's target writes. */
+  file: z.enum(['toolset.yaml', 'config.yaml']),
   personality: z.enum(['ok', 'not_found', 'builtin']),
   liveHash: z.string().nullable(),
   stale: z.boolean(),
   interruptedApply: z.boolean(),
   opsProblem: z.string().optional(),
   expectedAfterHash: z.string().nullable(),
-  /** `toolset.yaml`, live → after; each line prefixed `' '`, `'-'` or `'+'`. */
+  /** `file`, live → after; each line prefixed `' '`, `'-'` or `'+'`. */
   textDiff: z.array(z.string()),
   permissionDiff: z
     .object({ changes: z.array(AmendmentPermissionChangeViewSchema), widens: z.boolean() })

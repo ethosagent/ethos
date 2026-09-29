@@ -6,7 +6,22 @@
 // `propose_self_amendment` tool holds (extensions/tools-personality-design/src/
 // propose-amendment.ts). It only files: it writes a `pending` (or
 // `auto_rejected`) record into the amendment store (`@ethosagent/learning-inbox`
-// `createAmendment`) and never touches the personality's `toolset.yaml`. Apply,
+// `createAmendment`) and never touches the personality's definition. Two
+// targets share every step (`AMENDMENT_TARGET_FILES`): `toolset` changes
+// `toolset.yaml`; `identity` (plan personality-presence-and-initiative §1, the
+// birth ritual) changes the name, description, `display.emoji` and avatar lines
+// of `config.yaml` (`applyTargetOps`). Applying an identity amendment clears the
+// personality's birth marker (`clearBirthMarker`, @ethosagent/personalities).
+// Identity filings are NOT limited to a birth: a personality holding the tool
+// may propose a new name or vibe at any time, under the same checks as a
+// toolset change. That is deliberate and no wider than the toolset target,
+// which grants tools: the intake only ever writes a `pending` record
+// (`createAmendment` below, never `writeDefinitionBytes`), the lines it can
+// touch are the four in `identityUpdates` (never `display.avatar_url`), and
+// the only writer is `AmendmentService.apply`, whose only applying caller is
+// the TTY-gated CLI (`assertTty`, apps/ethos/src/commands/
+// personality-amendments.ts). Pinned by 'files an identity amendment outside a
+// birth too' in __tests__/birth-ritual.test.ts. Apply,
 // decline and rollback are `AmendmentService`, which shares no code path with
 // the port: the tool is handed the intake alone (compose-tools.ts), and the
 // service is returned to the HOST beside the loop (`CreateAgentLoopResult.
@@ -18,8 +33,9 @@
 //   1. who and where (D23)   — `gateRefusal`
 //   2. taint                 — `taintRefusal`
 //   3. opt-in                — the live `toolset.yaml` lists the tool itself
+//                              (for both targets)
 //   4. target (D25)          — not a built-in
-//   5. ops                   — `opsRefusal`, then `applyOps`
+//   5. ops                   — `opsRefusal` (toolset), then `applyTargetOps`
 //   6. evidence (D26)        — `collectEvidence`
 //   7. lock, limits, constitution — under `amendmentApplyLockPath`
 // Every row is pinned by packages/wiring/src/__tests__/propose-amendment.test.ts.
@@ -38,9 +54,11 @@ import {
   amendmentApplyLockPath,
   amendmentPriorPath,
   applyOps,
-  canonicalizeOps,
+  canonicalizeAmendmentOps,
+  canonicalizeIdentityOps,
   checkPendingLimits,
   createAmendment,
+  describeIdentityOpsRefusal,
   expectedAfterHash,
   listAmendments,
   opsHash,
@@ -48,6 +66,7 @@ import {
   transitionAmendment,
 } from '@ethosagent/learning-inbox';
 import {
+  clearBirthMarker,
   createPersonalityRegistry,
   DefinitionChangedError,
   type DescribedPersonality,
@@ -57,10 +76,12 @@ import {
   notComparedLine,
   type PermissionDiff,
   permissionSurface,
+  setConfigYamlScalars,
 } from '@ethosagent/personalities';
 import { redactString } from '@ethosagent/safety-redact';
 import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
 import {
+  AMENDMENT_TARGET_FILES,
   type AmendmentActor,
   type AmendmentEvidence,
   type AmendmentFlag,
@@ -70,7 +91,10 @@ import {
   type AmendmentSubmitInput,
   type AmendmentSubmitPort,
   type AmendmentSubmitResult,
+  type AmendmentTarget,
   type ExecutionPosture,
+  type IdentityAmendmentOp,
+  isToolsetAmendmentOp,
   type Logger,
   type PersonalityConfig,
   type PersonalityRegistry,
@@ -164,6 +188,25 @@ export interface AmendmentIntakeDeps {
 const refuse = (reason: string): AmendmentSubmitResult => ({ ok: false, reason });
 
 /**
+ * What {@link gateRefusal} reads. A `ToolContext` satisfies it, and so does a
+ * `PromptContext` (the fields `assembleContext` copies from `RunOptions`,
+ * packages/core/src/agent-loop/stages/context-assembly.ts) — so the birth-ritual
+ * injector (`createBirthRitualInjector`, ./birth-ritual.ts) applies the SAME
+ * gate the filing does, before the model is ever told about the ritual.
+ */
+export type AmendmentGateContext = Pick<
+  ToolContext,
+  | 'personalityId'
+  | 'initiator'
+  | 'roomAudience'
+  | 'sessionKey'
+  | 'jobId'
+  | 'reviewOfJobId'
+  | 'agentId'
+  | 'dryRun'
+>;
+
+/**
  * Check 1 (D23): a person started this turn, in a private room, on the owner's
  * CLI or cookie-authenticated web app, as a top-level foreground turn.
  *
@@ -175,7 +218,7 @@ const refuse = (reason: string): AmendmentSubmitResult => ({ ok: false, reason }
  * The key-prefix check is the second lock: it drops gateway DMs (owner DMs are
  * v1.1) and `acp:`, which mesh peers open.
  */
-export function gateRefusal(ctx: ToolContext): string | null {
+export function gateRefusal(ctx: AmendmentGateContext): string | null {
   if (!ctx.personalityId) return 'this turn has no personality to amend';
   if (ctx.initiator !== 'user') return 'only a turn a person started can file an amendment';
   if (ctx.roomAudience !== 'private')
@@ -226,10 +269,17 @@ export function gateRefusal(ctx: ToolContext): string | null {
  * is its own. The only rows skipped are the framework's own refusals
  * (`isFrameworkRefusal`), which carry no tool output and are the evidence
  * check 6 accepts.
+ *
+ * The birth-ritual injector (`createBirthRitualInjector`, ./birth-ritual.ts)
+ * calls this same function with the turn's `PromptContext`, which carries no
+ * attachments list: the turn's own message is already stored by then, with
+ * its `<attachments>` annotation or content blocks (`assembleContext`,
+ * packages/core/src/agent-loop/stages/context-assembly.ts), so the history
+ * scan sees it.
  */
 export async function taintRefusal(
   deps: Pick<AmendmentIntakeDeps, 'sessions' | 'tools'>,
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'sessionId' | 'attachments'>,
 ): Promise<string | null> {
   if ((ctx.attachments?.list().length ?? 0) > 0) return AMENDMENT_TAINT_REFUSAL;
   const history = (await deps.sessions.getMessages(ctx.sessionId)).filter(
@@ -330,7 +380,9 @@ function opsRefusal(
   tools: AmendmentIntakeDeps['tools'],
   ops: readonly AmendmentOp[],
 ): string | null {
-  for (const { tool } of ops) {
+  for (const op of ops) {
+    if (!isToolsetAmendmentOp(op)) continue;
+    const { tool } = op;
     if (tool.startsWith('mcp__')) return `MCP tools are not amendable (${tool})`;
     const registered = tools.get(tool);
     if (!registered) return `no tool named ${tool} is registered`;
@@ -388,8 +440,112 @@ function isShellTool(tool: string): boolean {
 }
 
 /** Where `writeDefinitionBytes` writes: the directory of the personality's SOUL.md. */
-function toolsetPathOf(config: PersonalityConfig): string | null {
-  return config.soulFile ? join(dirname(config.soulFile), 'toolset.yaml') : null;
+function definitionPathOf(
+  config: PersonalityConfig,
+  file: 'toolset.yaml' | 'config.yaml' = 'toolset.yaml',
+): string | null {
+  return config.soulFile ? join(dirname(config.soulFile), file) : null;
+}
+
+/**
+ * The `config.yaml` keys each identity op sets. The avatar op sets none:
+ * `display.avatar_url` and the bytes behind it are written by
+ * `FilePersonalityRegistry.writeAvatar` and removed by `deleteAvatar` (the web
+ * avatar routes, apps/web-api/src/routes/personality-avatar.ts), never by an
+ * amendment — removing the line here would orphan the stored image.
+ * - `generated` keeps the generated mark, so it is refused while an avatar is
+ *   set (`avatarRefusal`), never applied by deleting it;
+ * - `upload` is the owner's to do after applying.
+ */
+function identityUpdates(ops: readonly IdentityAmendmentOp[]): Record<string, string | null> {
+  const updates: Record<string, string | null> = {};
+  for (const op of ops) {
+    if (op.op === 'set_name') updates.name = op.value;
+    else if (op.op === 'set_description') updates.description = op.value;
+    else if (op.op === 'set_display_emoji') updates['display.emoji'] = op.value;
+  }
+  return updates;
+}
+
+/** A non-empty `display.avatar_url` line (quotes stripped, as the loader reads it). */
+function hasAvatarUrl(configBytes: string): boolean {
+  const value = /^display\.avatar_url:[ \t]*(.*)$/m.exec(configBytes)?.[1]?.trim() ?? '';
+  return value.replace(/^(["'])(.*)\1$/, '$2').length > 0;
+}
+
+/**
+ * `set_display_avatar: generated` over a personality that already has an
+ * avatar: the operator chose that image (the web create forms may attach one),
+ * so the ritual keeps it by leaving the avatar op out; removing it is the
+ * owner's, from the web Personalities page. Pinned by 'birth ritual — the
+ * avatar step (M3)' in __tests__/birth-ritual.test.ts.
+ */
+function avatarRefusal(ops: readonly IdentityAmendmentOp[], liveBytes: string): string | null {
+  const generated = ops.some((o) => o.op === 'set_display_avatar' && o.value === 'generated');
+  return generated && hasAvatarUrl(liveBytes)
+    ? "this personality already has an avatar; leave set_display_avatar out to keep it (the owner removes it from the web Personalities page), or use 'upload' to replace it"
+    : null;
+}
+
+/**
+ * The target's after-bytes from its live bytes, or the refusal as text. The
+ * ONE function filing, review, apply, crash recovery and rollback use, so all
+ * of them compute the same bytes and `expectedAfterHash` from the same inputs.
+ * - `toolset` — `applyOps` (@ethosagent/learning-inbox).
+ * - `identity` — `canonicalizeIdentityOps` (the values, the emoji through
+ *   `isSingleEmojiGrapheme`), `avatarRefusal`, then `setConfigYamlScalars`
+ *   (@ethosagent/personalities), which leaves every other line of
+ *   `config.yaml` byte for byte. Unlike a toolset `no_op`, a request that
+ *   changes no line is accepted: it CONFIRMS the identity as it is — the
+ *   name the operator typed at create time, or an upload-only request — and
+ *   applying it ends a birth ritual like any other identity change
+ *   (`clearBirthOnIdentity`). Pinned by 'accepts confirming the identity
+ *   as-is' in __tests__/birth-ritual.test.ts.
+ */
+function applyTargetOps(
+  target: AmendmentTarget,
+  liveBytes: string | null,
+  ops: readonly AmendmentOp[],
+):
+  | { ok: true; ops: AmendmentOp[]; afterBytes: string; toolset?: string[] }
+  | { ok: false; reason: string } {
+  if (target === 'toolset') {
+    const applied = applyOps(liveBytes, ops);
+    if (!applied.ok) return { ok: false, reason: describeOpsRefusal(applied) };
+    return { ok: true, ops: applied.ops, afterBytes: applied.afterBytes, toolset: applied.after };
+  }
+  const canonical = canonicalizeIdentityOps(ops);
+  if (!canonical.ok) return { ok: false, reason: describeIdentityOpsRefusal(canonical) };
+  if (!liveBytes) return { ok: false, reason: 'config.yaml is missing' };
+  const avatar = avatarRefusal(canonical.ops, liveBytes);
+  if (avatar) return { ok: false, reason: avatar };
+  const afterBytes = setConfigYamlScalars(liveBytes, identityUpdates(canonical.ops));
+  return { ok: true, ops: canonical.ops, afterBytes };
+}
+
+/**
+ * The personality the constitution judges after a change. For `identity`, the
+ * name, description and display lines are set; `enforceConstitution`
+ * (extensions/constitution/src/index.ts) reads the toolset, network allow
+ * list, budget and mounts, none of which an identity op touches, so an
+ * identity change can never be the cause of a violation — the check still
+ * runs, over the same path, so a live violation refuses exactly as it does for
+ * a toolset change.
+ */
+function configAfter(
+  config: PersonalityConfig,
+  target: AmendmentTarget,
+  applied: { ops: readonly AmendmentOp[]; toolset?: string[] },
+): PersonalityConfig {
+  if (target === 'toolset') return { ...config, toolset: applied.toolset ?? config.toolset };
+  const next: PersonalityConfig = { ...config };
+  for (const op of applied.ops) {
+    if (isToolsetAmendmentOp(op)) continue;
+    if (op.op === 'set_name') next.name = op.value;
+    else if (op.op === 'set_description') next.description = op.value;
+    else if (op.op === 'set_display_emoji') next.display = { ...next.display, emoji: op.value };
+  }
+  return next;
 }
 
 /**
@@ -402,7 +558,7 @@ function toolsetPathOf(config: PersonalityConfig): string | null {
  * personality. A personality with no SOUL.md path cannot be located, so it is
  * not user-owned either.
  */
-function isUserOwned(config: PersonalityConfig, dataDir: string): boolean {
+export function isUserOwned(config: PersonalityConfig, dataDir: string): boolean {
   return config.soulFile?.startsWith(`${join(dataDir, 'personalities')}${sep}`) ?? false;
 }
 
@@ -423,8 +579,10 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
       if (taint) return refuse(taint);
 
       // 3. Opt-in: the LIVE toolset.yaml declares a toolset and lists this tool.
+      //    The same opt-in for both targets.
+      const target: AmendmentTarget = input.target ?? 'toolset';
       const config = deps.personalities.get(personalityId);
-      const toolsetPath = config ? toolsetPathOf(config) : null;
+      const toolsetPath = config ? definitionPathOf(config) : null;
       if (!config || !toolsetPath) return refuse(`personality ${personalityId} was not found`);
       const liveBytes = await deps.storage.read(toolsetPath);
       if (!liveBytes || parseToolsetYaml(liveBytes).length === 0) {
@@ -443,11 +601,15 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
         );
       }
 
-      // 5. Ops.
-      const registryRefusal = opsRefusal(deps.tools, input.ops);
-      if (registryRefusal) return refuse(registryRefusal);
-      const applied = applyOps(liveBytes, input.ops);
-      if (!applied.ok) return refuse(describeOpsRefusal(applied));
+      // 5. Ops, against the target's live file (`toolset.yaml` was read above).
+      const targetPath = join(dirname(toolsetPath), AMENDMENT_TARGET_FILES[target]);
+      const targetBytes = target === 'toolset' ? liveBytes : await deps.storage.read(targetPath);
+      if (target === 'toolset') {
+        const registryRefusal = opsRefusal(deps.tools, input.ops);
+        if (registryRefusal) return refuse(registryRefusal);
+      }
+      const applied = applyTargetOps(target, targetBytes, input.ops);
+      if (!applied.ok) return refuse(applied.reason);
 
       // 6. Evidence.
       const evidence = await collectEvidence(
@@ -467,8 +629,10 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
       }
       try {
         // The bytes the ops were checked against must still be live.
-        const lockedBytes = await deps.storage.read(toolsetPath);
-        if (lockedBytes !== liveBytes) return refuse('the toolset changed while filing; try again');
+        const lockedBytes = await deps.storage.read(targetPath);
+        if (lockedBytes !== targetBytes) {
+          return refuse(`${AMENDMENT_TARGET_FILES[target]} changed while filing; try again`);
+        }
 
         const hashOfOps = opsHash(applied.ops);
         const limits = await checkPendingLimits(
@@ -493,7 +657,7 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
         let preCheck: AmendmentPreCheck = 'ok';
         try {
           // A clone: `enforceConstitution` clamps `budgetCapUsd` in place.
-          const after = { ...structuredClone(config), toolset: applied.after };
+          const after = configAfter(structuredClone(config), target, applied);
           enforceConstitution({
             constitution: constitution.constitution,
             personalities: [after],
@@ -511,8 +675,9 @@ export function createAmendmentIntake(deps: AmendmentIntakeDeps): AmendmentSubmi
           deps.dataDir,
           {
             personalityId,
+            target,
             ops: applied.ops,
-            baseHash: hashDefinitionBytes(liveBytes),
+            baseHash: hashDefinitionBytes(targetBytes ?? ''),
             rationale: input.rationale,
             evidence,
             provenance: {
@@ -636,9 +801,11 @@ export interface AmendmentServiceDeps {
 /** What `get` shows a reviewer. Everything but `record` is recomputed from live state. */
 export interface AmendmentReview {
   record: AmendmentRecord;
+  /** The definition file the record's target writes (`AMENDMENT_TARGET_FILES`). */
+  file: 'toolset.yaml' | 'config.yaml';
   /** The personality still loads and is user-owned (the only kind apply writes). */
   personality: 'ok' | 'not_found' | 'builtin';
-  /** The live `toolset.yaml` bytes; `null` when the file (or the personality) is gone. */
+  /** The live bytes of {@link file}; `null` when the file (or the personality) is gone. */
   liveBytes: string | null;
   liveHash: string | null;
   /** The live file is not the bytes the proposal was filed against — apply would go `stale`. */
@@ -651,7 +818,7 @@ export interface AmendmentReview {
    * (`recoverInterruptedApply`), so it can be rolled back.
    */
   interruptedApply: boolean;
-  /** `applyOps` on the LIVE bytes; `null` when the ops no longer apply (`opsProblem`). */
+  /** `applyTargetOps` on the LIVE bytes; `null` when the ops no longer apply (`opsProblem`). */
   afterBytes: string | null;
   opsProblem?: string;
   /**
@@ -659,13 +826,14 @@ export interface AmendmentReview {
    * value apply must be handed (G2-5). `null` when there is nothing to apply.
    */
   expectedAfterHash: string | null;
-  /** Line diff of `toolset.yaml`, live → after: each line prefixed `' '`, `'-'` or `'+'`. */
+  /** Line diff of {@link file}, live → after: each line prefixed `' '`, `'-'` or `'+'`. */
   textDiff: string[];
   /**
    * For an `applied` record: the line diff a rollback would make, live → the
    * prior snapshot. Empty when there is nothing to roll back or no snapshot.
    */
   rollbackDiff: string[];
+  /** The toolset target's permission diff; `null` for an identity change, which grants nothing. */
   permissionDiff: PermissionDiff | null;
   /** `Not compared: …` — printed beside the permission diff (D27). */
   notCompared: string;
@@ -775,27 +943,31 @@ function parseAppliedMarker(raw: string, amendmentId: string): AppliedMarker | n
   };
 }
 
+/** The definition file a record's target writes. */
+function fileOf(record: Pick<AmendmentRecord, 'target'>): 'toolset.yaml' | 'config.yaml' {
+  return AMENDMENT_TARGET_FILES[record.target];
+}
+
 type ConstitutionOutcome =
   | { kind: 'ok' }
   | { kind: 'violation'; reason: string }
   | { kind: 'malformed'; error: string };
 
 /**
- * The constitution over a CLONE of `config` with `toolset` swapped in —
- * `enforceConstitution` clamps `budgetCapUsd` in place, and the registry hands
- * out live references (G2-3).
+ * The constitution over a CLONE of `config` — `enforceConstitution` clamps
+ * `budgetCapUsd` in place, and the registry hands out live references (G2-3).
+ * Callers pass the after-state (`configAfter`).
  */
 async function checkConstitution(
   deps: Pick<AmendmentServiceDeps, 'storage' | 'dataDir' | 'workingDir' | 'log'>,
   config: PersonalityConfig,
-  toolset: string[],
 ): Promise<ConstitutionOutcome> {
   const constitution = await loadConstitution(deps.storage, deps.dataDir);
   if (constitution.status === 'malformed') return { kind: 'malformed', error: constitution.error };
   try {
     enforceConstitution({
       constitution: constitution.constitution,
-      personalities: [{ ...structuredClone(config), toolset }],
+      personalities: [structuredClone(config)],
       ethosHome: deps.dataDir,
       workingDir: deps.workingDir,
       log: deps.log,
@@ -807,7 +979,7 @@ async function checkConstitution(
   return { kind: 'ok' };
 }
 
-/** Longest-common-subsequence line diff; `toolset.yaml` is a short list, so O(n·m) is fine. */
+/** Longest-common-subsequence line diff; `toolset.yaml` and `config.yaml` are short, so O(n·m) is fine. */
 function lineDiff(before: string, after: string): string[] {
   const a = before === '' ? [] : before.replace(/\n$/, '').split('\n');
   const b = after === '' ? [] : after.replace(/\n$/, '').split('\n');
@@ -862,12 +1034,16 @@ export function amendmentFlags(input: {
 }): AmendmentFlag[] {
   const { record, tools } = input;
   const flags = new Set<AmendmentFlag>();
-  for (const { op, tool } of record.ops) {
-    if (op === 'add_tool' && tools.get(tool)?.isAvailable?.() === false) {
+  for (const op of record.ops) {
+    if (op.op === 'add_tool' && tools.get(op.tool)?.isAvailable?.() === false) {
       flags.add('tool-unavailable');
     }
   }
-  if (record.evidence.length === 0) flags.add('no-recorded-refusal');
+  // Evidence is a refused tool call — it is what a TOOLSET request cites. An
+  // identity request has none to cite, so its absence flags nothing.
+  if (record.target === 'toolset' && record.evidence.length === 0) {
+    flags.add('no-recorded-refusal');
+  }
   const recordedLocalShell =
     record.provenance.executionPosture === 'local' && record.provenance.holdsShellTool;
   const liveLocalShell =
@@ -881,8 +1057,11 @@ export function amendmentFlags(input: {
 }
 
 /** Where the live file is — recomputed from the personality id on every call, never read from a record (G2-8). */
-function liveToolsetPath(described: DescribedPersonality): string | null {
-  return toolsetPathOf(described.config);
+function livePath(
+  described: DescribedPersonality,
+  record: Pick<AmendmentRecord, 'target'>,
+): string | null {
+  return definitionPathOf(described.config, fileOf(record));
 }
 
 /** The review service. See the section header above. */
@@ -919,7 +1098,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
   > {
     const registry = await deps.loadPersonalities();
     const described = registry.describe(record.personalityId);
-    const path = described ? liveToolsetPath(described) : null;
+    const path = described ? livePath(described, record) : null;
     if (!described || !path) {
       return {
         ok: false,
@@ -961,12 +1140,14 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
   ): Promise<AppliedMarker | null> {
     if (liveHash === null) return null;
     const raw = await deps.storage.read(amendmentAppliedPath(deps.dataDir, record.id));
-    const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, record.id));
+    const prior = await deps.storage.read(
+      amendmentPriorPath(deps.dataDir, record.id, fileOf(record)),
+    );
     if (raw === null || prior === null) return null;
     const marker = parseAppliedMarker(raw, record.id);
     if (!marker || marker.afterHash !== liveHash) return null;
     if (hashDefinitionBytes(prior) !== record.baseHash) return null;
-    const after = applyOps(prior, record.ops);
+    const after = applyTargetOps(record.target, prior, record.ops);
     if (!after.ok || hashDefinitionBytes(after.afterBytes) !== liveHash) return null;
     const siblings = await listAmendments(deps.storage, deps.dataDir, {
       personalityId: record.personalityId,
@@ -1022,7 +1203,33 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         recovered: true,
       },
     });
+    await clearBirthOnIdentity(record);
     return { ok: true, record: next };
+  }
+
+  /**
+   * An applied identity amendment ends the personality's birth ritual
+   * (plan personality-presence-and-initiative §1): its marker is removed.
+   * Housekeeping, not the guarantee — it runs AFTER the record is `applied`,
+   * and `createBirthRitualInjector` (./birth-ritual.ts) is silent for any
+   * personality with an `applied` identity amendment whether or not the
+   * marker is gone. So a failure here is logged and swallowed: the apply
+   * succeeded, and reporting it as failed would invite a second one. Pinned by
+   * 'reports a successful apply as applied when clearing the marker throws'
+   * and 'stays silent once an identity amendment is applied, even if the
+   * marker survived' in __tests__/birth-ritual.test.ts.
+   */
+  async function clearBirthOnIdentity(record: AmendmentRecord): Promise<void> {
+    if (record.target !== 'identity') return;
+    try {
+      await clearBirthMarker(deps.storage, deps.dataDir, record.personalityId);
+    } catch (err) {
+      deps.log.warn('amendment applied, but its birth marker could not be removed', {
+        amendmentId: record.id,
+        personalityId: record.personalityId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Why a `pending` record no longer applies to the live bytes, or null when it still does. */
@@ -1032,12 +1239,16 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
     liveHash: string | null,
   ): string | null {
     if (liveBytes === null || liveHash !== record.baseHash) {
-      return 'toolset.yaml changed since this amendment was filed';
+      return `${fileOf(record)} changed since this amendment was filed`;
     }
     const registryProblem = opsRefusal(deps.tools, record.ops);
     if (registryProblem) return registryProblem;
-    const after = applyOps(liveBytes, record.ops);
-    return after.ok ? null : describeOpsRefusal(after);
+    const after = applyTargetOps(record.target, liveBytes, record.ops);
+    return after.ok ? null : after.reason;
+  }
+
+  async function readOrNull(path: string | null): Promise<string | null> {
+    return path ? deps.storage.read(path) : null;
   }
 
   async function markStale(
@@ -1064,12 +1275,13 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
       if (!record) return null;
       const registry = await deps.loadPersonalities();
       const described = registry.describe(record.personalityId);
-      const path = described ? liveToolsetPath(described) : null;
+      const path = described ? livePath(described, record) : null;
       const liveBytes = path ? await deps.storage.read(path) : null;
       const liveHash = liveBytes === null ? null : hashDefinitionBytes(liveBytes);
       const open = record.status === 'pending' || record.status === 'stale';
       const review: AmendmentReview = {
         record,
+        file: fileOf(record),
         personality: !described || !path ? 'not_found' : described.builtin ? 'builtin' : 'ok',
         liveBytes,
         liveHash,
@@ -1083,15 +1295,23 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         notCompared: notComparedLine(),
         flags: [],
       };
-      const liveToolset = liveBytes === null ? [] : parseToolsetYaml(liveBytes);
+      // The toolset the flags judge: the target's own bytes for a toolset
+      // request, the live `toolset.yaml` (unchanged by it) for an identity one.
+      const toolsetBytes =
+        record.target === 'toolset'
+          ? liveBytes
+          : described
+            ? await readOrNull(definitionPathOf(described.config))
+            : null;
+      const liveToolset = toolsetBytes === null ? [] : parseToolsetYaml(toolsetBytes);
       let afterToolset: string[] = liveToolset;
       if (described && open) {
         const registryProblem = opsRefusal(deps.tools, record.ops);
-        const after = applyOps(liveBytes, record.ops);
+        const after = applyTargetOps(record.target, liveBytes, record.ops);
         if (registryProblem) review.opsProblem = registryProblem;
-        else if (!after.ok) review.opsProblem = describeOpsRefusal(after);
+        else if (!after.ok) review.opsProblem = after.reason;
         if (after.ok && !registryProblem) {
-          afterToolset = after.after;
+          afterToolset = after.toolset ?? liveToolset;
           review.afterBytes = after.afterBytes;
           review.expectedAfterHash = expectedAfterHash(
             record.baseHash,
@@ -1099,14 +1319,18 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             after.afterBytes,
           );
           review.textDiff = lineDiff(liveBytes ?? '', after.afterBytes);
-          review.permissionDiff = diffPermissionSurface(
-            permissionSurface({ ...described.config, toolset: liveToolset }),
-            permissionSurface({ ...described.config, toolset: after.after }),
-          );
+          if (after.toolset) {
+            review.permissionDiff = diffPermissionSurface(
+              permissionSurface({ ...described.config, toolset: liveToolset }),
+              permissionSurface({ ...described.config, toolset: after.toolset }),
+            );
+          }
         }
       }
       if (record.status === 'applied' && liveBytes !== null) {
-        const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, record.id));
+        const prior = await deps.storage.read(
+          amendmentPriorPath(deps.dataDir, record.id, fileOf(record)),
+        );
         if (prior !== null) review.rollbackDiff = lineDiff(liveBytes, prior);
       }
       review.flags = amendmentFlags({
@@ -1145,7 +1369,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
 
         // 4. The reviewer approved exactly these bytes (G2-5) — checked before
         //    anything is recorded, so a mismatched hash changes no status.
-        const after = applyOps(liveBytes, record.ops);
+        const after = applyTargetOps(record.target, liveBytes, record.ops);
         if (
           !after.ok ||
           expectedAfterHash(record.baseHash, opsHash(after.ops), after.afterBytes) !==
@@ -1162,14 +1386,22 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         //    the ops still name registered, toolset-gated tools.
         const stale = staleReason(record, liveBytes, liveHash);
         if (stale || liveBytes === null || liveHash === null) {
-          return markStale(record, opts.decidedBy, opts.actor, stale ?? 'toolset.yaml is missing');
+          return markStale(
+            record,
+            opts.decidedBy,
+            opts.actor,
+            stale ?? `${fileOf(record)} is missing`,
+          );
         }
 
         // 6. The constitution. A violation the LIVE definition already has is
         //    not this change's doing — often a `${CWD}` rule read from the
         //    reviewer's working directory — so it refuses and records nothing;
         //    only a violation the delta introduces auto-rejects.
-        const constitution = await checkConstitution(deps, described.config, after.after);
+        const constitution = await checkConstitution(
+          deps,
+          configAfter(described.config, record.target, after),
+        );
         if (constitution.kind === 'malformed') {
           return {
             ok: false,
@@ -1178,7 +1410,12 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           };
         }
         if (constitution.kind === 'violation') {
-          const live = await checkConstitution(deps, described.config, parseToolsetYaml(liveBytes));
+          const live = await checkConstitution(
+            deps,
+            record.target === 'toolset'
+              ? { ...described.config, toolset: parseToolsetYaml(liveBytes) }
+              : described.config,
+          );
           if (live.kind !== 'ok') {
             return {
               ok: false,
@@ -1210,7 +1447,10 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         //    `pending` over untouched live bytes, and a retry proceeds; a crash
         //    after the write is completed by the next apply or refresh.
         const afterHash = hashDefinitionBytes(after.afterBytes);
-        await deps.storage.writeAtomic(amendmentPriorPath(deps.dataDir, id), liveBytes);
+        await deps.storage.writeAtomic(
+          amendmentPriorPath(deps.dataDir, id, fileOf(record)),
+          liveBytes,
+        );
         const appliedMarker: AppliedMarker = {
           amendmentId: id,
           personalityId: record.personalityId,
@@ -1229,7 +1469,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
         try {
           await registry.writeDefinitionBytes(
             record.personalityId,
-            'toolset.yaml',
+            fileOf(record),
             after.afterBytes,
             {
               expectedHash: record.baseHash,
@@ -1241,7 +1481,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             record,
             opts.decidedBy,
             opts.actor,
-            'toolset.yaml changed while applying; nothing was written',
+            `${fileOf(record)} changed while applying; nothing was written`,
           );
         }
 
@@ -1266,6 +1506,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             appliedHash: afterHash,
           },
         });
+        await clearBirthOnIdentity(record);
         return { ok: true, record: next };
       });
     },
@@ -1290,7 +1531,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
               ok: false,
               code: 'not_pending',
               reason:
-                `an earlier apply of ${id} already wrote toolset.yaml; run apply to record it, ` +
+                `an earlier apply of ${id} already wrote ${fileOf(record)}; run apply to record it, ` +
                 'then rollback to undo it',
             };
           }
@@ -1332,26 +1573,26 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             ok: false,
             code: 'live_edited',
             reason:
-              'toolset.yaml changed since this amendment was applied (a later amendment or an ' +
-              'edit); roll that back first',
+              `${fileOf(record)} changed since this amendment was applied (a later amendment or ` +
+              'an edit); roll that back first',
           };
         }
         // The snapshot lives in the amendment's own directory (by id); its
         // hash must be the base the proposal was filed against.
-        const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, id));
+        const prior = await deps.storage.read(amendmentPriorPath(deps.dataDir, id, fileOf(record)));
         if (prior === null || hashDefinitionBytes(prior) !== record.baseHash) {
           return {
             ok: false,
             code: 'prior_missing',
-            reason: `the prior toolset.yaml snapshot for ${id} is missing or does not match`,
+            reason: `the prior ${fileOf(record)} snapshot for ${id} is missing or does not match`,
           };
         }
         // The record binds the two ends (C5): its ops are the canonical ops it
         // was filed with, and they turn the prior snapshot into exactly the
         // bytes this apply wrote. A record or snapshot edited on disk fails
         // here, so rollback restores only what this amendment replaced.
-        const canonical = canonicalizeOps(record.ops);
-        const replayed = applyOps(prior, record.ops);
+        const canonical = canonicalizeAmendmentOps(record.target, record.ops);
+        const replayed = applyTargetOps(record.target, prior, record.ops);
         if (
           !canonical.ok ||
           opsHash(canonical.ops) !== record.opsHash ||
@@ -1364,10 +1605,13 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
             reason: `amendment ${id} does not match the bytes it applied, so nothing was rolled back`,
           };
         }
+        // An identity rollback restores lines the constitution never reads
+        // (`configAfter`), so the live definition stands in for the prior one.
         const constitution = await checkConstitution(
           deps,
-          described.config,
-          parseToolsetYaml(prior),
+          record.target === 'toolset'
+            ? { ...described.config, toolset: parseToolsetYaml(prior) }
+            : described.config,
         );
         if (constitution.kind === 'malformed') {
           return {
@@ -1384,7 +1628,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           };
         }
         try {
-          await registry.writeDefinitionBytes(record.personalityId, 'toolset.yaml', prior, {
+          await registry.writeDefinitionBytes(record.personalityId, fileOf(record), prior, {
             expectedHash: appliedHash,
           });
         } catch (err) {
@@ -1392,7 +1636,7 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
           return {
             ok: false,
             code: 'live_edited',
-            reason: 'toolset.yaml changed while rolling back; nothing was written',
+            reason: `${fileOf(record)} changed while rolling back; nothing was written`,
           };
         }
         const next = await transitionAmendment(
@@ -1435,4 +1679,65 @@ export function createAmendmentService(deps: AmendmentServiceDeps): AmendmentSer
       });
     },
   };
+}
+
+/** The decline reason {@link retireDeletedPersonality} records. */
+export const PERSONALITY_DELETED_REASON = 'personality deleted';
+
+/**
+ * After a personality is deleted through an operator path (the web delete RPC,
+ * `PersonalitiesService.delete` in apps/web-api), retire what it left under
+ * `learning/`: every `pending` or `stale` amendment filed for its id goes to
+ * `declined` with reason {@link PERSONALITY_DELETED_REASON}, and its birth
+ * marker is removed. Without this, a personality later created with the same
+ * id inherits them — a proposal written for the old one could be applied to
+ * it, and a leftover marker would restart a ritual it never asked for.
+ *
+ * Applied, declined and rolled-back records stay as history. An `applied`
+ * identity record cannot end the NEW personality's ritual, because the
+ * injector counts only records filed after the current marker
+ * (`createBirthRitualInjector`, ./birth-ritual.ts).
+ *
+ * Declines run under the amendment lock ({@link acquireAmendmentLock}), so no
+ * filing, apply or decline interleaves. Pinned by 'birth ritual — a deleted
+ * personality leaves nothing behind' in __tests__/birth-ritual.test.ts.
+ */
+export async function retireDeletedPersonality(opts: {
+  storage: Storage;
+  dataDir: string;
+  personalityId: string;
+  actor: AmendmentActor;
+  decidedBy: string;
+  /** Injectable for tests; defaults to {@link acquireAmendmentLock}. */
+  acquireLock?: (dataDir: string) => Promise<() => void>;
+  now?: () => number;
+}): Promise<{ declined: string[]; markerCleared: boolean }> {
+  const { storage, dataDir, personalityId } = opts;
+  const release = await (opts.acquireLock ?? acquireAmendmentLock)(dataDir);
+  const declined: string[] = [];
+  try {
+    const open = await listAmendments(storage, dataDir, {
+      personalityId,
+      status: ['pending', 'stale'],
+    });
+    for (const record of open) {
+      await transitionAmendment(
+        storage,
+        dataDir,
+        record.id,
+        {
+          to: 'declined',
+          actor: opts.actor,
+          decidedBy: opts.decidedBy,
+          reason: PERSONALITY_DELETED_REASON,
+        },
+        opts.now,
+      );
+      declined.push(record.id);
+    }
+  } finally {
+    release();
+  }
+  const markerCleared = await clearBirthMarker(storage, dataDir, personalityId);
+  return { declined, markerCleared };
 }

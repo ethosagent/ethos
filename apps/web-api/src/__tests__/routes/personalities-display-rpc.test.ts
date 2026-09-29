@@ -138,4 +138,36 @@ describe('personalities RPC — display.avatar_url', () => {
     expect(res.status).toBe(200);
     expect(await avatarUrlOf(res)).toBe('/avatars/aria.svg');
   });
+
+  // plan personality-presence-and-initiative §2 — the `emoji` sub-key.
+  async function displayOf(res: Response) {
+    const body = (await res.json()) as { json: { personality: unknown } };
+    const parsed = PersonalitySchema.safeParse(body.json.personality);
+    if (!parsed.success) throw new Error(`personality failed contract parse: ${parsed.error}`);
+    return parsed.data.display;
+  }
+
+  it('an update carrying display.emoji persists it beside the avatar and returns both', async () => {
+    expect(
+      (await call('create', { id: 'aria', name: 'Aria', toolset: [], soulMd: '# Aria\n' })).status,
+    ).toBe(200);
+    expect(
+      (await call('update', { id: 'aria', display: { avatar_url: '/avatars/aria.svg' } })).status,
+    ).toBe(200);
+
+    const res = await call('update', { id: 'aria', display: { emoji: '🦉' } });
+    expect(res.status).toBe(200);
+    expect(await displayOf(res)).toEqual({ avatar_url: '/avatars/aria.svg', emoji: '🦉' });
+
+    const cleared = await call('update', { id: 'aria', display: { emoji: '' } });
+    expect(await displayOf(cleared)).toEqual({ avatar_url: '/avatars/aria.svg' });
+  });
+
+  it('refuses a display.emoji that is not one emoji with a 400', async () => {
+    expect(
+      (await call('create', { id: 'aria', name: 'Aria', toolset: [], soulMd: '# Aria\n' })).status,
+    ).toBe(200);
+    const res = await call('update', { id: 'aria', display: { emoji: 'ab' } });
+    expect(res.status).toBe(400);
+  });
 });

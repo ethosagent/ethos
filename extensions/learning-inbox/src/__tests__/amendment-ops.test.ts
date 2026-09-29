@@ -6,6 +6,7 @@ import { parseToolsetYaml, renderToolsetYaml } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   applyOps,
+  canonicalizeIdentityOps,
   canonicalizeOps,
   expectedAfterHash,
   MAX_AMENDMENT_OPS,
@@ -176,5 +177,92 @@ describe('hashes', () => {
     expect(expectedAfterHash(sha256Hex('other'), ops, after)).not.toBe(h);
     expect(expectedAfterHash(base, opsHash([{ op: 'add_tool', tool: 'x' }]), after)).not.toBe(h);
     expect(expectedAfterHash(base, ops, `${after}- terminal\n`)).not.toBe(h);
+  });
+});
+
+// M2 — a name or vibe line may carry no character a reviewer cannot see. The
+// emoji op keeps its own validator (`isSingleEmojiGrapheme`).
+describe('canonicalizeIdentityOps — invisible characters', () => {
+  const INVISIBLE: ReadonlyArray<readonly [string, string]> = [
+    ['a Unicode tag character (U+E0041)', String.fromCodePoint(0xe0041)],
+    ['the tag cancel character (U+E007F)', String.fromCodePoint(0xe007f)],
+    ['the reserved tag block start (U+E0000, unassigned)', String.fromCodePoint(0xe0000)],
+    ['a soft hyphen (U+00AD)', '\u00ad'],
+    ['a function application (U+2061)', '\u2061'],
+    ['an invisible separator (U+2063)', '\u2063'],
+    ['an Arabic letter mark (U+061C)', '\u061c'],
+    ['a Mongolian vowel separator (U+180E)', '\u180e'],
+    ['an interlinear annotation anchor (U+FFF9)', '\ufff9'],
+    ['a private-use character (U+E000)', '\ue000'],
+    ['a supplementary private-use character (U+F0000)', String.fromCodePoint(0xf0000)],
+    ['an unassigned code point (U+0378)', '\u0378'],
+    ['a lone high surrogate', '\ud800'],
+    ['a lone low surrogate', '\udc00'],
+    ['a zero-width space (U+200B)', '\u200b'],
+    ['a right-to-left override (U+202E)', '\u202e'],
+    ['a variation selector VS1 (U+FE00)', '\ufe00'],
+    ['the text-presentation selector VS15 (U+FE0E)', '\ufe0e'],
+    ['the emoji-presentation selector VS16 (U+FE0F)', '\ufe0f'],
+    ['a supplementary variation selector (U+E0100)', String.fromCodePoint(0xe0100)],
+    ['the last supplementary variation selector (U+E01EF)', String.fromCodePoint(0xe01ef)],
+    ['a Hangul choseong filler (U+115F)', '\u115f'],
+    ['a Hangul jungseong filler (U+1160)', '\u1160'],
+    ['a Hangul filler (U+3164)', '\u3164'],
+    ['a halfwidth Hangul filler (U+FFA0)', '\uffa0'],
+    ['a braille blank (U+2800)', '\u2800'],
+    ['a combining long stroke overlay (U+0336) on a letter', 'a\u0336'],
+    ['a combining tilde overlay (U+0334) on a letter', 'a\u0334'],
+    ['a combining long solidus overlay (U+0338) on a letter', 'a\u0338'],
+    ['a combining mark after a space', ' \u0301'],
+    ['a combining mark after a digit', '1\u0301'],
+    ['a combining mark after punctuation', '-\u0301'],
+    ['an enclosing keycap mark after a digit', '1\u20e3'],
+    ['a stack of four combining marks on a letter', 'a\u0301\u0302\u0303\u0304'],
+  ];
+
+  for (const op of ['set_name', 'set_description'] as const) {
+    it.each(INVISIBLE)(`refuses ${op} carrying %s`, (_label, ch) => {
+      const result = canonicalizeIdentityOps([{ op, value: `No${ch}va` }]);
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_value', op });
+    });
+  }
+
+  it('still accepts ordinary text, accents, CJK and an emoji in a vibe line', () => {
+    expect(
+      canonicalizeIdentityOps([
+        { op: 'set_name', value: 'Zoë 小龙' },
+        { op: 'set_description', value: 'Calm, curious — a little dry 🦉' },
+      ]),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('refuses a combining mark at the very start of the value', () => {
+    expect(canonicalizeIdentityOps([{ op: 'set_name', value: '\u0301Nova' }])).toMatchObject({
+      ok: false,
+      reason: 'invalid_value',
+    });
+  });
+
+  it.each([
+    ['a composed accent', 'Zoë Café'],
+    ['a decomposed accent', 'Zoe\u0308 Cafe\u0301'],
+    ['two stacked marks on a letter (Vietnamese, decomposed)', 'Vie\u0323\u0302t'],
+    ['Hindi with combining vowel signs and virama', 'शिक्षक मित्र'],
+    ['Hindi with two marks on one letter', 'कीं'],
+    ['CJK', '小龙'],
+    ['plain emoji text', 'Chef 🍳 and owl 🦉'],
+  ])('accepts %s in a name and a vibe', (_label, value) => {
+    expect(
+      canonicalizeIdentityOps([
+        { op: 'set_name', value },
+        { op: 'set_description', value },
+      ]),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('leaves the emoji op to its own validator: a ZWJ family emoji is still one emoji', () => {
+    expect(
+      canonicalizeIdentityOps([{ op: 'set_display_emoji', value: '👩\u200d👩\u200d👧' }]),
+    ).toMatchObject({ ok: true });
   });
 });

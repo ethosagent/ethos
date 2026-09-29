@@ -68,7 +68,9 @@ export function runWatcherWakeTurn(
  * path as `'private'`.
  */
 export function callCaptureWake(
-  wake: (event: WatcherWakeEvent) => Promise<void>,
+  wake: (event: WatcherWakeEvent) => Promise<unknown>,
 ): (event: Omit<WatcherWakeEvent, 'roomAudience'>) => Promise<void> {
-  return (event) => wake({ ...event, roomAudience: 'private' });
+  return async (event) => {
+    await wake({ ...event, roomAudience: 'private' });
+  };
 }

@@ -833,6 +833,15 @@ export {
   type ReplayAndResolveResult,
   type ReplayReport,
 } from '@ethosagent/learning-inbox';
+// plan personality-presence-and-initiative §1 — the birth marker, for the
+// CLI's `ethos personality birth skip` and `ethos personality create` (apps
+// reach extensions through wiring): the registry factory it creates through,
+// and `markPersonalityBorn` for the copies and scaffolds it did not write.
+export {
+  clearBirthMarker,
+  createPersonalityRegistry,
+  markPersonalityBorn,
+} from '@ethosagent/personalities';
 export {
   type A2aIdentityView,
   A2aPeeringError,
@@ -861,6 +870,8 @@ export {
   amendmentPersonalityLoader,
   createAmendmentIntake,
   createAmendmentService,
+  PERSONALITY_DELETED_REASON,
+  retireDeletedPersonality,
 } from './amendments';
 // plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
 export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';

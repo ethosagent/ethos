@@ -122,7 +122,6 @@ const UNDOCUMENTED_ETHOS_FIELDS = new Set([
   'memoryCharLimits',
   'memoryConsolidation',
   'modelCatalog',
-  'modelRegistry',
   'pauseClockCorrection',
   'pauseLifecycle',
   'personalitiesConfig',
@@ -145,7 +144,6 @@ const UNDOCUMENTED_ETHOS_FIELDS = new Set([
 
 const UNDOCUMENTED_PERSONALITY_FIELDS = new Set([
   'decisions',
-  'display',
   'dreaming',
   'evolution_approval_mode',
   'memory',

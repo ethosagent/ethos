@@ -114,6 +114,15 @@ export interface DraftStreamerOptions {
    * `hasDelivered`); inverting it would ripple for no gain.
    */
   delivery?: DeliveryBinding;
+  /**
+   * Puts the bot's reply prefix in front of every draft body (plan
+   * personality-presence-and-initiative §3) — the first chunk and every
+   * intermediate edit. `composeBody` is the one place a draft body is built,
+   * so the prefix lands exactly once per body. `finalize()` takes text the
+   * gateway already prefixed (`applyReplyPrefix`), so the terminal edit, its
+   * ledger row and its dedup record match the draft. Absent = bodies as-is.
+   */
+  prefixBody?: (body: string) => string;
   /** Minimum ms between successive edits (the first send is never throttled). */
   minEditIntervalMs?: number;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -145,6 +154,7 @@ export class DraftStreamer {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onFloodDisable: (() => void) | undefined;
+  private readonly prefixBody: ((body: string) => string) | undefined;
 
   private messageId: string | undefined;
   private latestText = '';
@@ -167,6 +177,7 @@ export class DraftStreamer {
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.onFloodDisable = opts.onFloodDisable;
+    this.prefixBody = opts.prefixBody;
   }
 
   /** True once at least one draft message has been delivered. */
@@ -275,10 +286,12 @@ export class DraftStreamer {
 
   private composeBody(): string {
     const base = closeUnbalancedMarkup(this.latestText).trimEnd();
-    if (this.progressLine) {
-      return base.length > 0 ? `${base}\n_${this.progressLine}_` : `_${this.progressLine}_`;
-    }
-    return base;
+    const body = this.progressLine
+      ? base.length > 0
+        ? `${base}\n_${this.progressLine}_`
+        : `_${this.progressLine}_`
+      : base;
+    return body && this.prefixBody ? this.prefixBody(body) : body;
   }
 
   private async maybeFlush(): Promise<void> {

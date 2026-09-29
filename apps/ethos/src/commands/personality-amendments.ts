@@ -1,6 +1,9 @@
 // `ethos personality amendments` — the owner's side of governed self-amendment
 // (plan personality-memory-boundary-and-self-amendment G2, D30–D32). The v1
-// apply surface: the web view is read-only.
+// apply surface: the web view is read-only. A request changes `toolset.yaml`
+// (target `toolset`) or the identity lines of `config.yaml` (target `identity`,
+// the birth ritual's filing — plan personality-presence-and-initiative §1);
+// every message names the file `AmendmentReview.file` says.
 //
 //   ethos personality amendments list [--personality <id>] [--all] [--json]
 //   ethos personality amendments show <id> [--json]
@@ -29,6 +32,7 @@
 import { userInfo } from 'node:os';
 import { createInterface } from 'node:readline';
 import {
+  type AmendmentOp,
   type AmendmentRecord,
   type AmendmentStatus,
   EthosError,
@@ -69,10 +73,10 @@ const USAGE = [
   'Usage: ethos personality amendments <command>',
   '',
   '  list [--personality <id>] [--all] [--json]   requests waiting for you (--all: every status)',
-  '  show <id> [--json]                           permission diff, toolset.yaml diff, flags, history',
+  '  show <id> [--json]                           permission diff, file diff, flags, history',
   '  apply <id>                                   apply it (terminal only; type the personality id)',
   '  decline <id> --reason "<text>"               decline it (also closes a stale one)',
-  '  rollback <id>                                restore the toolset.yaml it replaced',
+  '  rollback <id>                                restore the file it replaced',
 ];
 
 /** Flags that take a value, so the value is never mistaken for the positional id. */
@@ -230,7 +234,7 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
     // it now (`AmendmentService.refresh`). Nothing new is written.
     const done = settled(id, await deps.service.refresh(id, by));
     deps.out(
-      `${c.green}✓${c.reset} Recorded ${cleanLine(id)} as applied: an earlier apply had already written ${cleanLine(done.personalityId)}'s toolset.yaml.`,
+      `${c.green}✓${c.reset} Recorded ${cleanLine(id)} as applied: an earlier apply had already written ${cleanLine(done.personalityId)}'s ${review.file}.`,
     );
     deps.out(`${c.dim}Undo with: ethos personality amendments rollback ${id}${c.reset}`);
     return;
@@ -250,7 +254,7 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
     throw new EthosError({
       code: 'CONFIG_CONFLICT',
       cause: review.stale
-        ? `Amendment ${cleanLine(id)} is stale: ${cleanLine(record.personalityId)}'s toolset.yaml changed since it was filed`
+        ? `Amendment ${cleanLine(id)} is stale: ${cleanLine(record.personalityId)}'s ${review.file} changed since it was filed`
         : `Amendment ${cleanLine(id)} no longer applies: ${cleanLine(review.opsProblem ?? 'nothing to change')}`,
       action: `Close it with: ethos personality amendments decline ${id} --reason "<text>"`,
       details: { status: refreshed.ok ? refreshed.record.status : refreshed.record?.status },
@@ -265,8 +269,15 @@ async function apply(id: string, deps: AmendmentsCliDeps): Promise<void> {
   if (!result.ok && result.code === 'hash_mismatch') await deps.service.refresh(id, by);
   const done = settled(id, result);
   deps.out(
-    `${c.green}✓${c.reset} Applied ${cleanLine(id)} to ${cleanLine(done.personalityId)}'s toolset.yaml. Other processes pick it up on their next turn.`,
+    `${c.green}✓${c.reset} Applied ${cleanLine(id)} to ${cleanLine(done.personalityId)}'s ${review.file}. Other processes pick it up on their next turn.`,
   );
+  if (done.ops.some((o) => o.op === 'set_display_avatar' && o.value === 'upload')) {
+    // The personality never supplies an image: `upload` leaves config.yaml
+    // alone and the owner uploads one (only `writeAvatar` sets avatar_url).
+    deps.out(
+      `  Upload the avatar from the web Personalities page for ${cleanLine(done.personalityId)}; until then it shows the generated mark.`,
+    );
+  }
   deps.out(`${c.dim}Undo with: ethos personality amendments rollback ${id}${c.reset}`);
 }
 
@@ -308,11 +319,11 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
   );
   deps.out(`  Undoes: ${opsLabel(record)}`);
   deps.out(
-    `  Restores the toolset.yaml saved when it was applied (${cleanLine(record.applied?.at ?? '?')}).`,
+    `  Restores the ${review.file} saved when it was applied (${cleanLine(record.applied?.at ?? '?')}).`,
   );
-  deps.out('  Refused if toolset.yaml was edited since, or the constitution forbids the result.');
+  deps.out(`  Refused if ${review.file} was edited since, or the constitution forbids the result.`);
   deps.out('');
-  deps.out(`  ${c.bold}toolset.yaml${c.reset} (live → restored)`);
+  deps.out(`  ${c.bold}${review.file}${c.reset} (live → restored)`);
   if (review.rollbackDiff.length === 0) {
     deps.out(`    ${c.dim}(no saved snapshot — rollback will refuse)${c.reset}`);
   }
@@ -323,7 +334,7 @@ async function rollback(id: string, deps: AmendmentsCliDeps): Promise<void> {
   const result = await deps.service.rollback(id, { actor: 'cli', decidedBy: deps.decidedBy });
   const done = settled(id, result);
   deps.out(
-    `${c.green}✓${c.reset} Rolled back ${cleanLine(id)}; ${cleanLine(done.personalityId)}'s toolset.yaml is restored.`,
+    `${c.green}✓${c.reset} Rolled back ${cleanLine(id)}; ${cleanLine(done.personalityId)}'s ${review.file} is restored.`,
   );
 }
 
@@ -341,36 +352,44 @@ function printReview(review: AmendmentReview, deps: AmendmentsCliDeps): void {
       `  ${c.yellow}${c.bold}! this personality can already edit its own definition — this review is not a boundary for it.${c.reset}`,
     );
     out(
-      `  ${c.dim}  It holds a shell tool under local execution, so it can change toolset.yaml or run this command itself.${c.reset}`,
+      `  ${c.dim}  It holds a shell tool under local execution, so it can change ${review.file} or run this command itself.${c.reset}`,
     );
   }
   if (review.stale) {
     out(
-      `  ${c.yellow}Stale: toolset.yaml changed since this was filed — apply will refuse.${c.reset}`,
+      `  ${c.yellow}Stale: ${review.file} changed since this was filed — apply will refuse.${c.reset}`,
     );
   }
   if (review.interruptedApply) {
     out(
-      `  ${c.yellow}An earlier apply was interrupted after it wrote toolset.yaml. Run apply to record it.${c.reset}`,
+      `  ${c.yellow}An earlier apply was interrupted after it wrote ${review.file}. Run apply to record it.${c.reset}`,
     );
   }
   if (review.opsProblem)
     out(`  ${c.yellow}No longer applies: ${cleanLine(review.opsProblem)}${c.reset}`);
   out('');
-  out(`  ${c.bold}Permission diff${c.reset}`);
-  const changes = review.permissionDiff?.changes ?? [];
-  if (changes.length === 0) out(`    ${c.dim}(no permission row changes)${c.reset}`);
-  for (const change of changes) {
-    const colour =
-      change.direction === 'widens' ? c.red : change.direction === 'narrows' ? c.green : c.yellow;
-    const flag = change.flag ? `  ${c.bold}[${change.flag}]${c.reset}` : '';
+  if (record.target === 'toolset') {
+    out(`  ${c.bold}Permission diff${c.reset}`);
+    const changes = review.permissionDiff?.changes ?? [];
+    if (changes.length === 0) out(`    ${c.dim}(no permission row changes)${c.reset}`);
+    for (const change of changes) {
+      const colour =
+        change.direction === 'widens' ? c.red : change.direction === 'narrows' ? c.green : c.yellow;
+      const flag = change.flag ? `  ${c.bold}[${change.flag}]${c.reset}` : '';
+      out(
+        `    ${colour}${change.direction.toUpperCase().padEnd(7)}${c.reset} ${cleanLine(change.section)}: ${cleanLine(change.detail)}${flag}`,
+      );
+    }
+    out(`    ${c.dim}${cleanLine(review.notCompared)}${c.reset}`);
+  } else {
+    // An identity change sets how the personality presents itself; it grants
+    // no tool, reach or permission (`applyTargetOps`, packages/wiring).
     out(
-      `    ${colour}${change.direction.toUpperCase().padEnd(7)}${c.reset} ${cleanLine(change.section)}: ${cleanLine(change.detail)}${flag}`,
+      `  ${c.bold}Permission diff${c.reset}  ${c.dim}none — an identity change grants nothing${c.reset}`,
     );
   }
-  out(`    ${c.dim}${cleanLine(review.notCompared)}${c.reset}`);
   out('');
-  out(`  ${c.bold}toolset.yaml${c.reset}`);
+  out(`  ${c.bold}${review.file}${c.reset}`);
   if (review.textDiff.length === 0) out(`    ${c.dim}(no diff — see above)${c.reset}`);
   for (const line of review.textDiff) out(`    ${diffColour(line)}${cleanLine(line)}${c.reset}`);
   out('');
@@ -434,10 +453,26 @@ function nextStep(review: AmendmentReview): string | null {
   }
 }
 
+/** `+ terminal, - web_fetch`, or `name → "Ledger", emoji → 🧾, avatar → generated mark`. */
 function opsLabel(record: Pick<AmendmentRecord, 'ops'>): string {
-  return cleanLine(
-    record.ops.map((o) => `${o.op === 'add_tool' ? '+' : '-'} ${o.tool}`).join(', '),
-  );
+  return cleanLine(record.ops.map(opLabel).join(', '));
+}
+
+function opLabel(o: AmendmentOp): string {
+  switch (o.op) {
+    case 'add_tool':
+      return `+ ${o.tool}`;
+    case 'remove_tool':
+      return `- ${o.tool}`;
+    case 'set_name':
+      return `name → "${o.value}"`;
+    case 'set_description':
+      return `vibe → "${o.value}"`;
+    case 'set_display_emoji':
+      return `emoji → ${o.value}`;
+    case 'set_display_avatar':
+      return o.value === 'upload' ? 'avatar → upload after applying' : 'avatar → generated mark';
+  }
 }
 
 function diffColour(line: string): string {
@@ -518,16 +553,17 @@ const ACTION_ERROR_CODES: Record<AmendmentActionCode, EthosErrorCode> = {
 
 const ACTION_HINTS: Partial<Record<AmendmentActionCode, string>> = {
   stale: 'The definition changed under it. Close it with decline; the personality can file again.',
-  hash_mismatch: 'toolset.yaml changed after the review was printed. Run show again, then apply.',
+  hash_mismatch:
+    'The definition file changed after the review was printed. Run show again, then apply.',
   auto_rejected: 'The constitution forbids the result. Nothing was written.',
   constitution_violation:
     'The constitution forbids the result, or the current definition already. Nothing was written.',
   constitution_malformed: 'Fix ~/.ethos/constitution.yaml, then retry.',
   live_edited:
-    'toolset.yaml was edited after the apply; roll back later amendments first, or edit it by hand.',
+    'The definition file was edited after the apply; roll back later amendments first, or edit it by hand.',
   locked: 'Another amendment operation is running. Retry in a moment.',
   record_mismatch:
-    'The stored amendment or its snapshot was edited on disk. Restore toolset.yaml by hand.',
+    'The stored amendment or its snapshot was edited on disk. Restore the definition file by hand.',
 };
 
 /** The record an action settled on, or the `EthosError` for its refusal. */

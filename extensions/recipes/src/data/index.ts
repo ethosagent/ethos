@@ -3,6 +3,7 @@
 // array in the table test. No filesystem discovery, no user-authored recipes.
 
 import type { RecipeBundle } from '../schema';
+import { heartbeat } from './heartbeat';
 import { linkArchiver } from './link-archiver';
 import { morningBriefing } from './morning-briefing';
 import { obsidianSecondBrain } from './obsidian-second-brain';
@@ -13,6 +14,7 @@ export const RECIPES: readonly RecipeBundle[] = [
   obsidianSecondBrain,
   linkArchiver,
   webWatchdog,
+  heartbeat,
 ];
 
-export { linkArchiver, morningBriefing, obsidianSecondBrain, webWatchdog };
+export { heartbeat, linkArchiver, morningBriefing, obsidianSecondBrain, webWatchdog };

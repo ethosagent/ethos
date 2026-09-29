@@ -44,6 +44,7 @@ import {
   listPendingExpressionCandidates,
   type PrivateChatSet,
   resolveCharacterSheetDecisions,
+  retireDeletedPersonality,
   submitExpressionCandidate,
   turnWasShared,
 } from '@ethosagent/wiring';
@@ -665,6 +666,18 @@ export class PersonalitiesService {
     return { personality: await this.wire(created) };
   }
 
+  /**
+   * `create`, as a birth (plan personality-presence-and-initiative §1): the
+   * create RPC's path (`personalitiesRouter.create` — the web create form and
+   * the new-agent dialog), not a recipe install's. The new personality gets a
+   * birth marker and runs the birth ritual in its first private conversation
+   * (`FilePersonalityRegistry.create` with `birth`).
+   */
+  async createBorn(input: CreatePersonalityInput): Promise<{ personality: Personality }> {
+    const created = await this.opts.personalities.create(input, { birth: true });
+    return { personality: await this.wire(created) };
+  }
+
   async update(id: string, patch: UpdatePersonalityPatch): Promise<{ personality: Personality }> {
     const updated = await this.opts.personalities.update(id, patch);
     return { personality: await this.wire(updated) };
@@ -741,8 +754,28 @@ export class PersonalitiesService {
     await this.opts.personalities.writeToolsConfig(id, config);
   }
 
+  /**
+   * Delete a user personality, then retire what it left under `learning/`:
+   * its birth marker and its pending/stale amendments (declined, reason
+   * `personality deleted`) — `retireDeletedPersonality` in
+   * packages/wiring/src/amendments.ts — so a later personality with the same
+   * id starts clean. Needs `storage` and `dataDir`; without them (tests) only
+   * the directory is removed. Pinned by 'PersonalitiesService.delete — what
+   * the personality left under learning/' in
+   * __tests__/services/personalities.service.test.ts.
+   */
   async delete(id: string): Promise<void> {
     await this.opts.personalities.deletePersonality(id);
+    const { storage, dataDir } = this.opts;
+    if (storage && dataDir) {
+      await retireDeletedPersonality({
+        storage,
+        dataDir,
+        personalityId: id,
+        actor: 'web',
+        decidedBy: 'web',
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1369,8 +1402,13 @@ function toWire(
         }
       : {}),
     ...(c.memory?.provider !== undefined ? { memory: { provider: c.memory.provider } } : {}),
-    ...(c.display?.avatar_url !== undefined
-      ? { display: { avatar_url: c.display.avatar_url } }
+    ...(c.display?.avatar_url !== undefined || c.display?.emoji !== undefined
+      ? {
+          display: {
+            ...(c.display.avatar_url !== undefined ? { avatar_url: c.display.avatar_url } : {}),
+            ...(c.display.emoji !== undefined ? { emoji: c.display.emoji } : {}),
+          },
+        }
       : {}),
     ...(c.nightly !== undefined ? { nightly: c.nightly } : {}),
     // Every sub-key the editor writes, echoed back so it can populate its form.

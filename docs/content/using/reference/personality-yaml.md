@@ -1,10 +1,10 @@
 ---
 title: "Personality config reference"
-description: "Every field in a personality's config.yaml and toolset.yaml — model, fs_reach, MCP, plugins, budget, voice, safety."
+description: "Every field in a personality's config.yaml and toolset.yaml — model, fs_reach, MCP, plugins, budget, voice, display, safety."
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -435,6 +435,28 @@ Notes:
 - Call-look precedence, resolved in one function (`resolveCallTreatment` in `packages/types/src/personality.ts`) so every surface agrees: `voice.call_style` > a concrete `display.call_style` > derived from the personality id. `display.call_style: personality` is the default and is not a pin — it defers to the derivation.
 - Confirm what parsed with `ethos personality show <id>` — it emits a `## Voice` block, and omits the section entirely when the personality declares no `voice` block. Its `Call look` line names the derived treatment when the key is unset, because there is no blank state to report.
 
+## display.\* {#display}
+
+Type: dotted block · Default: unset (every surface draws the generated mark)
+
+How this personality looks where its name is shown. Both keys are sub-keys of one identity block, so they do not move `.personality-field-count`. Parsed by `buildDisplayConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts); the type is `PersonalityConfig.display` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts).
+
+| Field | Type | Description |
+|---|---|---|
+| `display.avatar_url` | string | URL of a served or uploaded avatar image. Set by the avatar upload on the web Personalities page (`FilePersonalityRegistry.writeAvatar`). Unset, or an image that fails to load, falls back to the generated mark. |
+| `display.emoji` | string | Exactly one emoji: a pictograph (with an optional skin tone or VS16, or a ZWJ sequence such as a family), a country or subdivision flag, or a keycap. Shown beside the name in the CLI chat header, the TUI, the character sheet and the web identity rows; it never replaces the generated mark. Also the default receipt reaction and the `{emoji}` placeholder of a channel [reply prefix](./config-yaml.md#reply-prefix). Checked by `isSingleEmojiGrapheme` ([`packages/types/src/display-emoji.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/display-emoji.ts)). Editable in the web Personalities tab, next to the avatar. |
+
+```yaml
+display.emoji: 🦉
+display.avatar_url: /api/personalities/scout/avatar
+```
+
+Notes:
+
+- An invalid `display.emoji` (`🦉🦉`, `ab`, a pasted sentence, anything over 32 UTF-16 code units) is dropped with a load warning, and the personality still loads. `ethos personality show <id>` prints the warning as `⚠ …`. A save through the web editor or `FilePersonalityRegistry.update` refuses it instead.
+- `display.emoji: ''` in an update clears the value, the same convention as `avatar_url`.
+- A new personality's [birth ritual](../how-to/run-a-birth-ritual.md) can propose an emoji. It reaches this file only when you apply the request.
+
 ## mcp_export.\* {#mcp-export}
 
 Type: dotted block · Default: unset (not exported). Lets `ethos mcp serve --personality <id>` export this personality as one `ask` tool — walkthrough in [Use Ethos as an MCP server](../how-to/use-as-mcp-server.md). Parsed by `buildMcpExportConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts). A value outside a key's vocabulary is ignored and the fail-closed default stands — `expose_memory: Scoped` resolves to `none`.
@@ -488,7 +510,7 @@ Notes:
 
 - An empty file (or one with only comments) means the personality runs with no external tools. The file may be omitted entirely for an internal-only personality.
 - Tools the personality requests but does not list are rejected by `DefaultToolRegistry` and returned to the LLM as `is_error: true` so the Anthropic tool-result contract remains intact.
-- Listing `propose_self_amendment` lets the personality file a request to add or remove entries in this file. The request waits for you; nothing changes until you run `ethos personality amendments apply <id>` in a terminal. A personality that does not list the tool is never offered it, and a built-in cannot file. Source: [`extensions/tools-personality-design/src/propose-amendment.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-personality-design/src/propose-amendment.ts). Applying a request rewrites the file as a plain list, dropping comments; the review shows this first. Walkthrough: [Review a personality's change request](../how-to/review-personality-change-requests.md).
+- Listing `propose_self_amendment` lets the personality file a request to add or remove entries in this file, or to change its `name`, `description` and `display.emoji` in `config.yaml` (an identity request, which is how a [birth ritual](../how-to/run-a-birth-ritual.md) ends). The request waits for you; nothing changes until you run `ethos personality amendments apply <id>` in a terminal. `ethos personality create` and the web create form add the tool to a new personality's declared toolset for its birth ritual; a toolset left empty is not changed. A personality that does not list the tool is never offered it, and a built-in cannot file. Source: [`extensions/tools-personality-design/src/propose-amendment.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-personality-design/src/propose-amendment.ts). Applying a request rewrites the file as a plain list, dropping comments; the review shows this first. Walkthrough: [Review a personality's change request](../how-to/review-personality-change-requests.md).
 
 ## SOUL.md {#ethos-md}
 

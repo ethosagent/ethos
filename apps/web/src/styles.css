@@ -1988,6 +1988,11 @@ body,
   letter-spacing: -0.005em;
 }
 
+/* `display.emoji` before a personality's name (components/ui/PersonalityName.tsx). */
+.personality-emoji {
+  margin-right: 0.35em;
+}
+
 .personality-bar-model {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;

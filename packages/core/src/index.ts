@@ -112,6 +112,8 @@ export type { ChannelModeDecision, ChannelModeInputs } from './channel-mode';
 export { evaluateChannelMode } from './channel-mode';
 export type { ChannelModeParser, ChannelOverrideEntry } from './channel-overrides';
 export { ChannelOverrideStore } from './channel-overrides';
+export type { ChannelPresence, ChannelPresenceResolver } from './channel-presence';
+export { mentionsPersonalityName } from './channel-presence';
 export {
   isSharedSession,
   PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,

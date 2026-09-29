@@ -139,6 +139,46 @@ describe('amendment round trip', () => {
     expect(await readAmendment(storage, DATA, record.id)).toBeNull();
   });
 
+  // plan personality-presence-and-initiative §1 — identity records.
+  it('stores an identity record with canonical ops and re-validates it on read', async () => {
+    const record = await created({
+      target: 'identity',
+      baseHash: sha256Hex('name: nova\n'),
+      ops: [
+        { op: 'set_display_emoji', value: '🦉' },
+        { op: 'set_name', value: ' Nova ' },
+      ],
+    });
+    expect(record.target).toBe('identity');
+    expect(record.ops).toEqual([
+      { op: 'set_name', value: 'Nova' },
+      { op: 'set_display_emoji', value: '🦉' },
+    ]);
+    expect(await readAmendment(storage, DATA, record.id)).toEqual(record);
+
+    const path = amendmentProposalPath(DATA, record.id);
+    const stored = JSON.parse((await storage.read(path)) ?? '{}');
+    const forgeries: unknown[] = [
+      [{ op: 'set_display_emoji', value: 'owl' }],
+      [{ op: 'set_display_avatar', value: 'https://evil.example/a.png' }],
+      [{ op: 'set_name', value: 'A\nfs_reach.write: /' }],
+      [{ op: 'add_tool', tool: 'terminal' }],
+      [{ op: 'set_toolset', value: 'terminal' }],
+    ];
+    for (const ops of forgeries) {
+      await storage.write(path, JSON.stringify({ ...stored, ops }));
+      expect(await readAmendment(storage, DATA, record.id)).toBeNull();
+    }
+    // A toolset record carrying identity ops is refused the same way.
+    await storage.write(
+      path,
+      JSON.stringify({ ...stored, target: 'toolset', ops: [{ op: 'set_name', value: 'X' }] }),
+    );
+    expect(await readAmendment(storage, DATA, record.id)).toBeNull();
+    await storage.write(path, JSON.stringify({ ...stored, target: 'soul' }));
+    expect(await readAmendment(storage, DATA, record.id)).toBeNull();
+  });
+
   it('returns an empty list when the directory does not exist', async () => {
     expect(await listAmendments(storage, DATA)).toEqual([]);
   });

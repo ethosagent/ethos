@@ -8,6 +8,8 @@ export interface PickerPersonality {
   name: string;
   description?: string | null;
   avatarUrl?: string;
+  /** `display.emoji`, shown before the name. */
+  emoji?: string;
 }
 
 // Meta-personalities that should never start a chat — the same

@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: review-change-requests
 time: "10 min"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Task
@@ -15,7 +15,7 @@ Let a personality ask you for a tool it keeps needing, and decide on each reques
 ## Result
 
 - The personality files a request with `propose_self_amendment`, and it waits for you. Nothing changes on its own.
-- You read the exact `toolset.yaml` change and the permission diff before anything is written.
+- You read the exact file change and the permission diff before anything is written.
 - You apply, decline or roll back with `ethos personality amendments`, and the web **Learning** page shows the same requests read-only.
 
 ## Prereqs
@@ -58,7 +58,7 @@ The check reads the conversation's stored messages, so it does not see text that
 
 Read the rationale and evidence as the personality's claim either way.
 
-A request adds or removes toolset entries. Each personality holds at most 3 pending requests. A filing that your `~/.ethos/constitution.yaml` forbids is rejected on the spot and recorded as `auto_rejected`.
+A request is one of two kinds. A **toolset** request adds or removes entries in `toolset.yaml`. An **identity** request sets the personality's `name`, `description` and `display.emoji` in `config.yaml`; it grants nothing, so its review shows no permission rows. A new personality files one at the end of its [birth ritual](run-a-birth-ritual.md), and any personality holding the tool can file one later. Each personality holds at most 3 pending requests. A filing that your `~/.ethos/constitution.yaml` forbids is rejected on the spot and recorded as `auto_rejected`.
 
 When the personality files, the chat shows the id:
 
@@ -112,7 +112,7 @@ Every part is recomputed from the live files each time you run `show`:
 | Part | What to look for |
 |---|---|
 | Permission diff | `WIDENS` rows give the personality more reach. `[high-risk]` marks a tool that can run code, write files, spawn agents or create personalities. `[team-workflow]` marks the removal of a tool a team member needs to report its work. |
-| `toolset.yaml` | The exact bytes that will be written. Comments in the file are not kept. |
+| `toolset.yaml` or `config.yaml` | The exact bytes that will be written. A toolset apply does not keep comments in `toolset.yaml`. An identity apply changes only its own lines of `config.yaml` and leaves every other line as it was. |
 | Flags | `no-recorded-refusal`: no refused call was cited. `tool-unavailable`: the tool is not usable on this machine right now. |
 | Rationale, Evidence | The personality's own words. Read them as a claim, not as fact. |
 

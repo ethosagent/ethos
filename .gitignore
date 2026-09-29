@@ -55,3 +55,6 @@ packages/ui-components/src/**/*.js.map
 /discord/
 /telegram/
 /whatsapp/
+
+# vitest JSON-report artifact written by `pnpm test --reporter=json` (test-validator skills).
+.vitest/

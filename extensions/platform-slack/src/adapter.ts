@@ -6,7 +6,11 @@
 
 import type { RequestListener } from 'node:http';
 import { join } from 'node:path';
-import { ChannelOverrideStore } from '@ethosagent/core';
+import {
+  ChannelOverrideStore,
+  type ChannelPresenceResolver,
+  mentionsPersonalityName,
+} from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import type {
   AdapterCapabilities,
@@ -55,7 +59,7 @@ import {
   type SessionUnfurlReader,
 } from './events/links';
 import { registerMemberEvents } from './events/members';
-import { registerMessageEvents } from './events/messages';
+import { type EnvelopeMeta, registerMessageEvents } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
 import { type ApprovalActionPayload, handleApprovalAction } from './interactions/actions';
@@ -253,10 +257,19 @@ export interface SlackAdapterConfig {
   /**
    * Slack emoji name (no colons) set as a reaction on inbound messages to
    * acknowledge receipt, then cleared once the agent's reply has landed.
-   * Default `'eyes'` (👀). Requires the `reactions:write` bot scope; missing
+   * When set it wins over the bound personality's `display.emoji`; absent =
+   * that emoji's Slack name when known (`slackEmojiName`), else `'eyes'` (👀).
+   * Requires the `reactions:write` bot scope; missing
    * scope is swallowed silently so the bot still works without it.
    */
   receiptReaction?: string;
+  /**
+   * Count a channel message that names the bound personality (a whole word,
+   * case-insensitive — `mentionsPersonalityName` in `@ethosagent/core`) as a
+   * mention, exactly like an @mention. Opt-in; default `false`. The name comes
+   * from the presence resolver the gateway binds (`setPresenceResolver`).
+   */
+  mentionByName?: boolean;
   /** Logger for startup diagnostics. Defaults to a silent NoopLogger. */
   logger?: Logger;
   /**
@@ -386,6 +399,64 @@ function slackFailure(err: unknown): DeliveryResult {
   return isPermanentSlackError(err) ? { ok: false, error, permanent: true } : { ok: false, error };
 }
 
+/**
+ * Slack names for common emoji a personality might carry as `display.emoji`
+ * (plan personality-presence-and-initiative §3). Slack's reactions API takes
+ * a NAME, not a glyph, and publishes no glyph→name map for standard emoji, so
+ * a short table covers the likely identity marks; any glyph outside it falls
+ * back to `eyes`. Consulted only when no `receiptReaction` is configured. Keys are stored without the
+ * variation selector 16 (U+FE0F).
+ */
+const SLACK_EMOJI_NAMES: ReadonlyMap<string, string> = new Map([
+  ['👀', 'eyes'],
+  ['🦉', 'owl'],
+  ['🦊', 'fox_face'],
+  ['🐱', 'cat'],
+  ['🐶', 'dog'],
+  ['🐺', 'wolf'],
+  ['🐻', 'bear'],
+  ['🐼', 'panda_face'],
+  ['🦁', 'lion_face'],
+  ['🐯', 'tiger'],
+  ['🐙', 'octopus'],
+  ['🐢', 'turtle'],
+  ['🐝', 'bee'],
+  ['🦋', 'butterfly'],
+  ['🐧', 'penguin'],
+  ['🦅', 'eagle'],
+  ['🐉', 'dragon'],
+  ['🦄', 'unicorn_face'],
+  ['🤖', 'robot_face'],
+  ['🧙', 'mage'],
+  ['🧠', 'brain'],
+  ['🔥', 'fire'],
+  ['⭐', 'star'],
+  ['🌟', 'star2'],
+  ['✨', 'sparkles'],
+  ['🚀', 'rocket'],
+  ['💡', 'bulb'],
+  ['📚', 'books'],
+  ['📝', 'memo'],
+  ['🔍', 'mag'],
+  ['🎯', 'dart'],
+  ['🧭', 'compass'],
+  ['⚙', 'gear'],
+  ['🌱', 'seedling'],
+  ['🌙', 'crescent_moon'],
+  ['🌈', 'rainbow'],
+  ['❤', 'heart'],
+  ['👍', '+1'],
+  ['🎉', 'tada'],
+  ['🤔', 'thinking_face'],
+]);
+
+/** The Slack reaction name for `emoji`, or `undefined` when the table does
+ *  not know it (the caller then falls back to `eyes`). */
+export function slackEmojiName(emoji: string | undefined): string | undefined {
+  if (!emoji) return undefined;
+  return SLACK_EMOJI_NAMES.get(emoji.replace(/\uFE0F/g, ''));
+}
+
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter {
   readonly id: string;
   readonly displayName = 'Slack';
@@ -496,7 +567,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private typingProbed = false;
 
   /** Emoji name (no colons) for the inbound-receipt reaction. */
-  private readonly receiptReaction: string;
+  /** The operator's explicit `receiptReaction`; absent = not configured (the
+   *  personality's emoji, else `eyes`, applies — `addReceiptReaction`). */
+  private readonly receiptReaction: string | undefined;
 
   /** Long-answer snippet-fallback threshold; `<= 0` disables the fallback. */
   private readonly longReplyThresholdChars: number;
@@ -506,7 +579,14 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
    * don't clobber each other's tracked message ts. Value is the original
    * inbound message ts that carries the reaction.
    */
-  private readonly pendingReactions = new Map<string, string>();
+  /** Lane → the inbound `ts` reacted on and the emoji NAME used, so the
+   *  clear removes the reaction that was actually added. */
+  private readonly pendingReactions = new Map<string, { ts: string; name: string }>();
+  /** Who this bot speaks as per chat — bound by the gateway
+   *  (`Gateway.bindPresence`). Absent = the plain receipt reaction and no
+   *  mention-by-name. */
+  private presence?: ChannelPresenceResolver;
+  private readonly mentionByName: boolean;
   private readonly pendingReactionsMaxEntries = 1024;
 
   constructor(config: SlackAdapterConfig) {
@@ -594,7 +674,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
     this.cache = config.cache;
     this.botToken = config.botToken;
-    this.receiptReaction = config.receiptReaction ?? 'eyes';
+    this.receiptReaction = config.receiptReaction;
+    this.mentionByName = config.mentionByName ?? false;
     this.longReplyThresholdChars =
       config.longReplyThresholdChars ?? LONG_REPLY_CHUNK_MULTIPLE * this.maxMessageLength;
     this.logger = (config.logger ?? noopLogger).child({ component: 'slack' });
@@ -693,13 +774,14 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         backfillState: this.backfillState,
         users: this.users,
         ...(this.allowedBotIds ? { allowedBotIds: this.allowedBotIds } : {}),
+        mentionsByName: (channel, threadTs, text) => this.mentionsByName(channel, threadTs, text),
       },
       {
-        onEnvelope: (msg) => {
+        onEnvelope: (msg, meta) => {
           // Acknowledge receipt with an emoji reaction immediately, before
           // any attachment download or agent work. Matches Telegram's UX:
           // the user sees we got their message in <100 ms.
-          this.addReceiptReaction(msg);
+          this.addReceiptReaction(msg, meta);
 
           const raw = msg.raw as Record<string, unknown> | undefined;
           const files = raw?.files as RawSlackFile[] | undefined;
@@ -1290,13 +1372,32 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     return `${chatId}:${threadTs ?? 'top'}`;
   }
 
-  private addReceiptReaction(msg: InboundMessage): void {
+  /** Gateway hook (`Gateway.bindPresence`): who this bot speaks as per chat.
+   *  Read by the receipt reaction and by `mentionByName`. */
+  setPresenceResolver(resolve: ChannelPresenceResolver): void {
+    this.presence = resolve;
+  }
+
+  /** `mentionByName` (plan personality-presence-and-initiative §3): does this
+   *  channel message name the personality bound to its lane? Off unless
+   *  configured. Called by `triageMessage` for non-DM messages only. */
+  private mentionsByName(channel: string, threadTs: string | undefined, text: string): boolean {
+    if (!this.mentionByName) return false;
+    const name = this.presence?.(channel, threadTs)?.name;
+    return name ? mentionsPersonalityName(text, name) : false;
+  }
+
+  private addReceiptReaction(msg: InboundMessage, meta?: EnvelopeMeta): void {
     // An observed channel is one the operator told the agent to be silent in,
     // and a 👀 landing on every message in it is the bot answering — visibly,
     // to everyone in the channel, several hundred times a day. Silent means
     // silent (R11). The guard sits inside the method rather than at its one
     // call site so a second caller cannot reintroduce the noise.
     if (msg.recordOnly) return;
+    // Nor on a message that reached the bot only by naming the personality
+    // (`TriageResult.nameOnly`): the channel filter may still drop it — a
+    // non-allowlisted member saying the name — and nothing would clear it.
+    if (meta?.nameOnly) return;
     const ts = msg.messageId;
     if (!ts) return;
     const lane = this.reactionLaneKey(msg.chatId, msg.threadId);
@@ -1312,19 +1413,25 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       this.pendingReactions.delete(oldestKey);
     }
 
-    this.pendingReactions.set(lane, ts);
-    this.client.reactions
-      .add({ channel: msg.chatId, timestamp: ts, name: this.receiptReaction })
-      .catch(() => {});
+    // An explicit `receiptReaction` wins; else the bound personality's
+    // `display.emoji` when its Slack NAME is known (`slackEmojiName`); else
+    // `eyes` (plan personality-presence-and-initiative §3). Slack reacts by
+    // name only.
+    const name =
+      this.receiptReaction ??
+      slackEmojiName(this.presence?.(msg.chatId, msg.threadId)?.emoji) ??
+      'eyes';
+    this.pendingReactions.set(lane, { ts, name });
+    this.client.reactions.add({ channel: msg.chatId, timestamp: ts, name }).catch(() => {});
   }
 
   private clearReceiptReaction(chatId: string, threadTs: string | undefined): void {
     const lane = this.reactionLaneKey(chatId, threadTs);
-    const ts = this.pendingReactions.get(lane);
-    if (!ts) return;
+    const pending = this.pendingReactions.get(lane);
+    if (!pending) return;
     this.pendingReactions.delete(lane);
     this.client.reactions
-      .remove({ channel: chatId, timestamp: ts, name: this.receiptReaction })
+      .remove({ channel: chatId, timestamp: pending.ts, name: pending.name })
       .catch(() => {});
   }
 

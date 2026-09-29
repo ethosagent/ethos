@@ -664,3 +664,144 @@ describe('propose_self_amendment — constitution (check 7, G2-3)', () => {
     expect(recordSafetyApproval).not.toHaveBeenCalled();
   });
 });
+
+// plan personality-presence-and-initiative §1 — the identity target. Same
+// intake, same gate, same opt-in and built-in refusal; the ops set name,
+// description (the vibe line), display.emoji and the avatar choice in
+// config.yaml, and filing never writes it.
+describe('propose_self_amendment — identity target', () => {
+  const configOf = (id: string) =>
+    readFileSync(join(dataDir, 'personalities', id, 'config.yaml'), 'utf-8');
+
+  async function fileIdentity(ops: unknown[], c: ToolContext = ctx()) {
+    return intake.submit(
+      { target: 'identity', ops: ops as AmendmentOp[], rationale: 'the operator chose these' },
+      c,
+    );
+  }
+
+  it('files a pending identity record against the live config.yaml and writes nothing', async () => {
+    const result = await fileIdentity([
+      { op: 'set_display_emoji', value: '🦉' },
+      { op: 'set_name', value: 'Scout' },
+    ]);
+    expect(result).toMatchObject({ ok: true, status: 'pending', deduped: false });
+    const [record] = await amendments();
+    expect(record).toMatchObject({
+      target: 'identity',
+      baseHash: hashDefinitionBytes('name: scout\n'),
+      // Canonical order: name, description, emoji, avatar.
+      ops: [
+        { op: 'set_name', value: 'Scout' },
+        { op: 'set_display_emoji', value: '🦉' },
+      ],
+    });
+    expect(configOf('scout')).toBe('name: scout\n');
+    expect(toolsetOf('scout')).toBe(SCOUT_TOOLSET);
+  });
+
+  it('the tool files identity ops', async () => {
+    const registered = tools.get(PROPOSE_SELF_AMENDMENT_TOOL);
+    const result = await registered?.execute(
+      {
+        target: 'identity',
+        ops: [{ op: 'set_name', value: 'Scout' }],
+        rationale: 'my name',
+      },
+      ctx(),
+    );
+    expect(result?.ok && result.value).toMatch(/^Filed amendment a-/);
+    expect(configOf('scout')).toBe('name: scout\n');
+  });
+
+  it.each([
+    ['a malformed emoji (two emoji)', { op: 'set_display_emoji', value: '🦉🦊' }, /single emoji/],
+    ['a malformed emoji (text)', { op: 'set_display_emoji', value: 'owl' }, /single emoji/],
+    ['an empty name', { op: 'set_name', value: '   ' }, /set_name/],
+    ['a multi-line name', { op: 'set_name', value: 'A\nfs_reach.write: /' }, /set_name/],
+    ['a quoted name', { op: 'set_name', value: 'The "Owl"' }, /set_name/],
+    [
+      'an over-long vibe line',
+      { op: 'set_description', value: 'x'.repeat(201) },
+      /set_description/,
+    ],
+    ['an avatar URL', { op: 'set_display_avatar', value: 'https://evil.example/a.png' }, /avatar/],
+    ['a toolset op', { op: 'add_tool', tool: 'terminal' }, /invalid/],
+  ])('refuses %s and writes nothing', async (_label, op, reason) => {
+    const result = await fileIdentity([op]);
+    expect(result).toMatchObject({ ok: false, reason: expect.stringMatching(reason) });
+    expect(await amendments()).toEqual([]);
+  });
+
+  it('refuses two values for one field', async () => {
+    expect(
+      await fileIdentity([
+        { op: 'set_name', value: 'A' },
+        { op: 'set_name', value: 'B' },
+      ]),
+    ).toEqual({ ok: false, reason: 'set_name is given two different values' });
+    expect(await amendments()).toEqual([]);
+  });
+
+  // L1 — confirming the identity as-is is a valid end to a birth: the owner
+  // keeps the name they typed at create time, or only wants to upload.
+  it('files an identity request that leaves config.yaml as it is (a confirmation)', async () => {
+    expect(await fileIdentity([{ op: 'set_name', value: 'scout' }])).toMatchObject({
+      ok: true,
+      status: 'pending',
+    });
+    expect(await fileIdentity([{ op: 'set_display_avatar', value: 'upload' }])).toMatchObject({
+      ok: true,
+      status: 'pending',
+    });
+    expect(configOf('scout')).toBe('name: scout\n');
+  });
+
+  it.each([
+    [
+      'a Telegram turn',
+      { sessionKey: 'telegram:bot:42', platform: 'telegram' },
+      'amendments are filed only from the owner CLI or the web app',
+    ],
+    [
+      'a shared room',
+      { roomAudience: 'shared' as const },
+      'amendments are filed only from a private conversation',
+    ],
+    [
+      'a system turn',
+      { initiator: 'system' as const },
+      'only a turn a person started can file an amendment',
+    ],
+    ['a background job', { jobId: 'job-1' }, 'a background job cannot file an amendment'],
+    ['a job review turn', { reviewOfJobId: 'job-1' }, 'a job review turn cannot file an amendment'],
+    [
+      'a delegated sub-agent',
+      { agentId: 'depth:1' },
+      'a delegated sub-agent cannot file an amendment',
+    ],
+    ['a dry run', { dryRun: true }, 'a dry run cannot file an amendment'],
+  ])('keeps the gate: %s cannot file, with its reason', async (_label, over, reason) => {
+    expect(await fileIdentity([{ op: 'set_name', value: 'Scout' }], ctx(over))).toEqual({
+      ok: false,
+      reason,
+    });
+    expect(await amendments()).toEqual([]);
+  });
+
+  it('keeps the opt-in and the built-in refusal', async () => {
+    expect(
+      await fileIdentity([{ op: 'set_name', value: 'L' }], ctx({ personalityId: 'lurker' })),
+    ).toEqual({
+      ok: false,
+      reason: `this personality has not opted in (its toolset does not list ${PROPOSE_SELF_AMENDMENT_TOOL})`,
+    });
+    expect(
+      await fileIdentity([{ op: 'set_name', value: 'S' }], ctx({ personalityId: 'stock' })),
+    ).toEqual({
+      ok: false,
+      reason: 'stock is a built-in personality; duplicate it first and amend the copy',
+    });
+    expect(await amendments()).toEqual([]);
+  });
+});

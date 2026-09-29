@@ -22,6 +22,7 @@ function ctx(roomAudience?: TurnAudience): ToolContext {
     abortSignal: new AbortController().signal,
     emit: () => {},
     resultBudgetChars: 80_000,
+    initiator: 'user',
   };
 }
 

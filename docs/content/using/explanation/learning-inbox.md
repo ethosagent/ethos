@@ -4,7 +4,7 @@ description: "How Ethos measures a drafted skill or Expression change against fr
 kind: explanation
 audience: user
 slug: learning-inbox
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Context
@@ -132,12 +132,12 @@ The `learning.*` RPCs behind the Learning page (`apps/web-api/src/rpc/learning.t
 
 ### Definition changes are not candidates
 
-A personality that lists `propose_self_amendment` can ask to add or remove tools in its own `toolset.yaml`. That request is an *amendment*, not a candidate, and nothing on this page promotes it. It lives in its own directory, `~/.ethos/learning/amendments/`, which `listCandidates` never reads (`extensions/learning-inbox/src/store.ts`), so no replay, nightly pass or `evolution_approval_mode: auto` setting can apply it.
+A personality that lists `propose_self_amendment` can ask to add or remove tools in its own `toolset.yaml`, or to change its `name`, `description` and `display.emoji` in `config.yaml` (an identity request, which is how a new personality's [birth ritual](../how-to/run-a-birth-ritual.md) ends). That request is an *amendment*, not a candidate, and nothing on this page promotes it. It lives in its own directory, `~/.ethos/learning/amendments/`, which `listCandidates` never reads (`extensions/learning-inbox/src/store.ts`), so no replay, nightly pass or `evolution_approval_mode: auto` setting can apply it.
 
 | Surface | What you can do there |
 |---|---|
-| `ethos personality amendments` | `list`, `show` (permission diff, `toolset.yaml` diff, flags, history), `apply`, `decline --reason`, `rollback`. Apply and rollback need a terminal and the personality id typed back (`apps/ethos/src/commands/personality-amendments.ts`). |
-| Web dashboard, **Learning** page | A read-only **Definition changes** section: each pending request's permission diff, `toolset.yaml` diff, flags and the CLI command to run. No button applies anything (`apps/web/src/components/DefinitionChanges.tsx`). |
+| `ethos personality amendments` | `list`, `show` (permission diff, `toolset.yaml` or `config.yaml` diff, flags, history), `apply`, `decline --reason`, `rollback`. Apply and rollback need a terminal and the personality id typed back (`apps/ethos/src/commands/personality-amendments.ts`). |
+| Web dashboard, **Learning** page | A read-only **Definition changes** section: each pending request's permission diff, file diff, flags and the CLI command to run. An identity request that asks for an avatar upload says so. No button applies anything (`apps/web/src/components/DefinitionChanges.tsx`). |
 
 The `amendments.*` RPCs are cookie-only, like `learning.*`. Walkthrough: [Review a personality's change request](../how-to/review-personality-change-requests.md).
 

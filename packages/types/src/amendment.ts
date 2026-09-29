@@ -15,16 +15,59 @@ import type { ExecutionPosture } from './execution';
 import type { ToolContext } from './tool';
 
 /**
- * One change to a personality's `toolset.yaml`. v1 is toolset membership only
+ * One change to a personality's `toolset.yaml`: toolset membership only
  * (D24); `fs_reach` prefix ops are v1.1.
  */
-export interface AmendmentOp {
+export interface ToolsetAmendmentOp {
   op: 'add_tool' | 'remove_tool';
   tool: string;
 }
 
-/** What an amendment changes. v1: `toolset.yaml` only. */
-export type AmendmentTarget = 'toolset';
+/**
+ * The avatar a birth ritual settles on (plan personality-presence-and-initiative
+ * §1). The personality never supplies an image or a URL, and neither choice
+ * changes `config.yaml` (`identityUpdates`, packages/wiring/src/amendments.ts):
+ * - `generated` — keep the generated mark. Refused while `display.avatar_url`
+ *   is set (`avatarRefusal`, same file), so it never deletes an avatar the
+ *   operator chose; the ritual keeps one by leaving the avatar op out;
+ * - `upload` — the owner uploads one themselves after applying (web
+ *   Personalities page, `AvatarPicker`).
+ */
+export type IdentityAvatarChoice = 'generated' | 'upload';
+
+/**
+ * One change to a personality's identity lines in `config.yaml` (plan
+ * personality-presence-and-initiative §1): `name`, `description` (the one-line
+ * vibe), `display.emoji` and the avatar choice. Values are validated by
+ * `canonicalizeIdentityOps` (extensions/learning-inbox/src/amendment-ops.ts),
+ * the emoji with `isSingleEmojiGrapheme`.
+ */
+export type IdentityAmendmentOp =
+  | { op: 'set_name'; value: string }
+  | { op: 'set_description'; value: string }
+  | { op: 'set_display_emoji'; value: string }
+  | { op: 'set_display_avatar'; value: IdentityAvatarChoice };
+
+/** Any amendment op. A record's ops are all of its `target`'s kind. */
+export type AmendmentOp = ToolsetAmendmentOp | IdentityAmendmentOp;
+
+/**
+ * What an amendment changes: `toolset` → `toolset.yaml`, `identity` →
+ * `config.yaml` ({@link AMENDMENT_TARGET_FILES}).
+ */
+export type AmendmentTarget = 'toolset' | 'identity';
+
+/** The one definition file each target writes. */
+export const AMENDMENT_TARGET_FILES: Readonly<
+  Record<AmendmentTarget, 'toolset.yaml' | 'config.yaml'>
+> = {
+  toolset: 'toolset.yaml',
+  identity: 'config.yaml',
+};
+
+export function isToolsetAmendmentOp(op: AmendmentOp): op is ToolsetAmendmentOp {
+  return op.op === 'add_tool' || op.op === 'remove_tool';
+}
 
 /**
  * - `pending` — filed, waiting on the owner.
@@ -125,16 +168,21 @@ export interface AmendmentRecord {
   /** The filing personality — the only personality it can ever change (G2-2). */
   personalityId: string;
   target: AmendmentTarget;
-  /** Canonical: deduplicated, sorted by tool then op, no add+remove of one tool. */
+  /**
+   * Canonical, and all of `target`'s kind. Toolset: deduplicated, sorted by
+   * tool then op, no add+remove of one tool. Identity: one op per field, in
+   * the order name, description, emoji, avatar.
+   */
   ops: AmendmentOp[];
   /** sha256 of `JSON.stringify(ops)` over the canonical ops. */
   opsHash: string;
   /**
-   * sha256 of the live `toolset.yaml` at filing. Never null: a missing or
-   * empty `toolset.yaml` is an UNDECLARED toolset, which cannot opt in to
-   * filing, and `applyOps` refuses it — so there is no "no file" base. That is
-   * consistent with `writeDefinitionBytes`, whose compare-and-swap treats a
-   * missing file as a mismatch for every hash.
+   * sha256 of the target's live file at filing (`toolset.yaml` or
+   * `config.yaml`). Never null: a missing or empty `toolset.yaml` is an
+   * UNDECLARED toolset, which cannot opt in to filing, and `applyOps` refuses
+   * it — so there is no "no file" base; a missing `config.yaml` is refused as
+   * well. That is consistent with `writeDefinitionBytes`, whose
+   * compare-and-swap treats a missing file as a mismatch for every hash.
    */
   baseHash: string;
   /** ≤ 1000 chars. Untrusted text: rendered escaped, never put in a prompt. */
@@ -154,6 +202,8 @@ export interface AmendmentRecord {
 
 /** What the `propose_self_amendment` tool passes to its port. */
 export interface AmendmentSubmitInput {
+  /** Absent → `'toolset'`. */
+  target?: AmendmentTarget;
   ops: AmendmentOp[];
   rationale: string;
   /** Tool-call ids of refused calls in the current session. */

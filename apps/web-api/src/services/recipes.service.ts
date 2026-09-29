@@ -659,6 +659,7 @@ export class RecipesService {
           prompt: job.prompt,
           personalityId,
           ...(job.missedRunPolicy ? { missedRunPolicy: job.missedRunPolicy } : {}),
+          ...(job.activeHours ? { activeHours: job.activeHours } : {}),
           deliverTo: originFor(job, channelDeliverTo),
         });
         created.cronJobs.push(result.job.name);

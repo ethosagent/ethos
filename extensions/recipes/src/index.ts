@@ -5,7 +5,14 @@
 // injected world snapshot. Every write lives at the app layer (R2's
 // `recipes.service.ts`), so nothing in this package can install anything.
 
-export { linkArchiver, morningBriefing, obsidianSecondBrain, RECIPES, webWatchdog } from './data';
+export {
+  heartbeat,
+  linkArchiver,
+  morningBriefing,
+  obsidianSecondBrain,
+  RECIPES,
+  webWatchdog,
+} from './data';
 export {
   type PreflightBlocker,
   type PreflightNeedsInput,

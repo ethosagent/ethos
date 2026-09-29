@@ -7,6 +7,7 @@ import { railMembers, teamAccents } from '../features/teams/lib/membership';
 import { capitalize, extractTeamId, extractWorkspacePersonalityId } from '../lib/scopeNav';
 import { buildRailSwitchPath, buildTeamPath } from '../lib/workspaceRoutes';
 import { EthosMark } from './ui/EthosMark';
+import { personalityLabel } from './ui/PersonalityName';
 import { PersonalityRingAvatar } from './ui/PersonalityRingAvatar';
 import { TeamRing } from './ui/TeamRing';
 
@@ -76,12 +77,15 @@ export function AltitudeRail({ onOpenQuickCreate }: { onOpenQuickCreate: () => v
           {members.map((m) => {
             const p = byId.get(m.personalityId);
             const label = p?.name ?? capitalize(m.personalityId);
+            // The tooltip is where the rail names a member, so the emoji goes
+            // there — the mark itself stays the button (no emoji as nav icon).
+            const title = personalityLabel(label, p?.display?.emoji);
             const lead = m.personalityId === team?.coordinator;
             const active = m.personalityId === activePersonalityId;
             return (
               <Tooltip
                 key={m.personalityId}
-                title={lead ? `${label} · coordinator` : label}
+                title={lead ? `${title} · coordinator` : title}
                 placement="right"
               >
                 <Link
@@ -131,7 +135,7 @@ export function AltitudeRail({ onOpenQuickCreate }: { onOpenQuickCreate: () => v
 
       <div className="altitude-rail-marks">
         {items.map((p) => (
-          <Tooltip key={p.id} title={p.name} placement="right">
+          <Tooltip key={p.id} title={personalityLabel(p.name, p.display?.emoji)} placement="right">
             <Link
               to={buildRailSwitchPath(pathname, p.id)}
               className={`altitude-rail-mark-btn${p.id === activePersonalityId ? ' active' : ''}`}

@@ -26,9 +26,36 @@ export const AMENDMENT_STATUS_WORDS: Record<AmendmentStatusView, string> = {
   rolled_back: 'rolled back',
 };
 
-/** `+ web_fetch, - terminal`. */
+/**
+ * `+ web_fetch, - terminal`, or for an identity request (the birth ritual,
+ * plan personality-presence-and-initiative §1)
+ * `name → "Ledger", vibe → "…", emoji → 🧾, avatar → generated mark`.
+ * Mirrors `opsLabel` in apps/ethos/src/commands/personality-amendments.ts.
+ */
 export function opsLabel(record: Pick<AmendmentRecordView, 'ops'>): string {
-  return record.ops.map((o) => `${o.op === 'add_tool' ? '+' : '-'} ${o.tool}`).join(', ');
+  return record.ops.map(opLabel).join(', ');
+}
+
+function opLabel(o: AmendmentRecordView['ops'][number]): string {
+  switch (o.op) {
+    case 'add_tool':
+      return `+ ${o.tool}`;
+    case 'remove_tool':
+      return `- ${o.tool}`;
+    case 'set_name':
+      return `name → "${o.value}"`;
+    case 'set_description':
+      return `vibe → "${o.value}"`;
+    case 'set_display_emoji':
+      return `emoji → ${o.value}`;
+    case 'set_display_avatar':
+      return o.value === 'upload' ? 'avatar → upload after applying' : 'avatar → generated mark';
+  }
+}
+
+/** True when an identity request leaves the avatar for the owner to upload. */
+export function wantsAvatarUpload(record: Pick<AmendmentRecordView, 'ops'>): boolean {
+  return record.ops.some((o) => o.op === 'set_display_avatar' && o.value === 'upload');
 }
 
 type Direction = NonNullable<AmendmentReviewView['permissionDiff']>['changes'][number]['direction'];

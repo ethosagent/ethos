@@ -750,14 +750,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // bound after the Gateway + bots exist, fired only once the scheduler runs.
   let watcherDeliverFn: ((target: WatcherDeliverTarget, text: string) => Promise<void>) | null =
     null;
-  let watcherWakeFn: ((event: WatcherWakeEvent) => Promise<void>) | null = null;
+  // Resolves whether a turn was started — `false` costs the watcher no fire
+  // (`WatcherManagerConfig.wake`).
+  let watcherWakeFn: ((event: WatcherWakeEvent) => Promise<boolean>) | null = null;
   // Named (rather than inlined into `WatcherManager`'s `wake` field below) so
   // the SAME wake path can also drive the call-capture daemon's audit-trail
   // leg further down — mirrors serve.ts's `watcherWake` closure, reused for
   // both `WatcherManager` and `CallCaptureDaemon` rather than duplicated.
-  const watcherWake = async (event: WatcherWakeEvent): Promise<void> => {
-    if (watcherWakeFn) await watcherWakeFn(event);
-  };
+  const watcherWake = async (event: WatcherWakeEvent): Promise<boolean> =>
+    watcherWakeFn ? watcherWakeFn(event) : false;
   // The registry this process answers personality-policy questions from —
   // `personalityDirectory.refresh()` below reloads it. Built here, ahead of
   // the watcher manager, because the manager's delivery gate reads it.
@@ -1194,6 +1195,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // refresh above reloads, so an edited `voice.tts_voice` is audible on the
     // next spoken reply without a restart.
     voice: (id: string) => seamPersonalities.get(id)?.voice,
+    // Channel presence (plan personality-presence-and-initiative §3): the
+    // name and `display.emoji` the reply prefix, receipt reaction and
+    // mention-by-name read — from the same refreshed registry.
+    identity: (id: string) => {
+      const p = seamPersonalities.get(id);
+      return p
+        ? { name: p.name, ...(p.display?.emoji ? { emoji: p.display.emoji } : {}) }
+        : undefined;
+    },
     list: (): Array<{ id: string; name: string; isDefault: boolean }> => {
       const defaultId = seamPersonalities.getDefault().id;
       return seamPersonalities.list().map((p) => ({
@@ -1536,12 +1546,13 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       console.error(
         `[watcher] wake dropped for "${event.watcherId}" — no bot bound to personality "${event.personalityId}"`,
       );
-      return;
+      return false;
     }
     // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
     const msg = watcherWakeMessage(event, bot.botKey);
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
+    return true;
   };
 
   // Index bots by botKey so health-check lines can show the binding inline.
@@ -2741,6 +2752,8 @@ async function assembleGatewayBots(
       ...(backgroundExecutor ? { backgroundExecutor } : {}),
       // D5 — `<bot entry>.budget.dailyUsd`, enforced by `Gateway.enqueueTurn`.
       ...(bot.budget ? { dailyBudgetUsd: bot.budget.dailyUsd } : {}),
+      // Plan personality-presence-and-initiative §3 — applied by the gateway.
+      ...(bot.replyPrefix ? { replyPrefix: bot.replyPrefix } : {}),
     };
   };
   for (const bot of config.telegram?.bots ?? []) {
@@ -2847,6 +2860,7 @@ async function assembleGatewayBots(
         binding: { type: 'personality', name: config.personality },
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+        ...(config.discord?.replyPrefix ? { replyPrefix: config.discord.replyPrefix } : {}),
       },
       at,
     );
@@ -4116,6 +4130,10 @@ export async function buildAdapters(
             ...(botCfg.webhookUrl ? { webhookUrl: botCfg.webhookUrl } : {}),
             ...(botCfg.webhookSecretToken ? { webhookSecretToken: botCfg.webhookSecretToken } : {}),
             ...(identity ? { identity } : {}),
+            // Plan personality-presence-and-initiative §3: a group message
+            // naming the bound personality counts as a mention. The name comes
+            // from the gateway's presence resolver (`Gateway.bindPresence`).
+            ...(botCfg.mentionByName !== undefined ? { mentionByName: botCfg.mentionByName } : {}),
             // Backs the `channelModes: true` the adapter advertises: without a
             // Storage there is no per-chat override store, so `/ethos
             // channel-mode` has nowhere to write and every chat is stuck on
@@ -4221,6 +4239,7 @@ export async function buildAdapters(
               : {}),
             ...(appCfg.defaultChannelMode ? { defaultChannelMode: appCfg.defaultChannelMode } : {}),
             ...(appCfg.receiptReaction ? { receiptReaction: appCfg.receiptReaction } : {}),
+            ...(appCfg.mentionByName !== undefined ? { mentionByName: appCfg.mentionByName } : {}),
             ...(appCfg.allowedBotIds?.length ? { allowedBotIds: appCfg.allowedBotIds } : {}),
             ...(appCfg.longReplyThresholdChars !== undefined
               ? { longReplyThresholdChars: appCfg.longReplyThresholdChars }
@@ -4277,6 +4296,9 @@ export async function buildAdapters(
             : {}),
           ...(config.discord?.missedMessageBackfill
             ? { missedMessageBackfill: config.discord.missedMessageBackfill }
+            : {}),
+          ...(config.discord?.mentionByName !== undefined
+            ? { mentionByName: config.discord.mentionByName }
             : {}),
           // UD4 — `discord.post_thinking_placeholder: false` turns the
           // "Thinking…" placeholder off. Included only when the operator set

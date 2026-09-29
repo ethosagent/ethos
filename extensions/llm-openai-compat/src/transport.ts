@@ -74,6 +74,44 @@ export function isOpenAiReasoningModelId(model: string): boolean {
 }
 
 /**
+ * Presence §4 — `CompletionOptions.effort` → Chat Completions `reasoning_effort`
+ * (openai SDK `ChatCompletionCreateParamsBase.reasoning_effort`).
+ *
+ * Sent only for an OpenAI reasoning-family model id (`isOpenAiReasoningModelId`)
+ * on api.openai.com. Everywhere else it is ignored and the body is unchanged:
+ * OpenRouter and the other hosted dialects spell reasoning control their own
+ * way, local runtimes do not read it, and whether the api-versions Azure is
+ * called with accept it has not been verified (the same caution
+ * `outputCapParam` applies to Azure), nor for the ids `acceptsReasoningEffort`
+ * excludes. `off` maps to `low`: `none` and `minimal` exist only on some
+ * reasoning generations, and `low` is the lowest every one of them accepts. Pinned by
+ * `__tests__/reasoning-effort.test.ts`.
+ */
+function openAiReasoningEffort(
+  options: CompletionOptions,
+  model: string,
+  openAiFirstParty: boolean | undefined,
+): 'low' | 'medium' | 'high' | undefined {
+  const effort = options.effort;
+  if (effort === undefined || openAiFirstParty !== true) return undefined;
+  if (!acceptsReasoningEffort(model)) return undefined;
+  if (/^gpt-5-pro(?:-|$)/i.test(model)) return 'high';
+  return effort === 'off' ? 'low' : effort;
+}
+
+/**
+ * The reasoning-family ids (`isOpenAiReasoningModelId`) that take
+ * `reasoning_effort`. Excluded: `gpt-5-chat*` (the non-reasoning ChatGPT
+ * snapshot), `o1-mini` and `o1-preview` (predate the parameter). `gpt-5-pro`
+ * takes only `high` (`openAiReasoningEffort`). An id outside the family sends
+ * nothing. Pinned by `__tests__/reasoning-effort.test.ts`.
+ */
+function acceptsReasoningEffort(model: string): boolean {
+  if (!isOpenAiReasoningModelId(model)) return false;
+  return !/^(?:gpt-5(?:\.\d+)?-chat|o1-mini|o1-preview)(?:-|$)/i.test(model);
+}
+
+/**
  * Which output-cap parameter a request sends. `max_completion_tokens` for
  * OpenAI's own host (where it is the current name for every model and
  * `max_tokens` is deprecated) and for a reasoning-family model id on any
@@ -273,6 +311,8 @@ export function buildChatCompletionsParams(
     ...(options.stopSequences ? { stop: options.stopSequences } : {}),
     ...(oaiTools.length > 0 ? { tools: oaiTools } : {}),
   };
+  const reasoningEffort = openAiReasoningEffort(options, effectiveModel, opts?.openAiFirstParty);
+  if (reasoningEffort) oaiParams.reasoning_effort = reasoningEffort;
 
   const dialect = opts?.structuredOutputDialect ?? 'openai';
   applyStructuredOutput(oaiParams, options, dialect);

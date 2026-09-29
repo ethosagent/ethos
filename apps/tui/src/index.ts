@@ -18,6 +18,8 @@ export type { RebuiltLoop } from './loop-switch';
 export interface TUIOptions {
   model: string;
   personality: string;
+  /** `display.emoji` by personality id — see `AppProps.emojiFor`. */
+  emojiFor?: (personalityId: string) => string | undefined;
   verbose?: boolean;
   /** Named skin to apply at boot (one of the built-in skin names). */
   skin?: string;
@@ -81,6 +83,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       bridge,
       model: opts.model,
       initialPersonality: opts.personality,
+      ...(opts.emojiFor ? { emojiFor: opts.emojiFor } : {}),
       initialSessionKey: sessionKey,
       initialVerbose: opts.verbose ?? false,
       initialSkin: opts.skin,

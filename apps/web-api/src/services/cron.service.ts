@@ -19,6 +19,8 @@ export interface CronCreateInput {
   prompt: string;
   personalityId: string;
   missedRunPolicy?: 'run-once' | 'skip';
+  /** `CronJob.activeHours` (`HH:MM-HH:MM`); refused by `CronScheduler.createJob` when malformed. */
+  activeHours?: string;
   /** @deprecated Alias for `deliverTo` — `true` ≡ `{kind:'inApp'}`, `false` ≡ `{kind:'none'}`. */
   notifyInApp?: boolean;
   deliverTo?: CronDeliverTo;
@@ -91,6 +93,7 @@ export class CronService {
         prompt: input.prompt,
         personalityId: input.personalityId,
         missedRunPolicy: input.missedRunPolicy ?? 'skip',
+        ...(input.activeHours !== undefined ? { activeHours: input.activeHours } : {}),
         // Absent origin keeps today's default — output saved to file only.
         ...(origin ? { origin } : {}),
         roomAudience,
@@ -111,7 +114,7 @@ export class CronService {
 
   async update(
     id: string,
-    patch: { name?: string; schedule?: string; prompt?: string },
+    patch: { name?: string; schedule?: string; prompt?: string; activeHours?: string | null },
   ): Promise<{ job: CronJob }> {
     try {
       const updated = await this.opts.scheduler.updateJob(id, patch);
@@ -296,6 +299,7 @@ function toWireJob(job: ExtCronJob): CronJob {
     lastRunAt: job.lastRunAt ?? null,
     nextRunAt: job.nextRunAt ?? null,
     createdAt: job.createdAt,
+    activeHours: job.activeHours ?? null,
   };
 }
 

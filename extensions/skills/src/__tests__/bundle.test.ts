@@ -61,6 +61,11 @@ describe('@ethosagent/skills bundle', () => {
       // acts under the user's OWN authenticated account. Added with the first
       // one advertised in BUNDLED_SKILL_IDS (`social-media/reddit-research`).
       'social-media',
+      // `personal` covers skills about the user themself — getting to know
+      // them, with consent (plan personality-presence-and-initiative §7).
+      // Added with the first one advertised in BUNDLED_SKILL_IDS
+      // (`personal/get-to-know-you`).
+      'personal',
     ]);
     for (const id of BUNDLED_SKILL_IDS) {
       const raw = readFileSync(join(SOURCE.dir, id, 'SKILL.md'), 'utf8');

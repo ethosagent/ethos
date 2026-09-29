@@ -7,6 +7,7 @@ import {
   CronScheduler,
   isValidSchedule,
   nextRunForSchedule,
+  parseActiveHours,
   type ScriptRef,
 } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
@@ -153,6 +154,7 @@ export async function runCronCommand(
               nextRun: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
               lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
               lastError: j.lastError ?? null,
+              activeHours: j.activeHours ?? null,
               prompt: j.prompt,
               script: j.script,
             })),
@@ -175,6 +177,7 @@ export async function runCronCommand(
           const pers = j.personalityId;
           console.log(`  ${c.bold}${j.name}${c.reset} ${c.dim}(${j.id})${c.reset} — ${status}`);
           console.log(`    Schedule    : ${j.schedule}`);
+          if (j.activeHours) console.log(`    Active hours: ${j.activeHours}`);
           console.log(`    Personality : ${pers}`);
           console.log(`    Next run    : ${next}`);
           // N4 — whether the last firing worked, not just when the next one is.
@@ -219,6 +222,7 @@ export async function runCronCommand(
             personalityId: j.personalityId,
             prompt: j.prompt,
             script: j.script,
+            activeHours: j.activeHours ?? null,
             lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
           });
           return;
@@ -234,6 +238,7 @@ export async function runCronCommand(
         console.log(`  Status      : ${status}`);
         console.log(`  Personality : ${c.cyan}${pers}${c.reset}`);
         console.log(`  Schedule    : ${j.schedule}`);
+        if (j.activeHours) console.log(`  Active hours: ${j.activeHours}`);
         console.log(
           `  Next run    : ${j.nextRunAt ? new Date(j.nextRunAt).toLocaleString() : 'not scheduled'}`,
         );
@@ -256,6 +261,7 @@ export async function runCronCommand(
     case 'create': {
       // ethos cron create --name "..." --schedule "..." (--prompt "..." | --script file.sh)
       //   [--script-timeout <sec>] [--precheck file.sh] [--precheck-timeout <sec>] [--personality X]
+      //   [--active-hours HH:MM-HH:MM]
       const params = parseFlags(args);
       const name = params.name ?? params.n;
       const schedule = params.schedule ?? params.s;
@@ -263,6 +269,7 @@ export async function runCronCommand(
       const script = toScriptRef(params.script, params['script-timeout']);
       const precheck = toScriptRef(params.precheck, params['precheck-timeout']);
       const personality = params.personality;
+      const activeHours = params['active-hours'];
 
       if (prompt && script) {
         console.log(`${c.red}--prompt and --script are mutually exclusive${c.reset}`);
@@ -276,7 +283,7 @@ export async function runCronCommand(
 
       if (!name || !schedule || (!prompt && !script)) {
         console.log(
-          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" (--prompt "Your prompt" | --script file.sh)',
+          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" (--prompt "Your prompt" | --script file.sh) [--active-hours HH:MM-HH:MM]',
         );
         console.log(
           `${c.dim}Script files are relative to ~/.ethos/scripts/ and must already exist (.sh or .py).${c.reset}`,
@@ -289,6 +296,11 @@ export async function runCronCommand(
         console.log(
           `${c.dim}Examples: "0 8 * * 1-5" (cron), "30m" (delay), "every 2h" (interval)${c.reset}`,
         );
+        return;
+      }
+
+      if (activeHours !== undefined && !parseActiveHours(activeHours)) {
+        console.log(`${c.red}${invalidActiveHours(activeHours)}${c.reset}`);
         return;
       }
 
@@ -315,10 +327,16 @@ export async function runCronCommand(
           personalityId: personality ?? config.personality,
           repeat: { kind: 'forever' },
           missedRunPolicy: 'skip',
+          ...(activeHours !== undefined ? { activeHours } : {}),
         });
         const next = nextRunForSchedule(schedule, new Date());
         console.log(`${c.green}✓ Created "${job.name}" (${job.id})${c.reset}`);
+        if (job.activeHours) console.log(`${c.dim}Active hours: ${job.activeHours}${c.reset}`);
         if (next) console.log(`${c.dim}Next run: ${next.toLocaleString()}${c.reset}`);
+      } catch (err) {
+        // The scheduler's refusals (a one-shot with activeHours, a bad script
+        // path) are the user's input, not a crash.
+        console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
         await cleanup();
       }
@@ -329,7 +347,7 @@ export async function runCronCommand(
       const id = args[0];
       if (!id) {
         console.log(
-          'Usage: ethos cron update <id> [--name "..."] [--schedule "..."] [--prompt "..."] [--script file.sh] [--precheck file.sh]',
+          'Usage: ethos cron update <id> [--name "..."] [--schedule "..."] [--prompt "..."] [--script file.sh] [--precheck file.sh] [--active-hours HH:MM-HH:MM|off]',
         );
         return;
       }
@@ -342,10 +360,19 @@ export async function runCronCommand(
       if (scriptPatch) patch.script = scriptPatch;
       const precheckPatch = toScriptRef(params.precheck, params['precheck-timeout']);
       if (precheckPatch) patch.precheck = precheckPatch;
+      const activeHours = params['active-hours'];
+      if (activeHours !== undefined) {
+        if (activeHours.trim().toLowerCase() === 'off') patch.activeHours = null;
+        else if (parseActiveHours(activeHours)) patch.activeHours = activeHours;
+        else {
+          console.log(`${c.red}${invalidActiveHours(activeHours)}${c.reset}`);
+          return;
+        }
+      }
 
       if (Object.keys(patch).length === 0) {
         console.log(
-          'At least one of --name, --schedule, --prompt, --script, or --precheck is required',
+          'At least one of --name, --schedule, --prompt, --script, --precheck, or --active-hours is required',
         );
         return;
       }
@@ -488,6 +515,10 @@ function cronAgo(diffMs: number): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function invalidActiveHours(spec: string): string {
+  return `Invalid activeHours: "${spec}" — use HH:MM-HH:MM (e.g. "09:00-21:00", or "22:00-06:00" across midnight), or "off" on update`;
 }
 
 function parseFlags(args: string[]): Record<string, string> {

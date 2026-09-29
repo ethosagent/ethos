@@ -9,6 +9,7 @@
 // symbol does not exist yet, rather than describing an enforcement that is not
 // on any code path (CLAUDE.md §12).
 
+import type { ReasoningEffort } from './llm';
 import type { ModelTierName } from './personality';
 
 /**
@@ -85,6 +86,14 @@ export interface ModelRegistryEntry {
    * than each re-deriving it from a catalog.
    */
   contextWindow?: number;
+  /**
+   * How hard this alias reasons (presence §4). Two aliases may share one
+   * `modelId` and differ only here (`opus-deep` / `opus-quick`), and a
+   * personality picks one by name through `PersonalityConfig.model`. An
+   * unknown value is dropped with a notice by `buildModelRegistry`
+   * (`packages/config/src/index.ts`); absent → the provider's own default.
+   */
+  effort?: ReasoningEffort;
   /** USD per 1k input tokens. Display and future budgeting; nothing bills on it. */
   costPer1kInput?: number;
   /** USD per 1k output tokens. Same. */
@@ -243,6 +252,8 @@ export interface ResolvedModel {
   /** The vendor id sent on the wire. */
   modelId: string;
   contextWindow?: number;
+  /** `ModelRegistryEntry.effort` of the alias that won, when it sets one. */
+  effort?: ReasoningEffort;
   cost?: { input?: number; output?: number };
   source: ModelResolutionSource;
   /**

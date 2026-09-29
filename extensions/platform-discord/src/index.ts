@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ChannelOverrideStore } from '@ethosagent/core';
+import { ChannelOverrideStore, type ChannelPresenceResolver } from '@ethosagent/core';
 import type {
   AdapterCapabilities,
   AdapterVoiceCaps,
@@ -41,7 +41,17 @@ interface DiscordAdapterConfig {
    *  the adapter no longer derives its own key, so routing (lane keys,
    *  `InboundMessage.botKey`) is stamped from this single source of truth. */
   botKey: string;
+  /** Receipt reaction on inbound messages, cleared when the reply lands. When
+   *  set it wins over the bound personality's `display.emoji`; absent = that
+   *  emoji, else '👀'. `''` = no receipt reaction. */
   receiptReaction?: string;
+  /**
+   * Count a guild message that names the bound personality (a whole word,
+   * case-insensitive — `mentionsPersonalityName` in `@ethosagent/core`) as a
+   * mention. Opt-in; default `false`. The name comes from the presence
+   * resolver the gateway binds (`setPresenceResolver`).
+   */
+  mentionByName?: boolean;
   cache?: AttachmentCache;
   storage?: Storage;
   discordDir?: string;
@@ -225,6 +235,9 @@ export class DiscordAdapter
   private readonly client: Client;
   private readonly token: string;
   private readonly receiptReaction: string;
+  /** `receiptReaction` was configured: it wins over the personality emoji. */
+  private readonly receiptReactionExplicit: boolean;
+  private readonly mentionByName: boolean;
   private readonly cache?: AttachmentCache;
   private readonly applicationId?: string;
   private readonly registerCommandsTo?: 'global' | string;
@@ -270,7 +283,11 @@ export class DiscordAdapter
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
-  private readonly pendingReactions = new Map<string, string>();
+  /** messageId → its channel and every receipt emoji that may have landed. */
+  private readonly pendingReactions = new Map<string, { channelId: string; reactions: string[] }>();
+  /** Who this bot speaks as per chat — bound by the gateway
+   *  (`Gateway.bindPresence`). */
+  private presence?: ChannelPresenceResolver;
   private readonly pendingReactionsMax = 256;
   /** The current turn's thinking placeholder per target channel (the thread
    *  for a thread turn, else the chat): its messageId plus when
@@ -284,6 +301,8 @@ export class DiscordAdapter
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
     this.receiptReaction = config.receiptReaction ?? '👀';
+    this.receiptReactionExplicit = config.receiptReaction !== undefined;
+    this.mentionByName = config.mentionByName ?? false;
     this.botKey = config.botKey;
     this.id = `discord:${this.botKey}`;
     this.cache = config.cache;
@@ -340,6 +359,12 @@ export class DiscordAdapter
     });
   }
 
+  /** Gateway hook (`Gateway.bindPresence`): who this bot speaks as per chat.
+   *  Read by the receipt reaction and by `mentionByName` at event time. */
+  setPresenceResolver(resolve: ChannelPresenceResolver): void {
+    this.presence = resolve;
+  }
+
   async start(): Promise<void> {
     await this.threadState?.load();
     await this.channelOverrides?.load();
@@ -350,6 +375,7 @@ export class DiscordAdapter
       botKey: this.botKey,
       defaultChannelMode: this.defaultChannelMode,
       receiptReaction: this.receiptReaction,
+      receiptReactionExplicit: this.receiptReactionExplicit,
       cache: this.cache,
       channelOverrides: this.channelOverrides,
       threadState: this.threadState,
@@ -357,12 +383,14 @@ export class DiscordAdapter
       maxInboundMediaBytes: this.maxInboundMediaBytes,
       backfill: this.missedMessageBackfill,
       onMessage: (msg: InboundMessage) => this.messageHandler?.(msg),
-      onReceipt: (channelId: string, messageId: string) => {
+      presence: (chatId: string, threadId?: string) => this.presence?.(chatId, threadId),
+      mentionByName: this.mentionByName,
+      onReceipt: (channelId: string, messageId: string, reactions: string[]) => {
         if (this.pendingReactions.size >= this.pendingReactionsMax) {
           const oldest = this.pendingReactions.keys().next().value;
           if (oldest !== undefined) this.pendingReactions.delete(oldest);
         }
-        this.pendingReactions.set(messageId, channelId);
+        this.pendingReactions.set(messageId, { channelId, reactions });
       },
     };
 
@@ -899,20 +927,22 @@ export class DiscordAdapter
 
   private async clearReceiptReaction(chatId: string): Promise<void> {
     // Find all pending reactions belonging to this channel and clear them.
-    const toClear: string[] = [];
-    for (const [msgId, chId] of this.pendingReactions) {
-      if (chId === chatId) toClear.push(msgId);
+    const toClear: Array<{ msgId: string; reactions: string[] }> = [];
+    for (const [msgId, pending] of this.pendingReactions) {
+      if (pending.channelId === chatId) toClear.push({ msgId, reactions: pending.reactions });
     }
     if (toClear.length === 0) return;
-    for (const msgId of toClear) this.pendingReactions.delete(msgId);
+    for (const { msgId } of toClear) this.pendingReactions.delete(msgId);
     try {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'messages' in channel) {
-        for (const msgId of toClear) {
+        for (const { msgId, reactions } of toClear) {
           // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const msg = await (channel as any).messages.fetch(msgId);
           if (this.client.user) {
-            await msg.reactions.cache.get(this.receiptReaction)?.users.remove(this.client.user.id);
+            for (const emoji of reactions) {
+              await msg.reactions.cache.get(emoji)?.users.remove(this.client.user.id);
+            }
           }
         }
       }

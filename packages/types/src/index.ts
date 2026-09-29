@@ -18,6 +18,7 @@ export * from './context-log';
 export * from './decision';
 export * from './deny-fold';
 export * from './diagnostics';
+export * from './display-emoji';
 export * from './document-extractor';
 export * from './errors';
 export * from './evaluator';

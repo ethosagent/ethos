@@ -514,3 +514,115 @@ describe('cron tool origin capture', () => {
     expect((await scheduler.getJob('web'))?.origin).toEqual({ platform: 'web', chatId: 'web:abc' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Active hours (plan personality-presence-and-initiative §6)
+// ---------------------------------------------------------------------------
+
+describe('cron tool active_hours', () => {
+  const create = {
+    action: 'create',
+    name: 'Check in',
+    schedule: 'every 2h',
+    prompt: 'Anything worth saying?',
+  };
+
+  it('refuses an invalid window at create, and creates nothing', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const result = await tool.execute({ ...create, active_hours: '25:00-07:00' }, makeCtx());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('activeHours');
+      expect(result.code).toBe('input_invalid');
+    }
+    expect(await scheduler.listJobs()).toHaveLength(0);
+  });
+
+  it('stores a valid window, updates it, and "off" clears it', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const created = await tool.execute({ ...create, active_hours: '09:00-21:00' }, makeCtx());
+    expect(created.ok).toBe(true);
+    if (created.ok) expect(created.value).toContain('Active hours: 09:00-21:00');
+    expect((await scheduler.getJob('check-in'))?.activeHours).toBe('09:00-21:00');
+
+    const bad = await tool.execute(
+      { action: 'update', id: 'check-in', active_hours: 'nine-to-five' },
+      makeCtx(),
+    );
+    expect(bad.ok).toBe(false);
+    expect((await scheduler.getJob('check-in'))?.activeHours).toBe('09:00-21:00');
+
+    const moved = await tool.execute(
+      { action: 'update', id: 'check-in', active_hours: '22:00-06:00' },
+      makeCtx(),
+    );
+    expect(moved.ok).toBe(true);
+    expect((await scheduler.getJob('check-in'))?.activeHours).toBe('22:00-06:00');
+
+    const off = await tool.execute(
+      { action: 'update', id: 'check-in', active_hours: 'off' },
+      makeCtx(),
+    );
+    expect(off.ok).toBe(true);
+    expect((await scheduler.getJob('check-in'))?.activeHours).toBeUndefined();
+  });
+});
+
+describe('cron tool active_hours — one-shots and manual runs', () => {
+  it('refuses active_hours on a one-shot schedule as input_invalid, and creates nothing', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Once',
+        schedule: '30m',
+        prompt: 'Remind me',
+        active_hours: '09:00-21:00',
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('input_invalid');
+      expect(result.error).toContain('one-shot');
+    }
+    expect(await scheduler.listJobs()).toHaveLength(0);
+  });
+
+  it('run runs the job now even outside its window — a person asked', async () => {
+    const ran: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        ran.push(job.id);
+        return { jobId: job.id, ranAt: new Date().toISOString(), output: 'hi', sessionKey: 'k' };
+      },
+    });
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    // A one-minute window that is certainly not now: the minute after now's.
+    const now = new Date();
+    const hh = (d: Date) =>
+      `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const start = new Date(now.getTime() + 5 * 60_000);
+    const end = new Date(now.getTime() + 6 * 60_000);
+    await tool.execute(
+      {
+        action: 'create',
+        name: 'Check in',
+        schedule: 'every 2h',
+        prompt: 'Anything?',
+        active_hours: `${hh(start)}-${hh(end)}`,
+      },
+      makeCtx(),
+    );
+    const result = await tool.execute({ action: 'run', id: 'check-in' }, makeCtx());
+    expect(result.ok).toBe(true);
+    expect(ran).toEqual(['check-in']);
+  });
+});

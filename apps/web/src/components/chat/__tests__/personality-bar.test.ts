@@ -53,6 +53,24 @@ describe('PersonalityBar', () => {
     expect(html).toContain('claude-sonnet-4');
   });
 
+  // plan personality-presence-and-initiative §2 — `display.emoji` sits beside
+  // the name; the generated ring mark and the accent stripe stay.
+  it('shows the emoji beside the name and keeps the mark and stripe', () => {
+    const html = bar({ emoji: '🦉' });
+    expect(html).toContain('<span class="personality-emoji" aria-hidden="true">🦉</span>Engineer');
+    expect(html).toContain('personality-bar-stripe');
+    expect(html).toContain('<svg');
+  });
+
+  it('shows no emoji when none is set', () => {
+    expect(bar()).not.toContain('personality-emoji');
+  });
+
+  it('shows the emoji beside the coordinator name in the team variant', () => {
+    const html = bar({ emoji: '🦉', teamContext: AS_COORDINATOR });
+    expect(html).toContain('<span class="personality-emoji" aria-hidden="true">🦉</span>Engineer');
+  });
+
   it('offers no control that changes the personality', () => {
     const html = bar();
     expect(html).not.toContain('personality-switcher');

@@ -854,6 +854,7 @@ export class AgentLoop {
         modelOverride,
         gateWindowTokens: setup.gateWindowTokens,
         providerEntry,
+        effort: setup.effort,
         serverCompaction,
         allowedPlugins,
         allowedTools,

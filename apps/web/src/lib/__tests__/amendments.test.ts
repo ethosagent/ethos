@@ -1,7 +1,13 @@
 import type { AmendmentReviewView } from '@ethosagent/web-contracts';
 import { AmendmentStatusSchema } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
-import { AMENDMENT_STATUS_WORDS, cliCommands, diffKind, opsLabel } from '../amendments';
+import {
+  AMENDMENT_STATUS_WORDS,
+  cliCommands,
+  diffKind,
+  opsLabel,
+  wantsAvatarUpload,
+} from '../amendments';
 
 function review(over: Partial<AmendmentReviewView> = {}, status = 'pending' as const) {
   return {
@@ -26,6 +32,23 @@ describe('amendments lib', () => {
         ],
       }),
     ).toBe('+ web_fetch, - terminal');
+    expect(
+      opsLabel({
+        ops: [
+          { op: 'set_name', value: 'Ledger' },
+          { op: 'set_description', value: 'Precise, patient.' },
+          { op: 'set_display_emoji', value: '🧾' },
+          { op: 'set_display_avatar', value: 'generated' },
+        ],
+      }),
+    ).toBe('name → "Ledger", vibe → "Precise, patient.", emoji → 🧾, avatar → generated mark');
+    expect(opsLabel({ ops: [{ op: 'set_display_avatar', value: 'upload' }] })).toBe(
+      'avatar → upload after applying',
+    );
+    expect(wantsAvatarUpload({ ops: [{ op: 'set_display_avatar', value: 'upload' }] })).toBe(true);
+    expect(wantsAvatarUpload({ ops: [{ op: 'set_display_avatar', value: 'generated' }] })).toBe(
+      false,
+    );
     expect([diffKind('+x'), diffKind('-x'), diffKind(' x')]).toEqual(['add', 'del', 'same']);
   });
 

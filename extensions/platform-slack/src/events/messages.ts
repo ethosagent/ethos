@@ -15,8 +15,14 @@ import {
 } from '../routing/triage';
 import type { UsernameResolver } from '../routing/usernames';
 
+/** What triage knew about an envelope that the envelope itself does not say. */
+export interface EnvelopeMeta {
+  /** Reached the agent only by naming the personality (`TriageResult.nameOnly`). */
+  nameOnly?: boolean;
+}
+
 export interface MessageEventHandlers {
-  onEnvelope(message: InboundMessage): void;
+  onEnvelope(message: InboundMessage, meta?: EnvelopeMeta): void;
 }
 
 const BACKFILL_FETCH_LIMIT = 50;
@@ -208,7 +214,10 @@ export function registerMessageEvents(
         void triageMessage(syntheticMsg, triage)
           .then((result) => {
             if (result.envelope) {
-              handlers.onEnvelope({ ...result.envelope, isEdit: true });
+              handlers.onEnvelope(
+                { ...result.envelope, isEdit: true },
+                result.nameOnly ? { nameOnly: true } : undefined,
+              );
             }
           })
           .catch(() => {
@@ -221,6 +230,7 @@ export function registerMessageEvents(
     }
 
     const result = await triageMessage(raw as unknown as RawSlackMessage, triage);
+    const meta = result.nameOnly ? { nameOnly: true } : undefined;
     if (result.envelope && triage.backfillState) {
       const channelId = result.envelope.chatId;
       const threadTs = result.envelope.threadId;
@@ -240,7 +250,7 @@ export function registerMessageEvents(
         }
       }
     }
-    if (result.envelope) handlers.onEnvelope(result.envelope);
+    if (result.envelope) handlers.onEnvelope(result.envelope, meta);
   });
 
   app.event('app_mention', async ({ event }) => {

@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Task
@@ -53,7 +53,7 @@ In `https://api.slack.com/apps`:
    - `chat:write` — post messages and edit them.
    - `users:read` — resolve user ids when audit-logging.
    - `files:read` — download user-attached files from `url_private_download`. Without it, Slack returns an HTML page in place of the file bytes; see [Receive files via Slack](../using/how-to/receive-files-via-slack.md).
-   - `reactions:write` — set and clear the 👀 receipt reaction on inbound messages (best-effort; missing scope just drops the reaction).
+   - `reactions:write` — set and clear the receipt reaction on inbound messages: 👀, or the bound personality's emoji when it has one ([Receipt reaction](../using/reference/config-yaml.md#receipt-reaction)). Best-effort; a missing scope just drops the reaction.
    - `files:write` — upload a long answer as `answer.md` instead of a four-message wall (best-effort; missing scope falls back to the chunked messages). Tune with `slack.apps.<i>.longReplyThresholdChars`.
 3. Under **Socket Mode** → **Enable Socket Mode**.
 4. Under **Basic Information** → **App-Level Tokens** → **Generate Token and Scopes**, add the `connections:write` scope. Copy the `xapp-…` token.
@@ -144,6 +144,8 @@ Expected boot lines include `⚡️ Bolt app started`. Socket Mode means no reve
 | Channel `@mention` | channel id `C…` | `false` | `true` | `slack:<channel-id>` |
 | Thread (channel mention with `thread_ts`) | channel id | `false` | `true` | `slack:<channel-id>` (replies go to the thread) |
 | DM | channel id `D…` (type `im`) | `true` | `false` | `slack:<channel-id>` |
+
+With [`slack.apps.<i>.mentionByName: true`](../using/reference/config-yaml.md#mention-by-name), a channel message that names the bound personality as a whole word ("hey Owl, …") counts as a mention too (`isGroupMention: true`). Such a message is not an `app_mention`, so the adapter sees it only with the `message.channels` / `message.groups` subscriptions from [step 1a](#1a-platform-prerequisites-for-unaddressed-channel-messages). A message that reaches the agent only by naming it gets no receipt reaction.
 
 When the inbound message has a `thread_ts` or the `replyToId` is set, the adapter passes `thread_ts` to `chat.postMessage` so the reply lands in the same thread. New top-level mentions start a new thread when the agent's reply spans multiple chunks.
 

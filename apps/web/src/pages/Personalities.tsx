@@ -42,6 +42,7 @@ import {
   decisionFieldValue,
   decisionsUpdateInput,
 } from '../components/personality/decisionModel';
+import { EmojiField } from '../components/personality/EmojiField';
 import { ExecutionTab } from '../components/personality/ExecutionTab';
 import { ModelDeclarationSelect } from '../components/personality/ModelDeclarationSelect';
 import {
@@ -54,6 +55,7 @@ import {
 import { TabSaveBar } from '../components/personality/TabSaveBar';
 import { ToolDetailModal } from '../components/personality/ToolDetailModal';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { PersonalityName } from '../components/ui/PersonalityName';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { TeamRing } from '../components/ui/TeamRing';
 import { useTeamMembership } from '../features/teams/api/queries';
@@ -154,7 +156,7 @@ export function Personalities() {
               to={`/personalities/${p.id}`}
               style={{ fontWeight: 500, color: 'var(--text-primary)' }}
             >
-              {name}
+              <PersonalityName name={name} emoji={p.display?.emoji} />
             </Link>{' '}
             {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
             {p.builtin ? <Tag>built-in</Tag> : null}
@@ -1522,6 +1524,7 @@ export function EditModal({
                   id={id}
                   initialSoulMd={data.soulMd}
                   initialAvatarUrl={data.personality.display?.avatar_url}
+                  initialEmoji={data.personality.display?.emoji}
                   onDirtyChange={reportDirty.identity}
                 />
               ),
@@ -1627,11 +1630,13 @@ export function IdentityEditor({
   id,
   initialSoulMd,
   initialAvatarUrl,
+  initialEmoji,
   onDirtyChange,
 }: {
   id: string;
   initialSoulMd: string;
   initialAvatarUrl?: string;
+  initialEmoji?: string;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const qc = useQueryClient();
@@ -1642,6 +1647,7 @@ export function IdentityEditor({
   // waiting on the invalidated query to come back.
   const [savedSoulMd, setSavedSoulMd] = useState(initialSoulMd);
   const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl);
+  const [emoji, setEmoji] = useState(initialEmoji);
 
   const mut = useMutation({
     mutationFn: (soulMd: string) => rpc.personalities.update({ id, soulMd }),
@@ -1698,6 +1704,23 @@ export function IdentityEditor({
       notification.error({ message: 'Avatar update failed', description: (err as Error).message }),
   });
 
+  // Applies on Set, like the avatar: one small value, nothing to stage.
+  const emojiMut = useMutation({
+    mutationFn: (next: string) => rpc.personalities.update({ id, display: { emoji: next } }),
+    onSuccess: (_result, next) => {
+      setEmoji(next === '' ? undefined : next);
+      qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
+      notification.success({
+        message: next === '' ? 'Emoji removed' : 'Emoji updated',
+        placement: 'topRight',
+      });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Emoji update failed', description: (err as Error).message }),
+  });
+
   return (
     <Form layout="vertical">
       <Form.Item
@@ -1716,6 +1739,16 @@ export function IdentityEditor({
             />
           </div>
         </div>
+      </Form.Item>
+      <Form.Item
+        label="Emoji"
+        help="Optional. One emoji, shown beside the name in the CLI, the TUI and chat. The mark stays."
+      >
+        <EmojiField
+          value={emoji}
+          saving={emojiMut.isPending}
+          onSave={(next) => emojiMut.mutate(next)}
+        />
       </Form.Item>
 
       <Typography.Paragraph type="secondary">

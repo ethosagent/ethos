@@ -268,6 +268,13 @@ const RecipeCronJobSchema = z.object({
   /** May contain `{{input.*}}`. */
   prompt: z.string().min(1),
   missedRunPolicy: z.enum(['run-once', 'skip']).optional(),
+  /**
+   * `CronJob.activeHours` — `HH:MM-HH:MM`, not templated. Only its type is
+   * checked here: this package depends on `@ethosagent/types` alone, and the
+   * grammar has one owner. The install refuses a malformed window
+   * (`CronScheduler.createJob`, extensions/cron/src/index.ts).
+   */
+  activeHours: z.string().optional(),
   /** Which §1 `deliverTo` arm this job wants. */
   deliverTo: z.enum(['channel', 'inApp', 'none']),
 });

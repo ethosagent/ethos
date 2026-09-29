@@ -583,14 +583,17 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // `logs.level` — the lowest severity every ConsoleLogger built here prints.
   const logLevel = config.logs?.level;
   const watcherLogger = new ConsoleLogger({}, logLevel);
-  const watcherWake = async (event: WatcherWakeEvent): Promise<void> => {
-    if (!loop) return;
+  // Resolves whether a turn ran — `false` (no loop yet) costs the watcher no
+  // fire (`WatcherManagerConfig.wake`).
+  const watcherWake = async (event: WatcherWakeEvent): Promise<boolean> => {
+    if (!loop) return false;
     // Under the wake's own audience (`WatcherManager.wakeAudience`); a
     // call-capture wake passes `'private'` (`callCaptureWake`).
     for await (const _event of runWatcherWakeTurn(loop, event)) {
       // Drain — a woken agent acts through its tools; no surface consumes
       // this stream in `ethos serve`.
     }
+    return true;
   };
   // The registry this process answers personality-policy questions from.
   // Built here, ahead of the watcher manager, because its delivery gate reads it.
@@ -610,6 +613,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       watcherLogger.warn(
         `[watcher] deliver to ${target.platform}:${target.chatId} unavailable — 'ethos serve' has no channel adapters; run 'ethos gateway' for channel delivery`,
       );
+      return false; // nothing sent — costs the watcher no fire
     },
     wake: watcherWake,
     // The approval outbox's delivery-time hold (O-T12): one gate per manager,

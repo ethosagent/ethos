@@ -13,6 +13,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/config": "workspace:*",
     "@ethosagent/execution-local": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",

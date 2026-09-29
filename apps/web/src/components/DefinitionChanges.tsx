@@ -10,6 +10,7 @@ import {
   diffKind,
   FLAG_TEXT,
   opsLabel,
+  wantsAvatarUpload,
 } from '../lib/amendments';
 import { formatAge, formatStamp } from '../lib/learning';
 import { rpc } from '../rpc';
@@ -17,9 +18,11 @@ import { PersonalityMark } from './ui/PersonalityMark';
 
 // "Definition changes" — the Learning page's READ-ONLY view of personality
 // self-amendments (plan personality-memory-boundary-and-self-amendment G2,
-// D30). A personality that lists `propose_self_amendment` can ask for a tool;
-// the request waits here with the permission diff, the toolset.yaml diff, its
-// flags and history. There is deliberately NO apply button in v1: the page
+// D30). A personality that lists `propose_self_amendment` can ask for a tool,
+// or — at the end of its birth ritual (plan personality-presence-and-initiative
+// §1) — for the name, vibe, emoji and avatar its owner chose; the request waits
+// here with the permission diff (toolset only), the file diff, its flags and
+// history. There is deliberately NO apply button in v1: the page
 // names the terminal command, and the CLI holds the gate (a TTY, the
 // personality id typed back, and the ETHOS_TOOL_PROCESS tripwire — D32).
 //
@@ -49,8 +52,8 @@ export function DefinitionChanges() {
         Definition changes <span className="learning-group-count">{amendments.length}</span>
       </div>
       <div className="learning-sub">
-        A personality asked to change its own toolset. Review it here; apply or decline it from a
-        terminal.
+        A personality asked to change its own toolset or identity. Review it here; apply or decline
+        it from a terminal.
       </div>
       {amendments.map((a) => (
         <div key={a.id} className="learning-panel">
@@ -90,7 +93,9 @@ function AmendmentRow({
         <span className="learning-row-name learning-mono">{opsLabel(amendment)}</span>
       </span>
       <span className="learning-row-bot">
-        <span className="learning-chip">toolset.yaml</span>
+        <span className="learning-chip">
+          {amendment.target === 'identity' ? 'config.yaml' : 'toolset.yaml'}
+        </span>
         <span className={`learning-pill learning-pill-${stale ? 'muted' : 'wait'}`}>
           <span className="learning-pill-ic" aria-hidden="true">
             {stale ? '·' : '⏳'}
@@ -138,7 +143,7 @@ function ReviewBody({ review }: { review: AmendmentReviewView }) {
               This personality can already edit its own definition — this review is not a boundary
               for it.
             </b>{' '}
-            It holds a shell tool under local execution, so it can change toolset.yaml or run the
+            It holds a shell tool under local execution, so it can change {review.file} or run the
             CLI itself.
           </span>
         </div>
@@ -149,7 +154,7 @@ function ReviewBody({ review }: { review: AmendmentReviewView }) {
             ✗
           </span>
           <span>
-            toolset.yaml changed since this was filed, so it can no longer be applied. Decline it;
+            {review.file} changed since this was filed, so it can no longer be applied. Decline it;
             the personality can ask again.
           </span>
         </div>
@@ -158,7 +163,11 @@ function ReviewBody({ review }: { review: AmendmentReviewView }) {
 
       <section className="learning-panel">
         <h2>Permission diff</h2>
-        {changes.length === 0 ? (
+        {record.target === 'identity' ? (
+          <div className="learning-sub">
+            None — an identity change sets how the personality presents itself and grants nothing.
+          </div>
+        ) : changes.length === 0 ? (
           <div className="learning-sub">No permission row changes.</div>
         ) : (
           <div className="learning-tl" data-testid="amendment-permission-diff">
@@ -192,11 +201,13 @@ function ReviewBody({ review }: { review: AmendmentReviewView }) {
             })}
           </div>
         )}
-        <div className="learning-sub">{review.notCompared}</div>
+        {record.target === 'identity' ? null : (
+          <div className="learning-sub">{review.notCompared}</div>
+        )}
       </section>
 
       <section className="learning-panel">
-        <h2>toolset.yaml</h2>
+        <h2>{review.file}</h2>
         <div className="learning-diff" data-testid="amendment-diff">
           {review.textDiff.map((line, i) => {
             const kind = diffKind(line);
@@ -273,6 +284,13 @@ function ReviewBody({ review }: { review: AmendmentReviewView }) {
               {c.label}: <code className="learning-mono">{c.command}</code>
             </div>
           ))}
+          {wantsAvatarUpload(record) ? (
+            <div className="learning-sub" data-testid="amendment-avatar-upload">
+              The owner chose to upload an avatar: after applying, upload it from{' '}
+              <span className="learning-mono">{record.personalityId}</span>'s page under
+              Personalities. Until then it shows the generated mark.
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>

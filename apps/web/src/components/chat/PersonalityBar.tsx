@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { formatUsd } from '../../lib/usage-format';
 import { buildWorkspaceChatPath } from '../../lib/workspaceRoutes';
 import { PersonalityMark } from '../ui/PersonalityMark';
+import { PersonalityName } from '../ui/PersonalityName';
 import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { TeamRing } from '../ui/TeamRing';
 
@@ -51,6 +52,9 @@ export interface PersonalityBarProps {
   /** Custom avatar image URL (`display.avatar_url`). Falls back to the
    *  generated ring mark when absent or on load failure. */
   avatarUrl?: string;
+  /** `display.emoji`, shown before the name (`PersonalityName`). Absent → the
+   *  bare name. */
+  emoji?: string;
   model: string;
   /** Called when the user wants to start a fresh session. Caller wipes
    *  reducer state, URL `?session=` param, and localStorage. */
@@ -75,6 +79,7 @@ export function PersonalityBar({
   personalityId,
   name,
   avatarUrl,
+  emoji,
   model,
   onNewSession,
   sessionTitle,
@@ -113,7 +118,9 @@ export function PersonalityBar({
             <span className="team-chat-bar-eq">
               <span aria-hidden="true">=</span>
               <PersonalityMark personalityId={personalityId} size={18} avatarUrl={avatarUrl} />
-              <span className="team-chat-bar-coordinator">{displayName}</span>
+              <span className="team-chat-bar-coordinator">
+                <PersonalityName name={displayName} emoji={emoji} />
+              </span>
               <span className="team-chat-bar-role">coordinator{model ? ` · ${model}` : ''}</span>
             </span>
           </div>
@@ -121,7 +128,9 @@ export function PersonalityBar({
           <div className="personality-bar-left">
             <PersonalityRingAvatar personalityId={personalityId} size={28} avatarUrl={avatarUrl} />
             <div className="personality-bar-identity">
-              <span className="personality-bar-name">{displayName}</span>
+              <span className="personality-bar-name">
+                <PersonalityName name={displayName} emoji={emoji} />
+              </span>
               {model ? <span className="personality-bar-model">{model}</span> : null}
             </div>
             {coordinatorOf ? (

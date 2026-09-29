@@ -24,6 +24,8 @@ import {
   EthosError,
   isRetentionDuration,
   MODEL_ROLE_NAMES,
+  REASONING_EFFORT_LEVELS,
+  type ReasoningEffort,
   SECRET_NAME_RE,
 } from '@ethosagent/types';
 import {
@@ -791,6 +793,22 @@ export interface TelegramBotConfig {
   dropPendingUpdates?: boolean;
   /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
   budget?: BotBudgetConfig;
+  /**
+   * Reply-prefix template (plan personality-presence-and-initiative §3). The
+   * only placeholders are `{name}` and `{emoji}`, filled from the personality
+   * bound to the lane (its `display.emoji`; an unset emoji is dropped with one
+   * adjacent space). Applied by the gateway (`applyReplyPrefix`,
+   * extensions/gateway/src/reply-prefix.ts) before dedup and the delivery
+   * ledger; adapters never add it. Quote a value that ends in a space:
+   * `replyPrefix: "[{name}] "`. Absent = replies unchanged.
+   */
+  replyPrefix?: string;
+  /**
+   * Count a group message that names the bound personality — a whole word,
+   * case-insensitive — as a mention of the bot (`mentionsPersonalityName`,
+   * packages/core/src/channel-presence.ts). Opt-in; absent = `false`.
+   */
+  mentionByName?: boolean;
 }
 
 export interface SlackAppConfig {
@@ -850,6 +868,22 @@ export interface SlackAppConfig {
   longReplyThresholdChars?: number;
   /** See {@link BotBudgetConfig}. `slack.apps.<n>.budget.dailyUsd`. */
   budget?: BotBudgetConfig;
+  /**
+   * Reply-prefix template (plan personality-presence-and-initiative §3). The
+   * only placeholders are `{name}` and `{emoji}`, filled from the personality
+   * bound to the lane (its `display.emoji`; an unset emoji is dropped with one
+   * adjacent space). Applied by the gateway (`applyReplyPrefix`,
+   * extensions/gateway/src/reply-prefix.ts) before dedup and the delivery
+   * ledger; adapters never add it. Quote a value that ends in a space:
+   * `replyPrefix: "[{name}] "`. Absent = replies unchanged.
+   */
+  replyPrefix?: string;
+  /**
+   * Count a group message that names the bound personality — a whole word,
+   * case-insensitive — as a mention of the bot (`mentionsPersonalityName`,
+   * packages/core/src/channel-presence.ts). Opt-in; absent = `false`.
+   */
+  mentionByName?: boolean;
 }
 
 /**
@@ -2557,6 +2591,10 @@ export interface EthosConfig {
      * waits out its timeout. Pinned by `__tests__/discord-approval-roles.test.ts`.
      */
     approvalRoleIds?: string[];
+    /** `discord.replyPrefix` — see `TelegramBotConfig.replyPrefix`. */
+    replyPrefix?: string;
+    /** `discord.mentionByName` — see `TelegramBotConfig.mentionByName`. */
+    mentionByName?: boolean;
     missedMessageBackfill?: {
       /** Read history at all. Default `true` — today's behaviour. */
       enabled?: boolean;
@@ -4491,6 +4529,10 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`telegram.bots.${i}.defaultChannelMode: ${bot.defaultChannelMode}`);
       }
       if (bot.budget) lines.push(`telegram.bots.${i}.budget.dailyUsd: ${bot.budget.dailyUsd}`);
+      if (bot.replyPrefix) lines.push(`telegram.bots.${i}.replyPrefix: ${bot.replyPrefix}`);
+      if (bot.mentionByName !== undefined) {
+        lines.push(`telegram.bots.${i}.mentionByName: ${bot.mentionByName}`);
+      }
     }
   }
   if (config.slack?.apps.length) {
@@ -4527,6 +4569,10 @@ function serializeConfigLines(config: EthosConfig): string[] {
       }
       if (app.webhookPath) lines.push(`slack.apps.${i}.webhookPath: ${app.webhookPath}`);
       if (app.budget) lines.push(`slack.apps.${i}.budget.dailyUsd: ${app.budget.dailyUsd}`);
+      if (app.replyPrefix) lines.push(`slack.apps.${i}.replyPrefix: ${app.replyPrefix}`);
+      if (app.mentionByName !== undefined) {
+        lines.push(`slack.apps.${i}.mentionByName: ${app.mentionByName}`);
+      }
     }
   }
   if (config.whatsapp?.length) {
@@ -5059,6 +5105,12 @@ function serializeConfigLines(config: EthosConfig): string[] {
   }
   if (config.discord?.approvalRoleIds && config.discord.approvalRoleIds.length > 0) {
     lines.push(`discord.approvalRoleIds: ${config.discord.approvalRoleIds.join(',')}`);
+  }
+  if (config.discord?.replyPrefix) {
+    lines.push(`discord.replyPrefix: ${config.discord.replyPrefix}`);
+  }
+  if (config.discord?.mentionByName !== undefined) {
+    lines.push(`discord.mentionByName: ${config.discord.mentionByName}`);
   }
   if (config.discord?.missedMessageBackfill) {
     const bf = config.discord.missedMessageBackfill;
@@ -6828,6 +6880,9 @@ export function parseConfigYaml(src: string): EthosConfig {
     .map((s) => s.trim())
     .filter(Boolean);
   const discordApprovalRoleIds = discordRoleList.length > 0 ? discordRoleList : undefined;
+  const discordReplyPrefix = discordKv.replyPrefix || undefined;
+  const discordMentionByName =
+    discordKv.mentionByName !== undefined ? discordKv.mentionByName === 'true' : undefined;
   const callCapture = callCaptureKv.personalityId
     ? { personalityId: callCaptureKv.personalityId }
     : undefined;
@@ -7329,10 +7384,16 @@ export function parseConfigYaml(src: string): EthosConfig {
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
-      discordBackfill || discordModeResult.mode || discordApprovalRoleIds
+      discordBackfill ||
+      discordModeResult.mode ||
+      discordApprovalRoleIds ||
+      discordReplyPrefix ||
+      discordMentionByName !== undefined
         ? {
             ...(discordModeResult.mode ? { defaultChannelMode: discordModeResult.mode } : {}),
             ...(discordApprovalRoleIds ? { approvalRoleIds: discordApprovalRoleIds } : {}),
+            ...(discordReplyPrefix ? { replyPrefix: discordReplyPrefix } : {}),
+            ...(discordMentionByName !== undefined ? { mentionByName: discordMentionByName } : {}),
             ...(discordBackfill ? { missedMessageBackfill: discordBackfill } : {}),
           }
         : undefined,
@@ -9108,6 +9169,8 @@ function buildTelegramBots(kv: Record<number, Record<string, string>>): {
       continue;
     }
     if (budget.budget) bot.budget = budget.budget;
+    if (entry.replyPrefix) bot.replyPrefix = entry.replyPrefix;
+    if (entry.mentionByName !== undefined) bot.mentionByName = entry.mentionByName === 'true';
     bots.push(bot);
   }
   return { bots, errors };
@@ -9192,6 +9255,8 @@ function buildSlackApps(kv: Record<number, Record<string, string>>): {
       continue;
     }
     if (budget.budget) app.budget = budget.budget;
+    if (entry.replyPrefix) app.replyPrefix = entry.replyPrefix;
+    if (entry.mentionByName !== undefined) app.mentionByName = entry.mentionByName === 'true';
     apps.push(app);
   }
   return { apps, errors };
@@ -10008,6 +10073,19 @@ function buildModelRegistry(
       modelId: fields.modelId ?? '',
     };
     if (fields.label) entry.label = fields.label;
+    // Presence §4 — an effort outside `REASONING_EFFORT_LEVELS` is dropped and
+    // named, the rule the numeric fields below follow: a guessed mapping would
+    // bill a depth of reasoning nobody chose.
+    if (fields.effort !== undefined) {
+      if ((REASONING_EFFORT_LEVELS as readonly string[]).includes(fields.effort)) {
+        entry.effort = fields.effort as ReasoningEffort;
+      } else {
+        notices.push(
+          `config.yaml: 'modelRegistry.${alias}.effort' must be one of ` +
+            `${REASONING_EFFORT_LEVELS.join(', ')} ('${fields.effort}'), so it was ignored.`,
+        );
+      }
+    }
     for (const key of ['contextWindow', 'costPer1kInput', 'costPer1kOutput'] as const) {
       const raw = fields[key];
       if (raw === undefined) continue;
@@ -10083,6 +10161,7 @@ export function renderModelRegistryPairs(registry: ModelRegistry): Array<[string
     if (entry.contextWindow !== undefined) {
       out.push([`modelRegistry.${alias}.contextWindow`, String(entry.contextWindow)]);
     }
+    if (entry.effort !== undefined) out.push([`modelRegistry.${alias}.effort`, entry.effort]);
     if (entry.costPer1kInput !== undefined) {
       out.push([`modelRegistry.${alias}.costPer1kInput`, String(entry.costPer1kInput)]);
     }
@@ -10155,7 +10234,7 @@ function claimModelRegistryLine(line: string, acc: ModelRegistryLineAcc): boolea
   // passthrough block) on the next write rather than being dropped or shovelled
   // into an untyped passthrough on a `@ethosagent/types` contract.
   const mreg = line.match(
-    /^modelRegistry\.([A-Za-z0-9_-]+)\.(provider|modelId|label|contextWindow|costPer1kInput|costPer1kOutput|fallbacks):\s*(.+)$/,
+    /^modelRegistry\.([A-Za-z0-9_-]+)\.(provider|modelId|label|contextWindow|effort|costPer1kInput|costPer1kOutput|fallbacks):\s*(.+)$/,
   );
   const mrAlias = mreg?.[1];
   const mrField = mreg?.[2];

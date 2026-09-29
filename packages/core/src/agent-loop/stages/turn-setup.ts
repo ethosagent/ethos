@@ -401,7 +401,7 @@ export async function* setupTurn(
     yield { type: 'done', text: '', turnCount: 0, ...(traceId ? { traceId } : {}) };
     return { kind: 'refused' };
   }
-  const { modelOverride, providerEntry } = route;
+  const { modelOverride, providerEntry, effort } = route;
 
   // D17 — the `once` suppression set, owned by the loop instance. A config fact
   // (an unbound role, a manifest outranking a declaration) is true until
@@ -579,6 +579,7 @@ export async function* setupTurn(
       effectiveModel,
       modelOverride,
       providerEntry,
+      ...(effort !== undefined ? { effort } : {}),
       serverCompaction: { active: servesServerCompaction(deps.llm, providerEntry) },
       allowedTools,
       allowedPlugins,

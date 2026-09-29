@@ -411,7 +411,7 @@ describe('CronScheduler updateJob', () => {
     });
 
     await expect(scheduler.updateJob('empty-update', {})).rejects.toThrow(
-      'At least one of name, schedule, prompt, script, or precheck is required',
+      'At least one of name, schedule, prompt, script, precheck, or activeHours is required',
     );
   });
 

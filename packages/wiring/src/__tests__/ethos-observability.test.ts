@@ -298,9 +298,15 @@ describe('EthosObservability', () => {
       const obs = new EthosObservability(writer);
       obs.recordHeartbeatDecision({ jobId: 'daily', decision: 'missed', delivered: false });
       obs.recordHeartbeatDecision({ jobId: 'triage', decision: 'overlap-skip', delivered: false });
+      obs.recordHeartbeatDecision({
+        jobId: 'check-in',
+        decision: 'inactive-hours-skip',
+        delivered: false,
+      });
       expect(events.map((e) => e.details)).toMatchObject([
         { jobId: 'daily', decision: 'missed' },
         { jobId: 'triage', decision: 'overlap-skip' },
+        { jobId: 'check-in', decision: 'inactive-hours-skip' },
       ]);
     });
 

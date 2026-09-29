@@ -69,11 +69,13 @@ import {
 } from '@ethosagent/worker-router';
 import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
 import { amendmentPersonalityLoader, createAmendmentService } from './amendments';
+import { createBirthRitualInjector } from './birth-ritual';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
 import { cwdReachWarning } from './cwd-reach-warning';
 import type { DisposerStack } from './disposer-stack';
+import { composeFirstContact } from './first-contact';
 import { goalRoomAudience } from './goal-audience';
 import type {
   CreateAgentLoopOptions,
@@ -412,6 +414,24 @@ export async function buildAgentLoop(
   // `__tests__/replay-isolation.test.ts`.
   const memory = new EagerPrefetchPolicy(opts.replay ? readOnlyMemory(baseMemory) : baseMemory);
   for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+  // Plan personality-presence §7 — first contact: the tail hint plus the
+  // `before_tool_call` consent refusal, reading USER.md from the same handle
+  // `memory_write` writes to (first-contact.ts).
+  injectors.push(composeFirstContact({ memory, personalities, hooks }));
+  // Plan personality-presence §1 — the birth ritual's tail section, while the
+  // personality's birth marker exists and the turn could file the identity
+  // amendment it ends in (birth-ritual.ts). Unscoped storage: the marker and
+  // the amendment store live under `learning/`, which every turn is denied.
+  // Its taint check reads the loop's own session store and tool registry.
+  injectors.push(
+    createBirthRitualInjector({
+      storage: wiringCtx.storage,
+      dataDir,
+      personalities,
+      sessions: session,
+      tools,
+    }),
+  );
   // F04 — the host-side memory surfaces (web/desktop editor, Timeline, restore,
   // approve queue), selected from the SAME `config` + storage the registry
   // factory above resolved, so an editor write lands in the backend the agent

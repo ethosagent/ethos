@@ -13,6 +13,8 @@
 export interface PersonalityLoadReportLike {
   failures: Array<{ id: string; error: string }>;
   reloaded: Array<{ id: string; changed: string[] }>;
+  /** config.yaml values the loader dropped rather than failing the load. */
+  warnings?: Array<{ id: string; warning: string }>;
 }
 
 export interface ReloadablePersonalityRegistry {
@@ -50,6 +52,7 @@ export function createPersonalityReloadNotifier(
       ...report.reloaded.map(
         (reload) => `[personality] ${reload.id} reloaded (${reload.changed.join(', ')} changed)`,
       ),
+      ...(report.warnings ?? []).map(({ id, warning }) => `[personality] ${id}: ${warning}`),
     ];
   };
 }

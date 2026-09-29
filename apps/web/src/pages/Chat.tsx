@@ -961,6 +961,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
       <PersonalityBar
         personalityId={personalityId}
         avatarUrl={personalityQuery.data?.personality.display?.avatar_url}
+        emoji={personalityQuery.data?.personality.display?.emoji}
         model={isLoading ? '' : model}
         onNewSession={handleNewSession}
         sessionTitle={sessionTitle}

@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: schedule-tasks-with-cron
 time: "10 min"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Task
@@ -195,6 +195,35 @@ Delivery to a chat follows the same rules as any tracked notice:
 | The run fails (a provider error, a turn with no answer) | Nothing is delivered. The chat gets one failure notice, at most once every 6 hours per job. `lastError` records every failure. |
 | A job created before jobs recorded their bot, on a platform with several bots | Delivery is refused with `CRON_TARGET_NOT_ALLOWED` rather than sent by the wrong bot. Recreate the job from the chat it should reply to. |
 
+### Active hours
+
+Give a recurring job a daily window, and an occurrence outside it is skipped before any model call. A check-in every three hours then costs nothing overnight.
+
+Ask the agent (`active_hours` on the `cron` tool), or set it from the CLI:
+
+```bash
+ethos cron create -n "Check-in" -s "0 */3 * * *" -p "Check in." --active-hours 09:00-21:00
+```
+
+```text
+✓ Created "Check-in" (check-in)
+Active hours: 09:00-21:00
+Next run: 30/09/2026, 09:00:00
+```
+
+| Rule | Detail |
+|---|---|
+| Format | `HH:MM-HH:MM`. Start inclusive, end exclusive. A start later than the end crosses midnight (`22:00-06:00`). Start and end must differ. |
+| Clock | The host's clock, the same one the schedule runs on, so `0 20 * * *` with `19:00-21:00` always runs. `notifications.timezone` moves quiet hours only. |
+| Skipped occurrence | No turn, no script, no precheck. It is audited as `inactive-hours-skip`, is not counted as a run, and never fires later as a missed run. A `repeat` count is not used up by it. |
+| Manual run | `ethos cron run <id>` and the tool's `run` action ignore the window. |
+| One-shot jobs | Refused: `activeHours is not allowed on a one-shot schedule`. A one-shot already names its exact time. |
+| Clear it | `ethos cron update <id> --active-hours off`, or `active_hours: "off"` on the tool's `update`. |
+
+Active hours save the turn. Quiet hours and `/mute` still hold the delivery of a run inside the window. The web Cron tab shows no field for the window yet; set it from the CLI or the agent.
+
+For a ready-made check-in, install the **Heartbeat check-in** recipe from the web **Recipes** page. It adds a check-in section to a personality you already have and a job with `09:00-21:00` active hours that stays silent (`[SILENT]`) when there is nothing worth saying.
+
 ### Overlapping runs
 
 A job never runs twice at once. If an occurrence falls due while the previous run is still executing, that occurrence is skipped and a `[skipped: overlap]` entry appears in the run history. "Run now" is refused while a run is executing. A run left behind by a process that crashed or was restarted does not block the job: it runs at the next tick.
@@ -233,6 +262,8 @@ cron({
 **`not_available: cron tool requires a scheduler`** — The personality lists `cron` in `toolset.yaml` but the process has no scheduler wired. Switch from `ethos chat` to `ethos gateway start` or `ethos serve --web`.
 
 **`input_invalid: invalid cron expression`** — The schedule string is not a valid 5-field cron expression. Use the format `minute hour day month weekday`. Examples: `0 8 * * 1-5` (8am weekdays), `*/15 * * * *` (every 15 minutes), `0 9 * * 1` (9am Mondays).
+
+**`Invalid activeHours: "…"`** — The window is not `HH:MM-HH:MM`, or its start equals its end. Use a value like `09:00-21:00`, or `off` on update.
 
 **`input_invalid: personality context required`** — The `create` action was called without an active personality. Switch to a personality first (`/personality <id>`).
 

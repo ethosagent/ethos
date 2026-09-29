@@ -47,6 +47,19 @@ export interface CodexProviderConfig {
 
 const RESPONSES_ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses';
 
+/**
+ * Presence §4 — `CompletionOptions.effort` → the Responses `reasoning.effort`.
+ * Absent → `medium`, the value this provider always sent, so an effort-less
+ * request is unchanged (pinned by `__tests__/effort.test.ts`). Codex serves
+ * only reasoning models and has no "no reasoning" setting every one of them
+ * takes: `none` and `minimal` exist only on some model generations, so `off`
+ * maps to `low`, the lowest effort every Codex model accepts.
+ */
+function codexEffort(effort: CompletionOptions['effort']): 'low' | 'medium' | 'high' {
+  if (effort === undefined) return 'medium';
+  return effort === 'off' ? 'low' : effort;
+}
+
 // ---------------------------------------------------------------------------
 // CodexProvider
 // ---------------------------------------------------------------------------
@@ -114,7 +127,7 @@ export class CodexProvider implements LLMProvider {
       input: toResponsesInput(messages),
       stream: true,
       store: false,
-      reasoning: { effort: 'medium', summary: 'auto' },
+      reasoning: { effort: codexEffort(options.effort), summary: 'auto' },
       include: ['reasoning.encrypted_content'],
     };
 

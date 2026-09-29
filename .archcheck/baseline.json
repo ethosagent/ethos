@@ -1059,13 +1059,6 @@
       "occurrences": 1
     },
     {
-      "identity": "a2fcd0fc7c5b4048",
-      "ruleId": "l5-apps-through-wiring",
-      "addedAt": "2026-09-26",
-      "note": "pre-existing at adoption",
-      "occurrences": 2
-    },
-    {
       "identity": "a3ab01b448a08405",
       "ruleId": "l5-apps-through-wiring",
       "addedAt": "2026-09-26",

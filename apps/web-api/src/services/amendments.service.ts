@@ -62,6 +62,7 @@ export class AmendmentsService {
 function toView(review: AmendmentReview): AmendmentReviewView {
   return {
     record: review.record,
+    file: review.file,
     personality: review.personality,
     liveHash: review.liveHash,
     stale: review.stale,

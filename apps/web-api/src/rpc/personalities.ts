@@ -15,7 +15,7 @@ export const personalitiesRouter = {
   ),
 
   create: os.personalities.create.handler(({ input, context }) =>
-    context.personalities.create({
+    context.personalities.createBorn({
       id: input.id,
       name: input.name,
       ...(input.description !== undefined ? { description: input.description } : {}),

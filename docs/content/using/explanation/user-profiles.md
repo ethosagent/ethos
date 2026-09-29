@@ -4,7 +4,7 @@ description: "How the gateway resolves each sender to an opaque userId, where th
 kind: explanation
 audience: user
 slug: user-profiles
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Context
@@ -168,5 +168,6 @@ USER.md is also not a preferences file for the agent's behaviour. "Use Opus for 
 - [Why MEMORY.md and USER.md, not a vector store?](memory-model.md) — the memory model that USER.md is part of
 - [Why is personality the unit?](what-is-a-personality.md) — how the personality boundary interacts with user profiles
 - [Audit user identity mappings](../how-to/audit-user-identity.md) — inspect and manage the identity map
+- [Let a personality get to know new users](../how-to/get-to-know-new-users.md) — fill a new sender's USER.md with consent, one fact per yes
 - [Personality config reference](../reference/personality-yaml.md) — every field a personality's `config.yaml` accepts
 - [Security controls](../../security/controls.md) — injection scanning on memory content

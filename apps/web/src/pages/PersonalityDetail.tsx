@@ -23,6 +23,7 @@ import { TriggersSection } from '../components/personality/TriggersSection';
 import { AddSecretModal, providersOfKind } from '../components/tool-settings/SecretPicker';
 import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { PersonalityName } from '../components/ui/PersonalityName';
 import { namedSecretKeys, toolSettingsKeys } from '../features/settings/api/keys';
 import { useToolSettingsSetForPersonality } from '../features/settings/api/mutations';
 import {
@@ -1083,7 +1084,7 @@ export function PersonalityDetail() {
           />
           <div>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              {personality.name}
+              <PersonalityName name={personality.name} emoji={personality.display?.emoji} />
             </Typography.Title>
             <Typography.Text
               type="secondary"

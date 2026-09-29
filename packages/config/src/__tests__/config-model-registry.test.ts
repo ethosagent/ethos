@@ -111,6 +111,41 @@ describe('modelRegistry config parsing', () => {
     expect(await storage.read(path)).toContain('modelRegistry.sonnet.maxTokens: 4096');
   });
 
+  // Presence §4 — reasoning effort rides the alias, so two aliases of one
+  // model can think at different depths.
+  it('parses modelRegistry.<alias>.effort', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'modelRegistry.opus-deep.provider: anthropic-work',
+        'modelRegistry.opus-deep.modelId: claude-opus-4-7',
+        'modelRegistry.opus-deep.effort: high',
+      ].join('\n'),
+    );
+    expect(cfg?.modelRegistry?.entries['opus-deep']?.effort).toBe('high');
+  });
+
+  it('ignores an unknown effort and says which line it ignored', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      path,
+      `${[
+        'schemaVersion: 1',
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: p',
+        'modelRegistry.opus-deep.provider: anthropic-work',
+        'modelRegistry.opus-deep.modelId: claude-opus-4-7',
+        'modelRegistry.opus-deep.effort: extreme',
+      ].join('\n')}\n`,
+    );
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.modelRegistry?.entries['opus-deep']?.effort).toBeUndefined();
+    const loaded = await loadConfigStrict(storage, new InMemorySecretsResolver());
+    expect(loaded?.deprecations.join('\n')).toContain("'modelRegistry.opus-deep.effort'");
+  });
+
   it('ignores a non-numeric contextWindow', async () => {
     const cfg = await load([...base, 'modelRegistry.sonnet.contextWindow: lots'].join('\n'));
     expect(cfg?.modelRegistry?.entries.sonnet?.contextWindow).toBeUndefined();
@@ -176,6 +211,7 @@ describe('modelRegistry serialization', () => {
     'modelRegistry.sonnet.modelId: claude-sonnet-5',
     'modelRegistry.sonnet.label: everyday driver',
     'modelRegistry.sonnet.contextWindow: 200000',
+    'modelRegistry.sonnet.effort: low',
     'modelRegistry.sonnet.costPer1kInput: 0.003',
     'modelRegistry.sonnet.costPer1kOutput: 0.015',
     'modelRegistry.sonnet.fallbacks: sonnet-eu,sonnet-old',

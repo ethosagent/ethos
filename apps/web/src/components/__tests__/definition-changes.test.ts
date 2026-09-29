@@ -55,6 +55,7 @@ const RECORD: AmendmentRecordView = {
 
 const REVIEW: AmendmentReviewView = {
   record: RECORD,
+  file: 'toolset.yaml',
   personality: 'ok',
   liveHash: 'b'.repeat(64),
   stale: false,
@@ -166,5 +167,48 @@ describe('Definition changes (read-only)', () => {
     // The only buttons are the row toggles — nothing here applies, declines or rolls back.
     const buttons = [...container.querySelectorAll('button')];
     expect(buttons.every((b) => b.getAttribute('data-testid') === 'amendment-row')).toBe(true);
+  });
+
+  // plan personality-presence-and-initiative §1 — the birth ritual's request.
+  it('renders an identity request readably, with config.yaml, no permission rows and the avatar step', async () => {
+    const identity: AmendmentRecordView = {
+      ...RECORD,
+      id: 'a-id-1',
+      target: 'identity',
+      ops: [
+        { op: 'set_name', value: 'Ledger' },
+        { op: 'set_display_emoji', value: '🧾' },
+        { op: 'set_display_avatar', value: 'upload' },
+      ],
+    };
+    listFn.mockResolvedValue({ amendments: [identity] });
+    getFn.mockResolvedValue({
+      review: {
+        ...REVIEW,
+        record: identity,
+        file: 'config.yaml',
+        textDiff: ['-name: researcher', '+name: Ledger', '+display.emoji: 🧾'],
+        permissionDiff: null,
+        flags: [],
+      },
+    });
+    await mount();
+    const row = container.querySelector<HTMLElement>('[data-testid="amendment-row"]');
+    expect(row?.textContent).toContain(
+      'name → "Ledger", emoji → 🧾, avatar → upload after applying',
+    );
+    expect(row?.textContent).toContain('config.yaml');
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="amendment-permission-diff"]')).toBeNull();
+    expect(container.textContent).toContain('an identity change');
+    expect(
+      container.querySelector('[data-testid="amendment-diff"] [data-kind="add"]')?.textContent,
+    ).toContain('name: Ledger');
+    expect(
+      container.querySelector('[data-testid="amendment-avatar-upload"]')?.textContent,
+    ).toContain('upload it from');
   });
 });

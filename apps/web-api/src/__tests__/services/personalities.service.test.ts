@@ -1,9 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DecisionsConfig } from '@ethosagent/config';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   type CharacterSheetModelFit,
+  createPersonalityRegistry,
   FilePersonalityRegistry,
+  hasBirthMarker,
   renderCharacterSheet,
 } from '@ethosagent/personalities';
 import { SkillsInjector, SkillsLibrary, UniversalScanner } from '@ethosagent/skills';
@@ -20,6 +24,8 @@ import { call, ORPCError } from '@orpc/server';
 import { describe, expect, it } from 'vitest';
 // Relative on purpose: web-api reaches the inbox through `@ethosagent/wiring`
 // and has no workspace link to the package; the test reads the real store.
+import { plantPendingAmendment } from '../../../../../extensions/learning-inbox/src/__tests__/amendment-fixture';
+import { readAmendment } from '../../../../../extensions/learning-inbox/src/amendment-store';
 import {
   listCandidates,
   submitCandidate,
@@ -737,6 +743,48 @@ describe('PersonalitiesService', () => {
   // Governed-learning settings — evolution_approval_mode + skill_evolution
   // round-trip through create/update → config.yaml → toWire.
   // -------------------------------------------------------------------------
+  // plan personality-presence-and-initiative §1 — the web create form is an
+  // operator create path: the personality is born with a birth marker (under
+  // learning/, out of every turn's reach) and can file its identity amendment.
+  // plan personality-presence-and-initiative §1 — the create RPC (the web
+  // create form and the new-agent dialog) is an operator create path: the
+  // personality is born with a birth marker (under learning/, out of every
+  // turn's reach) and can file its identity amendment. A recipe install goes
+  // through `service.create` without it.
+  describe('birth on create', () => {
+    async function makeBirthService() {
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({ personalities: registry, library });
+      return { storage, service, context: { personalities: service } as unknown as RpcContext };
+    }
+    const marker = (id: string) => join(DATA, 'learning', 'birth', `${id}.json`);
+
+    it('the create RPC writes the birth marker and lets the new personality file', async () => {
+      const { storage, context } = await makeBirthService();
+      const { personality } = await call(
+        personalitiesRouter.create,
+        { id: 'nova', name: 'nova', toolset: ['read_file'], soulMd: '# nova' },
+        { context },
+      );
+      expect(personality.toolset).toEqual(['read_file', 'propose_self_amendment']);
+      expect(await storage.exists(marker('nova'))).toBe(true);
+    });
+
+    it('service.create alone (a recipe install) is not a birth', async () => {
+      const { storage, service } = await makeBirthService();
+      const { personality } = await service.create({
+        id: 'archivist',
+        name: 'Archivist',
+        toolset: ['read_file'],
+        soulMd: '# a',
+      });
+      expect(personality.toolset).toEqual(['read_file']);
+      expect(await storage.exists(marker('archivist'))).toBe(false);
+    });
+  });
+
   describe('governed-learning settings round-trip', () => {
     async function makeRealService() {
       const storage = new InMemoryStorage();
@@ -1506,5 +1554,42 @@ describe('PersonalitiesService — resolved ## MCP export block (M-T8)', () => {
     const { markdown } = await service.characterSheet('exporter');
     expect(markdown).toContain('- Status: exported');
     expect(markdown).toContain('- Resolved slice: not available in this rendering.');
+  });
+});
+
+describe('PersonalitiesService.delete — what the personality left under learning/ (L6)', () => {
+  it('clears the birth marker and declines the pending amendments of the deleted id', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ethos-web-delete-'));
+    try {
+      const dataDir = join(root, '.ethos');
+      const storage = new FsStorage();
+      const registry = await createPersonalityRegistry({ storage, userPersonalitiesDir: dataDir });
+      await registry.create(
+        { id: 'nova', name: 'nova', toolset: ['read_file'], soulMd: '# nova\n' },
+        { birth: true },
+      );
+      const planted = await plantPendingAmendment(storage, dataDir, 'nova');
+      expect(await hasBirthMarker(storage, dataDir, 'nova')).toBe(true);
+
+      const service = new PersonalitiesService({
+        personalities: registry,
+        library: new SkillsLibrary({ dataDir, storage }),
+        storage,
+        dataDir,
+      });
+      await service.delete('nova');
+
+      expect(registry.get('nova')).toBeUndefined();
+      expect(await hasBirthMarker(storage, dataDir, 'nova')).toBe(false);
+      const record = await readAmendment(storage, dataDir, planted.record.id);
+      expect(record?.status).toBe('declined');
+      expect(record?.history.at(-1)).toMatchObject({
+        action: 'decline',
+        actor: 'web',
+        reason: 'personality deleted',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

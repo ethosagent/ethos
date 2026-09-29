@@ -56,6 +56,7 @@ import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
 import { createLineArbiter, type LineArbiter } from '../lib/line-arbiter';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
+import { chatPersonalityLabel } from '../lib/personality-label';
 import {
   createPersonalityReloadNotifier,
   type ReloadablePersonalityRegistry,
@@ -447,6 +448,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     await runTUI(loop, {
       model: config.model,
       personality: displayName,
+      // `display.emoji` beside the name in the TUI header and identity panel.
+      emojiFor: (id) => runtime.personalities.get(id)?.display?.emoji,
       verbose: config.verbose ?? false,
       skin: config.skin,
       inventory,
@@ -842,7 +845,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   }
 
   // Welcome
-  out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${displayName} · /help${c.reset}\n\n`);
+  const label = chatPersonalityLabel(displayName, runtime.personalities);
+  out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${label} · /help${c.reset}\n\n`);
 
   // FW-6 — show recap panel when resuming
   if (opts.resumeSessionId) {

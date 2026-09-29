@@ -55,6 +55,24 @@ describe('chat personality reload (N3)', () => {
     expect(await refresh()).toEqual(['[personality] engineer reloaded (SOUL.md changed)']);
   });
 
+  it('a dropped config value is named per personality (display.emoji, plan personality-presence §2)', async () => {
+    const registry = fakeRegistry({
+      report: {
+        failures: [],
+        reloaded: [{ id: 'owl', changed: ['config.yaml'] }],
+        warnings: [
+          { id: 'owl', warning: 'config.yaml: display.emoji "ab" is not a single emoji — ignored' },
+        ],
+      },
+    });
+    const refresh = createPersonalityReloadNotifier(() => registry, '/tmp/p');
+
+    expect(await refresh()).toEqual([
+      '[personality] owl reloaded (config.yaml changed)',
+      '[personality] owl: config.yaml: display.emoji "ab" is not a single emoji — ignored',
+    ]);
+  });
+
   it('an unchanged directory prints nothing (empty report per registry contract)', async () => {
     const registry = fakeRegistry({});
     const refresh = createPersonalityReloadNotifier(() => registry, '/tmp/p');

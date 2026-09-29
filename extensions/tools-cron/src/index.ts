@@ -9,9 +9,11 @@ import type {
 import {
   type CronScheduler,
   formatRunProgress,
+  isOneShotSchedule,
   isValidSchedule,
   jobIdForName,
   nextRunForSchedule,
+  parseActiveHours,
 } from '@ethosagent/cron';
 import { shortPatternCheck } from '@ethosagent/safety-injection';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
@@ -107,6 +109,11 @@ export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions =
             type: 'number',
             description: 'Precheck timeout in seconds. Default 60, max 600 (with precheck_file).',
           },
+          active_hours: {
+            type: 'string',
+            description:
+              'Daily window "HH:MM-HH:MM" (e.g. "09:00-21:00"; "22:00-06:00" crosses midnight) in which scheduled runs may happen, on the same server clock the schedule uses. An occurrence outside it is skipped without a turn and does not count as a run; the run action ignores it. Recurring schedules only. "off" clears it (update). Default: always (create, update).',
+          },
           missed_run_policy: {
             type: 'string',
             enum: ['run-once', 'skip'],
@@ -150,6 +157,7 @@ export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions =
           precheck_file,
           precheck_timeout_seconds,
           missed_run_policy,
+          active_hours,
           context_from,
           repeat,
           id,
@@ -164,6 +172,7 @@ export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions =
           precheck_file?: string;
           precheck_timeout_seconds?: number;
           missed_run_policy?: 'run-once' | 'skip';
+          active_hours?: string;
           context_from?: string[];
           repeat?: RepeatPolicy;
           id?: string;
@@ -189,6 +198,7 @@ export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions =
               precheck_file,
               precheck_timeout_seconds,
               missed_run_policy,
+              active_hours,
               context_from,
               repeat,
             });
@@ -208,6 +218,7 @@ export function createCronTool(scheduler: CronScheduler, opts: CronToolOptions =
               timeout_seconds,
               precheck_file,
               precheck_timeout_seconds,
+              active_hours,
             });
           case 'pause':
             return handlePause(scheduler, caller, shared, { id });
@@ -374,11 +385,12 @@ async function handleCreate(
     precheck_file?: string;
     precheck_timeout_seconds?: number;
     missed_run_policy?: 'run-once' | 'skip';
+    active_hours?: string;
     context_from?: string[];
     repeat?: RepeatPolicy;
   },
 ): Promise<ToolResult> {
-  const { name, schedule, prompt, missed_run_policy, context_from, repeat } = args;
+  const { name, schedule, prompt, missed_run_policy, active_hours, context_from, repeat } = args;
   const script = toScriptRef(args.script_file, args.timeout_seconds);
   const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
 
@@ -409,6 +421,18 @@ async function handleCreate(
     return {
       ok: false,
       error: `Invalid schedule: "${schedule}". Examples: "0 8 * * 1-5" (cron), "30m" (delay), "every 2h" (interval), "2026-06-01T09:00:00Z" (ISO).`,
+      code: 'input_invalid',
+    };
+  }
+  // The scheduler refuses it too (`CronScheduler.createJob`); checked here so
+  // the model gets `input_invalid`, not `execution_failed`.
+  if (active_hours !== undefined && !parseActiveHours(active_hours)) {
+    return { ok: false, error: invalidActiveHours(active_hours), code: 'input_invalid' };
+  }
+  if (active_hours !== undefined && schedule && isOneShotSchedule(schedule)) {
+    return {
+      ok: false,
+      error: `active_hours is not allowed on a one-shot schedule ("${schedule}") — it runs once at the time it names`,
       code: 'input_invalid',
     };
   }
@@ -477,6 +501,7 @@ async function handleCreate(
       ...(precheck ? { precheck } : {}),
       personalityId: callerPersonality,
       missedRunPolicy: missed_run_policy ?? 'skip',
+      ...(active_hours !== undefined ? { activeHours: active_hours } : {}),
       repeat: repeat ?? { kind: 'forever' },
       ...(origin ? { origin } : {}),
       ...(context_from ? { contextFrom: context_from } : {}),
@@ -494,7 +519,7 @@ async function handleCreate(
 
     return {
       ok: true,
-      value: `✓ Created job "${job.name}" (id: ${job.id})\nSchedule: ${schedule}\nNext run: ${nextStr}`,
+      value: `✓ Created job "${job.name}" (id: ${job.id})\nSchedule: ${schedule}${job.activeHours ? `\nActive hours: ${job.activeHours}` : ''}\nNext run: ${nextStr}`,
     };
   } catch (err) {
     return {
@@ -620,15 +645,32 @@ async function handleUpdate(
     timeout_seconds?: number;
     precheck_file?: string;
     precheck_timeout_seconds?: number;
+    active_hours?: string;
   },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  if (!args.name && !args.schedule && !args.prompt && !args.script_file && !args.precheck_file) {
+  if (
+    !args.name &&
+    !args.schedule &&
+    !args.prompt &&
+    !args.script_file &&
+    !args.precheck_file &&
+    args.active_hours === undefined
+  ) {
     return {
       ok: false,
-      error: 'At least one of name, schedule, prompt, script_file, or precheck_file is required',
+      error:
+        'At least one of name, schedule, prompt, script_file, precheck_file, or active_hours is required',
       code: 'input_invalid',
     };
+  }
+  const clearActiveHours = args.active_hours?.trim().toLowerCase() === 'off';
+  if (
+    args.active_hours !== undefined &&
+    !clearActiveHours &&
+    !parseActiveHours(args.active_hours)
+  ) {
+    return { ok: false, error: invalidActiveHours(args.active_hours), code: 'input_invalid' };
   }
 
   const owned = await loadOwnedJob(scheduler, args.id, caller, shared);
@@ -658,6 +700,9 @@ async function handleUpdate(
     if (script) patch.script = script;
     const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
     if (precheck) patch.precheck = precheck;
+    if (args.active_hours !== undefined) {
+      patch.activeHours = clearActiveHours ? null : args.active_hours;
+    }
 
     const updated = await scheduler.updateJob(args.id, patch);
     return {
@@ -779,5 +824,10 @@ function formatJob(j: CronJob): string {
     `  Next run:    ${next}`,
     `  Last run:    ${last}`,
     `  Missed runs: ${j.missedRunPolicy}`,
+    ...(j.activeHours ? [`  Active hrs:  ${j.activeHours}`] : []),
   ].join('\n');
+}
+
+function invalidActiveHours(spec: string): string {
+  return `Invalid activeHours: "${spec}" — use HH:MM-HH:MM with different start and end (e.g. "09:00-21:00", or "22:00-06:00" across midnight)`;
 }

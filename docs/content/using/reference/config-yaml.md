@@ -1,10 +1,10 @@
 ---
 title: "config.yaml reference"
-description: "Every field in ~/.ethos/config.yaml — provider, model, channel tokens, retention TTLs, provider chain, voice tier, channels, transcode, wake, telephony."
+description: "Every field in ~/.ethos/config.yaml — provider, model registry, channel tokens and reply prefix, retention, provider chain, voice, wake, telephony."
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -188,6 +188,62 @@ modelRouting.researcher: claude-opus-4-7
 modelRouting.engineer: moonshotai/kimi-k2.6
 ```
 
+## modelRegistry.\* {#model-registry}
+
+Type: dotted block · Default: unset (the legacy [`model`](#model) serves)
+
+The deployment's roster of model **aliases**. A personality's [`model`](./personality-yaml.md#model) names an alias or a role, and the registry turns it into a provider entry and a vendor model id. Parsed by `buildModelRegistry` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts); the type is `ModelRegistryEntry` in [`packages/types/src/model-registry.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/model-registry.ts).
+
+| Field | Type | Description |
+|---|---|---|
+| `modelRegistry.<alias>.provider` | string | The provider entry's explicit `providers.<i>.id`, not a provider type. |
+| `modelRegistry.<alias>.modelId` | string | The vendor id sent on the wire, e.g. `claude-opus-4-8`. |
+| `modelRegistry.<alias>.label` | string | Label shown in the model pickers. Display only. |
+| `modelRegistry.<alias>.contextWindow` | integer | Context window in tokens. |
+| `modelRegistry.<alias>.effort` | `off` \| `low` \| `medium` \| `high` | How hard this alias reasons. Unset sends each provider's own default request. See [Effort mapping](#model-registry-effort). |
+| `modelRegistry.<alias>.costPer1kInput` / `.costPer1kOutput` | number | USD per 1k tokens. Display only; nothing bills on it. |
+| `modelRegistry.<alias>.fallbacks` | comma list | Aliases tried in order when this entry's provider cannot answer. Same provider entry only. |
+| `modelRegistry.default` | alias | The alias a turn uses when nothing else declares one. |
+| `modelRegistry.roles.<role>` | alias | Binds a role (`trivial`, `default`, `deep`, `dreaming`) to an alias. |
+
+```yaml
+modelRegistry.opus-deep.provider: anthropic-main
+modelRegistry.opus-deep.modelId: claude-opus-4-8
+modelRegistry.opus-deep.effort: high
+modelRegistry.opus-quick.provider: anthropic-main
+modelRegistry.opus-quick.modelId: claude-opus-4-8
+modelRegistry.opus-quick.effort: low
+modelRegistry.default: opus-quick
+modelRegistry.roles.deep: opus-deep
+```
+
+Two aliases can share one `modelId` and differ only in `effort`. A personality picks one by name (`model: opus-deep`), so effort needs no personality field.
+
+Notes:
+
+- `effort` values: `off` — no extended reasoning where the model allows it; `low`, `medium`, `high` — increasing reasoning depth and token spend. There is no default value: an alias with no `effort` sends exactly the request it sent before the key existed.
+- An `effort` outside those four is dropped, and the config load prints `config.yaml: 'modelRegistry.<alias>.effort' must be one of off, low, medium, high ('<value>'), so it was ignored.`
+- The effort travels with the alias that answers. A mid-turn escalation to another alias sends that alias's effort, or none. On an unpinned turn a `providers.*` failover hop receives the same effort and maps it onto its own model.
+
+### Effort mapping {#model-registry-effort}
+
+Each provider maps `effort` to its own request field, or ignores it.
+
+| Provider | What `effort` sends |
+|---|---|
+| `anthropic`, adaptive-thinking models (Opus 4.6, 4.7, 4.8, 5, 5.5; Sonnet 4.6, 5; Fable 5, 5.1) | `low`/`medium`/`high` → `thinking: {type: adaptive}` plus `output_config.effort`. `off` → nothing on a model that does not think by default (Opus 4.6–4.8, Sonnet 4.6); `thinking: {type: disabled}` plus effort `low` on Opus 5; effort `low` alone on a model whose thinking cannot be disabled (Opus 5.5, Sonnet 5, Fable 5 and 5.1). |
+| `anthropic`, budget-thinking models (Haiku 4.5, Sonnet 4.5, Opus 4.5, Opus 4.1, Opus 4, Sonnet 4, Claude 3.7 Sonnet) | `thinking.budget_tokens`: `low` 1024, `medium` 4096, `high` 16,384; `off` sends no thinking. The budget is capped at the request's `max_tokens` minus 1024 and dropped below 1024, so `high` under an 8,096-token cap (a Claude model the catalog does not list) thinks with 7,072. Raise [`models.<provider>/<model>.maxOutputTokens`](#models-max-output-tokens) to give it the full budget. |
+| `anthropic`, any other model id | Nothing. |
+| `codex` | `reasoning.effort`: `low`, `medium` or `high`; `off` → `low`. Unset stays `medium`, the value it always sent. |
+| `openai` and other OpenAI-compatible providers | `reasoning_effort`, only for an OpenAI reasoning model (o-series, GPT-5 family) on `api.openai.com`; `off` → `low`; `gpt-5-pro` always gets `high`. `gpt-5-chat`, `o1-mini` and `o1-preview` get nothing. OpenRouter, local runtimes and Azure get nothing. |
+| `gemini`, `xai`, `bedrock`, `azure` | Nothing. The request is unchanged. |
+
+Notes:
+
+- **Tool continuations.** The Anthropic provider cannot send a previous turn's thinking block back to the API. So when a request continues a turn that called a tool, a budget-thinking model sends no thinking, and an adaptive model that does not think by default sends `output_config.effort` without a `thinking` param. Models that think by default send the same request as on any other turn. `thinkingParamsFor` and `continuesToolUseTurn` in [`extensions/llm-anthropic/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/llm-anthropic/src/index.ts); pinned by `extensions/llm-anthropic/src/__tests__/thinking-capabilities.test.ts`.
+- The Anthropic capability table is `ANTHROPIC_MODEL_CAPABILITIES` in the same file. Dated snapshots, `-latest`, Bedrock, Vertex and OpenRouter spellings of a model id map to the same row.
+- The Codex mapping is `codexEffort` in [`extensions/llm-codex/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/llm-codex/src/index.ts); the OpenAI mapping is `openAiReasoningEffort` in [`extensions/llm-openai-compat/src/transport.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/llm-openai-compat/src/transport.ts).
+
 ## models.\<provider\>/\<model\>.maxOutputTokens {#models-max-output-tokens}
 
 Type: integer · Default: the model catalog's cap for that model, else the provider's default
@@ -266,6 +322,8 @@ Multi-bot list shape. When set, the gateway creates one `TelegramAdapter` and on
 | `telegram.bots.<i>.webhookUrl` | string | — | Required when `useWebhook` is `true`. The full public URL Telegram POSTs updates to, **including** the `/telegram/webhook/<botKey>` path — the host routes on that path, so a URL without it reaches no handler. Registered for you by `setWebhook()` at startup. |
 | `telegram.bots.<i>.webhookSecretToken` | string | — | Required when `useWebhook` is `true`. Echoed by Telegram in `X-Telegram-Bot-Api-Secret-Token` and compared by grammy before the update is processed. A credential: externalized to the secret vault exactly like `token`, so write it as `${secrets:<ref>}`. |
 | `telegram.bots.<i>.dropPendingUpdates` | boolean | `false` | Discard updates Telegram queued while the process was down. With the default, messages sent during a restart are answered once the bot is back. **Poll mode only** — `bot.start()` is never called for a webhook-mode bot, so the flag does nothing there. Set `true` only if a restart should skip everything queued while the bot was down. |
+| `telegram.bots.<i>.replyPrefix` | string | unset | Template put in front of every reply, with `{name}` and `{emoji}` from the bound personality. See [`<bot>.replyPrefix`](#reply-prefix). |
+| `telegram.bots.<i>.mentionByName` | boolean | `false` | Count a group message that names the bound personality as a mention. See [`<bot>.mentionByName`](#mention-by-name). |
 
 ```yaml
 telegram.bots.0.token: "123456:ABCdefGhIJklmNopQRstuVwxYZ"
@@ -321,7 +379,9 @@ Multi-app list shape for Slack. Each entry creates one Slack adapter bound to a 
 | `slack.apps.<i>.bind.name` | string | — | Required. Personality id or team name. |
 | `slack.apps.<i>.bind.allowSlashSwitch` | boolean | `false` | Allow per-channel `/personality` switching. In a channel only `channel_filter.slack.ownerUserId` may switch; a channel with no owner configured refuses. |
 | `slack.apps.<i>.defaultChannelMode` | `mention_only` \| `thread_follow` \| `all` \| `observe` | `mention_only` | Reply-and-record behaviour in channels that have no per-channel override. Four values, not Telegram's five — the Slack adapter has no `regex_match`. `thread_follow` also answers follow-ups in threads the bot has already posted in; `all` answers every message; `observe` records every message and replies to none, not even an explicit `@mention`. DMs are answered under every mode. Anything but `mention_only` needs the `message.channels` / `message.groups` event subscriptions — see [Platform prerequisites for unaddressed channel messages](../../platforms/slack.md#1a-platform-prerequisites-for-unaddressed-channel-messages). `/ethos channel-mode <mode>` overrides it per channel. An out-of-range value is a parse error, not a silent fallback. |
-| `slack.apps.<i>.receiptReaction` | string | `eyes` | Emoji name (no colons) reacted onto an inbound message on arrival and removed once the reply lands. Needs the `reactions:write` scope; without it the reaction is skipped silently. |
+| `slack.apps.<i>.receiptReaction` | string | unset | Emoji name (no colons) reacted onto an inbound message on arrival and removed once the reply lands. When set, it wins over the bound personality's `display.emoji`; unset, the personality's emoji is used when its Slack name is known, else `eyes`. See [Receipt reaction](#receipt-reaction). Needs the `reactions:write` scope; without it the reaction is skipped silently. |
+| `slack.apps.<i>.replyPrefix` | string | unset | Template put in front of every reply, with `{name}` and `{emoji}` from the bound personality. See [`<bot>.replyPrefix`](#reply-prefix). |
+| `slack.apps.<i>.mentionByName` | boolean | `false` | Count a channel message that names the bound personality as a mention. See [`<bot>.mentionByName`](#mention-by-name). |
 | `slack.apps.<i>.allowedSlashUsers` | string list | unset | Comma-separated Slack user ids allowed to run `/ethos` and to see the App Home tab's memory, session, kanban, and channel sections. Narrows `channel_filter.slack` (`ownerUserId` + `recipientAllowlist`) — an id listed here that is not on that allowlist stays denied. Absent or empty means the `channel_filter.slack` allowlist alone. Both empty means nobody: the gate is default-closed. |
 | `slack.apps.<i>.allowedBotIds` | string list | unset | Comma-separated Slack `bot_id`s whose messages reach the agent, in new posts, edits, and thread backfill alike. Absent or empty drops every bot- and workflow-authored message — the gate is default-closed. Read a bot's id from the `bot_id` field of any message it has posted. |
 | `slack.apps.<i>.longReplyThresholdChars` | integer | `9000` | Reply length above which the agent posts a short lead message ending in "full answer attached" plus the complete text as an `answer.md` upload, instead of four or more chunked messages. `0` disables the fallback. The upload needs the `files:write` scope; without it the reply falls back to the chunked messages. |
@@ -481,6 +541,66 @@ Notes:
 - A value that is not a positive number is a parse error, and the bot entry is dropped. The legacy scalar bots (`telegramToken`, `discordToken`, email) have no entry to hold it, so they cannot be capped this way.
 - If the spend cannot be read, the turn runs, and the gateway records a `gateway.daily_budget_unreadable` event.
 - This is an operator setting, not part of a personality: two deployments of the same personality can set different caps. The per-session cap is [`budgetCapUsd`](./personality-yaml.md#budget-cap-usd).
+
+## \<bot\>.replyPrefix {#reply-prefix}
+
+Type: string template · Default: unset (replies unchanged)
+
+Text the gateway puts in front of every reply the bot sends, filled from the personality bound to the chat. Set it on the bot's own entry: `telegram.bots.<i>.replyPrefix`, `slack.apps.<i>.replyPrefix`, or the top-level `discord.replyPrefix` (Discord is single-bot).
+
+| Placeholder | Filled with |
+|---|---|
+| `{name}` | The bound personality's `name` (its id when it has none). Follows a `/personality` switch. |
+| `{emoji}` | The bound personality's [`display.emoji`](./personality-yaml.md#display). |
+
+```yaml
+telegram.bots.0.replyPrefix: "{emoji} {name}: "
+discord.replyPrefix: "[{name}] "
+```
+
+With `display.emoji: 🦉` and `name: Owl`, the first line renders `🦉 Owl: ` in front of the reply.
+
+Notes:
+
+- These are the only two placeholders. Any other text is copied as written, and a value is never re-scanned for placeholders.
+- A placeholder with no value is removed with one adjacent space, so `"{emoji} {name}: "` for a personality with no emoji renders `Owl: `, not ` Owl: `.
+- Quote a value that ends in a space. Unquoted, the trailing space is lost.
+- When a reply opens with a markdown block (a heading, a list item, a block quote, a code fence), the prefix is trimmed and put on its own line, so the block still renders.
+- The prefix is part of the reply's content. The gateway applies it before outbound dedup and before the delivery ledger records the reply, so a redelivery sends the stored text as-is and nothing is prefixed twice. A streamed reply carries it in the first chunk and in the final edit. Adapters never add it. `applyReplyPrefix` in [`extensions/gateway/src/reply-prefix.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/reply-prefix.ts); pinned by `extensions/gateway/src/__tests__/reply-prefix.test.ts`.
+- Gateway notices (errors, empty-reply notices, credential links) and the spoken text of a voice note get no prefix.
+- This is an operator setting, not a personality field: two deployments of the same personality can prefix differently.
+
+## \<bot\>.mentionByName {#mention-by-name}
+
+Type: boolean · Default: `false`
+
+Count a group message that names the bound personality as a mention of the bot, exactly like an `@mention`. Set it on `telegram.bots.<i>.mentionByName`, `slack.apps.<i>.mentionByName` or the top-level `discord.mentionByName`.
+
+```yaml
+telegram.bots.0.mentionByName: true
+```
+
+Notes:
+
+- The match is a whole word, case-insensitive, on the personality's `name`: with `name: Owl`, "hey Owl, can you check this?" counts and "Owlish" does not. Regex characters in the name are matched literally, and composed and decomposed accents match each other. `mentionsPersonalityName` in [`packages/core/src/channel-presence.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/channel-presence.ts); pinned by `packages/core/src/__tests__/channel-presence.test.ts`.
+- A match sets `InboundMessage.isGroupMention`. The channel filter is unchanged, so a member the filter does not allow is still dropped.
+- Direct messages never need it.
+- A message that reaches the bot only by naming it gets no receipt reaction on Slack and Discord. On Telegram it gets one only when the chat's mode would have answered it without the name.
+
+## Receipt reaction {#receipt-reaction}
+
+The emoji a channel bot reacts with when a message arrives, cleared when the reply lands. It is chosen in this order: an explicitly configured receipt reaction, then the bound personality's [`display.emoji`](./personality-yaml.md#display), then the platform default.
+
+| Platform | Configured by | Personality emoji used when | Default |
+|---|---|---|---|
+| Slack | [`slack.apps.<i>.receiptReaction`](#slack-apps) | Its Slack emoji name is in the adapter's table (`slackEmojiName`, `extensions/platform-slack/src/adapter.ts`) | `eyes` (👀) |
+| Telegram | Not a `config.yaml` key | Telegram's Bot API accepts it as a reaction (`telegramReceiptEmoji`, `extensions/platform-telegram/src/index.ts`) | 👀 |
+| Discord | Not a `config.yaml` key | Always (Discord takes any unicode emoji) | 👀 |
+
+Notes:
+
+- If the platform refuses the personality's emoji (a Telegram chat can narrow its allowed reactions), the adapter retries once with the default. The reaction is never dropped for the personality's sake.
+- With no `display.emoji` and no configured reaction, every platform reacts exactly as before.
 
 ## gateway.private\_chats.\<platform\> {#gateway-private-chats}
 

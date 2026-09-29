@@ -123,6 +123,11 @@ export async function* assembleContext(
     attachments?: Attachment[];
     userId?: string;
     dryRun?: boolean;
+    /** `RunOptions` fields copied onto `PromptContext` verbatim (see there). */
+    initiator?: import('@ethosagent/types').TurnInitiator;
+    jobId?: string;
+    reviewOfJobId?: string;
+    agentId?: string;
     /** T3 — max output tokens for the pending completion; reserved from the
      *  context window by compaction so the response can't overflow. */
     maxCompletionTokens?: number;
@@ -458,6 +463,15 @@ export async function* assembleContext(
     isDm: roomAudience !== 'shared',
     turnNumber: allMessages.length,
     personalityId: personality.id,
+    ...(opts.userId ? { userId: opts.userId } : {}),
+    // The turn's gate inputs, as the tool contexts get them
+    // (`toolCtxBase`, ./tool-processing.ts): verbatim, no fallback.
+    roomAudience,
+    ...(opts.initiator !== undefined ? { initiator: opts.initiator } : {}),
+    ...(opts.jobId !== undefined ? { jobId: opts.jobId } : {}),
+    ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
+    ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+    ...(opts.dryRun ? { dryRun: true } : {}),
     // Phase 4 — small-window mode forces skills into index form. Derived from
     // static inputs (resolved once at wiring), constant across turns.
     ...(deps.promptBudget?.skillsIndexMode ? { skillsIndexMode: true } : {}),

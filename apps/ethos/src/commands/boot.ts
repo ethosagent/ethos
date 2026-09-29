@@ -403,12 +403,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   let watcherDeliverFn:
     | ((target: { platform: string; chatId: string }, text: string) => Promise<void>)
     | null = null;
-  let watcherWakeFn: ((event: WatcherWakeEvent) => Promise<void>) | null = null;
+  // Resolves whether a turn was started — `false` costs the watcher no fire
+  // (`WatcherManagerConfig.wake`).
+  let watcherWakeFn: ((event: WatcherWakeEvent) => Promise<boolean>) | null = null;
   // Named so the SAME wake path drives both `WatcherManager` and the
   // call-capture daemon — one closure, not two copies (mirrors both commands).
-  const watcherWake = async (event: WatcherWakeEvent): Promise<void> => {
-    if (watcherWakeFn) await watcherWakeFn(event);
-  };
+  const watcherWake = async (event: WatcherWakeEvent): Promise<boolean> =>
+    watcherWakeFn ? watcherWakeFn(event) : false;
   const watcherManager = new WatcherManager({
     storage,
     logger,
@@ -688,6 +689,14 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
     has: (id: string): boolean => personalities.get(id) != null,
     voice: (id: string) => personalities.get(id)?.voice,
+    // Channel presence (plan personality-presence-and-initiative §3) — same
+    // seam and shape as `runGatewayStart`'s.
+    identity: (id: string) => {
+      const p = personalities.get(id);
+      return p
+        ? { name: p.name, ...(p.display?.emoji ? { emoji: p.display.emoji } : {}) }
+        : undefined;
+    },
     list: (): Array<{ id: string; name: string; isDefault: boolean }> => {
       const defaultId = personalities.getDefault().id;
       return personalities.list().map((p) => ({
@@ -1058,12 +1067,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       console.error(
         `[watcher] wake dropped for "${event.watcherId}" — no bot bound to personality "${event.personalityId}"`,
       );
-      return;
+      return false;
     }
     // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
     const msg = watcherWakeMessage(event, bot.botKey);
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
+    return true;
   };
 
   for (const adapter of adapters) {

@@ -44,6 +44,7 @@ export const cronRouter = {
       ...(input.missedRunPolicy !== undefined && { missedRunPolicy: input.missedRunPolicy }),
       ...(input.notifyInApp !== undefined && { notifyInApp: input.notifyInApp }),
       ...(input.deliverTo !== undefined && { deliverTo: input.deliverTo }),
+      ...(input.activeHours !== undefined && { activeHours: input.activeHours }),
     });
   }),
 
@@ -52,6 +53,7 @@ export const cronRouter = {
       ...(input.name !== undefined && { name: input.name }),
       ...(input.schedule !== undefined && { schedule: input.schedule }),
       ...(input.prompt !== undefined && { prompt: input.prompt }),
+      ...(input.activeHours !== undefined && { activeHours: input.activeHours }),
     }),
   ),
 

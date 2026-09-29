@@ -9,12 +9,16 @@
 // gap-event-triggers §3e).
 
 import { type MessagingToolsOptions, messagingTargetRefusal } from '@ethosagent/tools-messaging';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 import {
+  DEFAULT_WATCHER_MAX_FIRES,
+  effectiveMaxFires,
   isForeignDeliverForGatedOwner,
+  MAX_AGENT_WATCHER_FIRES,
   MIN_INTERVAL_SECONDS,
   type WatcherDeliveryGate,
   type WatcherKind,
+  type WatcherLimits,
   type WatcherManager,
   type WatcherOnChange,
   type WatcherOwner,
@@ -36,8 +40,27 @@ function formatWatcher(w: WatcherRecord): string {
   }
   if (w.onChange.wake) actions.push(`wake → ${w.onChange.wake.personalityId}`);
   const status = w.enabled ? 'active' : 'paused';
-  const line = `${w.id} [${w.kind}] ${w.target} — every ${w.intervalSeconds}s, ${actions.join(', ')} (${status})`;
-  return w.deliveryWithheld ? `${line}\n  ${w.deliveryWithheld.reason}` : line;
+  const line = `${w.id} [${w.kind}] ${w.target} — every ${w.intervalSeconds}s, ${actions.join(', ')}, ${formatBudget(w)} (${status})`;
+  const notes = [w.stopped?.reason, w.deliveryWithheld?.reason].filter(Boolean);
+  return notes.length > 0 ? `${line}\n  ${notes.join('\n  ')}` : line;
+}
+
+/** The remaining fire budget and any expiry/cooldown, as `watcher_list` shows it. */
+function formatBudget(w: WatcherRecord): string {
+  const max = effectiveMaxFires(w);
+  const used = w.firesUsed ?? 0;
+  const parts = [
+    max === 0 ? `${used} fires, unlimited` : `${Math.max(0, max - used)} of ${max} fires left`,
+  ];
+  if (w.limits?.cooldownSeconds) parts.push(`cooldown ${w.limits.cooldownSeconds}s`);
+  if (w.limits?.expiresAt) parts.push(`expires ${w.limits.expiresAt}`);
+  return parts.join(', ');
+}
+
+interface LimitsArg {
+  expires_at?: string;
+  cooldown_seconds?: number;
+  max_fires?: number;
 }
 
 interface DeliverArg {
@@ -132,6 +155,42 @@ export interface WatcherToolsOptions {
 
 const PERSONALITY_REQUIRED: ToolResult = fail('watchers require a personality context');
 
+// ---------------------------------------------------------------------------
+// Only a person grows or refills an agent's watchers (plan
+// personality-presence-and-initiative §5: "no watcher created by an agent can
+// wake a personality without limit").
+//
+// `watcher_create`, `watcher_resume` and `watcher_delete` refuse unless
+// `ToolContext.initiator === 'user'` — the same strict reading as `gateRefusal`
+// in `packages/wiring/src/amendments.ts`: a watcher wake (`initiator: 'system'`,
+// `initiatorFor` in `extensions/gateway/src/index.ts` and `runWatcherWakeTurn`
+// in `apps/ethos/src/lib/watcher-wake.ts`), a cron turn
+// (`apps/ethos/src/commands/cron-turn.ts`) and any surface that does not say
+// who started it are all refused. `watcher_pause` and `watcher_list` stay open:
+// they cannot add a fire. Pinned by "only a person-started turn grows or
+// refills watchers" in `src/__tests__/limits.test.ts`.
+//
+// Why delete-then-recreate needs no per-id tombstone: without a person, the
+// woken agent can neither delete nor create, so the loop that refilled a spent
+// budget is gone. WITH a person, a tombstone keyed by id would be bypassed by
+// the next id, so it would buy nothing; the bound there is the per-owner cap
+// (`MAX_WATCHERS_PER_OWNER`, `WatcherManager.createWatcher`/`resumeWatcher`)
+// times the per-watcher ceiling (`MAX_AGENT_WATCHER_FIRES`,
+// `validateWatcherInput`) — fires that only a person-started turn can grant.
+// ---------------------------------------------------------------------------
+
+function personRequired(
+  ctx: Pick<ToolContext, 'initiator'>,
+  action: string,
+): ToolResult | undefined {
+  if (ctx.initiator === 'user') return undefined;
+  return fail(
+    `${action} needs a turn a person started. A watcher wake, a cron job or another ` +
+      'system turn cannot create, resume or delete watchers — ask the person to do it. ' +
+      '(watcher_pause and watcher_list still work.)',
+  );
+}
+
 /**
  * Whether the calling turn may see and act on `watcher` (plan
  * personality-memory-boundary G1, verification round E6): its own
@@ -199,7 +258,9 @@ export function createWatcherTools(
   const createTool: Tool = {
     name: 'watcher_create',
     description:
-      'Create a declarative zero-token watcher. A deterministic differ (file hash, HTTP ETag/content, RSS GUIDs, process alive/dead) runs on a schedule with no LLM involvement; on a change it delivers a short summary to a channel and/or wakes a personality. At least one of deliver/wake is required.',
+      'Create a declarative zero-token watcher. A deterministic differ (file hash, HTTP ETag/content, RSS GUIDs, process alive/dead) runs on a schedule with no LLM involvement; on a change it delivers a short summary to a channel and/or wakes a personality. At least one of deliver/wake is required. Every watcher has a fire budget (default ' +
+      DEFAULT_WATCHER_MAX_FIRES +
+      '); when it is spent, or the watcher expires, the watcher pauses.',
     toolset: 'watchers',
     capabilities: {},
     schema: {
@@ -240,19 +301,42 @@ export function createWatcherTools(
             },
           },
         },
+        limits: {
+          type: 'object',
+          description:
+            'When the watcher stops: an expiry, a cooldown between fires, a fire budget.',
+          properties: {
+            expires_at: {
+              type: 'string',
+              description:
+                'ISO-8601 date-time with a zone (Z or ±hh:mm), e.g. 2026-10-01T09:00:00Z, after which the watcher pauses.',
+            },
+            cooldown_seconds: {
+              type: 'number',
+              description: 'Minimum seconds between fires; changes inside it fire nothing.',
+            },
+            max_fires: {
+              type: 'number',
+              description: `Fires allowed before the watcher pauses. 1 to ${MAX_AGENT_WATCHER_FIRES}; default ${DEFAULT_WATCHER_MAX_FIRES}.`,
+            },
+          },
+        },
       },
       required: ['id', 'kind', 'target', 'interval_seconds'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { id, kind, target, interval_seconds, deliver, wake } = args as {
+      const { id, kind, target, interval_seconds, deliver, wake, limits } = args as {
         id?: string;
         kind?: WatcherKind;
         target?: string;
         interval_seconds?: number;
         deliver?: DeliverArg;
         wake?: WakeArg;
+        limits?: LimitsArg;
       };
       if (!ctx.personalityId) return PERSONALITY_REQUIRED;
+      const notPerson = personRequired(ctx, 'watcher_create');
+      if (notPerson) return notPerson;
       const caller = ctx.personalityId;
       if (!id) return fail('id is required');
       if (!kind) return fail('kind is required');
@@ -311,6 +395,28 @@ export function createWatcherTools(
         };
       }
 
+      // An agent never creates an unlimited watcher (plan
+      // personality-presence-and-initiative §5). `validateWatcherInput` also
+      // refuses `maxFires: 0` for any record with an owner, which this tool
+      // always stamps.
+      if (limits?.max_fires === 0) {
+        return fail(
+          'limits.max_fires must be at least 1 — an unlimited watcher can only be created by the operator',
+        );
+      }
+      if (limits?.max_fires !== undefined && limits.max_fires > MAX_AGENT_WATCHER_FIRES) {
+        return fail(
+          `limits.max_fires must be at most ${MAX_AGENT_WATCHER_FIRES} for a watcher an agent creates`,
+        );
+      }
+      const watcherLimits: WatcherLimits = {
+        ...(limits?.expires_at !== undefined ? { expiresAt: limits.expires_at } : {}),
+        ...(limits?.cooldown_seconds !== undefined
+          ? { cooldownSeconds: limits.cooldown_seconds }
+          : {}),
+        ...(limits?.max_fires !== undefined ? { maxFires: limits.max_fires } : {}),
+      };
+
       try {
         const record = await manager.createWatcher({
           id,
@@ -319,6 +425,7 @@ export function createWatcherTools(
           intervalSeconds: interval_seconds,
           onChange,
           owner,
+          limits: watcherLimits,
         });
         return { ok: true, value: `Watcher created: ${formatWatcher(record)}` };
       } catch (err) {
@@ -329,7 +436,8 @@ export function createWatcherTools(
 
   const listTool: Tool = {
     name: 'watcher_list',
-    description: "List this personality's watchers with their kind, target, interval, and actions.",
+    description:
+      "List this personality's watchers with their kind, target, interval, actions, remaining fire budget, and why a stopped watcher stopped.",
     toolset: 'watchers',
     capabilities: {},
     schema: { type: 'object', properties: {} },
@@ -348,6 +456,7 @@ export function createWatcherTools(
     description: string,
     action: (id: string) => Promise<void>,
     pastTense: string,
+    personOnly: boolean,
   ): Tool => ({
     name,
     description,
@@ -360,6 +469,8 @@ export function createWatcherTools(
     },
     async execute(args, ctx): Promise<ToolResult> {
       if (!ctx.personalityId) return PERSONALITY_REQUIRED;
+      const notPerson = personOnly ? personRequired(ctx, name) : undefined;
+      if (notPerson) return notPerson;
       const { id } = args as { id?: string };
       if (!id) return fail('id is required');
       const owned = await loadOwnedWatcher(
@@ -386,18 +497,21 @@ export function createWatcherTools(
       'Pause a watcher. Its backing schedule is deregistered; last-seen state is kept so resuming continues detection from where it left off.',
       (id) => manager.pauseWatcher(id),
       'paused',
+      false,
     ),
     lifecycleTool(
       'watcher_resume',
       'Resume a paused watcher. Detection continues against the state persisted before the pause.',
       (id) => manager.resumeWatcher(id),
       'resumed',
+      true,
     ),
     lifecycleTool(
       'watcher_delete',
       'Delete a watcher, its backing schedule, and its persisted state.',
       (id) => manager.removeWatcher(id),
       'deleted',
+      true,
     ),
   ];
 }

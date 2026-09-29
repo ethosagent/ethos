@@ -110,6 +110,32 @@ export function isForeignDeliverForGatedOwner(
   return target.chatId !== gate.ownerTarget(target.platform);
 }
 
+/**
+ * "Until Z" on a standing intent (plan personality-presence-and-initiative §5).
+ * Enforced in one place, `WatcherManager.dispatchChange`; validated by
+ * `validateWatcherInput`.
+ */
+export interface WatcherLimits {
+  /** ISO-8601 instant. A change after it pauses the watcher instead of firing. */
+  expiresAt?: string;
+  /** A change within this many seconds of the last fire advances state but
+   *  fires nothing. */
+  cooldownSeconds?: number;
+  /** Fires allowed before the watcher pauses. Absent = `DEFAULT_WATCHER_MAX_FIRES`
+   *  for a watcher with an owner, unlimited for one without (`effectiveMaxFires`).
+   *  `0` = unlimited, and only a watcher with no owner — one an operator created
+   *  outside an agent turn — may carry it; an owned watcher may carry at most
+   *  `MAX_AGENT_WATCHER_FIRES` (`validateWatcherInput`). */
+  maxFires?: number;
+}
+
+/** Why the manager paused a watcher (expiry or spent budget), persisted so
+ *  `watcher_list` can show it. Cleared by `resumeWatcher`. */
+export interface WatcherStopped {
+  at: string;
+  reason: string;
+}
+
 export interface WatcherRecord {
   id: string;
   kind: WatcherKind;
@@ -125,6 +151,12 @@ export interface WatcherRecord {
    *  before owners were stored — neither can be re-checked against a policy. */
   owner?: WatcherOwner;
   deliveryWithheld?: WatcherDeliveryWithheld;
+  limits?: WatcherLimits;
+  /** Changes that woke or delivered. Absent on records that never fired. */
+  firesUsed?: number;
+  /** When the last counted fire happened — the cooldown's reference point. */
+  lastFiredAt?: string;
+  stopped?: WatcherStopped;
 }
 
 export interface WatcherCreateInput {
@@ -134,6 +166,7 @@ export interface WatcherCreateInput {
   intervalSeconds: number;
   onChange: WatcherOnChange;
   owner?: WatcherOwner;
+  limits?: WatcherLimits;
 }
 
 export interface WatcherWakeEvent {
@@ -180,10 +213,14 @@ export interface WatcherManagerConfig {
   watchersDir?: string;
   logger?: Logger;
   /** Bound at wiring time to `Gateway.sendTo` (already dedup-gated — the
-   *  watcher layer adds NO dedup of its own, per the adapter contract). */
-  deliver?: (target: WatcherDeliverTarget, text: string) => Promise<void>;
-  /** Bound at wiring time to lane message synthesis (webhook-wake style). */
-  wake?: (event: WatcherWakeEvent) => Promise<void>;
+   *  watcher layer adds NO dedup of its own, per the adapter contract).
+   *  Resolving `false` reports that nothing was sent, and the change costs no
+   *  fire (`WatcherManager.dispatchChange`). */
+  deliver?: (target: WatcherDeliverTarget, text: string) => Promise<boolean | undefined>;
+  /** Bound at wiring time to lane message synthesis (webhook-wake style).
+   *  Resolving `false` reports that no turn was started (no bot for the
+   *  personality, no loop yet), and the change costs no fire. */
+  wake?: (event: WatcherWakeEvent) => Promise<boolean | undefined>;
   /** The approval-outbox questions every delivery asks (`dispatchChange`).
    *  Given at construction, so it exists before the first tick and a manager
    *  has exactly one. Consulted on every delivery, never cached, and its
@@ -212,6 +249,33 @@ export interface WatcherManagerConfig {
 /** The single systemTask name every watcher-backed cron job dispatches to. */
 export const WATCHER_SYSTEM_TASK = 'watcher-tick';
 export const MIN_INTERVAL_SECONDS = 60;
+/** The fire budget an OWNED watcher gets when none is given — including every
+ *  owned record written before limits existed (`effectiveMaxFires`). */
+export const DEFAULT_WATCHER_MAX_FIRES = 20;
+/** The largest fire budget an owned (agent-created) watcher may carry
+ *  (`validateWatcherInput`; `watcher_create` refuses above it first). */
+export const MAX_AGENT_WATCHER_FIRES = 100;
+/** Enabled watchers one personality may own at once (`WatcherManager.createWatcher`,
+ *  `WatcherManager.resumeWatcher`). Paused watchers do not count. */
+export const MAX_WATCHERS_PER_OWNER = 10;
+
+/**
+ * The fire budget `WatcherManager` enforces for `watcher`; `0` = unlimited. An
+ * explicit `limits.maxFires` always wins. Without one, an owned (agent-created)
+ * watcher gets `DEFAULT_WATCHER_MAX_FIRES`, and an owner-less one — created by
+ * the operator outside an agent turn, or written before limits existed — keeps
+ * the unlimited behavior it had before limits were introduced.
+ */
+export function effectiveMaxFires(watcher: Pick<WatcherRecord, 'limits' | 'owner'>): number {
+  const explicit = watcher.limits?.maxFires;
+  if (explicit !== undefined) return explicit;
+  return watcher.owner ? DEFAULT_WATCHER_MAX_FIRES : 0;
+}
+
+/** Strict ISO-8601 date-time with a `Z` or `±hh:mm` zone. A bare date, a
+ *  zone-less time (read in whatever zone the host runs in) and anything
+ *  `Date.parse` merely tolerates ("October 1") are refused. */
+const ISO_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 /** Backing cron-job id prefix. The id round-trips through the scheduler's
  *  slugifier, so watcher ids are restricted to lowercase alphanumerics and
@@ -247,7 +311,48 @@ export function validateWatcherInput(input: WatcherCreateInput): void {
   if (wake && !wake.personalityId?.trim()) {
     throw new Error('wake requires personalityId');
   }
+  const limits = input.limits;
+  if (limits === undefined) return;
+  if (
+    limits.expiresAt !== undefined &&
+    (typeof limits.expiresAt !== 'string' ||
+      !ISO_INSTANT_RE.test(limits.expiresAt) ||
+      Number.isNaN(Date.parse(limits.expiresAt)))
+  ) {
+    throw new Error(
+      `limits.expiresAt "${limits.expiresAt}" is not an ISO-8601 date-time with a zone, e.g. 2026-10-01T09:00:00Z or 2026-10-01T09:00:00+05:30`,
+    );
+  }
+  if (
+    limits.cooldownSeconds !== undefined &&
+    (!Number.isInteger(limits.cooldownSeconds) || limits.cooldownSeconds < 0)
+  ) {
+    throw new Error('limits.cooldownSeconds must be an integer >= 0');
+  }
+  if (limits.maxFires !== undefined) {
+    if (!Number.isInteger(limits.maxFires) || limits.maxFires < 0) {
+      throw new Error('limits.maxFires must be an integer >= 0');
+    }
+    // An owner is stamped only by `watcher_create` (`@ethosagent/tools-watchers`),
+    // i.e. an agent turn. No agent-created watcher may wake without limit.
+    if (limits.maxFires === 0 && input.owner) {
+      throw new Error(
+        'limits.maxFires: 0 (unlimited) is operator-only — a watcher created by an agent must have a fire budget',
+      );
+    }
+    if (input.owner && limits.maxFires > MAX_AGENT_WATCHER_FIRES) {
+      throw new Error(
+        `limits.maxFires must be at most ${MAX_AGENT_WATCHER_FIRES} for a watcher created by an agent`,
+      );
+    }
+  }
 }
+
+/**
+ * One queue per watchers.json path, shared by every manager in the process, so
+ * each read-modify-write of the file runs alone (`WatcherManager.serialize`).
+ */
+const rmwQueues = new Map<string, Promise<unknown>>();
 
 // ---------------------------------------------------------------------------
 // WatcherManager
@@ -259,8 +364,11 @@ export class WatcherManager {
   private readonly watchersPath: string;
   private readonly stateDir: string;
   private readonly logger: Logger;
-  private readonly deliver?: (target: WatcherDeliverTarget, text: string) => Promise<void>;
-  private readonly wake?: (event: WatcherWakeEvent) => Promise<void>;
+  private readonly deliver?: (
+    target: WatcherDeliverTarget,
+    text: string,
+  ) => Promise<boolean | undefined>;
+  private readonly wake?: (event: WatcherWakeEvent) => Promise<boolean | undefined>;
   private readonly targetAudience?: (platform: string, chatId: string) => TurnAudience;
   private readonly fetchFn: typeof fetch;
   private readonly processProbe: ProcessProbe;
@@ -317,22 +425,27 @@ export class WatcherManager {
 
   async createWatcher(input: WatcherCreateInput): Promise<WatcherRecord> {
     validateWatcherInput(input);
-    const watchers = await this.readWatchers();
-    if (watchers.some((w) => w.id === input.id)) {
-      throw new Error(`Watcher with id "${input.id}" already exists`);
-    }
-    const record: WatcherRecord = {
-      id: input.id,
-      kind: input.kind,
-      target: input.target,
-      intervalSeconds: input.intervalSeconds,
-      onChange: input.onChange,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-      ...(input.owner ? { owner: input.owner } : {}),
-    };
-    watchers.push(record);
-    await this.writeWatchers(watchers);
+    const record = await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      if (watchers.some((w) => w.id === input.id)) {
+        throw new Error(`Watcher with id "${input.id}" already exists`);
+      }
+      if (input.owner) this.assertOwnerHasRoom(watchers, input.owner.personalityId);
+      const created: WatcherRecord = {
+        id: input.id,
+        kind: input.kind,
+        target: input.target,
+        intervalSeconds: input.intervalSeconds,
+        onChange: input.onChange,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        ...(input.owner ? { owner: input.owner } : {}),
+        limits: { ...input.limits, maxFires: effectiveMaxFires(input) },
+      };
+      watchers.push(created);
+      await this.writeWatchers(watchers);
+      return created;
+    });
     await this.registerJob(record);
     return record;
   }
@@ -349,32 +462,56 @@ export class WatcherManager {
   /** Pause: deregister the backing system job and mark disabled. State is
    *  kept, so resume continues detection from the last-seen snapshot. */
   async pauseWatcher(id: string): Promise<void> {
-    const watchers = await this.readWatchers();
-    const watcher = watchers.find((w) => w.id === id);
-    if (!watcher) throw new Error(`Watcher not found: ${id}`);
-    watcher.enabled = false;
-    await this.writeWatchers(watchers);
+    await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      const watcher = watchers.find((w) => w.id === id);
+      if (!watcher) throw new Error(`Watcher not found: ${id}`);
+      watcher.enabled = false;
+      await this.writeWatchers(watchers);
+    });
     await this.deregisterJob(id);
   }
 
   async resumeWatcher(id: string): Promise<void> {
-    const watchers = await this.readWatchers();
-    const watcher = watchers.find((w) => w.id === id);
-    if (!watcher) throw new Error(`Watcher not found: ${id}`);
-    watcher.enabled = true;
-    await this.writeWatchers(watchers);
+    const watcher = await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      const found = watchers.find((w) => w.id === id);
+      if (!found) throw new Error(`Watcher not found: ${id}`);
+      if (!found.enabled && found.owner) {
+        this.assertOwnerHasRoom(watchers, found.owner.personalityId);
+      }
+      found.enabled = true;
+      delete found.stopped;
+      await this.writeWatchers(watchers);
+      return found;
+    });
     await this.registerJob(watcher);
   }
 
   /** Remove the watcher, its backing system job, and its persisted state. */
   async removeWatcher(id: string): Promise<void> {
-    const watchers = await this.readWatchers();
-    if (!watchers.some((w) => w.id === id)) throw new Error(`Watcher not found: ${id}`);
-    await this.writeWatchers(watchers.filter((w) => w.id !== id));
+    await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      if (!watchers.some((w) => w.id === id)) throw new Error(`Watcher not found: ${id}`);
+      await this.writeWatchers(watchers.filter((w) => w.id !== id));
+    });
     await this.deregisterJob(id);
     const statePath = this.statePath(id);
     if (await this.storage.exists(statePath)) {
       await this.storage.remove(statePath).catch(() => {});
+    }
+  }
+
+  /** The per-owner cap (`MAX_WATCHERS_PER_OWNER`): throws when `personalityId`
+   *  already owns that many ENABLED watchers. Called inside `serialize`. */
+  private assertOwnerHasRoom(watchers: WatcherRecord[], personalityId: string): void {
+    const active = watchers.filter(
+      (w) => w.enabled && w.owner?.personalityId === personalityId,
+    ).length;
+    if (active >= MAX_WATCHERS_PER_OWNER) {
+      throw new Error(
+        `personality "${personalityId}" already has ${active} active watchers — the limit is ${MAX_WATCHERS_PER_OWNER}. Pause or delete one first.`,
+      );
     }
   }
 
@@ -385,6 +522,15 @@ export class WatcherManager {
   async tick(id: string): Promise<WatcherTickResult> {
     const watcher = await this.getWatcher(id);
     if (!watcher?.enabled) return { changed: false };
+
+    // Expiry and a spent budget are checked on EVERY tick, before the differ,
+    // so a watcher whose target never changes again still pauses (and stops
+    // polling) once it has expired. `claimFire` asks again at fire time.
+    const stop = this.stopReason(watcher, Date.now());
+    if (stop) {
+      await this.stopWatcher(id, stop, Date.now());
+      return { changed: false };
+    }
 
     const prev = await this.readState(watcher);
     const outcome = await this.runDiffer(watcher, prev);
@@ -458,8 +604,25 @@ export class WatcherManager {
 
   /** Invoke deliver and/or wake (both may be set). Callback failures are
    *  logged, never thrown — a broken channel must not break the tick, and
-   *  state still advances (at-least-once alerting is the accepted posture). */
+   *  state still advances (at-least-once alerting is the accepted posture).
+   *
+   *  The watcher's limits are enforced here and at the top of `tick`: expired
+   *  or out of budget → paused with `stopped` recorded, nothing fires; inside
+   *  the cooldown → nothing fires (the caller still advances state).
+   *
+   *  A fire is RESERVED before any callback runs (`claimFire`, one serialized
+   *  read-modify-write), so two overlapping ticks cannot both spend the last
+   *  unit of budget. The reservation is returned (`refundFire`) when nothing
+   *  went out: a withheld deliver, a refused foreign wake, no callback wired,
+   *  or a callback that resolved `false` (it reports it started nothing). A
+   *  callback that THROWS keeps the fire — a turn may have run before the
+   *  throw, and a watcher whose wake always fails must not wake without limit.
+   *  Pinned by `__tests__/limits.test.ts`. */
   private async dispatchChange(watcher: WatcherRecord, summary: string): Promise<void> {
+    const now = Date.now();
+    const claim = await this.claimFire(watcher.id, now);
+    if (!claim.ok) return;
+    let fired = false;
     const { deliver, wake } = watcher.onChange;
     if (deliver) await this.refreshDeliveryGate(watcher.id);
     const withheld = deliver ? this.withheldReason(watcher, deliver) : undefined;
@@ -477,8 +640,9 @@ export class WatcherManager {
       if (watcher.deliveryWithheld) await this.setDeliveryWithheld(watcher.id, undefined);
       if (this.deliver) {
         try {
-          await this.deliver(deliver, `[watcher ${watcher.id}] ${summary}`);
+          fired = (await this.deliver(deliver, `[watcher ${watcher.id}] ${summary}`)) !== false;
         } catch (err) {
+          fired = true;
           this.logger.error(`[watchers] delivery failed for "${watcher.id}"`, {
             component: 'watchers',
             watcherId: watcher.id,
@@ -506,7 +670,7 @@ export class WatcherManager {
     } else if (wake) {
       if (this.wake) {
         try {
-          await this.wake({
+          const woke = await this.wake({
             watcherId: watcher.id,
             target: watcher.target,
             personalityId: wake.personalityId,
@@ -514,7 +678,9 @@ export class WatcherManager {
             summary,
             roomAudience: this.wakeAudience(watcher),
           });
+          if (woke !== false) fired = true;
         } catch (err) {
+          fired = true;
           this.logger.error(`[watchers] wake failed for "${watcher.id}"`, {
             component: 'watchers',
             watcherId: watcher.id,
@@ -527,6 +693,134 @@ export class WatcherManager {
           watcherId: watcher.id,
         });
       }
+    }
+    if (!fired) await this.refundFire(watcher.id, claim.stamp, claim.previousLastFiredAt);
+  }
+
+  /**
+   * Reserve one fire for `id` at `now`, against the record as it is on disk
+   * NOW (not the tick's earlier snapshot). Refused when the watcher was paused
+   * or removed meanwhile, is inside its cooldown, or has expired / spent its
+   * budget — the last case pauses it with the reason.
+   */
+  private async claimFire(
+    id: string,
+    now: number,
+  ): Promise<{ ok: true; stamp: string; previousLastFiredAt: string | undefined } | { ok: false }> {
+    const outcome = await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      const watcher = watchers.find((w) => w.id === id);
+      if (!watcher?.enabled) return { kind: 'refused' as const };
+      const stop = this.stopReason(watcher, now);
+      if (stop) return { kind: 'stop' as const, reason: stop };
+      const cooldownMs = (watcher.limits?.cooldownSeconds ?? 0) * 1000;
+      if (watcher.lastFiredAt && now - Date.parse(watcher.lastFiredAt) < cooldownMs) {
+        return { kind: 'cooldown' as const };
+      }
+      const previousLastFiredAt = watcher.lastFiredAt;
+      const stamp = new Date(now).toISOString();
+      watcher.firesUsed = (watcher.firesUsed ?? 0) + 1;
+      watcher.lastFiredAt = stamp;
+      await this.writeWatchers(watchers);
+      return { kind: 'claimed' as const, stamp, previousLastFiredAt };
+    });
+    switch (outcome.kind) {
+      case 'claimed':
+        return { ok: true, stamp: outcome.stamp, previousLastFiredAt: outcome.previousLastFiredAt };
+      case 'stop':
+        await this.stopWatcher(id, outcome.reason, now);
+        return { ok: false };
+      case 'cooldown':
+        this.logger.info(`[watchers] "${id}" change inside cooldown — not dispatched`, {
+          component: 'watchers',
+          watcherId: id,
+        });
+        return { ok: false };
+      case 'refused':
+        return { ok: false };
+    }
+  }
+
+  /** Return a reserved fire that sent nothing. `lastFiredAt` is restored only
+   *  if no later fire has stamped it since. */
+  private async refundFire(
+    id: string,
+    stamp: string,
+    previousLastFiredAt: string | undefined,
+  ): Promise<void> {
+    await this.updateRecord(id, (w) => {
+      w.firesUsed = Math.max(0, (w.firesUsed ?? 0) - 1);
+      if (w.lastFiredAt !== stamp) return;
+      if (previousLastFiredAt === undefined) delete w.lastFiredAt;
+      else w.lastFiredAt = previousLastFiredAt;
+    });
+  }
+
+  /** Pause `id` because it expired or spent its budget, recording why. */
+  private async stopWatcher(id: string, reason: string, now: number): Promise<void> {
+    this.logger.warn(`[watchers] "${id}" paused: ${reason}`, {
+      component: 'watchers',
+      watcherId: id,
+    });
+    await this.updateRecord(id, (w) => {
+      w.enabled = false;
+      w.stopped = { at: new Date(now).toISOString(), reason };
+    });
+    await this.deregisterJob(id);
+  }
+
+  /** Why `watcher` may not fire at `now` and must pause, or `undefined`. */
+  private stopReason(watcher: WatcherRecord, now: number): string | undefined {
+    const expiresAt = watcher.limits?.expiresAt;
+    if (expiresAt !== undefined && now >= Date.parse(expiresAt)) {
+      return `expired at ${expiresAt}; paused instead of firing.`;
+    }
+    const maxFires = effectiveMaxFires(watcher);
+    const used = watcher.firesUsed ?? 0;
+    if (maxFires > 0 && used >= maxFires) {
+      return `fire budget spent (${used} of ${maxFires}); paused instead of firing.`;
+    }
+    return undefined;
+  }
+
+  /** Read-modify-write one record in watchers.json; a missing id is a no-op. */
+  private async updateRecord(id: string, mutate: (watcher: WatcherRecord) => void): Promise<void> {
+    await this.serialize(async () => {
+      const watchers = await this.readWatchers();
+      const watcher = watchers.find((w) => w.id === id);
+      if (!watcher) return;
+      mutate(watcher);
+      await this.writeWatchers(watchers);
+    });
+  }
+
+  /**
+   * Run one read-modify-write of watchers.json with no other in THIS process
+   * interleaved (`rmwQueues`, keyed by the file path, so two managers on one
+   * file share a queue). Every write of watchers.json goes through here, and
+   * nothing inside `fn` may call back into a serialized method (it would wait
+   * on itself) — so no callback (deliver, wake) ever runs inside it.
+   *
+   * LIMITATION — in-process only. Two PROCESSES on one state dir (`ethos serve`
+   * beside `ethos gateway start`; `acquireGatewayLock` excludes only a second
+   * gateway) can still interleave a read-modify-write and lose an update: a
+   * `firesUsed` increment, a pause, a new record. A cross-process lock needs a
+   * raw `node:fs` exclusive create (`withJobsFileLock` in
+   * `extensions/cron/src/jobs-lock.ts` is the precedent), which is a new
+   * storage carve-out this package does not have.
+   */
+  private async serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = rmwQueues.get(this.watchersPath) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    rmwQueues.set(this.watchersPath, settled);
+    try {
+      return await run;
+    } finally {
+      if (rmwQueues.get(this.watchersPath) === settled) rmwQueues.delete(this.watchersPath);
     }
   }
 
@@ -566,12 +860,10 @@ export class WatcherManager {
     id: string,
     withheld: WatcherDeliveryWithheld | undefined,
   ): Promise<void> {
-    const watchers = await this.readWatchers();
-    const watcher = watchers.find((w) => w.id === id);
-    if (!watcher) return;
-    if (withheld) watcher.deliveryWithheld = withheld;
-    else delete watcher.deliveryWithheld;
-    await this.writeWatchers(watchers);
+    await this.updateRecord(id, (watcher) => {
+      if (withheld) watcher.deliveryWithheld = withheld;
+      else delete watcher.deliveryWithheld;
+    });
   }
 
   // -------------------------------------------------------------------------

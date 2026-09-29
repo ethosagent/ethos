@@ -257,7 +257,10 @@ describe('Orchestrator guardrails', () => {
     // declaration), and the logger + per-loop `rootReachWarned` set (two
     // fields, a constructor assignment, two deps lines) the turn-setup
     // root-reach warning needs. The logic lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1113);
+    // Bumped 1113 -> 1114 (personality-presence §4): `effort: setup.effort` in
+    // the stream-step context. Pass-through only; the route that sets it is
+    // agent-loop/model-route.ts.
+    expect(lineCount).toBeLessThanOrEqual(1114);
   });
 
   it('no stage file exceeds 700 lines', () => {

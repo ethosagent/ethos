@@ -50,6 +50,7 @@ const RECORD: AmendmentRecord = {
 
 const REVIEW: AmendmentReview = {
   record: RECORD,
+  file: 'toolset.yaml',
   personality: 'ok',
   liveBytes: '- read_file\n',
   liveHash: 'b'.repeat(64),

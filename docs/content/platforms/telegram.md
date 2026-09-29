@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 ## Task
@@ -101,6 +101,8 @@ In **single-bot** mode (legacy `telegramToken` scalar), the session key omits th
 | Group (bot is `@mentioned`) | negative group id | `false` | `true` | `telegram:<group-id>` |
 | Group (reply to bot) | negative group id | `false` | `false` | `telegram:<group-id>` |
 | Group (random chatter) | negative group id | `false` | `false` | dropped by the mention gate |
+
+With [`telegram.bots.<i>.mentionByName: true`](../using/reference/config-yaml.md#mention-by-name), a group message that names the bound personality as a whole word ("hey Owl, …") also sets `isGroupMention: true`. It gets a receipt reaction only when the chat's mode would have answered it without the name. The receipt reaction is the personality's [`display.emoji`](../using/reference/personality-yaml.md#display) when Telegram accepts it as a reaction, else 👀.
 
 The last row assumes Telegram delivered the message at all. With BotFather's Group Privacy on — the default for every new bot — it does not: unaddressed group posts never reach the adapter, so the mention gate never sees them. [Platform prerequisites for group messages](#3b-platform-prerequisites-for-group-messages) covers the difference and how to check which side of it a bot is on.
 

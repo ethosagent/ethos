@@ -245,6 +245,25 @@ export type MessageContent =
       filename?: string;
     };
 
+/**
+ * How hard a model should reason before it answers — one vocabulary for every
+ * provider, set per model ALIAS (`ModelRegistryEntry.effort`), never per
+ * personality (plan/phases/personality-presence-and-initiative.md §4).
+ *
+ * Each provider maps it to its own native field or ignores it; the mapping
+ * lives in the provider, beside the request body it shapes.
+ */
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+
+/** The four {@link ReasoningEffort} values, ordered, frozen. The one list the
+ *  config parser (`buildModelRegistry` in `packages/config`) accepts. */
+export const REASONING_EFFORT_LEVELS: readonly ReasoningEffort[] = [
+  'off',
+  'low',
+  'medium',
+  'high',
+] as const;
+
 export interface CompletionOptions {
   system?: string;
   maxTokens?: number;
@@ -252,6 +271,18 @@ export interface CompletionOptions {
   topP?: number;
   seed?: number;
   thinkingBudget?: number;
+  /**
+   * The resolved alias's reasoning effort (`ModelRegistryEntry.effort`), set by
+   * the agent loop from `routeTurnModel` (`packages/core/src/agent-loop/model-route.ts`).
+   * Absent → every provider sends exactly the request it sent before effort
+   * existed. An explicit {@link CompletionOptions.thinkingBudget} wins over it.
+   *
+   * Not scoped by {@link CompletionOptions.providerEntry}: `ChainedProvider`
+   * passes it to whichever hop answers, so on an unpinned turn a failover hop
+   * maps the same intent onto its own model. It is a provider-neutral request,
+   * not a vendor field, and each provider decides what it means.
+   */
+  effort?: ReasoningEffort;
   cacheSystemPrompt?: boolean;
   abortSignal?: AbortSignal;
   stopSequences?: string[];

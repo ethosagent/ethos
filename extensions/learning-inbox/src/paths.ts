@@ -90,9 +90,17 @@ export function amendmentProposalPath(dataDir: string, amendmentId: string): str
   return join(amendmentDir(dataDir, amendmentId), 'proposal.json');
 }
 
-/** The live `toolset.yaml` bytes an apply replaced — what a rollback restores. */
-export function amendmentPriorPath(dataDir: string, amendmentId: string): string {
-  return join(amendmentDir(dataDir, amendmentId), 'prior.toolset.yaml');
+/**
+ * The live definition bytes an apply replaced — what a rollback restores.
+ * `prior.toolset.yaml` for a toolset amendment, `prior.config.yaml` for an
+ * identity one (`AMENDMENT_TARGET_FILES`, packages/types/src/amendment.ts).
+ */
+export function amendmentPriorPath(
+  dataDir: string,
+  amendmentId: string,
+  file: 'toolset.yaml' | 'config.yaml' = 'toolset.yaml',
+): string {
+  return join(amendmentDir(dataDir, amendmentId), `prior.${file}`);
 }
 
 /** Written before an apply's live write (the `promote.ts` snapshot order). */

@@ -1034,6 +1034,9 @@ importers:
 
   extensions/cron:
     dependencies:
+      '@ethosagent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@ethosagent/execution-local':
         specifier: workspace:*
         version: link:../execution-local

@@ -33,6 +33,9 @@ export interface RawDiscordMessage {
   threadId?: string;
   parentChannelId?: string;
   isMention: boolean;
+  /** `isMention` is true ONLY because the text names the bound personality
+   *  (`mentionByName`), not an @mention of the bot. Feeds `TriageResult.nameOnly`. */
+  mentionIsNameOnly?: boolean;
   reference?: { messageId?: string; userId?: string };
   /** Platform send time (ms) — `Message.createdTimestamp`. Orders the transcript. */
   sentAt: number;
@@ -54,6 +57,13 @@ export interface TriageResult {
    * about a bad override — the same value reaches `/ethos help`.
    */
   effectiveMode: string;
+  /**
+   * `true` when the message reaches the agent ONLY because it names the bound
+   * personality: without the name it would not be answered. No receipt
+   * reaction goes on it — the channel filter may still drop it (a
+   * non-allowlisted member), and nothing would clear the reaction.
+   */
+  nameOnly?: true;
 }
 
 export async function triageMessage(
@@ -84,7 +94,19 @@ export async function triageMessage(
   // Only a message that is neither answered nor recorded is dropped here.
   if (!decision.shouldRecord) return { drop: 'channel_mode', effectiveMode: channelMode };
 
+  const nameOnly =
+    msg.mentionIsNameOnly === true &&
+    decision.shouldReply &&
+    !evaluateChannelMode({
+      isDm: msg.isDm,
+      isGroupMention: false,
+      channelMode,
+      supportedModes: CHANNEL_MODES,
+      hasBotPosted,
+    }).shouldReply;
+
   return {
+    ...(nameOnly ? { nameOnly: true as const } : {}),
     envelope: buildEnvelope({
       botKey: ctx.botKey,
       chatId,

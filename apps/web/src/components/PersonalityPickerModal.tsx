@@ -11,6 +11,7 @@ import {
   type PickerPersonality,
   resolveInitialSelection,
 } from '../lib/newSessionPicker';
+import { PersonalityName } from './ui/PersonalityName';
 import { PersonalityRingAvatar } from './ui/PersonalityRingAvatar';
 
 interface PersonalityPickerModalProps {
@@ -36,6 +37,7 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
         name: p.name,
         description: p.description,
         avatarUrl: p.display?.avatar_url,
+        emoji: p.display?.emoji,
       })),
     [data?.items],
   );
@@ -144,7 +146,9 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
                     avatarUrl={p.avatarUrl}
                   />
                   <span className="np-picker-info">
-                    <span className="np-picker-name">{p.name}</span>
+                    <span className="np-picker-name">
+                      <PersonalityName name={p.name} emoji={p.emoji} />
+                    </span>
                     {p.description ? <span className="np-picker-desc">{p.description}</span> : null}
                   </span>
                 </button>

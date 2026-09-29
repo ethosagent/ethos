@@ -23,8 +23,53 @@ describe('propose_self_amendment tool', () => {
     expect(tool.capabilities).toEqual({});
     expect(tool.alwaysInclude).toBeUndefined();
     const props = (tool.schema as { properties: Record<string, unknown> }).properties;
-    // No target argument: the intake files for ctx.personalityId only (G2-2).
-    expect(Object.keys(props).sort()).toEqual(['evidence_tool_call_ids', 'ops', 'rationale']);
+    // No argument names a personality: the intake files for ctx.personalityId
+    // only (G2-2). `target` names which of its OWN files (toolset or identity).
+    expect(Object.keys(props).sort()).toEqual([
+      'evidence_tool_call_ids',
+      'ops',
+      'rationale',
+      'target',
+    ]);
+    expect((props.target as { enum: string[] }).enum).toEqual(['toolset', 'identity']);
+  });
+
+  it('passes identity ops through as shape only, and refuses a toolset op under target identity', async () => {
+    const { port, submit } = portReturning({
+      ok: true,
+      id: 'a-2',
+      status: 'pending',
+      deduped: false,
+    });
+    const tool = createProposeSelfAmendmentTool(port);
+    await tool.execute(
+      {
+        target: 'identity',
+        ops: [{ op: 'set_display_emoji', value: '🦉' }],
+        rationale: 'the operator chose it',
+      },
+      ctx,
+    );
+    expect(submit).toHaveBeenCalledWith(
+      {
+        target: 'identity',
+        ops: [{ op: 'set_display_emoji', value: '🦉' }],
+        rationale: 'the operator chose it',
+      },
+      ctx,
+    );
+    expect(
+      await tool.execute(
+        { target: 'identity', ops: [{ op: 'add_tool', tool: 'x' }], rationale: 'r' },
+        ctx,
+      ),
+    ).toMatchObject({ ok: false, code: 'input_invalid' });
+    expect(
+      await tool.execute(
+        { target: 'soul', ops: [{ op: 'add_tool', tool: 'x' }], rationale: 'r' },
+        ctx,
+      ),
+    ).toMatchObject({ ok: false, code: 'input_invalid' });
   });
 
   it('is unavailable with no port wired', async () => {
@@ -44,6 +89,7 @@ describe('propose_self_amendment tool', () => {
     const result = await tool.execute({ ...OK_ARGS, evidence_tool_call_ids: ['c1'] }, ctx);
     expect(submit).toHaveBeenCalledWith(
       {
+        target: 'toolset',
         ops: [{ op: 'add_tool', tool: 'web_fetch' }],
         rationale: 'fetches were refused',
         evidenceToolCallIds: ['c1'],

@@ -8,6 +8,11 @@
 // Here the comparison is against the entry the registry named, and the
 // override is scoped to that entry (`CompletionOptions.providerEntry`, read by
 // `ChainedProvider.optionsFor`).
+//
+// The route also carries the winning alias's reasoning effort (presence §4),
+// so the two call sites that send a turn's model — turn setup and the mid-turn
+// escalation in `stream-step.ts` — cannot send one alias's model with another
+// alias's effort.
 
 import type { CompletionOptions, LLMProvider, ModelResolutionContext } from '@ethosagent/types';
 import { ChainedProvider, providerEntriesOf } from '../providers/chained-provider';
@@ -18,10 +23,21 @@ export type TurnModelRoute =
       ok: true;
       modelOverride?: string;
       providerEntry?: NonNullable<CompletionOptions['providerEntry']>;
+      /** `TurnModel.effort`; absent → `CompletionOptions.effort` is not set. */
+      effort?: NonNullable<CompletionOptions['effort']>;
     }
   | { ok: false; reason: string };
 
 export function routeTurnModel(
+  llm: LLMProvider,
+  turn: TurnModel,
+  ctx: ModelResolutionContext,
+): TurnModelRoute {
+  const route = routeToEntry(llm, turn, ctx);
+  return route.ok && turn.effort !== undefined ? { ...route, effort: turn.effort } : route;
+}
+
+function routeToEntry(
   llm: LLMProvider,
   turn: TurnModel,
   ctx: ModelResolutionContext,

@@ -35,6 +35,8 @@ export const BUNDLED_SKILL_IDS = [
   'writer/no-ai-slop',
   'platform-integration/xurl',
   'social-media/reddit-research',
+  'personal/get-to-know-you',
+  'personal/birth-ritual',
 ] as const;
 
 export type BundledSkillId = (typeof BUNDLED_SKILL_IDS)[number];

@@ -4,6 +4,7 @@ import {
   assertSafeId,
   type DreamingConfig,
   EthosError,
+  isSingleEmojiGrapheme,
   isValidSecretName,
   type LearningLogEntry,
   type LivingSoul,
@@ -17,6 +18,7 @@ import {
   renderToolsetYaml,
   type Storage,
 } from '@ethosagent/types';
+import { withBirthFilingTool, writeBirthMarker } from './birth';
 import {
   applyExpressionUpdate,
   parseLivingSoul,
@@ -42,6 +44,15 @@ export {
   PersonalityA2aIdentityProvider,
   resolveA2aSkillTools,
 } from './a2a-identity';
+// plan personality-presence-and-initiative §1 — the birth marker.
+export {
+  birthMarkerCreatedAt,
+  birthMarkerPath,
+  clearBirthMarker,
+  hasBirthMarker,
+  markPersonalityBorn,
+  writeBirthMarker,
+} from './birth';
 export {
   type CharacterSheetBoundary,
   type CharacterSheetDecisionSite,
@@ -814,6 +825,10 @@ export interface DescribedPersonality {
    *  structural problems that caused policy to be silently dropped (e.g.
    *  tab indentation, unknown keys, bad indent). Empty array omitted. */
   mcpWarnings?: string[];
+  /** Warnings from parsing config.yaml — a value the loader dropped rather
+   *  than failing the load (today: an invalid `display.emoji`, see
+   *  `buildDisplayConfig`). Empty array omitted. */
+  configWarnings?: string[];
 }
 
 export interface CreatePersonalityInput {
@@ -938,11 +953,12 @@ export interface UpdatePersonalityPatch {
    *  `''` CLEARS that sub-key — the same convention `fs_reach.workdir` uses,
    *  and the only way the editor can express "back to the default provider". */
   voice?: EditableVoiceConfig;
-  /** Avatar sub-key of the `display` identity block. `''` clears
-   *  `avatar_url` — the same convention as `voice.*` / `fs_reach.workdir`.
-   *  Written by `writeAvatar`/`deleteAvatar` below; not a general editor
-   *  field (there is no raw-URL-paste flow in v1). */
-  display?: { avatar_url?: string };
+  /** Sub-keys of the `display` identity block, merged by `mergeDisplayConfig`.
+   *  `''` clears a sub-key — the same convention as `voice.*` /
+   *  `fs_reach.workdir`. `avatar_url` is written by `writeAvatar`/
+   *  `deleteAvatar` below (there is no raw-URL-paste flow in v1); `emoji` must
+   *  pass `isSingleEmojiGrapheme` or `update()` refuses the patch. */
+  display?: { avatar_url?: string; emoji?: string };
   /** `mcp_export.*` sub-keys, shallow-merged onto the stored declaration like
    *  `safety` / `memory` / `nightly`, so `{ enabled: false }` withdraws the
    *  export and keeps `expose_tools` / `expose_memory` / `expose_sessions` /
@@ -965,19 +981,23 @@ export interface UpdatePersonalityPatch {
 
 /**
  * Apply an editable `display` patch to the stored `display` block. Mirrors
- * `mergeVoiceConfig`'s clearing convention (`''` clears, `undefined` leaves,
- * anything else sets) even though `display` has only one sub-key today — a
- * second sub-key (subject to the same schema-freeze governance as everything
- * else on `PersonalityConfig`) then has one merge path to extend, not a new
- * one to invent.
+ * `mergeVoiceConfig`'s clearing convention per sub-key (`''` clears,
+ * `undefined` leaves, anything else sets), so an avatar pick never drops the
+ * emoji and vice versa. A block with no sub-keys left is `undefined`.
  */
 function mergeDisplayConfig(
   existing: PersonalityConfig['display'],
-  patch: { avatar_url?: string } | undefined,
+  patch: { avatar_url?: string; emoji?: string } | undefined,
 ): PersonalityConfig['display'] {
-  if (patch === undefined || patch.avatar_url === undefined) return existing;
-  if (patch.avatar_url === '') return undefined;
-  return { avatar_url: patch.avatar_url };
+  if (patch === undefined) return existing;
+  const next: { avatar_url?: string; emoji?: string } = { ...existing };
+  for (const key of ['avatar_url', 'emoji'] as const) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    if (value === '') delete next[key];
+    else next[key] = value;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /**
@@ -1059,6 +1079,10 @@ export interface PersonalityLoadReport {
    *  of the six fingerprinted paths, e.g. `SOUL.md`). First sights are not
    *  listed. */
   reloaded: Array<{ id: string; changed: string[] }>;
+  /** config.yaml values dropped with a warning on this call (a personality
+   *  that loaded, minus the bad value — see `DescribedPersonality.configWarnings`).
+   *  Same once-per-content-change cadence as `reloaded`. Omitted when none. */
+  warnings?: Array<{ id: string; warning: string }>;
 }
 
 /** The definition files `FilePersonalityRegistry.writeDefinitionBytes` may
@@ -1110,6 +1134,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly mcpPolicies = new Map<string, import('@ethosagent/types').McpPolicy>();
   /** Warnings from parsing mcp.yaml, keyed by personality id. */
   private readonly mcpWarningsMap = new Map<string, string[]>();
+  /** Warnings from parsing config.yaml, keyed by personality id. */
+  private readonly configWarningsMap = new Map<string, string[]>();
   /** Per-personality tool config loaded from tools.yaml (source of truth,
    *  sibling artifact — NOT on PersonalityConfig). Keyed by personality id. */
   private readonly toolsConfigs = new Map<string, PersonalityToolsConfig>();
@@ -1186,6 +1212,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     this.personalities.delete(id);
     this.mcpPolicies.delete(id);
     this.mcpWarningsMap.delete(id);
+    this.configWarningsMap.delete(id);
     this.toolsConfigs.delete(id);
     // Also drop fingerprint entries for that id's directory so a
     // subsequent re-create with the same id rebuilds cleanly. We
@@ -1219,14 +1246,21 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     // allSettled, not all (N3): one malformed personality directory must not
     // block the others — every successful loadOne is APPLIED before this call
     // settles, whatever its siblings did.
+    const warnings: Array<{ id: string; warning: string }> = [];
     const results = await Promise.allSettled(
       entries.map(async (entry) => {
         const personalityDir = join(dir, entry);
-        return await this.loadOne(personalityDir, entry);
+        return await this.loadOne(personalityDir, entry, (warning) =>
+          warnings.push({ id: entry, warning }),
+        );
       }),
     );
 
-    const report: PersonalityLoadReport = { failures: [], reloaded: [] };
+    const report: PersonalityLoadReport = {
+      failures: [],
+      reloaded: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
     results.forEach((result, i) => {
       const entry = entries[i];
       if (entry === undefined) return;
@@ -1377,7 +1411,21 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     return ids;
   }
 
-  async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
+  /**
+   * `opts.birth` (plan personality-presence-and-initiative §1): set by the
+   * operator's create paths — the web create form (`PersonalitiesService.createBorn`,
+   * behind the `personalities.create` RPC, apps/web-api/src/rpc/personalities.ts)
+   * and `ethos personality create --blank` (`createBlankPersonality`,
+   * apps/ethos/src/commands/personality-create.ts). The new personality
+   * is born: a birth marker is written and `propose_self_amendment` is listed
+   * (`withBirthFilingTool`), so its first private CLI/web conversation runs the
+   * birth ritual. Other creators — a recipe install, which ships a designed
+   * identity — leave it unset.
+   */
+  async create(
+    input: CreatePersonalityInput,
+    opts: { birth?: boolean } = {},
+  ): Promise<DescribedPersonality> {
     assertSafeId(input.id, 'personalityId');
     if (this.personalities.get(input.id)) {
       throw new EthosError({
@@ -1396,8 +1444,17 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       join(dir, 'config.yaml'),
       renderConfigYaml({ ...input, ...(voice ? { voice } : { voice: undefined }) }),
     );
-    await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(input.toolset));
+    await this.storage.write(
+      join(dir, 'toolset.yaml'),
+      renderToolsetYaml(opts.birth ? withBirthFilingTool(input.toolset) : input.toolset),
+    );
     await this.storage.write(join(dir, 'SOUL.md'), input.soulMd);
+    // A born personality's first private CLI/web conversation runs the birth
+    // ritual (`createBirthRitualInjector`, packages/wiring/src/birth-ritual.ts)
+    // until an identity amendment is applied or the owner skips it. Only this
+    // path writes the marker, and it creates user personalities only.
+    // `dir` is `<dataDir>/personalities/<id>` (`userPathFor`).
+    if (opts.birth) await writeBirthMarker(this.storage, dirname(dirname(dir)), input.id);
     await this.refreshUserDir();
     const created = this.describe(input.id);
     if (!created) {
@@ -1497,6 +1554,15 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
             });
           }
         }
+      }
+      const emoji = patch.display?.emoji;
+      if (emoji !== undefined && emoji !== '' && !isSingleEmojiGrapheme(emoji)) {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: `display.emoji ${JSON.stringify(emoji.slice(0, 40))} is not a single emoji.`,
+          action:
+            "Use exactly one emoji (a flag, keycap or ZWJ sequence counts as one), or '' to clear it.",
+        });
       }
       const exposeTools = patch.mcp_export?.expose_tools;
       if (Array.isArray(exposeTools)) {
@@ -1989,11 +2055,13 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const builtin = userPrefix && soulFile ? !soulFile.startsWith(userPrefix) : true;
     const mcpPolicy = this.mcpPolicies.get(config.id);
     const mcpWarnings = this.mcpWarningsMap.get(config.id);
+    const configWarnings = this.configWarningsMap.get(config.id);
     return {
       config,
       builtin,
       ...(mcpPolicy ? { mcpPolicy } : {}),
       ...(mcpWarnings ? { mcpWarnings } : {}),
+      ...(configWarnings ? { configWarnings } : {}),
     };
   }
 
@@ -2056,9 +2124,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
    * Returns the changed fingerprint inputs (file basenames) when this call
    * RELOADED a directory already fingerprinted, `null` on a first sight or a
    * no-change fast path — `loadFromDirectory` turns that into the
-   * `lastLoadReport.reloaded` entries (N3).
+   * `lastLoadReport.reloaded` entries (N3). `onWarning` receives each
+   * config.yaml value this parse dropped (`lastLoadReport.warnings`).
    */
-  private async loadOne(dir: string, id: string): Promise<string[] | null> {
+  private async loadOne(
+    dir: string,
+    id: string,
+    onWarning: (warning: string) => void,
+  ): Promise<string[] | null> {
     // Fingerprint guard — invalidate when any of the personality's inputs change.
     // mtime alone is enough: filesystems we run on (APFS / ext4 / NTFS) all
     // expose sub-millisecond mtime, so two writes within the same tick
@@ -2092,9 +2165,18 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
             paths.map((p) => basename(p)),
           );
 
-    const { config, mcpPolicy, mcpWarnings, toolsConfig } = await this.buildConfig(dir, id);
+    const { config, mcpPolicy, mcpWarnings, configWarnings, toolsConfig } = await this.buildConfig(
+      dir,
+      id,
+    );
     if (config) {
       this.define(config);
+      if (configWarnings) {
+        this.configWarningsMap.set(id, configWarnings);
+        for (const warning of configWarnings) onWarning(warning);
+      } else {
+        this.configWarningsMap.delete(id);
+      }
       if (mcpPolicy) {
         this.mcpPolicies.set(id, mcpPolicy);
       } else {
@@ -2121,6 +2203,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     config: PersonalityConfig | null;
     mcpPolicy?: import('@ethosagent/types').McpPolicy;
     mcpWarnings?: string[];
+    configWarnings?: string[];
     toolsConfig?: PersonalityToolsConfig;
   }> {
     // Must have at least config.yaml or SOUL.md to be considered a personality
@@ -2208,7 +2291,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const skills = buildSkillsConfig(cfg);
     const outboundPolicy = buildOutboundPolicy(cfg);
     const voice = buildVoiceConfig(cfg);
-    const display = buildDisplayConfig(cfg);
+    const configWarnings: string[] = [];
+    const display = buildDisplayConfig(cfg, configWarnings);
     const decisions = buildDecisionsConfig(cfg);
     const execution = parseExecutionPosture(cfg.execution);
 
@@ -2282,7 +2366,13 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         toolsConfig = parsed;
       }
     }
-    return { config, mcpPolicy, mcpWarnings, toolsConfig };
+    return {
+      config,
+      mcpPolicy,
+      mcpWarnings,
+      ...(configWarnings.length > 0 ? { configWarnings } : {}),
+      toolsConfig,
+    };
   }
 
   private async fileFingerprint(paths: string[]): Promise<string> {
@@ -2579,15 +2669,37 @@ function buildVoiceConfig(
  *
  * Same dotted-key convention as `voice` (see `buildVoiceConfig` above): a
  * true nested block would mean a second parse path and a second render path
- * for a single scalar. `display.avatar_url` is the one sub-key today.
+ * for two scalars.
  *
  *   display.avatar_url: /api/personalities/researcher/avatar
+ *   display.emoji: 🦉
+ *
+ * An emoji that fails `isSingleEmojiGrapheme` is dropped and named in
+ * `warnings` rather than thrown: a cosmetic value must never stop a
+ * personality from loading.
  */
 function buildDisplayConfig(
   cfg: Record<string, string>,
+  warnings: string[],
 ): import('@ethosagent/types').PersonalityConfig['display'] | undefined {
   const avatarUrl = cfg['display.avatar_url'];
-  return avatarUrl ? { avatar_url: avatarUrl } : undefined;
+  const emoji = cfg['display.emoji'];
+  let validEmoji: string | undefined;
+  if (emoji) {
+    if (isSingleEmojiGrapheme(emoji)) {
+      validEmoji = emoji;
+    } else {
+      const shown = emoji.length > 40 ? `${emoji.slice(0, 40)}…` : emoji;
+      warnings.push(
+        `config.yaml: display.emoji ${JSON.stringify(shown)} is not a single emoji — ignored`,
+      );
+    }
+  }
+  if (!avatarUrl && !validEmoji) return undefined;
+  return {
+    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+    ...(validEmoji ? { emoji: validEmoji } : {}),
+  };
 }
 
 const PERSONALITY_DECISION_SITES = [
@@ -3101,6 +3213,44 @@ function withSourceFile<T>(file: string, fn: () => T): T {
   }
 }
 
+/**
+ * Set or remove flat top-level `key: value` lines in `config.yaml` text; every
+ * other line is kept byte for byte. A key's first line is replaced and any
+ * later duplicate dropped (the loader lets the LAST one win, `parseConfigYaml`,
+ * so a leftover would override the change); a missing key is appended; `null`
+ * removes every line of the key. Values go through {@link yamlScalar}, like
+ * every rendered value. Only column-0 lines match, so nothing inside the
+ * indented `safety:` block is touched.
+ *
+ * The writer behind identity amendments (plan personality-presence-and-
+ * initiative §1): the bytes a reviewer approves are exactly these, and apply
+ * writes them with `writeDefinitionBytes`, not through `update()`'s re-render.
+ */
+export function setConfigYamlScalars(
+  src: string,
+  updates: Readonly<Record<string, string | null>>,
+): string {
+  const lines = src === '' ? [] : src.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  for (const [key, value] of Object.entries(updates)) {
+    const matcher = new RegExp(`^${key.replace(/[.]/g, '\\.')}:(\\s|$)`);
+    const rendered = value === null ? null : `${key}: ${yamlScalar(value)}`;
+    let placed = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (!matcher.test(lines[i] ?? '')) continue;
+      if (rendered !== null && !placed) {
+        lines[i] = rendered;
+        placed = true;
+      } else {
+        lines.splice(i, 1);
+        i--;
+      }
+    }
+    if (rendered !== null && !placed) lines.push(rendered);
+  }
+  return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
+}
+
 function yamlScalar(value: string): string {
   if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
     return JSON.stringify(value);
@@ -3298,6 +3448,9 @@ function renderConfigYaml(input: RenderConfigInput): string {
   }
   if (input.display?.avatar_url !== undefined) {
     lines.push(`display.avatar_url: ${yamlScalar(input.display.avatar_url)}`);
+  }
+  if (input.display?.emoji !== undefined) {
+    lines.push(`display.emoji: ${yamlScalar(input.display.emoji)}`);
   }
   if (input.decisions !== undefined) {
     const d = input.decisions;

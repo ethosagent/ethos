@@ -1,6 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { ChannelOverrideStore, evaluateChannelMode } from '@ethosagent/core';
+import {
+  ChannelOverrideStore,
+  type ChannelPresenceResolver,
+  evaluateChannelMode,
+  mentionsPersonalityName,
+} from '@ethosagent/core';
 import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 import type {
   AdapterCapabilities,
@@ -244,6 +249,43 @@ function outboxSettledText(
 // grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
 // literals. We define a type alias so config strings can be cast cleanly.
 type TelegramEmoji = '👀';
+
+/**
+ * Every emoji the Bot API accepts as a `ReactionTypeEmoji` — copied from the
+ * `emoji` union on grammy's `ReactionTypeEmoji` (@grammyjs/types
+ * `message.d.ts`), which mirrors the Bot API documentation. A chat can narrow
+ * this further (`available_reactions`); that refusal is handled at the call.
+ */
+const TELEGRAM_REACTION_EMOJI: ReadonlySet<string> = new Set(
+  `👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮
+   💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡
+   🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻
+   👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿
+   🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡`.split(/\s+/),
+);
+
+/**
+ * The receipt reaction for a personality whose `display.emoji` is `emoji`
+ * (plan personality-presence-and-initiative §3): the emoji itself when the
+ * Bot API accepts it as a reaction, else `fallback` (the platform default 👀).
+ * Consulted only when the operator configured no `receiptReaction`, which
+ * wins outright (`TelegramAdapter.reactOnReceipt`). Variation selector 16 is
+ * dropped before the lookup because Telegram's list spells ❤, ✍, ☃ and 🕊
+ * without it. Pinned by `__tests__/presence.test.ts`.
+ */
+export function telegramReceiptEmoji(emoji: string | undefined, fallback: string): string {
+  if (!emoji) return fallback;
+  const bare = emoji.replace(/\uFE0F/g, '');
+  return TELEGRAM_REACTION_EMOJI.has(bare) ? bare : fallback;
+}
+
+/** Most reacted-but-unanswered messages remembered per chat and topic. */
+const PENDING_REACTIONS_PER_CHAT = 32;
+
+/** `pendingReactions` key: a forum topic is its own conversation. */
+function pendingReactionKey(chatId: string, threadId: string | undefined): string {
+  return threadId ? `${chatId}:${threadId}` : chatId;
+}
 
 // ---------------------------------------------------------------------------
 // Truncation utility — BotFather fields have strict char limits
@@ -595,9 +637,19 @@ export interface TelegramAdapterConfig {
   };
   /**
    * Emoji reaction set on inbound messages to acknowledge receipt.
-   * Cleared when the agent's reply lands. Default '👀'.
+   * Cleared when the agent's reply lands. When set it wins over the bound
+   * personality's `display.emoji`; absent = that emoji when Telegram allows
+   * it, else '👀'.
    */
   receiptReaction?: string;
+  /**
+   * Count a group message that names the bound personality (a whole word,
+   * case-insensitive — `mentionsPersonalityName` in `@ethosagent/core`) as a
+   * mention, exactly like an @mention of the bot. Opt-in; default `false`.
+   * The name comes from the presence resolver the gateway binds
+   * (`setPresenceResolver`), so it follows a `/personality` switch.
+   */
+  mentionByName?: boolean;
   /**
    * How long after the original message an edit is still accepted for
    * re-processing (milliseconds). Edits outside this window are ignored.
@@ -844,8 +896,17 @@ export class TelegramAdapter
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
-  /** Tracks inbound message ids per chat for reaction clearing on reply. */
-  private readonly pendingReactions = new Map<string, number>();
+  /**
+   * Inbound message ids carrying a receipt reaction, oldest first, per chat
+   * and topic (`pendingReactionKey`), cleared as replies land. A list, not one
+   * id, so a second message in the chat cannot overwrite — and orphan — the
+   * first one's reaction. Pinned by `__tests__/presence.test.ts`.
+   */
+  private readonly pendingReactions = new Map<string, number[]>();
+  /** Who this bot speaks as per chat — bound by the gateway
+   *  (`Gateway.bindPresence`). Absent = the plain receipt reaction and no
+   *  mention-by-name. */
+  private presence?: ChannelPresenceResolver;
   private readonly editWindowMs: number;
   /** Anti-thrashing debounce timers for edited_message, keyed by messageId. */
   private readonly editDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -889,6 +950,60 @@ export class TelegramAdapter
       this.channelOverrides = new ChannelOverrideStore(config.storage, baseDir, ChannelModeSchema);
       this.threadState = new ThreadStateStore(config.storage, baseDir);
     }
+  }
+
+  /** Remember a reacted inbound message; the oldest is forgotten past
+   *  `PENDING_REACTIONS_PER_CHAT` (its reaction simply stays). */
+  private trackPendingReaction(key: string, messageId: number): void {
+    const ids = this.pendingReactions.get(key) ?? [];
+    ids.push(messageId);
+    if (ids.length > PENDING_REACTIONS_PER_CHAT) ids.shift();
+    this.pendingReactions.set(key, ids);
+  }
+
+  /** The reacted message a reply answers: the one it replies to when that is
+   *  pending, else the oldest — a lane answers its messages in arrival order. */
+  private takePendingReaction(key: string, replyToId: string | undefined): number | undefined {
+    const ids = this.pendingReactions.get(key);
+    if (!ids || ids.length === 0) return undefined;
+    const wanted = replyToId !== undefined ? ids.indexOf(Number(replyToId)) : -1;
+    const [taken] = ids.splice(wanted >= 0 ? wanted : 0, 1);
+    if (ids.length === 0) this.pendingReactions.delete(key);
+    return taken;
+  }
+
+  /** Gateway hook (`Gateway.bindPresence`): who this bot speaks as per chat.
+   *  Read by the receipt reaction and by `mentionByName`. */
+  setPresenceResolver(resolve: ChannelPresenceResolver): void {
+    this.presence = resolve;
+  }
+
+  /** `mentionByName` (plan personality-presence-and-initiative §3): a GROUP
+   *  message naming the bound personality counts as a mention. Off unless
+   *  configured; a DM never needs it. */
+  private mentionsByName(isDm: boolean, text: string, name: string | undefined): boolean {
+    if (!this.config.mentionByName || isDm || !name) return false;
+    return mentionsPersonalityName(text, name);
+  }
+
+  /**
+   * The receipt reaction: an explicitly configured `receiptReaction`, else
+   * the personality's emoji when Telegram accepts it (`telegramReceiptEmoji`),
+   * else 👀. A chat can still refuse
+   * an emoji the Bot API allows (its `available_reactions`), so a refusal is
+   * retried once with `receiptReaction` — the reaction is never dropped for
+   * the personality's sake. Best-effort and non-blocking, as before.
+   */
+  private reactOnReceipt(chatId: number, messageId: number, emoji: string | undefined): void {
+    // Operator config → personality emoji → 👀 (the explicit value wins).
+    const chosen = this.config.receiptReaction ?? telegramReceiptEmoji(emoji, this.receiptReaction);
+    const react = (e: string) =>
+      this.bot.api.setMessageReaction(chatId, messageId, [
+        { type: 'emoji' as const, emoji: e as TelegramEmoji },
+      ]);
+    react(chosen)
+      .catch(() => (chosen !== this.receiptReaction ? react(this.receiptReaction) : undefined))
+      .catch(() => {});
   }
 
   /**
@@ -1136,8 +1251,11 @@ export class TelegramAdapter
 
       // --- Channel-mode gating (Gap 5) ---
       const isDm = ctx.chat.type === 'private';
-      const isGroupMention = mentionsBot(rawMsg, ctx.me.username);
       const chatIdStr = String(chatId);
+      const presence = this.presence?.(chatIdStr, threadId);
+      const atMention = mentionsBot(rawMsg, ctx.me.username);
+      const nameOnly = !atMention && this.mentionsByName(isDm, text, presence?.name);
+      const isGroupMention = atMention || nameOnly;
       const decision = this.channelDecision({ chatIdStr, isDm, isGroupMention, threadId, text });
 
       // Only a message that is neither answered nor recorded is dropped here.
@@ -1148,10 +1266,19 @@ export class TelegramAdapter
       // Skipped for an observed message: a 👀 landing on every message in a
       // chat the operator told the agent to be silent in is the bot
       // answering — visibly, to everyone in the room. Silent means silent (R11).
-      if (!recordOnly) {
-        const reaction = [{ type: 'emoji' as const, emoji: this.receiptReaction as TelegramEmoji }];
-        this.bot.api.setMessageReaction(chatId, messageId, reaction).catch(() => {});
-        this.pendingReactions.set(chatIdStr, messageId);
+      // Nor for a message that reaches the bot ONLY because it names the
+      // personality (`mentionByName`): the channel filter may still drop it (a
+      // non-allowlisted member), and nothing would clear a reaction on a
+      // message that is never answered. It reacts exactly when the message
+      // would have been answered without the name match.
+      const reacts =
+        !recordOnly &&
+        (!nameOnly ||
+          this.channelDecision({ chatIdStr, isDm, isGroupMention: false, threadId, text })
+            .shouldReply);
+      if (reacts) {
+        this.reactOnReceipt(chatId, messageId, presence?.emoji);
+        this.trackPendingReaction(pendingReactionKey(chatIdStr, threadId), messageId);
       }
 
       // --- Build initial message (attachments filled async below) ---
@@ -1238,8 +1365,10 @@ export class TelegramAdapter
       // to stamp (R8). `isGroupMention` is computed rather than assumed false:
       // in `mention_only` a false would drop an edit that mentions the bot.
       const isDm = ctx.chat.type === 'private';
-      const isGroupMention = mentionsBot(rawMsg, ctx.me.username);
       const chatIdStr = String(chatId);
+      const isGroupMention =
+        mentionsBot(rawMsg, ctx.me.username) ||
+        this.mentionsByName(isDm, text, this.presence?.(chatIdStr, threadId)?.name);
       const decision = this.channelDecision({ chatIdStr, isDm, isGroupMention, threadId, text });
       if (!decision.shouldRecord) return;
       const recordOnly = !decision.shouldReply;
@@ -1598,10 +1727,12 @@ export class TelegramAdapter
     }
 
     // Clear receipt reaction now that the reply has landed.
-    const trackedMsgId = this.pendingReactions.get(chatId);
+    const trackedMsgId = this.takePendingReaction(
+      pendingReactionKey(chatId, message.threadId),
+      message.replyToId,
+    );
     if (trackedMsgId !== undefined) {
       this.bot.api.setMessageReaction(Number(chatId), trackedMsgId, []).catch(() => {});
-      this.pendingReactions.delete(chatId);
     }
 
     // --- Track thread state for thread_follow mode (Gap 4) ---

@@ -128,6 +128,12 @@ export interface AppProps {
   bridge: AgentBridge;
   model: string;
   initialPersonality: string;
+  /**
+   * A personality's `display.emoji`, looked up by id so a `/personality`
+   * switch shows the new one. Shown before the name in the StatusBar, HUD
+   * and Splash; absent or `undefined` → the bare name.
+   */
+  emojiFor?: (personalityId: string) => string | undefined;
   initialSessionKey: string;
   initialVerbose?: boolean;
   /**
@@ -233,6 +239,7 @@ export function App({
   bridge,
   model,
   initialPersonality,
+  emojiFor,
   initialSessionKey,
   initialVerbose = false,
   startupNotices,
@@ -381,6 +388,7 @@ export function App({
   const currentTool =
     activeTools.length > 0 ? activeTools[activeTools.length - 1]?.toolName : undefined;
   const accentColor = useMemo(() => personalityAccent(personality), [personality]);
+  const emoji = emojiFor?.(personality);
   const showIdentityPane = columns >= 90;
   const showSplash = messages.length === 0 && !running && !streamingText;
 
@@ -1503,6 +1511,7 @@ export function App({
               personality={snap.personality}
               sessionKey={snap.sessionKey}
               accentColor={snap.accentColor}
+              emoji={emojiFor?.(snap.personality)}
             />
             <Box flexDirection="row" marginBottom={1}>
               {showIdentityPane && (
@@ -1512,6 +1521,7 @@ export function App({
                     status="idle"
                     delegationCount={0}
                     accentColor={snap.accentColor}
+                    emoji={emojiFor?.(snap.personality)}
                   />
                 </Box>
               )}
@@ -1553,6 +1563,7 @@ export function App({
             sessionKey={sessionKey}
             accentColor={accentColor}
             inventory={inventory}
+            emoji={emoji}
           />
         ) : (
           <StreamingRow text={streamingText} accentColor={accentColor} />
@@ -1660,6 +1671,7 @@ export function App({
         <StatusBar
           model={currentModel}
           personality={personality}
+          emoji={emoji}
           accentColor={accentColor}
           inputTokens={usage.inputTokens}
           outputTokens={usage.outputTokens}

@@ -1,7 +1,7 @@
 import { resolveCapabilities } from '@ethosagent/core';
 import type { CronScheduler, CronJob as ExtCronJob } from '@ethosagent/cron';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
-import { morningBriefing, obsidianSecondBrain, RECIPES } from '@ethosagent/recipes';
+import { heartbeat, morningBriefing, obsidianSecondBrain, RECIPES } from '@ethosagent/recipes';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { isEthosError, type Tool } from '@ethosagent/types';
@@ -475,6 +475,30 @@ describe('recipes — path inputs', () => {
 // ---------------------------------------------------------------------------
 // Attach mode — onto a personality that already exists
 // ---------------------------------------------------------------------------
+
+describe('recipes — heartbeat (active hours)', () => {
+  it('installs onto an existing personality with its activeHours on the cron job', async () => {
+    const { recipes, createJob } = await attachWorld({
+      availableTools: [...heartbeat.requires.tools],
+    });
+    const report = await recipes.install({
+      id: 'heartbeat',
+      version: heartbeat.version,
+      inputs: { checkInSchedule: '0 */3 * * *' },
+      installMode: 'attach',
+      personalityIdOverride: 'writer',
+    });
+    expect(report.ok).toBe(true);
+    expect(report.created.cronJobs).toEqual(['heartbeat']);
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        personalityId: 'writer',
+        schedule: '0 */3 * * *',
+        activeHours: '09:00-21:00',
+      }),
+    );
+  });
+});
 
 describe('recipes — attach mode', () => {
   it('asks for a target, and refuses one that does not exist', async () => {

@@ -10,6 +10,8 @@ interface IdentityPanelProps {
   delegationCount: number;
   accentColor: string;
   focused?: boolean;
+  /** `display.emoji` — shown before the name, never in place of the mark. */
+  emoji?: string;
 }
 
 function modeFromStatus(status: PanelStatus): string {
@@ -31,6 +33,7 @@ export function IdentityPanel({
   delegationCount,
   accentColor,
   focused = false,
+  emoji,
 }: IdentityPanelProps) {
   const tokens = useSkin();
   return (
@@ -44,7 +47,7 @@ export function IdentityPanel({
     >
       <PersonalityMark personality={personality} accentColor={accentColor} />
       <Text bold color={accentColor}>
-        {personality}
+        {emoji ? `${emoji} ${personality}` : personality}
       </Text>
       <Text dimColor>mode: {modeFromStatus(status)}</Text>
       <Text dimColor>status: {status}</Text>
