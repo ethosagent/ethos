@@ -33,3 +33,7 @@ overrides:
   # @xenova/transformers pulls sharp@0.32.6, which depends on the deprecated
   # prebuild-install; force the graph onto 0.34.x (already resolved elsewhere) instead.
   "sharp": "^0.34.0"
+  # The locked node-abi versions (3.92.0 / 4.31.0 via @electron/rebuild) predate
+  # electron 44, so desktop packaging fails with "Could not detect abi for version
+  # 44.4.5". Force the graph onto a node-abi that knows electron 44's ABI (149).
+  "node-abi": "^4.35.0"
