@@ -66,11 +66,17 @@ const webHealthy = {
   gateway: { status: 'ok', adapters: [{ name: 'telegram:default', ok: true }] },
 };
 const webDegradedGatewayOk = {
-  // Fresh heartbeat but zero adapters (fresh single-service boot) — the
-  // endpoint returns 503 "degraded", yet the container must stay healthy.
+  // Fresh heartbeat but an adapter is down (upstream outage) — the endpoint
+  // returns 503 "degraded", yet the container must stay healthy. (Zero
+  // adapters no longer degrades: gatewayHealthStatus in commands/gateway.ts
+  // and the web-api /healthz both read an empty adapter list as ok.)
   status: 'degraded',
   uptime: 12,
-  gateway: { status: 'ok', adapters: [], lastHeartbeatAgeSec: 2 },
+  gateway: {
+    status: 'ok',
+    adapters: [{ name: 'telegram:default', ok: false }],
+    lastHeartbeatAgeSec: 2,
+  },
 };
 const webStale = {
   status: 'degraded',
@@ -116,7 +122,7 @@ describe('docker-healthcheck.sh mode matrix', () => {
     );
   });
 
-  it('all mode: fresh heartbeat, zero adapters (degraded 503) → exit 0', async () => {
+  it('all mode: fresh heartbeat, adapter down (degraded 503) → exit 0', async () => {
     const port = await serveHealthz(503, webDegradedGatewayOk);
     expect(await runScript({ ETHOS_MODE: 'all', ETHOS_HEALTHCHECK_WEB_PORT: String(port) })).toBe(
       0,

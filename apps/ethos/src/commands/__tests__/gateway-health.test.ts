@@ -1,6 +1,6 @@
 import type { PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { buildGatewayHeartbeat } from '../gateway';
+import { buildGatewayHeartbeat, gatewayHealthStatus } from '../gateway';
 
 function stubAdapter(
   id: string,
@@ -66,6 +66,35 @@ describe('buildGatewayHeartbeat', () => {
 
     expect(hb.adapters).toEqual([]);
     expect(hb.pid).toBe(process.pid);
+  });
+});
+
+// A channel-less deployment (web UI only — the helm chart's minimal install)
+// must not sit at 503 forever: zero adapters is a valid configuration, so
+// `every()`'s vacuous truth on `[]` is the point. Degraded means a CONFIGURED
+// adapter is down. Do NOT re-add a `length > 0` guard — the same rule the
+// web-api `/healthz` documents in apps/web-api/src/routes/index.ts.
+describe('gatewayHealthStatus', () => {
+  it('zero adapters is ok — a web-only deployment is healthy', () => {
+    expect(gatewayHealthStatus([])).toBe('ok');
+  });
+
+  it('one configured adapter down is degraded', () => {
+    expect(
+      gatewayHealthStatus([
+        { name: 'telegram:bot-1', ok: true },
+        { name: 'slack:app-1', ok: false },
+      ]),
+    ).toBe('degraded');
+  });
+
+  it('all configured adapters up is ok', () => {
+    expect(
+      gatewayHealthStatus([
+        { name: 'telegram:bot-1', ok: true },
+        { name: 'slack:app-1', ok: true },
+      ]),
+    ).toBe('ok');
   });
 });
 

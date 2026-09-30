@@ -178,6 +178,7 @@ import {
   createTelegramPersonalityCardReader,
   everyStartedAdapter,
   type GatewayBotWiring,
+  gatewayHealthStatus,
   gatewayObservability,
   gatewaySqliteStorePaths,
   gatewayTurnOrigin,
@@ -1542,9 +1543,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     healthHost,
     async () => {
       const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
-      const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
       return {
-        status: allOk ? 'ok' : 'degraded',
+        status: gatewayHealthStatus(hb.adapters),
         uptime: process.uptime(),
         pid: hb.pid,
         startedAt: hb.startedAt,

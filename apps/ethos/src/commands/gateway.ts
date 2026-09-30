@@ -301,6 +301,19 @@ export async function buildGatewayHeartbeat(
   };
 }
 
+/**
+ * `/healthz` status from a heartbeat's adapter list: zero adapters is a valid
+ * web-only deployment (helm minimal install) — degraded only when a CONFIGURED
+ * adapter is down, so `every()`'s vacuous truth on `[]` is the point. Shared by
+ * `ethos gateway start` and `ethos boot`; pinned by the 'gatewayHealthStatus'
+ * cases in `apps/ethos/src/commands/__tests__/gateway-health.test.ts`.
+ */
+export function gatewayHealthStatus(
+  adapters: Array<{ name: string; ok: boolean }>,
+): 'ok' | 'degraded' {
+  return adapters.every((a) => a.ok) ? 'ok' : 'degraded';
+}
+
 /** R6 — the SQLite stores an adapter-owning process (`ethos gateway start`,
  *  `ethos boot`) cannot serve without; `/readyz` requires each to open. */
 export function gatewaySqliteStorePaths(dataDir: string): string[] {
@@ -1944,9 +1957,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     healthHost,
     async () => {
       const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
-      const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
       return {
-        status: allOk ? 'ok' : 'degraded',
+        status: gatewayHealthStatus(hb.adapters),
         uptime: process.uptime(),
         pid: hb.pid,
         startedAt: hb.startedAt,
