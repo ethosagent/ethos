@@ -46,7 +46,7 @@ See `values.yaml` for the full commented reference. The key groups:
 | `networkPolicy.enabled` / `ingress.from` / `monitoring.from` / `egress.mode` / `egress.cidrs` | `true` / `[]` / `[]` / `open` / `[]` | Default-on; only declared Service ports reachable from pods; `monitoring.from` required for scraping; egress open by default |
 | `metrics.serviceMonitor.enabled` / `interval` / `auth.existingSecret` / `auth.key` | `false` / `30s` / `""` / `""` | Renders only when enabled AND the `monitoring.coreos.com/v1` CRDs exist; scrapes with a `metrics:read` bearer key |
 | `resources` | `250m`/`512Mi` requests, `1Gi` memory limit | No CPU limit — throttling a streaming agent buys nothing; scale up for multi-bot |
-| `startupProbe` / `livenessProbe` / `readinessProbe` | all `:3002/healthz` | Full probe objects passed through verbatim — overridable |
+| `startupProbe` / `livenessProbe` / `readinessProbe` | all `tcpSocket` on `:3002` | Full probe objects passed through verbatim — overridable |
 | `preStopSleepSeconds` / `terminationGracePeriodSeconds` | `0` / `60` | SIGTERM drain is ~37s worst case |
 | `nodeSelector` / `tolerations` / `affinity` | `{}` / `[]` / `{}` | Standard scheduling passthrough |
 | `serviceAccount` / `extraEnvVars` / `podAnnotations` / `podLabels` | create, no annotations / `{}` | ServiceAccount exists only for workload-identity annotations (IRSA); `extraEnvVars` maps render as `value` or `valueFrom` |
@@ -91,7 +91,7 @@ Three layers, each honest about what it covers:
 - **Self-provisioning:** the chart sets `ETHOS_PROVISION_FROM_ENV=1`; a fresh volume runs `ethos setup --from-env` from the injected Secret. Later boots keep the volume's `config.yaml`; secrets re-sync from env on every start.
 - **CrashLoop right after install:** almost always no provider key in the Secret. `kubectl logs ethos-0` names the missing variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...). Fix the Secret, delete the pod.
 - **Web UI 401 on first visit:** open the `auth/exchange?t=<token>` URL from `kubectl logs ethos-0`, not the bare `http://localhost:3000`. One-time — it sets the auth cookie.
-- **Probes:** all three default to `:3002/healthz` (process up). `/readyz` is deliberately NOT the readiness probe — with one replica it would turn any platform-adapter outage into a UI outage. Use it as the diagnostic: `kubectl exec ethos-0 -- curl -s localhost:3002/readyz`.
+- **Probes:** all three default to a TCP check on `:3002` (process up). Not `:3002/healthz`: it reports 503 whenever no channel adapter is configured — exactly the chart's minimal web-only install — so an httpGet probe there could never pass. `/readyz` is deliberately NOT the readiness probe either — with one replica it would turn any platform-adapter outage into a UI outage. Operators running channel adapters can override any probe with `httpGet /healthz` (gateway-status-coupled) or `/readyz` (strict). Diagnostics: `kubectl exec ethos-0 -- curl -s localhost:3002/readyz`.
 - **SSE streams die mid-answer:** your edge's idle timeout. The nginx overlay sets `proxy-read-timeout`; the EKS overlay sets the ALB `idle_timeout` attribute.
 
 ## Webhooks

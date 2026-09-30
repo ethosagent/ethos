@@ -88,26 +88,43 @@ tests:
             name: ETHOS_WEB_HOST
             value: 0.0.0.0
 
-  - it: points all three probes at httpGet /healthz on the health port (review D4)
+  - it: points all three probes at tcpSocket on the health port — healthz 503s with zero adapters (plan D4)
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].startupProbe.httpGet.path
-          value: /healthz
-      - equal:
-          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          path: spec.template.spec.containers[0].startupProbe.tcpSocket.port
           value: health
+      - notExists:
+          path: spec.template.spec.containers[0].startupProbe.httpGet
       - equal:
-          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
-          value: /healthz
-      - equal:
-          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          path: spec.template.spec.containers[0].livenessProbe.tcpSocket.port
           value: health
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.tcpSocket.port
+          value: health
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet
+
+  - it: passes an operator probe override through verbatim (gateway-status-coupled httpGet)
+    set:
+      # Values maps merge, so an httpGet override also nulls the default
+      # tcpSocket — exactly what an operator's values file must do.
+      readinessProbe:
+        tcpSocket: null
+        httpGet:
+          path: /healthz
+          port: health
+        periodSeconds: 10
+    asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /healthz
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.port
           value: health
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.tcpSocket
 
   - it: retains the PVC on delete and scale-down and marks the state claim helm.sh/resource-policy keep
     asserts:

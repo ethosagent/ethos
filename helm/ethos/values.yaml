@@ -190,26 +190,27 @@ resources:
     memory: 1Gi
 
 # ── Probes ───────────────────────────────────────────────────────────────────
-# All three default to :3002/healthz (process up). Readiness deliberately
-# does NOT use /readyz: with one replica a readiness failure removes the
-# only Service endpoint, turning any platform-adapter outage into a UI
-# outage (review D4). /readyz stays the operator diagnostic surface; each
-# probe is a full object passed through verbatim, so strict-readyz operators
-# can override.
+# All three default to a TCP check on :3002 — "process up", plan D4's intent.
+# Not httpGet /healthz: :3002/healthz reports 503 whenever the gateway has
+# ZERO channel adapters configured, which is exactly the chart's minimal
+# web-only install, so an httpGet startup probe there could never pass.
+# Readiness deliberately does NOT use /readyz either: with one replica a
+# readiness failure removes the only Service endpoint, turning any
+# platform-adapter outage into a UI outage (review D4). /healthz and /readyz
+# stay the operator diagnostic surfaces; each probe is a full object passed
+# through verbatim, so operators who DO run channel adapters can override
+# with httpGet /healthz (gateway-status-coupled) or /readyz (strict).
 startupProbe:
-  httpGet:
-    path: /healthz
+  tcpSocket:
     port: health
   failureThreshold: 30
   periodSeconds: 5
 livenessProbe:
-  httpGet:
-    path: /healthz
+  tcpSocket:
     port: health
   periodSeconds: 10
 readinessProbe:
-  httpGet:
-    path: /healthz
+  tcpSocket:
     port: health
   periodSeconds: 10
 
