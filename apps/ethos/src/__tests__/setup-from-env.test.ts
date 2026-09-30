@@ -89,6 +89,24 @@ describe('resolveProviderFromEnv — W2.4 provider matrix', () => {
       'generativelanguage.googleapis.com',
     );
   });
+
+  it('carries AZURE_OUTPUT_CAP_PARAM only when it is one of the two accepted values', () => {
+    const base = { AZURE_API_KEY: 'az', AZURE_ENDPOINT: 'https://x.openai.azure.com' };
+    expect(
+      resolveProviderFromEnv({ ...base, AZURE_OUTPUT_CAP_PARAM: 'max_completion_tokens' })
+        ?.outputCapParam,
+    ).toBe('max_completion_tokens');
+    expect(
+      resolveProviderFromEnv({ ...base, AZURE_OUTPUT_CAP_PARAM: 'max_tokens' })?.outputCapParam,
+    ).toBe('max_tokens');
+    expect(resolveProviderFromEnv(base)?.outputCapParam).toBeUndefined();
+    // The invalid non-empty case reads as absent HERE; `runSetupFromEnv`
+    // refuses it fail-closed before anything is written (tested below).
+    expect(
+      resolveProviderFromEnv({ ...base, AZURE_OUTPUT_CAP_PARAM: 'max_output_tokens' })
+        ?.outputCapParam,
+    ).toBeUndefined();
+  });
 });
 
 // The init last-line contract (W1.3 / Z-T14). These verbatim strings are the
@@ -156,5 +174,77 @@ describe('runSetupFromEnv — B4 telegram list form', () => {
     const loaded = await loadConfigStrict(storage);
     expect(loaded?.parseErrors).toEqual([]);
     expect(loaded?.deprecations).toEqual([]);
+  });
+});
+
+// AZURE_OUTPUT_CAP_PARAM — a reasoning model deployed under a non-family name
+// needs `outputCapParam: max_completion_tokens`, and it has no top-level
+// spelling: the primary's is chain entry 0, so the provisioned config carries
+// a minimal `providers.0` entry (V-CP-5).
+describe('runSetupFromEnv — AZURE_OUTPUT_CAP_PARAM', () => {
+  const STATE_DIR = '/tmp/ethos-from-env-azure-cap-test';
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      PATH: ORIGINAL_ENV.PATH,
+      ETHOS_STATE_DIR: STATE_DIR,
+      ETHOS_SKIP_VALIDATION: '1',
+      AZURE_API_KEY: 'az-key',
+      AZURE_ENDPOINT: 'https://x.openai.azure.com',
+      AZURE_MODEL: 'gpt-6-sol',
+    };
+    secretStore.clear();
+    memStorageHolder.storage = new InMemoryStorage();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+    vi.restoreAllMocks();
+  });
+
+  async function writtenConfig(): Promise<string> {
+    const storage = memStorageHolder.storage;
+    if (!storage) throw new Error('storage not constructed');
+    return (await storage.read(join(STATE_DIR, 'config.yaml'))) ?? '';
+  }
+
+  it('provisions providers.0.outputCapParam when the value is valid', async () => {
+    process.env.AZURE_OUTPUT_CAP_PARAM = 'max_completion_tokens';
+    await runSetupFromEnv();
+
+    const text = await writtenConfig();
+    expect(text).toContain('providers.0.provider: azure');
+    expect(text).toContain('providers.0.outputCapParam: max_completion_tokens');
+
+    const storage = memStorageHolder.storage;
+    if (!storage) throw new Error('storage not constructed');
+    const loaded = await loadConfigStrict(storage);
+    expect(loaded?.parseErrors).toEqual([]);
+    expect(loaded?.deprecations).toEqual([]);
+    expect(loaded?.config.providers?.[0]?.outputCapParam).toBe('max_completion_tokens');
+  });
+
+  it('omits the key entirely when AZURE_OUTPUT_CAP_PARAM is absent', async () => {
+    await runSetupFromEnv();
+    const text = await writtenConfig();
+    expect(text).not.toContain('outputCapParam');
+    expect(text).not.toContain('providers.0.');
+  });
+
+  it('refuses an invalid value with a named error before writing anything', async () => {
+    process.env.AZURE_OUTPUT_CAP_PARAM = 'max_output_tokens';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit(1)');
+    });
+
+    await expect(runSetupFromEnv()).rejects.toThrow('process.exit(1)');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "AZURE_OUTPUT_CAP_PARAM must be max_tokens or max_completion_tokens (got 'max_output_tokens') — fix .env and re-run docker compose up.",
+    );
+    expect(await writtenConfig()).toBe('');
   });
 });

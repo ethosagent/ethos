@@ -47,6 +47,14 @@ interface ResolvedProviderEnv {
   model: string;
   baseUrl?: string;
   apiVersion?: string;
+  /**
+   * Azure-only (V-CP-5): which output-cap parameter requests to the deployment
+   * send — needed when a reasoning model is deployed under a non-family name
+   * (the portal lets you name deployments anything). Carried only when
+   * `AZURE_OUTPUT_CAP_PARAM` holds one of the two accepted values; an invalid
+   * non-empty value is refused fail-closed in `runSetupFromEnv`.
+   */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens';
   /** The env var the key came from — named in error/validation messages. */
   envVar: string;
 }
@@ -54,6 +62,16 @@ interface ResolvedProviderEnv {
 /** Default chat model per provider — the catalog default; no env var carries it for most providers. */
 function defaultModel(provider: string): string {
   return getDefaultModel(provider)?.modelId ?? 'claude-opus-5-5';
+}
+
+/** Narrow `AZURE_OUTPUT_CAP_PARAM` to the two values the config accepts
+ *  (`ProviderChainEntry.outputCapParam`, packages/config). Anything else —
+ *  including a typo — reads as absent here; `runSetupFromEnv` refuses the
+ *  invalid non-empty case out loud instead of provisioning without the knob. */
+function azureOutputCapParamFromEnv(
+  raw: string | undefined,
+): 'max_tokens' | 'max_completion_tokens' | undefined {
+  return raw === 'max_tokens' || raw === 'max_completion_tokens' ? raw : undefined;
 }
 
 /** Provider precedence matches the compose init script it replaces. */
@@ -65,6 +83,7 @@ export function resolveProviderFromEnv(env: NodeJS.ProcessEnv): ResolvedProvider
       model: env.AZURE_MODEL || defaultModel('azure'),
       baseUrl: env.AZURE_ENDPOINT,
       apiVersion: env.AZURE_API_VERSION || '2024-12-01-preview',
+      outputCapParam: azureOutputCapParamFromEnv(env.AZURE_OUTPUT_CAP_PARAM),
       envVar: 'AZURE_API_KEY',
     };
   }
@@ -139,6 +158,15 @@ export async function runSetupFromEnv(): Promise<void> {
     fail('AZURE_ENDPOINT is required for Azure — set it in .env and re-run docker compose up.');
   }
 
+  // Fail-closed like the other AZURE_* inputs: a typo'd value must not
+  // silently provision a config without the knob (the first turn would fail
+  // with Azure's 400 "use max_completion_tokens").
+  if (prov.provider === 'azure' && env.AZURE_OUTPUT_CAP_PARAM && !prov.outputCapParam) {
+    fail(
+      `AZURE_OUTPUT_CAP_PARAM must be max_tokens or max_completion_tokens (got '${env.AZURE_OUTPUT_CAP_PARAM}') — fix .env and re-run docker compose up.`,
+    );
+  }
+
   // ── provider secret: re-sync from env, validate only when the value changed ──
   const providerRef = `providers/${prov.provider}/apiKey`;
   const priorKey = await secrets.get(providerRef);
@@ -206,6 +234,15 @@ export async function runSetupFromEnv(): Promise<void> {
       personality,
       baseUrl: prov.baseUrl,
       apiVersion: prov.apiVersion,
+      // V-CP-5 — `outputCapParam` has no top-level spelling: the runtime reads
+      // the primary's from chain entry 0 (the top-level fields count as entry
+      // 0, `createLLM` in packages/wiring), so it rides a minimal
+      // `providers.0` entry through the shared chain codec
+      // (`renderProviderChain` in packages/config — the single owner of
+      // `providers.N.*` lines).
+      providers: prov.outputCapParam
+        ? [{ provider: prov.provider, apiKey: '', outputCapParam: prov.outputCapParam }]
+        : undefined,
       // B4 — the list form the gateway reads natively (`telegram.bots.0.*`),
       // not the deprecated `telegramToken` scalar.
       telegram: telegramConfigured

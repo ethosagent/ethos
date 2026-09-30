@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model registry, 
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -267,7 +267,7 @@ Provider fallback chain. When two or more entries are present, the runtime wraps
 | `providers.<i>.apiVersion` | string | Azure only: REST API version for entry `<i>`. |
 | `providers.<i>.region` | string | Bedrock only: AWS region for entry `<i>`. |
 | `providers.<i>.awsProfile` | string | Bedrock only: named AWS profile for entry `<i>`. |
-| `providers.<i>.outputCapParam` | `max_tokens` \| `max_completion_tokens` | Azure only: the output-cap parameter entry `<i>`'s deployment is sent. Default: `max_completion_tokens` when the deployment name is a reasoning model id (`o4-mini`, `gpt-5-mini`), `max_tokens` otherwise. Set `max_completion_tokens` for a reasoning deployment with any other name. Any other value is ignored with a warning at startup. The top-level fields count as entry `0`. |
+| `providers.<i>.outputCapParam` | `max_tokens` \| `max_completion_tokens` | Azure only: the output-cap parameter entry `<i>`'s deployment is sent. Default: `max_completion_tokens` when the deployment name is a reasoning model id (`o4-mini`, `gpt-5-mini`), `max_tokens` otherwise. Set `max_completion_tokens` for a reasoning deployment with any other name. Any other value is ignored with a warning at startup. The top-level fields count as entry `0`. Settable at provision time via `AZURE_OUTPUT_CAP_PARAM` (`ethos setup --from-env`, see [Run Ethos in Docker](../how-to/run-in-docker.md)). |
 | `providers.<i>.serverCompaction` | boolean | Anthropic only. `true` lets the provider compact the conversation server-side instead of the local context engine. Default off. See [Server-side compaction](#server-compaction). |
 | `providers.<i>.serverCompactionTriggerTokens` | integer | Input-token count at which the server compacts. Default: the local compaction threshold for the model. A value below 50,000, the minimum in Anthropic's API documentation, is raised to 50,000 rather than rejected. |
 

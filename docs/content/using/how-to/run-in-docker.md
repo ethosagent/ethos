@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 Run Ethos via Docker Compose. Set one provider API key, run one command, and get a web UI you can talk to. Config is provisioned by the CLI (`ethos setup --from-env`), which validates your key before writing it — no interactive setup, no hand-edited YAML.
@@ -81,7 +81,7 @@ At least one must be set. `ethos setup --from-env` uses the first one it finds, 
 
 | Variable | Provider | Notes |
 |---|---|---|
-| `AZURE_API_KEY` | Azure OpenAI | requires `AZURE_ENDPOINT` |
+| `AZURE_API_KEY` | Azure OpenAI | requires `AZURE_ENDPOINT`; optional `AZURE_OUTPUT_CAP_PARAM` (`max_tokens` or `max_completion_tokens`) provisions `providers.0.outputCapParam` — set `max_completion_tokens` for a reasoning model deployed under a non-family name; any other value stops the boot |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) | — |
 | `OPENAI_API_KEY` | OpenAI | — |
 | `OPENROUTER_API_KEY` | OpenRouter | — |
