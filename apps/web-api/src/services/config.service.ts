@@ -1659,10 +1659,13 @@ export interface ProviderRowInput {
  * stored entry the row came from and is kept: the key reference, `apiVersion`,
  * `region`, `awsProfile` and `passthrough`.
  *
- * A row keeps nothing when it has no `sourceIndex`, when that index is past the
- * stored chain, or when its provider differs from the stored entry's — a key
- * or a region never crosses to a different provider. Stored entries no row
- * points at are dropped, because the caller's list IS the new chain.
+ * A row keeps nothing when its `sourceIndex` is past the stored chain, or when
+ * its provider differs from the stored entry's — a key or a region never
+ * crosses to a different provider. Stored entries no row points at are
+ * dropped, because the caller's list IS the new chain. A row with no
+ * `sourceIndex` was resolved by `claimStoredSources` first, so a caller that
+ * omits it (the RPC is public; only the Settings page stamps it) still keeps
+ * a matched entry's chain-only fields.
  */
 function overlayProviderRow(
   row: ProviderRowInput,
@@ -1690,6 +1693,34 @@ function overlayProviderRow(
   if (row.failover === false) entry.failover = false;
   else if (row.failover === true && entry.failover === false) delete entry.failover;
   return entry;
+}
+
+/**
+ * Give each row without a `sourceIndex` the stored entry it evidently came
+ * from: the first entry of the same provider that no other row — loaded or
+ * resolved here — already claims. The shipped Settings page always stamps
+ * `sourceIndex`, but the RPC is public, and a caller sending just
+ * `{provider, model, baseUrl}` used to get a rebuilt entry that silently
+ * dropped the stored key reference and every chain-only field (`apiVersion`,
+ * `region`, `awsProfile`, `outputCapParam`, `passthrough`) — fatal to the
+ * one-entry chain that exists only to carry `outputCapParam`
+ * (AZURE_OUTPUT_CAP_PARAM, `ethos setup --from-env`). A row whose provider has
+ * no unclaimed stored entry is left as it was: a fresh entry, exactly as
+ * before (pinned by "a new row, or one whose sourceIndex is stale, is a fresh
+ * entry" and the sourceIndex-less cases in `config-provider-chain.test.ts`).
+ */
+function claimStoredSources(
+  rows: readonly ProviderRowInput[],
+  stored: readonly RawProviderEntry[],
+): ProviderRowInput[] {
+  const claimed = new Set(rows.map((r) => r.sourceIndex).filter((i) => i !== undefined));
+  return rows.map((row) => {
+    if (row.sourceIndex !== undefined) return row;
+    const index = stored.findIndex((e, i) => e.provider === row.provider && !claimed.has(i));
+    if (index === -1) return row;
+    claimed.add(index);
+    return { ...row, sourceIndex: index };
+  });
 }
 
 /**
@@ -2555,7 +2586,9 @@ export class ConfigService {
       assertProviderRows(patch.providers, patch.providersVersion);
       const storedChain = before?.providers ?? [];
       assertProviderIds(
-        patch.providers.map((row) => overlayProviderRow(row, storedChain)),
+        claimStoredSources(patch.providers, storedChain).map((row) =>
+          overlayProviderRow(row, storedChain),
+        ),
         storedChain,
         before?.modelRegistry,
       );
@@ -3193,7 +3226,9 @@ export class ConfigService {
     let chainSecretRefs: string[] = [];
     if (cleaned.providers) {
       const stored = before?.providers ?? [];
-      repoProviders = cleaned.providers.map((p) => overlayProviderRow(p, stored));
+      repoProviders = claimStoredSources(cleaned.providers, stored).map((p) =>
+        overlayProviderRow(p, stored),
+      );
       chainSecretRefs = providerChainSecretRefs(stored);
       // Below two entries the runtime runs on the top-level fields, from two
       // on on the chain alone (`createLLM`, packages/wiring). A config with no

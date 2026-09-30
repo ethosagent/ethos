@@ -646,6 +646,98 @@ describe('ConfigService.update — a legacy top-level config meets the chain edi
   });
 });
 
+// The RPC is public: the shipped Settings page stamps `sourceIndex` on every
+// loaded row and its other patches never send `providers` at all
+// (`buildConfigPatch`, pinned by apps/web's `settings-patch-completeness.test.ts`
+// "never sends providers…"), but any other caller can send a row without one.
+// Such a row used to be rebuilt from its three visible fields, dropping the
+// stored entry's key reference and chain-only fields — fatal to the one-entry
+// chain that exists only to carry `outputCapParam` (AZURE_OUTPUT_CAP_PARAM,
+// `ethos setup --from-env`).
+describe('ConfigService.update — a provider row sent without sourceIndex', () => {
+  let storage: InMemoryStorage;
+  let secrets: InMemorySecretsResolver;
+  let service: ConfigService;
+
+  beforeEach(async () => {
+    storage = new InMemoryStorage();
+    secrets = new InMemorySecretsResolver();
+    service = new ConfigService({
+      config: new ConfigRepository({ dataDir: ethosDir(), storage, secrets }),
+      secrets,
+    });
+    await writeConfig(
+      storage,
+      {
+        provider: 'azure',
+        model: 'prod-chat',
+        apiKey: 'azure-top-0123456789',
+        baseUrl: 'https://r.openai.azure.com',
+        apiVersion: '2024-12-01-preview',
+        personality: 'researcher',
+        providers: [
+          {
+            provider: 'azure',
+            apiKey: 'azure-chain-0123456789',
+            model: 'prod-chat',
+            baseUrl: 'https://r.openai.azure.com',
+            apiVersion: '2024-12-01-preview',
+            outputCapParam: 'max_completion_tokens',
+          },
+        ],
+      },
+      secrets,
+    );
+  });
+
+  it('merges onto the unclaimed stored entry of its provider, keeping chain-only fields', async () => {
+    const { providersVersion } = await service.get();
+    await service.update({
+      providersVersion,
+      providers: [
+        { provider: 'azure', model: 'gpt-6.1-sol', baseUrl: 'https://r.openai.azure.com' },
+      ],
+    });
+
+    const raw = await readRawConfig(storage);
+    expect(raw?.providers?.[0]).toMatchObject({
+      provider: 'azure',
+      apiKey: secretRef('providers/0/azure/apiKey'),
+      model: 'gpt-6.1-sol',
+      baseUrl: 'https://r.openai.azure.com',
+      apiVersion: '2024-12-01-preview',
+      outputCapParam: 'max_completion_tokens',
+    });
+    const resolved = await readConfig(storage, secrets);
+    expect(resolved?.providers?.[0]?.apiKey).toBe('azure-chain-0123456789');
+  });
+
+  it('a row whose stored match another row already claims stays a fresh entry', async () => {
+    const { providersVersion } = await service.get();
+    await service.update({
+      providersVersion,
+      providers: [
+        {
+          provider: 'azure',
+          model: 'prod-chat',
+          baseUrl: 'https://r.openai.azure.com',
+          sourceIndex: 0,
+        },
+        { provider: 'azure', model: 'second-deployment' },
+      ],
+    });
+
+    const raw = await readRawConfig(storage);
+    expect(raw?.providers?.[0]).toMatchObject({
+      apiKey: secretRef('providers/0/azure/apiKey'),
+      outputCapParam: 'max_completion_tokens',
+    });
+    expect(raw?.providers?.[1]?.apiKey).toBe('');
+    expect(raw?.providers?.[1]?.apiVersion).toBeUndefined();
+    expect(raw?.providers?.[1]?.outputCapParam).toBeUndefined();
+  });
+});
+
 // A save that drops the top-level key reference — a provider switch with no
 // key to carry — must not leave the vault entry behind (the same sweep, and
 // the same whole-data-dir reference scan, chain secrets get).
