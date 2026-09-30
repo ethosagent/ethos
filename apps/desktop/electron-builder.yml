@@ -41,6 +41,8 @@ win:
 linux:
   icon: build/icon.png
   target: AppImage
+  # AppImage allows only letters, digits, hyphens, underscores, dots and spaces in executable paths — the default derived from the scoped package name is rejected.
+  executableName: ethos-desktop
 publish:
   provider: github
   releaseType: release
