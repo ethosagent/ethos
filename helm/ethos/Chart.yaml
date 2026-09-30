@@ -3,9 +3,9 @@ name: ethos
 description: Ethos agent framework — a single-pod StatefulSet with persistent state, env-injected secrets, health probes and optional ingress/metrics
 type: application
 # Chart version. Patch-bumped by the release flow when appVersion moves (plan R5).
-version: 0.1.0
+version: 0.1.1
 # Default image tag when image.tag is "" (plan R5 / review D8).
-appVersion: "0.8.0"
+appVersion: "0.9.0"
 home: https://github.com/ethosagent/ethos
 sources:
   - https://github.com/ethosagent/ethos
