@@ -81,7 +81,7 @@
     "pino": "^10.3.1",
     "react": "19.2.6",
     "undici": "^7.28.0",
-    "ws": "^8.20.0",
+    "ws": "^8.22.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.7.1",
     "zod": "^4.3.6"
