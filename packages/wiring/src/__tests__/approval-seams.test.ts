@@ -23,6 +23,7 @@ import {
   REWRITTEN_ARGS_NOTE,
 } from '../approval-seams';
 import { createSmartApprover } from '../smart-approver';
+import { PASSTHROUGH_METER } from './helpers/usage-test-kit';
 
 // The reviewer must not even be CONSTRUCTED on the default path — a
 // deployment where no personality declares `smart` pays nothing. Spying on the
@@ -141,6 +142,7 @@ describe('createApprovalDangerPredicate — execution posture', () => {
     const hooks = new DefaultHookRegistry();
     const asked: Array<string | undefined> = [];
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       hooks: [hooks],
       personalities: registryWith(person('local-one', {}), person('boxed', {})),
       getProvider: async () => {
@@ -182,6 +184,7 @@ describe('createApprovalDangerPredicate — execution posture', () => {
 describe('createApprovalDangerPredicate — re-judge of rewritten args', () => {
   function manual() {
     return createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [new DefaultHookRegistry()],
       personalities: registryWith(),
@@ -220,6 +223,7 @@ describe('createApprovalDangerPredicate — personality resolution', () => {
     const hooks = new DefaultHookRegistry();
     const { provider, calls } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
@@ -242,6 +246,7 @@ describe('createApprovalDangerPredicate — personality resolution', () => {
   it('falls back to manual for a session it never saw', async () => {
     const hooks = new DefaultHookRegistry();
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
@@ -264,6 +269,7 @@ describe('createApprovalDangerPredicate — personality resolution', () => {
     const hooks = new DefaultHookRegistry();
     const { provider } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
@@ -295,6 +301,7 @@ describe('createApprovalDangerPredicate — smart mode', () => {
     );
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
@@ -325,6 +332,7 @@ describe('createApprovalDangerPredicate — smart mode', () => {
     const hooks = new DefaultHookRegistry();
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('plain'), person('explicit', { approvalMode: 'manual' })),
@@ -361,6 +369,7 @@ describe('createApprovalDangerPredicate — built-in consequential flag set', ()
     const { provider, calls } = verdictProvider(verdictJson);
     let constructed = 0;
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities: registryWith(person('p', safety)),
@@ -431,6 +440,7 @@ describe('smart mode through a real agent turn', () => {
       '{"decision":"deny","reason":"rewrites tracked source"}',
     );
     const isDangerous = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [hooks],
       personalities,

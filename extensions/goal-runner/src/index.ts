@@ -1,5 +1,6 @@
 import { AsyncResource } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { withUsageScope } from '@ethosagent/core';
 import type {
   AgentEvent,
   Goal,
@@ -1336,14 +1337,20 @@ export class GoalRunner {
 
     this.setStatus(run, goalId, 'judging');
     const exec = this.execAcceptanceCheck;
-    const verdict = await judge(
-      { output, spec, goalText: goal.goalText },
-      {
-        ...(exec
-          ? { execCommand: (command) => exec(command, { personalityId: goal.personalityId }) }
-          : {}),
-        ...(this.judgeCheck ? { judgeCheck: this.judgeCheck } : {}),
-      },
+    // A judge model call is billed to this goal, never to whatever async
+    // context the run started from (plan background-usage-accounting D10).
+    const verdict = await withUsageScope(
+      { attribution: { sourceRef: goalId, personalityId: goal.personalityId } },
+      () =>
+        judge(
+          { output, spec, goalText: goal.goalText },
+          {
+            ...(exec
+              ? { execCommand: (command) => exec(command, { personalityId: goal.personalityId }) }
+              : {}),
+            ...(this.judgeCheck ? { judgeCheck: this.judgeCheck } : {}),
+          },
+        ),
     );
 
     this.store.updateAttempt(goalId, attemptN, {

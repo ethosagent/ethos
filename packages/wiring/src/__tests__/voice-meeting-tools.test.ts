@@ -13,6 +13,7 @@ import { APPROVAL_SURFACE_ALWAYS_ASK } from '../danger-predicate';
 import type { WiringConfig } from '../index';
 import { SPOKEN_CONFIRMATION_TOOLS } from '../spoken-confirmation';
 import { resolveSipTrunkClient } from '../voice-stack';
+import { PASSTHROUGH_METER } from './helpers/usage-test-kit';
 
 // Regression guard for the voice/meeting integration gap: the tool packages were
 // built with green tests but never registered into the tool registry, so the
@@ -113,6 +114,7 @@ describe('call tool availability tracks the configured trunk', () => {
     expect(SPOKEN_CONFIRMATION_TOOLS).toContain('call');
 
     const predicate = createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [new DefaultHookRegistry()],
       personalities: new DefaultPersonalityRegistry(),

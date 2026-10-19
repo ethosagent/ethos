@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MeteredProvider, withUsageScope } from '@ethosagent/core';
 import { HistoryStore } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { sanitize } from '@ethosagent/safety-injection';
@@ -14,6 +15,7 @@ import type {
   Session,
   SessionStore,
   Storage,
+  UsageRecord,
 } from '@ethosagent/types';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { hashFact } from '../dedup';
@@ -507,5 +509,52 @@ describe('MemoryCaptureRunner — grounding consult', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.sessionId).toBe('s1');
     expect(seen[0]?.text).toBe('Congrats!');
+  });
+});
+
+// D10 (plan background-usage-accounting) — the drain loop runs in the async
+// context of whichever `enqueue` started it, so a metered extraction must be
+// billed through a scope the runner opens PER JOB, never through the one the
+// drain inherited.
+describe('MemoryCaptureRunner — usage attribution', () => {
+  it('two queued jobs from different sessions are each billed to their own session', async () => {
+    const rows: UsageRecord[] = [];
+    const { llm: base } = makeLlm(FACT);
+    const metered = new MeteredProvider({
+      inner: {
+        ...base,
+        async *complete(messages, tools, options) {
+          yield* base.complete(messages, tools, options);
+          yield {
+            type: 'usage',
+            usage: {
+              inputTokens: 10,
+              outputTokens: 2,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0.01,
+            },
+          };
+        },
+      },
+      recorder: { record: (r) => rows.push(r) },
+      kind: 'memory_capture',
+    });
+    const h = makeHarness({
+      llm: metered,
+      session: makeSession({ s1: 'cli:one', s2: 'cli:two' }),
+    });
+
+    await withUsageScope(
+      { attribution: { sessionId: 'leaked-turn', sessionKey: 'cli:leaked' } },
+      async () => h.runner.enqueue({ ...JOB, sessionId: 's1', personalityId: 'muse' }),
+    );
+    h.runner.enqueue({ ...JOB, sessionId: 's2', personalityId: 'sage' });
+    await h.runner.whenIdle();
+
+    expect(rows.map((r) => [r.kind, r.sessionId, r.sessionKey, r.personalityId])).toEqual([
+      ['memory_capture', 's1', 'cli:one', 'muse'],
+      ['memory_capture', 's2', 'cli:two', 'sage'],
+    ]);
   });
 });

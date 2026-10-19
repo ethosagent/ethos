@@ -24,6 +24,7 @@ import type {
 import { createDangerPredicate, type DangerPredicate } from './danger-predicate';
 import { createSmartApprover, type SmartApproverDecisionSite } from './smart-approver';
 import { type SpokenConfirmationRecord, withSpokenConfirmation } from './spoken-confirmation';
+import type { UsageMeter } from './usage-meter';
 
 /**
  * Backstop on the session → personality map. Entries are added on
@@ -129,6 +130,14 @@ export interface CreateApprovalDangerPredicateOptions {
    * shell un-gated, with nothing failing. `tsc` names every call site instead.
    */
   executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
+  /**
+   * `CreateAgentLoopResult.usageMeter` of the build whose loops these are
+   * (plan background-usage-accounting §5.4): the reviewer's provider is
+   * metered as `smart_approver`, one usage-ledger row per review, charged to
+   * the turn through the scope core opens around `before_tool_call`. Required
+   * for the same reason as `executionPostureFor`: `tsc` names every surface.
+   */
+  usageMeter: Pick<UsageMeter, 'meter'>;
 }
 
 /**
@@ -185,7 +194,8 @@ export function createApprovalDangerPredicate(
       getExecutionPosture: (_payload, personality) => opts.executionPostureFor(personality?.id),
       smartApprove: (payload, reason, personality) => {
         approver ??= createSmartApprover({
-          getProvider: opts.getProvider,
+          getProvider: async () =>
+            opts.usageMeter.meter(await opts.getProvider(), 'smart_approver'),
           model: opts.model,
           ...(opts.decision ? { decision: opts.decision } : {}),
         });

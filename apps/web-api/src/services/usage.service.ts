@@ -10,7 +10,7 @@ import { summarizeUsageRows, type UsageAggregateRow, type UsageTotals } from '@e
 // a store without it — the in-memory one tests use — answers zeros rather than
 // failing the page.
 
-export type UsageDimension = 'model' | 'personality' | 'channel' | 'session';
+export type UsageDimension = 'model' | 'personality' | 'channel' | 'session' | 'source';
 
 interface UsageAggregator {
   usageAggregate(opts: {

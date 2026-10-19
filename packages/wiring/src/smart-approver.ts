@@ -269,16 +269,12 @@ async function review(
  * approver that propagated an exception would let the dangerous tool *execute*
  * — the exact inverse of this module's posture. Every error is caught here.
  *
- * **Known limitation: reviewer spend is not attributed.** There is no path
- * from a `before_tool_call` hook into per-turn cost accounting — `sessionCosts`
- * has two writers, both needing a `ToolResult` or stage deps, and the map is
- * private to `AgentLoop`. Closing it means an `extraCostUsd` field on
- * `BeforeToolCallResult`, a contract change under `packages/types/`. Existing
- * precedent discards usage the same way: `extensions/tools-kanban/src/verifier.ts`
- * records nothing, and `extensions/eval-harness/src/scorers.ts` drops the usage
- * chunks entirely. Volume is bounded instead of measured: the reviewer fires
- * only for calls that already reached the danger branch. Attribution is a
- * follow-up.
+ * **Reviewer spend.** The reviewer's provider is metered as `smart_approver`
+ * by the approval surface that builds it (`createApprovalDangerPredicate`'s
+ * `usageMeter`, ./approval-seams.ts): one usage-ledger row per review, charged
+ * to the turn through the usage scope core opens around the `before_tool_call`
+ * dispatch (plan background-usage-accounting §5.2/§5.4). Pinned by the 'usage
+ * ledger' case in `__tests__/smart-approver.test.ts`.
  *
  * The cheap-model auxiliary split (an `auxiliary.approvals` config block, the
  * shape `build-agent-loop.ts` uses for `auxiliaryVision` / `auxiliaryWeb`) is a

@@ -1,13 +1,16 @@
 import type { AgentLoop } from '@ethosagent/core';
-import { DefaultHookRegistry } from '@ethosagent/core';
+import { BackgroundBudgetSkipped, DefaultHookRegistry, MeteredProvider } from '@ethosagent/core';
 import type {
   AgentEvent,
   DeliveryResult,
   InboundMessage,
+  LLMProvider,
   PlatformAdapter,
+  UsageMeterEvent,
+  UsageSourceKind,
 } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { Gateway } from '../index';
+import { type BotSpend, Gateway } from '../index';
 
 // Plan openclaw-2026.9.6-gaps S4/U1 — a budget `halt` reaches the lane as one
 // message naming the cap and the reset command.
@@ -207,26 +210,30 @@ describe('gateway /budget (S4/U1)', () => {
   });
 });
 
+/** A spend figure that is all reply spend — the shape every D5 case used. */
+const turnSpend = (usd: number): BotSpend => ({ repliesUsd: usd, backgroundUsd: 0 });
+
 describe('gateway per-bot daily cap (D5)', () => {
   function cappedGateway(
     loop: AgentLoop,
-    spend: () => Promise<number>,
+    spend: () => Promise<number | BotSpend>,
     dailyBudgetUsd: number | null = 1,
-  ): { gateway: Gateway; queries: Array<{ prefix: string; since: Date }> } {
-    const queries: Array<{ prefix: string; since: Date }> = [];
+  ): { gateway: Gateway; queries: Array<{ prefix: string; botKey: string; since: Date }> } {
+    const queries: Array<{ prefix: string; botKey: string; since: Date }> = [];
     const gateway = new Gateway({
       bots: [
         {
           botKey: 'bot-1',
           loop,
           binding: { type: 'personality', name: 'researcher' },
-          ...(dailyBudgetUsd !== null ? { dailyBudgetUsd } : {}),
+          ...(dailyBudgetUsd !== null ? { budget: { dailyUsd: dailyBudgetUsd } } : {}),
         },
       ],
       clarifySweepIntervalMs: 0,
-      botSpendSince: async (prefix, since) => {
-        queries.push({ prefix, since });
-        return spend();
+      botSpendSince: async (scope, since) => {
+        queries.push({ prefix: scope.sessionKeyPrefix, botKey: scope.botKey, since });
+        const got = await spend();
+        return typeof got === 'number' ? turnSpend(got) : got;
       },
     });
     return { gateway, queries };
@@ -244,6 +251,7 @@ describe('gateway per-bot daily cap (D5)', () => {
     expect(adapter.sent[0]).toContain('$1.00');
     // One bot's sessions, since 00:00 UTC today.
     expect(queries[0]?.prefix).toBe('telegram:bot-1:');
+    expect(queries[0]?.botKey).toBe('bot-1');
     expect(queries[0]?.since.toISOString()).toBe(
       `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
     );
@@ -300,5 +308,186 @@ describe('gateway per-bot daily cap (D5)', () => {
     const { gateway } = cappedGateway(loop, async () => 0.25);
     await gateway.handleMessage(inbound('/budget'), adapter);
     expect(adapter.sent[0]).toContain('$0.2500 of a $1.00 daily cap');
+  });
+});
+
+// Background spend has its own gate, and counts against replies only with
+// `backgroundBlocksReplies: true` (plan background-usage-accounting D14).
+describe('gateway daily cap: background spend', () => {
+  function capped(
+    spend: () => Promise<BotSpend>,
+    extra: { backgroundBlocksReplies?: boolean } = {},
+  ) {
+    const loop = makeCostLoop(undefined);
+    const adapter = makeAdapter();
+    const blocks: Array<{ code?: string; cause?: string; details?: Record<string, unknown> }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'bot-1',
+          loop,
+          binding: { type: 'personality', name: 'researcher' },
+          budget: { dailyUsd: 1, ...extra },
+        },
+      ],
+      // The bot's own adapter is how a background call with no platform in its
+      // attribution (a memory-capture job) finds the bot's lanes.
+      botAdapters: new Map([['bot-1', adapter]]),
+      clarifySweepIntervalMs: 0,
+      observability: {
+        recordSafetyBlock: (b: { code?: string; details?: Record<string, unknown> }) => {
+          blocks.push(b);
+        },
+      } as never,
+      botSpendSince: async () => spend(),
+    });
+    return { gateway, loop, adapter, blocks };
+  }
+
+  /** A background provider metered the way wiring meters `captureLlm`, gated by the gateway. */
+  function backgroundCall(gateway: Gateway, kind: UsageSourceKind = 'memory_capture') {
+    const events: UsageMeterEvent[] = [];
+    let innerCalls = 0;
+    const inner = {
+      name: 'fake',
+      model: 'm',
+      maxContextTokens: 1000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete() {
+        innerCalls++;
+        yield { type: 'done' as const, finishReason: 'end_turn' };
+      },
+      async countTokens() {
+        return 0;
+      },
+    } as unknown as LLMProvider;
+    const provider = new MeteredProvider({
+      inner,
+      recorder: { record() {} },
+      kind,
+      attribution: { botKey: 'bot-1', personalityId: 'researcher' },
+      gate: (req) => gateway.backgroundGate(req),
+      onEvent: (e) => events.push(e),
+    });
+    const run = async () => {
+      for await (const _ of provider.complete([], [], {})) {
+        // drain
+      }
+    };
+    return { run, events, innerCalls: () => innerCalls };
+  }
+
+  it('(1) background spend alone at the cap: replies run, background calls are skipped', async () => {
+    const { gateway, loop, adapter } = capped(async () => ({ repliesUsd: 0, backgroundUsd: 1 }));
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(1);
+    expect(adapter.sent).toEqual(['ok']);
+
+    expect(
+      await gateway.backgroundGate({ kind: 'memory_capture', attribution: { botKey: 'bot-1' } }),
+    ).toEqual({ decision: 'skip', spentUsd: 1, capUsd: 1 });
+
+    const call = backgroundCall(gateway);
+    await expect(call.run()).rejects.toBeInstanceOf(BackgroundBudgetSkipped);
+    expect(call.innerCalls()).toBe(0);
+    expect(call.events).toHaveLength(1);
+    expect(call.events[0]).toMatchObject({
+      type: 'usage.background_skipped',
+      kind: 'memory_capture',
+      spentUsd: 1,
+      capUsd: 1,
+    });
+  });
+
+  it('background calls run while the bot has money left', async () => {
+    const { gateway } = capped(async () => ({ repliesUsd: 0.5, backgroundUsd: 0.4 }));
+    const call = backgroundCall(gateway);
+    await call.run();
+    expect(call.innerCalls()).toBe(1);
+    expect(call.events).toEqual([]);
+  });
+
+  it('never skips the goal judge — a skipped judge re-runs the goal attempt instead', async () => {
+    const { gateway } = capped(async () => ({ repliesUsd: 0, backgroundUsd: 5 }));
+    // The gate itself would skip; `GATE_EXEMPT_KINDS` keeps the meter from asking (D38).
+    const call = backgroundCall(gateway, 'goal_judge');
+    await call.run();
+    expect(call.innerCalls()).toBe(1);
+    expect(call.events).toEqual([]);
+  });
+
+  it('single-bot: a call naming no platform finds the bot through the sole platform adapter', async () => {
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'bot-1',
+          loop: makeLoop([]),
+          binding: { type: 'personality', name: 'r' },
+          budget: { dailyUsd: 1 },
+        },
+      ],
+      // Filed under its platform, not the bot's key — the `adapterForBot` alias case.
+      adapters: new Map([['telegram', { ...makeAdapter(), id: 'telegram' }]]),
+      clarifySweepIntervalMs: 0,
+      botSpendSince: async () => ({ repliesUsd: 0, backgroundUsd: 1 }),
+    });
+    expect(
+      await gateway.backgroundGate({ kind: 'memory_capture', attribution: { botKey: 'bot-1' } }),
+    ).toEqual({ decision: 'skip', spentUsd: 1, capUsd: 1 });
+  });
+
+  it('a bot with no daily cap never skips a background call', async () => {
+    const gateway = new Gateway({
+      bots: [{ botKey: 'bot-1', loop: makeLoop([]), binding: { type: 'personality', name: 'r' } }],
+      clarifySweepIntervalMs: 0,
+      botSpendSince: async () => ({ repliesUsd: 0, backgroundUsd: 100 }),
+    });
+    expect(
+      await gateway.backgroundGate({ kind: 'memory_capture', attribution: { botKey: 'bot-1' } }),
+    ).toEqual({ decision: 'allow' });
+  });
+
+  it('(2) with backgroundBlocksReplies: true, background spend refuses the reply', async () => {
+    const { gateway, loop, adapter, blocks } = capped(
+      async () => ({ repliesUsd: 0, backgroundUsd: 1 }),
+      { backgroundBlocksReplies: true },
+    );
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(0);
+    expect(adapter.sent[0]).toContain('daily budget');
+    expect(blocks.map((b) => b.code)).toContain('gateway.daily_budget_refused');
+  });
+
+  it('(3) reply spend (turns + in-turn utility) at the cap refuses the message, as before', async () => {
+    const { gateway, loop, adapter, blocks } = capped(async () => ({
+      repliesUsd: 1,
+      backgroundUsd: 0,
+    }));
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(0);
+    expect(adapter.sent[0]).toContain('daily budget');
+    const refused = blocks.find((b) => b.code === 'gateway.daily_budget_refused');
+    expect(refused?.details).toMatchObject({ spentUsd: 1, capUsd: 1 });
+  });
+
+  it('(4) an unreadable figure: gate allows, reply allowed, unreadable recorded', async () => {
+    const { gateway, loop, adapter, blocks } = capped(async () => {
+      throw new Error('sessions.db locked');
+    });
+    expect(
+      await gateway.backgroundGate({ kind: 'memory_capture', attribution: { botKey: 'bot-1' } }),
+    ).toEqual({ decision: 'allow' });
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(1);
+    expect(blocks.filter((b) => b.code === 'gateway.daily_budget_unreadable').length).toBe(2);
+  });
+
+  it('/budget splits today’s spend into replies and background', async () => {
+    const { gateway, adapter } = capped(async () => ({ repliesUsd: 0.25, backgroundUsd: 0.1 }));
+    await gateway.handleMessage(inbound('/budget'), adapter);
+    expect(adapter.sent[0]).toContain(
+      'Bot spend today (UTC): $0.3500 of a $1.00 daily cap ($0.2500 replies, $0.1000 background)',
+    );
   });
 });

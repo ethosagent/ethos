@@ -683,6 +683,8 @@ export async function createAgentLoop(
     resolveOriginThreadId?: (sessionKey: string) => string | undefined;
     /** Resolve who started a live turn, for the same reason. Gateway only. */
     resolveOriginUserId?: (sessionKey: string) => string | undefined;
+    /** The bot daily cap's background gate (`Gateway.backgroundGate`). Gateway only. */
+    backgroundGate?: import('@ethosagent/types').UsageGate;
     /**
      * Lane 0 (D16) — force a LIVE served-window probe (bypassing the disk
      * cache) and rewrite the cache. Set by `ethos bench context`; chat and
@@ -745,6 +747,7 @@ export async function createAgentLoop(
     ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
     ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
     ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
+    ...(opts.backgroundGate ? { backgroundGate: opts.backgroundGate } : {}),
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
@@ -806,6 +809,8 @@ export interface TeamLoopInfo {
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
   /** `CreateAgentLoopResult.executionPostureFor` of the coordinator's build (S6 / D1(a)). */
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  /** `CreateAgentLoopResult.usageMeter` of the same build — meters the smart reviewer (§5.4). */
+  usageMeter: import('@ethosagent/wiring').CreateAgentLoopResult['usageMeter'];
   /** `CreateAgentLoopResult.personalities` of the coordinator's build — what the
    *  terminal approval gate reads `approvalMode` from (`wireTerminalApprovalGate`). */
   personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
@@ -878,6 +883,7 @@ export async function createTeamAgentLoop(
     drain,
     approverDecision,
     executionPostureFor,
+    usageMeter,
     personalities,
   } = await createAgentLoop(
     {
@@ -922,6 +928,7 @@ export async function createTeamAgentLoop(
     drain,
     ...(approverDecision ? { approverDecision } : {}),
     executionPostureFor,
+    usageMeter,
     personalities,
   };
 }
@@ -975,6 +982,7 @@ export interface ActiveLoop {
   personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
+  usageMeter: import('@ethosagent/wiring').CreateAgentLoopResult['usageMeter'];
 }
 
 export async function resolveActiveLoop(
@@ -1005,6 +1013,7 @@ export async function resolveActiveLoop(
       drain: teamResult.drain,
       personalities: teamResult.personalities,
       executionPostureFor: teamResult.executionPostureFor,
+      usageMeter: teamResult.usageMeter,
       ...(teamResult.approverDecision ? { approverDecision: teamResult.approverDecision } : {}),
     };
   }
@@ -1030,6 +1039,7 @@ export async function resolveActiveLoop(
     drain: result.drain,
     personalities: result.personalities,
     executionPostureFor: result.executionPostureFor,
+    usageMeter: result.usageMeter,
     ...(result.approverDecision ? { approverDecision: result.approverDecision } : {}),
   };
 }

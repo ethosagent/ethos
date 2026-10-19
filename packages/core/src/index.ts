@@ -101,6 +101,7 @@ export {
 // rather than restating it.
 export type { TurnModel, TurnModelResult } from './agent-loop/turn-model';
 export { describeResolutionFailure, resolveTurnModel } from './agent-loop/turn-model';
+export type { LoopUsageConfig } from './agent-loop/usage-charges';
 export { buildAttachmentAnnotation } from './attachment-annotation';
 export { deriveBotKey } from './bot-key';
 export { toolsDeclaringNetwork } from './capability-reach';
@@ -236,6 +237,12 @@ export { DefaultExecutionBackendRegistry } from './providers/execution-registry'
 export { DefaultJobRunnerRegistry } from './providers/job-runner-registry';
 export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
+export {
+  BackgroundBudgetSkipped,
+  isMeteredProvider,
+  MeteredProvider,
+  type MeteredProviderOptions,
+} from './providers/metered-provider';
 export { DefaultRealtimeVoiceProviderRegistry } from './providers/realtime-registry';
 export { DefaultStorageRegistry } from './providers/storage-registry';
 export { DefaultSttProviderRegistry } from './providers/stt-registry';
@@ -313,6 +320,7 @@ export { DefaultToolRegistry } from './tool-registry';
 export type { ResolveToolSecretRefOptions, ToolSecretRung } from './tool-secret-ref';
 export { resolveToolSecretRef } from './tool-secret-ref';
 export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';
+export { activeUsageScope, withUsageScope } from './usage-scope';
 // Voice V2 Lane 6a — the durable per-lane `/voice` mode, shared by the gateway
 // and web-api so a mode set on one surface is the same fact on the other.
 export {

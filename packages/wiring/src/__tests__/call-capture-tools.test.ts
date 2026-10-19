@@ -61,7 +61,10 @@ describe('call capture is never registered as an LLM-callable tool', () => {
     // `new TapCapture()` / `new MicCapture()` this test asserted before.
     expect(src).toMatch(/tapCapture: new TapCapture\(tapCaptureOpts\)/);
     expect(src).toMatch(/micCapture: new MicCapture\(micCaptureOpts\)/);
-    expect(src).toMatch(/getSummaryProvider: async \(\) => llm/);
+    // Metered as `call_summary` (plan background-usage-accounting §5.4), per invocation.
+    expect(src).toMatch(
+      /getSummaryProvider: async \(\) =>\s+usageMeter\.meter\(llm, 'call_summary'/,
+    );
     // The fix under test: dispatch is a bound function returned through
     // CreateAgentLoopResult, not a Tool registered into the LLM-visible registry.
     expect(src).toMatch(/runCallCapture\(callCaptureOpts,/);

@@ -50,20 +50,12 @@
 //   `traceId` falls back to `sink.traceId`, which is how injection and approver
 //   rows carry the turn's trace. A throwing sink is ignored.
 //
-// Cost accounting (D13) — KNOWN LIMITATION. The plan asks for decision usage to
-// flow "through the same accounting as LLM usage". No such path exists from a
-// classifier or approver: `InjectionClassifier` (packages/types/src/safety.ts)
-// returns only a verdict, `result-defense.ts` has no cost channel, and the
-// per-turn `sessionCosts` map is private to `AgentLoop` (the same gap
-// `smart-approver.ts`'s "Known limitation: reviewer spend is not attributed"
-// documents; today's LLM classifier discards its usage too). Closing it is a
-// contract change under packages/types/. Until then the cost is computed with
-// `estimateCost` (@ethosagent/pricing) and recorded on every `decision.call` /
-// `decision.shadow` observability event, where it is queryable but NOT seen by
-// budget watchers.
+// Cost accounting (D13): the ledger row is `UsageMeter.meterDecision`'s, labelled by
+// `siteUsageScope` below — pinned by the 'usage ledger' cases in `__tests__/decision-wiring.test.ts`.
 
 import { randomUUID } from 'node:crypto';
 import type { DecisionSiteId, DecisionSiteMode } from '@ethosagent/config';
+import { activeUsageScope, withUsageScope } from '@ethosagent/core';
 import { estimateCost } from '@ethosagent/pricing';
 import { redactJson, redactString } from '@ethosagent/safety-redact';
 import type {
@@ -279,6 +271,22 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
     };
   };
 
+  // The metered provider's ledger row names this site, and is charged to the
+  // turn only while the turn's own scope is open (a late shadow answer is not).
+  const siteUsageScope = () => {
+    const outer = activeUsageScope();
+    const charge = outer?.charge;
+    return {
+      attribution: {
+        ...outer?.attribution,
+        sourceRef: opts.site,
+        ...(traceId !== undefined ? { traceId } : {}),
+        ...(opts.personalityId !== undefined ? { personalityId: opts.personalityId } : {}),
+      },
+      ...(charge ? { charge: (usd: number) => outer.open && charge(usd) } : {}),
+    };
+  };
+
   // Never rejects: every failure — redaction included — becomes an error result.
   const consult = async (): Promise<Consultation> => {
     const started = now();
@@ -287,12 +295,14 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
         opts.digest.kind === 'text'
           ? redactString(opts.digest.value)
           : redactJson(opts.digest.value);
-      const result = await provider.decide({
-        state,
-        questions: opts.questions,
-        timeoutMs: opts.timeoutMs,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      });
+      const result = await withUsageScope(siteUsageScope(), () =>
+        provider.decide({
+          state,
+          questions: opts.questions,
+          timeoutMs: opts.timeoutMs,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        }),
+      );
       return { result, latencyMs: now() - started };
     } catch (err) {
       return {

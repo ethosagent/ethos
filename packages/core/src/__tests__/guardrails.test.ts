@@ -260,7 +260,18 @@ describe('Orchestrator guardrails', () => {
     // Bumped 1113 -> 1114 (personality-presence §4): `effort: setup.effort` in
     // the stream-step context. Pass-through only; the route that sets it is
     // agent-loop/model-route.ts.
-    expect(lineCount).toBeLessThanOrEqual(1114);
+    // Bumped 1114 -> 1128 (background-usage-accounting Lane A, §5.2): the
+    // optional `usage` config field (doc + declaration), its private field and
+    // constructor assignment, the deps-getter line; the tools' metered
+    // `tool_llm` provider (field + one construction) and `setup.charges` on
+    // the tool stage's context; `completeDirect`'s `usage` option
+    // (declaration, two metering lines) with its two type imports and
+    // `meteredFor` import; and `/compact`'s attribution-only usage scope when
+    // `usage` is set (the hoisted call, the guard, the scoped call, and the
+    // `withUsageScope` import). Pass-through only: the scopes, charges and
+    // metering live in agent-loop/usage-charges.ts, ../usage-scope.ts and
+    // ../providers/metered-provider.ts.
+    expect(lineCount).toBeLessThanOrEqual(1128);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -393,7 +404,15 @@ describe('Orchestrator guardrails', () => {
       // types `roomAudience`/`initiator` on its opts (two lines) and spreads
       // them into the ToolContext (two lines). No
       // logic — the audience is resolved in agent-loop/audience.ts.
-      if (lineCount > 874) {
+      // Bumped 874 -> 882 (background-usage-accounting Lane A, §5.2):
+      // tool-processing.ts wraps the tool batch, the `before_tool_call`
+      // dispatch and the injection classifier in the turn's usage scope (the
+      // batch call re-indents by one level; the other two hoist their
+      // arguments into a const), and yields the queued charges after the batch
+      // and on the return-direct exit (two lines and a blank). One ctx field
+      // (`TurnSetup.charges`), one type import. The logic lives in
+      // agent-loop/usage-charges.ts.
+      if (lineCount > 882) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }
@@ -425,7 +444,13 @@ describe('Orchestrator guardrails', () => {
       // completion budget, and pressureGateTokens takes the same reserve (one
       // parameter, one type alias, one line of lookup, one doc line); pinned by
       // __tests__/output-reserve-cap.test.ts.
-      if (lineCount > 524) {
+      // Bumped 524 -> 527 (background-usage-accounting Lane A, §5.2): turn-end.ts
+      // meters the memory flush and charges it (and a metered turn-end
+      // compaction summary) to the turn — `charges` on TurnEndCtx (field +
+      // doc, copied in buildTurnEndCtx), the compaction's arguments hoisted
+      // into two consts around the scoped call, two drains with their
+      // comments. The logic lives in agent-loop/usage-charges.ts.
+      if (lineCount > 527) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

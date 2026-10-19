@@ -4,12 +4,18 @@
 // probe path is exercised cache-first with a fetch stub that fails the test
 // on any network call.
 
-import { DefaultLLMProviderRegistry } from '@ethosagent/core';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DefaultLLMProviderRegistry, withUsageScope } from '@ethosagent/core';
+import { SQLiteUsageLedger } from '@ethosagent/session-sqlite';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message, Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { buildCompressionSummarizer, type WiringConfig } from '../index';
 import { windowProbeCachePath } from '../local-models';
+import { createUsageMeter } from '../usage-meter';
+import { PASSTHROUGH_METER, usageChunk } from './helpers/usage-test-kit';
 
 const noopLog = {
   info: () => {},
@@ -82,11 +88,18 @@ describe('Lane 5(ii) — buildCompressionSummarizer window/profile threading', (
       auxiliaryCompression: { model: 'aux-model' },
       models: { 'ollama/aux-model': { toolCallFormat: 'openai', maxOutputTokens: 512 } },
     };
-    const summarize = buildCompressionSummarizer(registry, config, undefined, noopLog, {
-      storage,
-      dataDir: '/data',
-      fetchImpl: forbiddenFetch,
-    });
+    const summarize = buildCompressionSummarizer(
+      registry,
+      config,
+      undefined,
+      noopLog,
+      {
+        storage,
+        dataDir: '/data',
+        fetchImpl: forbiddenFetch,
+      },
+      PASSTHROUGH_METER,
+    );
     const result = await summarize([{ role: 'user', content: 'hello' }], 100);
 
     expect(result).toBe('a summary');
@@ -113,11 +126,18 @@ describe('Lane 5(ii) — buildCompressionSummarizer window/profile threading', (
       baseUrl: BASE_URL,
       auxiliaryCompression: { model: 'aux-model' },
     };
-    const summarize = buildCompressionSummarizer(registry, config, undefined, noopLog, {
-      storage,
-      dataDir: '/data',
-      fetchImpl: forbiddenFetch,
-    });
+    const summarize = buildCompressionSummarizer(
+      registry,
+      config,
+      undefined,
+      noopLog,
+      {
+        storage,
+        dataDir: '/data',
+        fetchImpl: forbiddenFetch,
+      },
+      PASSTHROUGH_METER,
+    );
     await summarize([{ role: 'user', content: 'one' }], 100);
     await summarize([{ role: 'user', content: 'two' }], 100);
     expect(seen).toHaveLength(1);
@@ -136,10 +156,68 @@ describe('Lane 5(ii) — buildCompressionSummarizer window/profile threading', (
     };
     // No windowProbe context at all → resolution falls through with no value;
     // the provider keeps its own default rather than a fabricated one.
-    const summarize = buildCompressionSummarizer(registry, config, undefined, noopLog);
+    const summarize = buildCompressionSummarizer(
+      registry,
+      config,
+      undefined,
+      noopLog,
+      undefined,
+      PASSTHROUGH_METER,
+    );
     await summarize([{ role: 'user', content: 'hello' }], 100);
 
     const providerConfig = seen[0] ?? {};
     expect('maxContextTokens' in providerConfig).toBe(false);
+  });
+});
+
+// U12 (plan background-usage-accounting §10) — the reproducing case: a
+// compaction on the auxiliary model used to land in observability.db only, so
+// the bot's daily cap never saw it. The summarizer's provider is now metered
+// as `compaction`; core opens the usage scope around the compaction await
+// (`turnUsageCharges`, packages/core/src/agent-loop/usage-charges.ts), which is
+// mirrored here with `withUsageScope`, so the row carries the compacting
+// turn's session key and the bot's spend read rises by the summarizer's cost.
+describe('U12 — an auxiliary compaction is billed to the bot', () => {
+  it('writes one compaction ledger row on the compacting turn, raising that bot spend', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-u12-'));
+    const ledger = new SQLiteUsageLedger(join(dir, 'sessions.db'));
+    try {
+      const registry = new DefaultLLMProviderRegistry();
+      registry.register('ollama', ({ config }) => ({
+        ...stubProvider(config as Record<string, unknown>),
+        complete: async function* (): AsyncGenerator<CompletionChunk> {
+          yield { type: 'text_delta', text: 'a summary' };
+          yield usageChunk(900, 80, 0.042);
+        },
+      }));
+      const meter = createUsageMeter({ recorder: ledger, defaults: { botKey: 'bot-a' } });
+      const config: WiringConfig = {
+        provider: 'ollama',
+        model: 'main-model',
+        apiKey: 'local',
+        auxiliaryCompression: { model: 'aux-model' },
+      };
+      const summarize = buildCompressionSummarizer(
+        registry,
+        config,
+        undefined,
+        noopLog,
+        undefined,
+        meter,
+      );
+      const since = new Date(Date.now() - 1000);
+      const sessionKey = 'telegram:bot-a:42';
+      const before = ledger.spendSince({ since, keyPrefix: 'telegram:bot-a:' });
+      await withUsageScope({ attribution: { sessionId: 's-42', sessionKey } }, () =>
+        summarize([{ role: 'user', content: 'a long middle' }], 100),
+      );
+      const after = ledger.spendSince({ since, keyPrefix: 'telegram:bot-a:' });
+      expect(after.turnUtilityUsd - before.turnUtilityUsd).toBeCloseTo(0.042, 9);
+      expect(ledger.spendSince({ since, botKey: 'bot-a' }).turnUtilityUsd).toBeCloseTo(0.042, 9);
+    } finally {
+      ledger.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

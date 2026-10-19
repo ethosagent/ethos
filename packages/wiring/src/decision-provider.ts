@@ -18,6 +18,7 @@
 import { DECISIONS_API_KEY_REF, type ResolvedDecisionsConfig } from '@ethosagent/config';
 import type { DecisionBreakerEvent } from '@ethosagent/decision-typesafe';
 import type { DecisionProvider, SecretsResolver } from '@ethosagent/types';
+import type { UsageMeter } from './usage-meter';
 
 export interface DecisionBreakerRecorder {
   recordDecisionBreaker(event: DecisionBreakerEvent): void;
@@ -28,6 +29,8 @@ export interface CreateDecisionProviderHandleOptions {
   decisions: ResolvedDecisionsConfig;
   secrets: SecretsResolver | undefined;
   observability?: DecisionBreakerRecorder;
+  /** The build's usage meter: the provider is wrapped once, so every site and the `decide` tool record spend. */
+  usageMeter?: Pick<UsageMeter, 'meterDecision'>;
 }
 
 /** The build's one provider, constructed on first use. */
@@ -42,7 +45,10 @@ export function createDecisionProviderHandle(
   let pending: Promise<DecisionProvider | undefined> | undefined;
   return {
     get: () => {
-      pending ??= buildProvider(opts).catch(() => undefined);
+      const meter = opts.usageMeter;
+      pending ??= buildProvider(opts)
+        .then((p) => (p && meter ? meter.meterDecision(p) : p))
+        .catch(() => undefined);
       return pending;
     },
   };

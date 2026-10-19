@@ -24,7 +24,13 @@
 
 import type { AgentLoop } from '@ethosagent/core';
 import { INJECTION_DEFENSE_PRELUDE } from '@ethosagent/safety-injection';
-import type { ChannelTranscriptMessage, ChannelTranscriptStore, Storage } from '@ethosagent/types';
+import {
+  type ChannelTranscriptMessage,
+  type ChannelTranscriptStore,
+  type Storage,
+  type UsageGateVerdict,
+  usageMeterEventRecord,
+} from '@ethosagent/types';
 import { tryAcquireChannelDigestLock } from './channel-digest-lock';
 
 /** Last-ingested-N messages read per lane. Earlier ones are counted, never summarised. */
@@ -199,6 +205,13 @@ export interface ChannelDigestDeps {
       details?: Record<string, unknown>;
     }): void;
   };
+  /**
+   * The bot daily cap's BACKGROUND gate (`Gateway.backgroundGate`), asked once
+   * per lane that has work, before the lane is charged. `skip` leaves cursor and
+   * attempt stamp untouched, is counted in `ChannelDigestReport.budgetSkipped`
+   * and recorded as one `usage.background_skipped`. Absent → never gated.
+   */
+  backgroundGate?(lane: { botKey: string; platform: string }): Promise<UsageGateVerdict>;
   now?(): number;
 }
 
@@ -500,13 +513,19 @@ interface LaneTurnResult {
  * `DIGEST_MAX_OUTPUT_TOKENS` and `maxMessagesPerLane` are the two bounds that
  * apply before the fact — see `ChannelDigestSettings.costWarnUsdPerLane`.
  */
-async function runLaneTurn(loop: AgentLoop, prompt: string): Promise<LaneTurnResult> {
+async function runLaneTurn(
+  loop: AgentLoop,
+  bot: { botKey: string; platform: string },
+  prompt: string,
+): Promise<LaneTurnResult> {
   let text = '';
   let spentUsd = 0;
 
   for await (const chunk of loop.completeDirect([{ role: 'user', content: prompt }], {
     system: DIGEST_SYSTEM_PROMPT,
     maxTokens: DIGEST_MAX_OUTPUT_TOKENS,
+    // One `channel_digest` ledger row billed to the watching bot.
+    usage: { kind: 'channel_digest', attribution: bot },
   })) {
     if (chunk.type === 'text_delta') text += chunk.text;
     else if (chunk.type === 'done') break;
@@ -577,6 +596,12 @@ export interface ChannelDigestReport {
    */
   deferred: number;
   /**
+   * Lanes with undigested messages left for a later run because their bot's
+   * daily budget was spent (`ChannelDigestDeps.backgroundGate`). Like
+   * `deferred`, not a loss: their cursors are untouched.
+   */
+  budgetSkipped: number;
+  /**
    * Set when the run did NO work because another digest run held the lock.
    * Every other count is then zero and means nothing — this field is what
    * distinguishes "there was nothing to say" from "somebody else is saying it".
@@ -599,10 +624,12 @@ export function summarizeChannelDigest(report: ChannelDigestReport): string {
   // something, so a healthy run does not train the eye past the field.
   const deferred =
     report.deferred > 0 ? `, ${report.deferred} deferred to the next run by the lane cap` : '';
+  const budget =
+    report.budgetSkipped > 0 ? `, ${report.budgetSkipped} skipped by the daily budget` : '';
   return (
     `Channel digest: ${report.summarised} lane(s) summarised, ${report.empty} with nothing ` +
     `to report, ${report.deliveredToOwner} delivered to the owner, ` +
-    `${report.undelivered} undelivered${failed}${deferred}`
+    `${report.undelivered} undelivered${failed}${deferred}${budget}`
   );
 }
 
@@ -700,6 +727,7 @@ export async function runChannelDigest(
     undelivered: 0,
     failed: 0,
     deferred: 0,
+    budgetSkipped: 0,
   };
   // Nothing to read, so nothing to serialise against — do not churn the lock.
   if (!deps.transcript) return idle;
@@ -738,6 +766,7 @@ async function digestWatchedLanes(
     undelivered: 0,
     failed: 0,
     deferred: 0,
+    budgetSkipped: 0,
   };
   if (!deps.transcript) return report;
 
@@ -881,6 +910,26 @@ async function digestWatchedLanes(
       // Consumed in ingestion order, SHOWN in the order things were said: a
       // message the platform delivered late still belongs where its clock time
       // puts it in a transcript somebody reads.
+      // The bot's daily budget, before the lane is charged or stamped: a lane
+      // its bot cannot pay for was not attempted, so it keeps its place.
+      const verdict = await deps.backgroundGate?.({
+        botKey: lane.botKey,
+        platform: lane.platform,
+      });
+      if (verdict?.decision === 'skip') {
+        report.budgetSkipped += 1;
+        deps.observability?.recordSafetyBlock(
+          usageMeterEventRecord({
+            type: 'usage.background_skipped',
+            kind: 'channel_digest',
+            attribution: { botKey: lane.botKey, platform: lane.platform, sourceRef: lane.laneKey },
+            ...(verdict.spentUsd !== undefined ? { spentUsd: verdict.spentUsd } : {}),
+            ...(verdict.capUsd !== undefined ? { capUsd: verdict.capUsd } : {}),
+          }),
+        );
+        continue;
+      }
+
       const fresh = [...page.messages].sort((a, b) => a.sentAt - b.sentAt);
       const nextCursor = page.messages.reduce((max, m) => (m.id > max ? m.id : max), cursor);
 
@@ -902,6 +951,7 @@ async function digestWatchedLanes(
       stateChanged = true;
       const turn = await runLaneTurn(
         bot.loop,
+        { botKey: lane.botKey, platform: lane.platform },
         buildDigestPrompt({
           platform: lane.platform,
           chatId: lane.chatId,

@@ -355,6 +355,36 @@ describe('pruneObservability', () => {
     sessDb.close();
   });
 
+  // background-usage-accounting D8 — ledger rows share retention.messages.
+  it('prunes usage_ledger rows older than retention.messages in the same pass', () => {
+    const sessDb = makeSessDb();
+    sessDb.exec(`CREATE TABLE usage_ledger (id TEXT PRIMARY KEY, ts TEXT NOT NULL) STRICT`);
+    const ins = sessDb.prepare('INSERT INTO usage_ledger (id, ts) VALUES (?, ?)');
+    ins.run('old', new Date(NOW - 400 * 86_400_000).toISOString());
+    ins.run('recent', new Date(RECENT).toISOString());
+    insertMessage(sessDb, 's1', 'old msg', new Date(NOW - 400 * 86_400_000).toISOString());
+
+    const result = pruneObservability(db, RETENTION_DEFAULTS, { dryRun: false, now: NOW, sessDb });
+
+    expect(result.messages).toBe(1);
+    const left = (sessDb.prepare('SELECT id FROM usage_ledger').all() as { id: string }[]).map(
+      (r) => r.id,
+    );
+    expect(left).toEqual(['recent']);
+    sessDb.close();
+  });
+
+  it('leaves a sessions.db with no usage_ledger table without one', () => {
+    const sessDb = makeSessDb();
+    insertMessage(sessDb, 's1', 'old msg', new Date(NOW - 400 * 86_400_000).toISOString());
+    pruneObservability(db, RETENTION_DEFAULTS, { dryRun: false, now: NOW, sessDb });
+    const t = sessDb
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'usage_ledger'`)
+      .get();
+    expect(t).toBeUndefined();
+    sessDb.close();
+  });
+
   // A1a — `ethos data prune` opens sessions.db raw, without running the store's
   // migrations, so the file may predate the usage rollup entirely. Pruning
   // messages is the primary job: a rollup that cannot be maintained is skipped,

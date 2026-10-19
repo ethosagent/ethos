@@ -295,6 +295,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
                   personalities,
                   agentConfig,
                   agentResult.executionPostureFor,
+                  agentResult.usageMeter,
                   agentResult.approverDecision,
                 ),
             });
@@ -502,6 +503,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // Where each personality's shell tools run in the build `loop` came from —
   // the web approval predicate flags them under a host-local posture (S6 / D1(a)).
   let executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  let usageMeter: import('@ethosagent/wiring').CreateAgentLoopResult['usageMeter'];
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -795,6 +797,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
     executionPostureFor = result.executionPostureFor;
+    usageMeter = result.usageMeter;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -832,6 +835,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       amendments: teamAmendments,
       dispose: teamDispose,
       executionPostureFor: teamExecutionPostureFor,
+      usageMeter: teamUsageMeter,
       approverDecision: teamApproverDecision,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
@@ -841,6 +845,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     toolRegistry = teamToolRegistry;
     approverDecision = teamApproverDecision;
     executionPostureFor = teamExecutionPostureFor;
+    usageMeter = teamUsageMeter;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;
@@ -869,6 +874,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
     executionPostureFor = result.executionPostureFor;
+    usageMeter = result.usageMeter;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -893,7 +899,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
-    const titleLlm = await createLLM(config);
+    // A session title is a model call outside any turn's own stream — metered
+    // as `title` (background-usage-accounting §5.4).
+    const titleLlm = usageMeter.meter(await createLLM(config), 'title');
     titleFn = async (systemPrompt: string, userMessage: string): Promise<string> => {
       let text = '';
       for await (const chunk of titleLlm.complete([{ role: 'user', content: userMessage }], [], {
@@ -1366,6 +1374,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop,
     ...(approverDecision ? { approverDecision } : {}),
     executionPostureFor,
+    usageMeter,
     session,
     contextLog,
     personalities,
@@ -1763,6 +1772,7 @@ export function buildServeDangerPredicate(
   personalities: ServePersonalityRegistry,
   config: EthosConfig,
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'],
+  usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>,
   decision?: SmartApproverDecisionSite,
 ): ReturnType<typeof createApprovalDangerPredicate> {
   return createApprovalDangerPredicate({
@@ -1773,6 +1783,7 @@ export function buildServeDangerPredicate(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(decision ? { decision } : {}),
     executionPostureFor,
+    usageMeter,
   });
 }
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
@@ -2202,6 +2213,8 @@ export interface BuildServeWebApiOptions {
   approverDecision?: SmartApproverDecisionSite;
   /** `CreateAgentLoopResult.executionPostureFor` of the build `loop` came from. */
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  /** `CreateAgentLoopResult.usageMeter` of the build `loop` came from. */
+  usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>;
   session: ReturnType<typeof createSessionStore>;
   contextLog: SQLiteContextLog;
   personalities: ServePersonalityRegistry;
@@ -2339,7 +2352,10 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     attachmentCache,
     sessionStore: session,
     contextLog,
-    personalitiesLlm: () => createLLM(config),
+    // Drafting an Expression or a SOUL split is operator-initiated spend
+    // (background-usage-accounting §5.4): meter it on the build's meter.
+    personalitiesLlm: async () =>
+      opts.usageMeter.meter(await createLLM(config), 'personality_draft'),
     // Per-team loops for web chat (D4): a team member's turn runs on its
     // team's loop, built on demand through this factory.
     ...(createTeamLoop ? { createTeamLoop } : {}),
@@ -2463,6 +2479,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
       personalities,
       config,
       opts.executionPostureFor,
+      opts.usageMeter,
       opts.approverDecision,
     ),
     // Every modal decision (and every allowlist auto-allow) lands in the

@@ -50,6 +50,7 @@ import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { LangfusePollLoop } from '@ethosagent/export-langfuse';
 import {
   adapterRegistries,
+  type BotSpend,
   createCapturingAdapter,
   createFfmpegTranscoder,
   createVoiceArtifactStore,
@@ -83,7 +84,12 @@ import {
   MicActivityDetector,
   NotificationGate,
 } from '@ethosagent/platform-callcapture';
-import { hashApiKey, SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import {
+  hashApiKey,
+  SQLiteSessionStore,
+  SQLiteUsageLedger,
+  SqliteApiKeyStore,
+} from '@ethosagent/session-sqlite';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import Database from '@ethosagent/sqlite';
 import {
@@ -114,6 +120,7 @@ import {
   type SessionStore,
   type ToolRegistry,
   type TurnAudience,
+  type UsageGate,
 } from '@ethosagent/types';
 import {
   type WatcherDeliverTarget,
@@ -1094,6 +1101,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // Where each personality's shell tools run in this process — the approval
     // predicates below flag them under a host-local posture (S6 / D1(a)).
     executionPostureFor,
+    // …and meter their smart reviewer on this build's ledger.
+    usageMeter,
     jobStore: systemJobStore,
     backgroundExecutor: systemBackgroundExecutor,
   } = await createAgentLoop(config, {
@@ -1133,6 +1142,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
     isRemoteSenderTurn: (sessionId) => gatewayRef?.resolveApprovalRoute(sessionId) !== undefined,
     executionPostureFor,
+    usageMeter,
     ...(approverDecision ? { decision: approverDecision } : {}),
   });
   // Say so at boot, once, for every personality whose cron jobs can reach a
@@ -1610,6 +1620,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       : {}),
     ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
     executionPostureFor,
+    usageMeter,
     ...(approverDecision ? { decision: approverDecision } : {}),
   });
 
@@ -2765,8 +2776,8 @@ async function assembleGatewayBots(
       piiRedaction: bot.piiRedaction,
       ...(jobStore ? { jobStore } : {}),
       ...(backgroundExecutor ? { backgroundExecutor } : {}),
-      // D5 — `<bot entry>.budget.dailyUsd`, enforced by `Gateway.enqueueTurn`.
-      ...(bot.budget ? { dailyBudgetUsd: bot.budget.dailyUsd } : {}),
+      // D5 — `<bot entry>.budget`, enforced by `Gateway.enqueueTurn` and `backgroundGate`.
+      budget: bot.budget,
       // Plan personality-presence-and-initiative §3 — applied by the gateway.
       ...(bot.replyPrefix ? { replyPrefix: bot.replyPrefix } : {}),
     };
@@ -2824,7 +2835,7 @@ async function assembleGatewayBots(
         piiRedaction: waCfg.piiRedaction,
         ...(jobStore ? { jobStore } : {}),
         ...(backgroundExecutor ? { backgroundExecutor } : {}),
-        ...(waCfg.budget ? { dailyBudgetUsd: waCfg.budget.dailyUsd } : {}),
+        budget: waCfg.budget,
       },
       at,
     );
@@ -3077,6 +3088,8 @@ export function wireApprovalFlow(
      *  predicate built here (S6 / D1(a)). Posture is operator- and
      *  personality-level, so one build's resolver serves every bot. */
     executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
+    /** `CreateAgentLoopResult.usageMeter` of that same build — meters the smart reviewer. */
+    usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
@@ -3087,6 +3100,7 @@ export function wireApprovalFlow(
     model: seams.model,
     ...(seams.decision ? { decision: seams.decision } : {}),
     executionPostureFor: seams.executionPostureFor,
+    usageMeter: seams.usageMeter,
   };
   // Wire 0: a bot with no approval surface is gated here, before the
   // early return below, so a deployment with no card-capable adapter at all
@@ -3194,6 +3208,7 @@ export function wireApprovalFlow(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(seams.decision ? { decision: seams.decision } : {}),
     executionPostureFor: seams.executionPostureFor,
+    usageMeter: seams.usageMeter,
   });
   // A turn on one of these loops that arrived through an adapter with no card
   // (an Email message that fell back to a Slack bot's loop) cannot be asked:
@@ -3712,6 +3727,7 @@ export function closeSlackSessionStores(): void {
   slackSessionStores.clear();
   branchSessionStore = undefined;
   spendSessionStore = undefined;
+  spendLedger = undefined;
 }
 
 let branchSessionStore: SessionStore | undefined;
@@ -3731,19 +3747,29 @@ function openBranchSessionStore(): SessionStore {
 }
 
 let spendSessionStore: SQLiteSessionStore | undefined;
+let spendLedger: SQLiteUsageLedger | undefined;
 
 /**
  * `GatewayConfig.botSpendSince` for a production host (plan
- * openclaw-2026.9.6-gaps D5): one bot's USD spend since `since`, summed from
- * `SQLiteSessionStore.usageAggregate` — the aggregation `ethos usage` reads
- * (commands/usage.ts) — narrowed to the bot's session keys. The concrete store
- * rather than `createSessionStore`'s `SessionStore`, because `usageAggregate`
- * is not on the interface. Opened on the first capped turn and closed by
- * `closeSlackSessionStores()` with the others. Pinned by
+ * openclaw-2026.9.6-gaps D5, background-usage-accounting D40): one bot's USD
+ * spend since `since`, split into {@link BotSpend}.
+ *
+ * - `repliesUsd` — message rows under the bot's session-key prefix, from
+ *   `SQLiteSessionStore.usageAggregate` by `source` with only the message keys
+ *   (`turn`, `turn:<prefix>`; ledger keys are `<source_class>:<kind>`) summed,
+ *   plus the ledger's `turn_utility` rows.
+ * - `backgroundUsd` — the ledger's `background` rows. Ledger rows match the
+ *   bot's key OR its session-key prefix, each once (`SQLiteUsageLedger.spendSince`):
+ *   a memory-capture job carries the build's `botKey` and no session key.
+ *
+ * Message rows and ledger rows are disjoint (§5.5), so the parts add. The
+ * concrete stores rather than `createSessionStore`'s `SessionStore`, because
+ * neither read is on the interface. Opened on the first capped read and closed
+ * by `closeSlackSessionStores()` with the others. Pinned by
  * `__tests__/gateway-daily-budget-wiring.test.ts`.
  */
 export async function botSpendSince(
-  sessionKeyPrefix: string,
+  scope: { sessionKeyPrefix: string; botKey: string },
   since: Date,
   open: () => SQLiteSessionStore = () => {
     if (!spendSessionStore) {
@@ -3753,16 +3779,32 @@ export async function botSpendSince(
     }
     return spendSessionStore;
   },
-): Promise<number> {
+  openLedger: () => SQLiteUsageLedger = () => {
+    if (!spendLedger) {
+      const opened = new SQLiteUsageLedger(join(ethosDir(), 'sessions.db'));
+      slackSessionStores.add(opened);
+      spendLedger = opened;
+    }
+    return spendLedger;
+  },
+): Promise<BotSpend> {
   const rows = await open().usageAggregate({
     since,
     // Open-ended: a row stamped in this very millisecond counts too. A 4-digit
     // year, because the query compares ISO strings.
     until: new Date('9999-12-31T23:59:59.999Z'),
-    dimension: 'day',
-    keyPrefix: sessionKeyPrefix,
+    dimension: 'source',
+    keyPrefix: scope.sessionKeyPrefix,
   });
-  return rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0);
+  const turnUsd = rows
+    .filter((r) => r.key === 'turn' || r.key.startsWith('turn:'))
+    .reduce((sum, r) => sum + r.estimatedCostUsd, 0);
+  const ledger = openLedger().spendSince({
+    since,
+    botKey: scope.botKey,
+    keyPrefix: scope.sessionKeyPrefix,
+  });
+  return { repliesUsd: turnUsd + ledger.turnUtilityUsd, backgroundUsd: ledger.backgroundUsd };
 }
 
 function createSlackSessionReaders(botKey: string) {
@@ -4918,12 +4960,21 @@ export function idleGatewayBotLoopOpts(
 export interface GatewayTurnOrigin {
   resolveOriginThreadId: (sessionKey: string) => string | undefined;
   resolveOriginUserId: (sessionKey: string) => string | undefined;
+  /**
+   * The bot daily cap's background gate (`Gateway.backgroundGate`, plan
+   * background-usage-accounting D39), handed to the loop's usage meter. Rides
+   * here because every loop a gateway host builds already takes this object,
+   * late-bound. `allow` before the Gateway exists.
+   */
+  backgroundGate: UsageGate;
 }
 
 export function gatewayTurnOrigin(gateway: () => Gateway | null): GatewayTurnOrigin {
   return {
     resolveOriginThreadId: (sessionKey) => gateway()?.originThreadIdFor(sessionKey),
     resolveOriginUserId: (sessionKey) => gateway()?.originUserIdFor(sessionKey),
+    backgroundGate: async (request) =>
+      (await gateway()?.backgroundGate(request)) ?? { decision: 'allow' },
   };
 }
 
@@ -5728,7 +5779,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         // with the Slack readers by `closeSlackSessionStores()` at shutdown.
         sessionStore: openBranchSessionStore,
         // D5 — each bot's `budget.dailyUsd` is enforced against this.
-        botSpendSince: (prefix, since) => botSpendSince(prefix, since),
+        botSpendSince: (scope, since) => botSpendSince(scope, since),
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,

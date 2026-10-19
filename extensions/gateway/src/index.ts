@@ -74,6 +74,8 @@ import type {
   TtsProviderRegistry,
   TurnAudience,
   TurnInitiator,
+  UsageGateRequest,
+  UsageGateVerdict,
   VoiceAudioFormat,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
@@ -320,6 +322,18 @@ const CLARIFY_ESCALATION_POLL_MS = 5_000;
  * message rows land — at most one window's worth of drift.
  */
 const DAILY_SPEND_REFRESH_MS = 60_000;
+
+/**
+ * One bot's spend since a point, split by who caused it (plan
+ * background-usage-accounting §7.1) — what `GatewayConfig.botSpendSince`
+ * answers. `repliesUsd` is the bot's turns plus the utility calls they made
+ * (message rows + `turn_utility` ledger rows); `backgroundUsd` its background
+ * work (`background` ledger rows). Disjoint (§5.5), so the two add.
+ */
+export interface BotSpend {
+  repliesUsd: number;
+  backgroundUsd: number;
+}
 
 /** The one lane message a turn refused by the daily cap gets (D5). */
 function dailyCapNotice(over: { spentUsd: number; capUsd: number }): string {
@@ -985,10 +999,12 @@ export interface GatewayBotConfig {
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
   /** This bot's job store — present when background is enabled. */
   jobStore?: import('@ethosagent/types').JobStore;
-  /** Operator cap on this bot's spend per UTC day, USD (`<bot entry>.budget.dailyUsd`,
-   *  plan openclaw-2026.9.6-gaps D5). Enforced by `Gateway.enqueueTurn` when
-   *  `GatewayConfig.botSpendSince` is wired; absent = no daily cap. */
-  dailyBudgetUsd?: number;
+  /** `<bot entry>.budget` (plan openclaw-2026.9.6-gaps D5): `dailyUsd` caps this
+   *  bot's spend per UTC day, enforced by `Gateway.enqueueTurn` (replies) and
+   *  `Gateway.backgroundGate` when `GatewayConfig.botSpendSince` is wired;
+   *  `backgroundBlocksReplies` (background-usage-accounting D14) makes
+   *  background spend count toward the reply gate too. Absent = no daily cap. */
+  budget?: { dailyUsd: number; backgroundBlocksReplies?: boolean };
   /**
    * Reply-prefix template (`telegram.bots.N.replyPrefix`,
    * `slack.apps.N.replyPrefix`, `discord.replyPrefix`; plan
@@ -1491,14 +1507,19 @@ export interface GatewayConfig {
    */
   sessionStore?: () => SessionStore;
   /**
-   * USD spent since `since` by every session whose key starts with
-   * `sessionKeyPrefix` — how `Gateway.enqueueTurn` reads one bot's spend today
-   * for its `GatewayBotConfig.dailyBudgetUsd` (plan openclaw-2026.9.6-gaps D5).
-   * The host backs it with the aggregation `ethos usage` reads
-   * (`SQLiteSessionStore.usageAggregate` with `keyPrefix`). Absent → no daily
-   * cap is enforced, whatever the bots say.
+   * One bot's USD spend since `since`, split by {@link BotSpend} — how
+   * `Gateway.enqueueTurn` (replies) and `Gateway.backgroundGate` (background
+   * calls) read the bot's spend today against its `GatewayBotConfig.budget`. `sessionKeyPrefix` names the bot's lane
+   * sessions; `botKey` names its ledger rows, which may carry no session key at
+   * all (a memory-capture job). The production host (`botSpendSince` in
+   * apps/ethos/src/commands/gateway.ts) reads message rows with
+   * `usageAggregate` and ledger rows with `SQLiteUsageLedger.spendSince`.
+   * Absent → no daily cap is enforced, whatever the bots say.
    */
-  botSpendSince?: (sessionKeyPrefix: string, since: Date) => Promise<number>;
+  botSpendSince?: (
+    scope: { sessionKeyPrefix: string; botKey: string },
+    since: Date,
+  ) => Promise<BotSpend>;
   /** STT provider registry for resolving voice transcription providers by name. */
   sttProviderRegistry?: SttProviderRegistry;
   /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
@@ -1784,7 +1805,7 @@ export class Gateway {
   /** Today's spend per bot (`dailySpendKey`), read through `botSpendSince` at
    *  most once per `DAILY_SPEND_REFRESH_MS` and advanced in between by the
    *  `usage` events this process's own turns yield (`addDailySpend`). */
-  private readonly dailySpend = new Map<string, { day: string; usd: number; readAt: number }>();
+  private readonly dailySpend = new Map<string, { day: string; spend: BotSpend; readAt: number }>();
   /** Per-lane active personality (overrideable via /personality). */
   private readonly personalityIds = new Map<string, string>();
   /** Per-lane usage accumulator. */
@@ -8544,6 +8565,8 @@ export class Gateway {
             }
           : {}),
         ...(this.observability ? { observability: this.observability } : {}),
+        backgroundGate: (lane) =>
+          this.backgroundGate({ kind: 'channel_digest', attribution: lane }),
       },
       settings,
     );
@@ -8846,27 +8869,27 @@ export class Gateway {
 
   /**
    * The bot's spend since 00:00 UTC, or `null` when no daily cap applies (no
-   * `dailyBudgetUsd`, no `botSpendSince`) or the read failed. See
+   * `budget`, no `botSpendSince`) or the read failed. See
    * `DAILY_SPEND_REFRESH_MS` for when the store is read. Fail-open on a read
    * that throws — recorded as `gateway.daily_budget_unreadable` — because a
    * cap that cannot be read refusing every turn would take the bot down over a
    * locked database; the next turn tries the read again.
    */
-  private async spentToday(bot: GatewayBotConfig, platform: string): Promise<number | null> {
+  private async spentToday(bot: GatewayBotConfig, platform: string): Promise<BotSpend | null> {
     const read = this.botSpendSince;
-    if (bot.dailyBudgetUsd === undefined || !read) return null;
+    if (!bot.budget || !read) return null;
     const now = Date.now();
     const start = utcDayStart(now);
     const day = start.toISOString().slice(0, 10);
     const key = this.dailySpendKey(bot, platform);
     const cached = this.dailySpend.get(key);
     if (cached && cached.day === day && now - cached.readAt < DAILY_SPEND_REFRESH_MS) {
-      return cached.usd;
+      return cached.spend;
     }
     try {
-      const usd = await read(key, start);
-      this.dailySpend.set(key, { day, usd, readAt: now });
-      return usd;
+      const spend = await read({ sessionKeyPrefix: key, botKey: bot.botKey }, start);
+      this.dailySpend.set(key, { day, spend, readAt: now });
+      return spend;
     } catch (err) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.daily_budget_unreadable',
@@ -8877,24 +8900,78 @@ export class Gateway {
     }
   }
 
-  /** Fold a `usage` event from this process's own turn into the cached figure. */
+  /** Fold a `usage` event from this process's own turn into the cached figure.
+   *  A turn's `usage` events carry its main calls and its utility charges, both
+   *  reply spend. */
   private addDailySpend(bot: GatewayBotConfig, platform: string, usd: number): void {
-    if (bot.dailyBudgetUsd === undefined || !Number.isFinite(usd) || usd <= 0) return;
+    if (!bot.budget || !Number.isFinite(usd) || usd <= 0) return;
     const cached = this.dailySpend.get(this.dailySpendKey(bot, platform));
     if (cached && cached.day === utcDayStart(Date.now()).toISOString().slice(0, 10)) {
-      cached.usd += usd;
+      cached.spend = { ...cached.spend, repliesUsd: cached.spend.repliesUsd + usd };
     }
   }
 
-  /** `{ spentUsd, capUsd }` when today's spend meets the bot's daily cap, else null. */
+  /**
+   * `{ spentUsd, capUsd }` when today's spend meets the bot's daily cap, else
+   * null — the REPLY gate. Counts reply spend; background spend only with
+   * `budget.backgroundBlocksReplies` (D14). Pinned by the background-spend
+   * cases in `__tests__/budget-halt.test.ts`.
+   */
   private async dailyCapReached(
     bot: GatewayBotConfig,
     platform: string,
   ): Promise<{ spentUsd: number; capUsd: number } | null> {
-    const capUsd = bot.dailyBudgetUsd;
-    if (capUsd === undefined) return null;
-    const spentUsd = await this.spentToday(bot, platform);
-    return spentUsd !== null && spentUsd >= capUsd ? { spentUsd, capUsd } : null;
+    if (!bot.budget) return null;
+    const capUsd = bot.budget.dailyUsd;
+    const spend = await this.spentToday(bot, platform);
+    if (spend === null) return null;
+    const spentUsd =
+      spend.repliesUsd + (bot.budget.backgroundBlocksReplies ? spend.backgroundUsd : 0);
+    return spentUsd >= capUsd ? { spentUsd, capUsd } : null;
+  }
+
+  /**
+   * The BACKGROUND gate (background-usage-accounting §7.2): `skip` once the
+   * bot's whole spend today (replies and background) meets its
+   * `budget.dailyUsd`, else `allow`. Asked by the usage meter before a bot
+   * loop's `background` call (`MeteredProvider`'s `gate`, which never asks for
+   * `GATE_EXEMPT_KINDS`; bound late by `gatewayTurnOrigin` in
+   * apps/ethos/src/commands/gateway.ts) and by the channel digest before each
+   * lane. The caller records a skip (`usage.background_skipped`).
+   *
+   * `allow` whenever no cap applies or the figure cannot be had: no bot with
+   * that key (the system loop's rows carry none), no `budget`, no platform to
+   * read the bot's lanes under, or an unreadable store (recorded by
+   * `spentToday`). Pinned by `__tests__/budget-halt.test.ts`.
+   */
+  async backgroundGate(request: UsageGateRequest): Promise<UsageGateVerdict> {
+    const { botKey } = request.attribution;
+    const bot = botKey !== undefined ? this.bots.get(botKey) : undefined;
+    if (!bot?.budget) return { decision: 'allow' };
+    const capUsd = bot.budget.dailyUsd;
+    const platform = this.platformOfBot(bot.botKey, request.attribution);
+    if (!platform) return { decision: 'allow' };
+    const spend = await this.spentToday(bot, platform);
+    if (spend === null) return { decision: 'allow' };
+    const spentUsd = spend.repliesUsd + spend.backgroundUsd;
+    return spentUsd >= capUsd ? { decision: 'skip', spentUsd, capUsd } : { decision: 'allow' };
+  }
+
+  /** The platform whose lanes hold a bot's sessions, for a call that may not
+   *  say: the call's own platform, else the bot's own adapter's, else — the
+   *  single-bot alias `adapterForBot` applies — the one platform this process
+   *  serves. */
+  private platformOfBot(
+    botKey: string,
+    attribution: UsageGateRequest['attribution'],
+  ): string | undefined {
+    if (attribution.platform) return attribution.platform;
+    const own = this.botAdapters.get(botKey);
+    if (own) return platformOfAdapterId(own.id);
+    if (botKey === this.defaultBotKey && this.adapterRegistry.size === 1) {
+      return [...this.adapterRegistry.keys()][0];
+    }
+    return undefined;
   }
 
   /**
@@ -8947,8 +9024,10 @@ export class Gateway {
     await reply(
       `Session spend: $${spent.toFixed(4)}` +
         (cap != null ? ` of a $${cap.toFixed(2)} cap` : ' (no session cap set)') +
-        (today !== null && bot.dailyBudgetUsd !== undefined
-          ? `\nBot spend today (UTC): $${today.toFixed(4)} of a $${bot.dailyBudgetUsd.toFixed(2)} daily cap`
+        (today !== null && bot.budget
+          ? `\nBot spend today (UTC): $${(today.repliesUsd + today.backgroundUsd).toFixed(4)} ` +
+            `of a $${bot.budget.dailyUsd.toFixed(2)} daily cap ` +
+            `($${today.repliesUsd.toFixed(4)} replies, $${today.backgroundUsd.toFixed(4)} background)`
           : '') +
         `\nUse /budget reset to start a new budget window.`,
     );

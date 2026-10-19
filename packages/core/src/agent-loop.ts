@@ -19,6 +19,8 @@ import type {
   SteerSink,
   Storage,
   ToolRegistry,
+  UsageAttribution,
+  UsageSourceKind,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
 import { createApprovalPostureGuard } from './agent-loop/approval-posture';
@@ -50,6 +52,7 @@ import type { LoopDeps } from './agent-loop/turn-context';
 import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { emptyModelResolution } from './agent-loop/turn-model';
+import { meteredFor } from './agent-loop/usage-charges';
 import { createWatcherTap } from './agent-loop/watcher-tap';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
@@ -60,6 +63,7 @@ import { DefaultPersonalityRegistry } from './defaults/noop-personality';
 import { DefaultHookRegistry } from './hook-registry';
 import type { AgentLoopObservability } from './observability/agent-loop-observability';
 import { DefaultToolRegistry } from './tool-registry';
+import { withUsageScope } from './usage-scope';
 
 // AgentEvent lives in @ethosagent/types (Phase 1). Core re-exports for
 // backwards compatibility — all existing consumers import from here.
@@ -230,6 +234,8 @@ export interface AgentLoopConfig {
   tierRouter?: import('./agent-loop/tier-router').TierRouter;
   /** §15.3 — the approver's private sink channel (agent-loop/approver-decision-sinks.ts). */
   approverDecisionSinks?: import('./agent-loop/approver-decision-sinks').ApproverDecisionSinks;
+  /** Meters in-turn utility calls (plan background-usage-accounting §5.2); absent → unchanged. */
+  usage?: import('./agent-loop/usage-charges').LoopUsageConfig;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -409,6 +415,8 @@ export class AgentLoop {
   private readonly personalityToolExclude?: AgentLoopConfig['personalityToolExclude'];
   private readonly tierRouter?: AgentLoopConfig['tierRouter'];
   private readonly approverDecisionSinks?: AgentLoopConfig['approverDecisionSinks'];
+  private readonly usage?: AgentLoopConfig['usage'];
+  private readonly toolLlm: LLMProvider; // tools' `ctx.llm`: `llm` metered as `tool_llm` (§5.2)
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly rootReachWarned = new Set<string>(); // E3 `once` per personality, per loop
@@ -483,6 +491,8 @@ export class AgentLoop {
     this.personalityToolExclude = config.personalityToolExclude;
     this.tierRouter = config.tierRouter;
     this.approverDecisionSinks = config.approverDecisionSinks;
+    if (config.usage) this.usage = config.usage;
+    this.toolLlm = meteredFor(config.llm, config.usage, 'tool_llm');
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
@@ -590,19 +600,18 @@ export class AgentLoop {
     opts: { instructions?: string; personalityId?: string } = {},
   ): Promise<ManualCompactionResult> {
     const summarizer = this.llmHandle?.summarize;
-    return compactSession(
-      {
-        session: this.session,
-        personalities: this.personalities,
-        historyLimit: this.historyLimit,
-        historyLimitFor: historyLimitFor(this.deps), // the personality's own (small-window.ts)
-        minTailUserMessages: this.compaction?.minTailUserMessages,
-        ...(summarizer ? { summarizer } : {}),
-        ...(this.observability ? { observability: this.observability } : {}),
-      },
-      sessionKey,
-      opts,
-    );
+    const deps: Parameters<typeof compactSession>[0] = {
+      session: this.session,
+      personalities: this.personalities,
+      historyLimit: this.historyLimit,
+      historyLimitFor: historyLimitFor(this.deps), // the personality's own (small-window.ts)
+      minTailUserMessages: this.compaction?.minTailUserMessages,
+      ...(summarizer ? { summarizer } : {}),
+      ...(this.observability ? { observability: this.observability } : {}),
+    };
+    const run = () => compactSession(deps, sessionKey, opts);
+    if (!this.usage) return run(); // §5.2 — else a metered summarizer bills this session, uncharged
+    return withUsageScope({ attribution: { sessionKey, platform: this.platform } }, run);
   }
 
   /** Dependency bag passed to extracted stage functions. */
@@ -657,6 +666,7 @@ export class AgentLoop {
       documentExtractors: this.documentExtractors,
       contentStore: this.contentStore,
       contextLog: this.contextLog,
+      usage: this.usage,
     };
   }
 
@@ -990,7 +1000,7 @@ export class AgentLoop {
           resultBudgetChars: turnDeps.resultBudgetChars,
           teamId: this.teamId,
           sessionReadMtimes: this.sessionReadMtimes,
-          llm: this.llm,
+          llm: this.toolLlm,
         },
         {
           completedToolCalls,
@@ -1018,6 +1028,7 @@ export class AgentLoop {
           scriptToolBridge,
           contextStore,
           decisions,
+          charges: setup.charges,
           dgEnabled,
           dgRemaining: dgRemainingRef,
           dgTools,
@@ -1102,9 +1113,12 @@ export class AgentLoop {
       system?: string;
       maxTokens?: number;
       abortSignal?: AbortSignal;
+      usage?: { kind: UsageSourceKind; attribution?: UsageAttribution }; // meter as `kind` (§5.2)
     } = {},
   ): AsyncIterable<import('@ethosagent/types').CompletionChunk> {
-    return this.llm.complete(messages, [], {
+    const { usage } = opts;
+    const llm = usage ? meteredFor(this.llm, this.usage, usage.kind, usage.attribution) : this.llm;
+    return llm.complete(messages, [], {
       system: opts.system,
       maxTokens: opts.maxTokens,
       abortSignal: opts.abortSignal,

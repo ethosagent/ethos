@@ -1,8 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseDuration } from '../commands/usage';
+import { SQLiteSessionStore, SQLiteUsageLedger } from '@ethosagent/session-sqlite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseDuration, runUsage } from '../commands/usage';
 
 // ---------------------------------------------------------------------------
 // parseDuration unit tests
@@ -187,5 +188,104 @@ describe('ethos usage aggregation', () => {
 
     expect(personalityMap.get('hermes')).toBe(3);
     expect(personalityMap.get('ethos')).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `--by source` (plan background-usage-accounting §6.2)
+// ---------------------------------------------------------------------------
+
+describe('ethos usage --by source', () => {
+  let stateDir: string;
+  const prevState = process.env.ETHOS_STATE_DIR;
+
+  beforeEach(async () => {
+    stateDir = mkdtempSync(join(tmpdir(), 'ethos-usage-source-'));
+    process.env.ETHOS_STATE_DIR = stateDir;
+    const dbPath = join(stateDir, 'sessions.db');
+    const store = new SQLiteSessionStore(dbPath);
+    const s = await store.createSession({
+      key: 'cli:a',
+      platform: 'cli',
+      model: 'm',
+      provider: 'p',
+      usage: baseUsage,
+    });
+    await store.appendMessage({
+      sessionId: s.id,
+      role: 'assistant',
+      content: 'x',
+      usage: { ...baseUsage, inputTokens: 10, outputTokens: 5, estimatedCostUsd: 0.5 },
+    });
+    store.close();
+    const ledger = new SQLiteUsageLedger(dbPath);
+    ledger.record({
+      ts: new Date().toISOString(),
+      kind: 'memory_capture',
+      sourceClass: 'background',
+      provider: 'p',
+      model: 'm',
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0.25,
+      outcome: 'ok',
+    });
+    ledger.close();
+  });
+
+  afterEach(() => {
+    if (prevState === undefined) Reflect.deleteProperty(process.env, 'ETHOS_STATE_DIR');
+    else process.env.ETHOS_STATE_DIR = prevState;
+    vi.restoreAllMocks();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  async function capture(argv: string[]): Promise<{ out: string; lines: string[] }> {
+    let out = '';
+    const lines: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      out += String(chunk);
+      return true;
+    });
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      lines.push(a.join(' '));
+    });
+    await runUsage(argv);
+    return { out, lines };
+  }
+
+  it('JSON carries source rows with calls, and calls in totals', async () => {
+    const { out } = await capture(['--since', '1d', '--by', 'source', '--json']);
+    const body = JSON.parse(out) as {
+      totals: { calls: number; messages: number; estimatedCostUsd: number };
+      by: { dimension: string; rows: Array<{ key: string; calls: number; messages: number }> };
+    };
+    expect(body.by.dimension).toBe('source');
+    const byKey = Object.fromEntries(body.by.rows.map((r) => [r.key, r]));
+    expect(byKey.turn).toMatchObject({ calls: 0, messages: 1 });
+    expect(byKey['background:memory_capture']).toMatchObject({ calls: 1, messages: 0 });
+    expect(body.totals.calls).toBe(1);
+    expect(body.totals.estimatedCostUsd).toBeCloseTo(0.75, 6);
+  });
+
+  it('text output prints a source breakdown and a Background header line', async () => {
+    const { lines } = await capture(['--since', '1d', '--by', 'source']);
+    const text = lines.join('\n');
+    expect(text).toMatch(/Background\s+\$0\.25 \(1 calls\)/);
+    expect(text).toContain('background:memory_capture: $0.25');
+    expect(text).toContain('(1 calls | 0 messages)');
+  });
+
+  it('help text lists source, and an unknown dimension still exits 2', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit');
+    }) as never);
+    await expect(runUsage([])).rejects.toThrow('exit');
+    expect(String(err.mock.calls[0]?.[0])).toContain('source');
+    await expect(runUsage(['--since', '1d', '--by', 'bogus'])).rejects.toThrow('exit');
+    expect(exit).toHaveBeenLastCalledWith(2);
   });
 });

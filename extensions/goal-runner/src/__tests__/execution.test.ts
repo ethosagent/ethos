@@ -1,4 +1,4 @@
-import { DefaultHookRegistry } from '@ethosagent/core';
+import { activeUsageScope, DefaultHookRegistry } from '@ethosagent/core';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import type { AcceptanceSpec, AgentEvent, GoalStore, SteerSink } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -281,6 +281,25 @@ describe('GoalRunner phase b — convergence/retry loop', () => {
     });
     const verdict = store.getAttempts(goal.id)[0]?.verdict;
     expect(verdict?.perCriterion[0]).toMatchObject({ pass: true, method: 'llm' });
+  });
+
+  // plan background-usage-accounting D10 — the judge's metered call is billed to the goal.
+  it('runs judgeCheck inside a usage scope attributed to the goal', async () => {
+    const goal = makeGoalWithSpec(store, checkOnlySpec);
+    const seen: unknown[] = [];
+    const runner = new GoalRunner({
+      store,
+      judgeCheck: async () => {
+        seen.push(activeUsageScope()?.attribution);
+        return { pass: true, evidence: 'ok' };
+      },
+      runAttempt: scriptedRunAttempt([[{ type: 'done', text: 'wrote marker.txt', turnCount: 1 }]]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(seen).toEqual([{ sourceRef: goal.id, personalityId: goal.personalityId }]);
   });
 
   it('completes a no-criteria goal immediately with exactly one attempt row', async () => {

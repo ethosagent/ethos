@@ -261,6 +261,7 @@ describe('/stop through the production approval wiring (UBP-046)', () => {
       clarifyEscalationDelayMs: 0,
     });
     const flow = wireApprovalFlow(gw, bots, [adapter], {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities,
       getProvider: async () => {

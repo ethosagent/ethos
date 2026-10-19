@@ -113,13 +113,18 @@ export function createVideoAnalyzeTool(opts: VideoToolOptions): Tool {
         ];
 
         let result = '';
+        let costUsd = 0;
         for await (const chunk of provider.complete(messages, [], {
           modelOverride: resolvedModel,
         })) {
           if (chunk.type === 'text_delta') result += chunk.text;
+          else if (chunk.type === 'usage') costUsd += chunk.usage.estimatedCostUsd;
         }
 
-        return { ok: true, value: result || '(no analysis returned)' };
+        // Reported like `vision_analyze`'s (./index.ts): core persists a tool's
+        // `cost_usd` on its tool_result row and charges the session, so this
+        // provider is never metered (plan background-usage-accounting D9/D17).
+        return { ok: true, value: result || '(no analysis returned)', cost_usd: costUsd };
       } catch (err) {
         return {
           ok: false,

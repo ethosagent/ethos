@@ -202,6 +202,7 @@ describe('the idle gateway bot', () => {
     const origin = {
       resolveOriginThreadId: (key: string) => `t:${key}`,
       resolveOriginUserId: (key: string) => `u:${key}`,
+      backgroundGate: () => ({ decision: 'allow' as const }),
     };
     const opts = idleGatewayBotLoopOpts(origin);
     expect(opts.originBotKey).toBe(IDLE_GATEWAY_BOT_KEY);

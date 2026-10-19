@@ -671,6 +671,7 @@ describe('wireApprovalFlow', () => {
       resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
     } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, bots, [adapter], {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {
@@ -835,6 +836,7 @@ describe('wireApprovalFlow', () => {
         resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
       } as unknown as Gateway;
       const flow = wireApprovalFlow(gateway, bots, [adapter], {
+        usageMeter: { meter: (p) => p },
         personalities: { get: () => undefined } as unknown as PersonalityRegistry,
         getProvider: async () => {
           throw new Error('no provider in this test');
@@ -865,6 +867,7 @@ describe('wireApprovalFlow', () => {
       resolveApprovalRoute: () => undefined,
     } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, [], [], {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {

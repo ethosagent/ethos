@@ -2043,3 +2043,68 @@ describe('the lane cap', () => {
     expect(prompts.filter((p) => p.includes('room -100 said'))).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Background spend (plan background-usage-accounting D42)
+// ---------------------------------------------------------------------------
+
+describe('the bot daily cap', () => {
+  it('meters the digest call as channel_digest background spend for its bot', async () => {
+    const { loop, calls } = stubLoop();
+    const deps = makeDeps({
+      transcript: makeStore([lane()], { 'telegram:bot-a:-100': [message()] }),
+      bots: [{ botKey: 'bot-a', loop }],
+    });
+    await runChannelDigest(deps);
+    expect(calls[0]?.opts.usage).toEqual({
+      kind: 'channel_digest',
+      attribution: { botKey: 'bot-a', platform: 'telegram' },
+    });
+  });
+
+  it('skips a lane whose bot has no money left: no call, cursor untouched, one event', async () => {
+    const { loop, calls } = stubLoop();
+    const gateAsked: Array<{ botKey: string; platform: string }> = [];
+    const deps = makeDeps({
+      transcript: makeStore([lane()], { 'telegram:bot-a:-100': [message()] }),
+      bots: [{ botKey: 'bot-a', loop }],
+      backgroundGate: async (asked) => {
+        gateAsked.push(asked);
+        return { decision: 'skip', spentUsd: 2, capUsd: 1 };
+      },
+    });
+
+    const report = await runChannelDigest(deps);
+
+    expect(gateAsked).toEqual([{ botKey: 'bot-a', platform: 'telegram' }]);
+    expect(calls).toHaveLength(0);
+    expect(deps.sends).toHaveLength(0);
+    expect(report).toMatchObject({ summarised: 0, budgetSkipped: 1 });
+    expect(summarizeChannelDigest(report)).toContain('1 skipped by the daily budget');
+    const skipped = deps.blocks.filter((b) => b.code === 'usage.background_skipped');
+    expect(skipped).toHaveLength(1);
+    // The same record the usage meter writes for a metered skip.
+    expect(skipped[0]?.cause).toBe(
+      'background channel_digest call skipped: the daily budget is spent',
+    );
+    expect(skipped[0]?.details).toMatchObject({
+      kind: 'channel_digest',
+      attribution: { botKey: 'bot-a', platform: 'telegram' },
+      spentUsd: 2,
+      capUsd: 1,
+    });
+  });
+
+  it('runs the lane when the gate allows', async () => {
+    const { loop, calls } = stubLoop();
+    const deps = makeDeps({
+      transcript: makeStore([lane()], { 'telegram:bot-a:-100': [message()] }),
+      bots: [{ botKey: 'bot-a', loop }],
+      backgroundGate: async () => ({ decision: 'allow' }),
+    });
+    const report = await runChannelDigest(deps);
+    expect(calls).toHaveLength(1);
+    expect(report.summarised).toBe(1);
+    expect(report.budgetSkipped).toBe(0);
+  });
+});

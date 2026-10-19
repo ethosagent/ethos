@@ -34,6 +34,7 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
     } as unknown as HookRegistry;
 
     wireUnattendedApprovalGate(hooks, {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities: new DefaultPersonalityRegistry(),
       getProvider: async () => {

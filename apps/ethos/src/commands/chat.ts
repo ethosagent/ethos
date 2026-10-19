@@ -337,6 +337,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       model: config.model,
       ...(target.approverDecision ? { decision: target.approverDecision } : {}),
       executionPostureFor: target.executionPostureFor,
+      usageMeter: target.usageMeter,
       coordinator: interactive ? approvalCoordinator : null,
       nonInteractive,
       // Never ask about a call the personality toolset or `--toolsets` will

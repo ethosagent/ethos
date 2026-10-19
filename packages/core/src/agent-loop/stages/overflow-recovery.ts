@@ -2,6 +2,7 @@ import type { AgentEvent, Message, PersonalityConfig, SessionStore } from '@etho
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { applyOverflowRetry, overflowErrorEvent } from '../overflow';
 import type { LoopDeps } from '../turn-context';
+import type { TurnUsageCharges } from '../usage-charges';
 import { flushTurnUsage, type TurnUsageAccumulator } from './turn-finalizer';
 
 export interface OverflowRecoveryDeps
@@ -30,6 +31,7 @@ export interface OverflowRecoveryContext {
    * tool batch landed (UBP-021) — may retry again. Updated here.
    */
   lastRetry: { iteration: number };
+  charges: TurnUsageCharges; // §5.2 — `TurnSetup.charges`
 }
 
 /**
@@ -57,9 +59,11 @@ export async function* recoverFromOverflow(
     lastCompactionTurn: ctx.lastCompactionTurn,
     ...(ctx.serverCompaction ? { serverCompaction: ctx.serverCompaction } : {}),
   };
-  const retry = canRetry
-    ? await applyOverflowRetry(deps, ctx.llmMessages, ctx.systemPrompt, ctx.personality, meta)
-    : { retried: false };
+  const compact = () =>
+    applyOverflowRetry(deps, ctx.llmMessages, ctx.systemPrompt, ctx.personality, meta);
+  // §5.2 — a metered summarizer the emergency compaction calls is charged to this turn.
+  const retry = canRetry ? await ctx.charges.wrap(compact) : { retried: false };
+  yield* ctx.charges.drain();
   if (retry.retried) {
     // A4 — the compact-and-retry is user-visible work, not silence.
     // `_loop` is a reserved name (DefaultToolRegistry.register refuses

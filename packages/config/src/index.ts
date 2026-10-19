@@ -927,6 +927,18 @@ export interface WhatsAppConfig {
 export interface BotBudgetConfig {
   /** USD a bot may spend per UTC day before its turns are refused. > 0. */
   dailyUsd: number;
+  /**
+   * `<bot entry>.budget.backgroundBlocksReplies` (plan
+   * background-usage-accounting D14). Background spend (memory capture,
+   * consolidation, the channel digest, …) always counts toward the gate that
+   * stops BACKGROUND calls (`Gateway.backgroundGate`). It counts toward the
+   * gate that refuses REPLIES (`Gateway.dailyCapReached`) only when this is
+   * true. Absent = false: background never blocks a reply, at the cost that a
+   * bot can spend up to about twice `dailyUsd` in one UTC day — background
+   * stops once the total reaches the cap, replies continue until reply spend
+   * alone reaches it. Set true for a hard ceiling.
+   */
+  backgroundBlocksReplies?: boolean;
 }
 
 /**
@@ -4288,6 +4300,17 @@ function unexpressibleLines(existing: string, emitted: readonly string[]): strin
 }
 
 /** Pure `EthosConfig` → `config.yaml` lines. No I/O, no secret externalization. */
+/** `<prefix>.budget.*` lines for one bot entry (`telegram.bots.<n>`, `slack.apps.<n>`,
+ *  `whatsapp.<n>`); `backgroundBlocksReplies` only when set. Read by {@link buildBotBudget}. */
+function budgetLines(prefix: string, budget: BotBudgetConfig | undefined): string[] {
+  if (!budget) return [];
+  const lines = [`${prefix}.budget.dailyUsd: ${budget.dailyUsd}`];
+  if (budget.backgroundBlocksReplies !== undefined) {
+    lines.push(`${prefix}.budget.backgroundBlocksReplies: ${budget.backgroundBlocksReplies}`);
+  }
+  return lines;
+}
+
 function serializeConfigLines(config: EthosConfig): string[] {
   const lines = [
     `schemaVersion: ${config.schemaVersion ?? CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}`,
@@ -4527,7 +4550,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (bot.defaultChannelMode) {
         lines.push(`telegram.bots.${i}.defaultChannelMode: ${bot.defaultChannelMode}`);
       }
-      if (bot.budget) lines.push(`telegram.bots.${i}.budget.dailyUsd: ${bot.budget.dailyUsd}`);
+      lines.push(...budgetLines(`telegram.bots.${i}`, bot.budget));
       if (bot.replyPrefix) lines.push(`telegram.bots.${i}.replyPrefix: ${bot.replyPrefix}`);
       if (bot.mentionByName !== undefined) {
         lines.push(`telegram.bots.${i}.mentionByName: ${bot.mentionByName}`);
@@ -4567,7 +4590,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`slack.apps.${i}.mode.http: ${app.mode.http}`);
       }
       if (app.webhookPath) lines.push(`slack.apps.${i}.webhookPath: ${app.webhookPath}`);
-      if (app.budget) lines.push(`slack.apps.${i}.budget.dailyUsd: ${app.budget.dailyUsd}`);
+      lines.push(...budgetLines(`slack.apps.${i}`, app.budget));
       if (app.replyPrefix) lines.push(`slack.apps.${i}.replyPrefix: ${app.replyPrefix}`);
       if (app.mentionByName !== undefined) {
         lines.push(`slack.apps.${i}.mentionByName: ${app.mentionByName}`);
@@ -4590,7 +4613,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
           lines.push(`whatsapp.${i}.bind.allowSlashSwitch: true`);
         }
       }
-      if (wa.budget) lines.push(`whatsapp.${i}.budget.dailyUsd: ${wa.budget.dailyUsd}`);
+      lines.push(...budgetLines(`whatsapp.${i}`, wa.budget));
     }
   }
   if (config.voice) {
@@ -9064,14 +9087,31 @@ function buildBotBudget(
   label: string,
 ): { budget?: BotBudgetConfig; error?: string } {
   const raw = entry['budget.dailyUsd'];
-  if (raw === undefined) return {};
+  // Read before the early return: `ConfigKeyUse.track` counts only keys looked up.
+  const blocks = entry['budget.backgroundBlocksReplies'];
+  if (blocks !== undefined && blocks !== 'true' && blocks !== 'false') {
+    return {
+      error: `${label}: invalid budget.backgroundBlocksReplies '${blocks}' (expected true or false).`,
+    };
+  }
+  if (raw === undefined) {
+    if (blocks === undefined) return {};
+    return {
+      error: `${label}: budget.backgroundBlocksReplies needs budget.dailyUsd (there is no cap for it to apply to).`,
+    };
+  }
   const dailyUsd = Number(raw);
   if (raw.trim() === '' || !Number.isFinite(dailyUsd) || dailyUsd <= 0) {
     return {
       error: `${label}: invalid budget.dailyUsd '${raw}' (expected a positive number of USD).`,
     };
   }
-  return { budget: { dailyUsd } };
+  return {
+    budget: {
+      dailyUsd,
+      ...(blocks !== undefined ? { backgroundBlocksReplies: blocks === 'true' } : {}),
+    },
+  };
 }
 
 function sortedIndexes(kv: Record<number, Record<string, string>>): number[] {

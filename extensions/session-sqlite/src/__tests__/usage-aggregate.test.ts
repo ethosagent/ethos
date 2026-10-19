@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { forkSession } from '@ethosagent/core';
+import type { UsageRecord } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
+import { SQLiteUsageLedger } from '../usage-ledger';
 
 // AN-D1 — spend/token aggregates read from `messages`, not the per-session
 // rollup: a session straddling the window boundary would otherwise put all of
@@ -207,5 +212,140 @@ describe('usageAggregate', () => {
     // A user message has no usage — it is not a billable row.
     await store.appendMessage({ sessionId: s.id, role: 'user', content: 'hello' });
     expect(await store.usageAggregate({ ...window, dimension: 'day' })).toEqual([]);
+  });
+});
+
+// plan/phases/background-usage-accounting.md §6.2 — ledger rows join every total.
+describe('usageAggregate with the usage ledger', () => {
+  let dir: string;
+  let store: SQLiteSessionStore;
+  let ledger: SQLiteUsageLedger;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'usage-agg-'));
+    const path = join(dir, 'sessions.db');
+    store = new SQLiteSessionStore(path);
+    ledger = new SQLiteUsageLedger(path);
+  });
+  afterEach(() => {
+    ledger.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const window = { since: new Date(0), until: new Date(Date.now() + 60_000) };
+
+  function ledgerRow(over: Partial<UsageRecord> = {}): UsageRecord {
+    return {
+      ts: new Date().toISOString(),
+      kind: 'memory_capture',
+      sourceClass: 'background',
+      provider: 'anthropic',
+      model: 'claude-haiku',
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0.25,
+      outcome: 'ok',
+      ...over,
+    };
+  }
+
+  async function msg(key: string, cost: number): Promise<void> {
+    const s = await store.createSession({ ...base, key, personalityId: 'ops' } as never);
+    await store.appendMessage({
+      sessionId: s.id,
+      role: 'assistant',
+      content: 'x',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: cost,
+      },
+    });
+  }
+
+  it('totals include ledger rows; calls counts ledger rows, messages is unchanged', async () => {
+    await msg('cli:a', 1);
+    ledger.record(ledgerRow());
+    ledger.record(ledgerRow({ estimatedCostUsd: 0.5 }));
+    const rows = await store.usageAggregate({ ...window, dimension: 'day' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      estimatedCostUsd: 1.75,
+      inputTokens: 120,
+      outputTokens: 30,
+      messages: 1,
+      calls: 2,
+    });
+  });
+
+  it('source dimension: turn, turn:<prefix>, and <class>:<kind>', async () => {
+    await msg('cli:a', 1);
+    await msg('dream:ops:123', 2);
+    await msg('cron:system:x', 4);
+    ledger.record(ledgerRow({ estimatedCostUsd: 8 }));
+    const rows = await store.usageAggregate({ ...window, dimension: 'source' });
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+    expect(Object.keys(byKey).sort()).toEqual([
+      'background:memory_capture',
+      'turn',
+      'turn:cron',
+      'turn:dream',
+    ]);
+    expect(byKey.turn).toMatchObject({ estimatedCostUsd: 1, messages: 1, calls: 0 });
+    expect(byKey['turn:dream']).toMatchObject({ estimatedCostUsd: 2, messages: 1 });
+    expect(byKey['turn:cron']).toMatchObject({ estimatedCostUsd: 4, messages: 1 });
+    expect(byKey['background:memory_capture']).toMatchObject({
+      estimatedCostUsd: 8,
+      messages: 0,
+      calls: 1,
+    });
+  });
+
+  it('excludes ledger rows outside [since, until)', async () => {
+    ledger.record(ledgerRow({ ts: '2026-10-18T23:59:59.999Z' }));
+    ledger.record(ledgerRow({ ts: '2026-10-19T00:00:00.000Z' }));
+    ledger.record(ledgerRow({ ts: '2026-10-20T00:00:00.000Z' }));
+    const rows = await store.usageAggregate({
+      since: new Date('2026-10-19T00:00:00.000Z'),
+      until: new Date('2026-10-20T00:00:00.000Z'),
+      dimension: 'day',
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ key: '2026-10-19', calls: 1 });
+  });
+
+  it('keyPrefix is case-sensitive for ledger rows', async () => {
+    ledger.record(ledgerRow({ sessionKey: 'telegram:Bot:1' }));
+    ledger.record(ledgerRow({ sessionKey: 'telegram:bot:1' }));
+    const calls = async (keyPrefix: string) =>
+      (await store.usageAggregate({ ...window, dimension: 'day', keyPrefix })).reduce(
+        (n, r) => n + r.calls,
+        0,
+      );
+    expect(await calls('telegram:Bot:')).toBe(1);
+    expect(await calls('telegram:bot:')).toBe(1);
+    expect(await calls('TELEGRAM:')).toBe(0);
+  });
+
+  it('other dimensions use the ledger columns, with fallbacks for NULLs', async () => {
+    ledger.record(ledgerRow({ personalityId: 'ops', platform: 'slack', model: 'm1' }));
+    ledger.record(ledgerRow());
+    const key = async (dimension: 'personality' | 'channel' | 'model' | 'session') =>
+      (await store.usageAggregate({ ...window, dimension })).map((r) => r.key).sort();
+    expect(await key('personality')).toEqual(['ops', 'unknown']);
+    expect(await key('model')).toEqual(['claude-haiku', 'm1']);
+    expect(await key('session')).toEqual(['background']);
+    expect(await key('channel')).toContain('slack');
+  });
+
+  it('a store whose file has no usage_ledger table still aggregates', async () => {
+    const plain = new SQLiteSessionStore(':memory:');
+    expect(await plain.usageAggregate({ ...window, dimension: 'source' })).toEqual([]);
+    plain.close();
   });
 });

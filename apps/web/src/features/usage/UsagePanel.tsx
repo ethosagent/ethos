@@ -15,7 +15,7 @@ import { rpc } from '../../rpc';
 
 type UsageSummary = Awaited<ReturnType<typeof rpc.usage.summary>>;
 type UsageRow = UsageSummary['daily'][number];
-type Breakdown = 'model' | 'personality' | 'channel' | 'session';
+type Breakdown = 'model' | 'personality' | 'channel' | 'session' | 'source';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOWS: ReadonlyArray<{ label: string; value: number }> = [
@@ -23,11 +23,11 @@ const WINDOWS: ReadonlyArray<{ label: string; value: number }> = [
   { label: '7d', value: 7 * DAY_MS },
   { label: '30d', value: 30 * DAY_MS },
 ];
-const BREAKDOWNS: readonly Breakdown[] = ['model', 'personality', 'channel', 'session'];
+const BREAKDOWNS: readonly Breakdown[] = ['model', 'personality', 'channel', 'session', 'source'];
 
-function columns(keyTitle: string): ColumnsType<UsageRow> {
+function columns(keyTitle: string, withCalls = false): ColumnsType<UsageRow> {
   const mono = (text: string) => <span className="activity-mono">{text}</span>;
-  return [
+  const base: ColumnsType<UsageRow> = [
     { title: keyTitle, dataIndex: 'key', render: (key: string) => mono(key), ellipsis: true },
     {
       title: 'Cost',
@@ -46,6 +46,18 @@ function columns(keyTitle: string): ColumnsType<UsageRow> {
       dataIndex: 'outputTokens',
       align: 'right',
       render: (n: number) => mono(formatTokens(n)),
+    },
+  ];
+  if (!withCalls) return base;
+  // Turn replies are `messages`, everything else a ledger `call` — one column
+  // each would be two mostly-empty columns, so the source view shows their sum.
+  return [
+    ...base,
+    {
+      title: 'Calls',
+      key: 'calls',
+      align: 'right',
+      render: (_: unknown, row: UsageRow) => mono(String(row.messages + row.calls)),
     },
   ];
 }
@@ -98,12 +110,15 @@ function UsageBody({
     );
   }
   const t = data.totals;
+  const hasLedgerCalls = t.calls > 0;
+  const hasSpend = t.messages > 0 || hasLedgerCalls;
   const stats: ReadonlyArray<{ label: string; value: string }> = [
     { label: 'cost', value: formatUsd(t.estimatedCostUsd) },
     { label: 'tokens in', value: formatTokens(t.inputTokens) },
     { label: 'tokens out', value: formatTokens(t.outputTokens) },
     { label: 'cache hits', value: `${(t.cacheHitRate * 100).toFixed(1)}%` },
     { label: 'model calls', value: String(t.messages) },
+    ...(hasLedgerCalls ? [{ label: 'background & utility calls', value: String(t.calls) }] : []),
   ];
   return (
     <>
@@ -115,10 +130,10 @@ function UsageBody({
           </div>
         ))}
       </div>
-      {t.messages === 0 ? (
+      {!hasSpend ? (
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          Nothing spent in this window. Spend is read from the replies stored in each session, the
-          same figure <code>ethos usage</code> prints.
+          Nothing spent in this window. Spend is read from the replies stored in each session and
+          the usage ledger, the same figure <code>ethos usage</code> prints.
         </Typography.Paragraph>
       ) : (
         <>
@@ -143,7 +158,7 @@ function UsageBody({
             size="small"
             rowKey="key"
             pagination={false}
-            columns={columns(by)}
+            columns={columns(by, by === 'source')}
             dataSource={data.by?.rows ?? []}
           />
         </>

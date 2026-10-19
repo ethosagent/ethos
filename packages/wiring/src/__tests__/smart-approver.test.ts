@@ -1,12 +1,17 @@
+import { DefaultHookRegistry, DefaultPersonalityRegistry, withUsageScope } from '@ethosagent/core';
 import type {
   BeforeToolCallPayload,
   CompletionChunk,
   LLMProvider,
   Message,
+  UsageRecord,
 } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { createApprovalDangerPredicate } from '../approval-seams';
 import { createDangerPredicate } from '../danger-predicate';
 import { createSmartApprover } from '../smart-approver';
+import { createUsageMeter } from '../usage-meter';
+import { scriptedProvider, usageChunk } from './helpers/usage-test-kit';
 
 function payload(toolName: string, args: unknown): BeforeToolCallPayload {
   return { sessionId: 's', toolCallId: 'tc', toolName, args };
@@ -191,5 +196,58 @@ describe('createSmartApprover', () => {
     });
 
     await expect(pred(payload('email_send', { to: 'a@b' }))).resolves.toMatch(/explicit approval/);
+  });
+});
+
+// plan background-usage-accounting §5.4 — the reviewer's spend reaches the
+// usage ledger: an approval surface that passes the build's `usageMeter`
+// meters the reviewer as `smart_approver`, attributed and charged through the
+// scope core opens around the `before_tool_call` dispatch (mirrored here).
+describe('createSmartApprover — usage ledger', () => {
+  it('a reviewed call writes one smart_approver row and charges the turn', async () => {
+    const rows: UsageRecord[] = [];
+    const charged: number[] = [];
+    const provider = scriptedProvider([
+      { type: 'text_delta', text: '{"decision":"deny","reason":"no"}' },
+      usageChunk(40, 8, 0.003),
+      { type: 'done', finishReason: 'end_turn' },
+    ]);
+    const hooks = new DefaultHookRegistry();
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({ id: 'reviewed', name: 'reviewed', safety: { approvalMode: 'smart' } });
+    const isDangerous = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
+      hooks: [hooks],
+      personalities,
+      getProvider: async () => provider,
+      model: 'reviewer-model',
+      alwaysAsk: ['email_send'],
+      usageMeter: createUsageMeter({ recorder: { record: (r) => rows.push(r) } }),
+    });
+    await hooks.fireVoid('session_start', {
+      sessionId: 'sess-1',
+      sessionKey: 'slack:bot:c1',
+      platform: 'slack',
+      personalityId: 'reviewed',
+    });
+
+    const reason = await withUsageScope(
+      {
+        attribution: { sessionId: 'sess-1', sessionKey: 'slack:bot:c1' },
+        charge: (usd) => charged.push(usd),
+      },
+      () => isDangerous({ ...payload('email_send', { to: 'a@b' }), sessionId: 'sess-1' }),
+    );
+
+    expect(reason).toBe('denied by reviewer: no');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: 'smart_approver',
+      sourceClass: 'turn_utility',
+      sessionKey: 'slack:bot:c1',
+      model: 'reviewer-model',
+      estimatedCostUsd: 0.003,
+    });
+    expect(charged).toEqual([0.003]);
   });
 });

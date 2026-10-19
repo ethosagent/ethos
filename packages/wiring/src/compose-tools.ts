@@ -139,6 +139,7 @@ import {
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import type { WiringContext } from './types';
+import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
 
 // ---------------------------------------------------------------------------
@@ -1235,6 +1236,8 @@ export interface ComposeToolsDeps {
    * did before Part 2 — pinned by `src/__tests__/outbox-gate.test.ts`.
    */
   outbox?: OutboxWiring;
+  /** The build's usage meter (`./usage-meter.ts`) — the verifier and decomposer are metered (§5.4). */
+  usageMeter: UsageMeter;
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,6 +1251,7 @@ function buildVerifierProviderGetter(
   registry: LLMProviderRegistry,
   config: WiringConfig,
   log: Logger,
+  usageMeter: Pick<UsageMeter, 'meter'>,
 ): () => Promise<LLMProvider> {
   let cachedProvider: LLMProvider | undefined;
   return async () => {
@@ -1265,7 +1269,7 @@ function buildVerifierProviderGetter(
       delete: async () => {},
       list: async () => [],
     };
-    cachedProvider = await factory({
+    const provider = await factory({
       config: {
         provider: config.provider,
         model: config.model,
@@ -1276,6 +1280,8 @@ function buildVerifierProviderGetter(
       secrets: config.secretsResolver ?? NOOP,
       logger: log,
     });
+    // §5.4 — attributed to the completing turn by the scope around its tool batch.
+    cachedProvider = usageMeter.meter(provider, 'completion_verifier');
     return cachedProvider;
   };
 }
@@ -1297,6 +1303,7 @@ export async function buildKanbanDecomposerProvider(
   registry: LLMProviderRegistry,
   config: WiringConfig,
   log: Logger,
+  usageMeter: Pick<UsageMeter, 'meter'>,
 ): Promise<LLMProvider | undefined> {
   const aux = config.auxiliaryKanbanDecomposer;
   if (!aux) return undefined;
@@ -1316,7 +1323,7 @@ export async function buildKanbanDecomposerProvider(
     list: async () => [],
   };
   const baseUrl = aux.baseUrl ?? config.baseUrl;
-  return factory({
+  const provider = await factory({
     config: {
       provider: providerName,
       model: aux.model,
@@ -1327,6 +1334,8 @@ export async function buildKanbanDecomposerProvider(
     secrets: config.secretsResolver ?? NOOP,
     logger: log,
   });
+  // §5.4 — a `kanban_decompose` call is in-turn utility spend.
+  return usageMeter.meter(provider, 'tool_llm', { sourceRef: 'kanban_decompose' });
 }
 
 /**
@@ -1551,7 +1560,12 @@ export async function composeAllTools(
         const p = personalities.get(id);
         return p ? { name: p.name } : undefined;
       },
-      decomposerProvider: await buildKanbanDecomposerProvider(infra.llmProviders, config, log),
+      decomposerProvider: await buildKanbanDecomposerProvider(
+        infra.llmProviders,
+        config,
+        log,
+        deps.usageMeter,
+      ),
     };
     if (config.trustPolicy?.mode === 'tiered') {
       const policy = config.trustPolicy;
@@ -1602,7 +1616,14 @@ export async function composeAllTools(
       'before_ticket_complete',
       createCompletionVerifier({
         ...(config.teamName !== undefined
-          ? { getProvider: buildVerifierProviderGetter(infra.llmProviders, config, log) }
+          ? {
+              getProvider: buildVerifierProviderGetter(
+                infra.llmProviders,
+                config,
+                log,
+                deps.usageMeter,
+              ),
+            }
           : {}),
         ...(verifyWorkdir !== undefined
           ? {

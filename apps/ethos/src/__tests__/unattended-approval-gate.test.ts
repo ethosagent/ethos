@@ -125,6 +125,7 @@ async function runUnattendedTurn(opts: {
 
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    usageMeter: { meter: (p) => p },
     executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
@@ -262,6 +263,7 @@ describe('systemLoop unattended approval gate', () => {
     const hooks = new DefaultHookRegistry();
     expect(hasHostApprovalGate(hooks)).toBe(false);
     wireUnattendedApprovalGate(hooks, {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities: new DefaultPersonalityRegistry(),
       getProvider: async () => {
@@ -344,6 +346,7 @@ function idleGatewayRig(opts: {
   const gateway = new Gateway({ bots: [idleGatewayBot(loop, 'idlebot', undefined)] });
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    usageMeter: { meter: (p) => p },
     executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
@@ -438,6 +441,7 @@ describe('idle gateway — channel turns on the systemLoop never get the D12 opt
       registerVoid: () => () => {},
     } as unknown as Parameters<typeof wireUnattendedApprovalGate>[0];
     wireUnattendedApprovalGate(hooks, {
+      usageMeter: { meter: (p) => p },
       executionPostureFor: () => undefined,
       personalities,
       getProvider: async () => {

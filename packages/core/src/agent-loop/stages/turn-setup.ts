@@ -27,6 +27,7 @@ import type { LoopDeps, TurnSetup, TurnSetupResult } from '../turn-context';
 import type { TurnDecisions } from '../turn-decisions';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 import { turnGateWindow } from '../turn-window';
+import { turnUsageCharges } from '../usage-charges';
 
 /**
  * Where a declaration that did not resolve lives, and the edit that fixes it —
@@ -562,6 +563,7 @@ export async function* setupTurn(
   }
 
   const memScopeId = `personality:${personality.id}`;
+  const turnRef = { sessionId, sessionKey, traceId, personalityId: personality.id }; // §5.2 charges
 
   return {
     kind: 'ready',
@@ -594,6 +596,7 @@ export async function* setupTurn(
         return w !== undefined ? { gateWindowTokens: w } : {};
       })(),
       ...(ethosSession.metadata ? { sessionMetadata: ethosSession.metadata } : {}),
+      charges: turnUsageCharges(deps, turnRef),
     },
   };
 }

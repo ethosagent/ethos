@@ -17,6 +17,8 @@ import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const PASSTHROUGH_METER = { meter: <T>(provider: T): T => provider };
+
 const DATA = '/ethos';
 const PID = 'sage';
 
@@ -63,7 +65,7 @@ vi.mock('../../wiring', () => ({
   getSecretsResolver: async () => ({ get: async () => undefined }),
   createAgentLoop: async () => {
     shared.loopsBuilt++;
-    return { loop: fakeLoop, dispose: async () => {} };
+    return { loop: fakeLoop, usageMeter: PASSTHROUGH_METER, dispose: async () => {} };
   },
   createLLM: async () => grader(),
   // The y/N decision goes through the learning inbox; hand the command a real
@@ -89,6 +91,17 @@ vi.mock('../../wiring', () => ({
 // The judge loop's approval gate is pinned by
 // apps/ethos/src/__tests__/non-interactive-approval.test.ts; this fake loop
 // carries no hook registry.
+// The command meters its drafting calls on a ledger it opens in the state dir
+// (background-usage-accounting D33); this test has no disk, so hand it a meter
+// that meters nothing.
+vi.mock('@ethosagent/wiring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ethosagent/wiring')>();
+  return {
+    ...actual,
+    withUsageMeter: (_opts: unknown, fn: (m: unknown) => Promise<unknown>) => fn(PASSTHROUGH_METER),
+  };
+});
+
 vi.mock('../../lib/non-interactive-approval', () => ({ gateNonInteractiveLoop: () => {} }));
 vi.mock('../../lib/release-command-runtime', () => ({
   releaseCommandRuntime: async () => {},

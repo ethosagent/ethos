@@ -5256,7 +5256,11 @@ const InboundActionOutput = z.object({ ok: z.boolean() });
 // ---------------------------------------------------------------------------
 
 const UsageRowSchema = z.object({
-  /** The group: a UTC date, model, personality id, platform, or session id. */
+  /**
+   * The group: a UTC date, model, personality id, platform, session id, or — for
+   * `by: 'source'` — `turn`, `turn:<background prefix>` or `<class>:<kind>`
+   * (e.g. `background:memory_capture`).
+   */
   key: z.string(),
   inputTokens: z.number(),
   outputTokens: z.number(),
@@ -5264,9 +5268,11 @@ const UsageRowSchema = z.object({
   cacheCreationTokens: z.number(),
   estimatedCostUsd: z.number(),
   messages: z.number(),
+  /** Usage-ledger rows (non-turn model calls) in the group. Defaults to 0 for older servers. */
+  calls: z.number().default(0),
 });
 
-const UsageDimensionSchema = z.enum(['model', 'personality', 'channel', 'session']);
+const UsageDimensionSchema = z.enum(['model', 'personality', 'channel', 'session', 'source']);
 
 const UsageSummaryInput = z.object({
   /** Window length ending now, in ms. 1 minute to 366 days. */

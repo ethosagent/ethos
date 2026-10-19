@@ -108,6 +108,7 @@ function wire(opts: {
         : undefined,
   } as unknown as Gateway;
   return wireApprovalFlow(gateway, opts.bots, opts.adapters, {
+    usageMeter: { meter: (p) => p },
     executionPostureFor: () => undefined,
     personalities: { get: (id: string) => PERSONALITIES[id] } as unknown as PersonalityRegistry,
     getProvider: async () => {

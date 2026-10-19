@@ -22,7 +22,7 @@ import { createLLM } from '../wiring';
  *  `resolveActiveLoop`'s results both carry it. */
 export type GatableLoop = Pick<
   CreateAgentLoopResult,
-  'loop' | 'personalities' | 'executionPostureFor' | 'approverDecision'
+  'loop' | 'personalities' | 'executionPostureFor' | 'approverDecision' | 'usageMeter'
 >;
 
 /**
@@ -41,6 +41,7 @@ export function gateNonInteractiveLoop(
     model: config.model,
     ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
     executionPostureFor: runtime.executionPostureFor,
+    usageMeter: runtime.usageMeter,
     coordinator: null,
     nonInteractive: why,
   });
@@ -64,5 +65,6 @@ export function gateCronLoop(runtime: GatableLoop, config: EthosConfig): () => v
     isRemoteSenderTurn: () => false,
     ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
     executionPostureFor: runtime.executionPostureFor,
+    usageMeter: runtime.usageMeter,
   });
 }

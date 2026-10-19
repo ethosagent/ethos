@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { DECISIONS_API_KEY_REF, resolveDecisionsConfig } from '@ethosagent/config';
 import { createTypesafeDecisionProvider } from '@ethosagent/decision-typesafe';
 import { createLLMClassifier } from '@ethosagent/safety-injection';
+import Database from '@ethosagent/sqlite';
 import type {
   AgentSafety,
   DecisionProvider,
@@ -363,6 +364,99 @@ describe('createAgentLoop — which injection classifier is built', () => {
       await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(3));
       expect(factory).toHaveBeenCalledTimes(1);
       expect(get.mock.calls.filter(([ref]) => ref === DECISIONS_API_KEY_REF)).toHaveLength(1);
+    } finally {
+      factory.mockReset();
+      factory.mockImplementation(
+        (
+          await vi.importActual<typeof import('@ethosagent/decision-typesafe')>(
+            '@ethosagent/decision-typesafe',
+          )
+        ).createTypesafeDecisionProvider,
+      );
+      await result.dispose();
+    }
+  }, 60_000);
+
+  // plan background-usage-accounting §5.4/D29 — the build wraps its one decision
+  // provider with `UsageMeter.meterDecision`, so every answered `decide()` — a
+  // site's or the `decide` tool's — writes one `decision` ledger row, and an
+  // answer that reached no provider (zero usage) writes none.
+  it('usage ledger: a site and the decide tool each write one decision row; an off site and a zero-usage answer write none', async () => {
+    const answered = (inputTokens: number, outputTokens: number): DecisionResult => ({
+      ok: true,
+      answers: {
+        injection: { type: 'boolean', p: 0.9, confidence: 0.95 },
+        buy: { type: 'boolean', p: 0.9, confidence: 0.95 },
+      },
+      model: 'ts-model',
+      usage: { inputTokens, outputTokens },
+    });
+    const decide = vi.fn(async (): Promise<DecisionResult> => answered(120, 4));
+    factory.mockImplementation(() => ({ name: 'typesafe', calibrated: true, decide }));
+    const decisionRows = () => {
+      const db = new Database(join(dataDir, 'sessions.db'));
+      try {
+        return db
+          .prepare(
+            "SELECT source_ref AS ref, personality_id AS pid, provider, model FROM usage_ledger WHERE source_kind = 'decision'",
+          )
+          .all() as { ref: string | null; pid: string | null; provider: string; model: string }[];
+      } finally {
+        db.close();
+      }
+    };
+    const { resolver } = KEYED();
+    const { result, classifier } = await build(
+      config({ secretsResolver: resolver, decisions: { provider: 'typesafe' } }),
+    );
+    try {
+      const before = decisionRows().length;
+      await classifier({ content: INJECTION, personalityId: 'plain' });
+      expect(decide).not.toHaveBeenCalled();
+      expect(decisionRows()).toHaveLength(before);
+
+      await classifier({ content: INJECTION, personalityId: 'judge' });
+      await vi.waitFor(() => expect(decisionRows()).toHaveLength(before + 1));
+      expect(decisionRows().at(-1)).toEqual({
+        ref: 'injection',
+        pid: 'judge',
+        provider: 'typesafe',
+        model: 'ts-model',
+      });
+
+      const callTool = async () => {
+        const [out] = await result.toolRegistry.executeParallel(
+          [
+            {
+              toolCallId: 'u1',
+              name: 'decide',
+              args: {
+                state: 'price 2940',
+                questions: { buy: { type: 'boolean', instructions: 'Is this a buy?' } },
+              },
+            },
+          ],
+          {
+            sessionId: 's',
+            sessionKey: 'cli:test',
+            platform: 'cli',
+            workingDir: home,
+            personalityId: 'judge',
+            currentTurn: 1,
+            messageCount: 1,
+            abortSignal: new AbortController().signal,
+            emit: () => {},
+            resultBudgetChars: 80_000,
+          },
+        );
+        expect(out?.result.ok).toBe(true);
+      };
+      decide.mockResolvedValueOnce(answered(0, 0));
+      await callTool();
+      expect(decisionRows()).toHaveLength(before + 1);
+      await callTool();
+      expect(decisionRows()).toHaveLength(before + 2);
+      expect(decisionRows().at(-1)).toMatchObject({ provider: 'typesafe', model: 'ts-model' });
     } finally {
       factory.mockReset();
       factory.mockImplementation(

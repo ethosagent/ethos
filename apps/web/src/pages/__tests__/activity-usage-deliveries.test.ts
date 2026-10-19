@@ -140,6 +140,48 @@ describe('Activity → Usage (U3)', () => {
     expect(text).toContain('claude-sonnet-5');
     expect(usageSummary).toHaveBeenCalledWith({ windowMs: 7 * 24 * 60 * 60 * 1000, by: 'model' });
   });
+
+  it('offers a source breakdown and renders background-only spend (background-usage-accounting §6.2)', async () => {
+    const zero = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    };
+    const row = {
+      ...zero,
+      inputTokens: 900,
+      outputTokens: 90,
+      estimatedCostUsd: 0.5,
+      messages: 0,
+      calls: 4,
+    };
+    usageSummary.mockResolvedValue({
+      since: 0,
+      until: 1,
+      totals: { ...row, cacheHitRate: 0 },
+      daily: [{ key: '2026-10-19', ...row }],
+      by: { dimension: 'source', rows: [{ key: 'background:memory_capture', ...row }] },
+    });
+    await mount(createElement(UsagePanel));
+    const labels = [...container.querySelectorAll('.ant-segmented-item-label')].map(
+      (el) => el.textContent,
+    );
+    expect(labels).toContain('source');
+    const sourceItem = [...container.querySelectorAll('.ant-segmented-item-label')].find(
+      (el) => el.textContent === 'source',
+    );
+    await act(async () => {
+      (sourceItem as HTMLElement).click();
+    });
+    await flush();
+    expect(usageSummary).toHaveBeenLastCalledWith({
+      windowMs: 7 * 24 * 60 * 60 * 1000,
+      by: 'source',
+    });
+    expect(container.textContent).toContain('background:memory_capture');
+    expect(container.textContent).toContain('Calls');
+  });
 });
 
 describe('Chat header session cost (U3)', () => {

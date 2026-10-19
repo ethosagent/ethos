@@ -8,7 +8,7 @@
 // in-memory in-flight flag; every rate-limit / dedup fact is derived from the
 // append-only history (§3.2), so nothing races across processes.
 
-import { type PrivateChatSet, turnWasShared } from '@ethosagent/core';
+import { type PrivateChatSet, turnWasShared, withUsageScope } from '@ethosagent/core';
 import type { HistoryStore } from '@ethosagent/memory-history';
 import type {
   AgentDonePayload,
@@ -206,7 +206,29 @@ export class MemoryCaptureRunner {
     // Resolve sessionKey off the hot path (the frozen payload lacks it).
     const session = await this.opts.session.getSession(job.sessionId);
     const sessionKey = session?.key ?? '';
+    // D10 (plan background-usage-accounting) — one usage scope PER JOB. The
+    // drain loop runs in whatever async context its first `enqueue` came from,
+    // so without this a metered extraction (and the consolidation it may
+    // trigger) would be billed to that first job's turn, not this one. A
+    // nested scope replaces, never merges. Pinned by 'usage attribution' in
+    // `__tests__/runner.test.ts`.
+    await withUsageScope(
+      {
+        attribution: {
+          sessionId: job.sessionId,
+          ...(sessionKey ? { sessionKey } : {}),
+          personalityId: job.personalityId,
+        },
+      },
+      () => this.capture(job, session, sessionKey),
+    );
+  }
 
+  private async capture(
+    job: CaptureJob,
+    session: Awaited<ReturnType<SessionStore['getSession']>>,
+    sessionKey: string,
+  ): Promise<void> {
     const eligibility = evaluateEligibility({
       sessionKey,
       // G1-8: a stamped-shared or pre-upgrade group session, or a non-owner DM

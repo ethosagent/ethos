@@ -761,7 +761,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
 
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
-    const titleLlm = await createLLM(cfg);
+    // A session title is a model call outside any turn's own stream — metered
+    // as `title` (background-usage-accounting §5.4).
+    const titleLlm = shared.usageMeter.meter(await createLLM(cfg), 'title');
     titleFn = async (systemPrompt: string, userMessage: string): Promise<string> => {
       let text = '';
       for await (const chunk of titleLlm.complete([{ role: 'user', content: userMessage }], [], {
@@ -808,6 +810,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // (plan decision-provider-jev §8.2), as `ethos serve` passes its own.
     ...(shared.approverDecision ? { approverDecision: shared.approverDecision } : {}),
     executionPostureFor: shared.executionPostureFor,
+    usageMeter: shared.usageMeter,
     session,
     contextLog,
     personalities,
@@ -1097,6 +1100,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // Where each personality's shell tools run (S6 / D1(a)) — the shared
     // build's, for the same reason as the decision site below.
     executionPostureFor: shared.executionPostureFor,
+    usageMeter: shared.usageMeter,
     // The provider half of `decisions.*` is operator-level, so every bot's
     // approval predicate takes the shared build's decision site (plan
     // decision-provider-jev §8.2), as it takes that config's `createLLM(cfg)`

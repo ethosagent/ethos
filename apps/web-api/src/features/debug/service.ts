@@ -71,6 +71,7 @@ export class DebugService {
             'You are a debug assistant for the Ethos agent framework. Be terse and precise. Diagnose root causes, not symptoms. You have access to recent session messages as context.',
           maxTokens: 1024,
           abortSignal: abort.signal,
+          usage: { kind: 'debug_assistant' },
         },
       )) {
         chunkTypes.push(chunk.type);

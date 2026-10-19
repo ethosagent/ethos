@@ -23,6 +23,7 @@ import {
 import { runTurnComplete } from './turn-complete';
 import type { LoopDeps, TurnSetup } from './turn-context';
 import { turnGateDeps } from './turn-gate';
+import { meteredFor, type TurnUsageCharges } from './usage-charges';
 
 // ---------------------------------------------------------------------------
 // Phase 3 — turn-end context maintenance. Two triggers run as the FINAL stage
@@ -115,6 +116,8 @@ export interface TurnEndCtx {
    * `../__tests__/turn-end-consolidation.test.ts`.
    */
   untrustedSeen?: boolean;
+  /** `TurnSetup.charges` — the flush and a turn-end compaction are charged to the turn (§5.2). */
+  charges: TurnUsageCharges;
 }
 
 /** Extra loop-local fields the turn-end stage needs beyond `TurnSetup`. */
@@ -151,6 +154,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     contextStore: extras.contextStore,
     rootSessionKey: extras.rootSessionKey,
     roomAudience: setup.roomAudience,
+    charges: setup.charges,
     ...(extras.initiator !== undefined ? { initiator: extras.initiator } : {}),
     ...(extras.untrustedSeen === true ? { untrustedSeen: true } : {}),
     ...(setup.gateWindowTokens !== undefined ? { gateWindowTokens: setup.gateWindowTokens } : {}),
@@ -265,7 +269,9 @@ export async function* maybeConsolidateAtTurnEnd(
     return;
   }
   if (flushEnabled && gateEval.current > flushGate) {
-    await runMemoryFlush(deps, ctx, llmMessages, raw.length);
+    // §5.2 — the metered flush is charged to this turn (a post-`done` usage event).
+    await ctx.charges.wrap(() => runMemoryFlush(deps, ctx, llmMessages, raw.length));
+    yield* ctx.charges.drain();
   }
 }
 
@@ -282,24 +288,24 @@ async function* compactAtTurnEnd(
     deps.compaction?.defaultEngine ??
     (summarizer ? 'semantic_summary' : 'drop_oldest');
 
-  const result = await runManualCompaction(
-    {
-      session: deps.session,
-      ...(summarizer ? { summarizer } : {}),
-      ...(deps.observability ? { observability: deps.observability } : {}),
-    },
-    {
-      sessionId: ctx.sessionId,
-      history: replay,
-      engineName,
-      tailKeep: COMPACTION_TAIL_KEEP,
-      ...(deps.compaction?.minTailUserMessages !== undefined
-        ? { minTailUserMessages: deps.compaction.minTailUserMessages }
-        : {}),
-      summaryTargetTokens: MANUAL_SUMMARY_TARGET_TOKENS,
-    },
-  );
-
+  const compactDeps: Parameters<typeof runManualCompaction>[0] = {
+    session: deps.session,
+    ...(summarizer ? { summarizer } : {}),
+    ...(deps.observability ? { observability: deps.observability } : {}),
+  };
+  const request: Parameters<typeof runManualCompaction>[1] = {
+    sessionId: ctx.sessionId,
+    history: replay,
+    engineName,
+    tailKeep: COMPACTION_TAIL_KEEP,
+    ...(deps.compaction?.minTailUserMessages !== undefined
+      ? { minTailUserMessages: deps.compaction.minTailUserMessages }
+      : {}),
+    summaryTargetTokens: MANUAL_SUMMARY_TARGET_TOKENS,
+  };
+  // §5.2 — a metered summarizer is charged to this turn (a post-`done` usage event).
+  const result = await ctx.charges.wrap(() => runManualCompaction(compactDeps, request));
+  yield* ctx.charges.drain();
   if (!result.ok || result.droppedCount === 0) return;
 
   // Mark the cooldown so the next turn's pre-LLM gate does not re-compact.
@@ -424,7 +430,7 @@ export async function runMemoryFlush(
         repair?: { outcome: 'repaired' | 'failed' };
       }> = [];
       let text = '';
-      const stream = deps.llm.complete(messages, toolDefs, {
+      const stream = meteredFor(deps.llm, deps.usage, 'memory_flush').complete(messages, toolDefs, {
         system: FLUSH_SYSTEM_PROMPT,
         maxTokens,
         abortSignal: signal,

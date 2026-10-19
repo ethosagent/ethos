@@ -11,6 +11,7 @@ import type { CompletionChunk, LLMProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { buildKanbanDecomposerProvider } from '../compose-tools';
 import type { WiringConfig } from '../index';
+import { PASSTHROUGH_METER } from './helpers/usage-test-kit';
 
 const noopLog = {
   info: () => {},
@@ -51,7 +52,12 @@ describe('buildKanbanDecomposerProvider', () => {
   it('returns undefined when auxiliaryKanbanDecomposer is not configured', async () => {
     const registry = registryRecording([]);
     const config: WiringConfig = { provider: 'anthropic', model: 'main-model', apiKey: 'k' };
-    const provider = await buildKanbanDecomposerProvider(registry, config, noopLog);
+    const provider = await buildKanbanDecomposerProvider(
+      registry,
+      config,
+      noopLog,
+      PASSTHROUGH_METER,
+    );
     expect(provider).toBeUndefined();
   });
 
@@ -65,7 +71,12 @@ describe('buildKanbanDecomposerProvider', () => {
       baseUrl: 'https://primary.example',
       auxiliaryKanbanDecomposer: { model: 'aux-model' },
     };
-    const provider = await buildKanbanDecomposerProvider(registry, config, noopLog);
+    const provider = await buildKanbanDecomposerProvider(
+      registry,
+      config,
+      noopLog,
+      PASSTHROUGH_METER,
+    );
     expect(provider).toBeDefined();
     expect(seen).toHaveLength(1);
     expect(seen[0]?.provider).toBe('anthropic');
@@ -92,7 +103,12 @@ describe('buildKanbanDecomposerProvider', () => {
         baseUrl: 'http://localhost:11434/v1',
       },
     };
-    const provider = await buildKanbanDecomposerProvider(registry, config, noopLog);
+    const provider = await buildKanbanDecomposerProvider(
+      registry,
+      config,
+      noopLog,
+      PASSTHROUGH_METER,
+    );
     expect(provider).toBeDefined();
     expect(seen).toHaveLength(1);
     expect(seen[0]?.provider).toBe('ollama');
@@ -111,7 +127,7 @@ describe('buildKanbanDecomposerProvider', () => {
       apiKey: 'k',
       auxiliaryKanbanDecomposer: { model: 'aux-model', provider: 'unregistered-provider' },
     };
-    const provider = await buildKanbanDecomposerProvider(registry, config, log);
+    const provider = await buildKanbanDecomposerProvider(registry, config, log, PASSTHROUGH_METER);
     expect(provider).toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(

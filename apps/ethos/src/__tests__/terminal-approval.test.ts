@@ -109,6 +109,7 @@ function wire(opts: {
     ? new ApprovalCoordinator({ timeoutMs: opts.timeoutMs ?? 0 })
     : null;
   const unwire = wireTerminalApprovalGate(hooks, {
+    usageMeter: { meter: (p) => p },
     personalities: registry(opts.personality),
     getProvider: async () => {
       throw new Error('no provider in this test');

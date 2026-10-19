@@ -53,6 +53,7 @@ import {
   markHostApprovalGate,
   redactString,
   type SmartApproverDecisionSite,
+  type UsageMeter,
 } from '@ethosagent/wiring';
 import { type ApprovalCoordinator, createSlackApprovalHook } from './approval-coordinator';
 
@@ -67,6 +68,8 @@ export interface TerminalApprovalGateOptions {
   decision?: SmartApproverDecisionSite;
   /** `CreateAgentLoopResult.executionPostureFor` of the loop's build. */
   executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
+  /** `CreateAgentLoopResult.usageMeter` of the loop's build — meters the smart reviewer. */
+  usageMeter: Pick<UsageMeter, 'meter'>;
   /**
    * The coordinator a person answers through, or `null` when nobody can be
    * asked on this run — every flagged call is then refused.
@@ -113,6 +116,7 @@ export function wireTerminalApprovalGate(
     allowAutoApproveDangerousTools: true,
     ...(opts.decision ? { decision: opts.decision } : {}),
     executionPostureFor: opts.executionPostureFor,
+    usageMeter: opts.usageMeter,
   });
   const refuse = async (
     payload: BeforeToolCallPayload,

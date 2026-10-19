@@ -61,6 +61,7 @@ import {
   markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApproverDecisionSite,
+  type UsageMeter,
 } from '@ethosagent/wiring';
 
 /**
@@ -126,6 +127,8 @@ export interface WireUnattendedApprovalGateOptions {
    *  host-local posture the shell tools are flagged, so with nobody to ask they
    *  are refused (S6 / D1(a), plan openclaw-2026.9.6-gaps). */
   executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
+  /** `CreateAgentLoopResult.usageMeter` of the same build — meters the smart reviewer. */
+  usageMeter: Pick<UsageMeter, 'meter'>;
 }
 
 /**
@@ -155,6 +158,7 @@ export function wireUnattendedApprovalGate(
     allowAutoApproveDangerousTools: opts.allowUnattendedDangerousTools,
     ...(opts.decision ? { decision: opts.decision } : {}),
     executionPostureFor: opts.executionPostureFor,
+    usageMeter: opts.usageMeter,
   });
   const unattended = createUnattendedApprovalGate(danger, unattendedApprovalRejection);
   const remote = createNoApprovalSurfaceGate([hooks], opts);
@@ -199,6 +203,8 @@ export interface NoApprovalSurfaceGateOptions {
   decision?: SmartApproverDecisionSite;
   /** Same as `WireUnattendedApprovalGateOptions.executionPostureFor`. */
   executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
+  /** Same as `WireUnattendedApprovalGateOptions.usageMeter`. */
+  usageMeter: Pick<UsageMeter, 'meter'>;
 }
 
 /**
@@ -228,6 +234,7 @@ export function createNoApprovalSurfaceGate(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(opts.decision ? { decision: opts.decision } : {}),
     executionPostureFor: opts.executionPostureFor,
+    usageMeter: opts.usageMeter,
   });
   return createUnattendedApprovalGate(danger, noApprovalSurfaceRejection);
 }

@@ -26,6 +26,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createApprovalDangerPredicate } from '../approval-seams';
 import { createAgentLoop, type WiringConfig } from '../index';
 import { createSmartApprover, type SmartApproverDecisionSite } from '../smart-approver';
+import { PASSTHROUGH_METER } from './helpers/usage-test-kit';
 
 vi.mock('../smart-approver', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../smart-approver')>();
@@ -79,6 +80,7 @@ async function smartPredicate(
   });
   const getProvider = async () => reviewer();
   const isDangerous = createApprovalDangerPredicate({
+    usageMeter: PASSTHROUGH_METER,
     executionPostureFor: () => undefined,
     hooks: [hooks],
     personalities,
@@ -227,7 +229,10 @@ describe('createAgentLoop — approverDecision', () => {
       expect(site?.global.timeouts.approver).toBe(2000);
       // Lazy (plan §7.0): nothing is built until a personality's site runs.
       expect(providerFactory).not.toHaveBeenCalled();
-      expect(await site?.provider.get()).toBe(providerFactory.mock.results[0]?.value);
+      // The build's one provider, metered once (background-usage-accounting D29).
+      const got = await site?.provider.get();
+      expect(got).toBeDefined();
+      expect(got?.name).toBe(providerFactory.mock.results[0]?.value?.name);
       expect(providerFactory).toHaveBeenCalledTimes(1);
     } finally {
       await result.dispose();

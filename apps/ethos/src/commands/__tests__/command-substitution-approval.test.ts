@@ -41,6 +41,7 @@ afterAll(async () => {
 
 const seams = {
   executionPostureFor: () => undefined,
+  usageMeter: { meter: <P>(p: P) => p },
   personalities: { get: () => undefined } as unknown as PersonalityRegistry,
   getProvider: async () => {
     throw new Error('no provider in this test');

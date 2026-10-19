@@ -21,6 +21,7 @@ import {
   SPOKEN_CONFIRMATION_TOOLS,
   withSpokenConfirmation,
 } from '../spoken-confirmation';
+import { PASSTHROUGH_METER } from './helpers/usage-test-kit';
 
 const allow: DangerPredicate = async () => null;
 const refuse: DangerPredicate = async () => 'base predicate said no';
@@ -141,6 +142,7 @@ describe('createApprovalDangerPredicate — the gate is applied by default', () 
 
   function predicate(spokenConfirmations?: { has(id: string): boolean }) {
     return createApprovalDangerPredicate({
+      usageMeter: PASSTHROUGH_METER,
       executionPostureFor: () => undefined,
       hooks: [new DefaultHookRegistry()],
       personalities: registry,

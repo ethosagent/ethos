@@ -52,6 +52,8 @@ import {
   privateChatSetFrom,
   resolveKanbanDbPath,
   submitExpressionCandidate,
+  type UsageMeter,
+  withUsageMeter,
 } from '@ethosagent/wiring';
 import { createLearningReplayer, createLLM, getStorage } from '../wiring';
 import {
@@ -541,7 +543,21 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
     }
   }
 
-  const llm = await createLLM(config);
+  // Operator spend with no loop to borrow a meter from (background-usage-accounting §5.4, D33).
+  await withUsageMeter({ dataDir: dir }, (usage) =>
+    runNightlyTargets({ usage, config, dir, reg, targets }),
+  );
+}
+
+async function runNightlyTargets(opts: {
+  usage: UsageMeter;
+  config: EthosConfig;
+  dir: string;
+  reg: import('@ethosagent/personalities').FilePersonalityRegistry;
+  targets: string[];
+}): Promise<void> {
+  const { usage, config, dir, reg, targets } = opts;
+  const llm = usage.meter(await createLLM(config), 'nightly');
   const backend = await nightlyMemory(config, dir, getStorage());
   const memorySkipReason = 'skipReason' in backend ? backend.skipReason : undefined;
   const deps = buildDeps({

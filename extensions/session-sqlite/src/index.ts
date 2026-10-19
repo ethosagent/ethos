@@ -18,6 +18,7 @@ import type {
 import { appendDecisionRow, readDecisionRows, SESSION_DECISIONS_SCHEMA } from './decisions';
 import { SqliteKeyValueStore } from './kv-store';
 import { readMessagePage } from './message-page';
+import { USAGE_LEDGER_SCHEMA } from './usage-ledger';
 
 export {
   AmbiguousPrefixError,
@@ -34,6 +35,7 @@ export {
   migrateSessionKeys,
   type SessionKeyMigrationResult,
 } from './session-key-migration';
+export { type LedgerSpend, SQLiteUsageLedger } from './usage-ledger';
 export { SqliteKeyValueStore };
 
 /** One grouped row from {@link SQLiteSessionStore.usageAggregate}. */
@@ -44,8 +46,15 @@ export interface UsageAggregateRow {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   estimatedCostUsd: number;
+  /** Message rows in the group. Ledger rows are counted in `calls`, never here. */
   messages: number;
+  /** Usage-ledger rows in the group (background-usage-accounting §6.2). */
+  calls: number;
 }
+
+/** Session-key prefixes of turns run by background schedulers: the `source`
+ *  dimension reports them as `turn:<prefix>`. The ONE place to add a new one. */
+const BACKGROUND_TURN_PREFIXES = ['dream', 'cron', 'goal', 'watcher', 'eval', 'replay'] as const;
 
 /** A window's totals over {@link UsageAggregateRow}s, plus the cache hit rate. */
 export interface UsageTotals {
@@ -55,6 +64,7 @@ export interface UsageTotals {
   cacheCreationTokens: number;
   estimatedCostUsd: number;
   messages: number;
+  calls: number;
   /** Share of billable input served from cache, 0–1. See {@link cacheHitRate}. */
   cacheHitRate: number;
 }
@@ -90,6 +100,7 @@ export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
     cacheCreationTokens: 0,
     estimatedCostUsd: 0,
     messages: 0,
+    calls: 0,
   };
   for (const r of rows) {
     t.inputTokens += r.inputTokens;
@@ -98,6 +109,7 @@ export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
     t.cacheCreationTokens += r.cacheCreationTokens;
     t.estimatedCostUsd += r.estimatedCostUsd;
     t.messages += r.messages;
+    t.calls += r.calls;
   }
   return { ...t, cacheHitRate: cacheHitRate(t) };
 }
@@ -373,6 +385,10 @@ export class SQLiteSessionStore implements SessionStore {
     // Additive migration (decision-provider-personality §15.5): settled
     // decision rows, cascaded with their session. See ./decisions.ts.
     this.db.exec(SESSION_DECISIONS_SCHEMA);
+
+    // Additive migration (background-usage-accounting D20): the ledger table
+    // `usageAggregate` reads. `SQLiteUsageLedger` execs the same idempotent DDL.
+    this.db.exec(USAGE_LEDGER_SCHEMA);
   }
 
   // ---------------------------------------------------------------------------
@@ -1087,7 +1103,7 @@ export class SQLiteSessionStore implements SessionStore {
   async usageAggregate(opts: {
     since: Date;
     until: Date;
-    dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
+    dimension: 'day' | 'model' | 'personality' | 'channel' | 'session' | 'source';
     /** Only sessions whose key starts with this, literally and case-sensitively:
      *  an exact `substr` comparison, not `LIKE`, which folds ASCII case and would
      *  mix the spend of bots whose ids differ only by case. Pinned by
@@ -1096,7 +1112,10 @@ export class SQLiteSessionStore implements SessionStore {
      *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
     keyPrefix?: string;
   }): Promise<UsageAggregateRow[]> {
-    const keyExpr = {
+    const sourceCase = `CASE ${BACKGROUND_TURN_PREFIXES.map(
+      (p) => `WHEN substr(s.key, 1, ${p.length + 1}) = '${p}:' THEN 'turn:${p}'`,
+    ).join(' ')} ELSE 'turn' END`;
+    const msgKey = {
       // `substr(timestamp, 1, 10)` over an ISO-8601 string is the UTC date, and
       // it stays sargable against idx_messages_session's timestamp component.
       day: 'substr(m.timestamp, 1, 10)',
@@ -1104,33 +1123,76 @@ export class SQLiteSessionStore implements SessionStore {
       personality: "COALESCE(s.personality_id, 'unknown')",
       channel: 's.platform',
       session: 'm.session_id',
+      source: sourceCase,
     }[opts.dimension];
+    const ledgerKey = {
+      day: 'substr(l.ts, 1, 10)',
+      model: 'l.model',
+      personality: "COALESCE(l.personality_id, 'unknown')",
+      channel: "COALESCE(l.platform, 'unknown')",
+      session: "COALESCE(l.session_id, 'background')",
+      source: "l.source_class || ':' || l.source_kind",
+    }[opts.dimension];
+
+    const prefix = opts.keyPrefix;
+    const since = opts.since.toISOString();
+    const until = opts.until.toISOString();
+    const prefixArgs = prefix !== undefined ? [prefix, prefix] : [];
+    // The repeated SUM(COALESCE…) columns, for table alias `t`.
+    const sums = (t: string) => `COALESCE(SUM(${t}.input_tokens), 0)          AS inputTokens,
+              COALESCE(SUM(${t}.output_tokens), 0)         AS outputTokens,
+              COALESCE(SUM(${t}.cache_read_tokens), 0)     AS cacheReadTokens,
+              COALESCE(SUM(${t}.cache_creation_tokens), 0) AS cacheCreationTokens,
+              COALESCE(SUM(${t}.estimated_cost_usd), 0)    AS estimatedCostUsd`;
+
+    // Both halves are normalised to the same columns and grouped once outside, so
+    // a key present in both (a day, a model) merges into one row. Each half groups
+    // by the EXPRESSION, never the `key` alias: `sessions.key` is a real column, so
+    // `GROUP BY key` silently resolves to it and every dimension collapses to
+    // per-session grouping.
+    const halves: Array<{ sql: string; params: unknown[] }> = [
+      {
+        sql: `SELECT ${msgKey} AS key,
+              ${sums('m')},
+              COUNT(*)                                  AS messages,
+              0                                         AS calls
+         FROM messages m
+         JOIN sessions s ON s.id = m.session_id
+        WHERE m.timestamp >= ? AND m.timestamp < ?
+          AND m.input_tokens IS NOT NULL
+          ${prefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
+        GROUP BY ${msgKey}`,
+        params: [since, until, ...prefixArgs],
+      },
+      {
+        sql: `SELECT ${ledgerKey} AS key,
+              ${sums('l')},
+              0                                         AS messages,
+              COUNT(*)                                  AS calls
+         FROM usage_ledger l
+        WHERE l.ts >= ? AND l.ts < ?
+          ${prefix !== undefined ? 'AND substr(l.session_key, 1, length(?)) = ?' : ''}
+        GROUP BY ${ledgerKey}`,
+        params: [since, until, ...prefixArgs],
+      },
+    ];
+    const params = halves.flatMap((h) => h.params);
 
     return this.db
       .prepare(
-        `SELECT ${keyExpr} AS key,
-                COALESCE(SUM(m.input_tokens), 0)          AS inputTokens,
-                COALESCE(SUM(m.output_tokens), 0)         AS outputTokens,
-                COALESCE(SUM(m.cache_read_tokens), 0)     AS cacheReadTokens,
-                COALESCE(SUM(m.cache_creation_tokens), 0) AS cacheCreationTokens,
-                COALESCE(SUM(m.estimated_cost_usd), 0)    AS estimatedCostUsd,
-                COUNT(*)                                  AS messages
-           FROM messages m
-           JOIN sessions s ON s.id = m.session_id
-          WHERE m.timestamp >= ? AND m.timestamp < ?
-            AND m.input_tokens IS NOT NULL
-            ${opts.keyPrefix !== undefined ? 'AND substr(s.key, 1, length(?)) = ?' : ''}
-          -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
-          -- real column, so \`GROUP BY key\` silently resolves to it and every
-          -- dimension collapses to per-session grouping.
-          GROUP BY ${keyExpr}
+        `SELECT key,
+                SUM(inputTokens)         AS inputTokens,
+                SUM(outputTokens)        AS outputTokens,
+                SUM(cacheReadTokens)     AS cacheReadTokens,
+                SUM(cacheCreationTokens) AS cacheCreationTokens,
+                SUM(estimatedCostUsd)    AS estimatedCostUsd,
+                SUM(messages)            AS messages,
+                SUM(calls)               AS calls
+           FROM (${halves.map((h) => h.sql).join(' UNION ALL ')})
+          GROUP BY key
           ORDER BY estimatedCostUsd DESC`,
       )
-      .all(
-        opts.since.toISOString(),
-        opts.until.toISOString(),
-        ...(opts.keyPrefix !== undefined ? [opts.keyPrefix, opts.keyPrefix] : []),
-      ) as UsageAggregateRow[];
+      .all(...params) as UsageAggregateRow[];
   }
 
   /** Close the database connection (useful in tests). */

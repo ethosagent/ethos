@@ -16,7 +16,7 @@ import {
   skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
-import { learningSubmitPort } from '@ethosagent/wiring';
+import { learningSubmitPort, type UsageMeter, withUsageMeter } from '@ethosagent/wiring';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
@@ -242,11 +242,26 @@ export async function runEvolveAfter(
   tasks: ReturnType<typeof parseTasksJsonl>,
   expectedMap: ReturnType<typeof parseExpectedJsonl>,
 ): Promise<void> {
+  // The evolver's drafting calls have no loop to borrow a meter from
+  // (background-usage-accounting §5.4, D33).
+  await withUsageMeter({ dataDir: ethosDir() }, (usage) =>
+    evolveAfter(config, evalOutputPath, autoApprove, tasks, expectedMap, usage),
+  );
+}
+
+async function evolveAfter(
+  config: EthosConfig,
+  evalOutputPath: string,
+  autoApprove: boolean,
+  tasks: ReturnType<typeof parseTasksJsonl>,
+  expectedMap: ReturnType<typeof parseExpectedJsonl>,
+  usage: Pick<UsageMeter, 'meter'>,
+): Promise<void> {
   const dir = ethosDir();
   const skillsDir = join(dir, 'skills');
   const storage = getStorage();
   const evolveConfig = await loadEvolveConfig(join(dir, 'evolve-config.json'), storage);
-  const llm = await createLLM(config);
+  const llm = usage.meter(await createLLM(config), 'skill_evolver');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
   await reg.loadFromDirectory(join(dir, 'personalities'));

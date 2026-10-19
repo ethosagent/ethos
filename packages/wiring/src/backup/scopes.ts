@@ -159,6 +159,13 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     reason: 'Fourth tenant of sessions.db — what context each turn was assembled from.',
   },
   {
+    source: 'extensions/session-sqlite/src/usage-ledger.ts',
+    sites: 1,
+    database: 'sessions.db',
+    scope: 'state',
+    reason: 'Tenant of sessions.db — the spend the bot daily cap counts for non-turn model calls.',
+  },
+  {
     source: 'apps/web-api/src/stores/idempotency-store.ts',
     sites: 1,
     database: 'sessions.db',

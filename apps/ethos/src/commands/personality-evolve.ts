@@ -44,6 +44,8 @@ import {
   privateChatSetFrom,
   submitExpressionCandidate,
   turnWasShared,
+  type UsageMeter,
+  withUsageMeter,
 } from '@ethosagent/wiring';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -441,7 +443,9 @@ export async function buildJudgeRunner(
   await storage.mkdir(runsDir);
   const runtime = await createAgentLoop(config);
   gateNonInteractiveLoop(runtime, config, 'a judge run has nobody to answer a prompt');
-  const llm = await createLLM(config);
+  // The scorer's calls are operator spend; the loop already owns a meter (D4), so
+  // borrow it rather than open a second ledger handle (background-usage-accounting §5.4).
+  const llm = runtime.usageMeter.meter(await createLLM(config), 'nightly');
   const outputPath = join(runsDir, `${Date.now()}.jsonl`);
   const runner = new EvalRunner(runtime.loop, {
     concurrency: 4,
@@ -597,6 +601,11 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
     return;
   }
 
+  const { ethosDir } = await import('@ethosagent/config');
+  await withUsageMeter({ dataDir: ethosDir() }, (usage) => evolvePersonality(id, usage));
+}
+
+async function evolvePersonality(id: string, usage: UsageMeter): Promise<void> {
   try {
     const { createPersonalityRegistry } = await import('@ethosagent/personalities');
     const { ethosDir, readConfig } = await import('@ethosagent/config');
@@ -704,7 +713,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
       store.close();
     }
 
-    const llm = await createLLM(config);
+    const llm = usage.meter(await createLLM(config), 'personality_draft');
 
     if (autoMode) {
       if (scopedNote) console.log(scopedNote);

@@ -191,6 +191,8 @@ export interface LoopDeps {
    *  emit-on-change write path in context-assembly.ts is a no-op. */
   contentStore?: ContentStore;
   contextLog?: ContextLog;
+  /** `AgentLoopConfig.usage` — meters in-turn utility calls (./usage-charges.ts). */
+  usage?: import('./usage-charges').LoopUsageConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +284,8 @@ export interface TurnSetup {
   /** `Session.metadata` as read at turn start. Context assembly reads the
    *  rows of a rejected vision call from it (vision-rejection.ts). */
   sessionMetadata?: Record<string, unknown>;
+  /** §5.2 — this turn's utility charges; stages `wrap` awaited work and yield `drain()`. */
+  charges: import('./usage-charges').TurnUsageCharges;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };

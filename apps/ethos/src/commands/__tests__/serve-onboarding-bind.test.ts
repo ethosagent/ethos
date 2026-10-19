@@ -43,10 +43,10 @@ describe('serve.ts — one builder for every serve loop', () => {
     // (S6 / D1(a)) and approver decision site (plan decision-provider-jev
     // §8.2), so the fourth and fifth arguments differ by branch.
     expect(src).toMatch(
-      /dangerPredicate: buildServeDangerPredicate\(\s*loop,\s*personalities,\s*config,\s*opts\.executionPostureFor,\s*opts\.approverDecision,\s*\),/,
+      /dangerPredicate: buildServeDangerPredicate\(\s*loop,\s*personalities,\s*config,\s*opts\.executionPostureFor,\s*opts\.usageMeter,\s*opts\.approverDecision,\s*\),/,
     );
     expect(src).toMatch(
-      /dangerPredicate: \(loop\) =>\s*buildServeDangerPredicate\(\s*loop,\s*personalities,\s*agentConfig,\s*agentResult\.executionPostureFor,\s*agentResult\.approverDecision,\s*\),/,
+      /dangerPredicate: \(loop\) =>\s*buildServeDangerPredicate\(\s*loop,\s*personalities,\s*agentConfig,\s*agentResult\.executionPostureFor,\s*agentResult\.usageMeter,\s*agentResult\.approverDecision,\s*\),/,
     );
   });
 

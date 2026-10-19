@@ -320,6 +320,7 @@ async function runServeExport(opts: {
     // decision-provider-jev §8.2); absent → the LLM reviewer only.
     ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
     executionPostureFor: runtime.executionPostureFor,
+    usageMeter: runtime.usageMeter,
   });
   runtime.loop.hooks.registerModifying('before_tool_call', createExportApprovalGate(danger));
 

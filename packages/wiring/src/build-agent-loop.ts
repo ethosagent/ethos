@@ -116,6 +116,7 @@ import {
   smallWindowModeMessage,
 } from './static-floor';
 import type { WiringContext } from './types';
+import type { UsageMeter } from './usage-meter';
 import { buildVoiceStack } from './voice-stack';
 
 /**
@@ -140,6 +141,8 @@ export interface BuildAgentLoopDeps {
   /** The stack every earlier stage registered on; this stage adds its own
    *  resources and hands `dispose` back on the result (F06). */
   disposers: DisposerStack;
+  /** The build's usage meter (D4) — returned as `CreateAgentLoopResult.usageMeter`. */
+  usageMeter: UsageMeter;
 }
 
 /**
@@ -327,7 +330,7 @@ export async function buildAgentLoop(
   deps: BuildAgentLoopDeps,
 ): Promise<CreateAgentLoopResult> {
   const { dataDir, log } = wiringCtx;
-  const { infra, toolsResult, pluginsResult, llm, profile, disposers } = deps;
+  const { infra, toolsResult, pluginsResult, llm, profile, disposers, usageMeter } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
   const { gatewaySendRef, goalStore, goalRunnerRef, injectors, mcpManager, skillsInjector } =
     toolsResult;
@@ -353,8 +356,12 @@ export async function buildAgentLoop(
   // Wire llmFactory now that the LLM provider is resolved.
   // -------------------------------------------------------------------------
 
+  // background-usage-accounting §5.4 — a monitor's call is background spend.
+  // `llmFactory` is not told which plugin asks, so the row carries no
+  // `sourceRef` (D22).
+  const monitorLlm = usageMeter.meter(llm, 'plugin_monitor');
   pluginRegistries.llmFactory = () =>
-    new SimpleCompletionImpl(llm, config.model, ({ input, output }) => {
+    new SimpleCompletionImpl(monitorLlm, config.model, ({ input, output }) => {
       pluginDiagnostics.pushMetric({
         pluginId: 'framework',
         name: 'monitor_llm_usage',
@@ -488,6 +495,7 @@ export async function buildAgentLoop(
       );
     }
   }
+  // D9 — vision tools report `cost_usd`, so never metered; pinned by `__tests__/usage-meter-wiring.test.ts`.
   for (const tool of createVisionTools({
     resolveProvider: (model) => {
       if (model === config.model) return llm;
@@ -532,6 +540,11 @@ export async function buildAgentLoop(
       );
     }
   }
+  // §5.4 — the `web_extract` summarizer is in-turn utility spend.
+  const meterWeb = (p: LLMProvider) =>
+    usageMeter.meter(p, 'tool_llm', { sourceRef: 'web_extract' });
+  const webLlm = meterWeb(llm);
+  const meteredAuxWeb = auxWebProvider ? meterWeb(auxWebProvider) : null;
   for (const tool of createWebTools({
     ...(config.webSearchBackend ? { searchBackend: config.webSearchBackend } : {}),
     ...(config.searxngUrl ? { searxngUrl: config.searxngUrl } : {}),
@@ -542,8 +555,8 @@ export async function buildAgentLoop(
     ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
     ...(auxWebConfig ? { auxModel: auxWebConfig.model } : {}),
     resolveProvider: (model) => {
-      if (model === config.model) return llm;
-      if (auxWebProvider && auxWebConfig && model === auxWebConfig.model) return auxWebProvider;
+      if (model === config.model) return webLlm;
+      if (meteredAuxWeb && auxWebConfig && model === auxWebConfig.model) return meteredAuxWeb;
       return null;
     },
   })) {
@@ -605,7 +618,6 @@ export async function buildAgentLoop(
       micCapture: new MicCapture(micCaptureOpts),
       ...(sttResolution.ok ? { sttProvider: sttResolution.provider } : {}),
       memory,
-      getSummaryProvider: async () => llm,
     };
     runCallCaptureFn = (personalityId, { source, abortSignal, onEntry, onAudioLevel }) => {
       // Stable per-personality key (mirrors this repo's `cli:<cwd-basename>`
@@ -633,6 +645,10 @@ export async function buildAgentLoop(
       // `documentsWorkdir` itself is only known per invocation.
       const callCaptureOpts: CallCaptureToolsOptions = {
         ...baseCallCaptureOpts,
+        // Decision 7 — the LLM summary, never the plain roll-up. §5.4 — it is
+        // background spend, billed to the capturing personality.
+        getSummaryProvider: async () =>
+          usageMeter.meter(llm, 'call_summary', { personalityId, sessionKey }),
         ...(documentsWorkdir
           ? {
               documentsWorkdir,
@@ -676,7 +692,11 @@ export async function buildAgentLoop(
   // -------------------------------------------------------------------------
 
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
-  const llmInjectionClassifier = createLLMClassifier({ llm });
+  // §5.4 — tier-2 classification is in-turn utility spend; core's scope around
+  // the classifier await attributes and charges it.
+  const llmInjectionClassifier = createLLMClassifier({
+    llm: usageMeter.meter(llm, 'injection_classifier'),
+  });
   // plan decision-provider-jev §8.1 — with no `decisions.*` keys the LLM
   // classifier above is used exactly as before, and no provider handle,
   // router or `approverDecision` exists (R7, pinned by
@@ -701,9 +721,11 @@ export async function buildAgentLoop(
         );
         const { createDecisionTierRouter } = await import('./decision-router');
         const { DecisionRecordTracker } = await import('./decision-site');
+        // §5.4 — metered once here, so every site and the `decide` tool record spend (D29).
         const provider = createDecisionProviderHandle({
           decisions,
           secrets: config.secretsResolver,
+          usageMeter,
           ...(opts.observability ? { observability: opts.observability } : {}),
         });
         // R8 — a `shadow` site never waits for the provider, so its recording
@@ -856,7 +878,9 @@ export async function buildAgentLoop(
       hooks,
       privateChats: roomPrivateChats,
       runtime: {
-        llm,
+        // §5.4/D6 — the fork's whole turn runs on an in-memory store, so its
+        // main calls are the background call: metered as `improvement_fork`.
+        llm: usageMeter.meter(llm, 'improvement_fork'),
         memoryProvider: memory,
         sessionStore: session,
         safety,
@@ -1260,7 +1284,10 @@ export async function buildAgentLoop(
   );
 
   const loop = new AgentLoop({
-    llm,
+    // §5.5/D27 — main `llm` never metered (`usage-meter-wiring.test.ts`) except a replay arm
+    // (`usage-no-double-count.test.ts`).
+    llm: opts.replay ? usageMeter.meter(llm, 'learning_replay') : llm,
+    ...(opts.replay ? {} : { usage: { recorder: usageMeter.recorder } }),
     tools,
     session,
     memory,
@@ -1687,7 +1714,8 @@ export async function buildAgentLoop(
     // Command-less acceptance checks are judged by the deployment's LLM,
     // fail-closed and time-bounded (createLLMCheckJudge). Not a Jev site yet:
     // goal-judge is deferred in plan/phases/decision-provider-jev.md §16.
-    judgeCheck: createLLMCheckJudge({ llm }),
+    // §5.4 — metered as `goal_judge`; `GoalRunner.judgeAttempt` opens the goal's usage scope (D10).
+    judgeCheck: createLLMCheckJudge({ llm: usageMeter.meter(llm, 'goal_judge') }),
     // S1 — a goal's `command` acceptance checks run through the same gates
     // and the same execution route as that personality's `terminal`, never a
     // raw host shell (`createAcceptanceCheckExecutor`).
@@ -1794,6 +1822,8 @@ export async function buildAgentLoop(
 
     // Extraction model: dedicated cheap aux model when configured, else reuse
     // the primary provider (open-question 2 — zero-config installs pay primary).
+    // §5.4 — metered as `memory_capture` below; the runner opens a scope per
+    // job (D10) so each row is billed to that job's own session.
     let captureLlm: LLMProvider = llm;
     if (captureConfig.model && captureConfig.model !== config.model) {
       const auxProviderName = captureConfig.provider ?? config.provider;
@@ -1906,12 +1936,13 @@ export async function buildAgentLoop(
       captureHistory,
       { source: 'consolidation' },
     );
+    const consolidationLlm = usageMeter.meter(llm, 'memory_consolidation');
     const consolidate: ConsolidateFn = async ({ ctx }) => {
       const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
       const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
       const result = await consolidateMemory(
         { memory: memBefore, user: userBefore, recentContext: '' },
-        llm,
+        consolidationLlm,
       );
       const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
       if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
@@ -1921,7 +1952,7 @@ export async function buildAgentLoop(
       provider: captureBase,
       history: captureHistory,
       session,
-      llm: captureLlm,
+      llm: usageMeter.meter(captureLlm, 'memory_capture'),
       sanitize,
       logger: log,
       nightlyConfigured,
@@ -1968,6 +1999,7 @@ export async function buildAgentLoop(
 
   return {
     loop,
+    usageMeter,
     dispose: () => disposers.dispose(),
     drain: async () => {
       // Jobs first: a running job can start a goal run, never the reverse

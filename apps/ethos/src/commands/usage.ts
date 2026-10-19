@@ -19,8 +19,18 @@ import {
 export { cacheHitRate };
 
 /** Dimensions `--by` accepts. `tool` and `skill` come from observability.db;
- *  the rest are grouped out of `messages` joined to `sessions`. */
-const DIMENSIONS = ['day', 'model', 'personality', 'channel', 'session', 'tool', 'skill'] as const;
+ *  the rest are grouped out of `messages` joined to `sessions` and the usage
+ *  ledger (`source` is the one that tells a turn from background spend). */
+const DIMENSIONS = [
+  'day',
+  'model',
+  'personality',
+  'channel',
+  'session',
+  'source',
+  'tool',
+  'skill',
+] as const;
 type Dimension = (typeof DIMENSIONS)[number];
 
 function isDimension(v: string): v is Dimension {
@@ -99,15 +109,7 @@ export async function runUsage(argv: string[]): Promise<void> {
     const empty: UsageResult = {
       since: since.toISOString(),
       until: until.toISOString(),
-      totals: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-        estimatedCostUsd: 0,
-        messages: 0,
-        cacheHitRate: 0,
-      },
+      totals: summarizeUsageRows([]),
       daily: [],
       outcomes: { completed: 0, errored: 0, halted: 0, running: 0 },
     };
@@ -180,11 +182,39 @@ export async function runUsage(argv: string[]): Promise<void> {
       }
     }
 
+    // Spend no turn caused (memory capture, consolidation, judges, …) — shown
+    // only when the window has some, so a quiet install reads as before.
+    const background = await backgroundSpend(store, since, until, by);
+    if (background) {
+      console.log(
+        `  Background    ${usd(background.estimatedCostUsd)} (${background.calls} calls)`,
+      );
+    }
+
     if (by) printBreakdown(by);
   } finally {
     obs?.close();
     store.close();
   }
+}
+
+/** `background:*` rows of the `source` breakdown, or undefined when there are none. */
+async function backgroundSpend(
+  store: SQLiteSessionStore,
+  since: Date,
+  until: Date,
+  by: UsageResult['by'],
+): Promise<{ estimatedCostUsd: number; calls: number } | undefined> {
+  const rows =
+    by?.dimension === 'source'
+      ? (by.rows as UsageAggregateRow[])
+      : await store.usageAggregate({ since, until, dimension: 'source' });
+  const background = rows.filter((r) => r.key.startsWith('background:'));
+  if (background.length === 0) return undefined;
+  return {
+    estimatedCostUsd: background.reduce((sum, r) => sum + r.estimatedCostUsd, 0),
+    calls: background.reduce((sum, r) => sum + r.calls, 0),
+  };
 }
 
 function printBreakdown(by: NonNullable<UsageResult['by']>): void {
@@ -210,8 +240,9 @@ function printBreakdown(by: NonNullable<UsageResult['by']>): void {
     return;
   }
   for (const r of by.rows as UsageAggregateRow[]) {
+    const counts = by.dimension === 'source' ? `  (${r.calls} calls | ${r.messages} messages)` : '';
     console.log(
-      `    ${r.key}: ${usd(r.estimatedCostUsd)} (${r.inputTokens.toLocaleString()} in / ${r.outputTokens.toLocaleString()} out)`,
+      `    ${r.key}: ${usd(r.estimatedCostUsd)} (${r.inputTokens.toLocaleString()} in / ${r.outputTokens.toLocaleString()} out)${counts}`,
     );
   }
 }

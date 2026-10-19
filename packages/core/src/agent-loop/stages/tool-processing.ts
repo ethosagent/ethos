@@ -36,6 +36,7 @@ import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
+import type { TurnUsageCharges } from '../usage-charges';
 import {
   advanceDowngrade,
   consultWatcherHalt,
@@ -83,7 +84,7 @@ export interface ToolProcessingDeps {
   resultBudgetChars: number;
   teamId?: string;
   sessionReadMtimes: Map<string, Map<string, { mtimeMs: number; readAtTurn: number }>>;
-  llm: LLMProvider;
+  llm: LLMProvider; // the tools' `ctx.llm` — metered as `tool_llm` under `usage` (§5.2)
 }
 
 export interface ToolProcessingContext {
@@ -118,6 +119,7 @@ export interface ToolProcessingContext {
   /** This run's get/setContext store — one per `AgentLoop.run()` (agent-loop.ts). */
   contextStore: ContextStore;
   decisions?: TurnDecisions; // decision-provider-personality §15.3 — ../turn-decisions
+  charges: TurnUsageCharges; // §5.2 — `TurnSetup.charges`
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
@@ -334,20 +336,20 @@ export async function* processTools(
       continue;
     }
 
-    const beforeDecision = await enforceBeforeToolCall(
-      { hooks: deps.hooks, observability: deps.observability },
-      {
-        sessionId: ctx.sessionId,
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        args: tc.args,
-        allowedPlugins: ctx.allowedPlugins,
-        traceId: ctx.traceId,
-        ...(ctx.voiceOrigin ? { voiceOrigin: ctx.voiceOrigin } : {}),
-        personalityId: ctx.personality.id,
-        denyRules: ctx.personality.safety?.denyRules,
-        ...approverSinkOf(ctx.decisions, ctx.sessionId, tc.toolCallId),
-      },
+    const beforeCall: Parameters<typeof enforceBeforeToolCall>[1] = {
+      sessionId: ctx.sessionId,
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      args: tc.args,
+      allowedPlugins: ctx.allowedPlugins,
+      traceId: ctx.traceId,
+      ...(ctx.voiceOrigin ? { voiceOrigin: ctx.voiceOrigin } : {}),
+      personalityId: ctx.personality.id,
+      denyRules: ctx.personality.safety?.denyRules,
+      ...approverSinkOf(ctx.decisions, ctx.sessionId, tc.toolCallId),
+    };
+    const beforeDecision = await ctx.charges.wrap(() =>
+      enforceBeforeToolCall({ hooks: deps.hooks, observability: deps.observability }, beforeCall),
     );
     // ...or while THIS call's hook was parked: no tool_start for a call that cannot run.
     if (ctx.abortSignal.aborted) {
@@ -474,12 +476,14 @@ export async function* processTools(
   const toolsPromise =
     execInputs.length > 0
       ? runToolsInTaintScope(ctx, () =>
-          deps.tools.executeParallel(
-            execInputs,
-            toolCtx,
-            ctx.allowedTools,
-            ctx.filterOpts,
-            ctx.opts.attachments,
+          ctx.charges.wrap(() =>
+            deps.tools.executeParallel(
+              execInputs,
+              toolCtx,
+              ctx.allowedTools,
+              ctx.filterOpts,
+              ctx.opts.attachments,
+            ),
           ),
         )
       : Promise.resolve([]);
@@ -558,6 +562,7 @@ export async function* processTools(
     }
     if (ctx.traceId) deps.observability?.endTrace(ctx.traceId, 'ok');
     deps.observability?.flush();
+    yield* ctx.charges.drain(); // §5.2 — this batch's utility charges
     yield {
       type: 'done',
       text: answer,
@@ -782,7 +787,7 @@ export async function* processTools(
       if (!frameworkAuthored) {
         const tool = deps.tools.get(p.name);
         if (tool?.outputIsUntrusted) {
-          const verdict = await handleUntrustedResult(
+          const untrusted: Parameters<typeof handleUntrustedResult> = [
             p.name,
             p.args,
             llmContent,
@@ -791,7 +796,8 @@ export async function* processTools(
             deps.safety,
             deps.observability,
             ctx.decisions?.sinkFor(p.toolCallId),
-          );
+          ];
+          const verdict = await ctx.charges.wrap(() => handleUntrustedResult(...untrusted));
           llmContent = verdict.wrappedContent;
           passedInjectionPipeline = true;
           if (verdict.containsInstructions) {
@@ -849,6 +855,8 @@ export async function* processTools(
       is_error: !result.ok,
     });
   }
+
+  yield* ctx.charges.drain(); // §5.2 — utility spend of the batch, its hooks and its classifier
 
   // Ch.3d — decrement the window, re-arm it (and the run taint) on an untrusted read.
   advanceDowngrade(ctx.dgRemaining, ctx.dgEnabled, ctx.dgTurns, untrustedReadThisIteration);

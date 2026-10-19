@@ -2,7 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemorySessionStore } from '@ethosagent/core';
-import { SQLiteSessionStore, summarizeUsageRows } from '@ethosagent/session-sqlite';
+import {
+  SQLiteSessionStore,
+  SQLiteUsageLedger,
+  summarizeUsageRows,
+} from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { SessionStore } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -125,6 +129,71 @@ describe('usage RPC (U3)', () => {
       ops: 2,
       research: 2,
     });
+  });
+
+  it('by: source returns turn and ledger rows; the totals still match the CLI fold (background-usage-accounting §6.2)', async () => {
+    const dbPath = join(dataDir, 'sessions.db');
+    const disk = new SQLiteSessionStore(dbPath);
+    const ledger = new SQLiteUsageLedger(dbPath);
+    try {
+      const s = await disk.createSession({
+        key: 'web:abc',
+        platform: 'web',
+        model: 'm',
+        provider: 'p',
+        usage: { ...usage(0), apiCallCount: 0, compactionCount: 0 },
+      } as never);
+      await disk.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'x',
+        usage: usage(2),
+      });
+      ledger.record({
+        ts: new Date().toISOString(),
+        kind: 'memory_capture',
+        sourceClass: 'background',
+        provider: 'p',
+        model: 'm',
+        inputTokens: 50,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0.25,
+        outcome: 'ok',
+      });
+      const app = await boot(disk);
+      const res = await call(app, { windowMs: 24 * 60 * 60 * 1000, by: 'source' });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        json: {
+          totals: Record<string, number>;
+          by: { dimension: string; rows: Array<{ key: string; calls: number; messages: number }> };
+        };
+      };
+      expect(body.json.by.dimension).toBe('source');
+      const byKey = Object.fromEntries(body.json.by.rows.map((r) => [r.key, r]));
+      expect(byKey.turn).toMatchObject({ messages: 1, calls: 0 });
+      expect(byKey['background:memory_capture']).toMatchObject({ messages: 0, calls: 1 });
+      const cli = summarizeUsageRows(
+        await disk.usageAggregate({
+          since: new Date(0),
+          until: new Date(Date.now() + 60_000),
+          dimension: 'day',
+        }),
+      );
+      expect(body.json.totals).toEqual(cli);
+      expect(body.json.totals.calls).toBe(1);
+    } finally {
+      ledger.close();
+      disk.close();
+    }
+  });
+
+  it('rejects a dimension outside the enum with a 400', async () => {
+    const app = await boot(store);
+    const res = await call(app, { windowMs: 60 * 60 * 1000, by: 'bogus' });
+    expect(res.status).toBe(400);
   });
 
   it('a session store with no aggregation answers zeros, not an error', async () => {

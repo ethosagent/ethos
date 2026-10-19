@@ -36,6 +36,7 @@ import type {
   SecretsResolver,
   SessionStore,
   Storage,
+  UsageGate,
 } from '@ethosagent/types';
 
 export type { WiringContext } from './types';
@@ -70,6 +71,7 @@ import {
   renderMiddleForSummary,
 } from './summarizer-prompt';
 import type { WiringContext } from './types';
+import { createUsageMeter, type UsageMeter } from './usage-meter';
 
 // ---------------------------------------------------------------------------
 // Messaging gateway — send function type re-exported for callers
@@ -786,6 +788,15 @@ export interface CreateAgentLoopOptions {
    */
   resolveOriginUserId?: (sessionKey: string) => string | undefined;
   /**
+   * The bot daily cap's background gate (plan background-usage-accounting
+   * §7.2), consulted by this build's usage meter before every `background`
+   * call (`MeteredProvider`'s `gate`). The gateway hosts pass
+   * `Gateway.backgroundGate`, late-bound; the request's attribution is filled
+   * with this build's `originBotKey` where the call names no bot, so the gate
+   * sees the same bot the ledger row is billed to. Absent → never gated.
+   */
+  backgroundGate?: UsageGate;
+  /**
    * Lane 0 (eng review D16) — force a LIVE served-window probe (bypassing the
    * 15-minute disk cache) and rewrite the cache. Set by the command paths
    * whose numbers the operator tunes against (`ethos doctor`, `ethos bench
@@ -942,6 +953,14 @@ export {
   type ToolPayloadGuardVerdict,
   type ToolSchemaBudgetVerdict,
 } from './static-floor';
+export {
+  type CreateUsageMeterOptions,
+  createUsageMeter,
+  type ExternalUsage,
+  type UsageMeter,
+  type WithUsageMeterOptions,
+  withUsageMeter,
+} from './usage-meter';
 
 // Hard ceiling on a single summarizer call. The summarizer runs on the turn's
 // critical path before the main provider call, so a hung auxiliary provider
@@ -965,7 +984,8 @@ export function buildCompressionSummarizer(
   config: WiringConfig,
   observability: EthosObservability | undefined,
   log: Logger,
-  windowProbe?: WindowProbeContext,
+  windowProbe: WindowProbeContext | undefined,
+  usageMeter: Pick<UsageMeter, 'meter'>,
 ): SummarizerFn {
   const aux = config.auxiliaryCompression;
   const providerName = aux?.provider ?? config.provider;
@@ -1025,7 +1045,7 @@ export function buildCompressionSummarizer(
       lookupProfile(providerName, model),
       config.models?.[`${providerName}/${model}`],
     );
-    cachedProvider = await factory({
+    const provider = await factory({
       config: {
         provider: providerName,
         model,
@@ -1055,6 +1075,8 @@ export function buildCompressionSummarizer(
       secrets: config.secretsResolver ?? NOOP,
       logger: log,
     });
+    // §5.4/U12 — session attribution comes from core's compaction scope (§5.6).
+    cachedProvider = usageMeter.meter(provider, 'compaction');
     return cachedProvider;
   };
 
@@ -1628,6 +1650,15 @@ export { complementExclude } from './tool-scope';
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
   /**
+   * The ONE owner of how a model call outside a turn's own `streamStep` is
+   * recorded (plan background-usage-accounting §5.4, D4): `meter(provider,
+   * kind)` for an `LLMProvider` a host calls itself, `recordExternal` for spend
+   * priced elsewhere. Hosts borrow it and never build a second meter beside a
+   * loop. Owns no handle of its own — the ledger it writes through is closed
+   * with the session store by `dispose()`.
+   */
+  usageMeter: UsageMeter;
+  /**
    * The registry the loop runs on — the CONCRETE `DefaultToolRegistry`, not the
    * narrower `ToolRegistry` contract from `@ethosagent/types`.
    *
@@ -1950,6 +1981,17 @@ async function assembleAgentLoop(
 
   const infra = await buildInfrastructure(wiringCtx, config, opts, disposers);
 
+  // background-usage-accounting §5.4 — the build's ONE usage meter (D4), on the
+  // ledger `buildInfrastructure` opened beside the session store. Built before
+  // the tool and plugin stages because the verifier, the decomposer and the
+  // compression summarizer they assemble are metered too.
+  const usageMeter = createUsageMeter({
+    recorder: infra.sessionCompose.usageLedger,
+    ...(opts.originBotKey ? { defaults: { botKey: opts.originBotKey } } : {}),
+    ...(opts.backgroundGate ? { gate: opts.backgroundGate } : {}),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+
   // -------------------------------------------------------------------------
   // Tool composition: all tool groups, hooks, skills, MCP, design tools,
   // guard hooks, team memory.
@@ -1959,6 +2001,7 @@ async function assembleAgentLoop(
     infra,
     profile,
     disposers,
+    usageMeter,
     // The approval outbox (O-T3/O-T4, plan/phases/trust-before-reach.md).
     // Absent for every surface with no path to a channel — CLI chat, one-shot
     // runs, the desktop app, tests — and `send_message` behaves exactly as it
@@ -1989,12 +2032,19 @@ async function assembleAgentLoop(
     skillPool,
     buildCompressionSummarizer: () =>
       config.auxiliaryCompression?.model
-        ? buildCompressionSummarizer(infra.llmProviders, config, opts.observability, log, {
-            // Lane 5(ii) — cache-first window resolution for the summarizer's
-            // provider; never a forced live probe (not a diagnostic command).
-            storage: wiringCtx.storage,
-            dataDir: wiringCtx.dataDir,
-          })
+        ? buildCompressionSummarizer(
+            infra.llmProviders,
+            config,
+            opts.observability,
+            log,
+            {
+              // Lane 5(ii) — cache-first window resolution for the summarizer's
+              // provider; never a forced live probe (not a diagnostic command).
+              storage: wiringCtx.storage,
+              dataDir: wiringCtx.dataDir,
+            },
+            usageMeter,
+          )
         : undefined,
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
     ...(opts.cliSubcommandRegistry ? { cliSubcommandRegistry: opts.cliSubcommandRegistry } : {}),
@@ -2033,6 +2083,7 @@ async function assembleAgentLoop(
     llm,
     profile,
     disposers,
+    usageMeter,
   });
 }
 

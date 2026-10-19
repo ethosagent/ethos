@@ -358,6 +358,14 @@ export function pruneObservability(
         result.messages = sessDb
           .transaction((): number => {
             subtractPrunedUsage(sessDb, iso);
+            // Ledger rows share the messages window (background-usage-accounting D8).
+            // The table belongs to `SQLiteUsageLedger`; a sessions.db that never opened
+            // one is left without one.
+            const hasLedger =
+              sessDb
+                .prepare(`SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = ?`)
+                .get('usage_ledger') !== undefined;
+            if (hasLedger) sessDb.prepare('DELETE FROM usage_ledger WHERE ts < ?').run(iso);
             return sessDb.prepare('DELETE FROM messages WHERE timestamp < ?').run(iso).changes;
           })
           .immediate();

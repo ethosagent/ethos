@@ -23,6 +23,7 @@ import {
   InMemorySessionStore,
   type PrivateChatSet,
   turnWasShared,
+  withUsageScope,
 } from '@ethosagent/core';
 import type {
   AgentDonePayload,
@@ -214,15 +215,23 @@ export class ImprovementFork {
     //    pins the fork's LLM calls; unset = the provider's own model.
     const model = personality.skill_evolution?.model;
     try {
-      for await (const _event of forkLoop.run(userPrompt, {
-        sessionKey: `improvement-fork-${Date.now()}`,
-        // `shouldFork` admits only a private source session, and a fork of a
-        // private session is private.
-        roomAudience: 'private',
-        ...(model ? { modelOverride: model } : {}),
-      })) {
-        // drain — no streaming
-      }
+      // D10 (plan background-usage-accounting) — the fork's spend is billed to
+      // the turn it analyses, in a scope of its own: the `agent_done` hook
+      // runs in that turn's async context, which must not lend it anything else.
+      await withUsageScope(
+        { attribution: { sessionId: payload.sessionId, personalityId: personality.id } },
+        async () => {
+          for await (const _event of forkLoop.run(userPrompt, {
+            sessionKey: `improvement-fork-${Date.now()}`,
+            // `shouldFork` admits only a private source session, and a fork of a
+            // private session is private.
+            roomAudience: 'private',
+            ...(model ? { modelOverride: model } : {}),
+          })) {
+            // drain — no streaming
+          }
+        },
+      );
     } catch {
       // Fork failures are non-fatal.
     }

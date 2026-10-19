@@ -484,10 +484,12 @@ export async function buildInfrastructure(
   // -------------------------------------------------------------------------
 
   const sessionCompose = composeSession(wiringCtx);
-  // Three connections on sessions.db, all opened here and handed only to this
+  // Four connections on sessions.db, all opened here and handed only to this
   // loop's own components — none is lent to a host beyond the loop's life.
   disposers.push('sessions.db (session store)', () => sessionCompose.sessionStore.close());
   disposers.push('sessions.db (context log)', () => sessionCompose.contextLog.close());
+  // background-usage-accounting §5.4 — the ledger `usageMeter` writes through.
+  disposers.push('sessions.db (usage ledger)', () => sessionCompose.usageLedger.close());
   disposers.push('sessions.db (kv stores)', () => sessionCompose.kvStoreFactory.close());
 
   // -------------------------------------------------------------------------
