@@ -3,6 +3,5 @@
 # required sections, prohibited content, JSON-LD parse, length, orphans).
 # Called by: CI's `docs` job; sandbox Stop hook (future work); local devs.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-source scripts/lib/quiet.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/quiet.sh"
 quiet_run docs pnpm docs:check

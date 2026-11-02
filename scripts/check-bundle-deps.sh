@@ -13,8 +13,7 @@
 # (before publish); local devs via `make bundle-deps`.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-source scripts/lib/quiet.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/quiet.sh"
 
 quiet_run bundle-deps node --input-type=module - <<'EOF'
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';

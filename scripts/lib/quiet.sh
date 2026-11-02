@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# quiet_run <name> <cmd...>: run a check with output captured to .logs/<name>.log.
-# Success prints nothing. Failure prints the tail of the log (filtered by
-# $QUIET_FILTER, an extended regex, when set and matching) plus the log path, and
-# returns the command's exit code. QUIET=0 streams output as before.
-# Logs are relative to the cwd; callers cd to the repo root first.
+# quiet_run <name> <cmd...>: run a check from the repo root with output captured to
+# <repo>/.logs/<name>.log. Success prints nothing. Failure prints the tail of the log (filtered by
+# $QUIET_FILTER, an extended regex, when set and matching) plus the repo-relative log path, and
+# returns the command's exit code. QUIET=0 streams output instead.
+# The repo root comes from this file's own location, so callers may run from any cwd.
 
 quiet_run() {
   local name="$1"
   shift
+  local root
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   if [ "${QUIET:-1}" = "0" ]; then
-    "$@"
+    (cd "$root" && "$@")
     return $?
   fi
-  mkdir -p .logs
-  local log=".logs/${name}.log"
-  : >"$log"
+  mkdir -p "$root/.logs"
+  local log="$root/.logs/${name}.log"
   local code=0
-  "$@" >>"$log" 2>&1 || code=$?
+  (cd "$root" && "$@") >"$log" 2>&1 || code=$?
   if [ "$code" -ne 0 ]; then
     local shown=""
     if [ -n "${QUIET_FILTER:-}" ]; then
@@ -26,7 +27,7 @@ quiet_run() {
       shown="$(tail -n 40 "$log")"
     fi
     printf '%s\n' "$shown"
-    echo "log: $log"
+    echo "log: .logs/${name}.log"
   fi
   return "$code"
 }

@@ -9,57 +9,73 @@
 # Test by piping a payload:
 #   echo '{"tool_name":"Read","tool_input":{"file_path":"/abs/path"}}' | bash scripts/hooks/read-size-guard.sh
 
-HOOK_INPUT="$(cat)" exec node --input-type=module - <<'JS'
-import { execFileSync } from "node:child_process";
+HOOK_INPUT="$(cat)"
+case "$HOOK_INPUT" in *'"offset"'* | *'"limit"'*) exit 0 ;; esac
+export HOOK_INPUT
+
+exec node --input-type=module - <<'JS'
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 
 const MAX_LINES = 400;
 const SKIP_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ipynb"]);
+const CHUNK = 64 * 1024;
 
-function isBinary(path) {
+// Reads in 64KB chunks. Returns the newline count, or MAX_LINES + 1 as soon as the count
+// exceeds MAX_LINES with `full` false; with `full` true it counts the whole file.
+// Returns -1 for a binary file (NUL in the first chunk).
+function countLines(path, full) {
   const fd = openSync(path, "r");
   try {
-    const buf = Buffer.alloc(8192);
-    const n = readSync(fd, buf, 0, buf.length, 0);
-    return buf.subarray(0, n).includes(0);
+    const buf = Buffer.alloc(CHUNK);
+    let lines = 0;
+    for (let first = true; ; first = false) {
+      const n = readSync(fd, buf, 0, CHUNK, null);
+      if (n === 0) return lines;
+      const chunk = buf.subarray(0, n);
+      if (first && chunk.subarray(0, 8192).includes(0)) return -1;
+      for (let i = chunk.indexOf(10); i !== -1; i = chunk.indexOf(10, i + 1)) lines++;
+      if (!full && lines > MAX_LINES) return lines;
+    }
   } finally {
     closeSync(fd);
   }
 }
 
-try {
-  const input = JSON.parse(process.env.HOOK_INPUT || "{}");
-  if (input.tool_name !== "Read") process.exit(0);
-  const args = input.tool_input ?? {};
-  if (args.offset !== undefined || args.limit !== undefined) process.exit(0);
-  const raw = String(args.file_path ?? "");
-  if (raw === "") process.exit(0);
-  if (SKIP_EXTENSIONS.has(extname(raw).toLowerCase())) process.exit(0);
+// Returns the deny reason, or null to allow.
+function check(input) {
+  if (input.tool_name !== "Read") return null;
+  const raw = String(input.tool_input?.file_path ?? "");
+  if (raw === "" || SKIP_EXTENSIONS.has(extname(raw).toLowerCase())) return null;
 
-  const base = process.env.CLAUDE_PROJECT_DIR || (typeof input.cwd === "string" && input.cwd) || process.cwd();
+  const base =
+    process.env.CLAUDE_PROJECT_DIR || (typeof input.cwd === "string" && input.cwd) || process.cwd();
   const root = realpathSync(resolve(base));
   const abs = realpathSync(resolve(isAbsolute(raw) ? raw : join(root, raw)));
   const rel = relative(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) process.exit(0); // outside the repo
-  if (!statSync(abs).isFile()) process.exit(0);
-  if (isBinary(abs)) process.exit(0);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null; // outside the repo
+  const st = statSync(abs);
+  if (!st.isFile() || st.size <= MAX_LINES) return null; // <= 400 bytes has <= 400 lines
 
-  const out = execFileSync("wc", ["-l", abs], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  const lines = Number.parseInt(out.trim().split(/\s+/)[0] ?? "", 10);
-  if (!Number.isFinite(lines) || lines <= MAX_LINES) process.exit(0);
+  if (countLines(abs, false) <= MAX_LINES) return null; // also covers binary (-1)
+  const lines = countLines(abs, true);
+  return `${raw} is ${lines} lines. Read a range (offset/limit), grep for the symbol, or ask a subagent to summarise it.`;
+}
 
-  process.stdout.write(
-    `${JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: `${raw} is ${lines} lines. Read a range (offset/limit), grep for the symbol, or ask a subagent to summarise it.`,
-      },
-    })}\n`,
-  );
+try {
+  const reason = check(JSON.parse(process.env.HOOK_INPUT || "{}"));
+  if (reason) {
+    process.stdout.write(
+      `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      })}\n`,
+    );
+  }
 } catch {
   // fail open: anything unexpected is "no decision"
 }
-process.exit(0);
 JS

@@ -2,19 +2,21 @@
 # Claude Code PreToolUse hook (matcher: Bash): deny a whole-suite `pnpm test` / `pnpm check` and
 # point at the quiet runners, which print failures only and keep full logs under .logs/.
 #
-# The command is split on `&&`, `||`, `;`, `|` and newlines; only a segment that is exactly
-# `pnpm test` or `pnpm check` is denied. `pnpm test <path>`, `pnpm test:integration`,
-# `pnpm typecheck` and `bash scripts/check-tests.sh` pass. It denies instead of rewriting with
-# `updatedInput`, because a rewrite needs `permissionDecision: "allow"`, which would also skip the
-# permission prompt. Any parse error exits 0 with no output.
+# Only a command segment (split on `&&`, `||`, `;`, `|`, newline) that is exactly `pnpm test` or
+# `pnpm check` is denied. It denies instead of rewriting with `updatedInput`, because a rewrite
+# needs `permissionDecision: "allow"`, which would also skip the permission prompt.
+# Fail-open: any parse error exits 0 with no output.
 #
 # Registered in .claude/settings.json (maintainer-applied; see plan/context-budget-1-settings.diff).
 
-HOOK_INPUT="$(cat)" exec node --input-type=module - <<'JS'
+HOOK_INPUT="$(cat)"
+case "$HOOK_INPUT" in *"pnpm test"* | *"pnpm check"*) ;; *) exit 0 ;; esac
+export HOOK_INPUT
+
+exec node --input-type=module - <<'JS'
 try {
   const input = JSON.parse(process.env.HOOK_INPUT || "{}");
-  if (input.tool_name !== "Bash") process.exit(0);
-  const command = String(input.tool_input?.command ?? "");
+  const command = input.tool_name === "Bash" ? String(input.tool_input?.command ?? "") : "";
   const hit = command.split(/&&|\|\||;|\||\n/).some((s) => /^\s*pnpm (test|check)\s*$/.test(s));
   if (hit) {
     process.stdout.write(
@@ -31,5 +33,4 @@ try {
 } catch {
   // fail open
 }
-process.exit(0);
 JS
