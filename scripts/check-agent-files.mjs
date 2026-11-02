@@ -124,17 +124,19 @@ function checkSkillDesc(fm, rel) {
   if (problems.length > 0) flag('skill-desc', rel, `description ${problems.join(', ')}`);
 }
 
+const claudeFiles = () => (existsSync(join(root, CLAUDE)) ? [CLAUDE] : []);
+
 // Size rules as data: add a row to add a rule. `files` finds paths, `measure` sizes the text.
 const LIMITS = {
   'claude-lines': {
-    files: () => (existsSync(join(root, CLAUDE)) ? [CLAUDE] : []),
+    files: claudeFiles,
     measure: lines,
     max: 150,
     unit: 'lines',
   },
   // 2.5K tokens at chars/4
   'claude-tokens': {
-    files: () => (existsSync(join(root, CLAUDE)) ? [CLAUDE] : []),
+    files: claudeFiles,
     measure: chars,
     max: 10_000,
     unit: 'chars',

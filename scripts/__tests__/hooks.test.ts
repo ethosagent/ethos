@@ -104,13 +104,17 @@ describe('quiet-checks', () => {
     const out = JSON.parse(run('quiet-checks.sh', bash('pnpm test && pnpm lint')).stdout);
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
   });
-  it.each(['pnpm run test', 'pnpm  test', 'pnpm -w test', 'pnpm -w check', 'pnpm run check'])(
-    'denies %s',
-    (cmd) => {
-      const out = JSON.parse(run('quiet-checks.sh', bash(cmd)).stdout);
-      expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
-    },
-  );
+  it.each([
+    'pnpm run test',
+    'pnpm  test',
+    'pnpm -w test',
+    'pnpm --workspace-root test',
+    'pnpm -w check',
+    'pnpm run check',
+  ])('denies %s', (cmd) => {
+    const out = JSON.parse(run('quiet-checks.sh', bash(cmd)).stdout);
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
+  });
   it.each([
     'pnpm test extensions/gateway',
     'pnpm test:integration',
