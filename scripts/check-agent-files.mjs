@@ -15,8 +15,6 @@ const noAllowances = args.includes('--no-allowances');
 const ALLOWANCES = noAllowances
   ? new Set()
   : new Set([
-      'claude-lines', // removed by context-budget-1 T3
-      'claude-tokens', // removed by context-budget-1 T3
       'skill-lines', // removed by context-budget-1 T7
       'skill-desc', // removed by context-budget-1 T7
     ]);

@@ -116,9 +116,8 @@ describe('check-agent-files', () => {
   });
 
   it('allowances downgrade', () => {
-    const c = lines(151);
-    const r = run(fixture({ ...clean(), ...twinned(c) }), true);
+    const r = run(fixture({ ...clean(), '.agents/skills/demo/SKILL.md': skill(301, 'ok') }), true);
     expect(r.status).toBe(0);
-    expect(r.stderr).toContain('(allowed) claude-lines');
+    expect(r.stderr).toContain('(allowed) skill-lines');
   });
 });
