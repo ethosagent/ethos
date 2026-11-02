@@ -1,12 +1,6 @@
 ---
 name: schema-validator
-description: |
-  Validate code changes against the project's frozen data contracts (packages/types/).
-  Catches breaking changes to PersonalityConfig, AgentEvent, ContextEngine, Storage,
-  the plugin contract, and the rest of the schema-frozen interfaces — early, before
-  the full test suite. Use when touching anything under packages/types/, adding a
-  field to a frozen schema, or changing a contract interface. Returns
-  {touched_schemas: [...], gate_tests: {passed, failed, details}}. Read-only.
+description: Validate changes against frozen contracts in packages/types/ (PersonalityConfig, AgentEvent, ContextEngine, Storage, plugin contract). Use when touching packages/types/, adding a field to a frozen schema, or changing a contract interface. Read-only.
 allowed-tools: Bash(schema-validate *), Bash(*/schema-validate *), Bash(pnpm test*), Bash(git diff*)
 ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Gate for the always-loaded agent context: CLAUDE.md / AGENTS.md twin and size, path-scoped
 // .claude/rules/ files, and .agents/skills/ size. Usage: node scripts/check-agent-files.mjs
-// [--root <dir>] [--no-allowances]. Exit 0 clean, 1 on violations (stderr, one per line).
+// [--root <dir>]. Exit 0 clean, 1 on violations (stderr, one per line).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -9,15 +9,6 @@ import { parse } from 'yaml';
 const args = process.argv.slice(2);
 const rootIdx = args.indexOf('--root');
 const root = rootIdx >= 0 ? (args[rootIdx + 1] ?? '.') : '.';
-const noAllowances = args.includes('--no-allowances');
-
-// Rules downgraded to a warning until the task that fixes them lands.
-const ALLOWANCES = noAllowances
-  ? new Set()
-  : new Set([
-      'skill-lines', // removed by context-budget-1 T7
-      'skill-desc', // removed by context-budget-1 T7
-    ]);
 
 const MAX_SKILL_DESC = 250;
 const CLAUDE = 'CLAUDE.md';
@@ -172,14 +163,6 @@ violations.sort(
   (a, b) => area(a.path) - area(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
 );
 
-let failed = 0;
-for (const v of violations) {
-  if (ALLOWANCES.has(v.rule)) {
-    console.error(`AGENT-FILES (allowed) ${v.rule} ${v.path}: ${v.detail}`);
-  } else {
-    failed++;
-    console.error(`AGENT-FILES ${v.rule} ${v.path}: ${v.detail}`);
-  }
-}
-if (failed > 0) process.exit(1);
+for (const v of violations) console.error(`AGENT-FILES ${v.rule} ${v.path}: ${v.detail}`);
+if (violations.length > 0) process.exit(1);
 console.log(`agent-files: ${cache.size} files checked`);

@@ -1,6 +1,6 @@
 ---
 name: session-audit
-description: Analyze the current Claude Code session transcript for execution failures, classify each error type, and suggest concrete CLAUDE.md rules or settings.json hooks to surface them clearly on every future run. Use when asked to "audit this session", "what failed", "analyze errors", or "what went wrong".
+description: Analyze the current Claude Code session transcript for execution failures, classify errors, and suggest CLAUDE.md rules or settings.json hooks. Use on "audit this session", "what failed", "analyze errors", "what went wrong".
 allowed-tools: Bash
 ---
 

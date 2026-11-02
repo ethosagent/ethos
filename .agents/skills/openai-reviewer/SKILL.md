@@ -1,6 +1,6 @@
 ---
 name: openai-reviewer
-description: Run OpenAI Codex CLI as the project's code reviewer. Code is written by Claude and reviewed by Codex — never review your own code. Invoke for ALL review requests in this project ("review", "check it", "look it over", "code review") and any time non-trivial code has been written. The Stop hook also calls this automatically.
+description: Run OpenAI Codex CLI as the code reviewer; Claude writes, Codex reviews, never self-review. Invoke for ALL review requests ("review", "check it", "look it over", "code review") and after any non-trivial code. The Stop hook also calls it.
 allowed-tools: Bash(openai-review *), Bash(*/openai-review *)
 ---
 

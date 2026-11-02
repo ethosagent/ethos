@@ -22,10 +22,8 @@ function fixture(files: Record<string, string>): string {
   return dir;
 }
 
-function run(dir: string, allowances = false) {
-  const args = [SCRIPT, '--root', dir];
-  if (!allowances) args.push('--no-allowances');
-  const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
+function run(dir: string) {
+  const r = spawnSync(process.execPath, [SCRIPT, '--root', dir], { encoding: 'utf8' });
   return { status: r.status, stderr: r.stderr, stdout: r.stdout };
 }
 
@@ -115,9 +113,9 @@ describe('check-agent-files', () => {
     );
   });
 
-  it('allowances downgrade', () => {
-    const r = run(fixture({ ...clean(), '.agents/skills/demo/SKILL.md': skill(301, 'ok') }), true);
-    expect(r.status).toBe(0);
-    expect(r.stderr).toContain('(allowed) skill-lines');
+  it('has no allowances: an over-limit skill fails and nothing is marked (allowed)', () => {
+    const r = run(fixture({ ...clean(), '.agents/skills/demo/SKILL.md': skill(301, 'ok') }));
+    expect(r.status).toBe(1);
+    expect(r.stderr).not.toContain('(allowed)');
   });
 });

@@ -1,13 +1,6 @@
 ---
 name: test-validator
-description: |
-  Run the project's test suite and return failures as agent-readable JSON. Use after
-  writing or modifying code, before declaring done, or when the user says "run tests",
-  "check tests", "did anything break". Wraps `pnpm test --reporter=json` — much faster
-  for an agent to parse than scrolling colored console output. Returns
-  {passed, failed, duration_ms, failures: [{file, test, line, error}]}.
-  NOT a replacement for `pnpm check` (typecheck + lint + test) — use that as the
-  full pre-ship gate. This skill is targeted: just the test outcomes.
+description: Run the test suite and return failures as agent-readable JSON. Use after modifying code, before declaring done, or on "run tests", "check tests", "did anything break". Not a replacement for `pnpm check`.
 allowed-tools: Bash(test-validate *), Bash(*/test-validate *), Bash(pnpm test*), Bash(pnpm vitest*)
 ---
 

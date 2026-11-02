@@ -1,11 +1,6 @@
 ---
 name: dependency-analyzer
-description: |
-  Detect new imports introduced by uncommitted changes and flag unintended cross-layer
-  coupling. Per ARCHITECTURE.md the layer model is types ← core ← extensions ← apps —
-  imports must only flow toward types. Use when adding any cross-package import, before
-  invoking /openai-reviewer, or when the user asks "what does this depend on" or
-  "did I introduce coupling". Returns {new_imports: [...], violations: [...]}. Read-only.
+description: Detect new imports in uncommitted changes and flag cross-layer coupling (types ← core ← extensions ← apps). Use when adding a cross-package import, before /openai-reviewer, or on "what does this depend on" / "did I introduce coupling". Read-only.
 allowed-tools: Bash(dep-analyze *), Bash(*/dep-analyze *), Bash(git diff*), Bash(rg*)
 ---
 

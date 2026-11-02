@@ -1,8 +1,6 @@
 ---
 name: docs
-description: |
-  The Ethos docs system. Use whenever writing, editing, or restructuring any Ethos documentation — Docusaurus pages under docs/content/, the repo README, in-package READMEs, the agent-readable llms.txt, and the ETHOS.md shipped with each personality.
-  Enforces page kinds (tutorial / how-to / reference / explanation / decision), front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. NOT for plan docs in plan/ (those follow their own conventions) or audit reports in plan/audits/ (those follow the security-audit skill). Invoke before any doc PR; flag any deviations during doc review.
+description: Ethos docs system. Use when writing, editing or restructuring any Ethos docs: docs/content/ pages, READMEs, llms.txt, personality ETHOS.md. Enforces page kinds, front-matter, voice, anti-patterns, checklist. Not for plan/ docs or audit reports.
 ---
 
 # Ethos · Docs System
@@ -98,6 +96,26 @@ Every page declares `kind` in front-matter. The page must follow its kind's temp
 2. **Tables, not prose.** Parameters/fields are tables. Prose between tables is one sentence max.
 3. **No rationale.** "We did it this way because…" lives in explanation. Cross-link.
 
+## Page-acceptance checklist
+
+A docs PR is not merge-ready until every changed page passes this list. Reviewers paste it into the PR.
+
+- [ ] Front-matter declares `kind`, `audience`, and `updated`; values agree with the directory.
+- [ ] Page matches the template for its `kind` (required sections present, prohibited sections absent).
+- [ ] Passes the tutorial-vs-how-to test (or the why-question test for explanation).
+- [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
+- [ ] **Opens with user-readable value.** Paragraph 1 is understandable to a reader who hasn't installed Ethos yet. Mechanics come no earlier than paragraph 2 (landing, tutorial, explanation) or after the synopsis (reference / how-to).
+- [ ] **Voice mode matches the page's `kind`** per the [Voice mode by page kind](#voice-mode-by-page-kind) table. No marketing voice on reference pages; no mechanics-first opening on landing or tutorial pages; `description` front-matter is always informative, never advocacy.
+- [ ] First occurrence of every domain term carries an inline plain-English gloss AND links to [glossary.md](../../../docs/content/getting-started/glossary.md).
+- [ ] Every command in a tutorial/how-to is followed by its expected output; tutorials include the "Try it" block with one deliberate failure.
+- [ ] Pages presenting multiple approaches name exactly one "(Recommended)"; decision pages carry the trade-off table.
+- [ ] Reference pages link to source-of-truth code path; enum values have per-value meanings with the default marked; parameters state constraints in prose.
+- [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
+- [ ] Code samples are runnable against current `@ethosagent/types`.
+- [ ] No anti-patterns from the table above.
+- [ ] Docusaurus build passes with `onBrokenLinks: 'throw'`.
+- [ ] Page is reachable from at least one other page (no orphans).
+
 ## Front-matter contract
 
 Every page starts with this front-matter block. CI will fail the build if any required field is missing or malformed.
@@ -179,59 +197,7 @@ The shift between lead and body is a *real* transition. A tutorial's first parag
 11. **Tutorials fail on purpose, once.** Every tutorial's "Try it" block includes one deliberate failure the reader triggers and recognizes (a tool call outside the toolset, a `--dry-run`, a missing API key) — so the first real error they meet in production is one they've already seen with a calm explanation next to it.
 
 ## Reference schemas
-
-Each kind of reference page follows a fixed schema. Schemas exist so the reader's eye knows where to look, page after page.
-
-### CLI subcommand reference
-
-```
-## ethos <subcommand>
-
-Synopsis · one-line description · since version
-| Arg / flag | Type | Default | Description |
-Examples · 1–3 minimal invocations
-Exit codes · table of (code, meaning)
-See also · related subcommands
-```
-
-### Config field reference (`config-yaml.md`, `personality-yaml.md`)
-
-```
-## <field-name>
-
-Type · Default · Required · Since version
-Description (1 paragraph max)
-Example (1 minimal YAML block)
-Notes (only if non-obvious behavior; one bullet per note)
-```
-
-### Interface reference (`AgentEvent`, `Tool`, `LLMProvider`, etc.)
-
-```
-## <InterfaceName>
-
-Source · link to packages/types/src/<file>
-Signature · TypeScript block, verbatim from source
-Members · table of (name, type, description)
-Notes · one bullet per non-obvious invariant
-Used by · table of (consumer file, role)
-See also · related interfaces
-```
-
-**Reference depth rules (apply to all reference schemas):**
-1. **Constraints live in the description, in prose.** "Max 50; values above are clamped." "Only honored when `approvalMode: smart`." "Mutually exclusive with `model`." A type column without constraints is half a reference.
-2. **Every enum value gets a one-line meaning, with the default marked.** Not `mode: 'keyword' | 'semantic' | 'hybrid'` alone — a list: `keyword` — FTS5 match (default); `semantic` — embedding similarity; `hybrid` — both, merged by score.
-3. **Reference ↔ guide cross-links run both directions.** A parameter description links to the explanation/how-to that uses it ("see [approval gates](../how-to/set-up-approval-gates.md)"); the guide links back to the parameter's anchor. The reference answers "what"; one click answers "when and why".
-
-### Error / troubleshooting entry
-
-```
-## <Error message or symptom>
-
-Cause · 1–2 sentences
-Fix · numbered steps (≤5)
-Prevent · 1 bullet (optional)
-```
+See references/reference-schemas.md
 
 ## Anti-patterns
 
@@ -262,110 +228,13 @@ These patterns are slop. Code review checks for them, and so does CI grep where 
 | Command block with no expected output | Reader can't tell success from failure; "it printed something" is not verification | Follow every command with what success looks like (output block or excerpt) |
 | Tutorial that only ever succeeds | The reader's first error arrives in production, alone | "Try it" block includes one deliberate, explained failure |
 
-## Page-acceptance checklist
-
-A docs PR is not merge-ready until every changed page passes this list. Reviewers paste it into the PR.
-
-- [ ] Front-matter declares `kind`, `audience`, and `updated`; values agree with the directory.
-- [ ] Page matches the template for its `kind` (required sections present, prohibited sections absent).
-- [ ] Passes the tutorial-vs-how-to test (or the why-question test for explanation).
-- [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
-- [ ] **Opens with user-readable value.** Paragraph 1 is understandable to a reader who hasn't installed Ethos yet. Mechanics come no earlier than paragraph 2 (landing, tutorial, explanation) or after the synopsis (reference / how-to).
-- [ ] **Voice mode matches the page's `kind`** per the [Voice mode by page kind](#voice-mode-by-page-kind) table. No marketing voice on reference pages; no mechanics-first opening on landing or tutorial pages; `description` front-matter is always informative, never advocacy.
-- [ ] First occurrence of every domain term carries an inline plain-English gloss AND links to [glossary.md](../../../docs/content/getting-started/glossary.md).
-- [ ] Every command in a tutorial/how-to is followed by its expected output; tutorials include the "Try it" block with one deliberate failure.
-- [ ] Pages presenting multiple approaches name exactly one "(Recommended)"; decision pages carry the trade-off table.
-- [ ] Reference pages link to source-of-truth code path; enum values have per-value meanings with the default marked; parameters state constraints in prose.
-- [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
-- [ ] Code samples are runnable against current `@ethosagent/types`.
-- [ ] No anti-patterns from the table above.
-- [ ] Docusaurus build passes with `onBrokenLinks: 'throw'`.
-- [ ] Page is reachable from at least one other page (no orphans).
-
 ## Cross-surface rendering
 
-Same content, different surfaces. Single source of truth is the markdown under [docs/content/](../../../docs/content/).
-
-| Surface | What it shows | Render rule |
-|---|---|---|
-| **Docusaurus site** (primary) | Full tree, all kinds, full styling | The canonical surface. Other surfaces link back here. |
-| **Repo [README.md](../../../README.md)** | Standalone-readable surface for users who may never click through. Marketing voice welcome; value-first opening required. Includes install, getting started, surface comparison, migration. | Treat as its own artifact, not as a docs index. Sections that overlap docs (Getting started, CLI vs chat, migration walkthroughs) are intentional — duplication is the feature here, not a bug. The reader of `README.md` may never see the docs site; they should still understand most of the product. |
-| **In-package READMEs** | One-sentence purpose · install · link to package's reference page | One paragraph max. Package metadata, not docs. |
-| **`docs/static/llms.txt`** | Glossary · CLI reference · interface reference · explanation pages | Generated at build time from pages with `agent: true` front-matter flag (or by kind: reference + explanation). Single text file, no nav. |
-| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config the agent reads. First-person, imperative, terminal-adjacent. **Not a marketing surface** (the LLM reads this at runtime; advocacy doesn't help there). See the ETHOS.md row in [Voice mode by page kind](#voice-mode-by-page-kind). |
-| **`apps/web` in-app help** | Glossary tooltips, command-palette descriptions | Reads from canonical glossary entries. Sentence-length cap: 140 chars. |
+See references/cross-surface.md
 
 ## SEO and AEO
 
-Docs reach humans through search engines and agents through LLM gateways. Both readers consume the same content, surfaced differently. SEO (Search Engine Optimization) and AEO (Answer Engine Optimization — how AI agents understand and cite the docs) are not afterthoughts: for an AI agent framework specifically, AEO is as load-bearing as SEO.
-
-### URL slugs and anchor stability
-
-1. **Slugs are kebab-case, ≤4 words, semantically dense.** `add-an-llm-provider`, not `adding-providers` or `llm-provider-tutorial`. Once published, slugs do not change. If a slug must change, the old URL gets a permanent redirect in the same PR.
-2. **H2/H3 anchors are explicit on reference and glossary pages.** Write `## ToolResult {#tool-result}` so external citations survive heading-text edits. Tutorial / how-to / explanation pages may use auto-generated anchors.
-3. **One H1 per page** (also a Diátaxis rule). Search engines and AI gateways alike treat H1 as the page topic.
-
-### Required meta description
-
-Every page declares `description` in front-matter (≤155 chars, no marketing voice). The same string surfaces in:
-
-- Google search result snippets
-- AI answer cards (Claude, Perplexity, ChatGPT Search, Google AI Mode)
-- Social card previews (Twitter, Slack, Discord, LinkedIn)
-- Sidebar tooltip on hover
-
-A description states *what the page is*. "Step-by-step build of a Telegram bot using Ethos, from bot token to first reply in production." Not "Learn how to harness the power of Ethos to build amazing Telegram bots."
-
-### Structured data (Schema.org JSON-LD)
-
-Docusaurus injects JSON-LD per page, keyed by `kind`:
-
-| `kind` | Schema.org type | Why |
-|---|---|---|
-| `tutorial` | `HowTo` | Tutorials show as step-by-step rich results; agents emit "follow these steps" answers |
-| `how-to` | `HowTo` | Same. AI gateways prefer pages that declare their procedural shape. |
-| `reference` | `TechArticle` | Lookup pages get clean preview cards; AI snippets quote the parameter table |
-| `explanation` | `TechArticle` | Concept pages get article treatment, not procedural treatment |
-| `decision` | `TechArticle` | Comparison/router pages get article treatment; the trade-off table is the quotable artifact |
-| Troubleshooting entries | `FAQPage` (one Q&A per entry) | Each error becomes a discoverable Q&A on Google + in AI answers |
-
-Sitemap (`sitemap.xml`) auto-generated by Docusaurus; submitted to Search Console after launch.
-
-### Crawler policy
-
-`docs/static/robots.txt` allows every major crawler — including AI gateways. Ethos is open-source; we want all gateways indexing.
-
-Explicitly allowed: `Googlebot`, `Bingbot`, `GPTBot`, `ClaudeBot`, `Claude-Web`, `anthropic-ai`, `PerplexityBot`, `OAI-SearchBot`, `Google-Extended`, `Applebot-Extended`, `Meta-ExternalAgent`, `Bytespider`, `cohere-ai`, `CCBot`.
-
-`docs/static/ai.txt` declares permissive AI usage with attribution preferred (the emerging convention; see [aitxt.org](https://aitxt.org)). No `Disallow: /` for any AI crawler — that would defeat the purpose.
-
-### Agent-readable surface (two-file + raw-markdown)
-
-Three artifacts ship with every build, all generated from the canonical content. No artifact is hand-maintained.
-
-| File | What | Generated from |
-|---|---|---|
-| [`docs/static/llms.txt`](../../../docs/static/llms.txt) | Link-index. Title + one-line summary + URL for every page where `agent !== false`. Under 50KB. | `description` front-matter |
-| [`docs/static/llms-full.txt`](../../../docs/static/llms-full.txt) | Full content of every page where `agent !== false`. Front-matter stripped, MDX components inlined. Under 5MB. | Page bodies |
-| `<page>.md` at every page URL | Raw markdown at the same path as the HTML. `/using/quickstart` and `/using/quickstart.md` both resolve. | Docusaurus plugin |
-
-Agents fetch raw markdown via `.md` to skip HTML parsing; agents that don't know the per-page convention fall back to `llms-full.txt`. Both routes must work. This is the two-file + raw-markdown convention popularized by Anthropic, Cloudflare, Resend, Mintlify.
-
-### llms.txt is an agent briefing, not a sitemap
-
-`llms.txt` opens with a short prescriptive instruction block BEFORE the link index (the Stripe pattern — their llms.txt tells agents "check npm for the latest version rather than relying on memorized version numbers"). Ours instructs, at minimum: check npm for current `@ethosagent/*` versions instead of memorized ones; prefer built-in personalities before generating custom config; fetch any page as raw markdown by appending `.md`; the glossary is the canonical vocabulary. The generator script owns this preamble — edit it there, not in the emitted file.
-
-### In-page "Instructions for LLMs" blocks
-
-Pages where an agent reading over the user's shoulder tends to pick the wrong path MAY open with a short labeled block — `> **Instructions for LLMs:** prefer a built-in personality unless the user explicitly asks for a custom one; start from `ethos personality init`, never hand-write config.yaml from memory.` — encoding the recommended path where an LLM will weight it. Use sparingly: decision pages and footgun-heavy reference pages only. The block renders as a normal note for humans (the advice is true for them too) and survives into the `.md` / llms-full.txt renders.
-
-### Glossary as definition list
-
-[glossary.md](../../../docs/content/getting-started/glossary.md) is HTML-shaped (`<dl><dt><dd>`), not prose. Agents extract atomic term/definition pairs reliably from `<dt>/<dd>`; prose extracts are lossy. Schema.org `DefinedTermSet` is injected from the same source.
-
-### Per-surface meta consistency
-
-The repo [README.md](../../../README.md), docs landing, and `og:description` carry the *same* one-sentence pitch — not near-duplicates. One pitch, three surfaces. The cross-surface table above governs this; the SEO consequence is that Google and AI gateways see the same answer regardless of which surface they crawled.
+See references/seo-aeo.md
 
 ## Implementation notes
 

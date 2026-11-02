@@ -1,8 +1,6 @@
 ---
 name: security-audit
-description: |
-  Subsystem-scoped security audit of the Ethos codebase. Use when asked to "audit the gateway", "review the trust boundaries of X", "security review of subsystem Y", "check personality isolation", "audit the skill loader", "audit the channel adapter", or any focused security-posture question against a named subsystem. NOT for per-PR diff review (that's a different motion). NOT for "audit Ethos" without a subsystem named — split the audit before starting. Produces an evidence-led report at plan/audits <subsystem>-audit-YYYY-MM-DD.{html,md}. Read-only — never edits the codebase during the audit. Does not commit; the user decides what to do with
-  findings.
+description: Subsystem-scoped security audit. Use on "audit the gateway", "review trust boundaries of X", "check personality isolation", "audit the skill loader" or any named subsystem. Not per-PR review, not whole-repo. Writes plan/audits/ report; read-only.
 ---
 
 # Security Audit Workflow — Ethos Codebase
