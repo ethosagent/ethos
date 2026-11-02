@@ -72,6 +72,18 @@ describe('read-size-guard', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
+  it('allows a binary file with a NUL after the first 8 KiB', () => {
+    const f = join(dir, 'bin.dat');
+    writeFileSync(
+      f,
+      Buffer.concat([
+        Buffer.from('a'.repeat(9 * 1024)),
+        Buffer.from('\n'.repeat(401)),
+        Buffer.from([0]),
+      ]),
+    );
+    expectAllow('read-size-guard.sh', read(f));
+  });
   it('allows a 400-line file', () => {
     const f = join(dir, 'ok.ts');
     writeFileSync(f, 'x\n'.repeat(400));
@@ -92,12 +104,22 @@ describe('quiet-checks', () => {
     const out = JSON.parse(run('quiet-checks.sh', bash('pnpm test && pnpm lint')).stdout);
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
   });
-  it.each(['pnpm test extensions/gateway', 'pnpm test:integration', 'bash scripts/check-tests.sh'])(
-    'allows %s',
+  it.each(['pnpm run test', 'pnpm  test', 'pnpm -w test', 'pnpm -w check', 'pnpm run check'])(
+    'denies %s',
     (cmd) => {
-      expectAllow('quiet-checks.sh', bash(cmd));
+      const out = JSON.parse(run('quiet-checks.sh', bash(cmd)).stdout);
+      expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
     },
   );
+  it.each([
+    'pnpm test extensions/gateway',
+    'pnpm test:integration',
+    'pnpm run test:integration',
+    'pnpm typecheck',
+    'bash scripts/check-tests.sh',
+  ])('allows %s', (cmd) => {
+    expectAllow('quiet-checks.sh', bash(cmd));
+  });
 });
 
 describe('session-compact', () => {

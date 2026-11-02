@@ -226,6 +226,7 @@
     "apps/*/src/**/*",
     "plugins/*/src/**/*",
     "plugins/*/test/**/*",
+    "scripts/__tests__/**/*",
     "vitest.config.ts"
   ],
   "exclude": [

@@ -3,21 +3,21 @@
 # point at the quiet runners, which print failures only and keep full logs under .logs/.
 #
 # Only a command segment (split on `&&`, `||`, `;`, `|`, newline) that is exactly `pnpm test` or
-# `pnpm check` is denied. It denies instead of rewriting with `updatedInput`, because a rewrite
+# `pnpm check` (also `pnpm run test`, `pnpm -w test`, extra spaces) is denied. It denies instead of rewriting with `updatedInput`, because a rewrite
 # needs `permissionDecision: "allow"`, which would also skip the permission prompt.
 # Fail-open: any parse error exits 0 with no output.
 #
 # Registered in .claude/settings.json (maintainer-applied; see plan/context-budget-1-settings.diff).
 
 HOOK_INPUT="$(cat)"
-case "$HOOK_INPUT" in *"pnpm test"* | *"pnpm check"*) ;; *) exit 0 ;; esac
+case "$HOOK_INPUT" in *pnpm*test* | *pnpm*check*) ;; *) exit 0 ;; esac
 export HOOK_INPUT
 
 exec node --input-type=module - <<'JS'
 try {
   const input = JSON.parse(process.env.HOOK_INPUT || "{}");
   const command = input.tool_name === "Bash" ? String(input.tool_input?.command ?? "") : "";
-  const hit = command.split(/&&|\|\||;|\||\n/).some((s) => /^\s*pnpm (test|check)\s*$/.test(s));
+  const hit = command.split(/&&|\|\||;|\||\n/).some((s) => /^\s*pnpm(\s+(run|-w|--workspace-root))*\s+(test|check)\s*$/.test(s));
   if (hit) {
     process.stdout.write(
       `${JSON.stringify({

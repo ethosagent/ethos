@@ -77,6 +77,20 @@ describe('check-agent-files', () => {
     expect(r.status).toBe(0);
   });
 
+  it('missing AGENTS.md fails twin', () => {
+    const { 'AGENTS.md': _agents, ...files } = clean();
+    expectFail(files, 'AGENT-FILES twin AGENTS.md');
+  });
+
+  it('dangling CLAUDE.md symlink fails twin', () => {
+    const { 'CLAUDE.md': _claude, 'AGENTS.md': _agents, ...files } = clean();
+    const dir = fixture(files);
+    symlinkSync('AGENTS.md', join(dir, 'CLAUDE.md'));
+    const r = run(dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('AGENT-FILES twin CLAUDE.md');
+  });
+
   it('151-line CLAUDE.md fails', () => {
     const c = lines(151);
     expectFail({ ...clean(), ...twinned(c) }, 'claude-lines');

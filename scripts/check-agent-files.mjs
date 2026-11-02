@@ -65,7 +65,6 @@ function parseFm(text) {
 const unparseable = (fm) => `frontmatter does not parse as YAML: ${fm.error}`;
 
 const isMd = (name) => name.endsWith('.md');
-const hasTwin = () => existsSync(join(root, CLAUDE)) && existsSync(join(root, AGENTS));
 const ruleFiles = () => walk(RULES_DIR, isMd);
 const skillDirs = () =>
   existsSync(join(root, SKILLS_DIR))
@@ -82,8 +81,13 @@ const skillRefs = () => skillDirs().flatMap((d) => walk(join(d, 'references'), i
 const lines = (text) => lineCount(text);
 const chars = (text) => text.length;
 
+// existsSync is false for a dangling symlink, so a CLAUDE.md whose target is gone counts as missing.
 function checkTwin() {
-  if (!hasTwin()) return;
+  const missing = [CLAUDE, AGENTS].filter((f) => !existsSync(join(root, f)));
+  for (const f of missing) {
+    flag('twin', f, 'missing; CLAUDE.md and AGENTS.md must both exist and be byte-identical');
+  }
+  if (missing.length > 0) return;
   const claude = read(CLAUDE);
   const agents = read(AGENTS);
   if (claude.equals(agents)) return;
@@ -123,14 +127,14 @@ function checkSkillDesc(fm, rel) {
 // Size rules as data: add a row to add a rule. `files` finds paths, `measure` sizes the text.
 const LIMITS = {
   'claude-lines': {
-    files: () => (hasTwin() ? [CLAUDE] : []),
+    files: () => (existsSync(join(root, CLAUDE)) ? [CLAUDE] : []),
     measure: lines,
     max: 150,
     unit: 'lines',
   },
   // 2.5K tokens at chars/4
   'claude-tokens': {
-    files: () => (hasTwin() ? [CLAUDE] : []),
+    files: () => (existsSync(join(root, CLAUDE)) ? [CLAUDE] : []),
     measure: chars,
     max: 10_000,
     unit: 'chars',

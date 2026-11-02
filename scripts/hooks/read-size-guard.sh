@@ -23,17 +23,17 @@ const CHUNK = 64 * 1024;
 
 // Reads in 64KB chunks. Returns the newline count, or MAX_LINES + 1 as soon as the count
 // exceeds MAX_LINES with `full` false; with `full` true it counts the whole file.
-// Returns -1 for a binary file (NUL in the first chunk).
+// Returns -1 for a binary file (NUL in any chunk read).
 function countLines(path, full) {
   const fd = openSync(path, "r");
   try {
     const buf = Buffer.alloc(CHUNK);
     let lines = 0;
-    for (let first = true; ; first = false) {
+    for (;;) {
       const n = readSync(fd, buf, 0, CHUNK, null);
       if (n === 0) return lines;
       const chunk = buf.subarray(0, n);
-      if (first && chunk.subarray(0, 8192).includes(0)) return -1;
+      if (chunk.includes(0)) return -1;
       for (let i = chunk.indexOf(10); i !== -1; i = chunk.indexOf(10, i + 1)) lines++;
       if (!full && lines > MAX_LINES) return lines;
     }
