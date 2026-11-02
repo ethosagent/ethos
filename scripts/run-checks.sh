@@ -31,6 +31,7 @@ run_check typecheck    check-typecheck.sh    1
 run_check tests        check-tests.sh        1
 run_check version-sync check-version-sync.sh 1
 run_check bundle-deps  check-bundle-deps.sh  1
+run_check agent-files check-agent-files.sh 1
 run_check lint         check-lint.sh         "$LINT_BLOCKING"
 
 echo ""

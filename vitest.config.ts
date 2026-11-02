@@ -84,6 +84,7 @@ export default defineConfig({
       'plugins/*/src/**/*.test.ts',
       'plugins/*/test/**/*.test.ts',
       'skills/src/**/*.test.ts',
+      'scripts/__tests__/**/*.test.ts',
     ],
     // Real-socket integration tests (plan T1.8) boot actual servers on real
     // ports — two per test in `packages/a2a`'s case — and are the slowest

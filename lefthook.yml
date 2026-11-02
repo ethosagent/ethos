@@ -51,3 +51,6 @@ pre-push:
     # extensions/tools-*/src (archcheck cannot ban a Node built-in import).
     tool-imports:
       run: bash scripts/check-tool-imports.sh
+    # CLAUDE.md/AGENTS.md twin and size, .claude/rules and skill budgets (context-budget plan).
+    agent-files:
+      run: node scripts/check-agent-files.mjs
