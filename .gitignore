@@ -61,3 +61,4 @@ packages/ui-components/src/**/*.js.map
 
 # Local-only deploy overlays (never committed)
 helm/ethos/examples/values.*.dev.yaml
+.logs/

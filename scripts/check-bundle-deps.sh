@@ -14,8 +14,9 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/lib/quiet.sh
 
-exec node --input-type=module - <<'EOF'
+quiet_run bundle-deps node --input-type=module - <<'EOF'
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { builtinModules } from 'node:module';
