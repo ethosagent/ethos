@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write HANDOFF.md at the repo root: what is done, what remains, the failing gate with its .logs/ path, open decisions, and files touched. Use before ending a session or when asked to hand off.
+description: 'Write HANDOFF.md at the repo root: what is done, what remains, the failing gate with its .logs/ path, open decisions, and files touched. Use before ending a session or when asked to hand off.'
 ---
 
 # Handoff

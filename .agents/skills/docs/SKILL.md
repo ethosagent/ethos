@@ -1,6 +1,6 @@
 ---
 name: docs
-description: Ethos docs system. Use when writing, editing or restructuring any Ethos docs: docs/content/ pages, READMEs, llms.txt, personality ETHOS.md. Enforces page kinds, front-matter, voice, anti-patterns, checklist. Not for plan/ docs or audit reports.
+description: 'Ethos docs system. Use when writing, editing or restructuring any Ethos docs: docs/content/ pages, READMEs, llms.txt, personality ETHOS.md. Enforces page kinds, front-matter, voice, anti-patterns, checklist. Not for plan/ docs or audit reports.'
 ---
 
 # Ethos · Docs System

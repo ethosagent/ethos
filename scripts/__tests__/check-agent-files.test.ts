@@ -118,4 +118,28 @@ describe('check-agent-files', () => {
     expect(r.status).toBe(1);
     expect(r.stderr).not.toContain('(allowed)');
   });
+
+  it('unparseable skill frontmatter fails', () => {
+    const r = expectFail(
+      { ...clean(), '.agents/skills/demo/SKILL.md': skill(10, 'Write it: then stop') },
+      'skill-desc',
+    );
+    expect(r.stderr).toContain('frontmatter does not parse as YAML');
+  });
+
+  it('unparseable rule frontmatter fails', () => {
+    const r = expectFail(
+      { ...clean(), '.claude/rules/b.md': "---\npaths: 'a: b: c\n---\nbody\n" },
+      'rule-paths',
+    );
+    expect(r.stderr).toContain('frontmatter does not parse as YAML');
+  });
+
+  it('skill without description fails', () => {
+    const r = expectFail(
+      { ...clean(), '.agents/skills/demo/SKILL.md': '---\nname: demo\n---\nbody\n' },
+      'skill-desc',
+    );
+    expect(r.stderr).toContain('missing description');
+  });
 });

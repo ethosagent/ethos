@@ -49,17 +49,20 @@ function walk(rel, match) {
   return out;
 }
 
-// Frontmatter as { data, raw }; no block or invalid YAML gives { data: {}, raw: '' }.
+// Frontmatter as { data, raw, error }; no block gives empty data, invalid YAML sets `error`
+// (first line of the parser message) so callers can report it instead of passing silently.
 function parseFm(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
   if (!m) return { data: {}, raw: '' };
   try {
     const data = parse(m[1]);
     return { data: data && typeof data === 'object' ? data : {}, raw: m[1] };
-  } catch {
-    return { data: {}, raw: '' };
+  } catch (e) {
+    return { data: {}, raw: m[1], error: String(e.message).split('\n')[0] };
   }
 }
+
+const unparseable = (fm) => `frontmatter does not parse as YAML: ${fm.error}`;
 
 const isMd = (name) => name.endsWith('.md');
 const hasTwin = () => existsSync(join(root, CLAUDE)) && existsSync(join(root, AGENTS));
@@ -93,15 +96,19 @@ function checkTwin() {
 
 function checkRulePaths() {
   for (const rel of ruleFiles()) {
-    if (parseFm(readText(rel)).data.paths == null) {
+    const fm = parseFm(readText(rel));
+    if (fm.error) flag('rule-paths', rel, unparseable(fm));
+    else if (fm.data.paths == null) {
       flag('rule-paths', rel, 'no paths: frontmatter (would load on every session)');
     }
   }
 }
 
 function checkSkillDesc(fm, rel) {
+  if (fm.error) return flag('skill-desc', rel, unparseable(fm));
   const desc = fm.data.description;
-  if (typeof desc !== 'string') return;
+  if (typeof desc !== 'string' || desc.trim() === '')
+    return flag('skill-desc', rel, 'missing description');
   const trimmed = desc.trim();
   const problems = [];
   if (/^description:\s*[|>]/m.test(fm.raw) || trimmed.includes('\n')) {
