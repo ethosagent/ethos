@@ -37,14 +37,21 @@ function skill(totalLines: number, description: string): string {
 
 const rule = (n: number) => `---\npaths:\n  - 'src/**'\n---\n${lines(n - 4)}`;
 const claude150 = lines(150);
+const twinned = (content: string) => ({ 'CLAUDE.md': content, 'AGENTS.md': content });
 
 function clean(): Record<string, string> {
   return {
-    'CLAUDE.md': claude150,
-    'AGENTS.md': claude150,
+    ...twinned(claude150),
     '.claude/rules/a.md': rule(60),
     '.agents/skills/demo/SKILL.md': skill(300, 'd'.repeat(250)),
   };
+}
+
+function expectFail(files: Record<string, string>, rule: string) {
+  const r = run(fixture(files));
+  expect(r.status).toBe(1);
+  expect(r.stderr).toContain(rule);
+  return r;
 }
 
 afterEach(() => {
@@ -60,14 +67,11 @@ describe('check-agent-files', () => {
   });
 
   it('twin differs by trailing newline', () => {
-    const r = run(fixture({ ...clean(), 'AGENTS.md': claude150.slice(0, -1) }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('AGENT-FILES twin AGENTS.md');
+    expectFail({ ...clean(), 'AGENTS.md': claude150.slice(0, -1) }, 'AGENT-FILES twin AGENTS.md');
   });
 
   it('symlinked twin passes', () => {
-    const files = clean();
-    delete (files as Record<string, string>)['CLAUDE.md'];
+    const { 'CLAUDE.md': _claude, ...files } = clean();
     const dir = fixture(files);
     symlinkSync('AGENTS.md', join(dir, 'CLAUDE.md'));
     const r = run(dir);
@@ -77,54 +81,43 @@ describe('check-agent-files', () => {
 
   it('151-line CLAUDE.md fails', () => {
     const c = lines(151);
-    const r = run(fixture({ ...clean(), 'CLAUDE.md': c, 'AGENTS.md': c }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('claude-lines');
+    expectFail({ ...clean(), ...twinned(c) }, 'claude-lines');
   });
 
   it('10,001-char CLAUDE.md fails', () => {
     const c = `${'x'.repeat(10_000)}\n`;
-    const r = run(fixture({ ...clean(), 'CLAUDE.md': c, 'AGENTS.md': c }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('claude-tokens');
+    expectFail({ ...clean(), ...twinned(c) }, 'claude-tokens');
   });
 
   it('61-line rule fails', () => {
-    const r = run(fixture({ ...clean(), '.claude/rules/sub/x.md': rule(61) }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('rule-lines');
+    const r = expectFail({ ...clean(), '.claude/rules/sub/x.md': rule(61) }, 'rule-lines');
     expect(r.stderr).toContain('.claude/rules/sub/x.md');
   });
 
   it('rule without paths fails', () => {
-    const r = run(fixture({ ...clean(), '.claude/rules/nopaths.md': '# no frontmatter\n' }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('rule-paths');
+    expectFail({ ...clean(), '.claude/rules/nopaths.md': '# no frontmatter\n' }, 'rule-paths');
   });
 
   it('block-scalar description is measured folded', () => {
     const half = 'y'.repeat(129);
     const md = `---\nname: demo\ndescription: |\n  ${half}\n  ${half}\n---\nbody\n`;
-    const r = run(fixture({ ...clean(), '.agents/skills/demo/SKILL.md': md }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('skill-desc');
+    expectFail({ ...clean(), '.agents/skills/demo/SKILL.md': md }, 'skill-desc');
   });
 
   it('301-line SKILL.md fails', () => {
-    const r = run(fixture({ ...clean(), '.agents/skills/demo/SKILL.md': skill(301, 'ok') }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('skill-lines');
+    expectFail({ ...clean(), '.agents/skills/demo/SKILL.md': skill(301, 'ok') }, 'skill-lines');
   });
 
   it('201-line reference fails', () => {
-    const r = run(fixture({ ...clean(), '.agents/skills/demo/references/r.md': lines(201) }));
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('skill-ref-lines');
+    expectFail(
+      { ...clean(), '.agents/skills/demo/references/r.md': lines(201) },
+      'skill-ref-lines',
+    );
   });
 
   it('allowances downgrade', () => {
     const c = lines(151);
-    const r = run(fixture({ ...clean(), 'CLAUDE.md': c, 'AGENTS.md': c }), true);
+    const r = run(fixture({ ...clean(), ...twinned(c) }), true);
     expect(r.status).toBe(0);
     expect(r.stderr).toContain('(allowed) claude-lines');
   });

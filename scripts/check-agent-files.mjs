@@ -11,13 +11,6 @@ const rootIdx = args.indexOf('--root');
 const root = rootIdx >= 0 ? (args[rootIdx + 1] ?? '.') : '.';
 const noAllowances = args.includes('--no-allowances');
 
-const MAX_CLAUDE_LINES = 150;
-const MAX_CLAUDE_CHARS = 10_000; // 2.5K tokens at chars/4
-const MAX_RULE_LINES = 60;
-const MAX_SKILL_LINES = 300;
-const MAX_SKILL_DESC = 250;
-const MAX_SKILL_REF_LINES = 200;
-
 // Rules downgraded to a warning until the task that fixes them lands.
 const ALLOWANCES = noAllowances
   ? new Set()
@@ -28,8 +21,14 @@ const ALLOWANCES = noAllowances
       'skill-desc', // removed by context-budget-1 T7
     ]);
 
+const MAX_SKILL_DESC = 250;
+const CLAUDE = 'CLAUDE.md';
+const AGENTS = 'AGENTS.md';
+const RULES_DIR = '.claude/rules';
+const SKILLS_DIR = '.agents/skills';
+
 const violations = [];
-let checked = 0;
+const cache = new Map();
 
 function flag(rule, path, detail) {
   violations.push({ rule, path, detail });
@@ -41,10 +40,13 @@ function lineCount(text) {
   return text.endsWith('\n') ? n - 1 : n;
 }
 
+// Each file is read (and counted) once, however many rules look at it.
 function read(rel) {
-  checked++;
-  return readFileSync(join(root, rel));
+  if (!cache.has(rel)) cache.set(rel, readFileSync(join(root, rel)));
+  return cache.get(rel);
 }
+
+const readText = (rel) => read(rel).toString('utf8');
 
 function walk(rel, match) {
   const abs = join(root, rel);
@@ -58,99 +60,128 @@ function walk(rel, match) {
   return out;
 }
 
-function frontmatter(text) {
+// Frontmatter as { data, raw }; no block or invalid YAML gives { data: {}, raw: '' }.
+function parseFm(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  return m ? m[1] : null;
-}
-
-// Twin + CLAUDE.md size. Compares bytes read through the paths, so a symlink passes.
-const claudeRel = 'CLAUDE.md';
-const agentsRel = 'AGENTS.md';
-if (existsSync(join(root, claudeRel)) && existsSync(join(root, agentsRel))) {
-  const claude = read(claudeRel);
-  const agents = read(agentsRel);
-  if (!claude.equals(agents)) {
-    const a = claude.toString('utf8').split('\n');
-    const b = agents.toString('utf8').split('\n');
-    let i = 0;
-    while (i < a.length && i < b.length && a[i] === b[i]) i++;
-    flag('twin', agentsRel, `differs from CLAUDE.md at line ${i + 1}`);
-  }
-  const text = claude.toString('utf8');
-  const n = lineCount(text);
-  if (n > MAX_CLAUDE_LINES) flag('claude-lines', claudeRel, `${n} lines (max ${MAX_CLAUDE_LINES})`);
-  if (text.length > MAX_CLAUDE_CHARS) {
-    flag('claude-tokens', claudeRel, `${text.length} chars (max ${MAX_CLAUDE_CHARS})`);
+  if (!m) return { data: {}, raw: '' };
+  try {
+    const data = parse(m[1]);
+    return { data: data && typeof data === 'object' ? data : {}, raw: m[1] };
+  } catch {
+    return { data: {}, raw: '' };
   }
 }
 
-// .claude/rules/**/*.md
-for (const rel of walk('.claude/rules', (n) => n.endsWith('.md'))) {
-  const text = read(rel).toString('utf8');
-  const n = lineCount(text);
-  if (n > MAX_RULE_LINES) flag('rule-lines', rel, `${n} lines (max ${MAX_RULE_LINES})`);
-  const fm = frontmatter(text);
-  let hasPaths = false;
-  if (fm !== null) {
-    try {
-      const data = parse(fm);
-      hasPaths = data?.paths != null;
-    } catch {
-      hasPaths = false;
-    }
-  }
-  if (!hasPaths) flag('rule-paths', rel, 'no paths: frontmatter (would load on every session)');
+const isMd = (name) => name.endsWith('.md');
+const hasTwin = () => existsSync(join(root, CLAUDE)) && existsSync(join(root, AGENTS));
+const ruleFiles = () => walk(RULES_DIR, isMd);
+const skillDirs = () =>
+  existsSync(join(root, SKILLS_DIR))
+    ? readdirSync(join(root, SKILLS_DIR), { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => join(SKILLS_DIR, e.name))
+    : [];
+const skillFiles = () =>
+  skillDirs()
+    .map((d) => join(d, 'SKILL.md'))
+    .filter((rel) => existsSync(join(root, rel)));
+const skillRefs = () => skillDirs().flatMap((d) => walk(join(d, 'references'), isMd));
+
+const lines = (text) => lineCount(text);
+const chars = (text) => text.length;
+
+function checkTwin() {
+  if (!hasTwin()) return;
+  const claude = read(CLAUDE);
+  const agents = read(AGENTS);
+  if (claude.equals(agents)) return;
+  const a = claude.toString('utf8').split('\n');
+  const b = agents.toString('utf8').split('\n');
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  flag('twin', AGENTS, `differs from CLAUDE.md at line ${i + 1}`);
 }
 
-// .agents/skills/*/SKILL.md and references/*.md
-const skillsDir = '.agents/skills';
-if (existsSync(join(root, skillsDir))) {
-  for (const e of readdirSync(join(root, skillsDir), { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    const skillRel = join(skillsDir, e.name, 'SKILL.md');
-    if (existsSync(join(root, skillRel))) {
-      const text = read(skillRel).toString('utf8');
-      const n = lineCount(text);
-      if (n > MAX_SKILL_LINES) flag('skill-lines', skillRel, `${n} lines (max ${MAX_SKILL_LINES})`);
-      const fm = frontmatter(text);
-      if (fm !== null) {
-        let desc;
-        try {
-          desc = parse(fm)?.description;
-        } catch {
-          desc = undefined;
-        }
-        if (typeof desc === 'string') {
-          const rawBlock = /^description:\s*[|>]/m.test(fm);
-          const trimmed = desc.trim();
-          const problems = [];
-          if (rawBlock || trimmed.includes('\n')) problems.push('spans more than one line');
-          if (trimmed.length > MAX_SKILL_DESC) {
-            problems.push(`${trimmed.length} chars (max ${MAX_SKILL_DESC})`);
-          }
-          if (problems.length > 0)
-            flag('skill-desc', skillRel, `description ${problems.join(', ')}`);
-        }
-      }
-    }
-    for (const ref of walk(join(skillsDir, e.name, 'references'), (n) => n.endsWith('.md'))) {
-      const n = lineCount(read(ref).toString('utf8'));
-      if (n > MAX_SKILL_REF_LINES) {
-        flag('skill-ref-lines', ref, `${n} lines (max ${MAX_SKILL_REF_LINES})`);
-      }
+function checkRulePaths() {
+  for (const rel of ruleFiles()) {
+    if (parseFm(readText(rel)).data.paths == null) {
+      flag('rule-paths', rel, 'no paths: frontmatter (would load on every session)');
     }
   }
 }
+
+function checkSkillDesc(fm, rel) {
+  const desc = fm.data.description;
+  if (typeof desc !== 'string') return;
+  const trimmed = desc.trim();
+  const problems = [];
+  if (/^description:\s*[|>]/m.test(fm.raw) || trimmed.includes('\n')) {
+    problems.push('spans more than one line');
+  }
+  if (trimmed.length > MAX_SKILL_DESC) {
+    problems.push(`${trimmed.length} chars (max ${MAX_SKILL_DESC})`);
+  }
+  if (problems.length > 0) flag('skill-desc', rel, `description ${problems.join(', ')}`);
+}
+
+// Size rules as data: add a row to add a rule. `files` finds paths, `measure` sizes the text.
+const LIMITS = {
+  'claude-lines': {
+    files: () => (hasTwin() ? [CLAUDE] : []),
+    measure: lines,
+    max: 150,
+    unit: 'lines',
+  },
+  // 2.5K tokens at chars/4
+  'claude-tokens': {
+    files: () => (hasTwin() ? [CLAUDE] : []),
+    measure: chars,
+    max: 10_000,
+    unit: 'chars',
+  },
+  'rule-lines': { files: ruleFiles, measure: lines, max: 60, unit: 'lines' },
+  'skill-lines': { files: skillFiles, measure: lines, max: 300, unit: 'lines' },
+  'skill-ref-lines': { files: skillRefs, measure: lines, max: 200, unit: 'lines' },
+};
+
+function checkLimit(id) {
+  const { files, measure, max, unit } = LIMITS[id];
+  for (const rel of files()) {
+    const n = measure(readText(rel));
+    if (n > max) flag(id, rel, `${n} ${unit} (max ${max})`);
+  }
+}
+
+const checkSkillDescs = () => {
+  for (const rel of skillFiles()) checkSkillDesc(parseFm(readText(rel)), rel);
+};
+
+// Run in this order; output is then grouped by file area (see `area`), stable within it.
+const CHECKS = [
+  checkTwin,
+  () => checkLimit('claude-lines'),
+  () => checkLimit('claude-tokens'),
+  () => checkLimit('rule-lines'),
+  checkRulePaths,
+  () => checkLimit('skill-lines'),
+  checkSkillDescs,
+  () => checkLimit('skill-ref-lines'),
+];
+for (const check of CHECKS) check();
+
+const area = (path) => (path.startsWith(RULES_DIR) ? 1 : path.startsWith(SKILLS_DIR) ? 2 : 0);
+violations.sort(
+  (a, b) => area(a.path) - area(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+);
 
 let failed = 0;
 for (const v of violations) {
-  const path = v.path;
   if (ALLOWANCES.has(v.rule)) {
-    console.error(`AGENT-FILES (allowed) ${v.rule} ${path}: ${v.detail}`);
+    console.error(`AGENT-FILES (allowed) ${v.rule} ${v.path}: ${v.detail}`);
   } else {
     failed++;
-    console.error(`AGENT-FILES ${v.rule} ${path}: ${v.detail}`);
+    console.error(`AGENT-FILES ${v.rule} ${v.path}: ${v.detail}`);
   }
 }
 if (failed > 0) process.exit(1);
-console.log(`agent-files: ${checked} files checked`);
+console.log(`agent-files: ${cache.size} files checked`);

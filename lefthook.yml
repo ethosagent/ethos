@@ -53,4 +53,4 @@ pre-push:
       run: bash scripts/check-tool-imports.sh
     # CLAUDE.md/AGENTS.md twin and size, .claude/rules and skill budgets (context-budget plan).
     agent-files:
-      run: node scripts/check-agent-files.mjs
+      run: bash scripts/check-agent-files.sh
