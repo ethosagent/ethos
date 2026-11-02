@@ -59,6 +59,7 @@ function check(input) {
 
   if (countLines(abs, false) <= MAX_LINES) return null; // also covers binary (-1)
   const lines = countLines(abs, true);
+  if (lines < 0) return null; // NUL beyond the first chunk: binary, fail open
   return `${raw} is ${lines} lines. Read a range (offset/limit), grep for the symbol, or ask a subagent to summarise it.`;
 }
 

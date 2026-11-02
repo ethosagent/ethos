@@ -11,11 +11,12 @@
 # Registered in .claude/settings.json (maintainer-applied; see plan/context-budget-1-settings.diff).
 
 HOOK_INPUT="$(cat)"
-# Cheap prefilter with the same grammar as the regex below; skips the Node cold start. The input is
-# JSON, so a tab arrives as the two characters `\t`.
-WS='([[:space:]]|\\t)+'
-PRE="pnpm(${WS}(run|-w|--workspace-root))*${WS}(test|check)"
-[[ $HOOK_INPUT =~ $PRE ]] || exit 0
+# Cheap superset prefilter: skips the Node cold start only when the payload cannot contain both
+# `pnpm` and `test`/`check`. Node decides the real match, so this must never be narrower than it.
+case "$HOOK_INPUT" in
+  *pnpm*test* | *pnpm*check*) ;;
+  *) exit 0 ;;
+esac
 export HOOK_INPUT
 
 exec node --input-type=module - <<'JS'

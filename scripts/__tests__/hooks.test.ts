@@ -84,6 +84,18 @@ describe('read-size-guard', () => {
     );
     expectAllow('read-size-guard.sh', read(f));
   });
+  it('allows a file whose NUL appears only after the first 64 KiB chunk had over 400 lines', () => {
+    const f = join(dir, 'late-nul.dat');
+    writeFileSync(
+      f,
+      Buffer.concat([
+        Buffer.from('\n'.repeat(401)),
+        Buffer.from('a'.repeat(70 * 1024)),
+        Buffer.from([0]),
+      ]),
+    );
+    expectAllow('read-size-guard.sh', read(f));
+  });
   it('allows a 400-line file', () => {
     const f = join(dir, 'ok.ts');
     writeFileSync(f, 'x\n'.repeat(400));
@@ -111,7 +123,9 @@ describe('quiet-checks', () => {
     'pnpm --workspace-root test',
     'pnpm -w check',
     'pnpm run check',
-  ])('denies %s', (cmd) => {
+    'pnpm\rtest',
+    'pnpm\ftest',
+  ])('denies %j', (cmd) => {
     const out = JSON.parse(run('quiet-checks.sh', bash(cmd)).stdout);
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
   });
