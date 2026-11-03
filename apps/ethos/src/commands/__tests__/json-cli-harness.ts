@@ -10,6 +10,7 @@ export const EXIT = 'process.exit';
 export interface JsonCliHarness {
   scopeDir: string;
   stdout(): string;
+  stderr(): string;
   teardown(): Promise<void>;
 }
 
@@ -31,11 +32,18 @@ export async function setupJsonCli(prefix: string): Promise<JsonCliHarness> {
   vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     throw new Error(`${EXIT}(${code})`);
   }) as never);
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  // console.log lands in the same buffer so a stray log in JSON mode breaks parseOneDoc.
+  vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+    out.push(`${a.join(' ')}\n`);
+  });
+  const err: string[] = [];
+  vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+    err.push(`${a.join(' ')}\n`);
+  });
   return {
     scopeDir,
     stdout: () => out.join(''),
+    stderr: () => err.join(''),
     async teardown() {
       vi.restoreAllMocks();
       if (prevStateDir === undefined) delete process.env.ETHOS_STATE_DIR;

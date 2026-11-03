@@ -47,6 +47,7 @@ import {
   type UsageMeter,
   withUsageMeter,
 } from '@ethosagent/wiring';
+import { writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createCliLearningInbox, createLLM, getStorage } from '../wiring';
@@ -511,10 +512,23 @@ export function signalNotice(id: string, signal: NonNullable<JudgeResult['signal
   return `⚠ ${id} has scored low for a sustained run — its responses are drifting from Core. Review the soul.`;
 }
 
+/** evolve / revert prompt for confirmation, so under `--json` they refuse with one INVALID_INPUT doc. */
+function refuseJson(argv: string[], verb: string, id: string | undefined): void {
+  if (!argv.includes('--json')) return;
+  writeJsonError(
+    'INVALID_INPUT',
+    id
+      ? `ethos personality ${verb} asks for confirmation and cannot run with --json; run it without --json`
+      : `Usage: ethos personality ${verb} <id> (interactive; no --json output)`,
+  );
+}
+
 export async function runPersonalityJudge(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
+  const json = argv.includes('--json');
   if (!id) {
-    console.log('Usage: ethos personality judge <id>');
+    if (json) writeJsonError('INVALID_INPUT', 'Usage: ethos personality judge <id> [--json]');
+    console.log('Usage: ethos personality judge <id> [--json]');
     return;
   }
 
@@ -530,13 +544,15 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
 
     const described = reg.describe(id);
     if (!described) {
+      if (json) writeJsonError('PERSONALITY_NOT_FOUND', `Unknown personality: ${id}`);
       console.error(`Unknown personality: ${id}`);
       console.error('Run `ethos personality list` to see available ids.');
       process.exit(1);
     }
 
-    const config = await readConfig(getStorage(), await getSecretsResolver());
+    const config = await readConfig(storage, await getSecretsResolver());
     if (!config) {
+      if (json) writeJsonError('CONFIG_MISSING', 'Run `ethos setup` first.');
       console.error('Run `ethos setup` first.');
       process.exit(1);
     }
@@ -572,30 +588,47 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
       activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
     }).finally(release);
 
-    if (recent.scopedNote) console.log(recent.scopedNote);
+    if (recent.scopedNote && !json) console.log(recent.scopedNote);
 
     if (outcome.kind === 'insufficient_data') {
-      console.log(`Not enough data to judge: ${outcome.reason}`);
+      if (json) writeJson({ ok: true, personality: id, judged: false, reason: outcome.reason });
+      else console.log(`Not enough data to judge: ${outcome.reason}`);
       return;
     }
 
     const { result } = outcome;
-    console.log(`=== Personality Judge: ${id} ===`);
-    console.log(`alignment: ${(result.alignmentScore * 100).toFixed(0)}%`);
-    console.log(`samples:   ${result.sampleCount}`);
-    for (const d of result.perDimension) {
-      console.log(`  ${d.id}: ${(d.score * 100).toFixed(0)}% — ${d.evidence}`);
+    if (json) {
+      writeJson({
+        ok: true,
+        personality: id,
+        judged: true,
+        alignmentScore: result.alignmentScore,
+        sampleCount: result.sampleCount,
+        perDimension: result.perDimension,
+        signal: result.signal ?? null,
+        notice: result.signal ? signalNotice(id, result.signal) : null,
+      });
+    } else {
+      console.log(`=== Personality Judge: ${id} ===`);
+      console.log(`alignment: ${(result.alignmentScore * 100).toFixed(0)}%`);
+      console.log(`samples:   ${result.sampleCount}`);
+      for (const d of result.perDimension) {
+        console.log(`  ${d.id}: ${(d.score * 100).toFixed(0)}% — ${d.evidence}`);
+      }
+      if (result.signal) console.log(`\n${signalNotice(id, result.signal)}`);
     }
-    if (result.signal) console.log(`\n${signalNotice(id, result.signal)}`);
 
     await writeJudgeStreak(id, outcome.lowStreak, result);
   } catch (err) {
+    // Under --json the throw reaches index.ts's top-level catch, which emits the error doc.
+    if (json) throw err;
     surface(err);
   }
 }
 
 export async function runPersonalityEvolve(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
+  refuseJson(argv, 'evolve', id);
   if (!id) {
     console.log('Usage: ethos personality evolve <id>');
     return;
@@ -832,6 +865,7 @@ async function evolvePersonality(id: string, usage: UsageMeter): Promise<void> {
 
 export async function runPersonalityRevert(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
+  refuseJson(argv, 'revert', id);
   if (!id) {
     console.log('Usage: ethos personality revert <id>');
     return;

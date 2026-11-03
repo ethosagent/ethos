@@ -14,6 +14,7 @@ import { ethosDir, secretRefForConfigKey } from '@ethosagent/config';
 import { DefaultToolRegistry, declaredWorkdirs } from '@ethosagent/core';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { BundleManifest, ExportStamp, PersonalityConfig } from '@ethosagent/types';
+import { writeJson, writeJsonError } from '../json-output';
 import { getStorage } from '../wiring';
 import { type Entry, writeTarGz } from './backup';
 
@@ -117,7 +118,7 @@ function secretFieldDisplay(
 // Case-insensitive substrings that flag a config field as a secret reference
 const SECRET_FIELD_PATTERNS = ['token', 'key', 'secret'];
 
-const USAGE = 'Usage: ethos personality export <id> [--output <path>] [--with-memory]';
+const USAGE = 'Usage: ethos personality export <id> [--output <path>] [--with-memory] [--json]';
 
 const ETHOS_EXPORT_KEY = 'ethos-personality-export-v1';
 
@@ -879,6 +880,7 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
   let id: string | undefined;
   let outputPath: string | undefined;
   let withMemory = false;
+  const json = argv.includes('--json');
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -893,6 +895,7 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
   }
 
   if (!id) {
+    if (json) writeJsonError('INVALID_INPUT', USAGE);
     console.error(USAGE);
     process.exitCode = 1;
     return;
@@ -912,6 +915,10 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
       .list()
       .map((p) => p.id)
       .sort();
+    if (json) {
+      const hint = known.length > 0 ? ` Known personalities: ${known.join(', ')}` : '';
+      writeJsonError('PERSONALITY_NOT_FOUND', `Personality "${id}" not found.${hint}`);
+    }
     console.error(`Personality "${id}" not found.`);
     if (known.length > 0) {
       console.error(`Known personalities: ${known.join(', ')}`);
@@ -922,6 +929,9 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
 
   const personalityDir = join(personalitiesDir, id);
   if (!existsSync(personalityDir)) {
+    if (json) {
+      writeJsonError('FILE_NOT_FOUND', `Personality directory not found: ${personalityDir}`);
+    }
     console.error(`Personality directory not found: ${personalityDir}`);
     process.exitCode = 1;
     return;
@@ -958,7 +968,8 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
   }
 
   if (entries.length === 0) {
-    console.log(`Nothing to export for personality "${id}".`);
+    if (json) writeJson({ ok: true, personality: id, exported: false, path: null, files: 0 });
+    else console.log(`Nothing to export for personality "${id}".`);
     return;
   }
 
@@ -982,5 +993,9 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
   const outPath =
     outputPath ?? `ethos-personality-${id}-${timestamp()}-${randomBytes(4).toString('hex')}.tar.gz`;
   await writeTarGz(entries, outPath);
+  if (json) {
+    writeJson({ ok: true, personality: id, exported: true, path: outPath, files: entries.length });
+    return;
+  }
   console.log(`Exported personality "${id}" to: ${outPath} (${entries.length} files)`);
 }

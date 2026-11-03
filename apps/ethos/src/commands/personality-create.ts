@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, IdValidationError, type Storage } from '@ethosagent/types';
 import { createPersonalityRegistry, markPersonalityBorn } from '@ethosagent/wiring';
+import { writeJson, writeJsonError } from '../json-output';
 import { getStorage } from '../wiring';
 
 const c = {
@@ -36,15 +37,21 @@ export async function runPersonalityCreate(args: string[]): Promise<void> {
   const flags = parseFlags(args);
 
   if (flags.blank || flags.nonInteractive) {
-    await scaffoldBlank(flags.name);
+    await scaffoldBlank(flags.name, flags.json);
     return;
   }
 
   if (flags.from) {
-    await scaffoldFrom(flags.from, flags.name);
+    await scaffoldFrom(flags.from, flags.name, flags.json);
     return;
   }
 
+  if (flags.json) {
+    writeJsonError(
+      'INVALID_INPUT',
+      'Usage: ethos personality create <name> (--blank | --from <id>) [--json] — the AI-assisted create is an interactive chat',
+    );
+  }
   await runAiAssisted(flags.name);
 }
 
@@ -53,6 +60,7 @@ interface CreateFlags {
   blank: boolean;
   nonInteractive: boolean;
   from?: string;
+  json: boolean;
 }
 
 function parseFlags(args: string[]): CreateFlags {
@@ -75,20 +83,22 @@ function parseFlags(args: string[]): CreateFlags {
     }
   }
 
-  return { name, blank, nonInteractive, from };
+  return { name, blank, nonInteractive, from, json: args.includes('--json') };
 }
 
-async function scaffoldBlank(name: string | undefined): Promise<void> {
+async function scaffoldBlank(name: string | undefined, json: boolean): Promise<void> {
   if (!name) {
-    console.error('Usage: ethos personality create <name> --blank');
+    const usage = 'Usage: ethos personality create <name> --blank [--json]';
+    if (json) writeJsonError('INVALID_INPUT', usage);
+    console.error(usage);
     process.exit(1);
   }
 
   const id = name.toLowerCase().replace(/\s+/g, '-');
   if (!isSafePathSegment(id)) {
-    console.error(
-      `Invalid personality name "${id}": must not contain path separators, "..", or start with "."`,
-    );
+    const msg = `Invalid personality name "${id}": must not contain path separators, "..", or start with "."`;
+    if (json) writeJsonError('INVALID_INPUT', msg);
+    console.error(msg);
     process.exit(1);
   }
   const { ethosDir } = await import('@ethosagent/config');
@@ -96,10 +106,15 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
   try {
     await createBlankPersonality(getStorage(), dataDir, name);
   } catch (err) {
+    if (json) throw err;
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
   const dir = join(dataDir, 'personalities', id);
+  if (json) {
+    writeJson({ ok: true, id, path: dir });
+    return;
+  }
   console.log(`\n${c.bold}Created personality "${id}"${c.reset}  ${c.dim}${dir}${c.reset}`);
   console.log(`${c.dim}Edit the files, then test: ethos chat --personality ${id}${c.reset}\n`);
 }
@@ -136,9 +151,15 @@ export async function createBlankPersonality(
   return id;
 }
 
-async function scaffoldFrom(sourceId: string, targetName: string | undefined): Promise<void> {
+async function scaffoldFrom(
+  sourceId: string,
+  targetName: string | undefined,
+  json: boolean,
+): Promise<void> {
   if (!targetName) {
-    console.error('Usage: ethos personality create <name> --from <source-id>');
+    const usage = 'Usage: ethos personality create <name> --from <source-id> [--json]';
+    if (json) writeJsonError('INVALID_INPUT', usage);
+    console.error(usage);
     process.exit(1);
   }
 
@@ -147,8 +168,14 @@ async function scaffoldFrom(sourceId: string, targetName: string | undefined): P
   try {
     await duplicateBornPersonality(getStorage(), ethosDir(), sourceId, newId);
   } catch (err) {
+    if (json) throw err;
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
+  }
+  if (json) {
+    const path = join(ethosDir(), 'personalities', newId);
+    writeJson({ ok: true, id: newId, from: sourceId, path });
+    return;
   }
   console.log(`\n${c.bold}Created personality "${targetName}" from "${sourceId}"${c.reset}`);
   console.log(`${c.dim}Test: ethos chat --personality ${newId}${c.reset}\n`);

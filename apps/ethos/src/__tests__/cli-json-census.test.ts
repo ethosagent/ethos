@@ -35,11 +35,6 @@ const JSON_EXEMPT: Record<string, string> = {
 
 // Task 15-17 families, not yet converted. Each later task removes its names.
 const PENDING = new Set([
-  // Task 15: personality
-  'personality-create',
-  'personality-export',
-  'personality-birth',
-  'personality-evolve',
   // Task 16: learning & eval
   'learning',
   'evolve',

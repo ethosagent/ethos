@@ -13,6 +13,7 @@
 
 import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
 import { clearBirthMarker } from '@ethosagent/wiring';
+import { writeJson } from '../json-output';
 
 export interface BirthCliDeps {
   /** Unscoped: the marker lives under `learning/`, which no turn can reach. */
@@ -20,22 +21,25 @@ export interface BirthCliDeps {
   dataDir: string;
   /** One line; a newline is added. */
   out(line: string): void;
+  /** `--json`: print one `{ok:true,...}` document through `writeJson` instead of `out` lines. */
+  json?: boolean;
 }
 
 const USAGE = [
-  'Usage: ethos personality birth <command>',
+  'Usage: ethos personality birth <command> [--json]',
   '',
-  '  skip <id>   end the birth ritual for this personality (it will not ask again)',
+  '  skip <id> [--json]   end the birth ritual for this personality (it will not ask again)',
 ];
 
 export async function runPersonalityBirth(args: string[]): Promise<void> {
   const { ethosDir } = await import('@ethosagent/config');
   const { getStorage } = await import('../wiring');
-  await runPersonalityBirthCommand(args, {
-    storage: getStorage(),
-    dataDir: ethosDir(),
-    out: (line) => console.log(line),
-  });
+  const json = args.includes('--json');
+  // A thrown EthosError reaches the top-level catch in index.ts, which emits the --json error doc.
+  await runPersonalityBirthCommand(
+    args.filter((a) => a !== '--json'),
+    { storage: getStorage(), dataDir: ethosDir(), out: (line) => console.log(line), json },
+  );
 }
 
 /** The command body, with every dependency injected. Throws `EthosError` on any failure. */
@@ -45,7 +49,8 @@ export async function runPersonalityBirthCommand(
 ): Promise<void> {
   const [sub, id] = args;
   if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') {
-    for (const line of USAGE) deps.out(line);
+    if (deps.json) writeJson({ ok: true, usage: USAGE.join('\n') });
+    else for (const line of USAGE) deps.out(line);
     return;
   }
   if (sub !== 'skip') {
@@ -63,6 +68,10 @@ export async function runPersonalityBirthCommand(
     });
   }
   const removed = await clearBirthMarker(deps.storage, deps.dataDir, id);
+  if (deps.json) {
+    writeJson({ ok: true, personality: id, skipped: removed });
+    return;
+  }
   deps.out(
     removed
       ? `Skipped the birth ritual for ${id}. It will not ask again.`
