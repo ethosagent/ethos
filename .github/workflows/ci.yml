@@ -135,8 +135,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The shrink-only check reads .size-baseline.json at the base commit and walks the
+          # commits since it for a Size-Baseline-Approved-By trailer.
+          fetch-depth: 0
       - uses: ./.github/actions/setup
       - run: bash scripts/check-agent-files.sh
+      - name: Source size limits and shrink-only baseline
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/check-source-size.sh --base "$BASE_SHA"
 
   lint:
     name: lint

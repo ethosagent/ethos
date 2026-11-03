@@ -1,0 +1,1890 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "DESIGN.md",
+      "kind": "doc",
+      "lines": 707
+    },
+    {
+      "path": "README.md",
+      "kind": "doc",
+      "lines": 223
+    },
+    {
+      "path": "RELEASE.md",
+      "kind": "doc",
+      "lines": 301
+    },
+    {
+      "path": "TESTING.md",
+      "kind": "doc",
+      "lines": 1371
+    },
+    {
+      "path": "apps/acp-server/src/__tests__/notify.test.ts",
+      "kind": "test",
+      "lines": 544
+    },
+    {
+      "path": "apps/acp-server/src/index.ts",
+      "kind": "source",
+      "lines": 1151
+    },
+    {
+      "path": "apps/desktop/src/main/__tests__/call-capture-pill.test.ts",
+      "kind": "test",
+      "lines": 1087
+    },
+    {
+      "path": "apps/desktop/src/main/call-capture-pill.ts",
+      "kind": "source",
+      "lines": 1069
+    },
+    {
+      "path": "apps/desktop/src/main/ipc.ts",
+      "kind": "source",
+      "lines": 1101
+    },
+    {
+      "path": "apps/ethos/src/__tests__/approval-coordinator.test.ts",
+      "kind": "test",
+      "lines": 881
+    },
+    {
+      "path": "apps/ethos/src/__tests__/config-reload-transactions.test.ts",
+      "kind": "test",
+      "lines": 1187
+    },
+    {
+      "path": "apps/ethos/src/__tests__/gateway-build-adapters.test.ts",
+      "kind": "test",
+      "lines": 568
+    },
+    {
+      "path": "apps/ethos/src/__tests__/gateway-platform-webhook-wiring.test.ts",
+      "kind": "test",
+      "lines": 629
+    },
+    {
+      "path": "apps/ethos/src/__tests__/listen-command.test.ts",
+      "kind": "test",
+      "lines": 857
+    },
+    {
+      "path": "apps/ethos/src/__tests__/listen-doctor.test.ts",
+      "kind": "test",
+      "lines": 912
+    },
+    {
+      "path": "apps/ethos/src/__tests__/listen-playback.test.ts",
+      "kind": "test",
+      "lines": 558
+    },
+    {
+      "path": "apps/ethos/src/__tests__/observe-silence-conformance.test.ts",
+      "kind": "test",
+      "lines": 834
+    },
+    {
+      "path": "apps/ethos/src/__tests__/plugin-install.test.ts",
+      "kind": "test",
+      "lines": 581
+    },
+    {
+      "path": "apps/ethos/src/__tests__/unattended-approval-gate.test.ts",
+      "kind": "test",
+      "lines": 574
+    },
+    {
+      "path": "apps/ethos/src/__tests__/webhook-server.test.ts",
+      "kind": "test",
+      "lines": 1526
+    },
+    {
+      "path": "apps/ethos/src/commands/__tests__/backup-cli.test.ts",
+      "kind": "test",
+      "lines": 1296
+    },
+    {
+      "path": "apps/ethos/src/commands/__tests__/personality-amendments.test.ts",
+      "kind": "test",
+      "lines": 567
+    },
+    {
+      "path": "apps/ethos/src/commands/__tests__/personality-bundle.test.ts",
+      "kind": "test",
+      "lines": 525
+    },
+    {
+      "path": "apps/ethos/src/commands/__tests__/personality-export.test.ts",
+      "kind": "test",
+      "lines": 823
+    },
+    {
+      "path": "apps/ethos/src/commands/__tests__/serve-a2a-runner.test.ts",
+      "kind": "test",
+      "lines": 501
+    },
+    {
+      "path": "apps/ethos/src/commands/backup.ts",
+      "kind": "source",
+      "lines": 1821
+    },
+    {
+      "path": "apps/ethos/src/commands/boot.ts",
+      "kind": "source",
+      "lines": 2886
+    },
+    {
+      "path": "apps/ethos/src/commands/chat.ts",
+      "kind": "source",
+      "lines": 2439
+    },
+    {
+      "path": "apps/ethos/src/commands/doctor.ts",
+      "kind": "source",
+      "lines": 2568
+    },
+    {
+      "path": "apps/ethos/src/commands/gateway.ts",
+      "kind": "source",
+      "lines": 5843
+    },
+    {
+      "path": "apps/ethos/src/commands/listen.ts",
+      "kind": "source",
+      "lines": 2831
+    },
+    {
+      "path": "apps/ethos/src/commands/mcp.ts",
+      "kind": "source",
+      "lines": 1224
+    },
+    {
+      "path": "apps/ethos/src/commands/personality-evolve.ts",
+      "kind": "source",
+      "lines": 898
+    },
+    {
+      "path": "apps/ethos/src/commands/personality-export.ts",
+      "kind": "source",
+      "lines": 986
+    },
+    {
+      "path": "apps/ethos/src/commands/plugin.ts",
+      "kind": "source",
+      "lines": 1193
+    },
+    {
+      "path": "apps/ethos/src/commands/serve.ts",
+      "kind": "source",
+      "lines": 2630
+    },
+    {
+      "path": "apps/ethos/src/config-reload.ts",
+      "kind": "source",
+      "lines": 1378
+    },
+    {
+      "path": "apps/ethos/src/index.ts",
+      "kind": "source",
+      "lines": 1719
+    },
+    {
+      "path": "apps/ethos/src/lib/__tests__/kanban-poll.test.ts",
+      "kind": "test",
+      "lines": 575
+    },
+    {
+      "path": "apps/ethos/src/lib/__tests__/outbox-wiring.test.ts",
+      "kind": "test",
+      "lines": 1499
+    },
+    {
+      "path": "apps/ethos/src/lib/outbox-wiring.ts",
+      "kind": "source",
+      "lines": 1690
+    },
+    {
+      "path": "apps/ethos/src/webhook-server.ts",
+      "kind": "source",
+      "lines": 829
+    },
+    {
+      "path": "apps/ethos/src/wiring.ts",
+      "kind": "source",
+      "lines": 1075
+    },
+    {
+      "path": "apps/mcp-server/src/__tests__/export-server.test.ts",
+      "kind": "test",
+      "lines": 585
+    },
+    {
+      "path": "apps/mcp-server/src/export-server.ts",
+      "kind": "source",
+      "lines": 937
+    },
+    {
+      "path": "apps/tui/src/components/App.tsx",
+      "kind": "source",
+      "lines": 1694
+    },
+    {
+      "path": "apps/web-api/src/__tests__/repositories/platforms.repository.test.ts",
+      "kind": "test",
+      "lines": 746
+    },
+    {
+      "path": "apps/web-api/src/__tests__/routes/openai-chat.test.ts",
+      "kind": "test",
+      "lines": 611
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/approvals.service.test.ts",
+      "kind": "test",
+      "lines": 916
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/chat.service.test.ts",
+      "kind": "test",
+      "lines": 889
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/completions.service.test.ts",
+      "kind": "test",
+      "lines": 545
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/config-provider-chain.test.ts",
+      "kind": "test",
+      "lines": 1024
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/config-voice-roster.test.ts",
+      "kind": "test",
+      "lines": 566
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/config.service.test.ts",
+      "kind": "test",
+      "lines": 2233
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/documents.service.test.ts",
+      "kind": "test",
+      "lines": 523
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/kanban.service.test.ts",
+      "kind": "test",
+      "lines": 555
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/model-registry-chain.service.test.ts",
+      "kind": "test",
+      "lines": 607
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/personalities.service.test.ts",
+      "kind": "test",
+      "lines": 1595
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/plugins.service.install.test.ts",
+      "kind": "test",
+      "lines": 967
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/recipes.test.ts",
+      "kind": "test",
+      "lines": 1178
+    },
+    {
+      "path": "apps/web-api/src/__tests__/services/tool-settings.service.test.ts",
+      "kind": "test",
+      "lines": 705
+    },
+    {
+      "path": "apps/web-api/src/browser/__tests__/takeover-socket.test.ts",
+      "kind": "test",
+      "lines": 958
+    },
+    {
+      "path": "apps/web-api/src/browser/takeover-socket.ts",
+      "kind": "source",
+      "lines": 951
+    },
+    {
+      "path": "apps/web-api/src/features/chat/service.ts",
+      "kind": "source",
+      "lines": 905
+    },
+    {
+      "path": "apps/web-api/src/index.ts",
+      "kind": "source",
+      "lines": 2346
+    },
+    {
+      "path": "apps/web-api/src/repositories/config.repository.ts",
+      "kind": "source",
+      "lines": 1050
+    },
+    {
+      "path": "apps/web-api/src/services/__tests__/keys.service.test.ts",
+      "kind": "test",
+      "lines": 556
+    },
+    {
+      "path": "apps/web-api/src/services/config.service.ts",
+      "kind": "source",
+      "lines": 3667
+    },
+    {
+      "path": "apps/web-api/src/services/model-registry.service.ts",
+      "kind": "source",
+      "lines": 1434
+    },
+    {
+      "path": "apps/web-api/src/services/personalities.service.ts",
+      "kind": "source",
+      "lines": 1486
+    },
+    {
+      "path": "apps/web-api/src/services/plugins.service.ts",
+      "kind": "source",
+      "lines": 880
+    },
+    {
+      "path": "apps/web-api/src/services/recipes.service.ts",
+      "kind": "source",
+      "lines": 1466
+    },
+    {
+      "path": "apps/web-api/src/services/voice.service.ts",
+      "kind": "source",
+      "lines": 1018
+    },
+    {
+      "path": "apps/web-api/src/voice/__tests__/realtime-control-lane.test.ts",
+      "kind": "test",
+      "lines": 621
+    },
+    {
+      "path": "apps/web-api/src/voice/__tests__/satellite-socket.test.ts",
+      "kind": "test",
+      "lines": 1262
+    },
+    {
+      "path": "apps/web-api/src/voice/__tests__/voice-lane.test.ts",
+      "kind": "test",
+      "lines": 508
+    },
+    {
+      "path": "apps/web-api/src/voice/__tests__/voice-socket.test.ts",
+      "kind": "test",
+      "lines": 628
+    },
+    {
+      "path": "apps/web-api/src/voice/satellite-lane.ts",
+      "kind": "source",
+      "lines": 1183
+    },
+    {
+      "path": "apps/web/src/components/goals/ExecutionGraph.tsx",
+      "kind": "source",
+      "lines": 1808
+    },
+    {
+      "path": "apps/web/src/components/kanban/KanbanBoard.tsx",
+      "kind": "source",
+      "lines": 944
+    },
+    {
+      "path": "apps/web/src/components/mcp/__tests__/AddMcpModal.test.ts",
+      "kind": "test",
+      "lines": 530
+    },
+    {
+      "path": "apps/web/src/components/personality/McpExportSection.tsx",
+      "kind": "source",
+      "lines": 1310
+    },
+    {
+      "path": "apps/web/src/components/personality/__tests__/mcp-export-section.test.ts",
+      "kind": "test",
+      "lines": 555
+    },
+    {
+      "path": "apps/web/src/features/voice/README.md",
+      "kind": "doc",
+      "lines": 213
+    },
+    {
+      "path": "apps/web/src/features/voice/__tests__/realtime-control-channel.test.ts",
+      "kind": "test",
+      "lines": 594
+    },
+    {
+      "path": "apps/web/src/features/voice/__tests__/talk-mode-regression-pin.test.ts",
+      "kind": "test",
+      "lines": 552
+    },
+    {
+      "path": "apps/web/src/features/voice/__tests__/voice-call-reducer.test.ts",
+      "kind": "test",
+      "lines": 820
+    },
+    {
+      "path": "apps/web/src/features/voice/realtime-voice-call-client.ts",
+      "kind": "source",
+      "lines": 806
+    },
+    {
+      "path": "apps/web/src/lib/__tests__/activityFeed.test.ts",
+      "kind": "test",
+      "lines": 634
+    },
+    {
+      "path": "apps/web/src/lib/__tests__/chat-reducer.test.ts",
+      "kind": "test",
+      "lines": 2301
+    },
+    {
+      "path": "apps/web/src/lib/__tests__/drawer-reducer.test.ts",
+      "kind": "test",
+      "lines": 632
+    },
+    {
+      "path": "apps/web/src/lib/__tests__/trail-decisions.test.ts",
+      "kind": "test",
+      "lines": 581
+    },
+    {
+      "path": "apps/web/src/lib/chat-reducer.ts",
+      "kind": "source",
+      "lines": 1742
+    },
+    {
+      "path": "apps/web/src/lib/trail.ts",
+      "kind": "source",
+      "lines": 830
+    },
+    {
+      "path": "apps/web/src/pages/Chat.tsx",
+      "kind": "source",
+      "lines": 1158
+    },
+    {
+      "path": "apps/web/src/pages/Communications.tsx",
+      "kind": "source",
+      "lines": 1495
+    },
+    {
+      "path": "apps/web/src/pages/Learning.tsx",
+      "kind": "source",
+      "lines": 851
+    },
+    {
+      "path": "apps/web/src/pages/Memory.tsx",
+      "kind": "source",
+      "lines": 908
+    },
+    {
+      "path": "apps/web/src/pages/Personalities.tsx",
+      "kind": "source",
+      "lines": 3170
+    },
+    {
+      "path": "apps/web/src/pages/PersonalityDetail.tsx",
+      "kind": "source",
+      "lines": 1163
+    },
+    {
+      "path": "apps/web/src/pages/Plugins.tsx",
+      "kind": "source",
+      "lines": 810
+    },
+    {
+      "path": "apps/web/src/pages/Skills.tsx",
+      "kind": "source",
+      "lines": 912
+    },
+    {
+      "path": "apps/web/src/pages/__tests__/activity-page.test.ts",
+      "kind": "test",
+      "lines": 545
+    },
+    {
+      "path": "apps/web/src/pages/__tests__/learning-inbox.test.ts",
+      "kind": "test",
+      "lines": 590
+    },
+    {
+      "path": "apps/web/src/pages/__tests__/recipe-detail.test.ts",
+      "kind": "test",
+      "lines": 804
+    },
+    {
+      "path": "apps/web/src/pages/settings/__tests__/backup-pane.test.ts",
+      "kind": "test",
+      "lines": 656
+    },
+    {
+      "path": "apps/web/src/pages/settings/__tests__/models-pane.test.ts",
+      "kind": "test",
+      "lines": 1164
+    },
+    {
+      "path": "apps/web/src/pages/settings/lib/settings-index.ts",
+      "kind": "source",
+      "lines": 1474
+    },
+    {
+      "path": "apps/web/src/pages/settings/panes/security.tsx",
+      "kind": "source",
+      "lines": 1045
+    },
+    {
+      "path": "apps/web/src/pages/settings/panes/voice.tsx",
+      "kind": "source",
+      "lines": 1726
+    },
+    {
+      "path": "docs/content/building/explanation/context-cost-optimization.md",
+      "kind": "doc",
+      "lines": 209
+    },
+    {
+      "path": "docs/content/building/explanation/hook-execution-models.md",
+      "kind": "doc",
+      "lines": 214
+    },
+    {
+      "path": "docs/content/building/explanation/personality-as-architecture.md",
+      "kind": "doc",
+      "lines": 298
+    },
+    {
+      "path": "docs/content/building/explanation/teams-and-meshes.md",
+      "kind": "doc",
+      "lines": 245
+    },
+    {
+      "path": "docs/content/building/how-to/add-a-memory-provider.md",
+      "kind": "doc",
+      "lines": 307
+    },
+    {
+      "path": "docs/content/building/how-to/author-a-canvas-template.md",
+      "kind": "doc",
+      "lines": 201
+    },
+    {
+      "path": "docs/content/building/how-to/create-a-plugin.md",
+      "kind": "doc",
+      "lines": 573
+    },
+    {
+      "path": "docs/content/building/how-to/openai-server-chat.md",
+      "kind": "doc",
+      "lines": 277
+    },
+    {
+      "path": "docs/content/building/how-to/publish-a-plugin.md",
+      "kind": "doc",
+      "lines": 228
+    },
+    {
+      "path": "docs/content/building/how-to/write-a-memory-backend-plugin.md",
+      "kind": "doc",
+      "lines": 212
+    },
+    {
+      "path": "docs/content/building/quickstart.md",
+      "kind": "doc",
+      "lines": 270
+    },
+    {
+      "path": "docs/content/building/reference/browser-tools.md",
+      "kind": "doc",
+      "lines": 269
+    },
+    {
+      "path": "docs/content/building/reference/cron-tools.md",
+      "kind": "doc",
+      "lines": 214
+    },
+    {
+      "path": "docs/content/building/reference/llm-provider-interface.md",
+      "kind": "doc",
+      "lines": 250
+    },
+    {
+      "path": "docs/content/building/reference/outbound-policy.md",
+      "kind": "doc",
+      "lines": 270
+    },
+    {
+      "path": "docs/content/building/reference/plugin-sdk.md",
+      "kind": "doc",
+      "lines": 223
+    },
+    {
+      "path": "docs/content/building/reference/tool-capabilities.md",
+      "kind": "doc",
+      "lines": 307
+    },
+    {
+      "path": "docs/content/building/reference/tool-interface.md",
+      "kind": "doc",
+      "lines": 350
+    },
+    {
+      "path": "docs/content/building/reference/vision-tools.md",
+      "kind": "doc",
+      "lines": 227
+    },
+    {
+      "path": "docs/content/building/tutorials/add-a-channel-adapter.md",
+      "kind": "doc",
+      "lines": 525
+    },
+    {
+      "path": "docs/content/building/tutorials/add-an-llm-provider.md",
+      "kind": "doc",
+      "lines": 532
+    },
+    {
+      "path": "docs/content/building/tutorials/build-a-plugin-home-panel.md",
+      "kind": "doc",
+      "lines": 511
+    },
+    {
+      "path": "docs/content/building/tutorials/build-custom-dashboard.md",
+      "kind": "doc",
+      "lines": 227
+    },
+    {
+      "path": "docs/content/building/tutorials/write-your-first-tool.md",
+      "kind": "doc",
+      "lines": 470
+    },
+    {
+      "path": "docs/content/getting-started/architecture-90-seconds.md",
+      "kind": "doc",
+      "lines": 211
+    },
+    {
+      "path": "docs/content/getting-started/glossary.md",
+      "kind": "doc",
+      "lines": 232
+    },
+    {
+      "path": "docs/content/platforms/discord.md",
+      "kind": "doc",
+      "lines": 281
+    },
+    {
+      "path": "docs/content/platforms/slack.md",
+      "kind": "doc",
+      "lines": 309
+    },
+    {
+      "path": "docs/content/platforms/telegram.md",
+      "kind": "doc",
+      "lines": 315
+    },
+    {
+      "path": "docs/content/security/bot-token-rotation-playbook.md",
+      "kind": "doc",
+      "lines": 206
+    },
+    {
+      "path": "docs/content/security/controls.md",
+      "kind": "doc",
+      "lines": 708
+    },
+    {
+      "path": "docs/content/security/least-privilege-tokens.md",
+      "kind": "doc",
+      "lines": 257
+    },
+    {
+      "path": "docs/content/security/overview.md",
+      "kind": "doc",
+      "lines": 221
+    },
+    {
+      "path": "docs/content/security/production-hardening-checklist.md",
+      "kind": "doc",
+      "lines": 378
+    },
+    {
+      "path": "docs/content/security/security-boundary.md",
+      "kind": "doc",
+      "lines": 272
+    },
+    {
+      "path": "docs/content/security/security-fixes.md",
+      "kind": "doc",
+      "lines": 326
+    },
+    {
+      "path": "docs/content/security/white-paper.md",
+      "kind": "doc",
+      "lines": 256
+    },
+    {
+      "path": "docs/content/troubleshooting.md",
+      "kind": "doc",
+      "lines": 395
+    },
+    {
+      "path": "docs/content/using/explanation/memory-model.md",
+      "kind": "doc",
+      "lines": 229
+    },
+    {
+      "path": "docs/content/using/explanation/what-is-a-personality.md",
+      "kind": "doc",
+      "lines": 260
+    },
+    {
+      "path": "docs/content/using/explanation/what-is-a-skill.md",
+      "kind": "doc",
+      "lines": 209
+    },
+    {
+      "path": "docs/content/using/how-to/answer-phone-calls.md",
+      "kind": "doc",
+      "lines": 233
+    },
+    {
+      "path": "docs/content/using/how-to/back-up-and-restore.md",
+      "kind": "doc",
+      "lines": 219
+    },
+    {
+      "path": "docs/content/using/how-to/configure-aws-secrets.md",
+      "kind": "doc",
+      "lines": 204
+    },
+    {
+      "path": "docs/content/using/how-to/deploy-in-production.md",
+      "kind": "doc",
+      "lines": 255
+    },
+    {
+      "path": "docs/content/using/how-to/deploy-on-ec2.md",
+      "kind": "doc",
+      "lines": 247
+    },
+    {
+      "path": "docs/content/using/how-to/export-traces-otlp.md",
+      "kind": "doc",
+      "lines": 262
+    },
+    {
+      "path": "docs/content/using/how-to/install-on-windows-wsl2.md",
+      "kind": "doc",
+      "lines": 237
+    },
+    {
+      "path": "docs/content/using/how-to/manage-skill-evolution.md",
+      "kind": "doc",
+      "lines": 226
+    },
+    {
+      "path": "docs/content/using/how-to/peer-two-ethos-agents.md",
+      "kind": "doc",
+      "lines": 370
+    },
+    {
+      "path": "docs/content/using/how-to/review-personality-change-requests.md",
+      "kind": "doc",
+      "lines": 207
+    },
+    {
+      "path": "docs/content/using/how-to/run-a-wake-satellite.md",
+      "kind": "doc",
+      "lines": 327
+    },
+    {
+      "path": "docs/content/using/how-to/run-as-daemon.md",
+      "kind": "doc",
+      "lines": 378
+    },
+    {
+      "path": "docs/content/using/how-to/run-in-docker.md",
+      "kind": "doc",
+      "lines": 260
+    },
+    {
+      "path": "docs/content/using/how-to/run-multiple-bots.md",
+      "kind": "doc",
+      "lines": 207
+    },
+    {
+      "path": "docs/content/using/how-to/schedule-tasks-with-cron.md",
+      "kind": "doc",
+      "lines": 289
+    },
+    {
+      "path": "docs/content/using/how-to/set-up-approval-gates.md",
+      "kind": "doc",
+      "lines": 248
+    },
+    {
+      "path": "docs/content/using/how-to/set-up-mcp-for-a-personality.md",
+      "kind": "doc",
+      "lines": 219
+    },
+    {
+      "path": "docs/content/using/how-to/use-a-decision-model.md",
+      "kind": "doc",
+      "lines": 234
+    },
+    {
+      "path": "docs/content/using/how-to/use-as-mcp-server.md",
+      "kind": "doc",
+      "lines": 304
+    },
+    {
+      "path": "docs/content/using/how-to/use-aws-bedrock.md",
+      "kind": "doc",
+      "lines": 232
+    },
+    {
+      "path": "docs/content/using/how-to/use-web-dashboard.md",
+      "kind": "doc",
+      "lines": 245
+    },
+    {
+      "path": "docs/content/using/how-to/use-zero-mode.md",
+      "kind": "doc",
+      "lines": 210
+    },
+    {
+      "path": "docs/content/using/quickstart.md",
+      "kind": "doc",
+      "lines": 231
+    },
+    {
+      "path": "docs/content/using/reference/cli.md",
+      "kind": "doc",
+      "lines": 778
+    },
+    {
+      "path": "docs/content/using/reference/config-yaml.md",
+      "kind": "doc",
+      "lines": 1617
+    },
+    {
+      "path": "docs/content/using/reference/mcp-config.md",
+      "kind": "doc",
+      "lines": 384
+    },
+    {
+      "path": "docs/content/using/reference/personality-yaml.md",
+      "kind": "doc",
+      "lines": 534
+    },
+    {
+      "path": "docs/content/using/tutorials/first-agent.md",
+      "kind": "doc",
+      "lines": 322
+    },
+    {
+      "path": "docs/content/using/tutorials/first-deploy-telegram.md",
+      "kind": "doc",
+      "lines": 423
+    },
+    {
+      "path": "docs/content/using/tutorials/first-personality.md",
+      "kind": "doc",
+      "lines": 401
+    },
+    {
+      "path": "docs/src/components/OrbitHero/index.tsx",
+      "kind": "source",
+      "lines": 821
+    },
+    {
+      "path": "examples/plugins/README.md",
+      "kind": "doc",
+      "lines": 421
+    },
+    {
+      "path": "extensions/channel-transcript-sqlite/src/__tests__/channel-transcript.test.ts",
+      "kind": "test",
+      "lines": 816
+    },
+    {
+      "path": "extensions/cron/src/__tests__/cron.test.ts",
+      "kind": "test",
+      "lines": 2408
+    },
+    {
+      "path": "extensions/cron/src/__tests__/run-integrity.test.ts",
+      "kind": "test",
+      "lines": 681
+    },
+    {
+      "path": "extensions/cron/src/index.ts",
+      "kind": "source",
+      "lines": 2109
+    },
+    {
+      "path": "extensions/dashboard/src/__tests__/dashboards.service.test.ts",
+      "kind": "test",
+      "lines": 578
+    },
+    {
+      "path": "extensions/dashboard/src/dashboards.service.ts",
+      "kind": "source",
+      "lines": 1063
+    },
+    {
+      "path": "extensions/delivery-ledger/src/__tests__/delivery-ledger.test.ts",
+      "kind": "test",
+      "lines": 1246
+    },
+    {
+      "path": "extensions/eval-harness/src/__tests__/decision-calibration.test.ts",
+      "kind": "test",
+      "lines": 519
+    },
+    {
+      "path": "extensions/execution-docker/src/__tests__/docker.test.ts",
+      "kind": "test",
+      "lines": 896
+    },
+    {
+      "path": "extensions/execution-docker/src/index.ts",
+      "kind": "source",
+      "lines": 1652
+    },
+    {
+      "path": "extensions/execution-ssh/src/__tests__/ssh.test.ts",
+      "kind": "test",
+      "lines": 1636
+    },
+    {
+      "path": "extensions/execution-ssh/src/index.ts",
+      "kind": "source",
+      "lines": 1470
+    },
+    {
+      "path": "extensions/export-otlp/src/__tests__/poller.test.ts",
+      "kind": "test",
+      "lines": 528
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/background-wake.test.ts",
+      "kind": "test",
+      "lines": 1036
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/channel-digest.test.ts",
+      "kind": "test",
+      "lines": 2110
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/delivery-ledger.test.ts",
+      "kind": "test",
+      "lines": 975
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/dream-executor.test.ts",
+      "kind": "test",
+      "lines": 631
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/inbound-spool.test.ts",
+      "kind": "test",
+      "lines": 1287
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/memory-boundary-e2e.test.ts",
+      "kind": "test",
+      "lines": 580
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/parent-review.test.ts",
+      "kind": "test",
+      "lines": 786
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/steer-mid-turn.test.ts",
+      "kind": "test",
+      "lines": 609
+    },
+    {
+      "path": "extensions/gateway/src/__tests__/turn-tail.test.ts",
+      "kind": "test",
+      "lines": 1067
+    },
+    {
+      "path": "extensions/gateway/src/channel-digest.ts",
+      "kind": "source",
+      "lines": 1145
+    },
+    {
+      "path": "extensions/gateway/src/index.ts",
+      "kind": "source",
+      "lines": 9220
+    },
+    {
+      "path": "extensions/goal-runner/src/__tests__/execution.test.ts",
+      "kind": "test",
+      "lines": 904
+    },
+    {
+      "path": "extensions/goal-runner/src/index.ts",
+      "kind": "source",
+      "lines": 1581
+    },
+    {
+      "path": "extensions/idle-watcher/src/__tests__/idle-watcher.test.ts",
+      "kind": "test",
+      "lines": 552
+    },
+    {
+      "path": "extensions/inbound-spool/src/__tests__/spool.test.ts",
+      "kind": "test",
+      "lines": 556
+    },
+    {
+      "path": "extensions/inbound-spool/src/index.ts",
+      "kind": "source",
+      "lines": 957
+    },
+    {
+      "path": "extensions/job-runner/src/__tests__/executor.test.ts",
+      "kind": "test",
+      "lines": 783
+    },
+    {
+      "path": "extensions/job-runner/src/index.ts",
+      "kind": "source",
+      "lines": 1166
+    },
+    {
+      "path": "extensions/job-store/src/__tests__/job-store.test.ts",
+      "kind": "test",
+      "lines": 1169
+    },
+    {
+      "path": "extensions/job-store/src/index.ts",
+      "kind": "source",
+      "lines": 868
+    },
+    {
+      "path": "extensions/kanban-store/src/__tests__/kanban-store.test.ts",
+      "kind": "test",
+      "lines": 2572
+    },
+    {
+      "path": "extensions/kanban-store/src/index.ts",
+      "kind": "source",
+      "lines": 2005
+    },
+    {
+      "path": "extensions/learning-inbox/src/__tests__/replay.test.ts",
+      "kind": "test",
+      "lines": 533
+    },
+    {
+      "path": "extensions/llm-anthropic/src/index.ts",
+      "kind": "source",
+      "lines": 1114
+    },
+    {
+      "path": "extensions/memory-capture/src/__tests__/runner.test.ts",
+      "kind": "test",
+      "lines": 560
+    },
+    {
+      "path": "extensions/memory-vector/src/__tests__/memory-vector.test.ts",
+      "kind": "test",
+      "lines": 520
+    },
+    {
+      "path": "extensions/nightly-loop/src/__tests__/orchestrator.test.ts",
+      "kind": "test",
+      "lines": 567
+    },
+    {
+      "path": "extensions/observability-sqlite/README.md",
+      "kind": "readme",
+      "lines": 193
+    },
+    {
+      "path": "extensions/observability-sqlite/src/__tests__/retention.test.ts",
+      "kind": "test",
+      "lines": 792
+    },
+    {
+      "path": "extensions/observability-sqlite/src/store.ts",
+      "kind": "source",
+      "lines": 1250
+    },
+    {
+      "path": "extensions/outbox/src/__tests__/service.test.ts",
+      "kind": "test",
+      "lines": 527
+    },
+    {
+      "path": "extensions/outbox/src/store.ts",
+      "kind": "source",
+      "lines": 846
+    },
+    {
+      "path": "extensions/personalities/src/__tests__/character-sheet.test.ts",
+      "kind": "test",
+      "lines": 1759
+    },
+    {
+      "path": "extensions/personalities/src/__tests__/mcp-yaml-loader.test.ts",
+      "kind": "test",
+      "lines": 547
+    },
+    {
+      "path": "extensions/personalities/src/__tests__/permission-surface.test.ts",
+      "kind": "test",
+      "lines": 518
+    },
+    {
+      "path": "extensions/personalities/src/__tests__/personalities.test.ts",
+      "kind": "test",
+      "lines": 1217
+    },
+    {
+      "path": "extensions/personalities/src/__tests__/update-roundtrip.test.ts",
+      "kind": "test",
+      "lines": 1812
+    },
+    {
+      "path": "extensions/personalities/src/character-sheet.ts",
+      "kind": "source",
+      "lines": 1173
+    },
+    {
+      "path": "extensions/personalities/src/index.ts",
+      "kind": "source",
+      "lines": 3532
+    },
+    {
+      "path": "extensions/personalities/src/permission-surface.ts",
+      "kind": "source",
+      "lines": 892
+    },
+    {
+      "path": "extensions/platform-callcapture/README.md",
+      "kind": "readme",
+      "lines": 1540
+    },
+    {
+      "path": "extensions/platform-callcapture/src/__tests__/daemon.test.ts",
+      "kind": "test",
+      "lines": 1255
+    },
+    {
+      "path": "extensions/platform-discord/README.md",
+      "kind": "readme",
+      "lines": 374
+    },
+    {
+      "path": "extensions/platform-discord/src/__tests__/clarify-surface.test.ts",
+      "kind": "test",
+      "lines": 610
+    },
+    {
+      "path": "extensions/platform-discord/src/index.ts",
+      "kind": "source",
+      "lines": 986
+    },
+    {
+      "path": "extensions/platform-slack/README.md",
+      "kind": "readme",
+      "lines": 370
+    },
+    {
+      "path": "extensions/platform-slack/src/__tests__/clarify-surface.test.ts",
+      "kind": "test",
+      "lines": 749
+    },
+    {
+      "path": "extensions/platform-slack/src/__tests__/home.test.ts",
+      "kind": "test",
+      "lines": 563
+    },
+    {
+      "path": "extensions/platform-slack/src/adapter.ts",
+      "kind": "source",
+      "lines": 1805
+    },
+    {
+      "path": "extensions/platform-telegram/README.md",
+      "kind": "readme",
+      "lines": 194
+    },
+    {
+      "path": "extensions/platform-telegram/src/__tests__/clarify-surface.test.ts",
+      "kind": "test",
+      "lines": 615
+    },
+    {
+      "path": "extensions/platform-telegram/src/__tests__/observe-inbound.test.ts",
+      "kind": "test",
+      "lines": 502
+    },
+    {
+      "path": "extensions/platform-telegram/src/__tests__/outbox-card.test.ts",
+      "kind": "test",
+      "lines": 596
+    },
+    {
+      "path": "extensions/platform-telegram/src/__tests__/phase3.test.ts",
+      "kind": "test",
+      "lines": 913
+    },
+    {
+      "path": "extensions/platform-telegram/src/__tests__/phase4.test.ts",
+      "kind": "test",
+      "lines": 704
+    },
+    {
+      "path": "extensions/platform-telegram/src/index.ts",
+      "kind": "source",
+      "lines": 2221
+    },
+    {
+      "path": "extensions/platform-voice/README.md",
+      "kind": "readme",
+      "lines": 213
+    },
+    {
+      "path": "extensions/platform-voice/src/__tests__/sip-webhook.test.ts",
+      "kind": "test",
+      "lines": 623
+    },
+    {
+      "path": "extensions/platform-whatsapp/README.md",
+      "kind": "readme",
+      "lines": 203
+    },
+    {
+      "path": "extensions/platform-whatsapp/src/__tests__/channel-mode.test.ts",
+      "kind": "test",
+      "lines": 557
+    },
+    {
+      "path": "extensions/plugin-loader/src/__tests__/plugin-loader.test.ts",
+      "kind": "test",
+      "lines": 769
+    },
+    {
+      "path": "extensions/plugin-loader/src/index.ts",
+      "kind": "source",
+      "lines": 1788
+    },
+    {
+      "path": "extensions/recipes/src/__tests__/preflight.test.ts",
+      "kind": "test",
+      "lines": 634
+    },
+    {
+      "path": "extensions/session-sqlite/src/__tests__/sqlite-session.test.ts",
+      "kind": "test",
+      "lines": 886
+    },
+    {
+      "path": "extensions/session-sqlite/src/index.ts",
+      "kind": "source",
+      "lines": 1376
+    },
+    {
+      "path": "extensions/skill-evolver/src/__tests__/evolver.test.ts",
+      "kind": "test",
+      "lines": 536
+    },
+    {
+      "path": "extensions/skill-evolver/src/__tests__/improvement-fork.test.ts",
+      "kind": "test",
+      "lines": 815
+    },
+    {
+      "path": "extensions/skills/src/__tests__/e2e-scanner-filter.test.ts",
+      "kind": "test",
+      "lines": 549
+    },
+    {
+      "path": "extensions/skills/src/__tests__/injectors.test.ts",
+      "kind": "test",
+      "lines": 724
+    },
+    {
+      "path": "extensions/team-supervisor/src/__tests__/dispatcher.test.ts",
+      "kind": "test",
+      "lines": 988
+    },
+    {
+      "path": "extensions/team-supervisor/src/__tests__/schema.test.ts",
+      "kind": "test",
+      "lines": 640
+    },
+    {
+      "path": "extensions/tools-a2a/src/__tests__/tools-a2a.test.ts",
+      "kind": "test",
+      "lines": 857
+    },
+    {
+      "path": "extensions/tools-answer-engines/src/__tests__/engine-ask.test.ts",
+      "kind": "test",
+      "lines": 1261
+    },
+    {
+      "path": "extensions/tools-answer-engines/src/__tests__/perplexity.test.ts",
+      "kind": "test",
+      "lines": 571
+    },
+    {
+      "path": "extensions/tools-browser/src/__tests__/browser-fill-credential.test.ts",
+      "kind": "test",
+      "lines": 532
+    },
+    {
+      "path": "extensions/tools-browser/src/__tests__/browser-takeover.test.ts",
+      "kind": "test",
+      "lines": 543
+    },
+    {
+      "path": "extensions/tools-browser/src/__tests__/sessions.test.ts",
+      "kind": "test",
+      "lines": 779
+    },
+    {
+      "path": "extensions/tools-browser/src/__tests__/takeover-lease.test.ts",
+      "kind": "test",
+      "lines": 617
+    },
+    {
+      "path": "extensions/tools-browser/src/sessions.ts",
+      "kind": "source",
+      "lines": 1195
+    },
+    {
+      "path": "extensions/tools-callcapture/src/__tests__/call-capture-start.test.ts",
+      "kind": "test",
+      "lines": 815
+    },
+    {
+      "path": "extensions/tools-code/src/__tests__/run-code.test.ts",
+      "kind": "test",
+      "lines": 583
+    },
+    {
+      "path": "extensions/tools-cron/src/__tests__/cron-tool.test.ts",
+      "kind": "test",
+      "lines": 628
+    },
+    {
+      "path": "extensions/tools-cron/src/index.ts",
+      "kind": "source",
+      "lines": 833
+    },
+    {
+      "path": "extensions/tools-delegation/src/__tests__/background-tools.test.ts",
+      "kind": "test",
+      "lines": 952
+    },
+    {
+      "path": "extensions/tools-delegation/src/__tests__/delegation.test.ts",
+      "kind": "test",
+      "lines": 676
+    },
+    {
+      "path": "extensions/tools-delegation/src/index.ts",
+      "kind": "source",
+      "lines": 1746
+    },
+    {
+      "path": "extensions/tools-file/src/index.ts",
+      "kind": "source",
+      "lines": 948
+    },
+    {
+      "path": "extensions/tools-kanban/src/__tests__/tools.test.ts",
+      "kind": "test",
+      "lines": 1247
+    },
+    {
+      "path": "extensions/tools-kanban/src/__tests__/verifier.test.ts",
+      "kind": "test",
+      "lines": 926
+    },
+    {
+      "path": "extensions/tools-kanban/src/index.ts",
+      "kind": "source",
+      "lines": 1538
+    },
+    {
+      "path": "extensions/tools-mcp/src/__tests__/install-flow.test.ts",
+      "kind": "test",
+      "lines": 1008
+    },
+    {
+      "path": "extensions/tools-mcp/src/__tests__/oauth.test.ts",
+      "kind": "test",
+      "lines": 689
+    },
+    {
+      "path": "extensions/tools-mcp/src/__tests__/reliability.test.ts",
+      "kind": "test",
+      "lines": 786
+    },
+    {
+      "path": "extensions/tools-mcp/src/__tests__/wire-format.test.ts",
+      "kind": "test",
+      "lines": 588
+    },
+    {
+      "path": "extensions/tools-mcp/src/index.ts",
+      "kind": "source",
+      "lines": 1822
+    },
+    {
+      "path": "extensions/tools-mcp/src/install-flow.ts",
+      "kind": "source",
+      "lines": 805
+    },
+    {
+      "path": "extensions/tools-mcp/src/oauth.ts",
+      "kind": "source",
+      "lines": 1049
+    },
+    {
+      "path": "extensions/tools-personality-design/src/__tests__/personality-design-tools.test.ts",
+      "kind": "test",
+      "lines": 591
+    },
+    {
+      "path": "extensions/tools-process/README.md",
+      "kind": "readme",
+      "lines": 152
+    },
+    {
+      "path": "extensions/tools-process/src/__tests__/guard.test.ts",
+      "kind": "test",
+      "lines": 587
+    },
+    {
+      "path": "extensions/tools-process/src/__tests__/process.test.ts",
+      "kind": "test",
+      "lines": 1245
+    },
+    {
+      "path": "extensions/tools-social-search/src/__tests__/site-search.test.ts",
+      "kind": "test",
+      "lines": 832
+    },
+    {
+      "path": "extensions/tools-terminal/src/__tests__/tools-terminal.test.ts",
+      "kind": "test",
+      "lines": 552
+    },
+    {
+      "path": "extensions/tools-vision/README.md",
+      "kind": "readme",
+      "lines": 208
+    },
+    {
+      "path": "extensions/tools-vision/src/__tests__/integration.test.ts",
+      "kind": "test",
+      "lines": 598
+    },
+    {
+      "path": "extensions/tools-vision/src/__tests__/vision.test.ts",
+      "kind": "test",
+      "lines": 690
+    },
+    {
+      "path": "extensions/tools-voice/src/__tests__/realtime-host.test.ts",
+      "kind": "test",
+      "lines": 545
+    },
+    {
+      "path": "extensions/tools-web/src/__tests__/tools-web.test.ts",
+      "kind": "test",
+      "lines": 1286
+    },
+    {
+      "path": "extensions/voice-satellite/src/__tests__/capture.test.ts",
+      "kind": "test",
+      "lines": 514
+    },
+    {
+      "path": "extensions/voice-session/src/__tests__/voice-session.test.ts",
+      "kind": "test",
+      "lines": 710
+    },
+    {
+      "path": "extensions/watchers/src/index.ts",
+      "kind": "source",
+      "lines": 952
+    },
+    {
+      "path": "packages/a2a/src/__tests__/auth.test.ts",
+      "kind": "test",
+      "lines": 528
+    },
+    {
+      "path": "packages/a2a/src/__tests__/outbound.test.ts",
+      "kind": "test",
+      "lines": 575
+    },
+    {
+      "path": "packages/a2a/src/__tests__/rpc.test.ts",
+      "kind": "test",
+      "lines": 690
+    },
+    {
+      "path": "packages/a2a/src/rpc.ts",
+      "kind": "source",
+      "lines": 1101
+    },
+    {
+      "path": "packages/agent-bridge/src/__tests__/agent-bridge.test.ts",
+      "kind": "test",
+      "lines": 552
+    },
+    {
+      "path": "packages/config/src/__tests__/config-multi-bot.test.ts",
+      "kind": "test",
+      "lines": 733
+    },
+    {
+      "path": "packages/config/src/__tests__/config-provider-chain.test.ts",
+      "kind": "test",
+      "lines": 598
+    },
+    {
+      "path": "packages/config/src/__tests__/config-secrets.test.ts",
+      "kind": "test",
+      "lines": 756
+    },
+    {
+      "path": "packages/config/src/__tests__/config-webhooks.test.ts",
+      "kind": "test",
+      "lines": 741
+    },
+    {
+      "path": "packages/config/src/__tests__/config.test.ts",
+      "kind": "test",
+      "lines": 1258
+    },
+    {
+      "path": "packages/config/src/index.ts",
+      "kind": "source",
+      "lines": 11100
+    },
+    {
+      "path": "packages/core/src/__tests__/agent-loop-injection.test.ts",
+      "kind": "test",
+      "lines": 978
+    },
+    {
+      "path": "packages/core/src/__tests__/agent-loop.test.ts",
+      "kind": "test",
+      "lines": 1458
+    },
+    {
+      "path": "packages/core/src/__tests__/capability-resolver.test.ts",
+      "kind": "test",
+      "lines": 622
+    },
+    {
+      "path": "packages/core/src/__tests__/chained-provider.test.ts",
+      "kind": "test",
+      "lines": 606
+    },
+    {
+      "path": "packages/core/src/__tests__/channel-mode.test.ts",
+      "kind": "test",
+      "lines": 574
+    },
+    {
+      "path": "packages/core/src/__tests__/clarify.test.ts",
+      "kind": "test",
+      "lines": 1207
+    },
+    {
+      "path": "packages/core/src/__tests__/compaction-gate.test.ts",
+      "kind": "test",
+      "lines": 588
+    },
+    {
+      "path": "packages/core/src/__tests__/compaction-watermark.test.ts",
+      "kind": "test",
+      "lines": 589
+    },
+    {
+      "path": "packages/core/src/__tests__/model-resolution.test.ts",
+      "kind": "test",
+      "lines": 824
+    },
+    {
+      "path": "packages/core/src/__tests__/model-tier.test.ts",
+      "kind": "test",
+      "lines": 550
+    },
+    {
+      "path": "packages/core/src/__tests__/script-tool-bridge.test.ts",
+      "kind": "test",
+      "lines": 665
+    },
+    {
+      "path": "packages/core/src/__tests__/shared-audience.test.ts",
+      "kind": "test",
+      "lines": 1193
+    },
+    {
+      "path": "packages/core/src/__tests__/tool-registry.test.ts",
+      "kind": "test",
+      "lines": 786
+    },
+    {
+      "path": "packages/core/src/__tests__/turn-end-consolidation.test.ts",
+      "kind": "test",
+      "lines": 1136
+    },
+    {
+      "path": "packages/core/src/agent-loop.ts",
+      "kind": "source",
+      "lines": 1127
+    },
+    {
+      "path": "packages/core/src/agent-loop/stages/context-assembly.ts",
+      "kind": "source",
+      "lines": 847
+    },
+    {
+      "path": "packages/core/src/agent-loop/stages/tool-processing.ts",
+      "kind": "source",
+      "lines": 881
+    },
+    {
+      "path": "packages/core/src/clarify/clarify-bridge.ts",
+      "kind": "source",
+      "lines": 980
+    },
+    {
+      "path": "packages/plugin-sdk/src/__tests__/plugin-sdk.test.ts",
+      "kind": "test",
+      "lines": 534
+    },
+    {
+      "path": "packages/plugin-sdk/src/index.ts",
+      "kind": "source",
+      "lines": 1314
+    },
+    {
+      "path": "packages/pricing/src/__tests__/pricing.test.ts",
+      "kind": "test",
+      "lines": 673
+    },
+    {
+      "path": "packages/safety/channel/src/__tests__/channel-filter.test.ts",
+      "kind": "test",
+      "lines": 511
+    },
+    {
+      "path": "packages/safety/groundtruth/src/__tests__/auditor.test.ts",
+      "kind": "test",
+      "lines": 571
+    },
+    {
+      "path": "packages/sdk/README.md",
+      "kind": "readme",
+      "lines": 179
+    },
+    {
+      "path": "packages/storage-fs/src/__tests__/scoped-storage.test.ts",
+      "kind": "test",
+      "lines": 672
+    },
+    {
+      "path": "packages/types/src/personality.ts",
+      "kind": "source",
+      "lines": 1018
+    },
+    {
+      "path": "packages/web-contracts/src/__tests__/contract.test.ts",
+      "kind": "test",
+      "lines": 504
+    },
+    {
+      "path": "packages/web-contracts/src/router.ts",
+      "kind": "source",
+      "lines": 6544
+    },
+    {
+      "path": "packages/web-contracts/src/schemas.ts",
+      "kind": "source",
+      "lines": 2763
+    },
+    {
+      "path": "packages/wiring/src/__tests__/amendments.test.ts",
+      "kind": "test",
+      "lines": 1190
+    },
+    {
+      "path": "packages/wiring/src/__tests__/approval-seams.test.ts",
+      "kind": "test",
+      "lines": 518
+    },
+    {
+      "path": "packages/wiring/src/__tests__/backup-schedule.test.ts",
+      "kind": "test",
+      "lines": 651
+    },
+    {
+      "path": "packages/wiring/src/__tests__/birth-ritual.test.ts",
+      "kind": "test",
+      "lines": 797
+    },
+    {
+      "path": "packages/wiring/src/__tests__/compose-tools-ssh.test.ts",
+      "kind": "test",
+      "lines": 814
+    },
+    {
+      "path": "packages/wiring/src/__tests__/danger-predicate.test.ts",
+      "kind": "test",
+      "lines": 621
+    },
+    {
+      "path": "packages/wiring/src/__tests__/decision-router.test.ts",
+      "kind": "test",
+      "lines": 522
+    },
+    {
+      "path": "packages/wiring/src/__tests__/decision-site.test.ts",
+      "kind": "test",
+      "lines": 672
+    },
+    {
+      "path": "packages/wiring/src/__tests__/decision-wiring.test.ts",
+      "kind": "test",
+      "lines": 641
+    },
+    {
+      "path": "packages/wiring/src/__tests__/first-contact.test.ts",
+      "kind": "test",
+      "lines": 679
+    },
+    {
+      "path": "packages/wiring/src/__tests__/grounding.test.ts",
+      "kind": "test",
+      "lines": 598
+    },
+    {
+      "path": "packages/wiring/src/__tests__/learning-pipeline.test.ts",
+      "kind": "test",
+      "lines": 525
+    },
+    {
+      "path": "packages/wiring/src/__tests__/model-catalog-loader.test.ts",
+      "kind": "test",
+      "lines": 763
+    },
+    {
+      "path": "packages/wiring/src/__tests__/propose-amendment.test.ts",
+      "kind": "test",
+      "lines": 807
+    },
+    {
+      "path": "packages/wiring/src/__tests__/replay-isolation.test.ts",
+      "kind": "test",
+      "lines": 611
+    },
+    {
+      "path": "packages/wiring/src/__tests__/resolve-execution-posture.test.ts",
+      "kind": "test",
+      "lines": 639
+    },
+    {
+      "path": "packages/wiring/src/__tests__/smart-approver-decision.test.ts",
+      "kind": "test",
+      "lines": 511
+    },
+    {
+      "path": "packages/wiring/src/__tests__/voice-stack.test.ts",
+      "kind": "test",
+      "lines": 1438
+    },
+    {
+      "path": "packages/wiring/src/__tests__/window-probe.test.ts",
+      "kind": "test",
+      "lines": 542
+    },
+    {
+      "path": "packages/wiring/src/amendments.ts",
+      "kind": "source",
+      "lines": 1743
+    },
+    {
+      "path": "packages/wiring/src/backup/__tests__/create-restore.test.ts",
+      "kind": "test",
+      "lines": 815
+    },
+    {
+      "path": "packages/wiring/src/backup/__tests__/restore-journal.test.ts",
+      "kind": "test",
+      "lines": 790
+    },
+    {
+      "path": "packages/wiring/src/backup/__tests__/secrets-manifest.test.ts",
+      "kind": "test",
+      "lines": 653
+    },
+    {
+      "path": "packages/wiring/src/backup/restore.ts",
+      "kind": "source",
+      "lines": 1316
+    },
+    {
+      "path": "packages/wiring/src/build-agent-loop.ts",
+      "kind": "source",
+      "lines": 2131
+    },
+    {
+      "path": "packages/wiring/src/compose-tools.ts",
+      "kind": "source",
+      "lines": 2258
+    },
+    {
+      "path": "packages/wiring/src/index.ts",
+      "kind": "source",
+      "lines": 2438
+    },
+    {
+      "path": "packages/wiring/src/model-catalog.ts",
+      "kind": "source",
+      "lines": 1006
+    },
+    {
+      "path": "packages/wiring/src/voice-stack.ts",
+      "kind": "source",
+      "lines": 866
+    },
+    {
+      "path": "sandbox/README.md",
+      "kind": "doc",
+      "lines": 227
+    }
+  ]
+}

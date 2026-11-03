@@ -54,3 +54,7 @@ pre-push:
     # CLAUDE.md/AGENTS.md twin and size, .claude/rules and skill budgets (context-budget plan).
     agent-files:
       run: bash scripts/check-agent-files.sh
+    # Source/test/doc size limits, then the rule that .size-baseline.json only shrinks unless a
+    # commit carries `Size-Baseline-Approved-By:` (bare --base: merge-base with origin/main, else HEAD~1).
+    source-size:
+      run: bash scripts/check-source-size.sh --base
