@@ -274,7 +274,6 @@ describe('check-agent-files', () => {
       [`${dir}/package.json`]: '{}\n',
       ...(readme ? { [`${dir}/README.md`]: '# x\n' } : {}),
     });
-    const CEILING = 69; // ALLOWANCES['readme-missing'] in scripts/check-agent-files.mjs
 
     it('missing README fails without allowance', () => {
       const r = expectFail(
@@ -285,16 +284,11 @@ describe('check-agent-files', () => {
       expect(r.stderr).not.toContain('(allowed');
     });
 
-    it('missing README is allowed under the ceiling', () => {
-      const r = run(fixture({ ...clean(), ...pkg('packages/safety/a') }));
-      expect(r.status).toBe(0);
-      expect(r.stdout).toContain('readme-missing packages/safety/a');
-    });
-
-    it('more missing READMEs than the ceiling fails', () => {
-      const many = Array.from({ length: CEILING + 1 }, (_, i) => pkg(`extensions/e${i}`));
-      const r = expectFail(Object.assign(clean(), ...many), 'readme-missing');
-      expect(r.stderr).toContain(`past its allowance of ${CEILING}`);
+    it('any missing README fails, in every workspace root', () => {
+      for (const dir of ['apps/a', 'packages/a', 'packages/safety/a', 'extensions/a']) {
+        const r = expectFail({ ...clean(), ...pkg(dir) }, `readme-missing ${dir}`);
+        expect(r.stderr).not.toContain('(allowed');
+      }
     });
 
     it('a package with a README passes', () => {

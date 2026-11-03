@@ -26,9 +26,6 @@ const ADR_INDEX = `${ADR_DIR}/README.md`;
 
 // rule -> path -> { max, why }. An allowed overage prints `(allowed ...)` on stdout and does not
 // fail; one past `max` fails, so an allowance only shrinks. Delete the entry when it is paid off.
-// Exception: 'readme-missing' is keyed by the bucket PKG_ROOTS_KEY, not a path; `max` is a count
-// ceiling over all package dirs lacking a README.
-const PKG_ROOTS_KEY = 'workspace packages';
 const ARCH_WHY = 'frozen §I/§V/§VI plus §III enforcer lines';
 const ALLOWANCES = {
   // Measured 2026-11-03 after the Clarifying pass (rationale and extension patterns moved to
@@ -39,8 +36,6 @@ const ALLOWANCES = {
   // rationale to ADRs. Lower these ceilings as it lands; delete the entries at 300 / 20,000.
   'arch-lines': { [ARCH]: { max: 518, why: ARCH_WHY } },
   'arch-tokens': { [ARCH]: { max: 27_957, why: ARCH_WHY } },
-  // A ceiling on the missing count (not a path list): shrinks as READMEs land, Task 13 deletes it.
-  'readme-missing': { [PKG_ROOTS_KEY]: { max: 69, why: 'package READMEs not yet written' } },
 };
 
 const violations = [];
@@ -187,25 +182,13 @@ const adrFiles = () => walk(ADR_DIR, (name) => isMd(name) && name !== 'README.md
 const adrIndexFiles = () => ifExists(ADR_INDEX);
 const claudeFiles = () => ifExists(CLAUDE);
 
-// Workspace package dirs (the four WORKSPACE_ROOTS, shared with the size gate) without a
-// README.md. Allowed while the count stays within the ceiling; one past it fails every missing
-// dir, so the number only shrinks.
+// Workspace package dirs (the WORKSPACE_ROOTS, shared with the size gate) without a README.md.
+// Strict: no allowance, every missing README fails.
 function checkPackageReadmes() {
   const missing = WORKSPACE_ROOTS.flatMap(subdirs).filter(
     (d) => existsSync(join(root, d, 'package.json')) && !existsSync(join(root, d, 'README.md')),
   );
-  const allowance = noAllowances ? undefined : ALLOWANCES['readme-missing'][PKG_ROOTS_KEY];
-  const detail = `no README.md (${missing.length} missing)`;
-  const ok = allowance && missing.length <= allowance.max;
-  const text = ok
-    ? `${detail} (allowed up to ${allowance.max}: ${allowance.why})`
-    : allowance
-      ? `${detail}, past its allowance of ${allowance.max}`
-      : detail;
-  for (const path of missing) {
-    if (ok) allowed.push({ rule: 'readme-missing', path, detail: text });
-    else flag('readme-missing', path, text);
-  }
+  for (const path of missing) flag('readme-missing', path, 'no README.md');
 }
 
 // Size rules as data: add a row to add a rule. `files` finds paths, `measure` sizes the text.
