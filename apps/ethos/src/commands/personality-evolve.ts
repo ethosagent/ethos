@@ -47,7 +47,7 @@ import {
   type UsageMeter,
   withUsageMeter,
 } from '@ethosagent/wiring';
-import { writeJson, writeJsonError } from '../json-output';
+import { refuseJson, writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createCliLearningInbox, createLLM, getStorage } from '../wiring';
@@ -513,10 +513,9 @@ export function signalNotice(id: string, signal: NonNullable<JudgeResult['signal
 }
 
 /** evolve / revert prompt for confirmation, so under `--json` they refuse with one INVALID_INPUT doc. */
-function refuseJson(argv: string[], verb: string, id: string | undefined): void {
-  if (!argv.includes('--json')) return;
-  writeJsonError(
-    'INVALID_INPUT',
+function refuseConfirmJson(argv: string[], verb: string, id: string | undefined): void {
+  refuseJson(
+    argv,
     id
       ? `ethos personality ${verb} asks for confirmation and cannot run with --json; run it without --json`
       : `Usage: ethos personality ${verb} <id> (interactive; no --json output)`,
@@ -628,7 +627,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
 
 export async function runPersonalityEvolve(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
-  refuseJson(argv, 'evolve', id);
+  refuseConfirmJson(argv, 'evolve', id);
   if (!id) {
     console.log('Usage: ethos personality evolve <id>');
     return;
@@ -865,7 +864,7 @@ async function evolvePersonality(id: string, usage: UsageMeter): Promise<void> {
 
 export async function runPersonalityRevert(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
-  refuseJson(argv, 'revert', id);
+  refuseConfirmJson(argv, 'revert', id);
   if (!id) {
     console.log('Usage: ethos personality revert <id>');
     return;

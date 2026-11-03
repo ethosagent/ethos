@@ -966,7 +966,10 @@ try {
         const { runNightly } = await import('./commands/nightly');
         await runNightly(args.slice(2));
       } else {
-        console.log('Usage: ethos nightly run [<id>]');
+        if (args.includes('--json')) {
+          writeJsonError('INVALID_INPUT', 'Usage: ethos nightly run [<id>] [--json]');
+        }
+        console.log('Usage: ethos nightly run [<id>] [--json]');
       }
       break;
     }

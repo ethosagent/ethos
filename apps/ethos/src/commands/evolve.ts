@@ -2,6 +2,8 @@ import { appendFile, mkdir, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import {
+  type EvolveApplyResult,
+  type EvolveResult,
   loadEvolveConfig,
   runEvolveApply,
   runEvolveArchive,
@@ -18,6 +20,7 @@ import {
   privateChatSetFrom,
   turnWasShared,
 } from '@ethosagent/wiring';
+import { refuseJson, type Say, sayFor, writeJson, writeJsonError } from '../json-output';
 import { createCliLearningInbox, createLearningReplayer, createLLM, getStorage } from '../wiring';
 
 const c = {
@@ -68,50 +71,70 @@ function parseArgs(args: string[]): ParsedArgs {
   return { evalOutput, listPending, approve, reject, approveAll, autoApprove };
 }
 
+const USAGE_LINES = [
+  'Usage:',
+  '  ethos evolve status [--json]',
+  '  ethos evolve run [--quiet] [--json]',
+  '  ethos evolve apply <candidate-id | filename> | --all [--json]',
+  '  ethos evolve prune [--older-than <days>] [--yes] [--json]   reject old waiting candidates',
+  '  ethos evolve archive [--older-than <days>] [--json]',
+  '  ethos evolve --eval-output <file.eval.jsonl> [--auto-approve] [--json]',
+  '  ethos evolve --list-pending [--json]',
+  '  ethos evolve --approve <candidate-id | filename> | --approve-all [--json]',
+  '  ethos evolve --reject <candidate-id | filename> [--json]',
+  '',
+  '  apply, --approve, --reject and --list-pending act on the learning inbox.',
+  '  They approve only a candidate whose replay passed; for any other, use',
+  '  ethos learning approve <id> --override "<reason>".',
+];
+
 function printUsage(): void {
-  console.log('Usage:');
-  console.log('  ethos evolve status');
-  console.log('  ethos evolve run [--quiet]');
-  console.log('  ethos evolve apply <candidate-id | filename> | --all');
-  console.log('  ethos evolve prune [--older-than <days>] [--yes]   reject old waiting candidates');
-  console.log('  ethos evolve archive [--older-than <days>]');
-  console.log('  ethos evolve --eval-output <file.eval.jsonl> [--auto-approve]');
-  console.log('  ethos evolve --list-pending');
-  console.log('  ethos evolve --approve <candidate-id | filename> | --approve-all');
-  console.log('  ethos evolve --reject <candidate-id | filename>');
-  console.log('');
-  console.log('  apply, --approve, --reject and --list-pending act on the learning inbox.');
-  console.log('  They approve only a candidate whose replay passed; for any other, use');
-  console.log('  ethos learning approve <id> --override "<reason>".');
+  for (const line of USAGE_LINES) console.log(line);
 }
 
 export async function runEvolve(args: string[], config: EthosConfig): Promise<void> {
   // New subcommand routing: status / run / apply
   const sub = args[0];
   const dir = ethosDir();
+  const json = args.includes('--json');
 
   if (sub === 'status') {
-    await runEvolveStatus(args.slice(1), dir, await createCliLearningInbox(config));
+    const status = await runEvolveStatus(args.slice(1), dir, await createCliLearningInbox(config), {
+      quiet: json,
+    });
+    if (json) writeJson({ ok: true, ...status });
     return;
   }
 
   if (sub === 'apply') {
-    await runEvolveApply(args.slice(1), await createCliLearningInbox(config));
+    const applied = await runEvolveApply(args.slice(1), await createCliLearningInbox(config), {
+      quiet: json,
+    });
+    if (json) emitApply(applied, !args.includes('--all'));
     return;
   }
 
   if (sub === 'run') {
-    await runEvolveRun(args.slice(1), config, dir);
+    await runEvolveRun(args.slice(1), config, dir, json);
     return;
   }
 
   if (sub === 'prune') {
-    await runEvolvePrune(args.slice(1), await createCliLearningInbox(config));
+    refuseJson(
+      args,
+      'ethos evolve prune asks for confirmation and cannot run with --json unless --yes is given',
+      { unlessFlag: '--yes' },
+    );
+    const pruned = await runEvolvePrune(args.slice(1), await createCliLearningInbox(config), {
+      quiet: json,
+    });
+    if (json) writeJson({ ok: true, ...pruned });
     return;
   }
 
   if (sub === 'archive') {
-    await runEvolveArchive(args.slice(1), dir);
+    const archived = await runEvolveArchive(args.slice(1), dir, { quiet: json });
+    if (json) writeJson({ ok: true, ...archived });
     return;
   }
 
@@ -123,31 +146,61 @@ export async function runEvolve(args: string[], config: EthosConfig): Promise<vo
   const skillsDir = join(dir, 'skills');
 
   if (opts.listPending) {
-    await listPendingCandidates(await createCliLearningInbox(config));
+    await listPendingCandidates(await createCliLearningInbox(config), json);
     return;
   }
 
   if (opts.approveAll) {
-    await runEvolveApply(['--all'], await createCliLearningInbox(config));
+    const applied = await runEvolveApply(['--all'], await createCliLearningInbox(config), {
+      quiet: json,
+    });
+    if (json) emitApply(applied, false);
     return;
   }
 
   if (opts.approve) {
-    await runEvolveApply([opts.approve], await createCliLearningInbox(config));
+    const applied = await runEvolveApply([opts.approve], await createCliLearningInbox(config), {
+      quiet: json,
+    });
+    if (json) emitApply(applied, true);
     return;
   }
 
   if (opts.reject) {
-    await rejectCandidate(opts.reject, await createCliLearningInbox(config));
+    await rejectCandidate(opts.reject, await createCliLearningInbox(config), json);
     return;
   }
 
   if (opts.evalOutput) {
-    await runAnalyze(opts.evalOutput, config, skillsDir, opts.autoApprove);
+    const summary = await runAnalyze(
+      opts.evalOutput,
+      config,
+      skillsDir,
+      opts.autoApprove,
+      undefined,
+      json,
+    );
+    if (json) writeJson({ ok: true, ...summary });
     return;
   }
 
+  if (json) writeJsonError('INVALID_INPUT', USAGE_LINES.join('\n'));
   printUsage();
+}
+
+/** The one document for `apply` / `--approve` / `--approve-all`; a single refused ref is an error. */
+function emitApply(applied: EvolveApplyResult, single: boolean): void {
+  if (applied.failure) {
+    writeJsonError(
+      applied.failure.kind === 'usage' ? 'INVALID_INPUT' : 'NOT_FOUND',
+      applied.failure.message,
+    );
+  }
+  const refused = applied.refused[0];
+  if (single && refused) {
+    writeJsonError('INVALID_INPUT', `not approved ${refused.id} — ${refused.reason}`);
+  }
+  writeJson({ ok: true, approved: applied.approved, refused: applied.refused });
 }
 
 // ---------------------------------------------------------------------------
@@ -158,9 +211,18 @@ export async function runEvolve(args: string[], config: EthosConfig): Promise<vo
 // sources sessions from the SQLite session store rather than requiring the
 // caller to supply a pre-baked eval file.
 
-async function runEvolveRun(args: string[], config: EthosConfig, dir: string): Promise<void> {
+async function runEvolveRun(
+  args: string[],
+  config: EthosConfig,
+  dir: string,
+  json: boolean,
+): Promise<void> {
   const quiet = args.includes('--quiet');
   const skillsDir = join(dir, 'skills');
+  const noSessions = (): void => {
+    if (json) writeJson({ ok: true, analyzed: false, reason: 'No sessions to analyze.' });
+    else if (!quiet) console.log(`${c.dim}No sessions to analyze.${c.reset}`);
+  };
 
   // Export recent sessions to a temporary eval file.
   // The SQLite session store doesn't expose a built-in eval exporter, so we
@@ -169,7 +231,7 @@ async function runEvolveRun(args: string[], config: EthosConfig, dir: string): P
   try {
     await stat(sessionsDb);
   } catch {
-    if (!quiet) console.log(`${c.dim}No sessions to analyze.${c.reset}`);
+    noSessions();
     return;
   }
 
@@ -183,18 +245,21 @@ async function runEvolveRun(args: string[], config: EthosConfig, dir: string): P
       privateChatSetFrom(config.gateway?.privateChats),
     );
   } catch (err) {
+    // Under --json an export failure is unexpected: it reaches index.ts's top-level catch.
+    if (json) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     if (!quiet) console.error(`${c.red}Failed to export sessions:${c.reset} ${msg}`);
     return;
   }
 
   if (!wroteRecords) {
-    if (!quiet) console.log(`${c.dim}No sessions to analyze.${c.reset}`);
+    noSessions();
     return;
   }
 
   try {
-    await runAnalyze(tmpEvalPath, config, skillsDir, false);
+    const summary = await runAnalyze(tmpEvalPath, config, skillsDir, false, undefined, json);
+    if (json) writeJson({ ok: true, analyzed: true, ...summary });
   } finally {
     await rm(tmpEvalPath, { force: true });
   }
@@ -313,6 +378,29 @@ function parseMetadata(raw: string | null): Record<string, unknown> | undefined 
   }
 }
 
+/** What `runAnalyze` found and submitted; the `--json` document of `evolve run` / `--eval-output`. */
+export interface EvolveAnalyzeSummary {
+  evalOutput: string;
+  model: string;
+  skillsAnalyzed: number;
+  rewriteCandidates: number;
+  newSkillCandidates: number;
+  rewritesSubmitted: string[];
+  newSkillsSubmitted: string[];
+  skipped: EvolveResult['skipped'];
+  candidateIds: string[];
+  /** One entry per candidate replayed by `--auto-approve`. */
+  replays: EvolveReplayOutcome[];
+}
+
+export interface EvolveReplayOutcome {
+  id: string;
+  verdict: string;
+  promoted: boolean;
+  /** Why it was not promoted; empty when it was. */
+  reason: string;
+}
+
 /**
  * Path 7 (plan `trust-before-reach.md` Part 4). The evolver's drafts are
  * submitted to the learning inbox for the configured default personality.
@@ -328,10 +416,13 @@ export async function runAnalyze(
   skillsDir: string,
   autoApprove: boolean,
   targetCaseIds?: (tasks: import('@ethosagent/skill-evolver').TaskSummary[]) => Promise<string[]>,
-): Promise<void> {
+  json = false,
+): Promise<EvolveAnalyzeSummary> {
+  const say = sayFor(json);
   try {
     await stat(evalOutput);
   } catch {
+    if (json) writeJsonError('FILE_NOT_FOUND', `Cannot read eval output: ${evalOutput}`);
     console.error(`${c.red}Cannot read eval output: ${evalOutput}${c.reset}`);
     process.exit(1);
   }
@@ -348,7 +439,7 @@ export async function runAnalyze(
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
   const personalityId = config.personality;
 
-  console.log(
+  say(
     `${c.bold}ethos evolve${c.reset}  ${c.dim}eval: ${evalOutput} · model: ${llm.model}${c.reset}`,
   );
 
@@ -389,42 +480,55 @@ export async function runAnalyze(
     console.warn(`${c.yellow}Could not append to evolver history:${c.reset} ${message}`);
   }
 
-  console.log('');
-  console.log(`${c.dim}skills analyzed:${c.reset} ${result.plan.skillStats.length}`);
-  console.log(`${c.dim}rewrite candidates:${c.reset} ${result.plan.rewriteCandidates.length}`);
-  console.log(`${c.dim}new-skill candidates:${c.reset} ${result.plan.newSkillCandidates.length}`);
-  console.log('');
+  say('');
+  say(`${c.dim}skills analyzed:${c.reset} ${result.plan.skillStats.length}`);
+  say(`${c.dim}rewrite candidates:${c.reset} ${result.plan.rewriteCandidates.length}`);
+  say(`${c.dim}new-skill candidates:${c.reset} ${result.plan.newSkillCandidates.length}`);
+  say('');
 
   if (result.rewritesSubmitted.length > 0) {
-    console.log(`${c.green}rewrites submitted:${c.reset}`);
-    for (const f of result.rewritesSubmitted) console.log(`  ${f}`);
+    say(`${c.green}rewrites submitted:${c.reset}`);
+    for (const f of result.rewritesSubmitted) say(`  ${f}`);
   }
   if (result.newSkillsSubmitted.length > 0) {
-    console.log(`${c.green}new skills submitted:${c.reset}`);
-    for (const f of result.newSkillsSubmitted) console.log(`  ${f}`);
+    say(`${c.green}new skills submitted:${c.reset}`);
+    for (const f of result.newSkillsSubmitted) say(`  ${f}`);
   }
   if (result.skipped.length > 0) {
-    console.log(`${c.yellow}skipped:${c.reset}`);
-    for (const s of result.skipped) console.log(`  ${s.kind} ${s.target} — ${s.reason}`);
+    say(`${c.yellow}skipped:${c.reset}`);
+    for (const s of result.skipped) say(`  ${s.kind} ${s.target} — ${s.reason}`);
   }
+  const summary: EvolveAnalyzeSummary = {
+    evalOutput,
+    model: llm.model,
+    skillsAnalyzed: result.plan.skillStats.length,
+    rewriteCandidates: result.plan.rewriteCandidates.length,
+    newSkillCandidates: result.plan.newSkillCandidates.length,
+    rewritesSubmitted: result.rewritesSubmitted,
+    newSkillsSubmitted: result.newSkillsSubmitted,
+    skipped: result.skipped,
+    candidateIds: result.candidateIds,
+    replays: [],
+  };
   if (
     result.rewritesSubmitted.length === 0 &&
     result.newSkillsSubmitted.length === 0 &&
     result.skipped.length === 0
   ) {
-    console.log(`${c.dim}nothing to evolve.${c.reset}`);
-    return;
+    say(`${c.dim}nothing to evolve.${c.reset}`);
+    return summary;
   }
 
   if (autoApprove && result.candidateIds.length > 0) {
-    console.log('');
-    await replayEvolvedCandidates(config, reg, result.candidateIds);
-    return;
+    say('');
+    summary.replays = await replayEvolvedCandidates(config, reg, result.candidateIds, say);
+    return summary;
   }
 
-  console.log('');
-  console.log(`Review with: ${c.bold}ethos learning list${c.reset}`);
-  console.log(`Approve with: ${c.bold}ethos learning approve <id>${c.reset}`);
+  say('');
+  say(`Review with: ${c.bold}ethos learning list${c.reset}`);
+  say(`Approve with: ${c.bold}ethos learning approve <id>${c.reset}`);
+  return summary;
 }
 
 /**
@@ -436,8 +540,9 @@ export async function replayEvolvedCandidates(
   config: EthosConfig,
   reg: import('@ethosagent/personalities').FilePersonalityRegistry,
   candidateIds: readonly string[],
-): Promise<void> {
-  console.log(
+  say: Say = sayFor(false),
+): Promise<EvolveReplayOutcome[]> {
+  say(
     `${c.bold}--auto-approve${c.reset} replaying ${candidateIds.length} candidate(s) before anything goes live...`,
   );
   const replay = await createLearningReplayer(config, {
@@ -445,18 +550,41 @@ export async function replayEvolvedCandidates(
     actor: 'evolve',
     autoApproveOverride: true,
   });
+  const outcomes: EvolveReplayOutcome[] = [];
   for (const id of candidateIds) {
     const r = await replay(id);
+    const why = r.promotion && !r.promotion.ok ? r.promotion.reason : (r.decision.reason ?? '');
     const outcome = r.promotion?.ok
       ? `${c.green}promoted${c.reset}`
-      : `${c.yellow}waiting for review${c.reset} — ${r.promotion && !r.promotion.ok ? r.promotion.reason : (r.decision.reason ?? '')}`;
-    console.log(`  ${id}: ${r.report.verdict} · ${outcome}`);
+      : `${c.yellow}waiting for review${c.reset} — ${why}`;
+    say(`  ${id}: ${r.report.verdict} · ${outcome}`);
+    outcomes.push({
+      id,
+      verdict: r.report.verdict,
+      promoted: r.promotion?.ok === true,
+      reason: r.promotion?.ok ? '' : why,
+    });
   }
+  return outcomes;
 }
 
 /** `--list-pending`: the learning inbox's waiting SKILL candidates, every origin (L-T8). */
-async function listPendingCandidates(inbox: LearningInbox): Promise<void> {
+async function listPendingCandidates(inbox: LearningInbox, json: boolean): Promise<void> {
   const waiting = await inbox.list({ kind: 'skill', status: AWAITING_DECISION });
+  if (json) {
+    writeJson({
+      ok: true,
+      count: waiting.length,
+      candidates: waiting.map((x) => ({
+        id: x.id,
+        destination: x.destination,
+        personalityId: x.personalityId,
+        origin: x.origin,
+        verdict: x.verdict ?? null,
+      })),
+    });
+    return;
+  }
   if (waiting.length === 0) {
     console.log(`${c.dim}No skill candidates waiting.${c.reset}`);
     return;
@@ -472,9 +600,12 @@ async function listPendingCandidates(inbox: LearningInbox): Promise<void> {
 }
 
 /** `--reject <candidate-id | filename>`: a human rejection through the inbox. */
-async function rejectCandidate(ref: string, inbox: LearningInbox): Promise<void> {
+async function rejectCandidate(ref: string, inbox: LearningInbox, json: boolean): Promise<void> {
   const found = await inbox.resolve(ref, { kind: 'skill' });
   if (!found.ok) {
+    if (json) {
+      writeJsonError(found.code === 'ambiguous' ? 'INVALID_INPUT' : 'NOT_FOUND', found.reason);
+    }
     console.error(`${c.red}${found.reason}${c.reset}`);
     process.exit(1);
   }
@@ -483,8 +614,18 @@ async function rejectCandidate(ref: string, inbox: LearningInbox): Promise<void>
     decidedBy: 'ethos evolve --reject',
   });
   if (!result.ok) {
+    if (json) writeJsonError('INVALID_INPUT', result.reason);
     console.error(`${c.red}${result.reason}${c.reset}`);
     process.exit(1);
+  }
+  if (json) {
+    writeJson({
+      ok: true,
+      id: found.value.id,
+      destination: found.value.destination,
+      rejected: true,
+    });
+    return;
   }
   console.log(
     `${c.dim}rejected ${found.value.id} (${basename(found.value.destination)})${c.reset}`,

@@ -25,6 +25,7 @@ import {
   type OutboxState,
   SQLiteOutboxStore,
 } from '@ethosagent/outbox';
+import { writeJson, writeJsonError } from '../json-output';
 import { getEthosObservability, getStorage } from '../wiring';
 
 const c = {
@@ -52,7 +53,7 @@ const CONSOLE_IO: OutboxCliIo = {
 };
 
 const USAGE = [
-  'Usage: ethos outbox <command>',
+  'Usage: ethos outbox <command> [--json]',
   '',
   '  list [--personality <id>] [--all]      publications waiting for a human (--all: every state)',
   '  show <id>                              destination, sender, reviewer receipt, and the exact text',
@@ -114,23 +115,26 @@ export function runOutboxCommand(
   io: OutboxCliIo = CONSOLE_IO,
   decidedBy = 'cli',
 ): number {
-  const [sub, ...rest] = args;
+  const json = args.includes('--json');
+  const [sub, ...rest] = args.filter((a) => a !== '--json');
   switch (sub) {
     case 'list':
-      return list(rest, service, io);
+      return list(rest, service, io, json);
     case 'show':
-      return withId(rest, io, (id) => show(id, service, io));
+      return withId(rest, io, json, (id) => show(id, service, io, json));
     case 'approve':
-      return withId(rest, io, (id) => approve(id, rest, service, io, decidedBy));
+      return withId(rest, io, json, (id) => approve(id, rest, service, io, decidedBy, json));
     case 'reject':
-      return withId(rest, io, (id) => reject(id, rest, service, io, decidedBy));
+      return withId(rest, io, json, (id) => reject(id, rest, service, io, decidedBy, json));
     case undefined:
     case 'help':
     case '--help':
     case '-h':
+      if (json) writeJsonError('INVALID_INPUT', USAGE.join('\n'));
       for (const line of USAGE) io.out(line);
       return 0;
     default:
+      if (json) writeJsonError('INVALID_INPUT', `Unknown subcommand: ${sub}\n${USAGE.join('\n')}`);
       io.err(`${c.red}Unknown subcommand: ${sub}${c.reset}`);
       for (const line of USAGE) io.err(line);
       return 1;
@@ -139,7 +143,12 @@ export function runOutboxCommand(
 
 // --- Subcommands -------------------------------------------------------------
 
-function list(args: readonly string[], service: OutboxService | null, io: OutboxCliIo): number {
+function list(
+  args: readonly string[],
+  service: OutboxService | null,
+  io: OutboxCliIo,
+  json: boolean,
+): number {
   const all = args.includes('--all');
   const states = all ? ALL_STATES : WAITING;
   const personalityId = flagValue(args, '--personality');
@@ -148,6 +157,10 @@ function list(args: readonly string[], service: OutboxService | null, io: Outbox
     : personalityId
       ? service.listByPersonality(personalityId).filter((i) => states.includes(i.state))
       : service.listByState(states);
+  if (json) {
+    writeJson({ ok: true, count: items.length, items });
+    return 0;
+  }
   if (items.length === 0) {
     io.out(
       `${c.dim}${all ? 'The outbox is empty.' : 'Nothing is waiting for approval.'}${c.reset}`,
@@ -171,15 +184,22 @@ function list(args: readonly string[], service: OutboxService | null, io: Outbox
   return 0;
 }
 
-function show(id: string, service: OutboxService | null, io: OutboxCliIo): number {
+function show(id: string, service: OutboxService | null, io: OutboxCliIo, json: boolean): number {
   const item = service?.get(id);
-  if (!service || !item) return notFound(id, io);
+  if (!service || !item) return notFound(id, io, json);
   const revision = service.getRevision(id, item.revision);
   if (!revision) {
+    if (json) {
+      writeJsonError('NOT_FOUND', `Revision ${item.revision} of ${id} is missing from the store.`);
+    }
     io.err(`${c.red}Revision ${item.revision} of ${id} is missing from the store.${c.reset}`);
     return 1;
   }
 
+  if (json) {
+    writeJson({ ok: true, item, revision });
+    return 0;
+  }
   io.out(`${c.bold}Outbox item ${item.id}${c.reset}`);
   io.out(`  personality:   ${item.personalityId}`);
   io.out(`  destination:   ${destination(item)}`);
@@ -229,9 +249,16 @@ function approve(
   service: OutboxService | null,
   io: OutboxCliIo,
   decidedBy: string,
+  json: boolean,
 ): number {
   const raw = flagValue(args, '--revision');
   if (raw === undefined) {
+    if (json) {
+      writeJsonError(
+        'INVALID_INPUT',
+        `approve needs --revision <n> — the revision you read with \`ethos outbox show ${id}\`.`,
+      );
+    }
     io.err(
       `${c.red}approve needs --revision <n> — the revision you read with \`ethos outbox show ${id}\`.${c.reset}`,
     );
@@ -240,13 +267,16 @@ function approve(
   }
   const revision = Number(raw);
   if (!Number.isInteger(revision) || revision < 1) {
+    if (json)
+      writeJsonError('INVALID_INPUT', `--revision must be a positive integer, got "${raw}".`);
     io.err(`${c.red}--revision must be a positive integer, got "${raw}".${c.reset}`);
     return 1;
   }
   const item = service?.get(id);
-  if (!service || !item) return notFound(id, io);
+  if (!service || !item) return notFound(id, io, json);
   const read = service.getRevision(id, revision);
   if (!read) {
+    if (json) writeJsonError('NOT_FOUND', `${id} has no revision ${revision}.`);
     io.err(`${c.red}${id} has no revision ${revision}.${c.reset}`);
     return 1;
   }
@@ -261,6 +291,14 @@ function approve(
     decidedBy,
   });
   if (!result.ok) {
+    if (json) {
+      writeJsonError(
+        'INVALID_INPUT',
+        result.code === 'conflict'
+          ? `Not approved: ${id} changed since you viewed it — revision ${item.revision} is current.`
+          : `Not approved: ${result.error}`,
+      );
+    }
     if (result.code === 'conflict') {
       io.err(
         `${c.red}Not approved: ${id} changed since you viewed it — revision ${item.revision} is current.${c.reset}`,
@@ -270,6 +308,10 @@ function approve(
       io.err(`${c.red}Not approved: ${result.error}${c.reset}`);
     }
     return 1;
+  }
+  if (json) {
+    writeJson({ ok: true, id, revision, botKey: result.value.botKey, approved: true });
+    return 0;
   }
   io.out(
     `${c.green}approved${c.reset} ${id} revision ${revision}. Nothing was sent from here — the gateway holding ${result.value.botKey} publishes it on its next poll.`,
@@ -283,16 +325,22 @@ function reject(
   service: OutboxService | null,
   io: OutboxCliIo,
   decidedBy: string,
+  json: boolean,
 ): number {
-  if (!service?.get(id)) return notFound(id, io);
+  if (!service?.get(id)) return notFound(id, io, json);
   const result = service.reject({
     itemId: id,
     reason: flagValue(args, '--reason') ?? 'rejected from the command line',
     decidedBy,
   });
   if (!result.ok) {
+    if (json) writeJsonError('INVALID_INPUT', `Not rejected: ${result.error}`);
     io.err(`${c.red}Not rejected: ${result.error}${c.reset}`);
     return 1;
+  }
+  if (json) {
+    writeJson({ ok: true, id, rejected: true });
+    return 0;
   }
   io.out(`${c.red}rejected${c.reset} ${id}. Nothing will be sent.`);
   return 0;
@@ -304,7 +352,8 @@ function destination(item: OutboxItem): string {
   return `${item.platform}:${item.chatId}${item.threadId ? ` (thread ${item.threadId})` : ''}`;
 }
 
-function notFound(id: string, io: OutboxCliIo): number {
+function notFound(id: string, io: OutboxCliIo, json: boolean): number {
+  if (json) writeJsonError('NOT_FOUND', `No outbox item ${id}.`);
   io.err(`${c.red}No outbox item ${id}.${c.reset}`);
   return 1;
 }
@@ -317,9 +366,15 @@ function operatorLabel(): string {
   }
 }
 
-function withId(args: readonly string[], io: OutboxCliIo, run: (id: string) => number): number {
+function withId(
+  args: readonly string[],
+  io: OutboxCliIo,
+  json: boolean,
+  run: (id: string) => number,
+): number {
   const id = positional(args);
   if (!id) {
+    if (json) writeJsonError('INVALID_INPUT', 'An outbox item id is required.');
     io.err(`${c.red}An outbox item id is required.${c.reset}`);
     for (const line of USAGE) io.err(line);
     return 1;

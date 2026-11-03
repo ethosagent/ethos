@@ -8,6 +8,7 @@ export { registerEvolverCron } from './cron';
 export {
   type EvolveApplyCandidate,
   type EvolveApplyInbox,
+  type EvolveApplyResult,
   runEvolveApply,
   runEvolveArchive,
   runEvolvePrune,

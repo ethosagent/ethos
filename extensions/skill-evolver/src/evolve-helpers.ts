@@ -15,6 +15,16 @@ const c = {
   red: '\x1b[31m',
 };
 
+/**
+ * `quiet` silences every line these verbs print and returns the outcome as data instead,
+ * so `ethos evolve <verb> --json` can emit its one document. The text path (no opts) is
+ * unchanged. Under `quiet` the usage and not-found failures of `apply` come back as
+ * `failure` rather than `process.exit(1)`; the CLI turns them into the error document.
+ */
+export interface EvolveOutputOpts {
+  quiet?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // ethos evolve status
 // ---------------------------------------------------------------------------
@@ -47,11 +57,17 @@ function parseLastRecord(raw: string): HistoryRecord | null {
 // import drains and nothing writes any more — so it reported "0 pending" while
 // the inbox held candidates.
 
+export interface EvolveStatusResult {
+  lastRun: { ranAt: string; proposed: number; skipped: number } | null;
+  pending: EvolveInboxCandidate[];
+}
+
 export async function runEvolveStatus(
   _args: string[],
   ethosDir: string,
   inbox: EvolveInboxReader,
-): Promise<void> {
+  opts: EvolveOutputOpts = {},
+): Promise<EvolveStatusResult> {
   const historyPath = join(ethosDir, 'evolver-history.jsonl');
 
   // Read history
@@ -64,10 +80,21 @@ export async function runEvolveStatus(
   }
 
   const waiting = await inbox.list({ kind: 'skill', status: WAITING });
+  const result: EvolveStatusResult = {
+    lastRun: lastRecord
+      ? {
+          ranAt: lastRecord.ranAt,
+          proposed: (lastRecord.rewritesProposed ?? 0) + (lastRecord.newSkillsProposed ?? 0),
+          skipped: Array.isArray(lastRecord.skipped) ? lastRecord.skipped.length : 0,
+        }
+      : null,
+    pending: waiting,
+  };
+  if (opts.quiet) return result;
 
   if (!lastRecord && waiting.length === 0) {
     console.log(`${c.dim}No proposals yet. Run: ethos evolve run${c.reset}`);
-    return;
+    return result;
   }
 
   if (lastRecord) {
@@ -81,7 +108,7 @@ export async function runEvolveStatus(
 
   if (waiting.length === 0) {
     console.log(`${c.dim}No pending proposals.${c.reset}`);
-    return;
+    return result;
   }
 
   console.log(`${c.bold}Pending (${waiting.length}):${c.reset}`);
@@ -94,6 +121,7 @@ export async function runEvolveStatus(
   console.log(
     `Approve with: ${c.bold}ethos evolve apply <candidate-id | filename>${c.reset}  or  ${c.bold}ethos learning approve <id> --override "<reason>"${c.reset}`,
   );
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,16 +198,30 @@ export interface EvolveApplyInbox {
 
 const DECIDED_BY = 'ethos evolve apply';
 
+export interface EvolveApplyResult {
+  approved: Array<{ id: string; destination: string }>;
+  refused: Array<{ id: string; code: string; reason: string }>;
+  /** Quiet mode only: the usage / not-found failure the text path exits on. */
+  failure: { kind: 'usage' | 'not_found'; message: string } | null;
+}
+
 async function approveCandidate(
   inbox: EvolveApplyInbox,
   candidate: EvolveApplyCandidate,
+  into: EvolveApplyResult,
+  quiet: boolean,
 ): Promise<boolean> {
   const label = `${candidate.id} (${basename(candidate.destination)})`;
   const result = await inbox.approve(candidate.id, { actor: 'cli', decidedBy: DECIDED_BY });
   if (result.ok) {
-    console.log(`${c.green}approved${c.reset} ${label} → ${result.value.candidate.destination}`);
+    into.approved.push({ id: candidate.id, destination: result.value.candidate.destination });
+    if (!quiet) {
+      console.log(`${c.green}approved${c.reset} ${label} → ${result.value.candidate.destination}`);
+    }
     return true;
   }
+  into.refused.push({ id: candidate.id, code: result.code, reason: result.reason });
+  if (quiet) return false;
   if (result.code === 'override_required') {
     console.error(`${c.red}not approved${c.reset} ${label} — ${result.reason}`);
     console.error(
@@ -191,19 +233,32 @@ async function approveCandidate(
   return false;
 }
 
-export async function runEvolveApply(args: string[], inbox: EvolveApplyInbox): Promise<void> {
+export async function runEvolveApply(
+  args: string[],
+  inbox: EvolveApplyInbox,
+  opts: EvolveOutputOpts = {},
+): Promise<EvolveApplyResult> {
+  const quiet = opts.quiet === true;
+  const result: EvolveApplyResult = { approved: [], refused: [], failure: null };
   if (args.includes('--all')) {
     const waiting = await inbox.list({ kind: 'skill', status: WAITING });
     if (waiting.length === 0) {
-      console.log(`${c.dim}No skill candidates waiting.${c.reset}`);
-      return;
+      if (!quiet) console.log(`${c.dim}No skill candidates waiting.${c.reset}`);
+      return result;
     }
-    for (const candidate of waiting) await approveCandidate(inbox, candidate);
-    return;
+    for (const candidate of waiting) await approveCandidate(inbox, candidate, result, quiet);
+    return result;
   }
 
   const ref = args.find((a) => !a.startsWith('-'));
   if (!ref) {
+    if (quiet) {
+      result.failure = {
+        kind: 'usage',
+        message: 'Usage: ethos evolve apply <candidate-id | filename.md> | --all',
+      };
+      return result;
+    }
     console.error(
       `${c.red}Usage: ethos evolve apply <candidate-id | filename.md> | --all${c.reset}`,
     );
@@ -212,11 +267,18 @@ export async function runEvolveApply(args: string[], inbox: EvolveApplyInbox): P
 
   const found = await inbox.resolve(ref, { kind: 'skill' });
   if (!found.ok) {
+    if (quiet) {
+      result.failure = { kind: 'not_found', message: found.reason };
+      return result;
+    }
     console.error(`${c.red}${found.reason}${c.reset}`);
     console.error(`${c.dim}List waiting candidates with: ethos learning list${c.reset}`);
     process.exit(1);
   }
-  if (!(await approveCandidate(inbox, found.value))) process.exit(1);
+  if (!(await approveCandidate(inbox, found.value, result, quiet))) {
+    if (!quiet) process.exit(1);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +309,21 @@ function askConfirm(question: string): Promise<boolean> {
   });
 }
 
-export async function runEvolvePrune(args: string[], inbox: EvolvePruneInbox): Promise<void> {
+export interface EvolvePruneResult {
+  days: number;
+  /** Waiting candidates older than `days`. */
+  stale: number;
+  rejected: number;
+  failed: Array<{ id: string; reason: string }>;
+  aborted: boolean;
+}
+
+export async function runEvolvePrune(
+  args: string[],
+  inbox: EvolvePruneInbox,
+  opts: EvolveOutputOpts = {},
+): Promise<EvolvePruneResult> {
+  const quiet = opts.quiet === true;
   const days = parseOlderThan(args, 7);
   const yes = args.includes('--yes');
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -259,13 +335,21 @@ export async function runEvolvePrune(args: string[], inbox: EvolvePruneInbox): P
   });
 
   if (stale.length === 0) {
-    console.log(`${c.dim}No skill candidates waiting longer than ${days} days.${c.reset}`);
-    return;
+    if (!quiet) {
+      console.log(`${c.dim}No skill candidates waiting longer than ${days} days.${c.reset}`);
+    }
+    return { days, stale: 0, rejected: 0, failed: [], aborted: false };
   }
 
-  console.log(
-    `${c.dim}prune rejects waiting skill candidates in the learning inbox; each rejection is audited and nothing is deleted.${c.reset}`,
-  );
+  if (!quiet) {
+    console.log(
+      `${c.dim}prune rejects waiting skill candidates in the learning inbox; each rejection is audited and nothing is deleted.${c.reset}`,
+    );
+  }
+  // Quiet (JSON) callers must not prompt: without --yes, report aborted and reject nothing.
+  if (!yes && quiet) {
+    return { days, stale: stale.length, rejected: 0, failed: [], aborted: true };
+  }
   if (!yes) {
     for (const candidate of stale) {
       console.log(
@@ -275,11 +359,12 @@ export async function runEvolvePrune(args: string[], inbox: EvolvePruneInbox): P
     const confirmed = await askConfirm(`Reject ${stale.length} candidate(s)? [y/N] `);
     if (!confirmed) {
       console.log(`${c.dim}Aborted.${c.reset}`);
-      return;
+      return { days, stale: stale.length, rejected: 0, failed: [], aborted: true };
     }
   }
 
   let rejected = 0;
+  const failed: EvolvePruneResult['failed'] = [];
   for (const candidate of stale) {
     const result = await inbox.reject(candidate.id, {
       actor: 'cli',
@@ -289,19 +374,37 @@ export async function runEvolvePrune(args: string[], inbox: EvolvePruneInbox): P
     if (result.ok) {
       rejected++;
     } else {
-      console.error(`${c.red}not rejected${c.reset} ${candidate.id} — ${result.reason}`);
+      failed.push({ id: candidate.id, reason: result.reason });
+      if (!quiet) {
+        console.error(`${c.red}not rejected${c.reset} ${candidate.id} — ${result.reason}`);
+      }
     }
   }
-  console.log(
-    `${c.green}rejected ${rejected} skill candidate(s) waiting longer than ${days} days${c.reset}`,
-  );
+  if (!quiet) {
+    console.log(
+      `${c.green}rejected ${rejected} skill candidate(s) waiting longer than ${days} days${c.reset}`,
+    );
+  }
+  return { days, stale: stale.length, rejected, failed, aborted: false };
 }
 
 // ---------------------------------------------------------------------------
 // ethos evolve archive [--older-than <days>]
 // ---------------------------------------------------------------------------
 
-export async function runEvolveArchive(args: string[], ethosDir: string): Promise<void> {
+export interface EvolveArchiveResult {
+  days: number;
+  archived: string[];
+  /** The `.archive/<date>` directory, or null when nothing moved. */
+  dir: string | null;
+}
+
+export async function runEvolveArchive(
+  args: string[],
+  ethosDir: string,
+  opts: EvolveOutputOpts = {},
+): Promise<EvolveArchiveResult> {
+  const quiet = opts.quiet === true;
   const days = parseOlderThan(args, 30);
   const skillsDir = join(ethosDir, 'skills');
 
@@ -309,8 +412,8 @@ export async function runEvolveArchive(args: string[], ethosDir: string): Promis
   try {
     entries = await readdir(skillsDir);
   } catch {
-    console.log(`${c.dim}No skills directory.${c.reset}`);
-    return;
+    if (!quiet) console.log(`${c.dim}No skills directory.${c.reset}`);
+    return { days, archived: [], dir: null };
   }
 
   const mds = entries.filter((e) => e.endsWith('.md'));
@@ -327,8 +430,8 @@ export async function runEvolveArchive(args: string[], ethosDir: string): Promis
   }
 
   if (stale.length === 0) {
-    console.log(`${c.dim}No active skills older than ${days} days.${c.reset}`);
-    return;
+    if (!quiet) console.log(`${c.dim}No active skills older than ${days} days.${c.reset}`);
+    return { days, archived: [], dir: null };
   }
 
   const prefix = new Date().toISOString().slice(0, 10);
@@ -345,5 +448,8 @@ export async function runEvolveArchive(args: string[], ethosDir: string): Promis
   };
   await writeFile(join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
-  console.log(`${c.green}archived ${stale.length} skills to .archive/${prefix}/${c.reset}`);
+  if (!quiet) {
+    console.log(`${c.green}archived ${stale.length} skills to .archive/${prefix}/${c.reset}`);
+  }
+  return { days, archived: stale, dir: archiveDir };
 }

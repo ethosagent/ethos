@@ -11,16 +11,40 @@ import {
 } from '@ethosagent/eval-harness';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import {
+  type EvolveResult,
   loadEvolveConfig,
   SkillEvolver,
   skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
 import { learningSubmitPort, type UsageMeter, withUsageMeter } from '@ethosagent/wiring';
+import { sayFor, writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
-import { replayEvolvedCandidates } from './evolve';
+import { type EvolveReplayOutcome, replayEvolvedCandidates } from './evolve';
+
+/**
+ * The `\r` progress bar for `EvalRunner.run`, or none under `--json` (it would corrupt the one
+ * document on stdout). `finish()` ends the bar's line once the run is over.
+ */
+function progressBar(json: boolean): {
+  onProgress: ((done: number, total: number) => void) | undefined;
+  finish(): void;
+} {
+  if (json) return { onProgress: undefined, finish() {} };
+  let lastLine = '';
+  return {
+    onProgress(done, total) {
+      const line = `  ${done}/${total} (${Math.round((done / total) * 100)}%)`;
+      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
+      lastLine = line;
+    },
+    finish() {
+      if (lastLine) process.stdout.write('\n');
+    },
+  };
+}
 
 const c = {
   reset: '\x1b[0m',
@@ -92,13 +116,14 @@ function parseArgs(args: string[]): {
       code: 'INVALID_INPUT',
       cause: 'ethos eval run requires a tasks file',
       action:
-        'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [--scorer exact|contains|regex|llm] [--concurrency N] [--output out.jsonl] [--evolve [--auto-approve]]',
+        'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [--scorer exact|contains|regex|llm] [--concurrency N] [--output out.jsonl] [--evolve [--auto-approve]] [--json]',
     });
   if (!expectedPath)
     throw new EthosError({
       code: 'INVALID_INPUT',
       cause: '--expected <expected.jsonl> is required',
-      action: 'Pass --expected pointing at a JSONL file with expected outputs.',
+      action:
+        'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [--scorer exact|contains|regex|llm] [--concurrency N] [--output out.jsonl] [--evolve [--auto-approve]] [--json]\nPass --expected pointing at a JSONL file with expected outputs.',
     });
 
   const base = inputPath.replace(/\.jsonl$/, '');
@@ -110,6 +135,7 @@ function parseArgs(args: string[]): {
 export async function runEval(subArgs: string[], config: EthosConfig): Promise<void> {
   const sub = subArgs[0] ?? '';
   const rest = subArgs.slice(1);
+  const json = subArgs.includes('--json');
 
   if (sub === 'local') {
     await runEvalLocal(rest, config);
@@ -117,8 +143,16 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   }
 
   if (sub !== 'run') {
-    console.log('Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [options]');
-    console.log('       ethos eval local [--model <id>] [--dataset evals/local]');
+    if (json) {
+      writeJsonError(
+        'INVALID_INPUT',
+        'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [options] [--json]\n       ethos eval local [--model <id>] [--dataset evals/local] [--json]',
+      );
+    }
+    console.log(
+      'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [options] [--json]',
+    );
+    console.log('       ethos eval local [--model <id>] [--dataset evals/local] [--json]');
     console.log('');
     console.log('Options (run):');
     console.log('  --expected, -e   Path to expected outputs JSONL (required)');
@@ -139,6 +173,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   try {
     opts = parseArgs(rest);
   } catch (err) {
+    if (json) throw err;
     console.error(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
     process.exit(1);
   }
@@ -149,6 +184,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   try {
     taskSrc = await readFile(inputPath, 'utf-8');
   } catch {
+    if (json) writeJsonError('FILE_NOT_FOUND', `Cannot read tasks file: ${inputPath}`);
     console.error(`${c.red}Cannot read tasks file: ${inputPath}${c.reset}`);
     process.exit(1);
   }
@@ -157,6 +193,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   try {
     expectedSrc = await readFile(expectedPath, 'utf-8');
   } catch {
+    if (json) writeJsonError('FILE_NOT_FOUND', `Cannot read expected file: ${expectedPath}`);
     console.error(`${c.red}Cannot read expected file: ${expectedPath}${c.reset}`);
     process.exit(1);
   }
@@ -165,6 +202,12 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   try {
     tasks = parseTasksJsonl(taskSrc);
   } catch (err) {
+    if (json) {
+      writeJsonError(
+        'EVAL_INVALID_LINE',
+        `Invalid tasks file: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     console.error(
       `${c.red}Invalid tasks file: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
     );
@@ -175,6 +218,12 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   try {
     expectedMap = parseExpectedJsonl(expectedSrc);
   } catch (err) {
+    if (json) {
+      writeJsonError(
+        'EVAL_INVALID_LINE',
+        `Invalid expected file: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     console.error(
       `${c.red}Invalid expected file: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
     );
@@ -182,15 +231,20 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   }
 
   if (tasks.length === 0) {
+    if (json) {
+      writeJson({ ok: true, tasks: 0, passed: 0, failed: 0, avgScore: 0, output: null });
+      return;
+    }
     console.log(`${c.yellow}No tasks found in ${inputPath}${c.reset}`);
     return;
   }
 
-  console.log(
+  const say = sayFor(json);
+  say(
     `${c.bold}ethos eval${c.reset}  ${c.dim}${tasks.length} tasks · scorer: ${scorer} · concurrency ${concurrency}${c.reset}`,
   );
-  console.log(`${c.dim}  expected   → ${expectedPath}${c.reset}`);
-  console.log(`${c.dim}  output     → ${outputPath}${c.reset}\n`);
+  say(`${c.dim}  expected   → ${expectedPath}${c.reset}`);
+  say(`${c.dim}  output     → ${outputPath}${c.reset}\n`);
 
   const runtime = await createAgentLoop(config);
   gateNonInteractiveLoop(runtime, config, '`ethos eval` has no prompt to answer it');
@@ -202,20 +256,34 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   });
 
   const start = Date.now();
-  let lastLine = '';
-
+  const bar = progressBar(json);
   const stats = await runner
-    .run(tasks, expectedMap, (done, total) => {
-      const pct = Math.round((done / total) * 100);
-      const line = `  ${done}/${total} (${pct}%)`;
-      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
-      lastLine = line;
-    })
+    .run(tasks, expectedMap, bar.onProgress)
     .finally(() => releaseCommandRuntime(runtime, { label: 'eval agent loop' }));
 
-  if (lastLine) process.stdout.write('\n');
+  bar.finish();
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  if (json) {
+    const evolved = evolve
+      ? await runEvolveAfter(config, outputPath, autoApprove, tasks, expectedMap, true)
+      : null;
+    writeJson({
+      ok: true,
+      tasks: tasks.length,
+      scorer,
+      concurrency,
+      passed: stats.passed,
+      failed: stats.failed,
+      avgScore: stats.avgScore,
+      elapsedSeconds: Number(elapsed),
+      output: outputPath,
+      evolve: evolved,
+    });
+    // Failing tasks still exit 1; the document above says how many.
+    if (stats.failed > 0) process.exit(1);
+    return;
+  }
   const passMark = `${c.green}${stats.passed} passed${c.reset}`;
   const failMark = stats.failed > 0 ? `  ${c.red}${stats.failed} failed${c.reset}` : '';
   const avgMark = `  ${c.dim}avg ${(stats.avgScore * 100).toFixed(0)}%${c.reset}`;
@@ -241,12 +309,22 @@ export async function runEvolveAfter(
   autoApprove: boolean,
   tasks: ReturnType<typeof parseTasksJsonl>,
   expectedMap: ReturnType<typeof parseExpectedJsonl>,
-): Promise<void> {
+  json = false,
+): Promise<EvalEvolveSummary> {
   // The evolver's drafting calls have no loop to borrow a meter from
   // (background-usage-accounting §5.4, D33).
-  await withUsageMeter({ dataDir: ethosDir() }, (usage) =>
-    evolveAfter(config, evalOutputPath, autoApprove, tasks, expectedMap, usage),
+  return withUsageMeter({ dataDir: ethosDir() }, (usage) =>
+    evolveAfter(config, evalOutputPath, autoApprove, tasks, expectedMap, usage, json),
   );
+}
+
+/** The `evolve` member of the `ethos eval run --evolve --json` document. */
+export interface EvalEvolveSummary {
+  rewritesSubmitted: string[];
+  newSkillsSubmitted: string[];
+  skipped: EvolveResult['skipped'];
+  candidateIds: string[];
+  replays: EvolveReplayOutcome[];
 }
 
 async function evolveAfter(
@@ -256,7 +334,9 @@ async function evolveAfter(
   tasks: ReturnType<typeof parseTasksJsonl>,
   expectedMap: ReturnType<typeof parseExpectedJsonl>,
   usage: Pick<UsageMeter, 'meter'>,
-): Promise<void> {
+  json: boolean,
+): Promise<EvalEvolveSummary> {
+  const say = sayFor(json);
   const dir = ethosDir();
   const skillsDir = join(dir, 'skills');
   const storage = getStorage();
@@ -268,7 +348,7 @@ async function evolveAfter(
   const personalityId = config.personality;
   const prompts = new Map(tasks.map((t) => [t.id, t.prompt]));
 
-  console.log(`\n${c.bold}evolving skills${c.reset}  ${c.dim}model: ${llm.model}${c.reset}`);
+  say(`\n${c.bold}evolving skills${c.reset}  ${c.dim}model: ${llm.model}${c.reset}`);
 
   const { caseFromEvalTask, freezeCase } = await import('@ethosagent/learning-inbox');
   const evolver = new SkillEvolver({
@@ -302,19 +382,28 @@ async function evolveAfter(
   });
   const result = await evolver.evolve();
 
-  console.log(
+  say(
     `  rewrites: ${result.rewritesSubmitted.length}  new: ${result.newSkillsSubmitted.length}  skipped: ${result.skipped.length}`,
   );
-  for (const f of result.rewritesSubmitted) console.log(`  ${c.green}rewrite${c.reset} ${f}`);
-  for (const f of result.newSkillsSubmitted) console.log(`  ${c.green}new${c.reset}     ${f}`);
+  for (const f of result.rewritesSubmitted) say(`  ${c.green}rewrite${c.reset} ${f}`);
+  for (const f of result.newSkillsSubmitted) say(`  ${c.green}new${c.reset}     ${f}`);
   for (const s of result.skipped)
-    console.log(`  ${c.yellow}skip${c.reset}    ${s.kind} ${s.target} — ${s.reason}`);
+    say(`  ${c.yellow}skip${c.reset}    ${s.kind} ${s.target} — ${s.reason}`);
 
-  if (autoApprove && result.candidateIds.length > 0) {
-    await replayEvolvedCandidates(config, reg, result.candidateIds);
-  } else if (result.candidateIds.length > 0) {
-    console.log(`  ${c.dim}review with: ethos learning list${c.reset}`);
+  const replays =
+    autoApprove && result.candidateIds.length > 0
+      ? await replayEvolvedCandidates(config, reg, result.candidateIds, say)
+      : [];
+  if (replays.length === 0 && result.candidateIds.length > 0) {
+    say(`  ${c.dim}review with: ethos learning list${c.reset}`);
   }
+  return {
+    rewritesSubmitted: result.rewritesSubmitted,
+    newSkillsSubmitted: result.newSkillsSubmitted,
+    skipped: result.skipped,
+    candidateIds: result.candidateIds,
+    replays,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -369,10 +458,13 @@ function readRepairEvents(since: number): { events: RepairEvent[]; available: bo
 }
 
 export async function runEvalLocal(args: string[], config: EthosConfig): Promise<void> {
+  const json = args.includes('--json');
+  const say = sayFor(json);
   let opts: LocalOpts;
   try {
     opts = parseLocalArgs(args);
   } catch (err) {
+    if (json) throw err;
     console.error(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
     process.exit(1);
   }
@@ -386,6 +478,12 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
     tasks = parseTasksJsonl(await readFile(tasksPath, 'utf-8'));
     expectedMap = parseExpectedJsonl(await readFile(expectedPath, 'utf-8'));
   } catch (err) {
+    if (json) {
+      writeJsonError(
+        'FILE_NOT_FOUND',
+        `Cannot load dataset from ${opts.dataset}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     console.error(
       `${c.red}Cannot load dataset from ${opts.dataset}: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
     );
@@ -393,6 +491,10 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   }
 
   if (tasks.length === 0) {
+    if (json) {
+      writeJson({ ok: true, mode: 'local', tasks: 0, dataset: opts.dataset, output: null });
+      return;
+    }
     console.log(`${c.yellow}No tasks found in ${tasksPath}${c.reset}`);
     return;
   }
@@ -400,10 +502,10 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   const effectiveConfig = opts.model ? { ...config, model: opts.model } : config;
   const outputPath = join(ethosDir(), 'eval-local.eval.jsonl');
 
-  console.log(
+  say(
     `${c.bold}ethos eval local${c.reset}  ${c.dim}${tasks.length} tasks · model: ${effectiveConfig.model} · concurrency ${opts.concurrency}${c.reset}`,
   );
-  console.log(`${c.dim}  dataset → ${opts.dataset}${c.reset}\n`);
+  say(`${c.dim}  dataset → ${opts.dataset}${c.reset}\n`);
 
   const localRuntime = await createAgentLoop(effectiveConfig);
   gateNonInteractiveLoop(
@@ -419,15 +521,11 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   });
 
   const runStart = Date.now();
-  let lastLine = '';
+  const bar = progressBar(json);
   const stats = await runner
-    .run(tasks, expectedMap, (done, total) => {
-      const line = `  ${done}/${total} (${Math.round((done / total) * 100)}%)`;
-      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
-      lastLine = line;
-    })
+    .run(tasks, expectedMap, bar.onProgress)
     .finally(() => releaseCommandRuntime(localRuntime, { label: 'eval agent loop' }));
-  if (lastLine) process.stdout.write('\n');
+  bar.finish();
 
   // Per-task scores come from the assistant records the runner wrote.
   const results: Array<{ id: string; score: number }> = [];
@@ -448,6 +546,29 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   const categories = aggregateByCategory(results);
   const { events, available } = readRepairEvents(runStart);
   const repair = summarizeRepairs(events);
+
+  if (json) {
+    writeJson({
+      ok: true,
+      mode: 'local',
+      tasks: tasks.length,
+      model: effectiveConfig.model,
+      dataset: opts.dataset,
+      categories,
+      passed: stats.passed,
+      failed: stats.failed,
+      avgScore: stats.avgScore,
+      repair: {
+        available,
+        repaired: repair.repaired,
+        failed: repair.failed,
+        repairSuccessRate: repair.repairSuccessRate,
+        executeWithEmptyArgs: repair.executeWithEmptyArgs,
+      },
+      output: outputPath,
+    });
+    return;
+  }
 
   console.log(`\n${c.bold}Pass rates by category${c.reset}`);
   for (const cat of categories) {

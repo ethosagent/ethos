@@ -24,6 +24,7 @@ import {
   type LearningInbox,
   type ReplayReport,
 } from '@ethosagent/wiring';
+import { writeJson, writeJsonError } from '../json-output';
 import { createCliLearningInbox } from '../wiring';
 
 const c = {
@@ -46,7 +47,7 @@ const CONSOLE_IO: LearningCliIo = {
 };
 
 const USAGE = [
-  'Usage: ethos learning <command>',
+  'Usage: ethos learning <command> [--json]',
   '',
   '  list [--personality <id>] [--all]      candidates waiting for a decision (--all: every status)',
   '  show <id>                              evidence, proposed content, replay scorecard, timeline',
@@ -71,27 +72,36 @@ export async function runLearningCommand(
   inbox: LearningInbox,
   io: LearningCliIo = CONSOLE_IO,
 ): Promise<number> {
-  const [sub, ...rest] = args;
+  const json = args.includes('--json');
+  const [sub, ...rest] = args.filter((a) => a !== '--json');
   switch (sub) {
     case 'list':
-      return list(rest, inbox, io);
+      return list(rest, inbox, io, json);
     case 'show':
-      return withId(rest, io, (id) => show(id, inbox, io));
+      return withId(rest, io, json, (id) => show(id, inbox, io, json));
     case 'replay':
-      return withId(rest, io, (id) => replay(id, inbox, io));
+      return withId(rest, io, json, (id) => replay(id, inbox, io, json));
     case 'approve':
-      return withId(rest, io, (id) => approve(id, flagValue(rest, '--override'), inbox, io));
+      return withId(rest, io, json, (id) =>
+        approve(id, flagValue(rest, '--override'), inbox, io, json),
+      );
     case 'reject':
-      return withId(rest, io, (id) => reject(id, flagValue(rest, '--reason'), inbox, io));
+      return withId(rest, io, json, (id) =>
+        reject(id, flagValue(rest, '--reason'), inbox, io, json),
+      );
     case 'rollback':
-      return withId(rest, io, (id) => rollback(id, flagValue(rest, '--reason'), inbox, io));
+      return withId(rest, io, json, (id) =>
+        rollback(id, flagValue(rest, '--reason'), inbox, io, json),
+      );
     case undefined:
     case 'help':
     case '--help':
     case '-h':
+      if (json) writeJsonError('INVALID_INPUT', USAGE.join('\n'));
       for (const line of USAGE) io.out(line);
       return 0;
     default:
+      if (json) writeJsonError('INVALID_INPUT', `Unknown subcommand: ${sub}\n${USAGE.join('\n')}`);
       io.err(`${c.red}Unknown subcommand: ${sub}${c.reset}`);
       for (const line of USAGE) io.err(line);
       return 1;
@@ -100,12 +110,21 @@ export async function runLearningCommand(
 
 // --- Subcommands -------------------------------------------------------------
 
-async function list(args: readonly string[], inbox: LearningInbox, io: LearningCliIo) {
+async function list(
+  args: readonly string[],
+  inbox: LearningInbox,
+  io: LearningCliIo,
+  json: boolean,
+) {
   const personalityId = flagValue(args, '--personality');
   const candidates = await inbox.list({
     ...(personalityId ? { personalityId } : {}),
     ...(args.includes('--all') ? {} : { status: AWAITING_DECISION }),
   });
+  if (json) {
+    writeJson({ ok: true, count: candidates.length, candidates });
+    return 0;
+  }
   if (candidates.length === 0) {
     io.out(
       `${c.dim}${args.includes('--all') ? 'No learning candidates.' : 'No learning candidates waiting for a decision.'}${c.reset}`,
@@ -129,13 +148,18 @@ async function list(args: readonly string[], inbox: LearningInbox, io: LearningC
   return 0;
 }
 
-async function show(id: string, inbox: LearningInbox, io: LearningCliIo) {
+async function show(id: string, inbox: LearningInbox, io: LearningCliIo, json: boolean) {
   const result = await inbox.get(id);
   if (!result.ok) {
+    if (json) writeJsonError(refusalCode(result.code), result.reason);
     io.err(`${c.red}${result.reason}${c.reset}`);
     return 1;
   }
   const d = result.value;
+  if (json) {
+    writeJson({ ok: true, ...d });
+    return 0;
+  }
   const x = d.candidate;
   io.out(`${c.bold}Learning candidate ${x.id}${c.reset}`);
   io.out(`  kind:         ${kindLabel(x)} (${x.kind}/${x.op})`);
@@ -183,16 +207,29 @@ async function show(id: string, inbox: LearningInbox, io: LearningCliIo) {
   return 0;
 }
 
-async function replay(id: string, inbox: LearningInbox, io: LearningCliIo) {
-  io.out(
-    `${c.dim}Replaying ${id} — baseline and candidate dry runs on every selected case…${c.reset}`,
-  );
+async function replay(id: string, inbox: LearningInbox, io: LearningCliIo, json: boolean) {
+  if (!json) {
+    io.out(
+      `${c.dim}Replaying ${id} — baseline and candidate dry runs on every selected case…${c.reset}`,
+    );
+  }
   const result = await inbox.replay(id);
   if (!result.ok) {
+    if (json) writeJsonError(refusalCode(result.code), result.reason);
     io.err(`${c.red}${result.reason}${c.reset}`);
     return 1;
   }
   const r = result.value;
+  if (json) {
+    writeJson({
+      ok: true,
+      id,
+      report: r.report,
+      decision: r.decision,
+      promotion: r.promotion ?? null,
+    });
+    return 0;
+  }
   io.out(`${summaryLine(r.report)}`);
   if (r.promotion?.ok) {
     io.out(`${c.green}promoted${c.reset} automatically (pass, auto approval, personality-scoped)`);
@@ -209,6 +246,7 @@ async function approve(
   overrideReason: string | undefined,
   inbox: LearningInbox,
   io: LearningCliIo,
+  json: boolean,
 ) {
   const result = await inbox.approve(id, {
     actor: 'cli',
@@ -216,6 +254,7 @@ async function approve(
     ...(overrideReason !== undefined ? { override: { reason: overrideReason } } : {}),
   });
   if (!result.ok) {
+    if (json) writeJsonError(refusalCode(result.code), `not approved ${id} — ${result.reason}`);
     io.err(`${c.red}not approved${c.reset} ${id} — ${result.reason}`);
     if (result.code === 'override_required') {
       io.err(
@@ -223,6 +262,15 @@ async function approve(
       );
     }
     return 1;
+  }
+  if (json) {
+    writeJson({
+      ok: true,
+      id,
+      destination: result.value.record.destination,
+      override: overrideReason?.trim() || null,
+    });
+    return 0;
   }
   io.out(`${c.green}approved${c.reset} ${id} → ${result.value.record.destination}`);
   if (overrideReason?.trim())
@@ -235,6 +283,7 @@ async function reject(
   reason: string | undefined,
   inbox: LearningInbox,
   io: LearningCliIo,
+  json: boolean,
 ) {
   const result = await inbox.reject(id, {
     actor: 'cli',
@@ -242,8 +291,13 @@ async function reject(
     reason,
   });
   if (!result.ok) {
+    if (json) writeJsonError(refusalCode(result.code), `not rejected ${id} — ${result.reason}`);
     io.err(`${c.red}not rejected${c.reset} ${id} — ${result.reason}`);
     return 1;
+  }
+  if (json) {
+    writeJson({ ok: true, id, rejected: true });
+    return 0;
   }
   io.out(`${c.dim}rejected ${id}${c.reset}`);
   return 0;
@@ -254,6 +308,7 @@ async function rollback(
   reason: string | undefined,
   inbox: LearningInbox,
   io: LearningCliIo,
+  json: boolean,
 ) {
   const result = await inbox.rollback(id, {
     actor: 'cli',
@@ -261,8 +316,13 @@ async function rollback(
     reason,
   });
   if (!result.ok) {
+    if (json) writeJsonError(refusalCode(result.code), `not rolled back ${id} — ${result.reason}`);
     io.err(`${c.red}not rolled back${c.reset} ${id} — ${result.reason}`);
     return 1;
+  }
+  if (json) {
+    writeJson({ ok: true, id, rolledBack: true });
+    return 0;
   }
   io.out(`${c.green}rolled back${c.reset} ${id}`);
   return 0;
@@ -350,14 +410,21 @@ function table(header: string[], rows: string[][]): string[] {
 async function withId(
   args: readonly string[],
   io: LearningCliIo,
+  json: boolean,
   run: (id: string) => Promise<number>,
 ): Promise<number> {
   const id = positional(args);
   if (!id) {
+    if (json) writeJsonError('INVALID_INPUT', 'A candidate id is required.');
     io.err(`${c.red}A candidate id is required.${c.reset} List them with: ethos learning list`);
     return 1;
   }
   return run(id);
+}
+
+/** A refused inbox call: an unknown candidate is NOT_FOUND, every other refusal INVALID_INPUT. */
+function refusalCode(code: string): 'NOT_FOUND' | 'INVALID_INPUT' {
+  return code === 'not_found' ? 'NOT_FOUND' : 'INVALID_INPUT';
 }
 
 /** `--flag value` or `--flag=value`. */

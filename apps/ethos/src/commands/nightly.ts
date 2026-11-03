@@ -55,6 +55,7 @@ import {
   type UsageMeter,
   withUsageMeter,
 } from '@ethosagent/wiring';
+import { type Say, sayFor, writeJson, writeJsonError } from '../json-output';
 import { createLearningReplayer, createLLM, getStorage } from '../wiring';
 import {
   buildEvidenceDigest,
@@ -171,8 +172,9 @@ export function nightlySkillDrafter(args: {
   dataDir: string;
   learningCtx: Parameters<typeof freezeTargetTurnCases>[0];
   digests: ReadonlyMap<string, EvidenceDigest>;
+  say?: Say;
 }): NonNullable<NightlyPassDeps['createSkills']> {
-  const { reg, llm, dataDir, learningCtx, digests } = args;
+  const { reg, llm, dataDir, learningCtx, digests, say = sayFor(false) } = args;
   return async (id, evidence) => {
     const cfg = reg.get(id)?.skill_evolution;
     if (!cfg?.enabled) return 0;
@@ -193,7 +195,7 @@ export function nightlySkillDrafter(args: {
       evidenceSessionIds: digest?.sessionIds ?? [],
       targetCaseIds,
     });
-    console.log(
+    say(
       `  skill candidate ${result.candidateId ?? '(none)'}: ${result.decision} — ${result.reason}`,
     );
     return result.decision === 'submitted' ? 1 : 0;
@@ -231,8 +233,9 @@ function buildDeps(args: {
   memory: Awaited<ReturnType<typeof nightlyMemory>>;
   /** The run's shared `maxCandidatesPerRun` budget. */
   replayBudget: { take(): boolean };
+  say: Say;
 }): NightlyPassDeps {
-  const { config, ethosDir, reg, llm } = args;
+  const { config, ethosDir, reg, llm, say } = args;
   const fileMemory = (): Exclude<typeof args.memory, { skipReason: string }> => {
     if ('skipReason' in args.memory) {
       throw new EthosError({
@@ -359,11 +362,11 @@ function buildDeps(args: {
         evidenceRef: meta.evidenceRef,
         targetCaseIds,
       });
-      console.log(`  submitted Expression candidate ${candidate.id} for ${id} — waits for replay`);
+      say(`  submitted Expression candidate ${candidate.id} for ${id} — waits for replay`);
       return { candidateId: candidate.id };
     },
 
-    createSkills: nightlySkillDrafter({ reg, llm, dataDir: ethosDir, learningCtx, digests }),
+    createSkills: nightlySkillDrafter({ reg, llm, dataDir: ethosDir, learningCtx, digests, say }),
 
     learning: {
       enabled: replaySettings.enabled,
@@ -385,7 +388,7 @@ function buildDeps(args: {
       async replay(_id, candidateId) {
         replayer ??= createLearningReplayer(config, { personalities: reg, actor: 'nightly' });
         const result = await (await replayer)(candidateId);
-        console.log(
+        say(
           `  replayed ${candidateId}: ${result.report.verdict}${
             result.promotion?.ok ? ' — promoted' : ` — ${result.decision.reason ?? 'not promoted'}`
           }`,
@@ -448,11 +451,11 @@ function buildDeps(args: {
     },
 
     onSignal(id, signal) {
-      console.log(signalNotice(id, signal));
+      say(signalNotice(id, signal));
     },
 
     log(msg) {
-      console.log(msg);
+      say(msg);
     },
   };
 }
@@ -504,8 +507,30 @@ export async function nightlyMemory(
 // serve/gateway schedulers. Builds the real per-personality dependencies and
 // runs the pass for one id (`opts.id`) or every user personality. Each
 // personality's pass is wrapped so one failure prints and the run continues.
-export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }): Promise<void> {
+//
+// `opts.json` keeps stdout clean for the one JSON document `runNightly` prints:
+// progress goes to stderr and the per-personality outcome is the return value.
+export interface NightlyTargetOutcome {
+  personality: string;
+  /** `skipped`: nightly disabled for this personality. `failed`: its pass threw; the run went on. */
+  status: 'ran' | 'skipped' | 'failed';
+  windowEnd: string | null;
+  steps: NightlyStepLog[];
+  /** Set only when `status` is `failed`. */
+  error?: { code: string; message: string };
+}
+
+export interface NightlyOutcome {
+  personalities: NightlyTargetOutcome[];
+}
+
+export async function runNightlyOnce(
+  config: EthosConfig,
+  opts?: { id?: string; json?: boolean },
+): Promise<NightlyOutcome> {
   const id = opts?.id;
+  const json = opts?.json === true;
+  const say = sayFor(json);
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { ethosDir } = await import('@ethosagent/config');
 
@@ -527,6 +552,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   if (id) {
     const described = reg.describe(id);
     if (!described) {
+      if (json) writeJsonError('PERSONALITY_NOT_FOUND', `Unknown personality: ${id}`);
       console.error(`Unknown personality: ${id}`);
       console.error('Run `ethos personality list` to see available ids.');
       process.exit(1);
@@ -538,14 +564,14 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
       .filter((d) => !d.builtin)
       .map((d) => d.config.id);
     if (targets.length === 0) {
-      console.log('No user personalities to run the nightly pass for.');
-      return;
+      say('No user personalities to run the nightly pass for.');
+      return { personalities: [] };
     }
   }
 
   // Operator spend with no loop to borrow a meter from (background-usage-accounting §5.4, D33).
-  await withUsageMeter({ dataDir: dir }, (usage) =>
-    runNightlyTargets({ usage, config, dir, reg, targets }),
+  return withUsageMeter({ dataDir: dir }, (usage) =>
+    runNightlyTargets({ usage, config, dir, reg, targets, json }),
   );
 }
 
@@ -555,8 +581,11 @@ async function runNightlyTargets(opts: {
   dir: string;
   reg: import('@ethosagent/personalities').FilePersonalityRegistry;
   targets: string[];
-}): Promise<void> {
-  const { usage, config, dir, reg, targets } = opts;
+  json: boolean;
+}): Promise<NightlyOutcome> {
+  const { usage, config, dir, reg, targets, json } = opts;
+  const say = sayFor(json);
+  const personalities: NightlyTargetOutcome[] = [];
   const llm = usage.meter(await createLLM(config), 'nightly');
   const backend = await nightlyMemory(config, dir, getStorage());
   const memorySkipReason = 'skipReason' in backend ? backend.skipReason : undefined;
@@ -567,6 +596,7 @@ async function runNightlyTargets(opts: {
     llm,
     memory: backend,
     replayBudget: runBudget(resolveLearningReplay(config).maxCandidatesPerRun),
+    say,
   });
 
   for (const target of targets) {
@@ -574,7 +604,8 @@ async function runNightlyTargets(opts: {
     // Master nightly toggle: an explicit `false` skips this personality
     // entirely. Absent/undefined runs (today's behavior).
     if (nightly?.enabled === false) {
-      console.log(`\n=== Nightly pass: ${target} — skipped (nightly disabled) ===`);
+      say(`\n=== Nightly pass: ${target} — skipped (nightly disabled) ===`);
+      personalities.push({ personality: target, status: 'skipped', windowEnd: null, steps: [] });
       continue;
     }
     // Per-step gates: judge gated by both the master nightly toggle's judge
@@ -587,21 +618,36 @@ async function runNightlyTargets(opts: {
     };
     try {
       const result = await runNightlyPass(target, deps, gates);
-      console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
+      say(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
       for (const step of result.steps) {
-        console.log(nightlyStepLine(step));
+        say(nightlyStepLine(step));
       }
       // Single-rotator: roll last month's history out of the live JSONL.
       if (!('skipReason' in backend)) await backend.history.rotate(`personality:${target}`);
+      personalities.push({
+        personality: target,
+        status: 'ran',
+        windowEnd: result.windowEnd,
+        steps: result.steps,
+      });
     } catch (err) {
       const e = toEthosError(err);
       console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);
+      personalities.push({
+        personality: target,
+        status: 'failed',
+        windowEnd: null,
+        steps: [],
+        error: { code: e.code, message: e.cause },
+      });
     }
   }
+  return { personalities };
 }
 
 export async function runNightly(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
+  const json = argv.includes('--json');
 
   try {
     const { readConfig } = await import('@ethosagent/config');
@@ -609,12 +655,16 @@ export async function runNightly(argv: string[]): Promise<void> {
 
     const config = await readConfig(getStorage(), await getSecretsResolver());
     if (!config) {
+      if (json) writeJsonError('CONFIG_MISSING', 'Run `ethos setup` first.');
       console.error('Run `ethos setup` first.');
       process.exit(1);
     }
 
-    await runNightlyOnce(config, id ? { id } : {});
+    const outcome = await runNightlyOnce(config, { ...(id ? { id } : {}), json });
+    if (json) writeJson({ ok: true, ...outcome });
   } catch (err) {
+    // Unexpected failures reach index.ts's top-level catch, which emits the one JSON doc.
+    if (json) throw err;
     surface(err);
   }
 }

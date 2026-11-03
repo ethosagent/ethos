@@ -14,6 +14,7 @@ import {
   waitingSkillNamesByPersonality,
 } from '@ethosagent/digest';
 import { formatError, toEthosError } from '@ethosagent/types';
+import { sayFor, writeJson, writeJsonError } from '../json-output';
 
 function surface(err: unknown): never {
   process.stderr.write(`\n${formatError(toEthosError(err), { color: process.stderr.isTTY })}\n`);
@@ -29,10 +30,30 @@ function surface(err: unknown): never {
 // `~/.ethos/digests/<ISO-week>.md` (overwrites — idempotent per week), and
 // optionally emails it. Does NOT call `process.exit` — the cron callback wraps
 // its own try/catch; the CLI wraps it with `surface`.
+//
+// `opts.json` keeps stdout clean for the one JSON document `runDigest` prints:
+// progress lines go to stderr and the outcome comes back as the return value.
+export interface DigestEmailOutcome {
+  /** Why nothing was sent: no email platform or no recipients. Null when a send was attempted. */
+  skipped: string | null;
+  sent: string[];
+  failed: string[];
+}
+
+export interface DigestOutcome {
+  /** False when there are no user personalities to build a digest for. */
+  written: boolean;
+  path: string | null;
+  week: string | null;
+  personalities: number;
+  email: DigestEmailOutcome | null;
+}
+
 export async function runDigestOnce(
   config: import('@ethosagent/config').EthosConfig,
-  opts?: { email?: boolean },
-): Promise<void> {
+  opts?: { email?: boolean; json?: boolean },
+): Promise<DigestOutcome> {
+  const say = sayFor(opts?.json === true);
   const { ethosDir } = await import('@ethosagent/config');
   const { createCliLearningInbox, getStorage } = await import('../wiring');
   const { AWAITING_DECISION } = await import('@ethosagent/learning-inbox');
@@ -49,8 +70,8 @@ export async function runDigestOnce(
     .filter((d) => !d.builtin)
     .map((d) => d.config);
   if (targets.length === 0) {
-    console.log('No user personalities to build a digest for.');
-    return;
+    say('No user personalities to build a digest for.');
+    return { written: false, path: null, week: null, personalities: 0, email: null };
   }
 
   const learningLogByPersonality: Record<
@@ -87,17 +108,18 @@ export async function runDigestOnce(
   await storage.mkdir(digestDir);
   const outPath = join(digestDir, `${label}.md`);
   await storage.writeAtomic(outPath, markdown);
-  console.log(`Wrote weekly digest to ${outPath}`);
+  say(`Wrote weekly digest to ${outPath}`);
 
-  if (opts?.email) {
-    await emailDigest(config, markdown, label);
-  }
+  const email = opts?.email ? await emailDigest(config, markdown, label, say) : null;
+  return { written: true, path: outPath, week: label, personalities: targets.length, email };
 }
 
 export async function runDigest(argv: string[]): Promise<void> {
   const sub = argv[0];
+  const json = argv.includes('--json');
   if (sub !== 'run') {
-    console.log('Usage: ethos digest run [--email]');
+    if (json) writeJsonError('INVALID_INPUT', 'Usage: ethos digest run [--email] [--json]');
+    console.log('Usage: ethos digest run [--email] [--json]');
     return;
   }
   const wantEmail = argv.includes('--email');
@@ -108,12 +130,16 @@ export async function runDigest(argv: string[]): Promise<void> {
 
     const config = await readConfig(getStorage(), await getSecretsResolver());
     if (!config) {
+      if (json) writeJsonError('CONFIG_MISSING', 'Run `ethos setup` first.');
       console.error('Run `ethos setup` first.');
       process.exit(1);
     }
 
-    await runDigestOnce(config, { email: wantEmail });
+    const outcome = await runDigestOnce(config, { email: wantEmail, json });
+    if (json) writeJson({ ok: true, ...outcome });
   } catch (err) {
+    // Unexpected failures reach index.ts's top-level catch, which emits the one JSON doc.
+    if (json) throw err;
     surface(err);
   }
 }
@@ -126,21 +152,22 @@ async function emailDigest(
   config: import('@ethosagent/config').EthosConfig,
   markdown: string,
   label: string,
-): Promise<void> {
+  say: (line: string) => void,
+): Promise<DigestEmailOutcome> {
   const user = config.emailUser;
   const password = config.emailPassword;
   const smtpHost = config.emailSmtpHost;
   const recipients = config.weeklyDigest?.recipients ?? [];
 
   if (!user || !password || !smtpHost) {
-    console.log(
+    say(
       '--email: no email platform configured (emailSmtpHost/emailUser/emailPassword); skipping send.',
     );
-    return;
+    return { skipped: 'no email platform configured', sent: [], failed: [] };
   }
   if (recipients.length === 0) {
-    console.log('--email: weeklyDigest.recipients is empty; skipping send.');
-    return;
+    say('--email: weeklyDigest.recipients is empty; skipping send.');
+    return { skipped: 'weeklyDigest.recipients is empty', sent: [], failed: [] };
   }
 
   // Minimal local typing for the nodemailer subset we use — `@types/nodemailer`
@@ -165,6 +192,8 @@ async function emailDigest(
     auth: { user, pass: password },
   });
 
+  const sent: string[] = [];
+  const failed: string[] = [];
   for (const to of recipients) {
     try {
       await transporter.sendMail({
@@ -173,11 +202,14 @@ async function emailDigest(
         subject: `Ethos weekly digest — ${label}`,
         text: markdown,
       });
-      console.log(`--email: sent digest to ${to}`);
+      say(`--email: sent digest to ${to}`);
+      sent.push(to);
     } catch (err) {
+      failed.push(to);
       console.error(
         `--email: failed to send to ${to}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
+  return { skipped: null, sent, failed };
 }
