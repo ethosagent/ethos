@@ -8,6 +8,8 @@ export interface OAuthServerMetadata {
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
   device_authorization_endpoint?: string;
+  /** RFC 9207: the AS adds `iss` to authorization responses. */
+  authorization_response_iss_parameter_supported?: boolean;
 }
 
 export interface ProtectedResourceMetadata {
@@ -92,6 +94,10 @@ export function parseOAuthServerMetadata(data: unknown): OAuthServerMetadata {
     device_authorization_endpoint:
       typeof obj.device_authorization_endpoint === 'string'
         ? obj.device_authorization_endpoint
+        : undefined,
+    authorization_response_iss_parameter_supported:
+      typeof obj.authorization_response_iss_parameter_supported === 'boolean'
+        ? obj.authorization_response_iss_parameter_supported
         : undefined,
   };
 }

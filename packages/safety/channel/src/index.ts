@@ -3,7 +3,14 @@ export type {
   ChannelFilterResult,
   ChannelPlatformConfig,
 } from './channel-filter';
-export { checkMessage, isSenderAllowed, senderIds } from './channel-filter';
+export {
+  checkMessage,
+  DEFAULT_DECLINE_MESSAGE,
+  isSenderAllowed,
+  senderIds,
+} from './channel-filter';
+export type { DeclineKey } from './decline-store';
+export { claimDeclineSlot, DECLINE_WINDOW_MS } from './decline-store';
 export type { ConsumeAndAllowResult, ConsumeResult } from './pairing-store';
 export {
   clearOwnerPause,

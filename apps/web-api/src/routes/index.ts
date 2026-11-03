@@ -518,6 +518,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     const state = c.req.query('state');
     const error = c.req.query('error');
     const errorDescription = c.req.query('error_description');
+    const iss = c.req.query('iss');
 
     // Parse the pending-state cookie (format: `<state>` or `<state>.<personalityId>`)
     const rawCookie = getCookie(c, 'ethos_mcp_pending');
@@ -540,7 +541,10 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
         detail: 'Missing code or state parameter',
       };
     } else {
-      const result = await opts.services.mcp.complete({ code, state }, pendingState);
+      const result = await opts.services.mcp.complete(
+        { code, state, ...(iss !== undefined ? { iss } : {}) },
+        pendingState,
+      );
       if ('ok' in result && result.ok === false) {
         const r = result as { code: string; detail?: string };
         msg = { type: 'ethos:mcp_oauth_error', state, code: r.code, detail: r.detail };

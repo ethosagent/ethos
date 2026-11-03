@@ -8,6 +8,7 @@ interface OAuthPayload {
   state?: string | null;
   error?: string | null;
   error_description?: string | null;
+  iss?: string | null;
 }
 
 type Status = 'completing' | 'success' | 'error';
@@ -29,6 +30,7 @@ export function OAuthCallback() {
       state: searchParams.get('state'),
       error: searchParams.get('error'),
       error_description: searchParams.get('error_description'),
+      iss: searchParams.get('iss'),
     };
 
     if (payload.error) {
@@ -76,7 +78,11 @@ export function OAuthCallback() {
 
     // Exchange code for tokens via mcp.complete RPC
     rpc.mcp
-      .complete({ code: payload.code, state: payload.state })
+      .complete({
+        code: payload.code,
+        state: payload.state,
+        ...(payload.iss ? { iss: payload.iss } : {}),
+      })
       .then((result) => {
         if ('ok' in result && result.ok === false) {
           const msg =

@@ -21,7 +21,7 @@ export type { McpAuthStatus, McpCreatedVia, McpServerInfo, McpTransport } from '
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ensureValidToken, loadAccessToken, refreshToken } from './oauth';
+import { ensureValidToken, loadAccessToken, OAuthBindingMismatch, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 import { probeTokenScopes } from './scope-probe';
 
@@ -46,11 +46,13 @@ export type {
   DcrResponse,
   DiscoveredOAuthMetadata,
   OAuthConfig,
+  TokenBinding,
   TokenSet,
 } from './oauth';
 export {
   buildAuthorizationUrl,
   ConfidentialClientUnsupported,
+  checkAuthorizationResponseIssuer,
   DcrUnsupported,
   deleteTokens,
   discoverOAuthMetadata,
@@ -58,10 +60,13 @@ export {
   exchangeCode,
   generateCodeChallenge,
   generateCodeVerifier,
+  issuerFields,
   isTokenExpired,
   loadAccessToken,
   MissingToken,
+  OAuthBindingMismatch,
   OAuthDiscoveryError,
+  OAuthIssuerMismatch,
   refreshToken,
   registerOAuthClient,
   revokeToken,
@@ -124,6 +129,10 @@ export interface McpServerConfig {
         scopes?: string[];
         revocation_endpoint?: string;
         introspection_endpoint?: string;
+        /** Authorization server issuer; bound to the stored grant and checked against `iss` (RFC 9207). */
+        issuer?: string;
+        /** AS advertised `authorization_response_iss_parameter_supported`. */
+        iss_parameter_supported?: boolean;
         dcr?: {
           registration_endpoint: string;
           client_id_issued_at?: number;
@@ -173,6 +182,53 @@ export interface McpManagerConfig {
    * OAuth-based servers so each personality gets isolated token storage.
    */
   innerSecrets?: SecretsResolver;
+  /**
+   * Max `connect()` calls in flight at once across this manager's discovery
+   * fan-outs (`connect`, `getToolsForPersonality`). Default
+   * `DEFAULT_DISCOVERY_CONCURRENCY`. The 1-16 range is enforced by the config
+   * parser (`mcp.discoveryConcurrency`, packages/config), not here.
+   */
+  discoveryConcurrency?: number;
+}
+
+/** Default for `McpManagerConfig.discoveryConcurrency`; the single source of the default. */
+export const DEFAULT_DISCOVERY_CONCURRENCY = 4;
+
+/** Connect timeout when a server config sets no `connectTimeoutMs`. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * Counting semaphore. A deliberate private copy of
+ * extensions/batch-runner/src/semaphore.ts (importing another extension for 20
+ * lines is not worth the dependency); a Phase 5 dedup candidate in
+ * plan/phases/codebase-slimming.md.
+ */
+class Semaphore {
+  private count: number;
+  private readonly queue: Array<() => void> = [];
+
+  constructor(count: number) {
+    this.count = count;
+  }
+
+  acquire(): Promise<void> {
+    if (this.count > 0) {
+      this.count--;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    } else {
+      this.count++;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +485,7 @@ export class McpClient {
           this._config.auth,
           this._secrets,
           'ui',
+          this._logger,
         );
         headers.Authorization = `Bearer ${token}`;
       }
@@ -472,6 +529,7 @@ export class McpClient {
           this._config.auth,
           this._secrets,
           'ui',
+          this._logger,
         );
         headers.Authorization = `Bearer ${token}`;
       }
@@ -535,7 +593,7 @@ export class McpClient {
       this._reconnectTimer = null;
       if (this._destroyed || gen !== this._generation) return;
       this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
-      const timeoutMs = this._config.connectTimeoutMs ?? 10_000;
+      const timeoutMs = this._config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
       try {
         await Promise.race([
           this.connect(),
@@ -676,7 +734,17 @@ export class McpClient {
           { component: 'tools-mcp', server: this._config.name },
         );
         try {
-          await refreshToken(this._config.name, this._config.auth, this._secrets);
+          try {
+            await refreshToken(this._config.name, this._config.auth, this._secrets, this._logger);
+          } catch (refreshErr) {
+            // A binding mismatch is an actionable re-auth message; surface it
+            // instead of swallowing it into the original 401. Pinned by
+            // __tests__/reliability.test.ts "a binding mismatch on the 401 path…".
+            if (refreshErr instanceof OAuthBindingMismatch) {
+              return { ok: false, error: refreshErr.message, code: 'not_available' };
+            }
+            throw refreshErr;
+          }
           // Reconnect with fresh token
           this._connected = false;
           try {
@@ -715,7 +783,7 @@ export class McpClient {
         this._connected = false;
         if (!this._destroyed) this._scheduleReconnect(0);
         if (this._reconnectPromise) {
-          const deadline = this._config.connectTimeoutMs ?? 10_000;
+          const deadline = this._config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
           await Promise.race([this._reconnectPromise, new Promise((r) => setTimeout(r, deadline))]);
         }
         return this._callToolInner(name, args, false, replaySafe);
@@ -877,9 +945,12 @@ export class McpManager {
   private _configs: McpServerConfig[];
   /** Mutex tail. `addServer` / `removeServer` / `listServers` chain onto this. */
   private _mutationChain: Promise<unknown> = Promise.resolve();
+  /** Bounds leader `connect()` calls (D11). Pinned by __tests__/discovery-concurrency.test.ts. */
+  private readonly _connectSlots: Semaphore;
 
   constructor(configs: McpServerConfig[], opts: McpManagerConfig = {}) {
     this.logger = opts.logger ?? noopLogger;
+    this._connectSlots = new Semaphore(opts.discoveryConcurrency ?? DEFAULT_DISCOVERY_CONCURRENCY);
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
     this._secrets = opts.secrets;
     this._innerSecrets = opts.innerSecrets;
@@ -978,6 +1049,32 @@ export class McpManager {
   }
 
   /**
+   * Run `op` (a leader's `connect()`) holding one discovery slot. The slot is
+   * released when `op` settles OR after `timeoutMs`, whichever is first; `op`
+   * keeps running after an early release and its outcome is still what the
+   * caller receives (D12), so no connect fails that would have succeeded
+   * without the cap. A server that hangs therefore cannot hold a slot for the
+   * SDK's 60 s initialize timeout. Joiners of an in-flight connect never call
+   * this (D11), so a joiner cannot deadlock against its leader.
+   */
+  private async _withConnectSlot<T>(config: McpServerConfig, op: () => Promise<T>): Promise<T> {
+    await this._connectSlots.acquire();
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this._connectSlots.release();
+    };
+    const timer = setTimeout(release, config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
+    try {
+      return await op();
+    } finally {
+      clearTimeout(timer);
+      release();
+    }
+  }
+
+  /**
    * Lazily connect MCP servers for a specific personality. Stdio servers
    * share one connection across all personalities; OAuth-based servers
    * (streamable-http, SSE) get a per-personality client with scoped token
@@ -1012,7 +1109,7 @@ export class McpManager {
                   : this._secrets;
                 const c = this._buildClientWithSecrets(config, scopedSecrets);
                 try {
-                  await c.connect();
+                  await this._withConnectSlot(config, () => c.connect());
                   this._oauthClients.set(key, c);
                   return c;
                 } catch (err) {
@@ -1052,7 +1149,7 @@ export class McpManager {
               const connectPromise = (async (): Promise<McpClient | null> => {
                 const c = this._buildClient(config);
                 try {
-                  await c.connect();
+                  await this._withConnectSlot(config, () => c.connect());
                   this._stdioClients.set(config.name, c);
                   return c;
                 } catch (err) {
@@ -1113,7 +1210,7 @@ export class McpManager {
     await Promise.allSettled(
       this._clients.map(async (client) => {
         try {
-          await client.connect();
+          await this._withConnectSlot(client.config, () => client.connect());
         } catch (err) {
           this.logger.warn(`[ethos] MCP server '${client.name}' failed to connect`, {
             component: 'tools-mcp',

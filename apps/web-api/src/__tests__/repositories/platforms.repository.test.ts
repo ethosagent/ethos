@@ -712,6 +712,27 @@ describe('PlatformsRepository channel filter', () => {
     expect(filter.ownerUserId).toBe('');
   });
 
+  it('setChannelFilter keeps an existing dmPolicy and declineMessage', async () => {
+    const message = 'Thanks: this is private # sorry';
+    await configRepo.update({
+      passthrough: {
+        'channel_filter.telegram.dmPolicy': 'decline',
+        'channel_filter.telegram.declineMessage': message,
+      },
+    });
+
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: ['456'],
+    });
+
+    const yaml = (await storage.read(join(DATA, 'config.yaml'))) ?? '';
+    expect(yaml).toContain('channel_filter.telegram.dmPolicy: decline');
+    expect(yaml).toContain(`channel_filter.telegram.declineMessage: "${message}"`);
+    expect(yaml).toContain('channel_filter.telegram.ownerUserId: 123');
+  });
+
   it('allowlist comma-parsing trims whitespace', async () => {
     await configRepo.update({
       passthrough: {

@@ -21,7 +21,7 @@ export interface ChannelPlatformConfig {
    * Policy for DMs from non-allowlisted senders.
    * Applies only to DMs; group messages always use allowlist check only.
    */
-  dmPolicy?: 'pairing' | 'allowlist' | 'queue' | 'reject' | 'silent-drop';
+  dmPolicy?: 'pairing' | 'allowlist' | 'queue' | 'reject' | 'silent-drop' | 'decline';
   /**
    * Context visibility filter.
    * 'all' (default): pass everything through.
@@ -31,7 +31,19 @@ export interface ChannelPlatformConfig {
    * 'allowlist_quote': alias for 'allowlist'.
    */
   contextVisibility?: 'all' | 'allowlist' | 'allowlist_quote';
+  /**
+   * Refusal text sent under `dmPolicy: 'decline'`. Absent → `DEFAULT_DECLINE_MESSAGE`.
+   * The operator's own words; at most 500 characters (enforced by `buildChannelFilter`
+   * in packages/config).
+   */
+  declineMessage?: string;
 }
+
+/**
+ * Default `decline` refusal. Names no owner, pairing code, `/allow`, personality,
+ * product, tool or policy (pinned by the deny-list case in channel-filter.test.ts).
+ */
+export const DEFAULT_DECLINE_MESSAGE = 'Sorry, I can only reply to people who have been approved.';
 
 /** Full config — keyed by platform name (e.g. 'telegram', 'discord', 'email'). */
 export type ChannelFilterConfig = Record<string, ChannelPlatformConfig>;
@@ -41,8 +53,8 @@ export type ChannelFilterConfig = Record<string, ChannelPlatformConfig>;
 // ---------------------------------------------------------------------------
 
 export interface ChannelFilterResult {
-  action: 'allow' | 'drop' | 'pairing_reply';
-  /** The reply text to send when action === 'pairing_reply'. */
+  action: 'allow' | 'drop' | 'pairing_reply' | 'decline_reply';
+  /** The reply text to send when action === 'pairing_reply' or 'decline_reply'. */
   reply?: string;
   /** When set, the caller should use this text instead of message.text. */
   strippedText?: string;
@@ -158,6 +170,14 @@ export function checkMessage(
       case 'silent-drop':
       case 'queue':
         return { action: 'drop' };
+
+      case 'decline':
+        // A shared-audience DM (unverified email sender, group DM) may be a
+        // forged address or reach more than the sender: silence, never a reply.
+        // The filter only says a refusal is due; the gateway holds it against
+        // quiet hours / mute and claims the window (`claimDeclineSlot`).
+        if (message.audienceHint === 'shared') return { action: 'drop' };
+        return { action: 'decline_reply', reply: config.declineMessage ?? DEFAULT_DECLINE_MESSAGE };
 
       case 'pairing': {
         if (!pairingDb) {

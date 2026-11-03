@@ -140,6 +140,22 @@ export async function readSharedExecutionFlags(
 }
 
 /**
+ * `mcp.discoveryConcurrency` from the shared `~/.ethos/config.yaml`, in the
+ * shape `WiringConfig.mcp` takes, so the desktop's `McpManager` bounds its
+ * connects the way every other host does (plan hermes-0.22-hardening §5.2
+ * item 4: the desktop builds its own `WiringConfig` and does not spread
+ * `EthosConfig`). `{}` when unset or the file is absent.
+ */
+export async function readSharedMcpSettings(
+  storage: Storage,
+  secrets: SecretsResolver,
+  dir: string = sharedEthosDir(),
+): Promise<Pick<WiringConfig, 'mcp'>> {
+  const mcp = (await readConfig(storage, secrets, { dir }))?.mcp;
+  return mcp ? { mcp } : {};
+}
+
+/**
  * `learningReplay.*` from the shared `~/.ethos/config.yaml`, resolved — the
  * settings `desktopLearningReplay` bounds a replay by. An absent file resolves
  * as an empty config.
@@ -308,6 +324,15 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     // keep the refusal
   }
 
+  // `mcp.discoveryConcurrency` from the shared config; an unreadable file keeps
+  // the manager's default.
+  let sharedMcp: Pick<WiringConfig, 'mcp'> = {};
+  try {
+    sharedMcp = await readSharedMcpSettings(new FsStorage(), secretsResolver);
+  } catch {
+    // keep the default
+  }
+
   // Verification round F2 — the same state dir the gateway child is given
   // (`ETHOS_STATE_DIR: getDataDir()`, ./gateway-control.ts). Wiring floors
   // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
@@ -337,6 +362,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
         : {}),
     ...sharedVoiceConfig,
     ...sharedExecution,
+    ...sharedMcp,
     secretsResolver,
   };
 

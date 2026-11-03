@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-09-29
+updated: 2026-11-02
 ---
 
 ## Task
@@ -159,24 +159,26 @@ Unlike Telegram and Discord, Slack requires manual slash command registration in
 
 ### 5. Restrict who can talk to the bot
 
-Configure under `channelFilter.slack` (`packages/safety/channel/src/channel-filter.ts`):
+Configure under `channel_filter.slack` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
-channelFilter:
-  slack:
-    ownerUserId: "U01ABCDEFGH"            # Slack user id — always allowed
-    recipientAllowlist:
-      - "U02ABCDEFGH"                     # extra user ids
-      - "C03ABCDEFGH"                     # or whole channel ids
-    dmPolicy: pairing                     # pairing | allowlist | queue | reject | silent-drop
-    contextVisibility: allowlist          # strip quoted text from non-allowlisted senders
+# Slack user id — always allowed
+channel_filter.slack.ownerUserId: U01ABCDEFGH
+# comma-separated user ids or whole channel ids
+channel_filter.slack.recipientAllowlist: U02ABCDEFGH,C03ABCDEFGH
+# pairing | decline | allowlist | queue | reject | silent-drop
+channel_filter.slack.dmPolicy: pairing
+# strip quoted text from non-allowlisted senders
+channel_filter.slack.contextVisibility: allowlist
 ```
+
+Each field is one flat `channel_filter.slack.<field>: <value>` line.
 
 Field meanings:
 
 - `ownerUserId` — bypasses every gate, including the channel mention gate.
 - `recipientAllowlist` — Slack user ids and channel ids that are also allowed.
-- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `allowlist` silently drops; the rest match the [Telegram adapter](telegram.md).
+- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `decline` replies once per sender per 24 h with a polite refusal (`declineMessage` sets the wording); `allowlist`, `queue`, `reject` and `silent-drop` drop the message without a reply. See the [Telegram adapter](telegram.md) for the full policy list.
 - `contextVisibility: allowlist` — strips quoted Slack-thread content from non-allowlisted senders before the agent sees it.
 
 From inside `ethos chat`:

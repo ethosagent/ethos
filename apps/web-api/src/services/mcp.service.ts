@@ -12,6 +12,7 @@ import {
   type McpServerConfig,
   type OAuthConfig,
   OAuthDiscoveryError,
+  OAuthIssuerMismatch,
   type PersonalityUpdater,
   revokeToken,
 } from '@ethosagent/tools-mcp';
@@ -103,7 +104,10 @@ export class McpService {
     }
   }
 
-  async complete(input: { code?: string; state: string; error?: string }, cookieState?: string) {
+  async complete(
+    input: { code?: string; state: string; error?: string; iss?: string },
+    cookieState?: string,
+  ) {
     // CSRF check: the pending cookie must match the state from the input.
     if (!cookieState) {
       return {
@@ -131,9 +135,18 @@ export class McpService {
       };
     }
     try {
-      const result = await this.flow.complete({ code: input.code, state: input.state });
+      const result = await this.flow.complete({
+        code: input.code,
+        state: input.state,
+        ...(input.iss !== undefined ? { iss: input.iss } : {}),
+      });
       return { ok: true as const, serverName: result.serverName };
     } catch (err) {
+      // RFC 9207: the install flow rejected the response before the code left
+      // this process. Pinned by __tests__/services/mcp.service.test.ts.
+      if (err instanceof OAuthIssuerMismatch) {
+        return { ok: false as const, code: 'issuer_mismatch' as const, detail: err.message };
+      }
       const coded = err as Error & { code?: string; details?: { kind?: string } };
       const kind = coded.details?.kind ?? coded.code;
       const code =

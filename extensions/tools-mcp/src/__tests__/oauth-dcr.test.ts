@@ -5,7 +5,9 @@ import {
   ConfidentialClientUnsupported,
   ensureValidToken,
   MissingToken,
+  OAuthIssuerMismatch,
   registerOAuthClient,
+  runDcrAuthorization,
 } from '../oauth';
 
 // safeFetch's default transport pins each connection to the validated address
@@ -160,5 +162,111 @@ describe('ensureValidToken with UI context', () => {
       expect(err).toBeInstanceOf(MissingToken);
       expect((err as MissingToken).serverName).toBe('test-server');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runDcrAuthorization — redirect URI + RFC 9207 iss (plan hermes-0.22-hardening §4)
+// ---------------------------------------------------------------------------
+
+describe('runDcrAuthorization', () => {
+  const realFetch = globalThis.fetch;
+  const MCP_URL = 'https://mcp.dcr.example.com/mcp';
+  const AS_META = 'https://mcp.dcr.example.com/.well-known/oauth-authorization-server';
+  const PR_META = 'https://mcp.dcr.example.com/.well-known/oauth-protected-resource/mcp';
+
+  function json(data: unknown, status = 200): Response {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  /**
+   * Stubs the discovery / DCR / token endpoints; requests to the loopback
+   * callback server go to the real fetch. `onAuthorize` plays the browser.
+   */
+  function script(meta: Record<string, unknown>) {
+    const seen: { dcrBody?: { redirect_uris: string[] }; tokenBody?: URLSearchParams } = {};
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+      if (url === PR_META) return new Response('nf', { status: 404 });
+      if (url === AS_META) {
+        return json({
+          issuer: 'https://mcp.dcr.example.com',
+          authorization_endpoint: 'https://mcp.dcr.example.com/authorize',
+          token_endpoint: 'https://mcp.dcr.example.com/token',
+          registration_endpoint: 'https://mcp.dcr.example.com/register',
+          code_challenge_methods_supported: ['S256'],
+          ...meta,
+        });
+      }
+      if (url === 'https://mcp.dcr.example.com/register') {
+        seen.dcrBody = JSON.parse(String(init?.body));
+        return json({ client_id: 'dcr-client' }, 201);
+      }
+      if (url === 'https://mcp.dcr.example.com/token') {
+        seen.tokenBody = new URLSearchParams(String(init?.body));
+        return json({ access_token: 'at', refresh_token: 'rt', expires_in: 3600 });
+      }
+      return new Response('nf', { status: 404 });
+    }) as typeof fetch;
+    return seen;
+  }
+
+  /** Plays the browser: hits the redirect URI the authorize URL names, with `extra` params. */
+  function browser(extra: Record<string, string>, captured: { authUrl?: string }) {
+    return (authUrl: string) => {
+      captured.authUrl = authUrl;
+      const u = new URL(authUrl);
+      const cb = new URL(u.searchParams.get('redirect_uri') ?? '');
+      cb.searchParams.set('code', 'code-1');
+      cb.searchParams.set('state', u.searchParams.get('state') ?? '');
+      for (const [k, v] of Object.entries(extra)) cb.searchParams.set(k, v);
+      void realFetch(cb.toString());
+    };
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it('runDcrAuthorization registers the redirect URI the callback server serves', async () => {
+    const seen = script({});
+    const captured: { authUrl?: string } = {};
+
+    const result = await runDcrAuthorization(MCP_URL, 'Ethos', browser({}, captured));
+
+    const registered = seen.dcrBody?.redirect_uris[0] ?? '';
+    expect(registered).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/);
+    expect(new URL(captured.authUrl ?? '').searchParams.get('redirect_uri')).toBe(registered);
+    expect(seen.tokenBody?.get('redirect_uri')).toBe(registered);
+    expect(result.tokens.access_token).toBe('at');
+    expect(result.oauthConfig.issuer).toBe('https://mcp.dcr.example.com');
+  });
+
+  it('a callback whose iss differs from the discovered issuer is rejected', async () => {
+    const seen = script({});
+    await expect(
+      runDcrAuthorization(MCP_URL, 'Ethos', browser({ iss: 'https://evil.example.com' }, {})),
+    ).rejects.toBeInstanceOf(OAuthIssuerMismatch);
+    expect(seen.tokenBody).toBeUndefined();
+  });
+
+  it('a callback without iss is rejected when the metadata advertises iss support', async () => {
+    const seen = script({ authorization_response_iss_parameter_supported: true });
+    await expect(runDcrAuthorization(MCP_URL, 'Ethos', browser({}, {}))).rejects.toBeInstanceOf(
+      OAuthIssuerMismatch,
+    );
+    expect(seen.tokenBody).toBeUndefined();
+  });
+
+  it('a callback without iss is accepted when the metadata does not advertise it', async () => {
+    script({});
+    await expect(runDcrAuthorization(MCP_URL, 'Ethos', browser({}, {}))).resolves.toMatchObject({
+      tokens: { access_token: 'at' },
+    });
   });
 });

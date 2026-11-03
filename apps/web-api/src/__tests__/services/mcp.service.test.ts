@@ -1,6 +1,11 @@
 import { DefaultToolRegistry } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
-import { type McpInstallFlow, McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
+import {
+  type McpInstallFlow,
+  McpJsonStore,
+  type McpManager,
+  OAuthIssuerMismatch,
+} from '@ethosagent/tools-mcp';
 import { describe, expect, it, vi } from 'vitest';
 import { McpService } from '../../services/mcp.service';
 
@@ -374,5 +379,55 @@ describe('McpService.catalog', () => {
     expect(first.remote.map((p) => p.name)).toEqual(second.remote.map((p) => p.name));
     expect(first.local.map((p) => p.name)).toEqual(second.local.map((p) => p.name));
     expect(first.local.map((p) => p.name)).toEqual([...first.local.map((p) => p.name)].sort());
+  });
+});
+
+describe('McpService.complete — RFC 9207 iss', () => {
+  function makeService() {
+    const service = new McpService({
+      mcpManager: {} as unknown as McpManager,
+      personalityUpdater: { get: () => undefined, update: async () => undefined },
+      secrets: new InMemorySecretsResolver(),
+      mcpJsonStore: new McpJsonStore(new InMemoryStorage()),
+      redirectUri: 'http://default.fallback/oauth/callback',
+    });
+    const flowComplete = vi.fn(async () => ({ serverName: 'srv' }));
+    (service as unknown as { flow: Pick<McpInstallFlow, 'complete'> }).flow = {
+      complete: flowComplete as unknown as McpInstallFlow['complete'],
+    };
+    return { service, flowComplete };
+  }
+
+  it('complete forwards iss and maps OAuthIssuerMismatch to issuer_mismatch', async () => {
+    const { service, flowComplete } = makeService();
+
+    await expect(
+      service.complete({ code: 'c', state: 's', iss: 'https://auth.example.com' }, 's'),
+    ).resolves.toEqual({ ok: true, serverName: 'srv' });
+    expect(flowComplete).toHaveBeenCalledWith({
+      code: 'c',
+      state: 's',
+      iss: 'https://auth.example.com',
+    });
+
+    // Without iss the key is omitted, so behaviour is unchanged for old callers.
+    await service.complete({ code: 'c', state: 's' }, 's');
+    expect(flowComplete).toHaveBeenLastCalledWith({ code: 'c', state: 's' });
+
+    flowComplete.mockRejectedValueOnce(
+      new OAuthIssuerMismatch(
+        'https://auth.example.com',
+        'https://evil.example',
+        'Authorization response came from https://evil.example, expected https://auth.example.com',
+      ),
+    );
+    await expect(
+      service.complete({ code: 'c', state: 's', iss: 'https://evil.example' }, 's'),
+    ).resolves.toEqual({
+      ok: false,
+      code: 'issuer_mismatch',
+      detail:
+        'Authorization response came from https://evil.example, expected https://auth.example.com',
+    });
   });
 });

@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-09-29
+updated: 2026-11-02
 ---
 
 ## Task
@@ -139,24 +139,26 @@ Nothing extra is needed on the Discord side. The **Message Content Intent** from
 
 ### 5. Restrict who can talk to the bot
 
-Configure under `channelFilter.discord` (`packages/safety/channel/src/channel-filter.ts`):
+Configure under `channel_filter.discord` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
-channelFilter:
-  discord:
-    ownerUserId: "234567890123456789"     # Discord snowflake — always allowed
-    recipientAllowlist:
-      - "345678901234567890"              # extra user snowflakes
-      - "456789012345678901"              # or whole channel snowflakes
-    dmPolicy: pairing                     # pairing | allowlist | queue | reject | silent-drop
-    contextVisibility: allowlist          # strip quoted text from non-allowlisted senders
+# Discord snowflake — always allowed
+channel_filter.discord.ownerUserId: 234567890123456789
+# comma-separated user snowflakes or whole channel snowflakes
+channel_filter.discord.recipientAllowlist: 345678901234567890,456789012345678901
+# pairing | decline | allowlist | queue | reject | silent-drop
+channel_filter.discord.dmPolicy: pairing
+# strip quoted text from non-allowlisted senders
+channel_filter.discord.contextVisibility: allowlist
 ```
+
+Each field is one flat `channel_filter.discord.<field>: <value>` line.
 
 Field meanings:
 
 - `ownerUserId` — bypasses every gate, including the mention gate inside guilds.
 - `recipientAllowlist` — user and channel snowflakes that are also allowed.
-- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `allowlist` silently drops; the rest match the [Telegram adapter](telegram.md).
+- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `decline` replies once per sender per 24 h with a polite refusal (`declineMessage` sets the wording); `allowlist`, `queue`, `reject` and `silent-drop` drop the message without a reply. See the [Telegram adapter](telegram.md) for the full policy list.
 - `contextVisibility: allowlist` — strips replied-to content from non-allowlisted senders before the agent sees it.
 
 From inside `ethos chat`:

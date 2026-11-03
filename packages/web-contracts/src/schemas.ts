@@ -854,6 +854,8 @@ export const McpCompleteInputSchema = z.object({
   code: z.string().optional(),
   state: z.string(),
   error: z.string().optional(),
+  /** RFC 9207 issuer identifier from the authorization response, when the provider sent one. */
+  iss: z.string().optional(),
 });
 
 export const McpCompleteOutputSchema = z.discriminatedUnion('ok', [
@@ -868,6 +870,7 @@ export const McpCompleteOutputSchema = z.discriminatedUnion('ok', [
       'upstream_error',
       'name_taken',
       'addserver_failed',
+      'issuer_mismatch',
     ]),
     detail: z.string().optional(),
   }),

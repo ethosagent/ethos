@@ -3374,6 +3374,22 @@ export interface EthosConfig {
     maxIdenticalToolCalls?: number;
   };
   /**
+   * MCP client settings that belong to the machine, not to a personality or to
+   * `mcp.json` (a bare array with nowhere to put a setting).
+   *
+   * Config format:
+   *   mcp.discoveryConcurrency: 4
+   */
+  mcp?: {
+    /**
+     * Max MCP server `connect()` calls in flight at once per `McpManager`.
+     * Integer 1-16; absent = `DEFAULT_DISCOVERY_CONCURRENCY` (4) in
+     * `@ethosagent/tools-mcp`. Parsed by `buildMcpConfig`; pinned by
+     * `__tests__/config-mcp-discovery.test.ts`.
+     */
+    discoveryConcurrency?: number;
+  };
+  /**
    * Board-wide work-in-progress caps. Distinct from `kanbanPoll` (poll cadence)
    * — these bound how many tasks may be `running` at once, enforced by
    * `KanbanStore.updateStatus` on the transition into `running`. Absent = no
@@ -4810,6 +4826,11 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (cfg.dmPolicy) lines.push(`channel_filter.${platform}.dmPolicy: ${cfg.dmPolicy}`);
       if (cfg.contextVisibility)
         lines.push(`channel_filter.${platform}.contextVisibility: ${cfg.contextVisibility}`);
+      // Raw here: `renderConfigLine` (the end of this function) runs every line
+      // through `renderConfigScalar`, the single owner of `quoteConfigScalar`
+      // spelling; quoting here too would double-quote it.
+      if (cfg.declineMessage)
+        lines.push(`channel_filter.${platform}.declineMessage: ${cfg.declineMessage}`);
     }
   }
   for (const [key, value] of renderProviderChain(config.providers ?? [])) {
@@ -5023,6 +5044,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.toolLoop.maxIdenticalToolCalls !== undefined)
       lines.push(`toolLoop.maxIdenticalToolCalls: ${config.toolLoop.maxIdenticalToolCalls}`);
   }
+  if (config.mcp?.discoveryConcurrency !== undefined)
+    lines.push(`mcp.discoveryConcurrency: ${config.mcp.discoveryConcurrency}`);
   if (config.cron) {
     // KNOWN HAZARD, mirrored not fixed: `cron.fireUrl` may have arrived from
     // ETHOS_CRON_FIRE_URL rather than the yaml (the parse folds the env
@@ -5537,6 +5560,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'kanbanPoll.',
   'learningReplay.',
   'logs.',
+  'mcp.',
   'memory.',
   'memoryApproval.',
   'memoryCapture.',
@@ -5784,6 +5808,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const groundingKanbanKv: Record<string, string> = keyUse.track('grounding.kanban.', {});
   // toolLoop.<field>: <n> — the loop's hard tool caps and their soft-warn tiers.
   const toolLoopKv: Record<string, string> = keyUse.track('toolLoop.', {});
+  // mcp.discoveryConcurrency: <1-16> — the MCP discovery connect pool.
+  const mcpKv: Record<string, string> = keyUse.track('mcp.', {});
   // browser.<field>: <value> — Playwright budgets plus launch posture. The
   // nested keys are stored under their DOTTED sub-path (`proxy.server`,
   // `stealth.enabled`) rather than in per-level maps: no flat key contains a
@@ -6604,6 +6630,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       toolLoopKv[tl[1]] = parseConfigScalar(tl[2]);
       continue;
     }
+    // mcp.<field>: <value>
+    const mcpLine = line.match(/^mcp\.(discoveryConcurrency):\s*(.+)$/);
+    if (mcpLine) {
+      mcpKv[mcpLine[1]] = parseConfigScalar(mcpLine[2]);
+      continue;
+    }
     // kanban.<field>: <value>  (board WIP caps; distinct from kanbanPoll)
     const kb = line.match(/^kanban\.(maxInProgress|maxInProgressPerProfile):\s*(.+)$/);
     if (kb) {
@@ -7140,8 +7172,10 @@ export function parseConfigYaml(src: string): EthosConfig {
   const webhooksResult = buildWebhooks(webhooksKv);
   const quick_commands = buildQuickCommands(qcKv);
   const channelToolsets = buildChannelToolsets(channelToolsetsKv);
-  const channelFilter = buildChannelFilter(channelFilterKv);
+  const channelFilterWarnings: string[] = [];
+  const channelFilter = buildChannelFilter(channelFilterKv, channelFilterWarnings);
   const groundingResult = buildGrounding(groundingKv, groundingKanbanKv);
+  const mcpResult = buildMcpConfig(mcpKv);
   const browserResult = buildBrowser(browserKv);
   const toolLoadingResult = parseToolLoading(kv.tool_loading);
   // Warnings, never errors: a `decisions.*` line must not stop boot (plan R6).
@@ -7399,6 +7433,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     channelDigest: buildChannelDigestConfig(kv),
     learningReplay: buildLearningReplayConfig(kv),
     toolLoop: buildToolLoop(toolLoopKv),
+    mcp: mcpResult.mcp,
     kanban: buildKanban(kanbanKv),
     grounding: groundingResult.grounding,
     browser: browserResult.browser,
@@ -7463,6 +7498,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,
+    ...channelFilterWarnings,
+    ...mcpResult.warnings,
     ...storageEncryptionRemovedNotice(kv),
     ...notificationWarnings,
     ...gatewayWarnings,
@@ -10404,6 +10441,35 @@ function buildCompaction(kv: Record<string, string>): EthosConfig['compaction'] 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** Bounds of `mcp.discoveryConcurrency`; the default (4) lives in `@ethosagent/tools-mcp`
+ * (`DEFAULT_DISCOVERY_CONCURRENCY`); the copy below only words the warning. */
+const MCP_DISCOVERY_CONCURRENCY_MIN = 1;
+const MCP_DISCOVERY_CONCURRENCY_MAX = 16;
+const MCP_DISCOVERY_CONCURRENCY_DEFAULT = 4;
+
+/**
+ * `mcp.discoveryConcurrency` from the flat `mcp.<field>` keys: an integer from
+ * 1 to 16. Anything else is dropped with a warning and the field stays unset,
+ * so the manager uses its default. Pinned by __tests__/config-mcp-discovery.test.ts.
+ */
+function buildMcpConfig(kv: Record<string, string>): {
+  mcp: EthosConfig['mcp'] | undefined;
+  warnings: string[];
+} {
+  const raw = kv.discoveryConcurrency;
+  if (raw === undefined) return { mcp: undefined, warnings: [] };
+  const n = parseBoundedInt(raw, MCP_DISCOVERY_CONCURRENCY_MIN, MCP_DISCOVERY_CONCURRENCY_MAX);
+  if (n === undefined) {
+    return {
+      mcp: undefined,
+      warnings: [
+        `mcp.discoveryConcurrency must be an integer from ${MCP_DISCOVERY_CONCURRENCY_MIN} to ${MCP_DISCOVERY_CONCURRENCY_MAX}; using the default (${MCP_DISCOVERY_CONCURRENCY_DEFAULT})`,
+      ],
+    };
+  }
+  return { mcp: { discoveryConcurrency: n }, warnings: [] };
+}
+
 /**
  * Tool-loop hard caps and soft-warn tiers from the flat `toolLoop.<field>`
  * keys. Positive integers — `0` would nudge on every turn before a single tool
@@ -10918,8 +10984,11 @@ function buildPauseLifecycleHttp(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+const MAX_DECLINE_MESSAGE_CHARS = 500;
+
 function buildChannelFilter(
   kv: Record<string, Record<string, string>>,
+  warnings: string[],
 ): ChannelFilterConfig | undefined {
   const platforms = Object.keys(kv);
   if (platforms.length === 0) return undefined;
@@ -10942,9 +11011,19 @@ function buildChannelFilter(
       entry.dmPolicy === 'allowlist' ||
       entry.dmPolicy === 'queue' ||
       entry.dmPolicy === 'reject' ||
-      entry.dmPolicy === 'silent-drop'
+      entry.dmPolicy === 'silent-drop' ||
+      entry.dmPolicy === 'decline'
     ) {
       cfg.dmPolicy = entry.dmPolicy;
+    }
+    if (entry.declineMessage) {
+      if (entry.declineMessage.length > MAX_DECLINE_MESSAGE_CHARS) {
+        warnings.push(
+          `channel_filter.${platform}.declineMessage is longer than ${MAX_DECLINE_MESSAGE_CHARS} characters; using the default`,
+        );
+      } else {
+        cfg.declineMessage = entry.declineMessage;
+      }
     }
     if (
       entry.contextVisibility === 'all' ||

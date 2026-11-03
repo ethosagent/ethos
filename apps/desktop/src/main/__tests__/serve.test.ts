@@ -23,6 +23,7 @@ import {
   getPort,
   readSharedExecutionFlags,
   readSharedLearningReplaySettings,
+  readSharedMcpSettings,
   readSharedVoiceAndCallCaptureConfig,
   sharedEthosDir,
 } from '../serve';
@@ -161,6 +162,34 @@ describe('readSharedExecutionFlags', () => {
     expect(await withConfig([])).toEqual({});
     expect(
       await readSharedExecutionFlags(new InMemoryStorage(), new InMemorySecretsResolver()),
+    ).toEqual({});
+  });
+});
+
+// `mcp.discoveryConcurrency` — the desktop builds its own WiringConfig, so the
+// shared-config value is forwarded explicitly (plan hermes-0.22-hardening §5.2).
+describe('readSharedMcpSettings', () => {
+  async function withConfig(lines: string[]) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: k', 'personality: p', ...lines].join('\n'),
+    );
+    return readSharedMcpSettings(storage, new InMemorySecretsResolver());
+  }
+
+  it('forwards mcp.discoveryConcurrency when set', async () => {
+    expect(await withConfig(['mcp.discoveryConcurrency: 2'])).toEqual({
+      mcp: { discoveryConcurrency: 2 },
+    });
+  });
+
+  it('forwards nothing when unset, invalid, or config.yaml is absent', async () => {
+    expect(await withConfig([])).toEqual({});
+    expect(await withConfig(['mcp.discoveryConcurrency: 99'])).toEqual({});
+    expect(
+      await readSharedMcpSettings(new InMemoryStorage(), new InMemorySecretsResolver()),
     ).toEqual({});
   });
 });

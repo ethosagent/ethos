@@ -2,7 +2,7 @@ import Database from '@ethosagent/sqlite';
 import type { InboundMessage } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChannelPlatformConfig } from '../channel-filter';
-import { checkMessage, isSenderAllowed } from '../channel-filter';
+import { checkMessage, DEFAULT_DECLINE_MESSAGE, isSenderAllowed } from '../channel-filter';
 import { initPairingDb } from '../pairing-store';
 
 // ---------------------------------------------------------------------------
@@ -396,6 +396,55 @@ describe('checkMessage', () => {
       db,
     );
     expect(result.action).toBe('drop');
+  });
+});
+
+describe('decline policy', () => {
+  const config: ChannelPlatformConfig = { ownerUserId: 'owner-1', dmPolicy: 'decline' };
+
+  it('decline returns decline_reply with the default text', () => {
+    const result = checkMessage(msg({ userId: 'stranger' }), config);
+    expect(result).toEqual({ action: 'decline_reply', reply: DEFAULT_DECLINE_MESSAGE });
+  });
+
+  it('decline uses declineMessage verbatim', () => {
+    const custom = 'Thanks for writing: this is private. # not a comment';
+    const result = checkMessage(msg({ userId: 'stranger' }), { ...config, declineMessage: custom });
+    expect(result).toEqual({ action: 'decline_reply', reply: custom });
+  });
+
+  it('decline drops a DM marked audienceHint shared', () => {
+    const result = checkMessage(msg({ userId: 'stranger', audienceHint: 'shared' }), config);
+    expect(result).toEqual({ action: 'drop' });
+  });
+
+  it("decline drops a stranger's group message", () => {
+    const result = checkMessage(msg({ userId: 'stranger', isDm: false }), config);
+    expect(result).toEqual({ action: 'drop' });
+  });
+
+  it('an allowlisted sender under decline is allowed', () => {
+    expect(checkMessage(msg({ userId: 'owner-1' }), config).action).toBe('allow');
+    const listed = { ...config, recipientAllowlist: ['friend'] };
+    expect(checkMessage(msg({ userId: 'friend' }), listed).action).toBe('allow');
+  });
+
+  it('the default text names no owner, pairing code, /allow, personality or tool', () => {
+    const denied = [
+      'owner',
+      'pairing',
+      'code',
+      '/allow',
+      'allow',
+      'personality',
+      'tool',
+      'ethos',
+      'policy',
+      'decline',
+      'allowlist',
+    ];
+    const lower = DEFAULT_DECLINE_MESSAGE.toLowerCase();
+    for (const word of denied) expect(lower).not.toContain(word);
   });
 });
 

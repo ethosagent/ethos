@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
+import { noopLogger } from '@ethosagent/logger';
 import {
   buildOAuthMetadataUrl,
   buildProtectedResourceMetadataUrl,
@@ -14,7 +15,7 @@ import {
   parseTokenResponse,
 } from '@ethosagent/oauth-core';
 import { safeFetch } from '@ethosagent/safety-network';
-import type { SecretsResolver } from '@ethosagent/types';
+import type { Logger, SecretsResolver } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +27,10 @@ export interface OAuthConfig {
   client_id: string;
   scopes?: string[];
   revocation_endpoint?: string;
+  /** Authorization server issuer (RFC 8414). Recorded in the token binding and checked against `iss` (RFC 9207). */
+  issuer?: string;
+  /** `authorization_response_iss_parameter_supported` from the AS metadata: when true the callback MUST carry `iss`. */
+  iss_parameter_supported?: boolean;
 }
 
 export interface TokenSet {
@@ -85,6 +90,65 @@ export class MissingToken extends Error {
   }
 }
 
+/**
+ * Thrown by `refreshToken` when the saved grant was minted for a different
+ * token endpoint / issuer than the one `mcp.json` names now. Raised before any
+ * request is made and before the refresh-flight lookup; nothing is deleted (D4).
+ * Pinned by __tests__/oauth-binding.test.ts.
+ */
+export class OAuthBindingMismatch extends Error {
+  constructor(
+    public readonly serverName: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OAuthBindingMismatch';
+  }
+}
+
+/** Thrown by `checkAuthorizationResponseIssuer` (RFC 9207). Pinned by __tests__/oauth-dcr.test.ts. */
+export class OAuthIssuerMismatch extends Error {
+  constructor(
+    public readonly expected: string | undefined,
+    public readonly received: string | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OAuthIssuerMismatch';
+  }
+}
+
+/**
+ * RFC 9207 check of the `iss` parameter on an authorization response.
+ *  - present and differs from the expected issuer -> throw
+ *  - absent while the server advertised `authorization_response_iss_parameter_supported` -> throw (RFC 9207 §2.4)
+ *  - otherwise accept (servers that predate RFC 9207 keep working, plan D7)
+ */
+export function checkAuthorizationResponseIssuer(input: {
+  iss?: string | null;
+  expectedIssuer?: string;
+  issParameterSupported?: boolean;
+}): void {
+  const { iss, expectedIssuer, issParameterSupported } = input;
+  if (iss) {
+    if (expectedIssuer && iss !== expectedIssuer) {
+      throw new OAuthIssuerMismatch(
+        expectedIssuer,
+        iss,
+        `Authorization response came from ${iss}, expected ${expectedIssuer}`,
+      );
+    }
+    return;
+  }
+  if (issParameterSupported === true) {
+    throw new OAuthIssuerMismatch(
+      expectedIssuer,
+      undefined,
+      'Authorization response is missing the iss parameter the authorization server advertises (RFC 9207)',
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Discovery & registration interfaces
 // ---------------------------------------------------------------------------
@@ -97,6 +161,22 @@ export interface DiscoveredOAuthMetadata {
   introspection_endpoint?: string;
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
+  /** Issuer the metadata was fetched for (metadata `issuer`, else the discovery issuer URL). Always set by discovery; absent only for a re-auth of an entry saved before issuer binding. */
+  issuer?: string;
+  iss_parameter_supported?: boolean;
+}
+
+/** The issuer pair of discovery metadata as `OAuthConfig` fields, defined keys only. */
+export function issuerFields(meta: {
+  issuer?: string;
+  iss_parameter_supported?: boolean;
+}): Pick<OAuthConfig, 'issuer' | 'iss_parameter_supported'> {
+  return {
+    ...(meta.issuer ? { issuer: meta.issuer } : {}),
+    ...(meta.iss_parameter_supported !== undefined
+      ? { iss_parameter_supported: meta.iss_parameter_supported }
+      : {}),
+  };
 }
 
 export interface DcrRequest {
@@ -138,6 +218,59 @@ function expiresAtRef(serverName: string): string {
   return `mcp/${serverName}/expires_at`;
 }
 
+/** Who minted the grant stored under mcp/<server>/. Written with the tokens, checked before every refresh. */
+export interface TokenBinding {
+  v: 1;
+  token_endpoint: string;
+  issuer?: string;
+}
+
+/** The binding recorded for a grant minted against `token_endpoint` (and `issuer`, when known). */
+export function bindingFor(src: { token_endpoint: string; issuer?: string }): TokenBinding {
+  return {
+    v: 1,
+    token_endpoint: src.token_endpoint,
+    ...(src.issuer !== undefined ? { issuer: src.issuer } : {}),
+  };
+}
+
+function isTokenBinding(value: unknown): value is TokenBinding {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Partial<TokenBinding>;
+  return v.v === 1 && typeof v.token_endpoint === 'string';
+}
+
+function tokenBindingRef(serverName: string): string {
+  return `mcp/${serverName}/token_binding`;
+}
+
+async function readBinding(
+  serverName: string,
+  secrets: SecretsResolver,
+): Promise<TokenBinding | null> {
+  const raw = await secrets.get(tokenBindingRef(serverName));
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isTokenBinding(parsed)) return parsed;
+  } catch {
+    // fall through: an unreadable binding is treated as a mismatch by the caller
+  }
+  return { v: 1, token_endpoint: '' };
+}
+
+function safeUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function hrefOf(url: string): string {
+  return safeUrl(url)?.href ?? url;
+}
+
 // ---------------------------------------------------------------------------
 // Token storage
 // ---------------------------------------------------------------------------
@@ -146,7 +279,14 @@ export async function storeTokens(
   serverName: string,
   tokens: TokenSet,
   secrets: SecretsResolver,
+  binding: TokenBinding,
 ): Promise<void> {
+  // Order matters on re-auth over an existing grant: drop the old refresh token
+  // first, then the binding, then the tokens. A crash in between leaves the user
+  // signed out (safe), never the OLD refresh token under the NEW binding.
+  // Pinned by __tests__/oauth-binding.test.ts "storeTokens clears the old refresh token before…".
+  await secrets.delete(refreshTokenRef(serverName));
+  await secrets.set(tokenBindingRef(serverName), JSON.stringify(binding));
   await secrets.set(accessTokenRef(serverName), tokens.access_token);
   if (tokens.refresh_token) {
     await secrets.set(refreshTokenRef(serverName), tokens.refresh_token);
@@ -167,6 +307,7 @@ export async function deleteTokens(serverName: string, secrets: SecretsResolver)
   await secrets.delete(accessTokenRef(serverName));
   await secrets.delete(refreshTokenRef(serverName));
   await secrets.delete(expiresAtRef(serverName));
+  await secrets.delete(tokenBindingRef(serverName));
 }
 
 // ---------------------------------------------------------------------------
@@ -226,20 +367,26 @@ function pruneExpiredStates(): void {
 
 const CALLBACK_PATH = '/oauth/callback';
 
+export interface CallbackParams {
+  code: string;
+  state: string | null;
+  iss: string | null;
+}
+
 export interface CallbackResult {
   port: number;
   redirectUri: string;
-  resultPromise: Promise<{ code: string; state: string | null }>;
+  resultPromise: Promise<CallbackParams>;
   close: () => void;
 }
 
 export async function startCallbackServer(): Promise<CallbackResult> {
   return new Promise((resolveServer, rejectServer) => {
     let settled = false;
-    let resolveResult: (result: { code: string; state: string | null }) => void;
+    let resolveResult: (result: CallbackParams) => void;
     let rejectResult: (err: Error) => void;
 
-    const resultPromise = new Promise<{ code: string; state: string | null }>((res, rej) => {
+    const resultPromise = new Promise<CallbackParams>((res, rej) => {
       resolveResult = res;
       rejectResult = rej;
     });
@@ -270,6 +417,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       const code = url.searchParams.get('code');
       const state = url.searchParams.get('state');
       const error = url.searchParams.get('error');
+      const iss = url.searchParams.get('iss');
 
       if (error) {
         settled = true;
@@ -301,7 +449,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       res.end(
         '<html><body><h1>Authorization successful</h1><p>You may close this tab.</p></body></html>',
       );
-      resolveResult({ code, state });
+      resolveResult({ code, state, iss });
       closeServer();
     });
 
@@ -367,7 +515,15 @@ export async function exchangeCode(
   code: string,
   redirectUri: string,
   codeVerifier: string,
+  iss?: string | null,
 ): Promise<TokenSet> {
+  // RFC 9207: reject a response from a different issuer BEFORE the code is sent
+  // anywhere. Pinned by __tests__/oauth-dcr.test.ts and install-flow.test.ts.
+  checkAuthorizationResponseIssuer({
+    iss,
+    expectedIssuer: config.issuer,
+    issParameterSupported: config.iss_parameter_supported,
+  });
   validateSsrfUrl(config.token_endpoint);
 
   const { body, headers } = buildTokenExchangeParams({
@@ -468,11 +624,73 @@ async function postRefresh(
   return tokens;
 }
 
+function signInAgainHint(serverName: string): string {
+  return `Sign in again: ethos mcp login ${serverName} [--personality <id>], or Reconnect on the MCP page.`;
+}
+
+function bindingMismatchMessage(serverName: string, config: OAuthConfig): string {
+  const host = safeUrl(config.token_endpoint)?.host ?? config.token_endpoint;
+  return (
+    `MCP server '${serverName}': the saved sign-in belongs to a different authorization server ` +
+    `than the one now configured (${host}). The saved token was not sent. ` +
+    signInAgainHint(serverName)
+  );
+}
+
+/**
+ * Compare the stored binding with the config. Mismatch throws and deletes
+ * nothing (D4). An unbound (pre-binding) grant is migrated silently only when
+ * its token endpoint is https and same-origin with the authorization endpoint
+ * (D5); otherwise it must be re-authorized.
+ */
+async function assertTokenBinding(
+  serverName: string,
+  config: OAuthConfig,
+  secrets: SecretsResolver,
+  logger: Logger,
+): Promise<void> {
+  const binding = await readBinding(serverName, secrets);
+  if (binding) {
+    const endpointsMatch = hrefOf(binding.token_endpoint) === hrefOf(config.token_endpoint);
+    const issuersMatch =
+      binding.issuer === undefined ||
+      config.issuer === undefined ||
+      binding.issuer === config.issuer;
+    if (endpointsMatch && issuersMatch) return;
+    throw new OAuthBindingMismatch(serverName, bindingMismatchMessage(serverName, config));
+  }
+
+  const token = safeUrl(config.token_endpoint);
+  const auth = safeUrl(config.authorization_endpoint);
+  const migratable = token && auth && token.protocol === 'https:' && token.origin === auth.origin;
+  if (!migratable) {
+    throw new OAuthBindingMismatch(
+      serverName,
+      `MCP server '${serverName}': the saved sign-in predates issuer binding and its token endpoint ` +
+        `cannot be tied to the authorization server. The saved token was not sent. ` +
+        signInAgainHint(serverName),
+    );
+  }
+  await secrets.set(tokenBindingRef(serverName), JSON.stringify(bindingFor(config)));
+  logger.warn('mcp.oauth.binding_migrated', {
+    component: 'tools-mcp',
+    event: 'mcp.oauth.binding_migrated',
+    server: serverName,
+  });
+}
+
 export async function refreshToken(
   serverName: string,
   config: OAuthConfig,
   secrets: SecretsResolver,
+  logger: Logger = noopLogger,
 ): Promise<string> {
+  // Binding gate (plan hermes-0.22-hardening §4.2 step 4): runs before the SSRF
+  // gate's network use and before the refreshFlights lookup (D3), so a caller
+  // holding a mismatched config can neither send nor join a flight. Pinned by
+  // __tests__/oauth-binding.test.ts.
+  await assertTokenBinding(serverName, config, secrets, logger);
+
   // SSRF gate: validate token endpoint before sending credentials
   validateSsrfUrl(config.token_endpoint);
 
@@ -531,16 +749,35 @@ export async function refreshToken(
 // Revocation
 // ---------------------------------------------------------------------------
 
+/**
+ * Best-effort revoke, then delete. The token is POSTed only to a revocation
+ * endpoint on the origin of the BOUND token endpoint: `config` is mutable
+ * (mcp.json), so without the binding it could redirect a stored token to a
+ * host of its choosing. Off-origin or unbound -> no POST, tokens still deleted.
+ * Pinned by __tests__/oauth-binding.test.ts "revokeToken does not send the token
+ * to a revocation endpoint off the bound origin" / "revokeToken sends to a
+ * same-origin revocation endpoint".
+ */
 export async function revokeToken(
   serverName: string,
   config: OAuthConfig,
   secrets: SecretsResolver,
+  logger: Logger = noopLogger,
 ): Promise<void> {
   if (config.revocation_endpoint) {
     // SSRF gate: validate revocation endpoint before sending token
     validateSsrfUrl(config.revocation_endpoint);
+    const binding = await readBinding(serverName, secrets);
+    const boundOrigin = binding ? safeUrl(binding.token_endpoint)?.origin : undefined;
+    const revocationOrigin = safeUrl(config.revocation_endpoint)?.origin;
     const token = await secrets.get(accessTokenRef(serverName));
-    if (token) {
+    if (token && (!boundOrigin || boundOrigin !== revocationOrigin)) {
+      logger.warn('mcp.oauth.revocation_skipped', {
+        component: 'tools-mcp',
+        event: 'mcp.oauth.revocation_skipped',
+        server: serverName,
+      });
+    } else if (token) {
       const { body } = buildRevocationParams({
         token,
         clientId: config.client_id,
@@ -619,6 +856,10 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
       introspection_endpoint: validated.introspection_endpoint,
       scopes_supported: validated.scopes_supported,
       code_challenge_methods_supported: validated.code_challenge_methods_supported,
+      ...issuerFields({
+        issuer: validated.issuer ?? issuer,
+        iss_parameter_supported: validated.authorization_response_iss_parameter_supported,
+      }),
     };
   } catch (err) {
     if (err instanceof OAuthDiscoveryError) throw err;
@@ -688,7 +929,9 @@ export async function runDcrAuthorization(
   }
 
   const callback = await startCallbackServer();
-  const redirectUri = `http://127.0.0.1:${callback.port}`;
+  // The callback server answers only CALLBACK_PATH, so register and use its own
+  // redirectUri (pinned by __tests__/oauth-dcr.test.ts "registers the redirect URI the callback server serves").
+  const redirectUri = callback.redirectUri;
 
   try {
     const dcrRequest: DcrRequest = {
@@ -708,6 +951,7 @@ export async function runDcrAuthorization(
       authorization_endpoint: meta.authorization_endpoint,
       token_endpoint: meta.token_endpoint,
       client_id: dcrResult.client_id,
+      ...issuerFields(meta),
     };
 
     const verifier = generateCodeVerifier();
@@ -730,8 +974,7 @@ export async function runDcrAuthorization(
     if (result.state !== state) {
       throw new Error('OAuth state mismatch — possible CSRF attack');
     }
-
-    const tokens = await exchangeCode(oauthConfig, result.code, redirectUri, verifier);
+    const tokens = await exchangeCode(oauthConfig, result.code, redirectUri, verifier, result.iss);
 
     return { tokens, dcrResult, meta, oauthConfig };
   } finally {
@@ -768,8 +1011,8 @@ export async function runPkceLogin(
     if (result.state !== state) {
       throw new Error('OAuth state mismatch — possible CSRF attack. Aborting.');
     }
-    const tokens = await exchangeCode(config, result.code, redirectUri, verifier);
-    await storeTokens(serverName, tokens, secrets);
+    const tokens = await exchangeCode(config, result.code, redirectUri, verifier, result.iss);
+    await storeTokens(serverName, tokens, secrets, bindingFor(config));
     return tokens;
   } finally {
     callback.close();
@@ -785,6 +1028,7 @@ export async function ensureValidToken(
   config: OAuthConfig,
   secrets: SecretsResolver,
   context: 'cli' | 'ui' = 'cli',
+  logger: Logger = noopLogger,
 ): Promise<string> {
   const token = await secrets.get(accessTokenRef(serverName));
 
@@ -798,7 +1042,7 @@ export async function ensureValidToken(
 
   const expired = await isTokenExpired(serverName, secrets);
   if (expired) {
-    return refreshToken(serverName, config, secrets);
+    return refreshToken(serverName, config, secrets, logger);
   }
 
   return token;

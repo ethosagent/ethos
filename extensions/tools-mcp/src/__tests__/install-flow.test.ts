@@ -12,6 +12,7 @@ import {
   InMemorySecretsResolver,
   type InMemorySecretsResolver as InMemorySecretsResolverType,
   InMemoryStorage,
+  PersonalityScopedSecrets,
 } from '@ethosagent/storage-fs';
 import type {
   McpServerInfo,
@@ -22,7 +23,13 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpInstallFlowOptions, McpServerConfig } from '../index';
 import { McpInstallFlow, McpJsonStore, type McpManager } from '../index';
-import { ConfidentialClientUnsupported, DcrUnsupported, OAuthDiscoveryError } from '../oauth';
+import {
+  ConfidentialClientUnsupported,
+  DcrUnsupported,
+  OAuthDiscoveryError,
+  OAuthIssuerMismatch,
+  refreshToken,
+} from '../oauth';
 
 // safeFetch's default transport pins each connection to the validated address
 // through undici (`pinnedFetch`, packages/safety/network/src/safe-fetch.ts),
@@ -607,6 +614,118 @@ describe('McpInstallFlow.complete', () => {
     // exchangeCode passes redirect_uri as a form field; it MUST match the
     // per-flow URI, not the constructor default.
     expect(capturedTokenForm?.get('redirect_uri')).toBe(flowRedirect);
+  });
+
+  it('complete refuses a mismatched iss and rolls back the placeholder', async () => {
+    const { flow, manager, jsonStore, secrets, script } = await makeHarness();
+    scriptHappyDiscoveryAndDcr(script);
+    script.responders.set(
+      'https://mcp.linear.app/.well-known/oauth-authorization-server',
+      async () => jsonResponse({ ...DISCOVERY_OK, issuer: 'https://auth.linear.app' }),
+    );
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
+    scriptHappyTokenExchange(script);
+
+    await expect(
+      flow.complete({ code: 'c', state, iss: 'https://evil.example.com' }),
+    ).rejects.toBeInstanceOf(OAuthIssuerMismatch);
+
+    // The code never reached the token endpoint, and nothing was kept.
+    expect(script.calls.some((c) => c.url === DISCOVERY_OK.token_endpoint)).toBe(false);
+    expect(await jsonStore.get(serverName)).toBeNull();
+    expect(manager.registered).toHaveLength(0);
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
+    expect(flow.getStatus(state)).toBe('expired');
+  });
+
+  it('complete stores a binding from the discovered metadata', async () => {
+    const { flow, secrets, jsonStore, script } = await makeHarness();
+    scriptHappyDiscoveryAndDcr(script);
+    script.responders.set(
+      'https://mcp.linear.app/.well-known/oauth-authorization-server',
+      async () =>
+        jsonResponse({
+          ...DISCOVERY_OK,
+          issuer: 'https://auth.linear.app',
+          authorization_response_iss_parameter_supported: true,
+        }),
+    );
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
+    scriptHappyTokenExchange(script);
+
+    await flow.complete({ code: 'c', state, iss: 'https://auth.linear.app' });
+
+    const raw = await secrets.get(
+      `personalities/${PERSONALITY_ID}/mcp/${serverName}/token_binding`,
+    );
+    expect(JSON.parse(raw ?? 'null')).toEqual({
+      v: 1,
+      token_endpoint: DISCOVERY_OK.token_endpoint,
+      issuer: 'https://auth.linear.app',
+    });
+    // The persisted auth block carries issuer + iss support for later re-auth / refresh.
+    expect((await jsonStore.get(serverName))?.auth).toMatchObject({
+      issuer: 'https://auth.linear.app',
+      iss_parameter_supported: true,
+    });
+  });
+
+  it('re-auth replaces a mismatched binding', async () => {
+    const { flow, secrets, jsonStore, script } = await makeHarness();
+    const oldBinding = JSON.stringify({
+      v: 1,
+      token_endpoint: 'https://old-auth.example.com/token',
+    });
+    await secrets.set(`personalities/${PERSONALITY_ID}/mcp/linear/token_binding`, oldBinding);
+    await secrets.set(`personalities/${PERSONALITY_ID}/mcp/linear/refresh_token`, 'rt-reauth-old');
+    await jsonStore.upsert('linear', {
+      name: 'linear',
+      transport: 'streamable-http',
+      url: MCP_URL,
+      created_via: 'ui',
+      auth: {
+        type: 'oauth2',
+        client_id: 'ethos-client-abc',
+        authorization_endpoint: DISCOVERY_OK.authorization_endpoint,
+        token_endpoint: DISCOVERY_OK.token_endpoint,
+        dcr: { registration_endpoint: DISCOVERY_OK.registration_endpoint },
+      },
+    });
+    scriptHappyTokenExchange(script);
+
+    const { state } = await flow.start({
+      mcpUrl: MCP_URL,
+      name: 'linear',
+      personalityId: PERSONALITY_ID,
+    });
+    await flow.complete({ code: 'c', state });
+
+    const scoped = new PersonalityScopedSecrets(secrets, PERSONALITY_ID);
+    const stored = JSON.parse((await scoped.get('mcp/linear/token_binding')) ?? 'null');
+    expect(stored.token_endpoint).toBe(DISCOVERY_OK.token_endpoint);
+
+    // A refresh against the new endpoint now proceeds (the leader fetch hits the stub).
+    script.responders.set(DISCOVERY_OK.token_endpoint, async () =>
+      jsonResponse({ access_token: 'at-after', refresh_token: 'tok_refresh_2' }),
+    );
+    await expect(
+      refreshToken(
+        'linear',
+        {
+          authorization_endpoint: DISCOVERY_OK.authorization_endpoint,
+          token_endpoint: DISCOVERY_OK.token_endpoint,
+          client_id: 'ethos-client-abc',
+        },
+        scoped,
+      ),
+    ).resolves.toBe('at-after');
   });
 
   it('rejects when the session has already completed', async () => {

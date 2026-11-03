@@ -44,6 +44,15 @@ export function initPairingDb(db: Database.Database): void {
       added_by   TEXT,
       PRIMARY KEY (sender_id, platform)
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS dm_declines (
+      platform    TEXT NOT NULL,
+      bot_key     TEXT NOT NULL,
+      sender_id   TEXT NOT NULL,
+      declined_at INTEGER NOT NULL,
+      PRIMARY KEY (platform, bot_key, sender_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS idx_dm_declines_at ON dm_declines(declined_at);
   `);
 }
 

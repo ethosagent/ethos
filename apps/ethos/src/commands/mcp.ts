@@ -28,6 +28,7 @@ import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-mcp';
 import {
   getPreset,
+  issuerFields,
   MCP_PRESETS,
   McpJsonStore,
   mcpEnvSecretRef,
@@ -853,6 +854,9 @@ async function runAddUrl(name: string, mcpUrl: string): Promise<UrlAddResult | n
       ...(meta.introspection_endpoint
         ? { introspection_endpoint: meta.introspection_endpoint }
         : {}),
+      // Persisted so `ethos mcp login` / refresh bind the grant to this issuer
+      // and enforce RFC 9207 `iss` (plan hermes-0.22-hardening §4.2 step 2).
+      ...issuerFields(meta),
       dcr: {
         registration_endpoint: registrationEndpoint,
         ...(dcrResult.client_id_issued_at != null

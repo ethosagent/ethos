@@ -903,6 +903,21 @@ logs.rotation.maxFiles: 10
 logs.rotation.enabled: true
 ```
 
+## mcp.discoveryConcurrency {#mcp-discovery-concurrency}
+
+Type: integer, `1`–`16` · Default: `4`
+
+How many MCP servers Ethos connects to at once while it discovers their tools. Each `McpManager` applies the cap on its own. A slot is released when a server connects, fails, or reaches its connect timeout, so one server that hangs cannot hold a slot for long. Lower it on a machine that struggles when many stdio servers start together.
+
+```yaml
+mcp.discoveryConcurrency: 8
+```
+
+Notes:
+
+- A value that is not an integer from `1` to `16` is dropped with a warning naming the key, and the default applies.
+- A change takes effect on restart.
+
 ## backup.* {#backup}
 
 Scheduled local snapshots of `~/.ethos/`. On by default: a serving process (`ethos serve`, `ethos gateway start`, `ethos boot`) seeds a `backup` cron job at first start and writes an `identity,state` archive at 04:00 local every night, keeping the newest seven. Nothing here uploads anywhere — the archive stays on this machine.

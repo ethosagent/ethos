@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-09-29
+updated: 2026-11-02
 ---
 
 Most controls on this page are shipped: code in `packages/` and `extensions/`, tests next to it, and an audit event in `observability.db` where the entry names an audit category. Some are **partial** or **not shipped**, and each entry says so in its status line. Where a control has no enforcer, the entry states that as a limitation rather than as a guarantee.
@@ -48,7 +48,7 @@ Channel controls are operator settings, one block per platform under `channel_fi
 
 Per-platform sender allowlists: the platform's `ownerUserId` plus `recipientAllowlist`. An entry is an exact sender id (a Telegram numeric user ID, a Discord snowflake, a Slack `U…` ID) or, for email, a leading-`*` suffix pattern such as `*@example.com` (`matchesGlob`, which handles only a leading wildcard).
 
-A non-allowlisted sender in a group is dropped. A non-allowlisted sender in a DM follows `dmPolicy`: `pairing` (the default) answers with a pairing code instead of passing the message to the [agent loop](../getting-started/glossary.md#agent-loop); `allowlist`, `reject`, `silent-drop` and `queue` all drop it.
+A non-allowlisted sender in a group is dropped. A non-allowlisted sender in a DM follows `dmPolicy`: `pairing` (the default) answers with a pairing code instead of passing the message to the [agent loop](../getting-started/glossary.md#agent-loop); `decline` answers with one fixed refusal per sender per 24 hours and never runs a turn; `allowlist`, `reject`, `silent-drop` and `queue` all drop it. A refusal is suppressed, and the 24-hour window left unspent, inside quiet hours or a `/mute`, and it is never sent to a DM marked as reaching more than one person. Enforced by `checkMessage` (`decline_reply`), `claimDeclineSlot` (`packages/safety/channel/src/decline-store.ts`) and the gateway's `decline_reply` branch in `dispatchInbound` (`extensions/gateway/src/index.ts`); pinned by `extensions/gateway/src/__tests__/dm-decline.test.ts`.
 
 - Source: `checkMessage` in `packages/safety/channel/src/channel-filter.ts`
 - Tests: `packages/safety/channel/src/__tests__/channel-filter.test.ts`

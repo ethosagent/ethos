@@ -32,6 +32,7 @@ import { jobRoomAudience } from '@ethosagent/job-runner';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
+  claimDeclineSlot,
   consumeAndAllow,
   getApprovedSenders,
   isSenderAllowed,
@@ -3327,6 +3328,38 @@ export class Gateway {
             ...(message.threadId ? { threadId: message.threadId } : {}),
           })
           .catch(() => {});
+        return;
+      }
+
+      if (filterResult.action === 'decline_reply') {
+        // `dmPolicy: decline` (plan hermes-0.22-hardening §6.2/§6.3). One fixed
+        // refusal per sender per window, never a turn, never a ledger obligation:
+        // the send is untracked like the slash-ack class (D17), so a refusal lost
+        // to a crash is lost rather than redelivered hours later.
+        // Pinned by `extensions/gateway/src/__tests__/dm-decline.test.ts`.
+        const laneKey = laneKeyOf(message.platform, dedupBotKey, message.chatId, message.threadId);
+        const reply = filterResult.reply ?? '';
+        const outcome = this.declineOutcome(message, dedupBotKey, laneKey);
+        // No message text and no reply text in the audit row.
+        this.observability?.recordSafetyBlock({
+          code: 'channel.allowlist.blocked',
+          details: {
+            platform: message.platform,
+            chatId: message.chatId,
+            userId: message.userId ?? '',
+            isDm: true,
+            decline: outcome,
+          },
+        });
+        if (outcome === 'sent' && this.outboundDedup.shouldSend(laneKey, reply)) {
+          await adapter
+            .send(message.chatId, {
+              text: reply,
+              ...(message.threadId ? { threadId: message.threadId } : {}),
+            })
+            .catch(() => {});
+        }
+        // Not handed off: `handleMessage`'s finally closes the spool row.
         return;
       }
 
@@ -7361,6 +7394,30 @@ export class Gateway {
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
     );
+  }
+
+  /**
+   * `dmPolicy: decline` — whether this sender's refusal may go out now. Held is
+   * checked FIRST: a held refusal is suppressed and does not spend the window
+   * (D23). Any store failure fails closed to silence, never a turn.
+   */
+  private declineOutcome(
+    message: InboundMessage,
+    botKey: string,
+    laneKey: string,
+  ): 'sent' | 'held' | 'rate_limited' | 'unavailable' {
+    if (this.noticeHoldReason(botKey, laneKey)) return 'held';
+    if (!this.pairingDb) return 'unavailable';
+    try {
+      const won = claimDeclineSlot(this.pairingDb, {
+        platform: message.platform,
+        botKey,
+        senderId: message.userId ?? '',
+      });
+      return won ? 'sent' : 'rate_limited';
+    } catch {
+      return 'unavailable';
+    }
   }
 
   /**

@@ -107,7 +107,10 @@ describe('token storage', () => {
       expires_at: '2026-12-01T00:00:00.000Z',
     };
 
-    await storeTokens('my-server', tokens, secrets);
+    await storeTokens('my-server', tokens, secrets, {
+      v: 1,
+      token_endpoint: 'https://auth.example.com/token',
+    });
 
     expect(secrets.set).toHaveBeenCalledWith('mcp/my-server/access_token', 'access-123');
     expect(secrets.set).toHaveBeenCalledWith('mcp/my-server/refresh_token', 'refresh-456');
@@ -121,9 +124,13 @@ describe('token storage', () => {
     const secrets = createMockSecrets();
     const tokens: TokenSet = { access_token: 'access-only' };
 
-    await storeTokens('srv', tokens, secrets);
+    await storeTokens('srv', tokens, secrets, {
+      v: 1,
+      token_endpoint: 'https://auth.example.com/token',
+    });
 
-    expect(secrets.set).toHaveBeenCalledTimes(1);
+    // access_token + the token_binding; no refresh_token / expires_at
+    expect(secrets.set).toHaveBeenCalledTimes(2);
     expect(secrets.set).toHaveBeenCalledWith('mcp/srv/access_token', 'access-only');
   });
 
@@ -461,8 +468,8 @@ describe('TOCTOU safety', () => {
     await refreshToken(
       'srv',
       {
-        authorization_endpoint: 'https://a',
-        token_endpoint: 'https://t',
+        authorization_endpoint: 'https://a/authorize',
+        token_endpoint: 'https://a/token',
         client_id: 'c',
       },
       secrets,
@@ -597,6 +604,11 @@ describe('refreshToken — coalesced refresh', () => {
   it('a failed shared refresh rejects every caller, stores nothing, and the next call retries', async () => {
     const secrets = createMockSecrets();
     secrets._store.set('mcp/srv/refresh_token', 'rt-fails');
+    // Bound grant: an unbound one would write a migration binding on first refresh.
+    secrets._store.set(
+      'mcp/srv/token_binding',
+      JSON.stringify({ v: 1, token_endpoint: config.token_endpoint }),
+    );
     const { mock, release } = gatedFetch(() => ({
       ok: false,
       status: 400,
@@ -650,7 +662,10 @@ describe('refreshToken — coalesced refresh', () => {
   });
 
   it('a joiner whose vault no longer holds the presented token stores nothing', async () => {
-    const vault = new Map([['mcp/srv/refresh_token', 'rt-moved']]);
+    const vault = new Map([
+      ['mcp/srv/refresh_token', 'rt-moved'],
+      ['mcp/srv/token_binding', JSON.stringify({ v: 1, token_endpoint: config.token_endpoint })],
+    ]);
     const leader = secretsOver(vault);
     const { release } = gatedFetch(() =>
       okResponse({ access_token: 'at-moved', refresh_token: 'rt-moved-2' }),
@@ -660,7 +675,14 @@ describe('refreshToken — coalesced refresh', () => {
 
     // Same vault, but this resolver started from the old token (read before the leader stored).
     const joiner = secretsOver(vault);
-    joiner.get.mockResolvedValueOnce('rt-moved');
+    let staleRead = true;
+    joiner.get.mockImplementation(async (ref: string) => {
+      if (ref === 'mcp/srv/refresh_token' && staleRead) {
+        staleRead = false;
+        return 'rt-moved';
+      }
+      return vault.get(ref) ?? null;
+    });
     await expect(refreshToken('srv', config, joiner)).resolves.toBe('at-moved');
     expect(joiner.set).not.toHaveBeenCalled();
   });

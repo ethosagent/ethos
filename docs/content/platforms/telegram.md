@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-09-29
+updated: 2026-11-02
 ---
 
 ## Task
@@ -172,26 +172,32 @@ A bot left on `observe` while privacy mode is still on records nothing, and says
 
 ### 4. Restrict who can talk to the bot
 
-Default behaviour is **deny by default in groups, pairing flow in DMs.** Configure under `channelFilter.telegram` (`packages/safety/channel/src/channel-filter.ts`):
+Default behaviour is **deny by default in groups, pairing flow in DMs.** Configure under `channel_filter.telegram` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
-channelFilter:
-  telegram:
-    enable: false                   # optional escape hatch — bypass the filter, keep the config
-    ownerUserId: "1234567"          # numeric Telegram user id — always allowed
-    recipientAllowlist:
-      - "9876543"
-      - "-1001234567890"            # whole group; negative ids
-    dmPolicy: pairing               # pairing | allowlist | queue | reject | silent-drop
-    contextVisibility: allowlist    # strip quoted text from non-allowlisted senders
+# enable: false is an optional escape hatch — bypass the filter, keep the config
+channel_filter.telegram.enable: false
+# numeric Telegram user id — always allowed
+channel_filter.telegram.ownerUserId: 1234567
+# comma-separated user ids and group ids (group ids are negative)
+channel_filter.telegram.recipientAllowlist: 9876543,-1001234567890
+# pairing | decline | allowlist | queue | reject | silent-drop
+channel_filter.telegram.dmPolicy: pairing
+# optional; the refusal text `decline` sends
+channel_filter.telegram.declineMessage: Thanks for writing. This assistant is private, so I can't reply.
+# strip quoted text from non-allowlisted senders
+channel_filter.telegram.contextVisibility: allowlist
 ```
+
+Each field is one flat `channel_filter.telegram.<field>: <value>` line; the parser reads no nested block.
 
 Field meanings:
 
 - `enable` — explicit on/off switch for the whole filter on this platform. Omitted (the default) or `true` keeps the filter on. `false` bypasses every gate — allowlist, `dmPolicy`, mention gating, context visibility — so you can disable the filter without deleting the rest of the block.
 - `ownerUserId` — bypasses every gate, including the group mention gate. Required for `/allow`, `/deny`, `/communications` to take effect.
 - `recipientAllowlist` — extra allowed user ids and group ids. Globs are accepted for the email adapter only.
-- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `allowlist` silently drops; `queue` parks the message for owner review; `reject` replies "not authorised"; `silent-drop` is the noisiest legacy mode.
+- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code. `decline` replies once per sender per 24 h with a polite refusal and never in quiet hours. `allowlist`, `queue`, `reject` and `silent-drop` all drop the message without a reply (`checkMessage`, `packages/safety/channel/src/channel-filter.ts`). Nothing is parked for review.
+- `declineMessage` — the refusal text `decline` sends, at most 500 characters. Omitted, it sends "Sorry, I can only reply to people who have been approved." The default names no owner, pairing code or policy.
 - `contextVisibility` — `allowlist` strips quoted or threaded content from non-allowlisted senders before the agent sees it (defence against context smuggling).
 
 From inside `ethos chat`:
@@ -247,7 +253,7 @@ Add the bot to a group, post `@yourbotname ping`. Reply appears in the same chat
 
 **Allowlist enforcement.**
 
-DM from a non-allowlisted account. With `dmPolicy: pairing`, the bot replies with a pairing code only — no agent turn fires. `ethos audit | tail` shows `channel.allowlist.blocked` (in groups) or `channel.pairing.sent`.
+DM from a non-allowlisted account. With `dmPolicy: pairing`, the bot replies with a pairing code only — no agent turn fires. `ethos audit | tail` shows `channel.allowlist.blocked` (in groups) or `channel.pairing.issued`.
 
 **Dedup is active.**
 

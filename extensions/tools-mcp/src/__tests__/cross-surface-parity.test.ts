@@ -20,7 +20,10 @@ describe('cross-surface parity', () => {
 
     // Simulate CLI path: wrap base resolver in PersonalityScopedSecrets + storeTokens
     const cliSecrets = new PersonalityScopedSecrets(baseResolver, personalityId);
-    await storeTokens(serverName, tokens, cliSecrets);
+    await storeTokens(serverName, tokens, cliSecrets, {
+      v: 1,
+      token_endpoint: 'https://auth.example.com/token',
+    });
 
     // Verify the token landed at the personality-scoped path
     const scopedPath = `personalities/${personalityId}/mcp/${serverName}/access_token`;
@@ -39,8 +42,14 @@ describe('cross-surface parity', () => {
     const secrets1 = new PersonalityScopedSecrets(baseResolver, 'admin');
     const secrets2 = new PersonalityScopedSecrets(baseResolver, 'support');
 
-    await storeTokens('linear', { access_token: 'admin-token' }, secrets1);
-    await storeTokens('linear', { access_token: 'support-token' }, secrets2);
+    await storeTokens('linear', { access_token: 'admin-token' }, secrets1, {
+      v: 1,
+      token_endpoint: 'https://auth.example.com/token',
+    });
+    await storeTokens('linear', { access_token: 'support-token' }, secrets2, {
+      v: 1,
+      token_endpoint: 'https://auth.example.com/token',
+    });
 
     const adminToken = await baseResolver.get('personalities/admin/mcp/linear/access_token');
     const supportToken = await baseResolver.get('personalities/support/mcp/linear/access_token');
@@ -64,6 +73,7 @@ describe('cross-surface parity', () => {
         expires_at: '2026-06-01T00:00:00.000Z',
       },
       scoped,
+      { v: 1, token_endpoint: 'https://auth.example.com/token' },
     );
 
     // Scoped paths

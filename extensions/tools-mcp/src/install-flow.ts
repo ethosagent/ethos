@@ -41,12 +41,15 @@ import { EthosError } from '@ethosagent/types';
 import type { McpManager, McpServerConfig, McpServerInfo } from './index';
 import type { McpJsonStore } from './mcp-json-store';
 import {
+  bindingFor,
   buildAuthorizationUrl,
   type DcrResponse,
   DcrUnsupported,
   type DiscoveredOAuthMetadata,
+  deleteTokens,
   discoverOAuthMetadata,
   exchangeCode,
+  issuerFields,
   type OAuthConfig,
   registerOAuthClient,
   storeTokens,
@@ -83,6 +86,8 @@ export interface StartResult {
 export interface CompleteOptions {
   code: string;
   state: string;
+  /** RFC 9207 `iss` from the authorization response, when the provider sent one. */
+  iss?: string;
 }
 
 export interface CompleteResult {
@@ -243,6 +248,7 @@ export class McpInstallFlow {
         };
         if (auth.revocation_endpoint) oauthConfig.revocation_endpoint = auth.revocation_endpoint;
         if (auth.scopes && auth.scopes.length > 0) oauthConfig.scopes = auth.scopes;
+        Object.assign(oauthConfig, issuerFields(auth));
 
         const discoveredMetadata: DiscoveredOAuthMetadata = {
           authorization_endpoint: auth.authorization_endpoint,
@@ -250,6 +256,7 @@ export class McpInstallFlow {
           registration_endpoint: auth.dcr.registration_endpoint,
           ...(auth.revocation_endpoint ? { revocation_endpoint: auth.revocation_endpoint } : {}),
           ...(auth.scopes ? { scopes_supported: auth.scopes } : {}),
+          ...issuerFields(auth),
         };
 
         const authorizeUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, codeChallenge);
@@ -353,6 +360,7 @@ export class McpInstallFlow {
     if (scopes && scopes.length > 0) {
       oauthConfig.scopes = scopes;
     }
+    Object.assign(oauthConfig, issuerFields(metadata));
 
     const authorizeUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, codeChallenge);
 
@@ -449,11 +457,15 @@ export class McpInstallFlow {
     // placeholder. No tokens to revoke (none stored yet).
     let tokens: Awaited<ReturnType<typeof exchangeCode>>;
     try {
+      // exchangeCode runs the RFC 9207 `iss` check before the code is sent; a
+      // mismatch rides this same rollback branch. Pinned by
+      // __tests__/install-flow.test.ts "complete refuses a mismatched iss…".
       tokens = await exchangeCode(
         session.oauthConfig,
         opts.code,
         session.redirectUri,
         session.codeVerifier,
+        opts.iss,
       );
     } catch (err) {
       session.status = 'error';
@@ -470,7 +482,15 @@ export class McpInstallFlow {
       ? new PersonalityScopedSecrets(this.secrets, session.personalityId)
       : this.secrets;
     try {
-      await storeTokens(session.serverName, tokens, scopedSecrets);
+      await storeTokens(
+        session.serverName,
+        tokens,
+        scopedSecrets,
+        bindingFor({
+          token_endpoint: session.oauthConfig.token_endpoint,
+          issuer: session.discoveredMetadata.issuer,
+        }),
+      );
     } catch (err) {
       await this.bestEffortDeleteTokens(session.serverName, session.personalityId);
       session.status = 'error';
@@ -655,26 +675,17 @@ export class McpInstallFlow {
   }
 
   /**
-   * Best-effort delete of the three secret refs `storeTokens` writes
-   * (access / refresh / expires_at). Used when token storage partially
-   * succeeded or when we need to revoke after a downstream failure.
+   * Best-effort delete of everything `storeTokens` writes (access / refresh /
+   * expires_at / token_binding). Delegates to `deleteTokens`, the one owner of
+   * the ref list. Used when token storage partially succeeded or when we need
+   * to revoke after a downstream failure.
    */
   private async bestEffortDeleteTokens(serverName: string, personalityId?: string): Promise<void> {
     const secrets = personalityId
       ? new PersonalityScopedSecrets(this.secrets, personalityId)
       : this.secrets;
     try {
-      await secrets.delete(`mcp/${serverName}/access_token`);
-    } catch {
-      /* best-effort */
-    }
-    try {
-      await secrets.delete(`mcp/${serverName}/refresh_token`);
-    } catch {
-      /* best-effort */
-    }
-    try {
-      await secrets.delete(`mcp/${serverName}/expires_at`);
+      await deleteTokens(serverName, secrets);
     } catch {
       /* best-effort */
     }
@@ -776,6 +787,7 @@ function buildAuthBlock(input: {
   if (input.scopes && input.scopes.length > 0) {
     auth.scopes = input.scopes;
   }
+  Object.assign(auth, issuerFields(input.metadata));
   return auth;
 }
 

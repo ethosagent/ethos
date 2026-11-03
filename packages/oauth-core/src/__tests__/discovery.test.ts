@@ -91,3 +91,28 @@ describe('parseProtectedResourceMetadata', () => {
     });
   });
 });
+
+describe('parseOAuthServerMetadata — RFC 9207', () => {
+  const base = {
+    authorization_endpoint: 'https://auth.example.com/authorize',
+    token_endpoint: 'https://auth.example.com/token',
+  };
+
+  it('parseOAuthServerMetadata reads authorization_response_iss_parameter_supported', () => {
+    expect(
+      parseOAuthServerMetadata({ ...base, authorization_response_iss_parameter_supported: true })
+        .authorization_response_iss_parameter_supported,
+    ).toBe(true);
+    expect(
+      parseOAuthServerMetadata({ ...base, authorization_response_iss_parameter_supported: false })
+        .authorization_response_iss_parameter_supported,
+    ).toBe(false);
+    expect(
+      parseOAuthServerMetadata({ ...base, authorization_response_iss_parameter_supported: 'yes' })
+        .authorization_response_iss_parameter_supported,
+    ).toBeUndefined();
+    expect(
+      parseOAuthServerMetadata(base).authorization_response_iss_parameter_supported,
+    ).toBeUndefined();
+  });
+});

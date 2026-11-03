@@ -730,4 +730,57 @@ describe('MCP reliability bundle', () => {
       await client.disconnect();
     });
   });
+
+  describe('oauth binding on the 401 path', () => {
+    it('a binding mismatch on the 401 path returns not_available with the re-auth message and does not reconnect', async () => {
+      const store = new Map<string, string>([
+        ['mcp/srv/access_token', 'at-old'],
+        ['mcp/srv/refresh_token', 'rt-401-binding'],
+        // Grant minted by a different token endpoint than the config names now.
+        [
+          'mcp/srv/token_binding',
+          JSON.stringify({ v: 1, token_endpoint: 'https://old-auth.example.com/token' }),
+        ],
+      ]);
+      const secrets = {
+        get: vi.fn(async (ref: string) => store.get(ref) ?? null),
+        set: vi.fn(async (ref: string, value: string) => {
+          store.set(ref, value);
+        }),
+        delete: vi.fn(async (ref: string) => {
+          store.delete(ref);
+        }),
+        list: vi.fn(async () => [...store.keys()]),
+      };
+      const client = new McpClient(
+        {
+          name: 'srv',
+          transport: 'streamable-http',
+          url: 'https://mcp.example.com/mcp',
+          keepaliveSeconds: 0,
+          auth: {
+            type: 'oauth2',
+            authorization_endpoint: 'https://new-auth.example.com/authorize',
+            token_endpoint: 'https://new-auth.example.com/token',
+            client_id: 'c',
+          },
+        },
+        { secrets },
+      );
+      await client.connect();
+      const connectsBefore = mockConnect.mock.calls.length;
+      mockCallTool.mockRejectedValueOnce(new Error('HTTP 401 Unauthorized'));
+
+      const result = await client.callTool('t', {});
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('not_available');
+        expect(result.error).toContain('ethos mcp login srv');
+      }
+      expect(mockConnect.mock.calls.length).toBe(connectsBefore);
+      expect(store.get('mcp/srv/refresh_token')).toBe('rt-401-binding');
+      await client.disconnect();
+    });
+  });
 });

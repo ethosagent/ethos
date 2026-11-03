@@ -221,6 +221,14 @@ export interface WiringConfig {
     maxIdenticalToolCalls?: number;
   };
   /**
+   * MCP client settings (mapped from `EthosConfig.mcp`). `discoveryConcurrency`
+   * bounds concurrent MCP server connects per `McpManager`; absent = the
+   * manager's default (`DEFAULT_DISCOVERY_CONCURRENCY`, 4).
+   */
+  mcp?: {
+    discoveryConcurrency?: number;
+  };
+  /**
    * The deployment's public web UI address — `EthosConfig.webBaseUrl`
    * verbatim (which already resolves `ETHOS_PUBLIC_URL` ahead of the
    * config-file value). Forwarded to `ClarifyBridge` so a `browser_takeover`

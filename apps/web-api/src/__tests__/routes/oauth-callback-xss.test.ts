@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWebApi } from '../../index';
+import { McpService } from '../../services/mcp.service';
 import {
   makeStubAgentLoop,
   makeStubMemoryBundle,
@@ -88,6 +89,41 @@ describe('GET /oauth/callback — reflected XSS + CSP (S2)', () => {
     const a = (await callback('error=x')).headers.get('content-security-policy');
     const b = (await callback('error=x')).headers.get('content-security-policy');
     expect(a).not.toBe(b);
+  });
+
+  it('the callback route passes the iss query parameter through', async () => {
+    const complete = vi
+      .spyOn(McpService.prototype, 'complete')
+      .mockResolvedValue({ ok: true as const, serverName: 'srv' });
+    try {
+      const res = await app.request(
+        `/oauth/callback?code=c1&state=s1&iss=${encodeURIComponent('https://auth.example.com')}`,
+        { headers: { cookie: 'ethos_mcp_pending=s1' } },
+      );
+      expect(res.status).toBe(200);
+      expect(complete).toHaveBeenCalledWith(
+        { code: 'c1', state: 's1', iss: 'https://auth.example.com' },
+        's1',
+      );
+
+      // A hostile iss that the service echoes back in its mismatch detail must
+      // still be escaped into the inline script.
+      complete.mockResolvedValue({
+        ok: false as const,
+        code: 'issuer_mismatch' as const,
+        detail: `Authorization response came from ${PAYLOAD}, expected https://auth.example.com`,
+      });
+      const hostile = await app.request(
+        `/oauth/callback?code=c1&state=s1&iss=${encodeURIComponent(PAYLOAD)}`,
+        { headers: { cookie: 'ethos_mcp_pending=s1' } },
+      );
+      const body = await hostile.text();
+      expect(complete).toHaveBeenLastCalledWith({ code: 'c1', state: 's1', iss: PAYLOAD }, 's1');
+      expect(body.match(/<\/script/gi) ?? []).toHaveLength(1);
+      expect(body).not.toContain('<script>window.__x');
+    } finally {
+      complete.mockRestore();
+    }
   });
 
   it('applies the strict policy to API responses too', async () => {

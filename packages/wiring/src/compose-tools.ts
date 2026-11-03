@@ -1951,6 +1951,8 @@ export async function composeAllTools(
     // resolver derived from `innerSecrets`.
     secrets: config.secretsResolver,
     innerSecrets: config.secretsResolver,
+    // Pinned by __tests__/mcp-discovery-wiring.test.ts.
+    ...config.mcp,
     onToolsChanged: (added, removedNames) => {
       for (const t of added) tools.register(t);
       for (const name of removedNames) tools.unregister(name);
