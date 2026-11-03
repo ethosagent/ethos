@@ -3,8 +3,9 @@ import { ethosDir } from '@ethosagent/config';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent } from '@ethosagent/types';
+import { writeJson } from '../json-output';
 
-// ethos audit [--since <duration>] [--category <pattern>] [transitions|decisions]
+// ethos audit [--since <duration>] [--category <pattern>] [transitions|decisions] [--json]
 
 const c = {
   reset: '\x1b[0m',
@@ -96,6 +97,7 @@ function parseFlags(args: string[]): Flags {
 }
 
 export async function runAudit(args: string[]): Promise<void> {
+  const json = args.includes('--json');
   const flags = parseFlags(args);
   const store = openStore();
 
@@ -134,6 +136,11 @@ export async function runAudit(args: string[]): Promise<void> {
     if (flags.category && flags.subcommand) {
       const pat = flags.category.toLowerCase();
       events = events.filter((e) => e.category.toLowerCase().includes(pat));
+    }
+
+    if (json) {
+      writeJson({ ok: true, title, events });
+      return;
     }
 
     console.log(

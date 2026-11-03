@@ -13,7 +13,7 @@
 
 import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
 import { clearBirthMarker } from '@ethosagent/wiring';
-import { writeJson } from '../json-output';
+import { splitJson, writeJson } from '../json-output';
 
 export interface BirthCliDeps {
   /** Unscoped: the marker lives under `learning/`, which no turn can reach. */
@@ -34,12 +34,14 @@ const USAGE = [
 export async function runPersonalityBirth(args: string[]): Promise<void> {
   const { ethosDir } = await import('@ethosagent/config');
   const { getStorage } = await import('../wiring');
-  const json = args.includes('--json');
+  const { json, args: positional } = splitJson(args);
   // A thrown EthosError reaches the top-level catch in index.ts, which emits the --json error doc.
-  await runPersonalityBirthCommand(
-    args.filter((a) => a !== '--json'),
-    { storage: getStorage(), dataDir: ethosDir(), out: (line) => console.log(line), json },
-  );
+  await runPersonalityBirthCommand(positional, {
+    storage: getStorage(),
+    dataDir: ethosDir(),
+    out: (line) => console.log(line),
+    json,
+  });
 }
 
 /** The command body, with every dependency injected. Throws `EthosError` on any failure. */

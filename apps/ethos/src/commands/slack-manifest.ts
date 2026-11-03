@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { splitJson, writeJson, writeJsonError } from '../json-output';
 
 // `ethos slack manifest` — generate the Slack app manifest the operator
 // pastes into api.slack.com → Your Apps → Create New App → "From a manifest".
@@ -15,6 +16,7 @@ import { writeFileSync } from 'node:fs';
 //   ethos slack manifest          — print JSON to stdout (default)
 //   ethos slack manifest --yaml   — print YAML (Slack's preferred form)
 //   ethos slack manifest -o <f>   — write to file instead of stdout
+//   ethos slack manifest --json   — {ok, format, content[, path]}; no next-steps text
 
 const c = {
   reset: '\x1b[0m',
@@ -26,11 +28,13 @@ const c = {
 };
 
 const USAGE =
-  'Usage: ethos slack [manifest [--yaml] [-o <file>] [--name <appname>] [--request-url <url>]]';
+  'Usage: ethos slack [manifest [--yaml] [-o <file>] [--name <appname>] [--request-url <url>] [--json]]';
 
-export async function runSlackManifest(args: string[]): Promise<void> {
+export async function runSlackManifest(argv: string[]): Promise<void> {
+  const { json, args } = splitJson(argv);
   const sub = args[0] ?? 'manifest';
   if (sub !== 'manifest') {
+    if (json) writeJsonError('INVALID_INPUT', `Unknown subcommand: ${sub}\n${USAGE}`);
     console.error(`${c.red}Unknown subcommand: ${sub}${c.reset}\n${USAGE}`);
     process.exit(1);
   }
@@ -46,6 +50,18 @@ export async function runSlackManifest(args: string[]): Promise<void> {
 
   const manifest = buildManifest({ appName: appName ?? 'Ethos Agent', requestUrl });
   const serialized = asYaml ? toYaml(manifest) : JSON.stringify(manifest, null, 2);
+
+  if (json) {
+    // The pasted-in next steps are for a human at a terminal; the document is the whole answer.
+    if (outPath) writeFileSync(outPath, `${serialized}\n`, 'utf-8');
+    writeJson({
+      ok: true,
+      format: asYaml ? 'yaml' : 'json',
+      content: serialized,
+      ...(outPath ? { path: outPath } : {}),
+    });
+    return;
+  }
 
   if (outPath) {
     writeFileSync(outPath, `${serialized}\n`, 'utf-8');

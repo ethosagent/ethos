@@ -29,58 +29,28 @@ const JSON_EXEMPT: Record<string, string> = {
   'verbose-timing': 'internal library, no CLI output',
   'zero-stream': 'internal helper of zero (streams)',
   learn: 'prints chat-usage help only',
+  'pairing-commands':
+    'library of the chat REPL /allow /deny /communications slash commands; returns strings, no CLI output',
   'request-dump': 'internal debug dumper, no CLI output',
   'memory-file': 'already JSON-capable: index.ts passes `jsonMode` to runMemoryFileCommand',
 };
-
-// Task 15-17 families, not yet converted. Each later task removes its names.
-const PENDING = new Set([
-  // Task 17: ops & inspection
-  'audit',
-  'archive',
-  'trace',
-  'models',
-  'fallback',
-  'migrate-models',
-  'commands',
-  'claw',
-  'batch',
-  'bench',
-  'set',
-  'slack-manifest',
-  'systemd-unit',
-  'pairing-commands',
-  'setup-from-env',
-]);
 
 const files = readdirSync(COMMANDS_DIR)
   .filter((f) => f.endsWith('.ts'))
   .map((f) => f.slice(0, -3));
 
 describe('CLI --json census', () => {
-  it('every JSON_EXEMPT and PENDING name is an existing command file', () => {
-    const stale = [...Object.keys(JSON_EXEMPT), ...PENDING].filter((n) => !files.includes(n));
+  it('every JSON_EXEMPT name is an existing command file', () => {
+    const stale = Object.keys(JSON_EXEMPT).filter((n) => !files.includes(n));
     expect(stale).toEqual([]);
-  });
-
-  it('no file is both exempt and pending', () => {
-    expect([...PENDING].filter((n) => n in JSON_EXEMPT)).toEqual([]);
   });
 
   it('every other command file supports --json', () => {
     const missing = files.filter(
       (name) =>
         !(name in JSON_EXEMPT) &&
-        !PENDING.has(name) &&
         !readFileSync(join(COMMANDS_DIR, `${name}.ts`), 'utf-8').includes('--json'),
     );
     expect(missing).toEqual([]);
-  });
-
-  it('a PENDING file that already supports --json must leave PENDING', () => {
-    const done = [...PENDING].filter((name) =>
-      readFileSync(join(COMMANDS_DIR, `${name}.ts`), 'utf-8').includes('--json'),
-    );
-    expect(done).toEqual([]);
   });
 });

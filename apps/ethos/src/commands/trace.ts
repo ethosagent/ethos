@@ -2,8 +2,9 @@ import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { EthosError, type Span, type Trace } from '@ethosagent/types';
+import { writeJson } from '../json-output';
 
-// ethos trace [id] [--session <id>] [--recent [N]] [--slow [N]]
+// ethos trace [id] [--session <id>] [--recent [N]] [--slow [N]] [--json]
 
 const c = {
   reset: '\x1b[0m',
@@ -107,6 +108,7 @@ function parseFlags(args: string[]): Flags {
 }
 
 export async function runTrace(args: string[]): Promise<void> {
+  const json = args.includes('--json');
   const flags = parseFlags(args);
 
   const store = openStore();
@@ -124,6 +126,11 @@ export async function runTrace(args: string[]): Promise<void> {
         });
       }
       const spans = store.getSpans(flags.traceId);
+
+      if (json) {
+        writeJson({ ok: true, trace, spans });
+        return;
+      }
 
       console.log(`\n${c.bold}Trace${c.reset}  ${c.cyan}${trace.traceId}${c.reset}\n`);
       console.log(`  kind:       ${trace.kind}`);
@@ -159,6 +166,11 @@ export async function runTrace(args: string[]): Promise<void> {
     }
 
     const display = filtered.slice(0, flags.recent);
+
+    if (json) {
+      writeJson({ ok: true, total: filtered.length, traces: display });
+      return;
+    }
 
     console.log(
       `\n${c.bold}ethos trace${c.reset}  ${c.dim}${display.length} of ${filtered.length}${c.reset}\n`,

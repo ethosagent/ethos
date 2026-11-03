@@ -9,6 +9,7 @@ import {
   writeConfig,
 } from '@ethosagent/config';
 import type { SecretsResolver } from '@ethosagent/types';
+import { refuseJson, type Say, sayFor, splitJson, writeJson, writeJsonError } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 // `ethos fallback` — interactive editor for the `providers:` chain in
@@ -40,14 +41,16 @@ const c = {
   red: '\x1b[31m',
 };
 
-const USAGE = 'Usage: ethos fallback [list | add | remove <index> | clear]';
+const USAGE = 'Usage: ethos fallback [list | add | remove <index> | clear] [--json]';
 
 export async function runFallback(args: string[]): Promise<void> {
-  const sub = args[0] ?? 'list';
+  const { json, args: argv } = splitJson(args);
+  const sub = argv[0] ?? 'list';
   const storage = getStorage();
   const config = await readRawConfig(storage);
 
   if (!config) {
+    if (json) writeJsonError('CONFIG_MISSING', 'No ethos config found. Run ethos setup first.');
     console.error(
       `${c.red}No ethos config found.${c.reset} Run ${c.bold}ethos setup${c.reset} first.`,
     );
@@ -56,28 +59,33 @@ export async function runFallback(args: string[]): Promise<void> {
 
   switch (sub) {
     case 'list':
-      printList(config);
+      if (json) writeJson(listDocument(config));
+      else printList(config);
       return;
     case 'add':
+      refuseJson(args, '`ethos fallback add` prompts for every field; run it without --json.');
       await addEntry(config);
       return;
     case 'remove': {
-      const idx = Number(args[1]);
+      const idx = Number(argv[1]);
       if (!Number.isInteger(idx) || idx < 1) {
+        if (json) writeJsonError('INVALID_INPUT', `remove requires a 1-based index. ${USAGE}`);
         console.error(`${c.red}remove requires a 1-based index.${c.reset} ${USAGE}`);
         process.exit(1);
       }
-      await removeEntry(config, idx - 1);
+      await removeEntry(config, idx - 1, json);
       return;
     }
     case 'clear':
-      await clearChain(config);
+      await clearChain(config, json);
       return;
     case '--help':
     case '-h':
-      console.log(USAGE);
+      if (json) writeJson({ ok: true, usage: USAGE });
+      else console.log(USAGE);
       return;
     default:
+      if (json) writeJsonError('INVALID_INPUT', `Unknown subcommand: ${sub}. ${USAGE}`);
       console.error(`${c.red}Unknown subcommand: ${sub}${c.reset}\n${USAGE}`);
       process.exit(1);
   }
@@ -135,6 +143,40 @@ function printList(config: EthosConfig): void {
   }
   console.log(`${c.dim}No fallback providers configured.${c.reset}`);
   console.log(`${c.dim}Add one with:${c.reset} ${c.bold}ethos fallback add${c.reset}`);
+}
+
+/** Key reference or masked tail, no colour: the `--json` twin of `maskRef`. Never the plaintext. */
+function maskRefPlain(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.startsWith('${secrets:')) return value;
+  return value.length <= 8 ? '****' : `****${value.slice(-4)}`;
+}
+
+/** The `--json` twin of `printList`: what the runtime runs, plus the chain with 1-based indexes. */
+function listDocument(config: EthosConfig): Record<string, unknown> {
+  const chain = config.providers ?? [];
+  const entry = (i: number, p: ProviderConfig) => ({
+    index: i + 1,
+    provider: p.provider,
+    model: p.model ?? null,
+    apiKey: maskRefPlain(p.apiKey),
+    baseUrl: p.baseUrl ?? null,
+    apiVersion: p.apiVersion ?? null,
+    region: p.region ?? null,
+    awsProfile: p.awsProfile ?? null,
+    // Names only, as in the text list: the values of unmodelled fields can be anything.
+    extraFields: Object.keys(p.passthrough ?? {}).sort(),
+  });
+  const active = chain.length >= 2 ? 'chain' : 'top-level';
+  return {
+    ok: true,
+    active,
+    primary:
+      active === 'chain' && chain[0]
+        ? entry(0, chain[0])
+        : { provider: config.provider, model: config.model, apiKey: maskRefPlain(config.apiKey) },
+    chain: chain.map((p, i) => entry(i, p)),
+  };
 }
 
 async function addEntry(config: EthosConfig): Promise<void> {
@@ -220,15 +262,19 @@ async function addEntry(config: EthosConfig): Promise<void> {
   }
 }
 
-async function removeEntry(config: EthosConfig, idx: number): Promise<void> {
+async function removeEntry(config: EthosConfig, idx: number, json: boolean): Promise<void> {
   const chain = [...(config.providers ?? [])];
   if (idx < 0 || idx >= chain.length) {
+    if (json) {
+      writeJsonError('INVALID_INPUT', `Index out of range. The chain has ${chain.length} entries.`);
+    }
     console.error(`${c.red}Index out of range. The chain has ${chain.length} entries.${c.reset}`);
     process.exit(1);
   }
 
   const removed = chain[idx];
   if (!removed) {
+    if (json) writeJsonError('INTERNAL', `Missing entry at index ${idx}.`);
     console.error(`${c.red}Internal: missing entry at index ${idx}.${c.reset}`);
     process.exit(1);
   }
@@ -242,7 +288,7 @@ async function removeEntry(config: EthosConfig, idx: number): Promise<void> {
   const next: EthosConfig = { ...config, providers: chain.length > 0 ? chain : undefined };
   await writeConfig(getStorage(), next, secrets);
 
-  console.log(`${c.green}✓ Removed fallback ${idx + 1} (${removed.provider})${c.reset}`);
+  if (!json) console.log(`${c.green}✓ Removed fallback ${idx + 1} (${removed.provider})${c.reset}`);
 
   // Cleanup of the underlying secret. The ref index doesn't shift even though
   // the array did — we intentionally don't renumber: the original ref strings
@@ -255,15 +301,26 @@ async function removeEntry(config: EthosConfig, idx: number): Promise<void> {
   // counts as a reference: `add` on a top-level-only config puts the top-level
   // entry at the head of the chain naming the SAME vault entry.
   const ref = secretRefFromValue(removed.apiKey);
+  const say = sayFor(json);
+  const notDeleted: string[] = [];
   if (ref && isProviderChainSecretRef(ref) && !stillReferenced(ref, chain, config)) {
-    await deleteSecretMaterial(secrets, ref);
+    if (!(await deleteSecretMaterial(secrets, ref, say))) notDeleted.push(ref);
+  }
+  if (json) {
+    writeJson({
+      ok: true,
+      removed: { index: idx + 1, provider: removed.provider },
+      remaining: chain.length,
+      secretsNotDeleted: notDeleted,
+    });
   }
 }
 
-async function clearChain(config: EthosConfig): Promise<void> {
+async function clearChain(config: EthosConfig, json: boolean): Promise<void> {
   const chain = config.providers ?? [];
   if (chain.length === 0) {
-    console.log(`${c.dim}Chain is already empty.${c.reset}`);
+    if (json) writeJson({ ok: true, cleared: 0, secretsNotDeleted: [] });
+    else console.log(`${c.dim}Chain is already empty.${c.reset}`);
     return;
   }
 
@@ -272,9 +329,11 @@ async function clearChain(config: EthosConfig): Promise<void> {
   const next: EthosConfig = { ...config, providers: undefined };
   await writeConfig(getStorage(), next, secrets);
 
-  console.log(
-    `${c.green}✓ Cleared ${chain.length} fallback provider${chain.length === 1 ? '' : 's'}${c.reset}`,
-  );
+  if (!json) {
+    console.log(
+      `${c.green}✓ Cleared ${chain.length} fallback provider${chain.length === 1 ? '' : 's'}${c.reset}`,
+    );
+  }
 
   // Delete all underlying secrets we wrote. Deduped: two entries can hold the
   // same ref, and no entry survives the clear to keep any of them alive.
@@ -283,9 +342,12 @@ async function clearChain(config: EthosConfig): Promise<void> {
     const ref = secretRefFromValue(entry.apiKey);
     if (ref && isProviderChainSecretRef(ref) && !stillReferenced(ref, [], config)) refs.add(ref);
   }
+  const say = sayFor(json);
+  const notDeleted: string[] = [];
   for (const ref of refs) {
-    await deleteSecretMaterial(secrets, ref);
+    if (!(await deleteSecretMaterial(secrets, ref, say))) notDeleted.push(ref);
   }
+  if (json) writeJson({ ok: true, cleared: chain.length, secretsNotDeleted: notDeleted });
 }
 
 /** Whether a surviving chain entry or the top-level `apiKey` still names `ref`. */
@@ -306,15 +368,21 @@ function stillReferenced(
  * because what is left behind is credential material, and the operator gets the
  * exact command to clean it up.
  */
-async function deleteSecretMaterial(secrets: SecretsResolver, ref: string): Promise<void> {
+async function deleteSecretMaterial(
+  secrets: SecretsResolver,
+  ref: string,
+  say: Say,
+): Promise<boolean> {
   try {
     await secrets.delete(ref);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(
+    say(
       `${c.red}⚠ Stored key material was not deleted:${c.reset} ${msg}\n` +
         `${c.dim}  Remove it with: ethos secrets remove ${ref}${c.reset}`,
     );
+    return false;
   }
 }
 
@@ -323,11 +391,10 @@ function ask(rl: Interface, prompt: string): Promise<string> {
 }
 
 function maskRef(value: string | undefined): string {
-  if (!value) return `${c.dim}(unset)${c.reset}`;
-  if (value.startsWith('${secrets:')) {
-    return `${c.dim}${value}${c.reset}`;
-  }
-  // Raw value — show only the last 4 chars.
-  if (value.length <= 8) return `${c.yellow}****${c.reset} (plaintext)`;
-  return `${c.yellow}****${value.slice(-4)}${c.reset}${c.dim} (plaintext — migrate to secrets resolver)${c.reset}`;
+  const plain = maskRefPlain(value);
+  if (plain === null) return `${c.dim}(unset)${c.reset}`;
+  if (plain.startsWith('${secrets:')) return `${c.dim}${plain}${c.reset}`;
+  // Raw value — maskRefPlain already reduced it to its last 4 chars.
+  if (plain === '****') return `${c.yellow}${plain}${c.reset} (plaintext)`;
+  return `${c.yellow}${plain}${c.reset}${c.dim} (plaintext — migrate to secrets resolver)${c.reset}`;
 }

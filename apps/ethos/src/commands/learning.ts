@@ -24,7 +24,7 @@ import {
   type LearningInbox,
   type ReplayReport,
 } from '@ethosagent/wiring';
-import { writeJson, writeJsonError } from '../json-output';
+import { splitJson, writeJson, writeJsonError } from '../json-output';
 import { createCliLearningInbox } from '../wiring';
 
 const c = {
@@ -72,8 +72,8 @@ export async function runLearningCommand(
   inbox: LearningInbox,
   io: LearningCliIo = CONSOLE_IO,
 ): Promise<number> {
-  const json = args.includes('--json');
-  const [sub, ...rest] = args.filter((a) => a !== '--json');
+  const { json, args: positional } = splitJson(args);
+  const [sub, ...rest] = positional;
   switch (sub) {
     case 'list':
       return list(rest, inbox, io, json);

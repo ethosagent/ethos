@@ -212,7 +212,7 @@ try {
       // W2.4 — headless bootstrap for Docker/CI: `ethos setup --from-env`.
       if (args.includes('--from-env')) {
         const { runSetupFromEnv } = await import('./commands/setup-from-env');
-        await runSetupFromEnv();
+        await runSetupFromEnv(args.slice(1));
         break;
       }
       const setupSub = args[1];

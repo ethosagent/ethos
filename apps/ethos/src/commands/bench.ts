@@ -6,6 +6,7 @@ import {
   measureStaticFloor,
   projectContextAtStartup,
 } from '@ethosagent/wiring';
+import { sayFor, splitJson, writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 
@@ -22,7 +23,7 @@ const c = {
 };
 
 const USAGE = [
-  'Usage: ethos bench context [--live] [--scenario <id>] [--turns <n>] [--write-baseline] [--cwd <dir>]',
+  'Usage: ethos bench context [--live] [--scenario <id>] [--turns <n>] [--write-baseline] [--cwd <dir>] [--json]',
   '',
   '  Static measurement (always): per-personality SOUL.md + tool-schema size, plus the',
   '  AGENTS.md/CLAUDE.md project context a turn launched in the working directory sends.',
@@ -283,15 +284,25 @@ function printScenarioResult(result: ScenarioResult): void {
 // ---------------------------------------------------------------------------
 
 export async function runBench(args: string[]): Promise<void> {
-  const sub = args[0] ?? '';
+  const { json, args: argv } = splitJson(args);
+  const say = sayFor(json);
+  const sub = argv[0] ?? '';
   if (sub !== 'context') {
+    const failed = sub !== '' && sub !== '--help' && sub !== '-h';
+    if (json) {
+      // Mirror the text path: no subcommand / --help is a normal exit 0, anything else a failure.
+      if (failed) writeJsonError('INVALID_INPUT', USAGE);
+      writeJson({ ok: true, usage: USAGE });
+      return;
+    }
     console.log(USAGE);
-    if (sub !== '' && sub !== '--help' && sub !== '-h') process.exitCode = 1;
+    if (failed) process.exitCode = 1;
     return;
   }
 
-  const flags = parseFlags(args.slice(1));
+  const flags = parseFlags(argv.slice(1));
   if (!flags) {
+    if (json) writeJsonError('INVALID_INPUT', USAGE);
     console.error(USAGE);
     process.exit(1);
   }
@@ -328,7 +339,7 @@ export async function runBench(args: string[]): Promise<void> {
     contextWindow = result.contextWindow;
     releaseLoop = () => releaseCommandRuntime(result, { label: 'bench agent loop' });
   } else {
-    console.log(
+    say(
       `${c.yellow}No ~/.ethos/config.yaml — measuring built-in personalities without a wired ` +
         `tool registry (tool-schema chars unavailable; run ethos setup for the full table).${c.reset}`,
     );
@@ -367,25 +378,28 @@ export async function runBench(args: string[]): Promise<void> {
   }
   staticRows.sort((a, b) => b.estStaticTokens - a.estStaticTokens);
 
-  console.log(
-    `\n${c.bold}Static context tax per personality${c.reset} ${c.dim}(chars/4 token estimate)${c.reset}`,
-  );
-  console.log(`  ${c.dim}project context measured in ${cwd}${c.reset}`);
-  console.log(
-    `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'tool_loading_chars'.padStart(20)}${'project ch'.padStart(12)}${'~tokens'.padStart(9)}`,
-  );
-  for (const row of staticRows) {
+  if (!json) {
     console.log(
-      `  ${row.id.padEnd(24)}${String(row.soulChars).padStart(9)}${String(row.toolCount).padStart(7)}` +
-        `${String(row.toolSchemaChars).padStart(11)}${String(row.toolLoadingChars).padStart(20)}` +
-        `${String(row.projectContextChars).padStart(12)}${String(row.estStaticTokens).padStart(9)}`,
+      `\n${c.bold}Static context tax per personality${c.reset} ${c.dim}(chars/4 token estimate)${c.reset}`,
     );
+    console.log(`  ${c.dim}project context measured in ${cwd}${c.reset}`);
+    console.log(
+      `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'tool_loading_chars'.padStart(20)}${'project ch'.padStart(12)}${'~tokens'.padStart(9)}`,
+    );
+    for (const row of staticRows) {
+      console.log(
+        `  ${row.id.padEnd(24)}${String(row.soulChars).padStart(9)}${String(row.toolCount).padStart(7)}` +
+          `${String(row.toolSchemaChars).padStart(11)}${String(row.toolLoadingChars).padStart(20)}` +
+          `${String(row.projectContextChars).padStart(12)}${String(row.estStaticTokens).padStart(9)}`,
+      );
+    }
   }
 
   // Lane 3(b) — the schema-budget gate, wired into the bench (no second
   // measurement path): the same `evaluateToolSchemaBudget` wiring runs at
   // startup, dividing the SAME toDefinitions payload by the SAME served
   // window. A personality flagged here is the one warned about at startup.
+  const warnings: string[] = [];
   if (toolRegistry && contextWindow !== undefined) {
     for (const personality of reg.list()) {
       const verdict = evaluateToolSchemaBudget({
@@ -393,7 +407,10 @@ export async function runBench(args: string[]): Promise<void> {
         windowTokens: contextWindow,
         toolDefinitions: toolRegistry.toDefinitions(personality.toolset),
       });
-      if (verdict.message) console.log(`  ${c.yellow}⚠ ${verdict.message}${c.reset}`);
+      if (verdict.message) {
+        warnings.push(verdict.message);
+        if (!json) console.log(`  ${c.yellow}⚠ ${verdict.message}${c.reset}`);
+      }
     }
   }
 
@@ -401,13 +418,12 @@ export async function runBench(args: string[]): Promise<void> {
   const liveResults: ScenarioResult[] = [];
   if (flags.live) {
     if (!config || !loop) {
-      console.log(
-        `\n${c.yellow}--live skipped: no provider configured. Run ethos setup first.${c.reset}`,
-      );
+      warnings.push('--live skipped: no provider configured. Run ethos setup first.');
+      say(`\n${c.yellow}--live skipped: no provider configured. Run ethos setup first.${c.reset}`);
     } else {
       const selected = SCENARIOS.filter((s) => !flags.scenario || s.id === flags.scenario);
       for (const scenario of selected) {
-        console.log(`\n${c.dim}running ${scenario.id} — ${scenario.description}…${c.reset}`);
+        say(`\n${c.dim}running ${scenario.id} — ${scenario.description}…${c.reset}`);
         const result = await runScenario(
           loop,
           activePersonalityId,
@@ -416,15 +432,14 @@ export async function runBench(args: string[]): Promise<void> {
           flags.turns,
         );
         liveResults.push(result);
-        printScenarioResult(result);
+        if (!json) printScenarioResult(result);
       }
     }
   } else {
-    console.log(
-      `\n${c.dim}Live scenarios not run (pass --live with a configured provider).${c.reset}`,
-    );
+    say(`\n${c.dim}Live scenarios not run (pass --live with a configured provider).${c.reset}`);
   }
 
+  let baselinePath: string | undefined;
   if (flags.writeBaseline) {
     const { mkdir, writeFile } = await import('node:fs/promises');
     const outDir = join('evals', 'local');
@@ -436,10 +451,22 @@ export async function runBench(args: string[]): Promise<void> {
     };
     await mkdir(outDir, { recursive: true });
     await writeFile(outPath, `${JSON.stringify(baseline, null, 2)}\n`, 'utf-8');
-    console.log(`\n${c.dim}baseline → ${outPath}${c.reset}`);
+    baselinePath = outPath;
+    say(`\n${c.dim}baseline → ${outPath}${c.reset}`);
   }
 
-  console.log();
+  if (json) {
+    writeJson({
+      ok: true,
+      cwd,
+      static: staticRows,
+      warnings,
+      live: liveResults,
+      ...(baselinePath ? { baseline: baselinePath } : {}),
+    });
+  } else {
+    console.log();
+  }
   // Loop construction leaves live handles (MCP children, cron timers, SQLite);
   // release them rather than exiting on top of them, then exit explicitly
   // because anything the bounded release left behind still holds the loop open.

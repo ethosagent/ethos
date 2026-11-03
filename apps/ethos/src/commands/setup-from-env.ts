@@ -19,9 +19,11 @@
 // matrix is a named follow-up.
 
 import { type EthosConfig, readRawConfig, writeConfig } from '@ethosagent/config';
+import type { EthosErrorCode } from '@ethosagent/types';
 import { probeProvider } from '@ethosagent/wiring';
 import { getDefaultModel } from '@ethosagent/wiring/model-catalog';
 import { getProvider } from '@ethosagent/wiring/provider-catalog';
+import { sayFor, writeJson, writeJsonError } from '../json-output';
 import { redactErrorMessage } from '../redact-error';
 import { getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
 import { scaffoldEthosDir } from './setup';
@@ -133,14 +135,17 @@ export function resolveProviderFromEnv(env: NodeJS.ProcessEnv): ResolvedProvider
   return null;
 }
 
-function fail(message: string): never {
+function fail(message: string, json: boolean, code: EthosErrorCode = 'CONFIG_MISSING'): never {
+  if (json) writeJsonError(code, message);
   // The actionable error is the FINAL line before non-zero exit so compose
   // surfaces it above the boot noise.
   console.error(message);
   process.exit(1);
 }
 
-export async function runSetupFromEnv(): Promise<void> {
+export async function runSetupFromEnv(args: string[] = []): Promise<void> {
+  const json = args.includes('--json');
+  const say = sayFor(json);
   const env = process.env;
   const skipValidation = env.ETHOS_SKIP_VALIDATION === '1';
   const storage = getStorage();
@@ -151,11 +156,15 @@ export async function runSetupFromEnv(): Promise<void> {
   if (!prov) {
     fail(
       'No provider API key found — set one of: AZURE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY, XAI_API_KEY in .env and re-run docker compose up.',
+      json,
     );
   }
 
   if (prov.provider === 'azure' && !prov.baseUrl) {
-    fail('AZURE_ENDPOINT is required for Azure — set it in .env and re-run docker compose up.');
+    fail(
+      'AZURE_ENDPOINT is required for Azure — set it in .env and re-run docker compose up.',
+      json,
+    );
   }
 
   // Fail-closed like the other AZURE_* inputs: a typo'd value must not
@@ -164,6 +173,8 @@ export async function runSetupFromEnv(): Promise<void> {
   if (prov.provider === 'azure' && env.AZURE_OUTPUT_CAP_PARAM && !prov.outputCapParam) {
     fail(
       `AZURE_OUTPUT_CAP_PARAM must be max_tokens or max_completion_tokens (got '${env.AZURE_OUTPUT_CAP_PARAM}') — fix .env and re-run docker compose up.`,
+      json,
+      'INVALID_INPUT',
     );
   }
 
@@ -171,7 +182,7 @@ export async function runSetupFromEnv(): Promise<void> {
   const providerRef = `providers/${prov.provider}/apiKey`;
   const priorKey = await secrets.get(providerRef);
   if (!skipValidation && priorKey !== prov.apiKey) {
-    console.log(`Validating ${prov.envVar}…`);
+    say(`Validating ${prov.envVar}…`);
     const outcome = await probeProvider({
       provider: prov.provider,
       model: prov.model,
@@ -180,7 +191,7 @@ export async function runSetupFromEnv(): Promise<void> {
       apiVersion: prov.apiVersion,
     });
     if (!outcome.ok && outcome.reason === 'rejected') {
-      fail(providerRejectedLine(prov.envVar));
+      fail(providerRejectedLine(prov.envVar), json, 'PROVIDER_AUTH_FAILED');
     }
     if (!outcome.ok) {
       // Redact: the SDK error can echo the key (Gemini `?key=`, openai-compat
@@ -207,6 +218,8 @@ export async function runSetupFromEnv(): Promise<void> {
       if (!v.ok && v.reason === 'rejected') {
         fail(
           'TELEGRAM_BOT_TOKEN rejected by Telegram (401) — fix .env and re-run docker compose up.',
+          json,
+          'PROVIDER_AUTH_FAILED',
         );
       }
       if (!v.ok) {
@@ -223,7 +236,7 @@ export async function runSetupFromEnv(): Promise<void> {
 
   // ── config.yaml: written ONCE (skip-if-exists) ──
   if (existingConfig) {
-    console.log('config.yaml already exists — secrets re-synced from env, config preserved.');
+    say('config.yaml already exists — secrets re-synced from env, config preserved.');
   } else {
     const ownerId = env.TELEGRAM_OWNER_ID;
     const personality = env.ETHOS_PERSONALITY || 'researcher';
@@ -274,5 +287,15 @@ export async function runSetupFromEnv(): Promise<void> {
   }
 
   // Success — the FINAL line (init last-line contract, W1.3).
+  if (json) {
+    writeJson({
+      ok: true,
+      provider: prov.provider,
+      model: prov.model,
+      configWritten: !existingConfig,
+      telegram: telegramConfigured,
+    });
+    return;
+  }
   console.log(INIT_SUCCESS_LINE);
 }

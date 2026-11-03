@@ -17,6 +17,7 @@ import {
   providerEntryProbes,
   testModelAlias,
 } from '@ethosagent/wiring';
+import { sayFor, writeJson, writeJsonError } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -30,8 +31,8 @@ const c = {
 };
 
 const USAGE = [
-  'Usage: ethos models test <alias>',
-  '       ethos models test --all',
+  'Usage: ethos models test <alias> [--json]',
+  '       ethos models test --all [--json]',
   '',
   '  <alias>  a `modelRegistry.<alias>` entry from ~/.ethos/config.yaml',
   '  --all    test one entry per PROVIDER ENTRY the registry references —',
@@ -107,9 +108,11 @@ function isFailure(outcome: ModelTestOutcome): boolean {
 }
 
 export async function runModels(args: string[], deps: ModelsCommandDeps = {}): Promise<void> {
-  const out = deps.out ?? ((line: string) => console.log(line));
+  const json = args.includes('--json');
+  const out = deps.out ?? sayFor(json);
 
   if (args[0] !== 'test') {
+    if (json) writeJsonError('INVALID_INPUT', USAGE);
     out(USAGE);
     process.exitCode = 1;
     return;
@@ -119,6 +122,7 @@ export async function runModels(args: string[], deps: ModelsCommandDeps = {}): P
   const all = rest.includes('--all');
   const alias = rest.find((a) => !a.startsWith('-'));
   if (!all && alias === undefined) {
+    if (json) writeJsonError('INVALID_INPUT', USAGE);
     out(USAGE);
     process.exitCode = 1;
     return;
@@ -126,6 +130,11 @@ export async function runModels(args: string[], deps: ModelsCommandDeps = {}): P
 
   const config = await (deps.loadConfig ?? (() => readRawConfig(getStorage())))();
   if (!config) {
+    if (json)
+      writeJsonError(
+        'CONFIG_MISSING',
+        'No config found at ~/.ethos/config.yaml — run ethos setup.',
+      );
     out(
       `${c.red}✗${c.reset} No config found at ~/.ethos/config.yaml — run ${c.cyan}ethos setup${c.reset}.`,
     );
@@ -139,6 +148,12 @@ export async function runModels(args: string[], deps: ModelsCommandDeps = {}): P
     : [{ providerKey: '', alias: alias ?? '', aliases: [alias ?? ''] }];
 
   if (all && targets.length === 0) {
+    if (json) {
+      writeJsonError(
+        'CONFIG_MISSING',
+        'No model registry entries are configured, so there is nothing to test.',
+      );
+    }
     out(
       `${c.red}✗${c.reset} No model registry entries are configured, so there is nothing to test.`,
     );
@@ -156,6 +171,7 @@ export async function runModels(args: string[], deps: ModelsCommandDeps = {}): P
   }
 
   let failed = false;
+  const results: Array<ModelTestOutcome & { covers?: string[] }> = [];
   for (const target of targets) {
     const outcome = await testModelAlias({
       alias: target.alias,
@@ -165,9 +181,13 @@ export async function runModels(args: string[], deps: ModelsCommandDeps = {}): P
       ...(deps.probe ? { probe: deps.probe } : {}),
       ...(deps.limiter ? { limiter: deps.limiter } : {}),
     });
-    for (const line of renderModelTest(outcome, all ? target.aliases : undefined)) out(line);
+    if (json) results.push(all ? { ...outcome, covers: target.aliases } : outcome);
+    else for (const line of renderModelTest(outcome, all ? target.aliases : undefined)) out(line);
     if (isFailure(outcome)) failed = true;
   }
+
+  // Per-result `state` carries each verdict; a failed one still sets the exit code below.
+  if (json) writeJson({ ok: true, results });
 
   if (failed) process.exitCode = 1;
 }

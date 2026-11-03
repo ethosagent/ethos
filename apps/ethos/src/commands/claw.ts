@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ClawMigrator, type MigrateOptions, type MigrationPlan } from '@ethosagent/claw-migrate';
 import { readConfig } from '@ethosagent/config';
+import { refuseJson, splitJson, writeJson, writeJsonError } from '../json-output';
 import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
@@ -22,14 +23,21 @@ interface ParsedFlags {
   yes: boolean;
 }
 
+/** The per-item outcomes of a plan that had nothing to execute. */
+const NOTHING_RAN = { copied: 0, skipped: 0, failed: 0, items: [] };
+
 export async function runClaw(args: string[]): Promise<void> {
-  const sub = args[0] ?? '';
+  const { json, args: argv } = splitJson(args);
+  const sub = argv[0] ?? '';
   if (sub !== 'migrate') {
-    console.log('Usage: ethos claw migrate [--dry-run] [--preset user-data] [--overwrite] [--yes]');
+    const usage =
+      'Usage: ethos claw migrate [--dry-run] [--preset user-data] [--overwrite] [--yes] [--json]';
+    if (json) writeJsonError('INVALID_INPUT', usage);
+    console.log(usage);
     process.exit(sub === '' ? 0 : 1);
   }
 
-  const flags = parseFlags(args.slice(1));
+  const flags = parseFlags(argv.slice(1), json);
   // The imported MEMORY.md / USER.md go to the scope of the TARGET's configured
   // memory backend (F04): the vault under `memory: vault`, the personality's own
   // directory under markdown. `openFileMemory` refuses a backend with no file
@@ -54,6 +62,12 @@ export async function runClaw(args: string[]): Promise<void> {
   const migrator = new ClawMigrator(opts);
 
   if (!(await migrator.sourceExists())) {
+    if (json) {
+      writeJsonError(
+        'FILE_NOT_FOUND',
+        `No OpenClaw install found at ${migrator.source}. Looking for ${migrator.source}/config.yaml — exiting without changes.`,
+      );
+    }
     console.error(
       `${c.red}No OpenClaw install found at ${migrator.source}.${c.reset}\n${c.dim}Looking for ${migrator.source}/config.yaml — exiting without changes.${c.reset}`,
     );
@@ -61,14 +75,42 @@ export async function runClaw(args: string[]): Promise<void> {
   }
 
   const plan = await migrator.plan();
-  printPlanSummary(plan, flags);
+  if (!json) printPlanSummary(plan, flags);
+
+  // The document echoes the plan, then the per-item outcomes (empty when nothing ran).
+  const document = (result: Awaited<ReturnType<ClawMigrator['execute']>> | typeof NOTHING_RAN) => ({
+    ok: true,
+    dryRun: flags.dryRun,
+    preset: flags.preset,
+    overwrite: flags.overwrite,
+    plan: {
+      source: plan.source,
+      target: plan.target,
+      workspace: plan.workspace,
+      summary: plan.summary,
+      personality: plan.personality,
+      ops: plan.ops,
+    },
+    copied: result.copied,
+    skipped: result.skipped,
+    failed: result.failed,
+    items: result.items,
+  });
 
   if (plan.ops.length === 0) {
+    if (json) {
+      writeJson(document(NOTHING_RAN));
+      return;
+    }
     console.log(`${c.yellow}Nothing to migrate.${c.reset}`);
     return;
   }
 
   if (!flags.dryRun && !flags.yes) {
+    refuseJson(
+      args,
+      '`ethos claw migrate` asks before writing; pass --yes (or --dry-run) with --json.',
+    );
     const ok = await confirm(`${c.bold}Proceed with migration?${c.reset} [y/N] `);
     if (!ok) {
       console.log(`${c.dim}Cancelled.${c.reset}`);
@@ -77,6 +119,11 @@ export async function runClaw(args: string[]): Promise<void> {
   }
 
   const result = await migrator.execute(plan);
+
+  if (json) {
+    writeJson(document(result));
+    return;
+  }
 
   console.log();
   for (const item of result.items) {
@@ -116,7 +163,7 @@ export async function runClaw(args: string[]): Promise<void> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseFlags(args: string[]): ParsedFlags {
+function parseFlags(args: string[], json: boolean): ParsedFlags {
   let dryRun = false;
   let preset: 'all' | 'user-data' = 'all';
   let overwrite = false;
@@ -132,10 +179,13 @@ function parseFlags(args: string[]): ParsedFlags {
         preset = next;
         i += 1;
       } else {
+        if (json)
+          writeJsonError('INVALID_INPUT', `Unknown preset: ${next}. Valid: 'all' | 'user-data'.`);
         console.error(`Unknown preset: ${next}. Valid: 'all' | 'user-data'.`);
         process.exit(1);
       }
     } else {
+      if (json) writeJsonError('INVALID_INPUT', `Unknown flag: ${a}`);
       console.error(`Unknown flag: ${a}`);
       process.exit(1);
     }

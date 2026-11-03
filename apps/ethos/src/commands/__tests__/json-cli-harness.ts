@@ -53,6 +53,14 @@ export async function setupJsonCli(prefix: string): Promise<JsonCliHarness> {
   };
 }
 
+/** Asserts none of `needles` (a secret) reached raw stdout or stderr, in any form. */
+export function expectNoSecret(h: JsonCliHarness, ...needles: string[]): void {
+  for (const needle of needles) {
+    expect(h.stdout()).not.toContain(needle);
+    expect(h.stderr()).not.toContain(needle);
+  }
+}
+
 /** Asserts stdout holds exactly one line and returns it parsed. */
 export interface JsonDoc {
   ok: boolean;

@@ -25,7 +25,7 @@ import {
   type OutboxState,
   SQLiteOutboxStore,
 } from '@ethosagent/outbox';
-import { writeJson, writeJsonError } from '../json-output';
+import { splitJson, writeJson, writeJsonError } from '../json-output';
 import { getEthosObservability, getStorage } from '../wiring';
 
 const c = {
@@ -115,8 +115,8 @@ export function runOutboxCommand(
   io: OutboxCliIo = CONSOLE_IO,
   decidedBy = 'cli',
 ): number {
-  const json = args.includes('--json');
-  const [sub, ...rest] = args.filter((a) => a !== '--json');
+  const { json, args: positional } = splitJson(args);
+  const [sub, ...rest] = positional;
   switch (sub) {
     case 'list':
       return list(rest, service, io, json);

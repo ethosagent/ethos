@@ -4,6 +4,7 @@ import type { EthosConfig } from '@ethosagent/config';
 import { readRawConfig, writeConfig } from '@ethosagent/config';
 import { teamsDir } from '@ethosagent/team-supervisor';
 import { EthosError } from '@ethosagent/types';
+import { splitJson, writeJson, writeJsonError } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -36,9 +37,10 @@ function resolveTeamExists(name: string): void {
   });
 }
 
-async function requireConfig(): Promise<EthosConfig> {
+async function requireConfig(json: boolean): Promise<EthosConfig> {
   const cfg = await readRawConfig(getStorage());
   if (!cfg) {
+    if (json) writeJsonError('CONFIG_MISSING', 'No config found. Run ethos setup first.');
     console.error('No config found. Run ethos setup first.');
     process.exit(1);
   }
@@ -60,28 +62,41 @@ function printCurrent(config: EthosConfig): void {
   );
 }
 
-export async function runSet(args: string[]): Promise<void> {
+export async function runSet(argv: string[]): Promise<void> {
+  const { json, args } = splitJson(argv);
   const sub = args[0]?.toLowerCase();
 
   // ethos set → show current
   if (!sub) {
-    const config = await requireConfig();
+    const config = await requireConfig(json);
+    if (json) {
+      writeJson({
+        ok: true,
+        personality: config.personality,
+        activeContext: config.activeContext ?? null,
+      });
+      return;
+    }
     printCurrent(config);
     return;
   }
 
   if (sub !== 'personality' && sub !== 'team') {
-    console.log('Usage: ethos set [personality <name> | team <name>]');
+    const usage = 'Usage: ethos set [personality <name> | team <name>] [--json]';
+    if (json) writeJsonError('INVALID_INPUT', usage);
+    console.log(usage);
     return;
   }
 
   const name = args[1];
   if (!name) {
-    console.log(`Usage: ethos set ${sub} <name>`);
+    const usage = `Usage: ethos set ${sub} <name> [--json]`;
+    if (json) writeJsonError('INVALID_INPUT', usage);
+    console.log(usage);
     return;
   }
 
-  const config = await requireConfig();
+  const config = await requireConfig(json);
 
   if (sub === 'team') {
     resolveTeamExists(name);
@@ -90,6 +105,10 @@ export async function runSet(args: string[]): Promise<void> {
       { ...config, activeContext: { type: 'team', name } },
       await getSecretsResolver(),
     );
+    if (json) {
+      writeJson({ ok: true, kind: 'team', name });
+      return;
+    }
     console.log(
       `${c.green}✓${c.reset} Active context set to ${c.bold}team:${name}${c.reset}\n` +
         `${c.dim}Start the team first: ethos team start ${name}${c.reset}`,
@@ -109,6 +128,10 @@ export async function runSet(args: string[]): Promise<void> {
       },
       await getSecretsResolver(),
     );
+    if (json) {
+      writeJson({ ok: true, kind: 'personality', name });
+      return;
+    }
     console.log(`${c.green}✓${c.reset} Default personality set to ${c.bold}${name}${c.reset}`);
   }
 }

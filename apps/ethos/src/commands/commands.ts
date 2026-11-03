@@ -3,6 +3,7 @@
 import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { splitJson, writeJson, writeJsonError } from '../json-output';
 import type { CommandMeta } from '../lib/command-loader';
 import { scanCommandsIntoRegistry } from '../lib/command-loader';
 import { SlashCommandRegistry } from '../lib/slash-commands';
@@ -17,27 +18,31 @@ const c = {
   yellow: '\x1b[33m',
 };
 
-export async function runCommands(args: string[]): Promise<void> {
+export async function runCommands(argv: string[]): Promise<void> {
+  const { json, args } = splitJson(argv);
   const sub = args[0] ?? 'list';
 
   switch (sub) {
     case 'list': {
-      await listCommands(args);
+      await listCommands(args, json);
       break;
     }
 
     case 'show': {
       const name = args[1];
       if (!name) {
-        console.log('Usage: ethos commands show <name>');
+        if (json) writeJsonError('INVALID_INPUT', 'Usage: ethos commands show <name> [--json]');
+        console.log('Usage: ethos commands show <name> [--json]');
         process.exit(1);
       }
-      await showCommand(name, args);
+      await showCommand(name, args, json);
       break;
     }
 
     default:
-      console.log('Usage: ethos commands [list | show <name>]');
+      if (json)
+        writeJsonError('INVALID_INPUT', 'Usage: ethos commands [list | show <name>] [--json]');
+      console.log('Usage: ethos commands [list | show <name>] [--json]');
   }
 }
 
@@ -74,8 +79,18 @@ async function scanCommands(args: string[]): Promise<Map<string, CommandMeta>> {
   return cache;
 }
 
-async function listCommands(args: string[]): Promise<void> {
+async function listCommands(args: string[], json: boolean): Promise<void> {
   const cache = await scanCommands(args);
+
+  if (json) {
+    const commands = [...cache.values()].map((meta) => ({
+      name: meta.definition.name,
+      scope: meta.definition.scope,
+      description: meta.definition.description,
+    }));
+    writeJson({ ok: true, commands });
+    return;
+  }
 
   if (cache.size === 0) {
     console.log(`\n${c.dim}No commands found.${c.reset}`);
@@ -117,17 +132,34 @@ async function listCommands(args: string[]): Promise<void> {
   }
 }
 
-async function showCommand(name: string, args: string[]): Promise<void> {
+async function showCommand(name: string, args: string[], json: boolean): Promise<void> {
   const cache = await scanCommands(args);
   const meta = cache.get(name);
 
   if (!meta) {
+    if (json) writeJsonError('NOT_FOUND', `Command not found: ${name}`);
     console.error(`${c.red}Command not found: ${name}${c.reset}`);
     console.error(`${c.dim}Run 'ethos commands list' to see available commands.${c.reset}`);
     process.exit(1);
   }
 
   const def = meta.definition;
+
+  if (json) {
+    writeJson({
+      ok: true,
+      command: {
+        name: def.name,
+        scope: def.scope,
+        file: meta.filePath,
+        description: def.description,
+        allowedTools: def.allowedTools ?? [],
+        argumentHint: def.argumentHint ?? null,
+        prompt: def.prompt,
+      },
+    });
+    return;
+  }
 
   console.log();
   console.log(`${c.bold}${def.name}${c.reset}`);

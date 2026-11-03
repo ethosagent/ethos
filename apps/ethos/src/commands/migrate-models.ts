@@ -24,6 +24,7 @@ import {
   writeConfig,
 } from '@ethosagent/config';
 import { lookupCatalogModel } from '@ethosagent/wiring/model-catalog';
+import { refuseJson, sayFor, writeJson, writeJsonError } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -37,7 +38,7 @@ const c = {
 };
 
 const USAGE = [
-  'Usage: ethos migrate models [--yes]',
+  'Usage: ethos migrate models [--yes] [--json]',
   '',
   '  models  adopt every model your provider chain declares into modelRegistry.* —',
   '          one alias per providers.<n>.model — after printing the diff',
@@ -75,8 +76,10 @@ function colour(line: string): string {
 }
 
 export async function runMigrate(args: string[], deps: MigrateCommandDeps = {}): Promise<void> {
-  const out = deps.out ?? ((line: string) => console.log(line));
+  const json = args.includes('--json');
+  const out = deps.out ?? sayFor(json);
   if (args[0] !== 'models') {
+    if (json) writeJsonError('INVALID_INPUT', USAGE);
     out(USAGE);
     process.exitCode = 1;
     return;
@@ -85,6 +88,11 @@ export async function runMigrate(args: string[], deps: MigrateCommandDeps = {}):
 
   const config = await (deps.loadConfig ?? (() => readRawConfig(getStorage())))();
   if (!config) {
+    if (json)
+      writeJsonError(
+        'CONFIG_MISSING',
+        'No config found at ~/.ethos/config.yaml — run ethos setup.',
+      );
     out(
       `${c.red}✗${c.reset} No config found at ~/.ethos/config.yaml — run ${c.cyan}ethos setup${c.reset}.`,
     );
@@ -96,6 +104,17 @@ export async function runMigrate(args: string[], deps: MigrateCommandDeps = {}):
     lookupCatalog: deps.lookupCatalog ?? lookupCatalogModel,
   });
   if (plan.diff.length === 0) {
+    if (json) {
+      writeJson({
+        ok: true,
+        changed: false,
+        diff: [],
+        adopted: [],
+        idsWritten: [],
+        defaultSet: null,
+      });
+      return;
+    }
     out(
       `${c.green}✓${c.reset} Nothing to import — every model your provider chain declares is already in modelRegistry.`,
     );
@@ -106,6 +125,10 @@ export async function runMigrate(args: string[], deps: MigrateCommandDeps = {}):
   for (const line of plan.diff) out(`  ${colour(line)}`);
 
   if (!yes) {
+    refuseJson(
+      args,
+      'ethos migrate models prompts before writing; pass --yes to write under --json.',
+    );
     const isTTY = deps.isTTY ?? Boolean(process.stdin.isTTY && process.stdout.isTTY);
     if (!isTTY) {
       out(
@@ -132,6 +155,18 @@ export async function runMigrate(args: string[], deps: MigrateCommandDeps = {}):
     deps.saveConfig ??
     (async (value: EthosConfig) => writeConfig(getStorage(), value, await getSecretsResolver()))
   )(next);
+
+  if (json) {
+    writeJson({
+      ok: true,
+      changed: true,
+      diff: plan.diff,
+      adopted: plan.adopted,
+      idsWritten: plan.idsWritten,
+      defaultSet: plan.defaultSet,
+    });
+    return;
+  }
 
   for (const model of plan.adopted) {
     out(
