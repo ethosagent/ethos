@@ -1,11 +1,11 @@
 ---
 title: "Write a memory backend plugin"
-description: "Ship a plugin that registers a custom memory provider via registerMemoryProvider so personalities can persist memory through your backend."
+description: "Scaffold a memory backend plugin and implement the MemoryProvider contract. Part 2 covers registration, configuration and routing."
 kind: how-to
 audience: developer
 slug: write-a-memory-backend-plugin
 time: "15 min"
-updated: 2026-05-14
+updated: 2026-11-03
 ---
 
 ## Task
@@ -21,6 +21,13 @@ Create a plugin that registers a custom [memory provider](../../getting-started/
 - TypeScript familiarity, Node 24+, pnpm on `PATH`.
 - A backend ready to talk to (Mem0, Letta, Zep, Redis, a custom API).
 - Understanding of the `MemoryProvider` interface (5 methods in `packages/types/src/memory.ts`).
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Steps 1-2: scaffold the plugin, implement `MemoryProvider`. |
+| [Register and configure](./write-a-memory-backend-plugin/register-and-configure.md) | Steps 3-5: register via `activate`, configure, per-personality routing. |
 
 ## Steps
 
@@ -149,64 +156,18 @@ export class Mem0Provider implements MemoryProvider {
 }
 ```
 
-### 3. Register via activate
-
-```ts title="src/index.ts"
-import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
-import { Mem0Provider } from './mem0-provider';
-
-export function activate(api: EthosPluginApi): void {
-  api.registerMemoryProvider('mem0', async ({ secrets, logger }) => {
-    const apiKey = await secrets.get('providers/mem0/apiKey');
-    if (!apiKey) {
-      throw new Error('Mem0 API key not found in secrets store');
-    }
-    logger.info('Mem0 memory provider activated');
-    return new Mem0Provider(apiKey, 'https://api.mem0.ai');
-  });
-}
-```
-
-The registered name becomes `ethos-plugin-mem0/mem0`.
-
-### 4. Configure
-
-```yaml title="~/.ethos/config.yaml"
-memory: ethos-plugin-mem0/mem0
-```
-
-```bash
-ethos secrets set providers/mem0/apiKey <your-key>
-```
-
-### 5. Per-personality routing (optional)
-
-A personality can override the global memory backend:
-
-```yaml title="~/.ethos/personalities/researcher/config.yaml"
-memory:
-  provider: ethos-plugin-mem0/mem0
-  options:
-    collection: researcher
-```
-
-The `options` dict is passed as `config` to your factory.
+Continue with [Register and configure](./write-a-memory-backend-plugin/register-and-configure.md).
 
 ## Verify
 
-```bash
-ethos chat -q "remember that I prefer dark mode"
-ethos chat -q "what are my preferences?"
-```
+If your plugin has a `tsconfig.json` and `typescript` installed, type-check the provider. Expect no output.
 
-The second turn should recall the preference via your Mem0 backend.
+```bash
+pnpm exec tsc --noEmit
+```
 
 ## Troubleshoot
 
-**"Memory provider X is not registered"** — The plugin did not load. Check `ethos plugins list` and ensure `ethos.pluginContractMajor: 2` is set.
-
 **prefetch returns null but memories exist** — Your `fetchMemories` call may be scoping incorrectly. The `scopeId` is `personality:<id>` for per-personality scope or `global` for shared.
-
-**Factory throws "API key not found"** — Run `ethos secrets set providers/mem0/apiKey <key>`. Network-only backends still need credentials even though they ignore `dataDir`.
 
 **The drift-gate rejects your plugin** — Your `package.json` must declare `ethos.pluginContractMajor: 2`. Plugins declaring v1 (or omitting the field from older versions) are accepted; plugins declaring a future major are rejected.

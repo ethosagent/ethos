@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: bot-token-rotation
 time: "10 min"
-updated: 2026-05-18
+updated: 2026-11-03
 ---
 
 ## Task
@@ -107,54 +107,12 @@ sudo systemctl restart ethos-gateway
 5. Send a test message in a Discord channel where the bot is present. Confirm the bot responds.
 6. The old token was automatically invalidated when you clicked **Reset Token** in step 2. No separate revocation step is needed.
 
-### 4. Rotate email credentials (IMAP/SMTP)
+The steps continue on the subpages below; run them in order.
 
-1. Change the email account password through the provider's account settings (Gmail, Outlook, self-hosted).
-2. If the account uses an app-specific password (e.g., Gmail with 2FA), generate a new app password and delete the old one.
-3. Store both the IMAP and SMTP passwords:
-
-```bash
-ethos secrets set channels/email/default/imap/password <new-password>
-ethos secrets set channels/email/default/smtp/password <new-password>
-```
-
-4. Restart the gateway.
-5. Send a test email to the monitored inbox. Confirm the bot processes the inbound message and replies.
-
-### 5. Handle multi-bot deployments
-
-In multi-bot deployments, each bot is identified by a unique bot key. The secret ref includes this key instead of `default`.
-
-1. List current secret refs to find the bot keys:
-
-```bash
-ethos secrets list
-```
-
-Example output:
-
-```
-channels/telegram/support-bot/botToken
-channels/telegram/alerts-bot/botToken
-channels/slack/eng-app/botToken
-channels/slack/ops-app/botToken
-```
-
-2. Rotate each bot individually using the platform-specific steps above, substituting the bot key for `default`:
-
-```bash
-# Indexed Telegram bots
-ethos secrets set channels/telegram/support-bot/botToken <new-token>
-ethos secrets set channels/telegram/alerts-bot/botToken <new-token>
-
-# Indexed Slack apps
-ethos secrets set channels/slack/eng-app/botToken <new-token>
-ethos secrets set channels/slack/eng-app/appToken <new-token>
-ethos secrets set channels/slack/eng-app/signingSecret <new-secret>
-```
-
-3. Restart the gateway once after storing all new tokens. Each bot reconnects with its updated credential.
-4. Verify every bot individually --- send a test message on each platform and bot.
+| Section | Page |
+| --- | --- |
+| <a id="4-rotate-email-credentials-imapsmtp"></a>[4. Rotate email credentials (IMAP/SMTP)](bot-token-rotation-playbook/email-and-multi-bot.md#4-rotate-email-credentials-imapsmtp) | [Bot-token rotation: email credentials and multi-bot deployments](bot-token-rotation-playbook/email-and-multi-bot.md) |
+| <a id="5-handle-multi-bot-deployments"></a>[5. Handle multi-bot deployments](bot-token-rotation-playbook/email-and-multi-bot.md#5-handle-multi-bot-deployments) | [Bot-token rotation: email credentials and multi-bot deployments](bot-token-rotation-playbook/email-and-multi-bot.md) |
 
 ## Verify
 

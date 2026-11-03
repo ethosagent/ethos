@@ -1,11 +1,11 @@
 ---
 title: "Manage skill evolution"
-description: "Review, replay, approve, reject and roll back the skills Ethos drafts from its own work, using the learning inbox and the ethos learning CLI."
+description: "List, inspect, replay and approve the skills Ethos drafts from its own work; later parts cover reject, rollback, web review and archive."
 kind: how-to
 audience: user
 slug: manage-skill-evolution
 time: "10 min"
-updated: 2026-09-13
+updated: 2026-11-03
 ---
 
 ## Task
@@ -39,6 +39,14 @@ The per-personality keys, in `~/.ethos/personalities/<id>/config.yaml`:
 | `skill_evolution.cooldown_minutes` | `60` | Minimum minutes between fork runs for this personality, per process |
 | `skill_evolution.promotion` | unset | `auto` lets a `pass` promote without you; `review` always waits for you. Unset falls back to `evolution_approval_mode`, then `autoApprove` |
 | `skill_evolution.scope` | `shared` | `personality` writes to `~/.ethos/personalities/<id>/skills/`. Only a personality-scoped skill can promote itself; a shared one always needs you |
+
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Steps 1-4: list, inspect, replay and approve candidates |
+| [Reject, roll back and archive](manage-skill-evolution/reject-rollback-archive.md) | Steps 5-8: reject, roll back a promotion, decide on the web, archive unused skills |
 
 ## Steps
 
@@ -126,57 +134,7 @@ override recorded: regression is a tone case I accept
 
 `ethos evolve apply <candidate-id | filename>` also approves, but only a `pass`.
 
-### 5. Reject what you do not want
-
-```bash
-ethos learning reject c-mf3m9q-d4e5f6 --reason "duplicates an existing skill"
-```
-
-```text
-rejected c-mf3m9q-d4e5f6
-```
-
-To reject every skill candidate waiting longer than 7 days, run `ethos evolve prune --older-than 7`. It lists them and asks before rejecting. Nothing is deleted either way.
-
-### 6. Roll back a promotion
-
-```bash
-ethos learning rollback c-mf3k2x-a1b2c3 --reason "made reviews too terse"
-```
-
-```text
-rolled back c-mf3k2x-a1b2c3
-```
-
-A rewrite gets its previous file back. A new skill's file is removed.
-
-### 7. Decide on the web instead
-
-Start the dashboard with `ethos serve`. Open **Learning** in the Library section of the sidebar. Its count shows candidates a replay has measured that now wait on you.
-
-The page groups candidates into **Needs review**, **Waiting for replay**, **Promoted**, and **Rejected & rolled back**. Select one to see its evidence, its diff, its replay scorecard with the dry-run caveat beside the numbers, and its timeline.
-
-| Button | Shown when | What it does |
-|---|---|---|
-| **Approve** | Waiting, verdict `pass` | Promotes the candidate. |
-| **Approve anyway…** | Waiting, any other verdict | Asks for a reason. **Approve anyway** stays disabled until you type one. |
-| **Reject…** | Waiting, `invalid` or `stale` | Rejects, with an optional reason. |
-| **Run replay** | Waiting | Replays now, the same as `ethos learning replay <id>`. |
-| **Rollback** | Promoted | Rolls back, with an optional reason. When rollback is not allowed, it is disabled and the reason is shown beside it. |
-
-The Skills page's **Approval queue** tab approves nothing. It links to this page, filtered to skill candidates.
-
-### 8. Archive skills you no longer use
-
-```bash
-ethos evolve archive --older-than 30
-```
-
-```text
-archived 2 skills to .archive/2026-09-13/
-```
-
-This moves `~/.ethos/skills/*.md` files last modified more than 30 days ago into `~/.ethos/skills/.archive/<date>/`, with a `manifest.json`. It goes by file modification time, not by use. Skill discovery skips dot-directories, so archived files stop loading. To restore one, move it back to `~/.ethos/skills/`.
+Continue with [Reject, roll back and archive](manage-skill-evolution/reject-rollback-archive.md).
 
 ## Verify
 
@@ -218,8 +176,6 @@ Each human decision prints one `audit.approval` line with code `learning.approve
 **`replay_unavailable`.** `learningReplay.enabled` is `false` in `~/.ethos/config.yaml`.
 
 **Approve refuses with `stale`.** The live file changed after the draft was made, so the draft no longer applies to it. Reject the candidate.
-
-**Rollback refuses with `live_edited`.** Someone edited the skill after it was promoted. Rollback never overwrites a hand edit. Edit the file yourself.
 
 **The agent says it cannot approve a skill.** That is intended. `skills_pending_approve` refuses in chat, because approval is a human decision. Run `ethos learning approve <id>`.
 

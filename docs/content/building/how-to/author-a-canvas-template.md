@@ -1,11 +1,11 @@
 ---
 title: "Author a Canvas template"
-description: "Write a ui/*.html Canvas template a personality renders with render_ui — the data global, theme variables, library allowlist, CSP limits, and caps."
+description: "Write a ui/*.html Canvas template: file location, catalog description, the data global and theme variables. Part 2 covers sizing, libraries, CSP and caps."
 kind: how-to
 audience: developer
 slug: author-a-canvas-template
 time: "15 min"
-updated: 2026-08-11
+updated: 2026-11-03
 ---
 
 ## Task
@@ -23,6 +23,13 @@ Reach for Canvas only when the shape does not fit one of the eight typed card ki
 - A personality directory at `~/.ethos/personalities/<personality-id>/` containing `SOUL.md`.
 - `render_ui` listed in that personality's `toolset.yaml`.
 - The web or desktop surface. Channel adapters drop the `ui` toolset by design.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Steps 1-4: file location, catalog description, `window.ethosData`, theme variables. |
+| [Sizing, libraries, CSP and caps](./author-a-canvas-template/limits-and-render.md) | Steps 5-8: frame height, library allowlist, CSP, caps; render check. |
 
 ## Steps
 
@@ -108,69 +115,11 @@ var inflow = css.getPropertyValue('--ethos-success').trim();
 
 An empty string back means the template is not running inside a Canvas frame. `sector-flow.html` treats that as another degraded case and renders its message instead of a mis-colored chart.
 
-### 5. Let the host size the frame
-
-Height is automatic. The host injects a `ResizeObserver` on `document.body` that reports `document.documentElement.scrollHeight` back over `postMessage`. Give your content a real height and do nothing else — no height protocol to implement, no manual resize call.
-
-Charts are the one case that needs a number, because a chart canvas has no intrinsic height. Derive it from the data:
-
-```js
-root.style.height = sectors.length * 34 + 108 + 'px';
-```
-
-### 6. Request a library, if you need one
-
-`libraries` is a versioned allowlist bundled locally by the web app. Spec 1 ships one entry:
-
-| Name | Global | Registered surface |
-|---|---|---|
-| `echarts@1` | `echarts` | Series: bar, line, pie, scatter, heatmap. Components: dataset, grid, legend, title, tooltip, visualMap. |
-
-Pass it on the call — `render_ui({ template: "sector-flow", libraries: ["echarts@1"], data })` — and the source is prepended inline before your markup. Unknown names are rejected at the tool. There is no CDN, by design.
-
-Many templates need no library at all. The swing-trader `market-brief.html` is plain DOM: `document.createElement` plus `textContent`, no dependency.
-
-### 7. Stay inside the CSP
-
-The frame runs with `sandbox="allow-scripts"` and no `allow-same-origin` — an opaque origin, no cookies, no storage, no reach into the page around it. On top of that:
-
-```
-default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;
-```
-
-| Forbidden | Why |
-|---|---|
-| `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` | `default-src 'none'` — a template cannot phone home. Everything it shows must arrive in `data`. |
-| Remote scripts, stylesheets, fonts, images | Same fallback. Fonts are deliberately absent: the frame renders in the stack `--ethos-font` names. Images must be `data:` URIs. |
-| `eval`, `new Function` | `script-src` carries no `'unsafe-eval'`. |
-| Nonces and hashes | Deliberately not shipped — adding one would disable `'unsafe-inline'` and break every template. |
-
-Inline `<style>`, `style=` attributes, and inline `<script>` all work. That is the whole surface.
-
-### 8. Respect the caps
-
-| Cap | Limit |
-|---|---|
-| `html` (inline or resolved template) | 65 536 chars |
-| `data`, serialized | 32 768 chars |
-| `libraries` | 4 entries |
-| `title` | 120 chars |
-
-Inline `html` is for one-off shapes the model composes on the spot. A template is the durable form: it is reviewed, it is versioned with the personality, and it costs no prompt tokens per turn.
+Continue with [Sizing, libraries, CSP and caps](./author-a-canvas-template/limits-and-render.md).
 
 ## Verify
 
-Call the tool from a chat turn on the web surface:
-
-```
-render_ui({ template: "sector-flow", libraries: ["echarts@1"], data: { "unit": "Cr", "buckets": ["Mon","Tue"], "sectors": ["Banks","IT"], "cells": [{"sector":"Banks","bucket":"Mon","value":412}] } })
-```
-
-```
-rendered canvas
-```
-
-The frame appears in the turn, themed to your skin, sized to its content. Switch the app between dark and light: every color follows, and nothing in the frame is a fixed hex.
+Open the template file directly in a browser. Expect the "no data" message, not a blank page.
 
 ## Troubleshoot
 
@@ -187,10 +136,6 @@ fs_reach.read: /tmp/, ${ETHOS_HOME}/personalities/${self}/
 **`Canvas template "<name>" is missing or empty`**
 
 The error names the exact path it tried. Check the file is under `ui/`, ends in `.html`, and is non-empty.
-
-**`Cards render on the web surface; answer in prose here.`**
-
-The turn ran on a channel or the CLI. Both `ui` tools refuse off-surface, and the composition rules are not injected there either.
 
 **The frame renders but the colors are wrong in one theme**
 

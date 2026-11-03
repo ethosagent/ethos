@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: deploy-on-ec2
 time: "15 min"
-updated: 2026-05-17
+updated: 2026-11-03
 ---
 
 ## Task
@@ -30,6 +30,13 @@ For the architecture explainer (why these processes, why this shape), see [Deplo
   - **SSH** — works fine. Generate an EC2 key pair, open port 22 to your IP, the rest is the same.
 
 **OS choice** is a recommendation, not a requirement. The canonical script targets **Amazon Linux 2023** (default AWS AMI, dnf-based, SSM agent preinstalled). Ubuntu 24.04 also works — the script's package commands are the only thing you'd swap. Any Linux that can run Node 24 fits.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Launch the instance, bootstrap script, mount the EBS state volume, security posture |
+| [Service, backup and operation](deploy-on-ec2/service-and-operate.md) | `ethos setup`, systemd service, AWS Backup, optional web dashboard, day-to-day commands |
 
 ## Steps
 
@@ -79,106 +86,13 @@ echo "/dev/nvme1n1 /var/lib/ethos xfs defaults,nofail 0 2" | sudo tee -a /etc/fs
 
 (The device name may be `xvdf` on older instance types; `lsblk` tells you what's actually there.)
 
-### 4. Connect and run `ethos setup`
+## Next
 
-**With SSM Session Manager:**
-
-```bash
-aws ssm start-session --target i-0123456789abcdef0
-```
-
-**With SSH:**
-
-```bash
-ssh -i ~/.ssh/your-key.pem ec2-user@<public-ip-or-dns>
-```
-
-Either way, become the `ethos` user and run setup:
-
-```bash
-sudo -iu ethos
-ethos setup
-```
-
-The wizard asks for your LLM provider + key, picks a default personality, and walks through Telegram / Slack / Discord / Email tokens for whichever channels you want. Everything lands in `~/.ethos/config.yaml` — which actually lives on the encrypted EBS state volume.
-
-Foreground-test before enabling the service:
-
-```bash
-ethos gateway start
-# DM your bot, confirm a reply, Ctrl+C
-exit       # back to your shell user
-```
-
-### 5. Enable the service
-
-```bash
-sudo systemctl enable --now ethos
-sudo systemctl status ethos
-```
-
-`enable --now` starts the service and wires it to launch at boot. The service runs `ethos gateway start` as the `ethos` user.
-
-Verify:
-
-- Send a DM to your bot — it replies.
-- `journalctl -u ethos -f` — streams the gateway's logs.
-- Reboot the instance (`sudo reboot`). Reconnect. `systemctl status ethos` shows `active (running)` — no manual intervention needed.
-
-### 6. Set up AWS Backup for the state volume
-
-Daily EBS snapshots cover the "I accidentally `rm -rf ~/.ethos`" and "the instance was terminated" cases.
-
-In the AWS Backup console:
-
-1. **Backup plans → Create backup plan → Start with a template → Daily backups**.
-2. **Resource assignments → Resources** → tag-based selection (tag the EBS volume with `backup: daily`).
-3. Retention: 7 days is plenty for state recovery; bump to 30 if your compliance posture wants it.
-
-That's it. AWS Backup takes encrypted snapshots inheriting the volume's encryption.
+Continue with [Service, backup and operation](deploy-on-ec2/service-and-operate.md) for steps 4 to 6: `ethos setup`, enabling the systemd service and AWS Backup.
 
 ## Verify
 
-Confirm the deployment is healthy after the steps above:
-
-- **Bot replies.** DM your Telegram bot (or `@mention` in Slack). Reply lands within a few seconds.
-- **Service active + enabled.** `sudo systemctl status ethos` shows `active (running)` and `enabled` (will start on boot).
-- **Logs stream.** `journalctl -u ethos -f` shows the gateway's startup banner and per-turn output.
-- **State volume mounted.** `df -h /var/lib/ethos` shows the EBS device (not the root volume). `ls -la /home/ethos/.ethos` shows the symlink target.
-- **Reboot survival.** `sudo reboot`, reconnect (SSM or SSH), `systemctl status ethos` shows `active (running)` again with no manual intervention.
-- **Backup ran.** AWS Backup console → Jobs tab → daily snapshot of the state volume appears within 24h of plan creation.
-
-If any of these fail, jump to [Troubleshoot](#troubleshoot) below.
-
-## Run the web dashboard too (optional)
-
-The default deployment is **gateway-only** — no inbound port, no dashboard, the simplest case. To also run the web dashboard + ACP server, swap the systemd unit's `ExecStart`:
-
-```bash
-sudo sed -i 's|ethos gateway start|ethos run-all|' /etc/systemd/system/ethos.service
-sudo systemctl daemon-reload
-sudo systemctl restart ethos
-```
-
-Now `ethos run-all` is supervising both `gateway start` and `serve`. The dashboard binds to `localhost:3000` on the instance. Reach it from your laptop without ever opening the port to the internet:
-
-**Via SSH tunnel:**
-
-```bash
-ssh -L 3000:localhost:3000 ec2-user@<public-ip>
-# now browse http://localhost:3000 on your laptop
-```
-
-**Via SSM port forwarding** (no SSH key needed):
-
-```bash
-aws ssm start-session --target i-0123456789abcdef0 \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
-# browse http://localhost:3000 on your laptop
-```
-
-Same security posture either way — the dashboard is never reachable from the public internet, only through your authenticated tunnel.
+After step 3, `df -h /var/lib/ethos` shows the EBS device, not the root volume, and `ls -ld /var/lib/ethos` shows it owned by `ethos`. The full deployment check is in part 2.
 
 ## Security
 
@@ -195,53 +109,12 @@ What this deployment shape deliberately *doesn't* solve, and what to add if you 
 - **Secrets at rest while the instance is running** — encrypted volume protects against snapshot theft, not a logged-in root user. See [Configure AWS Secrets Manager](configure-aws-secrets.md) to fetch tokens from AWS at runtime instead of storing them on the EBS volume.
 - **Public dashboard with auth** — out of scope. The tunnel approach above is the right answer until you have a reason to expose the dashboard, at which point you want a reverse proxy + a real auth story, not just port-opening.
 
-## Operate
-
-| What | Command |
-|---|---|
-| Stream gateway logs | `journalctl -u ethos -f` |
-| Restart the service | `sudo systemctl restart ethos` |
-| Stop / start | `sudo systemctl stop ethos` / `sudo systemctl start ethos` |
-| Status + last 10 log lines | `sudo systemctl status ethos` |
-| Upgrade | `sudo -iu ethos ethos upgrade && sudo systemctl restart ethos` |
-| Talk to the agent from your laptop | SSM/SSH in, run `ethos chat` (uses its own session lane, doesn't collide with the bots) |
-
-State volume layout reminder:
-
-```
-/var/lib/ethos/                ← EBS volume mount, owned by ethos
-├── config.yaml                ← tokens + provider keys
-├── personalities/<id>/        ← personality definitions + per-personality memory
-├── sessions.db                ← every conversation ever
-├── logs/{gateway,serve}.log   ← per-child logs (if using run-all)
-└── ...
-```
-
-Operator's laptop story: `ethos chat` on your laptop uses its own `~/.ethos/` (totally separate state), and the bots running on the EC2 box keep going whether your laptop is open or not. To chat with the *same* agent state the bots use, SSM/SSH in and run `ethos chat` on the instance.
-
 ## Troubleshoot
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Bootstrap script failed with `gyp ERR! build error` | A native dependency failed to compile | Install build tools: `dnf groupinstall "Development Tools"` (AL2023) or `sudo apt-get install build-essential` (Debian/Ubuntu), then re-run `pnpm install` |
-| `ethos: command not found` after `sudo -iu ethos` | PATH not picked up from `.bashrc` | Run `source ~/.bashrc` once, or use the absolute path: `/home/ethos/.npm-global/bin/ethos setup` |
-| `systemctl status ethos` shows `failed` with `Run ethos setup first` | The unit started before tokens were configured | `sudo -iu ethos && ethos setup`, then `sudo systemctl restart ethos` |
 | SSM session won't start | Missing IAM role / SSM agent not running | Confirm `AmazonSSMManagedInstanceCore` is attached; on AL2023 SSM is preinstalled. On Ubuntu, `sudo snap install amazon-ssm-agent --classic`. |
 | State lost after instance replacement | EBS volume wasn't separate / wasn't attached to the new instance | Step 1's "second volume mounted at `/var/lib/ethos`" is the load-bearing call. AWS Backup snapshots are the recovery path. |
-| Telegram bot stops responding but `systemctl status ethos` shows `active` | Token revoked, or Telegram API blocked | `journalctl -u ethos -n 100` — the error is usually one line. Fix the token in `~/.ethos/config.yaml`, restart. |
-| `ethos upgrade` says "command not found: npm" | Bare `sudo -u ethos ethos upgrade` (without `-i`); login shell wasn't sourced | Always use `sudo -iu ethos ethos upgrade` — the `-i` is what loads PATH and HOME correctly |
 
 For everything else: `journalctl -u ethos -n 200`, `ethos doctor`, [Troubleshooting reference](../../troubleshooting.md).
-
-## What you learned
-
-- One EC2 + one EBS + one systemd unit is the whole AWS architecture for a single-operator Ethos deployment.
-- The bootstrap script automates the fragile bits (Node version, build tools, service user, systemd wiring).
-- State on a separate encrypted EBS volume + AWS Backup snapshots = upgrade-safe and recoverable.
-- Web dashboard runs the same way — flip the systemd unit to `ethos run-all`, reach it via SSH tunnel or SSM port forwarding.
-
-## Next step
-
-- [Deploy in production](deploy-in-production.md) — the platform-neutral architecture for context.
-- [Run multiple Telegram bots from one gateway](run-multi-bot-telegram.md) — one EC2 instance, several personalities, several bots.
-- [Run a team with kanban](run-a-team-with-kanban.md) — multi-personality teams that coordinate on this same box.

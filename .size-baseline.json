@@ -547,36 +547,6 @@
       "lines": 245
     },
     {
-      "path": "docs/content/building/how-to/add-a-memory-provider.md",
-      "kind": "doc",
-      "lines": 307
-    },
-    {
-      "path": "docs/content/building/how-to/author-a-canvas-template.md",
-      "kind": "doc",
-      "lines": 201
-    },
-    {
-      "path": "docs/content/building/how-to/create-a-plugin.md",
-      "kind": "doc",
-      "lines": 573
-    },
-    {
-      "path": "docs/content/building/how-to/openai-server-chat.md",
-      "kind": "doc",
-      "lines": 277
-    },
-    {
-      "path": "docs/content/building/how-to/publish-a-plugin.md",
-      "kind": "doc",
-      "lines": 228
-    },
-    {
-      "path": "docs/content/building/how-to/write-a-memory-backend-plugin.md",
-      "kind": "doc",
-      "lines": 212
-    },
-    {
       "path": "docs/content/building/quickstart.md",
       "kind": "doc",
       "lines": 270
@@ -627,46 +597,6 @@
       "lines": 315
     },
     {
-      "path": "docs/content/security/bot-token-rotation-playbook.md",
-      "kind": "doc",
-      "lines": 206
-    },
-    {
-      "path": "docs/content/security/controls.md",
-      "kind": "doc",
-      "lines": 708
-    },
-    {
-      "path": "docs/content/security/least-privilege-tokens.md",
-      "kind": "doc",
-      "lines": 257
-    },
-    {
-      "path": "docs/content/security/overview.md",
-      "kind": "doc",
-      "lines": 221
-    },
-    {
-      "path": "docs/content/security/production-hardening-checklist.md",
-      "kind": "doc",
-      "lines": 378
-    },
-    {
-      "path": "docs/content/security/security-boundary.md",
-      "kind": "doc",
-      "lines": 272
-    },
-    {
-      "path": "docs/content/security/security-fixes.md",
-      "kind": "doc",
-      "lines": 326
-    },
-    {
-      "path": "docs/content/security/white-paper.md",
-      "kind": "doc",
-      "lines": 256
-    },
-    {
       "path": "docs/content/troubleshooting.md",
       "kind": "doc",
       "lines": 395
@@ -685,116 +615,6 @@
       "path": "docs/content/using/explanation/what-is-a-skill.md",
       "kind": "doc",
       "lines": 209
-    },
-    {
-      "path": "docs/content/using/how-to/answer-phone-calls.md",
-      "kind": "doc",
-      "lines": 233
-    },
-    {
-      "path": "docs/content/using/how-to/back-up-and-restore.md",
-      "kind": "doc",
-      "lines": 219
-    },
-    {
-      "path": "docs/content/using/how-to/configure-aws-secrets.md",
-      "kind": "doc",
-      "lines": 204
-    },
-    {
-      "path": "docs/content/using/how-to/deploy-in-production.md",
-      "kind": "doc",
-      "lines": 255
-    },
-    {
-      "path": "docs/content/using/how-to/deploy-on-ec2.md",
-      "kind": "doc",
-      "lines": 247
-    },
-    {
-      "path": "docs/content/using/how-to/export-traces-otlp.md",
-      "kind": "doc",
-      "lines": 262
-    },
-    {
-      "path": "docs/content/using/how-to/install-on-windows-wsl2.md",
-      "kind": "doc",
-      "lines": 237
-    },
-    {
-      "path": "docs/content/using/how-to/manage-skill-evolution.md",
-      "kind": "doc",
-      "lines": 226
-    },
-    {
-      "path": "docs/content/using/how-to/peer-two-ethos-agents.md",
-      "kind": "doc",
-      "lines": 370
-    },
-    {
-      "path": "docs/content/using/how-to/review-personality-change-requests.md",
-      "kind": "doc",
-      "lines": 207
-    },
-    {
-      "path": "docs/content/using/how-to/run-a-wake-satellite.md",
-      "kind": "doc",
-      "lines": 327
-    },
-    {
-      "path": "docs/content/using/how-to/run-as-daemon.md",
-      "kind": "doc",
-      "lines": 378
-    },
-    {
-      "path": "docs/content/using/how-to/run-in-docker.md",
-      "kind": "doc",
-      "lines": 260
-    },
-    {
-      "path": "docs/content/using/how-to/run-multiple-bots.md",
-      "kind": "doc",
-      "lines": 207
-    },
-    {
-      "path": "docs/content/using/how-to/schedule-tasks-with-cron.md",
-      "kind": "doc",
-      "lines": 289
-    },
-    {
-      "path": "docs/content/using/how-to/set-up-approval-gates.md",
-      "kind": "doc",
-      "lines": 248
-    },
-    {
-      "path": "docs/content/using/how-to/set-up-mcp-for-a-personality.md",
-      "kind": "doc",
-      "lines": 219
-    },
-    {
-      "path": "docs/content/using/how-to/use-a-decision-model.md",
-      "kind": "doc",
-      "lines": 234
-    },
-    {
-      "path": "docs/content/using/how-to/use-as-mcp-server.md",
-      "kind": "doc",
-      "lines": 304
-    },
-    {
-      "path": "docs/content/using/how-to/use-aws-bedrock.md",
-      "kind": "doc",
-      "lines": 232
-    },
-    {
-      "path": "docs/content/using/how-to/use-web-dashboard.md",
-      "kind": "doc",
-      "lines": 245
-    },
-    {
-      "path": "docs/content/using/how-to/use-zero-mode.md",
-      "kind": "doc",
-      "lines": 210
     },
     {
       "path": "docs/content/using/quickstart.md",

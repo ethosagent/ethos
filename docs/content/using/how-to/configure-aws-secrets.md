@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-aws-secrets
 time: "10 min"
-updated: 2026-05-19
+updated: 2026-11-03
 ---
 
 ## Task
@@ -24,6 +24,13 @@ Fetch Ethos [secrets](../../getting-started/glossary.md#secret) from AWS Secrets
 - An EC2 instance (or ECS task, EKS pod) with an IAM role attached. If you started from the [EC2 deploy guide](deploy-on-ec2.md), you already have one.
 - AWS CLI access from your laptop to create secrets.
 - Ethos installed and running per the [EC2 deploy guide](deploy-on-ec2.md) or equivalent.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Read policy, provisioning secrets, enabling the backend, restart, verify, cost, rotation |
+| [Write permissions and migration](configure-aws-secrets/write-and-migrate.md) | Step 5 (write policy, required for `ethos secrets set` and OAuth tokens), moving on-disk secrets to AWS |
 
 ## Steps
 
@@ -100,43 +107,9 @@ sudo systemctl restart ethos
 
 On restart, the [secrets resolver](../reference/secrets-resolver.md) detects `aws.secrets.enabled: true`, initializes the AWS backend, and resolves every `${secrets:ref}` placeholder against Secrets Manager before any provider or channel adapter starts.
 
-### 5. Grant write permissions (required)
+## Next
 
-When `aws.secrets.enabled: true`, Ethos writes secrets to AWS Secrets Manager at runtime -- MCP OAuth tokens, `ethos secrets set` values, and any other runtime secrets. The instance role needs write permissions in addition to the read permissions from step 1.
-
-Add a second statement to your IAM policy:
-
-```json
-{
-  "Sid": "EthosWriteOwnSecrets",
-  "Effect": "Allow",
-  "Action": [
-    "secretsmanager:CreateSecret",
-    "secretsmanager:PutSecretValue",
-    "secretsmanager:DeleteSecret",
-    "secretsmanager:RestoreSecret"
-  ],
-  "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
-}
-```
-
-Add this as a second `Statement` entry alongside the existing `EthosReadOwnSecrets` statement. `RestoreSecret` is required because `delete()` uses the default recovery window (reversible); when `set()` targets a secret that is still in scheduled-deletion state, it restores it first. `UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
-
-See the [instance write role](../reference/aws-iam-policies.md#instance-write-role) reference for the combined read+write policy.
-
-### Migrating existing on-disk secrets to AWS
-
-After enabling AWS writes, existing on-disk secrets under `~/.ethos/secrets/` are still readable -- the file resolver remains in the [reader chain](../reference/secrets-resolver.md#resolver-precedence) as a lowest-precedence fallback. New writes go to AWS; on-disk copies become stale.
-
-To migrate an existing secret to AWS manually:
-
-```bash
-aws secretsmanager create-secret \
-  --name ethos/<deployment>/<ref> \
-  --secret-string "$(cat ~/.ethos/secrets/<ref>)"
-```
-
-Repeat for each ref under `~/.ethos/secrets/`. Ethos does not ship a migration tool in v1.
+Step 5 grants the write permissions Ethos needs once `aws.secrets.enabled: true`. Continue with [Write permissions and migration](configure-aws-secrets/write-and-migrate.md).
 
 ## Verify
 

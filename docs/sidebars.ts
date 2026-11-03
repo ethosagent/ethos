@@ -44,9 +44,25 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/install-on-windows',
-            'using/how-to/install-on-windows-wsl2',
+            {
+              type: 'category',
+              label: 'Install Ethos on Windows (WSL2)',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/install-on-windows-wsl2' },
+              items: [
+                'using/how-to/install-on-windows-wsl2/files-networking-gateway',
+              ],
+            },
             'using/how-to/configure-providers',
-            'using/how-to/use-aws-bedrock',
+            {
+              type: 'category',
+              label: 'Run Ethos on AWS Bedrock',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/use-aws-bedrock' },
+              items: [
+                'using/how-to/use-aws-bedrock/iam-and-config',
+              ],
+            },
             'using/how-to/configure-local-serving',
             'using/how-to/qualify-a-local-model',
             'using/how-to/use-chatgpt-subscription-via-codex',
@@ -57,11 +73,54 @@ const sidebars: SidebarsConfig = {
           label: 'Deploy & run',
           collapsed: true,
           items: [
-            'using/how-to/deploy-in-production',
-            'using/how-to/deploy-on-ec2',
-            'using/how-to/run-in-docker',
-            'using/how-to/run-as-daemon',
-            'using/how-to/use-zero-mode',
+            {
+              type: 'category',
+              label: 'Deploy Ethos in production',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/deploy-in-production' },
+              items: [
+                'using/how-to/deploy-in-production/pm2-and-operate',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Deploy Ethos on AWS EC2',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/deploy-on-ec2' },
+              items: [
+                'using/how-to/deploy-on-ec2/service-and-operate',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Run Ethos in Docker',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/run-in-docker' },
+              items: [
+                'using/how-to/run-in-docker/configuration',
+                'using/how-to/run-in-docker/healthcheck-run-kubernetes',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Run Ethos as a daemon',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/run-as-daemon' },
+              items: [
+                'using/how-to/run-as-daemon/launchd',
+                'using/how-to/run-as-daemon/systemd',
+                'using/how-to/run-as-daemon/windows-and-pm2',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Use zero mode',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/use-zero-mode' },
+              items: [
+                'using/how-to/use-zero-mode/personality-session-model',
+              ],
+            },
           ],
         },
         {
@@ -69,7 +128,15 @@ const sidebars: SidebarsConfig = {
           label: 'Channels & bots',
           collapsed: true,
           items: [
-            'using/how-to/run-multiple-bots',
+            {
+              type: 'category',
+              label: 'Run multiple bots from one Ethos process',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/run-multiple-bots' },
+              items: [
+                'using/how-to/run-multiple-bots/isolation-and-start',
+              ],
+            },
             'using/how-to/run-channels-over-webhooks',
             'using/how-to/receive-files-via-telegram',
             'using/how-to/receive-files-via-slack',
@@ -83,8 +150,25 @@ const sidebars: SidebarsConfig = {
           items: [
             'using/how-to/local-voice',
             'using/how-to/voice-notes-on-channels',
-            'using/how-to/run-a-wake-satellite',
-            'using/how-to/answer-phone-calls',
+            {
+              type: 'category',
+              label: 'Run a wake satellite',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/run-a-wake-satellite' },
+              items: [
+                'using/how-to/run-a-wake-satellite/edge-stt-and-settings',
+                'using/how-to/run-a-wake-satellite/microphone-and-playout',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Give an agent a phone number',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/answer-phone-calls' },
+              items: [
+                'using/how-to/answer-phone-calls/run-and-verify',
+              ],
+            },
           ],
         },
         {
@@ -97,7 +181,16 @@ const sidebars: SidebarsConfig = {
             'using/how-to/use-team-memory',
             'using/how-to/group-chat-memory',
             'using/how-to/get-to-know-new-users',
-            'using/how-to/peer-two-ethos-agents',
+            {
+              type: 'category',
+              label: 'Peer two Ethos agents over A2A',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/peer-two-ethos-agents' },
+              items: [
+                'using/how-to/peer-two-ethos-agents/peer-identities',
+                'using/how-to/peer-two-ethos-agents/send-and-audit',
+              ],
+            },
           ],
         },
         {
@@ -106,10 +199,35 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/use-skills',
-            'using/how-to/manage-skill-evolution',
-            'using/how-to/review-personality-change-requests',
+            {
+              type: 'category',
+              label: 'Manage skill evolution',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/manage-skill-evolution' },
+              items: [
+                'using/how-to/manage-skill-evolution/reject-rollback-archive',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Review a personality\'s change request',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/review-personality-change-requests' },
+              items: [
+                'using/how-to/review-personality-change-requests/apply-decline-rollback',
+              ],
+            },
             'using/how-to/run-a-birth-ritual',
-            'using/how-to/schedule-tasks-with-cron',
+            {
+              type: 'category',
+              label: 'Schedule tasks with cron',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/schedule-tasks-with-cron' },
+              items: [
+                'using/how-to/schedule-tasks-with-cron/test-and-manage',
+                'using/how-to/schedule-tasks-with-cron/job-behavior',
+              ],
+            },
             'using/how-to/loop-over-tools-in-code',
             'using/how-to/run-tools-over-ssh',
           ],
@@ -119,8 +237,27 @@ const sidebars: SidebarsConfig = {
           label: 'Integrations & MCP',
           collapsed: true,
           items: [
-            'using/how-to/use-as-mcp-server',
-            'using/how-to/set-up-mcp-for-a-personality',
+            {
+              type: 'category',
+              label: 'Use Ethos as an MCP server',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/use-as-mcp-server' },
+              items: [
+                'using/how-to/use-as-mcp-server/export-a-personality',
+                'using/how-to/use-as-mcp-server/keys-and-http',
+                'using/how-to/use-as-mcp-server/dashboard',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Set up MCP for a personality',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/set-up-mcp-for-a-personality' },
+              items: [
+                'using/how-to/set-up-mcp-for-a-personality/web-path',
+                'using/how-to/set-up-mcp-for-a-personality/bearer-token',
+              ],
+            },
             'using/how-to/migrate-from-openclaw',
           ],
         },
@@ -129,7 +266,15 @@ const sidebars: SidebarsConfig = {
           label: 'Dashboard & files',
           collapsed: true,
           items: [
-            'using/how-to/use-web-dashboard',
+            {
+              type: 'category',
+              label: 'Use the web dashboard',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/use-web-dashboard' },
+              items: [
+                'using/how-to/use-web-dashboard/cron-mcp-chat-admin',
+              ],
+            },
             'using/how-to/use-admin-panel',
             'using/how-to/retrieve-agent-files',
             'using/how-to/upload-agent-files',
@@ -142,8 +287,24 @@ const sidebars: SidebarsConfig = {
           label: 'Approvals & identity',
           collapsed: true,
           items: [
-            'using/how-to/set-up-approval-gates',
-            'using/how-to/use-a-decision-model',
+            {
+              type: 'category',
+              label: 'Set up approval gates for dangerous tool calls',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/set-up-approval-gates' },
+              items: [
+                'using/how-to/set-up-approval-gates/approval-surfaces',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Use a decision model',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/use-a-decision-model' },
+              items: [
+                'using/how-to/use-a-decision-model/read-and-ask',
+              ],
+            },
             'using/how-to/approve-posts-before-sending',
             'using/how-to/audit-user-identity',
           ],
@@ -153,10 +314,26 @@ const sidebars: SidebarsConfig = {
           label: 'Ops & recovery',
           collapsed: true,
           items: [
-            'using/how-to/back-up-and-restore',
+            {
+              type: 'category',
+              label: 'Back up and restore an Ethos install',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/back-up-and-restore' },
+              items: [
+                'using/how-to/back-up-and-restore/restore',
+              ],
+            },
             'using/how-to/recover-messages-after-a-crash',
             'using/how-to/monitor-with-grafana',
-            'using/how-to/export-traces-otlp',
+            {
+              type: 'category',
+              label: 'Export traces to an OpenTelemetry collector',
+              collapsed: true,
+              link: { type: 'doc', id: 'using/how-to/export-traces-otlp' },
+              items: [
+                'using/how-to/export-traces-otlp/backends-privacy-delivery',
+              ],
+            },
             'using/how-to/safe-mode',
           ],
         },
@@ -271,20 +448,65 @@ const sidebars: SidebarsConfig = {
           label: 'How-to',
           collapsed: true,
           items: [
-            'building/how-to/create-a-plugin',
-            'building/how-to/publish-a-plugin',
+            {
+              type: 'category',
+              label: 'Create a plugin',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/create-a-plugin' },
+              items: [
+                'building/how-to/create-a-plugin/activate-and-register',
+                'building/how-to/create-a-plugin/test-and-install',
+                'building/how-to/create-a-plugin/local-dev-entry-point',
+                'building/how-to/create-a-plugin/local-dev-install-and-iterate',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Publish a plugin',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/publish-a-plugin' },
+              items: [
+                'building/how-to/publish-a-plugin/test-and-publish',
+              ],
+            },
             'building/how-to/register-plugin-commands',
             'building/how-to/register-plugin-data-source',
             'building/how-to/write-an-llm-provider-plugin',
-            'building/how-to/write-a-memory-backend-plugin',
-            'building/how-to/add-a-memory-provider',
+            {
+              type: 'category',
+              label: 'Write a memory backend plugin',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/write-a-memory-backend-plugin' },
+              items: [
+                'building/how-to/write-a-memory-backend-plugin/register-and-configure',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Add a memory provider',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/add-a-memory-provider' },
+              items: [
+                'building/how-to/add-a-memory-provider/implement',
+                'building/how-to/add-a-memory-provider/register-and-test',
+              ],
+            },
             'building/how-to/add-a-hook',
             'building/how-to/add-a-skill',
             'building/how-to/add-a-filesystem-tool',
             'building/how-to/add-a-network-tool',
             'building/how-to/add-a-stateful-tool',
             'building/how-to/point-sdk-at-ethos',
-            'building/how-to/openai-server-chat',
+            {
+              type: 'category',
+              label: 'Serve Ethos as an OpenAI-compatible backend',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/openai-server-chat' },
+              items: [
+                'building/how-to/openai-server-chat/clients-and-routing',
+                'building/how-to/openai-server-chat/retries-and-capabilities',
+              ],
+            },
             'building/how-to/connect-open-webui',
             'building/how-to/add-a-panel',
             'building/how-to/display-live-tool-events',
@@ -293,7 +515,15 @@ const sidebars: SidebarsConfig = {
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
             'building/how-to/consume-attachments-in-a-tool',
-            'building/how-to/author-a-canvas-template',
+            {
+              type: 'category',
+              label: 'Author a Canvas template',
+              collapsed: true,
+              link: { type: 'doc', id: 'building/how-to/author-a-canvas-template' },
+              items: [
+                'building/how-to/author-a-canvas-template/limits-and-render',
+              ],
+            },
           ],
         },
         {
@@ -427,16 +657,84 @@ const sidebars: SidebarsConfig = {
           label: 'Security',
           collapsed: true,
           items: [
-            'security/overview',
-            'security/security-boundary',
-            'security/white-paper',
+            {
+              type: 'category',
+              label: 'Security overview',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/overview' },
+              items: [
+                'security/overview/trade-offs',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Security boundary',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/security-boundary' },
+              items: [
+                'security/security-boundary/beyond-the-register',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Security white paper',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/white-paper' },
+              items: [
+                'security/white-paper/request-protection',
+                'security/white-paper/defenses-and-responsibilities',
+              ],
+            },
             'security/threat-model',
-            'security/controls',
-            'security/production-hardening-checklist',
-            'security/least-privilege-tokens',
+            {
+              type: 'category',
+              label: 'Security controls',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/controls' },
+              items: [
+                'security/controls/channel',
+                'security/controls/tools',
+                'security/controls/filesystem',
+                'security/controls/network',
+                'security/controls/injection-watcher-redaction',
+                'security/controls/install',
+                'security/controls/audit-and-access',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Production hardening checklist',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/production-hardening-checklist' },
+              items: [
+                'security/production-hardening-checklist/secrets-filesystem-network',
+                'security/production-hardening-checklist/channels-injection-observability',
+                'security/production-hardening-checklist/keys-origins-plugins',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Least-privilege tokens',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/least-privilege-tokens' },
+              items: [
+                'security/least-privilege-tokens/chat-platforms',
+                'security/least-privilege-tokens/work-tools',
+              ],
+            },
             'security/api-mediated-access',
             'security/process-isolation',
-            'security/security-fixes',
+            {
+              type: 'category',
+              label: 'Security hardening log',
+              collapsed: true,
+              link: { type: 'doc', id: 'security/security-fixes' },
+              items: [
+                'security/security-fixes/fixes-1-8',
+                'security/security-fixes/fixes-9-16',
+                'security/security-fixes/promptware',
+              ],
+            },
             'security/responsible-disclosure',
           ],
         },

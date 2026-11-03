@@ -1,11 +1,11 @@
 ---
 title: "Set up MCP for a personality"
-description: "Register an MCP server, acquire a per-personality OAuth token or set a bearer API key, and verify the tools surface in chat."
+description: "Register an MCP server and attach it to a personality from the CLI, with web-dashboard and bearer-key variants in two further parts."
 kind: how-to
 audience: user
 slug: set-up-mcp-for-a-personality
 time: "10 min"
-updated: 2026-09-25
+updated: 2026-11-03
 ---
 
 ## Task
@@ -15,6 +15,14 @@ Attach an MCP server to a specific [personality](../../getting-started/glossary.
 ## Result
 
 The personality can call the server's tools. Tokens are stored per-personality at `~/.ethos/personalities/<id>/mcp/<name>/` — no other personality inherits the credential.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| 1. CLI path (this page) | Register, log in, attach, verify and test from the terminal |
+| [2. Web path](set-up-mcp-for-a-personality/web-path.md) | The same job from the web dashboard's MCP tab |
+| [3. Bearer token servers](set-up-mcp-for-a-personality/bearer-token.md) | Servers that take a static API key and no OAuth |
 
 ## Prereqs
 
@@ -101,76 +109,7 @@ What MCP tools do you have?
 
 The agent responds with the tool list from the server (e.g. `mcp__linear__create_issue`, `mcp__linear__list_issues`). If the server requires a token and step 2 was skipped, the agent reports an authentication error.
 
-## Steps — Web path
-
-### 1. Open the web dashboard
-
-```bash
-ethos serve --web
-```
-
-Navigate to `http://localhost:3000` (or the configured port).
-
-### 2. Go to the MCP tab
-
-Click **MCP** in the sidebar. Click **Add MCP Server**.
-
-### 3. Enter the server URL
-
-Paste the server's endpoint (e.g. `https://mcp.linear.app`). The UI runs OAuth discovery and shows the server's metadata.
-
-### 4. Select a personality
-
-The personality dropdown appears before the OAuth redirect. Select the personality that should hold the token (e.g. `engineer`). This determines the storage path for the credential.
-
-### 5. Authorise
-
-Click **Connect**. A new tab opens for the OAuth provider's consent screen. After you authorise, the tab closes and the token lands at the per-personality path.
-
-### 6. Attach to the personality
-
-If the server is not already in the personality's `mcp_servers:` list, the UI prompts to attach it. Confirm.
-
-### 7. Test in chat
-
-Navigate to the **Chat** tab, select the personality, and ask: "What MCP tools do you have?"
-
-## Steps — Bearer token servers
-
-Bearer token servers accept a static API key with no OAuth consent screen. Skip the `mcp login` step entirely.
-
-### 1. Register the server
-
-Add the server to `~/.ethos/mcp.json` with `"auth": { "type": "bearer" }`. The entry needs no OAuth endpoints:
-
-```json
-{
-  "name": "lookout",
-  "transport": "streamable-http",
-  "url": "https://lookout.example.com/mcp",
-  "auth": { "type": "bearer" }
-}
-```
-
-### 2. Attach the server to the personality
-
-```bash
-ethos personality mcp engineer --attach lookout
-```
-
-### 3. Set the token
-
-Open the personality detail page in the web UI. The server row shows **Set token**. Paste the API key and confirm. The token is stored at:
-
-```text
-~/.ethos/personalities/engineer/mcp/lookout/access_token
-```
-
-To replace the token later, click **Update token** on the same row. The change takes effect on the next MCP request — no restart required.
-
-### 4. Test
-
-Click **Test connection** on the server row. A successful result lists the available tools. A `401` response means the token is wrong or has been rotated — update it with **Update token**.
+Use [part 2](set-up-mcp-for-a-personality/web-path.md) for the dashboard, or [part 3](set-up-mcp-for-a-personality/bearer-token.md) for a static API key.
 
 ## Verify
 
@@ -198,18 +137,6 @@ ethos mcp login <name> --personality <id>
 **Server not responding after OAuth** — The OAuth flow completed but the server itself is unreachable. Read the connection error in the output of the process running the agent. Ethos writes no per-server MCP log file. Verify the URL in `mcp.json` is correct and the server is running.
 
 **Server appears in `personality show` but some of its tools are missing in chat** — `toolset.yaml` does not gate MCP tools, so it is not the cause. The personality's own `~/.ethos/personalities/<id>/mcp.yaml` narrows the server to a `tools:` list, or sets `enabled: false` for it. Add the bare tool name to `servers.<name>.tools`, or remove the server's entry to expose everything it lists. See [Tool naming](../reference/mcp-config.md#tool-naming).
-
-**Web UI shows no personality dropdown** — The dashboard requires at least one personality. Create one first:
-
-```bash
-ethos personality create engineer
-```
-
-Then reload the MCP tab.
-
-**Bearer server shows "Missing" in web UI** — No token is stored for this personality. Open the personality detail page and click **Set token** on the server row.
-
-**`401 Unauthorized` on a bearer server** — The token is wrong or has been rotated. Open the personality detail page and click **Update token** to replace it.
 
 ## See also
 

@@ -1,11 +1,11 @@
 ---
 title: "Serve Ethos as an OpenAI-compatible backend"
-description: "Boot ethos serve with the web API enabled, point any OpenAI SDK or client at /v1/chat/completions, and route requests to a personality."
+description: "Boot ethos serve with the web API enabled, mint an API key and call /v1/chat/completions with curl; SDK clients and extras are in two further parts."
 kind: how-to
 audience: developer
 slug: openai-server-chat
 time: "10 min"
-updated: 2026-08-19
+updated: 2026-11-03
 ---
 
 ## Task
@@ -15,6 +15,14 @@ Point any OpenAI-compatible client — `openai` Python SDK, `openai` Node SDK, A
 ## Result
 
 `POST /v1/chat/completions` accepts a bearer token, resolves the `model` field to a personality, and streams (or returns) the assistant's response in the OpenAI wire shape.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| 1. Boot, key and curl (this page) | Steps 1-3: start the server, mint a `chat` key, make a first call |
+| [2. Clients and routing](openai-server-chat/clients-and-routing.md) | Steps 4-6: Python, Node, Aider and Cursor; the `model` field; session pinning; rejected request shapes |
+| [3. Retries and capabilities](openai-server-chat/retries-and-capabilities.md) | Steps 7-9: `Idempotency-Key`, `GET /v1/capabilities`, audio transcription |
 
 ## Prereqs
 
@@ -98,131 +106,7 @@ curl http://localhost:3000/v1/chat/completions \
 ```
 
 List every valid `model` id with `GET /v1/models`.
-
-### 4. Point an OpenAI SDK at it
-
-#### Python
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:3000/v1",
-    api_key="sk-ethos-...",
-)
-
-resp = client.chat.completions.create(
-    model="ethos-default",
-    messages=[{"role": "user", "content": "Hello"}],
-    stream=True,
-)
-for chunk in resp:
-    print(chunk.choices[0].delta.content or "", end="")
-```
-
-#### Node
-
-```typescript
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:3000/v1',
-  apiKey: process.env.ETHOS_API_KEY,
-});
-
-const stream = await client.chat.completions.create({
-  model: 'ethos-default',
-  messages: [{ role: 'user', content: 'Hello' }],
-  stream: true,
-});
-for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0].delta.content ?? '');
-}
-```
-
-#### Aider, Cursor, and other clients
-
-Set the OpenAI base URL to `http://localhost:3000/v1` and the API key to your `sk-ethos-...` secret. Most clients expose these as `OPENAI_BASE_URL` / `OPENAI_API_KEY` environment variables.
-
-### 5. Pick the right `model`
-
-The `model` field maps to one of three shapes, resolved in `apps/web-api/src/routes/openai/chat.ts`:
-
-| Value | Resolves to |
-|---|---|
-| `ethos-default` | The personality named in `~/.ethos/config.yaml`. Useful when the client cannot be re-configured per call. |
-| `<personality-id>` (e.g. `researcher`) | A loaded personality. The id must match an entry from `GET /v1/models`. |
-| `team:<name>` | Reserved for team routing. Currently rejected with `400 team_routing_not_implemented`. |
-
-The personality's `toolset.yaml`, model routing, and memory scope all apply transparently. The OpenAI client never sees that part.
-
-### 6. Pin a session across calls
-
-By default each request starts a fresh session. To keep history across calls, pass the `X-Ethos-Session` header:
-
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer sk-ethos-..." \
-  -H "X-Ethos-Session: my-aider-session" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "ethos-default", "messages": [...]}'
-```
-
-Reuse the same value across calls and Ethos appends to the same conversation. This is the bridge between OpenAI's stateless wire shape and Ethos's persistent sessions.
-
-### 7. Retry safely with `Idempotency-Key`
-
-A dropped connection mid-turn leaves a client unsure whether the agent loop ran. Send an `Idempotency-Key` header on `POST /v1/chat/completions` and a retry with the same key and the same request body replays the cached response instead of driving the loop a second time. This only covers non-streaming requests (`"stream": false` or omitted) — a streaming retry (`"stream": true`) with the same `Idempotency-Key` still re-runs the turn, since there is no cached SSE stream to replay.
-
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer sk-ethos-..." \
-  -H "Idempotency-Key: retry-attempt-1" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "ethos-default", "messages": [{"role": "user", "content": "Hello"}]}'
-```
-
-Reusing the same key with a **different** request body returns `422 idempotency_key_reused` — the key is meant for retrying one request, not for a fresh one. Pick a fresh key (a UUID per attempt is the usual pattern) for each new request.
-
-### 8. Check what the server supports with `GET /v1/capabilities`
-
-Instead of probing with a request that might fail, ask first:
-
-```bash
-curl http://localhost:3000/v1/capabilities \
-  -H "Authorization: Bearer sk-ethos-..."
-```
-
-```json
-{
-  "byok": true,
-  "voice_stt": false,
-  "voice_tts": false,
-  "chat_completions": true,
-  "embeddings": false,
-  "audio_transcriptions": false,
-  "client_tools": false,
-  "system_messages": false
-}
-```
-
-`chat_completions`, `embeddings`, `client_tools`, and `system_messages` are static — this surface never accepts client-supplied tools, `role: "system"` messages, or embeddings (there is no `/v1/embeddings`; point your client's embedder at its own local model instead). `voice_stt`, `voice_tts`, and `audio_transcriptions` reflect whether an STT/TTS provider is configured in `~/.ethos/config.yaml`. This endpoint requires the same bearer token as every other `/v1/*` route — an unauthenticated request gets `401 invalid_api_key`.
-
-### 9. Transcribe audio with `POST /v1/audio/transcriptions`
-
-When an STT provider is configured (`auxiliary.asr` in `~/.ethos/config.yaml`), `/v1/audio/transcriptions` accepts a multipart file upload and returns the transcript:
-
-```bash
-curl http://localhost:3000/v1/audio/transcriptions \
-  -H "Authorization: Bearer sk-ethos-..." \
-  -F "file=@recording.wav"
-```
-
-```json
-{"text": "Hello, this is a test recording."}
-```
-
-With no STT provider configured, the same request returns `501` with an OpenAI-shaped error body (`code: "stt_not_configured"`), and `audio_transcriptions` reads `false` in `GET /v1/capabilities`. `POST /v1/audio/speech` (text-to-speech) is not implemented.
+Continue with [part 2](openai-server-chat/clients-and-routing.md).
 
 ## Verify
 
@@ -238,34 +122,11 @@ curl -s http://localhost:3000/v1/chat/completions \
 
 A streaming call (`"stream": true`) returns `text/event-stream` with `data: {...}` frames terminated by `data: [DONE]`.
 
-## Non-goals (explicit rejections)
-
-The route rejects features that are not yet implemented, with a precise OpenAI-shaped error so clients fail loudly:
-
-| Request shape | Error code | Why |
-|---|---|---|
-| `messages` contains `role: "system"` | `system_messages_not_supported` | The personality owns the system prompt — Ethos rejects any per-request override, rather than silently discarding it. Clear the system prompt in your client instead (in Open WebUI: Admin Settings → Connections → your model's connection, or the active chat's model settings). |
-| `tools: [...]` non-empty | `client_tools_not_implemented` | Client-tools mode lands in a later release. Drop the `tools` field. |
-| `messages` contains `role: "tool"` | `client_tools_not_implemented` | Same reason. |
-| `messages` contains `assistant.tool_calls` | `client_tools_not_implemented` | Same reason. |
-| `model` starts with `team:` | `team_routing_not_implemented` | Team routing not wired yet. Use a personality id. |
-| `model` is unknown | `model_not_found` (404) | Not in the personalities list or the `ethos-default` alias. |
-
-`content` as an array (vision parts — `[{"type": "text", ...}, {"type": "image_url", ...}]`) **is** accepted: `image_url` parts are translated into attachments the personality can see, and the response carries an `x-ethos-warning` header noting that vision support depends on the personality. `temperature`, `top_p`, `max_tokens`, and `seed` **are** forwarded to the model as sampling parameters — they are not ignored.
-
 ## Troubleshooting
 
 **`401 invalid_api_key`** — `Authorization` header is missing, malformed, or the key is unknown. Confirm it starts with `Bearer sk-ethos-` and that `ethos api-key list` shows it as active.
 
 **`403 insufficient_scope`** — The key is missing the `chat` scope. Re-mint with `ethos api-key create --name <label> --scopes chat`.
-
-**`404 model_not_found`** — `model` is not a known personality id. Call `GET /v1/models` to list valid ids. The `ethos-default` alias is always available.
-
-**`400 team_routing_not_implemented`** — Drop the `team:` prefix; use a personality id directly.
-
-**`400 system_messages_not_supported`** — A `role: "system"` message is in the request. Clear the system prompt in your client (in Open WebUI: Admin Settings → Connections → your model's connection, or the active chat's model settings) — see [Connect Open WebUI to Ethos](connect-open-webui.md) for the full walkthrough.
-
-**`422 idempotency_key_reused`** — The same `Idempotency-Key` was sent with a different request body. Use a fresh key per new request.
 
 **The server runs but `/v1/*` returns 404** — Ensure you are running a current version of Ethos. The web API (including the OpenAI surface) always mounts with `ethos serve`.
 

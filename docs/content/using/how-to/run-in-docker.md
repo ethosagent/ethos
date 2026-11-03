@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-09-30
+updated: 2026-11-03
 ---
 
 Run Ethos via Docker Compose. Set one provider API key, run one command, and get a web UI you can talk to. Config is provisioned by the CLI (`ethos setup --from-env`), which validates your key before writing it — no interactive setup, no hand-edited YAML.
@@ -24,6 +24,18 @@ Web UI at `http://localhost:3000` that opens directly in chat, config validated 
 - At least one provider API key (Anthropic, OpenAI, OpenRouter, Google, or Azure).
 
 The shipped image does **not** include `ffmpeg`. Everything except spoken replies on channels works without it; to get those, add `ffmpeg` to the runtime stage of `docker/Dockerfile` (`apt-get install -y --no-install-recommends ffmpeg`) and rebuild. Without it the gateway still starts, prints a `⚠ ffmpeg not found` notice, and delivers voice notes only in formats the TTS provider already emits — see [Send and receive voice notes on a channel](voice-notes-on-channels.md).
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Quick start, three-service topology, verify, first-boot troubleshooting |
+| [Configuration and data](run-in-docker/configuration.md) | Required env vars, gateway opt-in, the `ethos-data` volume, backup, custom `config.yaml` |
+| [Healthcheck, docker run and Kubernetes](run-in-docker/healthcheck-run-kubernetes.md) | Mode-aware healthcheck, running the image without Compose, the Helm chart |
+
+## Steps
+
+Pick one profile: the single service for a first run, the three services for an operator setup.
 
 ## Quick start (single service)
 
@@ -75,180 +87,9 @@ docker compose -f docker/docker-compose.yml ps init
 # State should be "exited (0)"
 ```
 
-## Required env vars
-
-At least one must be set. `ethos setup --from-env` uses the first one it finds, in priority order:
-
-| Variable | Provider | Notes |
-|---|---|---|
-| `AZURE_API_KEY` | Azure OpenAI | requires `AZURE_ENDPOINT`; optional `AZURE_OUTPUT_CAP_PARAM` (`max_tokens` or `max_completion_tokens`) provisions `providers.0.outputCapParam` — set `max_completion_tokens` for a reasoning model deployed under a non-family name; any other value stops the boot |
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) | — |
-| `OPENAI_API_KEY` | OpenAI | — |
-| `OPENROUTER_API_KEY` | OpenRouter | — |
-| `GOOGLE_API_KEY` | Google (Gemini) | — |
-
-Set `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_OWNER_ID`) to provision a Telegram bot in the same pass. Tokens are validated before they are written: a rejected token (401) stops the boot; an unreachable endpoint is saved unverified with a warning. Set `ETHOS_SKIP_VALIDATION=1` to bypass all probes on air-gapped boots.
-
-## Mode-aware healthcheck
-
-The image bakes one healthcheck script (`docker-healthcheck.sh`) that probes the right endpoint for the container's `ETHOS_MODE`, so both Compose services and raw `docker run` users get a check that can actually pass.
-
-| `ETHOS_MODE` | Probe | Serves |
-|---|---|---|
-| `all` | `:3000/healthz` | web UI + supervised gateway |
-| `ui` | `:3000/healthz` | web UI only |
-| `gateway` | `:3002/healthz` | gateway's own health server |
-| `boot` (default) | `:3002/healthz` | merged scale-to-zero single-process profile — same health server as `gateway` |
-
-A hardcoded `:3000` check could never pass in `gateway` mode — nothing listens there. The script fixes that.
-
-Liveness is deliberate: only a definitive local failure flips a container unhealthy. A running process with an upstream outage (a Telegram blip, an adapter reporting not-ok) reports `degraded` over HTTP 503 but stays **healthy** — an upstream hiccup must not fail a fresh `compose up`. In `all` mode the check also fails if the supervised gateway's heartbeat goes stale or missing, which catches the gateway child dying while the web process stays up. This chains the existing gateway heartbeat — it is not a second health mechanism.
-
-For readiness rather than liveness — a Kubernetes `readinessProbe`, or a load balancer deciding whether to route to a replica — `gateway` and `boot` also serve `:3002/readyz`. It returns 503 when any adapter reports not-ok, when any of `sessions.db`, `delivery-ledger.db`, `inbound-dedup.db` or `inbound-spool.db` will not open read-only, or when the event loop's p99 delay is over one second, and lists each check in the JSON body (`createReadinessCheck` in [health-server.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/health-server.ts)). Adapter health is cached for 60 seconds, so a probe never costs an adapter round trip such as an IMAP login. The baked healthcheck stays on `/healthz`: a 503 from `/readyz` means "do not route to me", not "restart me".
-
-## Gateway opt-in
-
-The channel gateway (Telegram, Slack, Discord, Email) is off by default. Activate it with the `gateway` profile:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-… docker compose -f docker/docker-compose.yml --profile gateway up
-```
-
-The gateway service connects to each configured channel bot and routes inbound messages to the appropriate personality. Configure channel bots in `config.yaml` inside the volume — see [config.yaml reference](../reference/config-yaml.md).
-
-## Persisting data
-
-Both Compose files declare a named volume `ethos-data`, mounted at `/home/ethos/.ethos`. This volume holds `config.yaml`, the session database, personality data, and memory files.
-
-:::warning Keep state off Docker Desktop bind mounts
-On Docker Desktop (macOS and Windows), a host directory mounted into the container is a virtiofs or gRPC-FUSE mount (macOS) or a 9p mount (Windows). SQLite's file locking is not reliable on those filesystems, and the databases in the state directory can corrupt. Keep the default named volume there. `ethos doctor` inside the container warns under **Data directory** when the state directory sits on FUSE, 9p, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor.ts)).
-:::
-
-If you run native Docker on Linux and want the state in a host directory, set `ETHOS_DATA_DIR` in `docker/.env` to its path. Compose then bind-mounts that path instead of the volume.
-
-### Move an existing `ethos-data/` folder into the volume
-
-Before this release both Compose files bind-mounted a host folder (`../ethos-data` for `docker-compose.yml`, `docker/ethos-data` for the single-service file). If you have one and have not set `ETHOS_DATA_DIR`, copy it into the volume once. From the `docker/` folder, with the stack stopped:
-
-```bash
-docker compose -f docker-compose.single.yml run --rm --no-deps --user root \
-  -v "$(pwd)/ethos-data:/from:ro" --entrypoint sh ethos \
-  -c 'cp -a /from/. /home/ethos/.ethos/ && chown -R 1000:1000 /home/ethos/.ethos'
-```
-
-For `docker-compose.yml`, run the same command against the `init` service with `-f docker-compose.yml` and `-v "$(pwd)/../ethos-data:/from:ro"`. To keep the bind mount instead, set `ETHOS_DATA_DIR=../ethos-data` (or `./ethos-data`) in `docker/.env`.
-
-The volume survives `docker compose down`. To back it up:
-
-```bash
-docker run --rm -v ethos-data:/data -v "$(pwd)":/backup alpine tar czf /backup/ethos-backup.tar.gz -C /data .
-```
-
-To restore:
-
-```bash
-docker run --rm -v ethos-data:/data -v "$(pwd)":/backup alpine tar xzf /backup/ethos-backup.tar.gz -C /data
-```
-
-:::warning
-Do NOT run multiple containers sharing the same `ethos-data` volume. CronScheduler uses file-based locking and is not safe for concurrent multi-host access. `scale=1` per service is the only supported configuration. Running multiple replicas against the same volume will cause lock contention, data corruption, and undefined behaviour.
-:::
-
-## Advanced: custom config.yaml
-
-To skip the init auto-generation, write your own `config.yaml` into the volume before the first run:
-
-```bash
-# Create the volume and populate it
-docker volume create ethos-data
-docker run --rm -v ethos-data:/data -v "$(pwd)":/src alpine cp /src/config.yaml /data/config.yaml
-```
-
-The `init` service is idempotent — it detects the existing config and exits immediately.
-
-See [config.yaml reference](../reference/config-yaml.md) for every supported field.
-
-## Advanced: manual docker run
-
-If you prefer not to use Compose, run the image directly. Both services bind to `127.0.0.1` inside the container by default, so you must set `ETHOS_WEB_HOST=0.0.0.0` (web dashboard, port 3000) and `ETHOS_SERVE_HOST=0.0.0.0` (the `run-all` health server, port 3004) for `-p` to reach them from the host.
-
-That non-loopback bind means the same first-visit token-exchange step from [Quick start](#quick-start-single-service) applies here too — watch `docker logs ethos` for the `open: http://localhost:3000/auth/exchange?t=<token>` line and visit that URL before the bare one.
-
-### Option A — run the published image (recommended)
-
-```bash
-docker run -d --name ethos \
-  --restart unless-stopped \
-  -e ETHOS_MANAGED=1 \
-  -e ETHOS_WEB_HOST=0.0.0.0 \
-  -e ETHOS_SERVE_HOST=0.0.0.0 \
-  -e ANTHROPIC_API_KEY=sk-ant-… \
-  -v ethos-data:/home/ethos/.ethos \
-  -p 3000:3000 \
-  ethosagent/ethos:latest
-```
-
-`ethosagent/ethos:latest` always tracks the newest published release, so no version pinning is needed. To pin a specific version, use `ethosagent/ethos:<version>` (for example `ethosagent/ethos:0.4.18`).
-
-### Option B — build from source then run
-
-```bash
-git clone https://github.com/ethosagent/ethos.git
-cd ethos
-docker build -t ethos:local -f docker/Dockerfile docker/
-```
-
-```bash
-docker run -d --name ethos \
-  --restart unless-stopped \
-  -e ETHOS_MANAGED=1 \
-  -e ETHOS_WEB_HOST=0.0.0.0 \
-  -e ETHOS_SERVE_HOST=0.0.0.0 \
-  -e ANTHROPIC_API_KEY=sk-ant-… \
-  -v ethos-data:/home/ethos/.ethos \
-  -p 3000:3000 \
-  ethos:local
-```
-
-The image runs as `ethos:1000` and exposes port 3000. `ETHOS_MANAGED=1` skips the interactive setup wizard and exits with code 2 if `config.yaml` is missing.
-
-To run only the gateway (no web API), pass `-e ETHOS_MODE=gateway`. To run only the web API, pass `-e ETHOS_MODE=ui`.
-
-The image's default when `ETHOS_MODE` is unset — as in Option A/B's commands above — is now `boot`, not `all`. `boot` still gives a talking web UI at the same `:3000`, just via the merged single-process profile rather than two supervised subprocesses. Pass `-e ETHOS_MODE=all` to opt back into the two-subprocess topology with independent crash isolation.
-
-## Kubernetes
-
-Ethos ships a first-party Helm chart at [`helm/ethos`](https://github.com/ethosagent/ethos/tree/main/helm/ethos) in the repo. It is the supported Kubernetes path — do not hand-write manifests. The chart is not yet published to a chart registry; install it from a clone of the repo.
-
-Create a Secret holding your provider key, install the chart against it, then port-forward to reach the UI:
-
-```bash
-kubectl create secret generic ethos-keys --from-literal=ANTHROPIC_API_KEY=sk-ant-…
-helm install ethos ./helm/ethos --set existingSecret=ethos-keys
-kubectl port-forward svc/ethos 3000
-```
-
-```
-Forwarding from 127.0.0.1:3000 -> 3000
-```
-
-Open `http://localhost:3000`. The same first-visit token exchange from [Quick start](#quick-start-single-service) applies — watch `kubectl logs ethos-0` for the `open: .../auth/exchange?t=<token>` line. To keep the token out of pod logs, set the chart's `webAuth.bootstrapToken.existingSecret` (and optionally `key`) values: they inject the token from a pre-created Secret as `ETHOS_WEB_TOKEN` (at least 24 characters), the URL is then never printed, and you sign in by pasting the token — or claim the instance at `/welcome` with a username and password.
-
-The chart handles what the raw-manifest approach gets wrong. It deploys a single-replica StatefulSet — the gateway singleton lock means a second pod exits with code 3, so there is no scaling knob to misuse. A persistent volume at `/home/ethos/.ethos` holds `config.yaml` and the databases; `config.yaml` is rewritten at runtime (secret re-sync, web UI settings), which is why it must **not** be mounted from a ConfigMap — earlier versions of this page advised exactly that, and it breaks every runtime write. First boot self-provisions from env (`ethos setup --from-env`, the same provisioning the Compose files run), health probes hit the gateway's health server on `:3002`, a NetworkPolicy is on by default, and no Kubernetes API token is mounted into the pod.
-
-For real clusters, start from the overlays in [`helm/ethos/examples/`](https://github.com/ethosagent/ethos/tree/main/helm/ethos/examples): EKS (ALB + EBS + IRSA), nginx + cert-manager, and a minimal profile. The [chart README](https://github.com/ethosagent/ethos/tree/main/helm/ethos) covers the full values reference, network security notes, and the backup/restore (`ethos import`) runbook.
-
 ## Troubleshoot
 
 **Container exits with code 2.** `config.yaml` is missing from the mounted volume. Confirm the mount target is `/home/ethos/.ethos` and `config.yaml` is at the root of that directory.
-
-**Healthcheck fails but logs show "gateway started".** The web API failed to bind. Check whether port 3000 is in use, or set `ETHOS_MODE=gateway` to skip the web API entirely.
-
-**Telegram bot is silent.** Inspect `docker logs ethos` for adapter errors. The most common cause is a malformed token in `.env` — the value should have the form `<digits>:<base64-ish>` and the `botKey` suffix (if any) must match the one used in `config.yaml`.
-
-**Permission denied writing to the volume.** If you bind-mount a host directory (`ETHOS_DATA_DIR`), it must be owned by uid 1000. `sudo chown -R 1000:1000 ~/ethos-data` fixes this.
-
-**`ethos doctor` warns the state directory is on fuse, 9p, nfs or smb.** The state directory is a bind mount on a filesystem where SQLite locking is unsafe. Unset `ETHOS_DATA_DIR` to use the `ethos-data` named volume, and move the data with the command in [Move an existing `ethos-data/` folder into the volume](#move-an-existing-ethos-data-folder-into-the-volume).
 
 **Web UI loads but API calls return 401 Unauthorized.** You opened the bare `http://localhost:3000` before ever visiting the `open: .../auth/exchange?t=<token>` URL from the boot output. Open that exact URL once — it sets the auth cookie — then the bare URL works normally on subsequent visits. If you have claimed the instance (set a username and password), that URL no longer signs you in — use the login screen, or `/welcome/reset` with the token if the password is lost.
 

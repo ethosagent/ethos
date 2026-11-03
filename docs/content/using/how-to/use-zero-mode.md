@@ -1,11 +1,11 @@
 ---
 title: "Use zero mode"
-description: "Run a single prompt from the command line with ethos -z, pipe stdin, capture output, and resume sessions non-interactively."
+description: "Run a single prompt from the command line with ethos -z, pipe stdin, and capture output; personality, session and model overrides in a part."
 kind: how-to
 audience: user
 slug: use-zero-mode
 time: "5 min"
-updated: 2026-09-28
+updated: 2026-11-03
 ---
 
 ## Task
@@ -20,6 +20,13 @@ Run a single prompt through the agent from the command line, without entering th
 
 - `ethos` installed; `ethos --version` returns a version string.
 - A provider configured via `ethos setup` ([Configure an LLM provider](configure-providers.md)).
+
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| [Personality, session and model](use-zero-mode/personality-session-model.md) | Steps 5 to 7: `--personality`, `--session`, `--model`, combined flags. |
 
 ## Steps
 
@@ -111,60 +118,7 @@ $
 
 Without `--no-stream`, streaming chunks may interleave with other shell output in scripts. Always use `--no-stream` when capturing into a variable or piping to another command.
 
-### 5. Select a personality
-
-Override the default [personality](../../getting-started/glossary.md#personality) with `--personality`.
-
-```bash
-ethos -z "brief me on AAPL" --personality swing-trader
-```
-
-```text
-$ ethos -z "brief me on AAPL" --personality swing-trader
-AAPL — $198.42 (+1.2%)
-
-Setup: Consolidating above 20-day MA ($195.10). Volume declining
-into the base — accumulation pattern. Watch $200 resistance.
-
-Bias: Long above $195. Stop at $192.
-$
-```
-
-The personality's [SOUL.md](../../getting-started/glossary.md#ethos-md), toolset, and model configuration apply for the single turn.
-
-### 6. Resume an existing session
-
-Pass `--session <id>` to continue a previous conversation. The agent loads the full [session](../../getting-started/glossary.md#session) history as context.
-
-```bash
-ethos -z "summarize what we discussed" --session my-project
-```
-
-```text
-$ ethos -z "what files did we change?" --session my-project
-In our previous session, we modified:
-
-1. src/auth.ts — added JWT refresh token rotation
-2. src/middleware.ts — added rate limiting
-3. tests/auth.test.ts — added 4 test cases for token refresh
-$
-```
-
-Without `--session`, each `-z` invocation starts a fresh context. Use `--session` when a follow-up turn needs prior context.
-
-### 7. Override the model
-
-Pass `--model` to select a different [LLM provider](../../getting-started/glossary.md#llm-provider) model for the turn.
-
-```bash
-ethos -z "explain this error" --model claude-sonnet-5
-```
-
-Combine flags freely:
-
-```bash
-cat logs/crash.txt | ethos -z "diagnose" --personality devops --model claude-sonnet-5 --no-stream
-```
+Steps 5 to 7 (personality, session, model) are in [Parts](#parts).
 
 ## Flag reference
 
@@ -201,10 +155,6 @@ $
 
 **Response streams but the shell hangs.** -- A tool call is waiting for input (e.g. a `bash` tool prompting for confirmation). Zero mode executes tools non-interactively. If a tool requires stdin, it times out after the configured tool timeout. Avoid prompts that trigger interactive tools, or configure the personality's toolset to exclude them.
 
-**`--session` returns stale context.** -- The session ID is a string key, not a path. Verify the exact ID with `ethos session list`. Session IDs are case-sensitive.
-
 **Piped input is truncated.** -- Large inputs are subject to the [tool result budget](../../getting-started/glossary.md#tool-result-budget). For files over 80,000 characters, split the input or use a prompt that tells the agent to read the file directly with the `read_file` tool.
 
 **`--no-stream` produces no output.** -- The model returned an empty response. Run without `--no-stream` to see if the agent is making tool calls that produce side effects but no final text. Add "reply with your findings" to the prompt to force text output.
-
-**`personality not found: <id>`.** -- The personality directory does not exist at `~/.ethos/personalities/<id>/` or is missing `config.yaml`. Run `ethos personality list` to see available personalities.
