@@ -19,8 +19,10 @@ import type {
   GetJobEventsOptions,
   JobRunner,
   JobRunnerRegistry,
+  JobSteer,
   JobStore,
   ToolContext,
+  TurnAudience,
 } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -31,6 +33,9 @@ import {
   createTaskLogsTool,
   createTaskResultTool,
   createTaskStatusTool,
+  createTaskSteerTool,
+  type TaskSteerOutcome,
+  type TaskStopOutcome,
 } from '../index';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +48,7 @@ class FakeJobStore implements JobStore {
   jobs = new Map<string, BackgroundJob>();
   events = new Map<string, BackgroundJobEvent[]>();
   private seq = 0;
+  listSteers?: JobStore['listSteers'];
 
   async create(input: CreateBackgroundJobInput): Promise<BackgroundJob> {
     const id = `job-${++this.seq}`;
@@ -768,6 +774,149 @@ describe('task_cancel', () => {
     expect(res.ok).toBe(true);
     expect(spy).toHaveBeenCalledWith('c');
     expect(store.jobs.get('c')?.cancelRequested).toBe(true);
+  });
+});
+
+describe('task_cancel with injected stop', () => {
+  it('routes through stop and refuses a terminal row', async () => {
+    const store = new FakeJobStore();
+    const stop = vi.fn(
+      async (): Promise<TaskStopOutcome> => ({ ok: false, reason: 'finished', status: 'done' }),
+    );
+    const { deps } = makeDeps(store, { stop });
+    store.seed({ id: 't', rootSessionKey: 'cli:test', status: 'done' });
+    const res = await createTaskCancelTool(deps).execute({ id: 't' }, makeCtx());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe('job already finished (done)');
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('reports a terminal row as already finished without an injected stop', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    store.seed({ id: 't', rootSessionKey: 'cli:test', status: 'failed' });
+    const spy = vi.spyOn(store, 'requestCancel');
+    const res = await createTaskCancelTool(deps).execute({ id: 't' }, makeCtx());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe('job already finished (failed)');
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('task_result on an aborted job', () => {
+  it('appends the partial output and the unread-steer count', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    store.seed({
+      id: 'ab',
+      rootSessionKey: 'cli:test',
+      status: 'aborted',
+      error: 'cancelled',
+      summary: 'half the answer',
+    });
+    const steers: JobSteer[] = [1, 2].map((id) => ({
+      id,
+      jobId: 'ab',
+      text: 'x',
+      state: 'unread',
+      source: 'tool',
+      createdAt: 1,
+    }));
+    store.listSteers = async () => steers;
+    const res = await createTaskResultTool(deps).execute({ id: 'ab' }, makeCtx());
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toContain('cancelled');
+      expect(res.value).toContain('partial output:\nhalf the answer');
+      expect(res.value).toContain('2 steers were never read');
+    }
+  });
+});
+
+describe('task_steer', () => {
+  // Emulates the job-control audience gate: a shared requester may only act on a shared job.
+  const steerDep = vi.fn(
+    async (
+      job: BackgroundJob,
+      _text: string,
+      audience: TurnAudience,
+    ): Promise<TaskSteerOutcome> => {
+      if (audience === 'shared' && job.roomAudience !== 'shared') {
+        return { ok: false, reason: 'not_found' };
+      }
+      return { ok: true, steerId: 7 };
+    },
+  );
+
+  it('queues a steer for a visible job', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store, { steer: steerDep });
+    store.seed({ id: 's', rootSessionKey: 'cli:test', status: 'running' });
+    const res = await createTaskSteerTool(deps).execute(
+      { id: 's', text: 'use pnpm' },
+      makeCtx({ roomAudience: 'private' }),
+    );
+    expect(res.ok).toBe(true);
+    expect(steerDep).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 's' }),
+      'use pnpm',
+      'private',
+    );
+  });
+
+  it("treats another root's job as not found", async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store, { steer: steerDep });
+    store.seed({ id: 'f', rootSessionKey: 'cli:other', status: 'running' });
+    const res = await createTaskSteerTool(deps).execute({ id: 'f', text: 'x' }, makeCtx());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe('job not found');
+  });
+
+  it('a shared room steering a private job reads exactly like not found; no audience defaults shared', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store, { steer: steerDep });
+    store.seed({ id: 'p', rootSessionKey: 'cli:test', status: 'running', roomAudience: 'private' });
+    const tool = createTaskSteerTool(deps);
+    for (const ctx of [makeCtx({ roomAudience: 'shared' }), makeCtx()]) {
+      const res = await tool.execute({ id: 'p', text: 'x' }, ctx);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.code).toBe('input_invalid');
+        expect(res.error).toBe('job not found');
+      }
+    }
+  });
+
+  it('maps outcomes to messages and validates input', async () => {
+    const store = new FakeJobStore();
+    store.seed({ id: 'm', rootSessionKey: 'cli:test', status: 'running' });
+    const run = async (o: TaskSteerOutcome) => {
+      const { deps } = makeDeps(store, { steer: async () => o });
+      return createTaskSteerTool(deps).execute({ id: 'm', text: 'x' }, makeCtx());
+    };
+    const err = async (o: TaskSteerOutcome) => {
+      const r = await run(o);
+      return r.ok ? '' : r.error;
+    };
+    expect(await err({ ok: false, reason: 'finished', status: 'done' })).toBe(
+      'job already finished (done)',
+    );
+    expect(await err({ ok: false, reason: 'unsupported' })).toContain('does not support steering');
+    expect(await err({ ok: false, reason: 'remote' })).toContain('remote');
+    expect(await err({ ok: false, reason: 'full' })).toContain('too many');
+    expect(await err({ ok: false, reason: 'too_long' })).toContain('too long');
+    expect(await err({ ok: false, reason: 'not_available' })).toContain('not available');
+    expect((await run({ ok: true, steerId: 3 })).ok).toBe(true);
+
+    const { deps } = makeDeps(store, { steer: steerDep });
+    const empty = await createTaskSteerTool(deps).execute({ id: 'm', text: '  ' }, makeCtx());
+    expect(empty.ok).toBe(false);
+    const none = await createTaskSteerTool(makeDeps(store).deps).execute(
+      { id: 'm', text: 'x' },
+      makeCtx(),
+    );
+    expect(none.ok).toBe(false);
   });
 });
 

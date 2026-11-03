@@ -28,7 +28,7 @@ import {
 import type { DeliveryLedger, DeliveryObligation } from '@ethosagent/delivery-ledger';
 import type { InboundDedupStore } from '@ethosagent/inbound-dedup';
 import type { InboundSpool, SpoolRow } from '@ethosagent/inbound-spool';
-import { jobRoomAudience } from '@ethosagent/job-runner';
+import { isJobRef, type JobControl, jobRoomAudience } from '@ethosagent/job-runner';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
@@ -59,6 +59,7 @@ import type {
   ClarifySurfaceType,
   DeliveryResult,
   InboundMessage,
+  JobSteer,
   Logger,
   OutboundMessage,
   PersonalityVoiceConfig,
@@ -112,6 +113,13 @@ import {
   endDelivery,
   isDeliveryInFlight,
 } from './delivery';
+import {
+  activeLaneJobSummary,
+  parseJobCommand,
+  runJobCommand,
+  stopJobByRef,
+  unreadSteerSuffix,
+} from './job-commands';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
 import {
   attachmentsFromStructured,
@@ -1000,6 +1008,9 @@ export interface GatewayBotConfig {
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
   /** This bot's job store — present when background is enabled. */
   jobStore?: import('@ethosagent/types').JobStore;
+  /** Steer / stop / tail policy for this bot's jobs (`CreateAgentLoopResult.jobControl`) —
+   *  absent when background is disabled; `/background steer|stop|tail` then refuse. */
+  jobControl?: JobControl;
   /** `<bot entry>.budget` (plan openclaw-2026.9.6-gaps D5): `dailyUsd` caps this
    *  bot's spend per UTC day, enforced by `Gateway.enqueueTurn` (replies) and
    *  `Gateway.backgroundGate` when `GatewayConfig.botSpendSince` is wired;
@@ -3527,6 +3538,21 @@ export class Gateway {
       // the turn still holds the lane.
       const running =
         lane.length > 0 || this.activeSinks.has(laneKey) || this.activeTurns.has(laneKey);
+      const stopRef = text.split(/\s+/)[1];
+      let laneRows: BackgroundJob[] | undefined;
+      if (stopRef && isJobRef(stopRef)) {
+        // `/stop <id>` ends one background job of THIS lane (D9, D13); a ref
+        // that names none falls through to the plain lane stop below.
+        const stopped = await stopJobByRef(
+          this.jobCommandContext(bot, message, threadId, adapter),
+          stopRef,
+        );
+        if (stopped.reply !== null) {
+          await adapter.send(message.chatId, { text: stopped.reply, threadId }).catch(() => {});
+          return;
+        }
+        laneRows = stopped.rows;
+      }
       if (running) {
         lane.abort();
         // UBP-046 — a turn parked on an approval card does not see the abort
@@ -3534,8 +3560,19 @@ export class Gateway {
         this.notifyLaneStop(this.sessionKeys.get(laneKey) ?? laneKey);
         await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
       } else {
+        // D9 — a plain /stop never touches jobs (they outlive turns), but when
+        // the lane has active ones, say so and how to stop one.
+        const jobs = await activeLaneJobSummary(
+          this.jobCommandContext(bot, message, threadId, adapter),
+          laneRows,
+        ).catch(() => '');
         await adapter
-          .send(message.chatId, { text: 'nothing is running', threadId })
+          .send(message.chatId, {
+            text: jobs
+              ? `nothing is running — background: ${jobs} · /stop <id> to stop one`
+              : 'nothing is running',
+            threadId,
+          })
           .catch(() => {});
       }
       return;
@@ -3993,7 +4030,10 @@ export class Gateway {
       const bgText = text.slice('/background '.length).trim();
       if (!bgText) {
         await adapter
-          .send(message.chatId, { text: '✗ Usage: /background <prompt>', threadId })
+          .send(message.chatId, {
+            text: '✗ Usage: /background <prompt> | list | steer <id> <text> | stop <id> | tail <id>',
+            threadId,
+          })
           .catch(() => {});
         return;
       }
@@ -4008,6 +4048,13 @@ export class Gateway {
             threadId,
           })
           .catch(() => {});
+        return;
+      }
+      // `list|steer|stop|tail <ref>` act on this lane's jobs (D13); anything
+      // else — including `steer the boat`, no ref — is a prompt, as before.
+      const jobCmd = parseJobCommand(bgText);
+      if (jobCmd) {
+        await runJobCommand(jobCmd, this.jobCommandContext(bot, message, threadId, adapter));
         return;
       }
       const root = this.sessionKeys.get(laneKey) ?? laneKey;
@@ -6804,7 +6851,12 @@ export class Gateway {
     const platform = job.originPlatform;
     const chatId = job.originChatId;
     if (!platform || !chatId) return false;
-    const text = this.buildWakeNotice(job);
+    // D8 — steers the job never read ride on its completion notice. A failed
+    // read costs the suffix, never the notice.
+    const unread = (await bot.jobControl?.steers(job).catch(() => [] as JobSteer[]))?.filter(
+      (s) => s.state === 'unread',
+    );
+    const text = this.buildWakeNotice(job, unread ?? []);
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
     // U11 — a wake notice is unprompted: held for quiet hours or a lane mute.
     // `true`: the held store now owns it, so the job's delivery claim stays.
@@ -6839,13 +6891,13 @@ export class Gateway {
    * the job's own summary/error wrapped as untrusted content (it may echo
    * whatever the child agent read). Mirrors the `channel_message` treatment.
    */
-  private buildWakeNotice(job: BackgroundJob): string {
+  private buildWakeNotice(job: BackgroundJob, unread: JobSteer[] = []): string {
     const shortId = job.id.slice(0, 8);
     const labelPart = job.label ? `"${job.label}" ` : '';
     // Interrupted by its runtime's shutdown: no result to relay, and the error
     // is our own constant — a trusted one-liner, nothing to wrap.
     if (job.status === 'aborted') {
-      return `background job ${shortId} ${labelPart}was interrupted by a restart or config change — ask again to rerun`;
+      return `background job ${shortId} ${labelPart}was interrupted by a restart or config change — ask again to rerun${unreadSteerSuffix(unread)}`;
     }
     // H6 — a human sentence, not a bracketed record. A failure names where
     // the detail lives (`ethos process logs <id>`).
@@ -6873,7 +6925,7 @@ export class Gateway {
         },
       });
     }
-    return `${envelope}\n\n${wrapped.content}`;
+    return `${envelope}\n\n${wrapped.content}${unreadSteerSuffix(unread)}`;
   }
 
   /**
@@ -8385,6 +8437,24 @@ export class Gateway {
     const owner = this.channelFilter?.[message.platform]?.ownerUserId;
     if (owner === undefined || owner === '') return false;
     return !senderIsOwner(message, owner);
+  }
+
+  /** Lane scope + requester audience + untracked ack sender for `./job-commands`. */
+  private jobCommandContext(
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    threadId: string | undefined,
+    adapter: PlatformAdapter,
+  ) {
+    return {
+      bot,
+      message,
+      threadId,
+      audience: this.jobAudienceFor(message),
+      send: async (text: string) => {
+        await adapter.send(message.chatId, { text, threadId }).catch(() => {});
+      },
+    };
   }
 
   /**

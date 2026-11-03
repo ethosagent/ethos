@@ -1105,6 +1105,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     usageMeter,
     jobStore: systemJobStore,
     backgroundExecutor: systemBackgroundExecutor,
+    jobControl: systemJobControl,
   } = await createAgentLoop(config, {
     cronScheduler: scheduler,
     watcherManager,
@@ -1466,7 +1467,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     config,
     bots,
     systemLoop,
-    idleBotJobs: { jobStore: systemJobStore, backgroundExecutor: systemBackgroundExecutor },
+    idleBotJobs: {
+      jobStore: systemJobStore,
+      backgroundExecutor: systemBackgroundExecutor,
+      jobControl: systemJobControl,
+    },
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -2744,6 +2749,7 @@ async function assembleGatewayBots(
     let loop: AgentLoop;
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
+    let jobControl: GatewayBotConfig['jobControl'];
     if (bot.bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bot.bind.name, {
         ...(outbox ? { outbox } : {}),
@@ -2763,6 +2769,7 @@ async function assembleGatewayBots(
       loop = result.loop;
       jobStore = result.jobStore;
       backgroundExecutor = result.backgroundExecutor;
+      jobControl = result.jobControl;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
@@ -2776,6 +2783,7 @@ async function assembleGatewayBots(
       piiRedaction: bot.piiRedaction,
       ...(jobStore ? { jobStore } : {}),
       ...(backgroundExecutor ? { backgroundExecutor } : {}),
+      ...(jobControl ? { jobControl } : {}),
       // D5 — `<bot entry>.budget`, enforced by `Gateway.enqueueTurn` and `backgroundGate`.
       budget: bot.budget,
       // Plan personality-presence-and-initiative §3 — applied by the gateway.
@@ -2805,6 +2813,7 @@ async function assembleGatewayBots(
     let loop: AgentLoop;
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
+    let jobControl: GatewayBotConfig['jobControl'];
     if (bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bind.name, {
         ...(outbox ? { outbox } : {}),
@@ -2821,6 +2830,7 @@ async function assembleGatewayBots(
       loop = result.loop;
       jobStore = result.jobStore;
       backgroundExecutor = result.backgroundExecutor;
+      jobControl = result.jobControl;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
@@ -2835,6 +2845,7 @@ async function assembleGatewayBots(
         piiRedaction: waCfg.piiRedaction,
         ...(jobStore ? { jobStore } : {}),
         ...(backgroundExecutor ? { backgroundExecutor } : {}),
+        ...(jobControl ? { jobControl } : {}),
         budget: waCfg.budget,
       },
       at,
@@ -2862,6 +2873,7 @@ async function assembleGatewayBots(
         binding: { type: 'personality', name: hook.personalityId },
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+        ...(result.jobControl ? { jobControl: result.jobControl } : {}),
       },
       at,
     );
@@ -2886,6 +2898,7 @@ async function assembleGatewayBots(
         binding: { type: 'personality', name: config.personality },
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+        ...(result.jobControl ? { jobControl: result.jobControl } : {}),
         ...(config.discord?.replyPrefix ? { replyPrefix: config.discord.replyPrefix } : {}),
       },
       at,
@@ -2908,6 +2921,7 @@ async function assembleGatewayBots(
         binding: { type: 'personality', name: config.personality },
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+        ...(result.jobControl ? { jobControl: result.jobControl } : {}),
       },
       at,
     );
@@ -4988,7 +5002,7 @@ export function gatewayTurnOrigin(gateway: () => Gateway | null): GatewayTurnOri
 export function idleGatewayBot(
   loop: AgentLoop,
   personality: string | undefined,
-  jobs: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'> | undefined,
+  jobs: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor' | 'jobControl'> | undefined,
 ): GatewayBotConfig {
   return {
     botKey: IDLE_GATEWAY_BOT_KEY,
@@ -4996,6 +5010,7 @@ export function idleGatewayBot(
     binding: { type: 'personality', name: personality ?? 'default', allowSlashSwitch: true },
     ...(jobs?.jobStore ? { jobStore: jobs.jobStore } : {}),
     ...(jobs?.backgroundExecutor ? { backgroundExecutor: jobs.backgroundExecutor } : {}),
+    ...(jobs?.jobControl ? { jobControl: jobs.jobControl } : {}),
   };
 }
 
@@ -5015,7 +5030,7 @@ export interface BuildGatewayOptions {
   systemLoop: AgentLoop;
   /** `systemLoop`'s job store and background executor — the idle bot's, as a
    *  configured bot gets its own loop's. Ignored when `bots` is non-empty. */
-  idleBotJobs?: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'>;
+  idleBotJobs?: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor' | 'jobControl'>;
   /**
    * EVERY adapter this process runs. Both registries the Gateway takes are
    * derived from it by `adapterRegistries` (@ethosagent/gateway): the

@@ -2,7 +2,7 @@
 // openclaw-9.5-adoption item 6, D29): the parent review turn is a gateway
 // feature, and in the REPL the user is already in the parent session.
 
-import type { BackgroundJob } from '@ethosagent/types';
+import type { BackgroundJob, JobSteer } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { backgroundCompletionLines } from '../chat';
 
@@ -36,5 +36,37 @@ describe('CLI chat — background completion notice', () => {
     expect(backgroundCompletionLines(job({ status: 'failed', error: 'boom' }))?.[0]).toBe(
       '╭─ background [bg:job-1234] error: boom',
     );
+  });
+
+  it('appends unread steers before the footer, capped at 3 lines of 120 chars plus a count', () => {
+    const steer = (id: number, text: string): JobSteer => ({
+      id,
+      jobId: 'job-1234abcd-rest',
+      text,
+      state: 'unread',
+      source: 'cli',
+      createdAt: 0,
+    });
+    const lines = backgroundCompletionLines(job(), [
+      steer(1, 'skip the tests'),
+      steer(2, 'x'.repeat(300)),
+      steer(3, 'third'),
+      steer(4, 'fourth'),
+      steer(5, 'fifth'),
+    ]);
+    expect(lines?.slice(0, 2)).toEqual(['╭─ background [bg:job-1234] done', '│ all green']);
+    expect(lines?.[2]).toBe('│ unread steer: skip the tests');
+    expect(lines?.[3]).toBe(`│ unread steer: ${'x'.repeat(119)}…`);
+    expect(lines?.[4]).toBe('│ unread steer: third');
+    expect(lines?.[5]).toBe('│ ... and 2 more unread steers');
+    expect(lines?.at(-1)).toBe('╰─');
+  });
+
+  it('renders no steer lines when there are none', () => {
+    expect(backgroundCompletionLines(job(), [])).toEqual([
+      '╭─ background [bg:job-1234] done',
+      '│ all green',
+      '╰─',
+    ]);
   });
 });

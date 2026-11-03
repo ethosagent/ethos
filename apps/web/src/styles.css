@@ -7999,6 +7999,10 @@ button.activity-row:hover {
   margin: 0;
 }
 
+.run-card-steer {
+  margin-bottom: 8px;
+}
+
 .run-card-buttons {
   display: flex;
   gap: 8px;

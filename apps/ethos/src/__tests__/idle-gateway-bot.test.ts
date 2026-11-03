@@ -217,7 +217,9 @@ describe('the idle gateway bot', () => {
       expect(src).toMatch(
         /\.\.\.\(bots\.length === 0\s*\?\s*idleGatewayBotLoopOpts\(gatewayTurnOrigin\(\(\) => gatewayRef\)\)\s*: \{\}\),/,
       );
-      expect(src).toMatch(/idleBotJobs: \{ jobStore: \w+(\.jobStore)?, backgroundExecutor: /);
+      expect(src).toMatch(
+        /idleBotJobs: \{\s*jobStore: \w+(\.jobStore)?,\s*backgroundExecutor: \w+(\.backgroundExecutor)?,\s*jobControl: /,
+      );
     }
     // boot builds its bots before the system loop, so the count is known there.
     expect(boot.indexOf('const coldBuilt = await buildGatewayBots(')).toBeLessThan(

@@ -69,6 +69,11 @@ export type BackgroundJobStatus =
 export const JOB_ABORTED_BY_SHUTDOWN =
   'interrupted: its runtime shut down (a restart or a configuration change)';
 
+/** Most `pending` steers one job may hold; the gateway's foreground sink uses the same cap. */
+export const JOB_STEER_MAX_PENDING = 32;
+/** Longest single steer, in characters. Text only: no attachments in background steers. */
+export const JOB_STEER_MAX_CHARS = 4_000;
+
 // ---------------------------------------------------------------------------
 // Background job — one durable row per detached child turn
 // ---------------------------------------------------------------------------
@@ -216,6 +221,11 @@ export type BackgroundJobEventType =
    * row type back out of the event log the same way it reads every other kind.
    */
   | 'runner_log'
+  /**
+   * A steer was queued for the job. Payload is `{ steerId, chars, source }`;
+   * the text itself lives in `job_steers`, not the trail.
+   */
+  | 'steer'
   | 'done'
   | 'failed'
   | 'aborted'
@@ -266,11 +276,42 @@ export interface CreateBackgroundJobInput {
 
 /** Window over a job's event trail. Both fields are optional; see `getEvents`. */
 export interface GetJobEventsOptions {
+  /**
+   * Exclusive forward cursor — only rows with `seq` strictly greater than
+   * this, ascending, for tailing. With `limit`, the OLDEST n rows after the
+   * cursor are returned (so a tail can page forward without gaps).
+   */
+  afterSeq?: number;
   /** Return at most this many rows, taken from the NEWEST end. */
   limit?: number;
   /** Exclusive cursor — only rows with `seq` strictly less than this. */
   beforeSeq?: number;
 }
+
+/** `pending` → `read` (the runner's sink handed it over) or `unread` (the job ended first). */
+export type JobSteerState = 'pending' | 'read' | 'unread';
+export type JobSteerSource = 'cli' | 'gateway' | 'web' | 'tool';
+
+/** One correction queued for a running background job. */
+export interface JobSteer {
+  /** Autoincrement; insertion order per job. */
+  id: number;
+  jobId: string;
+  text: string;
+  state: JobSteerState;
+  source: JobSteerSource;
+  requesterUserId?: string;
+  createdAt: number;
+  readAt?: number;
+}
+
+export type AddSteerResult =
+  | { ok: true; steer: JobSteer }
+  | {
+      ok: false;
+      reason: 'not_found' | 'finished' | 'remote' | 'full' | 'too_long';
+      status?: BackgroundJobStatus;
+    };
 
 export interface JobStore {
   /** Insert a new queued job. Returns the created row. */
@@ -402,6 +443,30 @@ export interface JobStore {
    * ever silently truncated under a reader expecting everything.
    */
   getEvents(jobId: string, opts?: GetJobEventsOptions): Promise<BackgroundJobEvent[]>;
+  /**
+   * Queue a steer for a `queued | running | blocked` job. The status check and
+   * the insert share one transaction, and the terminal sweep runs inside
+   * `finish`'s, so a steer either lands before the job ends or is refused
+   * `finished`. Optional (D17): stores without a steer queue omit it.
+   */
+  addSteer?(
+    jobId: string,
+    input: { text: string; source: JobSteerSource; requesterUserId?: string },
+  ): Promise<AddSteerResult>;
+  /** `pending` steers with `id > afterId`, id ascending. */
+  listPendingSteers?(jobId: string, afterId: number): Promise<JobSteer[]>;
+  /** `pending → read` for these ids; rows in any other state do not move. */
+  markSteersRead?(jobId: string, ids: number[]): Promise<void>;
+  /** Every steer of a job, id ascending. */
+  listSteers?(jobId: string): Promise<JobSteer[]>;
+  /**
+   * Jobs started from one chat lane, newest first. `threadId` undefined matches
+   * only rows with no thread (never "any thread").
+   */
+  listByOrigin?(
+    origin: { platform: string; botKey: string; chatId: string; threadId?: string },
+    opts?: { limit?: number },
+  ): Promise<BackgroundJob[]>;
 }
 
 // ---------------------------------------------------------------------------

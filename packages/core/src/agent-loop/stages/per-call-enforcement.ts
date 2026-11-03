@@ -349,6 +349,11 @@ const RUN_SCOPED_SCHEDULERS: ReadonlyMap<string, SchedulerRule> = new Map<string
   // BackgroundExecutor, which reads no taint. The foreground mesh tools carry
   // the taint instead (`meshTaintParams`, extensions/tools-delegation/src/index.ts).
   ['route_to_agent', (a) => a.background === true],
+  // Writes a running background child's later prompt (`[USER STEER]`, persisted
+  // as `user_steer`). That child's taint was fixed at its start and the
+  // BackgroundExecutor reads none, so a steer from a tainted run would carry
+  // untrusted text in unmarked. Refused rather than marked.
+  ['task_steer', () => true],
   // A deliver-only watcher seeds no run; any wake does (V3-2).
   ['watcher_create', (a) => a.wake !== undefined],
 ]);

@@ -155,7 +155,7 @@ describe('BackgroundExecutor', () => {
     await exec.shutdown();
   });
 
-  it('aborts a running job when cancel is requested on the next heartbeat', async () => {
+  it('aborts a running job when cancel is requested on the next observe tick', async () => {
     const store = new SQLiteJobStore(':memory:');
     const { loop, signals } = makeNeverEndingLoop();
     const exec = new BackgroundExecutor({ store, loop, owner: OWNER, config: cfg() });

@@ -146,6 +146,8 @@ export const BackgroundJobEventTypeSchema = z.enum([
   // A batch of the runner subprocess's own stdout/stderr lines (I-LOG1).
   // Payload carries `lines` and an optional `dropped` count.
   'runner_log',
+  // A steer was queued for the job (payload: steerId, chars, source).
+  'steer',
   'done',
   'failed',
   'aborted',
@@ -224,6 +226,19 @@ export const RunnerCapabilitiesSchema = z.object({
 });
 export type RunnerCapabilitiesWire = z.infer<typeof RunnerCapabilitiesSchema>;
 
+/** Mirror of `@ethosagent/types` `JobSteer`. `pending` = queued, `read` = the run took it, `unread` = the run ended first. */
+export const JobSteerSchema = z.object({
+  id: z.number().int(),
+  jobId: z.string(),
+  text: z.string(),
+  state: z.enum(['pending', 'read', 'unread']),
+  source: z.enum(['cli', 'gateway', 'web', 'tool']),
+  requesterUserId: z.string().nullable(),
+  createdAt: z.number(),
+  readAt: z.number().nullable(),
+});
+export type JobSteerWire = z.infer<typeof JobSteerSchema>;
+
 export const BackgroundJobDetailSchema = BackgroundJobSummarySchema.extend({
   prompt: z.string(),
   summary: z.string().nullable(),
@@ -240,6 +255,8 @@ export const BackgroundJobDetailSchema = BackgroundJobSummarySchema.extend({
   detailRows: z.array(RunDetailRowSchema),
   /** Null when the runner that executed this row is not resolved in this process. */
   capabilities: RunnerCapabilitiesSchema.nullable(),
+  /** Every steer sent to this job, oldest first. Empty when the store has no steer queue. */
+  steers: z.array(JobSteerSchema),
 });
 export type BackgroundJobDetailWire = z.infer<typeof BackgroundJobDetailSchema>;
 

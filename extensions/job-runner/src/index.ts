@@ -7,16 +7,43 @@ import type {
   HookRegistry,
   JobRunner,
   JobRunnerRegistry,
+  JobSteer,
   JobStore,
   RunUpdateDigest,
-  SteerSink,
 } from '@ethosagent/types';
 import { answerSuffix, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
 import { EthosJobRunner } from './ethos-job-runner';
+import { createJobSteerSink } from './job-steer-sink';
 import { BoundedLogBuffer } from './log-buffer';
 import { capText, extractSummarySection, SUMMARY_RESULT_CAP } from './summary';
 
-export { ETHOS_RUNNER_NAME, EthosJobRunner, jobRoomAudience } from './ethos-job-runner';
+export {
+  ETHOS_RUNNER_CAPABILITIES,
+  ETHOS_RUNNER_NAME,
+  EthosJobRunner,
+  jobRoomAudience,
+} from './ethos-job-runner';
+export {
+  createJobControl,
+  type JobControl,
+  type JobControlDeps,
+  jobActionAllowed,
+  type SteerOutcome,
+  type StopOutcome,
+  type TailOutcome,
+} from './job-control';
+export { formatJobEventLine } from './job-event-format';
+export {
+  isActiveJob,
+  isJobRef,
+  JOB_REF_SHAPE,
+  type JobRefResolution,
+  resolveJobRef,
+  steerRefusalText,
+  stopRefusalText,
+  unreadSteerPreview,
+} from './job-ref';
+export { createJobSteerSink, type JobSteerSink } from './job-steer-sink';
 export { BoundedLogBuffer, type RunnerLogLine } from './log-buffer';
 // Every background job runs in summary mode, whatever the runner: the parent
 // re-ingests only a bounded digest. Exported so an out-of-process runner
@@ -196,13 +223,6 @@ function nowLine(toolName: string, args: unknown): string {
 }
 
 /**
- * A no-op steer sink. The executor does not (yet) thread surface-typed steering
- * into a background job — nothing pushes onto a detached child's sink today.
- * The runner still receives a real sink so it never has to special-case its
- * absence, and wiring one up later is a change at the executor, not at every
- * runner.
- */
-/**
  * The `error` on a run `shutdown()` aborted — the owning loop was disposed (a
  * process stop, or a live bot edit replacing its loop). Distinct from a user's
  * `task_cancel` ('cancelled by task_cancel'), so a surface can tell the origin
@@ -212,11 +232,12 @@ function nowLine(toolName: string, args: unknown): string {
  */
 export { JOB_ABORTED_BY_SHUTDOWN };
 
-const NOOP_STEER_SINK: SteerSink = {
-  push: () => false,
-  drain: () => [],
-  depth: () => 0,
-};
+/**
+ * Cadence of the per-job observe tick: cancel flag plus pending steers. Much
+ * tighter than `heartbeatMs`, which now only bumps the beat (plan
+ * background-job-steer D7). Two indexed point reads per running job per tick.
+ */
+export const JOB_OBSERVE_MS = 1_000;
 
 /**
  * Minimum gap between two digests for the SAME run (D11's "≤1 Hz per run").
@@ -273,6 +294,8 @@ export class BackgroundExecutor {
   private readonly activeControllers = new Map<string, AbortController>();
   /** job.id -> the in-flight run promise (resolves after its finish is written). */
   private readonly activeRuns = new Map<string, Promise<void>>();
+  /** Per running job: one observe pass (cancel flag + pending steers). See `pokeSteer`. */
+  private readonly observers = new Map<string, () => Promise<void>>();
   /**
    * job.id -> the requestId the run is parked on. Membership is the heartbeat
    * pause: while a job is in here its beat is skipped, so `reclaimStale` (which
@@ -469,6 +492,17 @@ export class BackgroundExecutor {
       void this.claimLoop();
     }, 0);
     this.nudgeTimer.unref?.();
+  }
+
+  /**
+   * Run the observe pass for `jobId` now, when THIS executor owns the run, so
+   * an in-process requester's steer or stop lands without waiting for the next
+   * `JOB_OBSERVE_MS` tick. A job another process owns is a no-op here: its
+   * owner's tick picks the row up. Never throws.
+   */
+  pokeSteer(jobId: string): void {
+    const observe = this.observers.get(jobId);
+    if (observe) void observe();
   }
 
   /**
@@ -674,13 +708,45 @@ export class BackgroundExecutor {
 
   private async runOne(job: BackgroundJob, controller: AbortController): Promise<void> {
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let observeTimer: ReturnType<typeof setInterval> | undefined;
+    const stopTimers = (): void => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (observeTimer) clearInterval(observeTimer);
+      heartbeatTimer = undefined;
+      observeTimer = undefined;
+      this.observers.delete(job.id);
+    };
+    // The durable steer queue's in-memory face (D1). `markReadChain` keeps the
+    // `pending -> read` writes in drain order.
+    const steerSink = createJobSteerSink();
+    let markReadChain: Promise<void> = Promise.resolve();
+    const markDrained = (): void => {
+      const ids = steerSink.takeDrainedIds();
+      const mark = this.store.markSteersRead?.bind(this.store);
+      if (ids.length === 0 || !mark) return;
+      markReadChain = markReadChain
+        .then(() => mark(job.id, ids))
+        .catch((err) => this.log?.(`markSteersRead failed for ${job.id}: ${errMsg(err)}`));
+    };
+    // D3 ordering: every terminal write goes through `finish`, and `finish`
+    // settles the read marks first. `store.finish` sweeps `pending -> unread`
+    // in its own transaction, so a drained-but-unmarked steer would otherwise
+    // be reported unread although the model read it.
     // V2-SEC-2 — set by the runner's `markTainted`; every terminal write carries it.
     const tainted = { value: false };
     const finish = (
       terminal: 'done' | 'failed' | 'aborted',
       fields: { summary?: string; error?: string },
     ): Promise<void> =>
-      this.finishAndNotify(job.id, terminal, tainted.value ? { ...fields, tainted: true } : fields);
+      (async () => {
+        markDrained();
+        await markReadChain;
+        await this.finishAndNotify(
+          job.id,
+          terminal,
+          tainted.value ? { ...fields, tainted: true } : fields,
+        );
+      })();
     try {
       // Pre-start aggregate spend gate. Sum spend across the root's jobs
       // (excluding this one); refuse to run if the cap is already reached.
@@ -698,26 +764,62 @@ export class BackgroundExecutor {
         }
       }
 
-      // Per-job heartbeat: bump the beat AND observe an out-of-band cancel.
+      // Per-job heartbeat: the beat only. Cancel and steers ride the observe tick.
       let cancelled = false;
       heartbeatTimer = setInterval(() => {
         void (async () => {
           try {
             // Paused while the run is parked on a human answer — see
-            // markJobBlocked. The cancel observation below keeps running, so a
-            // blocked run stays cancellable.
+            // markJobBlocked.
             if (!this.blockedJobs.has(job.id)) await this.store.heartbeat(job.id);
-            const fresh = await this.store.get(job.id);
-            if (fresh?.cancelRequested) {
-              cancelled = true;
-              controller.abort();
-            }
           } catch (err) {
             this.log?.(`heartbeat failed for ${job.id}: ${errMsg(err)}`);
           }
         })();
       }, this.config.heartbeatMs);
       heartbeatTimer.unref?.();
+
+      // A steer sent while the job was queued is read at its first seam (D6).
+      const pull = async (afterId: number): Promise<JobSteer[]> =>
+        (await this.store.listPendingSteers?.(job.id, afterId)) ?? [];
+      steerSink.enqueue(await pull(0));
+      // Observe pass (D7): the cancel flag — also while blocked, so a parked run
+      // stays cancellable — then steers newer than the sink has seen, then the
+      // marks for whatever the harness drained since the last pass.
+      // Single-flight: the interval and `pokeSteer` can overlap, so a trigger
+      // during a pass is folded into one more pass after it.
+      let observing: Promise<void> | undefined;
+      let again = false;
+      const observePass = async (): Promise<void> => {
+        try {
+          const fresh = await this.store.get(job.id);
+          if (fresh?.cancelRequested && !cancelled) {
+            cancelled = true;
+            controller.abort();
+          }
+          steerSink.enqueue(await pull(steerSink.lastSeenId));
+          markDrained();
+        } catch (err) {
+          this.log?.(`observe failed for ${job.id}: ${errMsg(err)}`);
+        }
+      };
+      const observe = (): Promise<void> => {
+        if (observing) {
+          again = true;
+          return observing;
+        }
+        observing = (async () => {
+          do {
+            again = false;
+            await observePass();
+          } while (again);
+          observing = undefined;
+        })();
+        return observing;
+      };
+      this.observers.set(job.id, observe);
+      observeTimer = setInterval(() => void observe(), JOB_OBSERVE_MS);
+      observeTimer.unref?.();
 
       const runner = this.runnerFor(job);
 
@@ -736,7 +838,7 @@ export class BackgroundExecutor {
 
       for await (const ev of runner.run(job, {
         signal: controller.signal,
-        steerSink: NOOP_STEER_SINK,
+        steerSink,
         // Artifacts are a job-event-log concern, not an event-stream one:
         // `AgentEvent` is frozen at 17 variants with no artifact slot, so a
         // file change becomes an `artifact_change` ROW and the inspector's Diff
@@ -844,10 +946,7 @@ export class BackgroundExecutor {
         // Forward-compat: any other event type is a no-op.
       }
 
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = undefined;
-      }
+      stopTimers();
 
       // Whatever the terminal state, the tail of the child's text belongs in the
       // stream before the terminal event.
@@ -871,7 +970,13 @@ export class BackgroundExecutor {
           error: `exceeded max_cost_usd $${job.maxCostUsd} (spent $${spend.toFixed(4)})`,
         });
       } else if (cancelled && !answered) {
-        await finish('aborted', { error: 'cancelled by task_cancel' });
+        // D9: the partial output is kept, bounded like a `done` summary.
+        await finish('aborted', {
+          error: 'cancelled by task_cancel',
+          ...(output
+            ? { summary: capText(extractSummarySection(output) ?? output, SUMMARY_RESULT_CAP) }
+            : {}),
+        });
       } else if (this.shuttingDown && !answered) {
         await finish('aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
       } else if (errorText) {
@@ -883,7 +988,7 @@ export class BackgroundExecutor {
         });
       }
     } catch (err) {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      stopTimers();
       // A thrown error fails the job — unless we're draining, where an abort is
       // the honest terminal state.
       try {

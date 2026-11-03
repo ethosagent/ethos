@@ -3,13 +3,28 @@ import type {
   BackgroundJobEvent,
   JobRunner,
   JobRunnerRegistry,
+  JobSteer,
   JobStore,
 } from '@ethosagent/types';
 import type {
   BackgroundJobDetailWire,
   BackgroundJobEventWire,
   BackgroundJobSummaryWire,
+  JobSteerWire,
 } from '@ethosagent/web-contracts';
+import type { CreateAgentLoopResult } from '@ethosagent/wiring';
+
+/** Typed off wiring's result so web-api needs no workspace dep on job-runner. */
+type JobControl = NonNullable<CreateAgentLoopResult['jobControl']>;
+type SteerOutcome = Awaited<ReturnType<JobControl['steer']>>;
+export type TasksSteerResult =
+  | { ok: true; steerId: number }
+  | Extract<SteerOutcome, { ok: false }>
+  | { ok: false; reason: 'not_available' };
+export type TasksEventsResult =
+  | { ok: true; events: BackgroundJobEventWire[] }
+  | { ok: false; reason: 'not_found' | 'not_available' };
+export type TasksCancelResult = { ok: boolean };
 
 /** How many of a job's newest events one detail read returns. */
 const DETAIL_EVENT_LIMIT = 200;
@@ -26,6 +41,14 @@ export interface TasksServiceOptions {
    * rows and no capabilities, which is still a valid card (T28).
    */
   runners?: JobRunnerRegistry;
+  /**
+   * The steer/stop/tail seam from wiring (`CreateAgentLoopResult.jobControl`).
+   * Absent → `steer` and `events` report `not_available`, `get` falls back to
+   * the resolved runner for `capabilities`, and `cancel` writes the cancel
+   * request directly. Every call here is a web-console call, so the requester
+   * audience is `'private'`.
+   */
+  control?: JobControl;
 }
 
 // Maps the domain `BackgroundJob` (camelCase, epoch-ms numbers, optional fields
@@ -63,10 +86,25 @@ function toEvent(event: BackgroundJobEvent): BackgroundJobEventWire {
   };
 }
 
+function toSteer(steer: JobSteer): JobSteerWire {
+  return {
+    id: steer.id,
+    jobId: steer.jobId,
+    text: steer.text,
+    state: steer.state,
+    source: steer.source,
+    requesterUserId: steer.requesterUserId ?? null,
+    createdAt: steer.createdAt,
+    readAt: steer.readAt ?? null,
+  };
+}
+
 function toDetail(
   job: BackgroundJob,
   events: BackgroundJobEvent[],
   runner: JobRunner | undefined,
+  capabilities: JobRunner['capabilities'] | null,
+  steers: JobSteer[],
 ): BackgroundJobDetailWire {
   return {
     ...toSummary(job),
@@ -81,7 +119,8 @@ function toDetail(
     // A runner throwing while describing a row must not take the detail read
     // down with it — the 12 shared rows are still worth rendering.
     detailRows: describeSafely(runner, job),
-    capabilities: runner ? toCapabilities(runner.capabilities) : null,
+    capabilities: capabilities ? toCapabilities(capabilities) : null,
+    steers: steers.map(toSteer),
   };
 }
 
@@ -121,10 +160,12 @@ function describeSafely(
 export class TasksService {
   private store?: JobStore;
   private runners?: JobRunnerRegistry;
+  private control?: JobControl;
 
   constructor(opts: TasksServiceOptions) {
     this.store = opts.store;
     this.runners = opts.runners;
+    this.control = opts.control;
   }
 
   /**
@@ -151,12 +192,54 @@ export class TasksService {
     // A row naming a runner this process did not resolve still renders: the 12
     // shared rows are the UI's contract, the runner's are a bonus (D18/T28).
     const runner = job.runner ? this.runners?.get(job.runner) : undefined;
-    return toDetail(job, events, runner);
+    // With a control seam, capabilities come from it so a default-runner row
+    // (no `job.runner`) still reports the Ethos runner's truth instead of null.
+    const capabilities = this.control
+      ? this.control.capabilitiesFor(job)
+      : (runner?.capabilities ?? null);
+    const steers = this.control
+      ? await this.control.steers(job)
+      : ((await this.store.listSteers?.(id)) ?? []);
+    return toDetail(job, events, runner, capabilities, steers);
   }
 
-  async cancel(id: string): Promise<{ ok: boolean }> {
+  async cancel(id: string): Promise<TasksCancelResult> {
     if (!this.store) return { ok: false };
-    await this.store.requestCancel(id);
-    return { ok: true };
+    if (!this.control) {
+      await this.store.requestCancel(id);
+      return { ok: true };
+    }
+    const job = await this.store.get(id);
+    if (!job) return { ok: false };
+    const res = await this.control.stop(job, { requesterAudience: 'private' });
+    return { ok: res.ok };
+  }
+
+  async steer(id: string, text: string): Promise<TasksSteerResult> {
+    if (!this.store || !this.control) return { ok: false, reason: 'not_available' };
+    const job = await this.store.get(id);
+    if (!job) return { ok: false, reason: 'not_found' };
+    return this.control.steer(job, { text, source: 'web', requesterAudience: 'private' });
+  }
+
+  /** Rows with `seq > afterSeq`, oldest first — the Tasks page's transcript cursor. */
+  async events(id: string, afterSeq?: number, limit?: number): Promise<TasksEventsResult> {
+    if (!this.store) return { ok: false, reason: 'not_available' };
+    const job = await this.store.get(id);
+    if (!job) return { ok: false, reason: 'not_found' };
+    if (!this.control) {
+      const rows = await this.store.getEvents(id, {
+        ...(afterSeq !== undefined ? { afterSeq } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return { ok: true, events: rows.map(toEvent) };
+    }
+    const res = await this.control.tail(job, {
+      requesterAudience: 'private',
+      audience: 'operator',
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+    return res.ok ? { ok: true, events: res.events.map(toEvent) } : res;
   }
 }

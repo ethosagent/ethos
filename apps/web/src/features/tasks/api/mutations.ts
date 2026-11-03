@@ -17,3 +17,19 @@ export function useTaskCancel() {
       }),
   });
 }
+
+export function useTaskSteer() {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+  return useMutation({
+    mutationFn: (input: { id: string; text: string }) => rpc.tasks.steer(input),
+    onSuccess: (_res, input) =>
+      void queryClient.invalidateQueries({ queryKey: tasksKeys.detail(input.id) }),
+    onError: (err) =>
+      notification.error({
+        message: 'Steer failed',
+        description: err instanceof Error ? err.message : String(err),
+        placement: 'topRight',
+      }),
+  });
+}

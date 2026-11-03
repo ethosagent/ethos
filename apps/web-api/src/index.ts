@@ -33,6 +33,7 @@ import type {
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  type CreateAgentLoopResult,
   createLearningInbox,
   DisposerStack,
   hardlineReason,
@@ -210,6 +211,12 @@ export interface CreateWebApiOptions {
    * else, which is a valid card.
    */
   jobRunners?: JobRunnerRegistry;
+  /**
+   * Steer/stop/tail seam from wiring (`CreateAgentLoopResult.jobControl`). Absent
+   * → `tasks.steer` and `tasks.events` answer 503 and `tasks.cancel` writes the
+   * cancel request directly.
+   */
+  jobControl?: CreateAgentLoopResult['jobControl'];
   /**
    * Subscribe to the executor's coalesced run digest (pi-delegation G9/D11/D20).
    * Wired by the surface that owns the `BackgroundExecutor`. Each digest is
@@ -1151,7 +1158,11 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     const handle = await teamLoops.handleFor(personalityId);
     return handle?.loop ?? agentLoop;
   };
-  const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});
+  const tasksService = new TasksService({
+    ...(opts.jobStore ? { store: opts.jobStore } : {}),
+    ...(opts.jobRunners ? { runners: opts.jobRunners } : {}),
+    ...(opts.jobControl ? { control: opts.jobControl } : {}),
+  });
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   // Phase 2 — global named-secrets vault + generic per-tool settings surface.
   // The registry is what makes the provider roster derived rather than

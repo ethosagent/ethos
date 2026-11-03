@@ -1,7 +1,9 @@
+import { JOB_STEER_MAX_CHARS } from '@ethosagent/types';
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import {
   BackgroundJobDetailSchema,
+  BackgroundJobEventSchema,
   BackgroundJobSummarySchema,
   DigestLatestSchema,
   GoalAttemptSchema,
@@ -442,7 +444,7 @@ export const goals = {
 // ---------------------------------------------------------------------------
 // Tasks — background-job (detached spawn-and-continue) surface
 //
-// Read-only plus one cancel: `list` enumerates jobs (optionally scoped to a
+// Reads plus cancel and steer: `list` enumerates jobs (optionally scoped to a
 // root session), `get` reads one job with its ordered event trail (null when
 // absent), `cancel` requests cancellation. The JobStore is the source of
 // truth; the server maps rows to the wire schemas in `schemas.ts`.
@@ -457,11 +459,34 @@ const TasksGetOutput = BackgroundJobDetailSchema.nullable();
 const TasksCancelInput = z.object({ id: z.string().min(1) });
 const TasksCancelOutput = z.object({ ok: z.boolean() });
 
+// Steer a running job. The cap is `JOB_STEER_MAX_CHARS` (the store enforces it
+// too; zod rejects early with 400). Whitespace-only text is rejected with a
+// refine, not `.trim()`, so a valid payload reaches the handler unchanged.
+const TasksSteerInput = z.object({
+  id: z.string().min(1),
+  text: z
+    .string()
+    .min(1)
+    .max(JOB_STEER_MAX_CHARS)
+    .refine((t) => t.trim().length > 0, 'text must not be blank'),
+});
+const TasksSteerOutput = z.object({ steerId: z.number().int() });
+
+// Cursor read of a job's event trail: rows with `seq > afterSeq`, oldest first.
+const TasksEventsInput = z.object({
+  id: z.string().min(1),
+  afterSeq: z.number().int().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+});
+const TasksEventsOutput = z.array(BackgroundJobEventSchema);
+
 /** @experimental */
 export const tasks = {
   list: oc.input(TasksListInput).output(TasksListOutput),
   get: oc.input(TasksGetInput).output(TasksGetOutput),
   cancel: oc.input(TasksCancelInput).output(TasksCancelOutput),
+  steer: oc.input(TasksSteerInput).output(TasksSteerOutput),
+  events: oc.input(TasksEventsInput).output(TasksEventsOutput),
 };
 
 // ---------------------------------------------------------------------------

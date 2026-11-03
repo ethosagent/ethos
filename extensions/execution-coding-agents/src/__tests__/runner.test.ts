@@ -118,6 +118,10 @@ describe('AcpJobRunner — construction and registration', () => {
     expect(runner.capabilities).toBe(CLAUDE_CODE_ACP_CAPABILITIES);
   });
 
+  it('claims no steering: the host never reads the steer sink (background-job-steer D16)', () => {
+    expect(CLAUDE_CODE_ACP_CAPABILITIES.steer).toBe(false);
+  });
+
   it('is constructible and resolvable through the same JobRunnerRegistry a surface uses', async () => {
     const registry = new DefaultJobRunnerRegistry();
     registry.register(

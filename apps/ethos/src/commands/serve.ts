@@ -529,6 +529,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
     | undefined;
   let jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
+  let jobControl: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'] | undefined;
   let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
   let ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
   let realtimeProviders: import('@ethosagent/types').RealtimeVoiceProviderRegistry | undefined;
@@ -810,6 +811,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
+    jobControl = result.jobControl;
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     realtimeProviders = result.realtimeProviders;
@@ -887,6 +889,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
+    jobControl = result.jobControl;
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     realtimeProviders = result.realtimeProviders;
@@ -1397,6 +1400,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     amendments,
     jobStore,
     jobRunners,
+    jobControl,
     backgroundExecutor,
     setOnSkillProposed,
     onMemoryCaptured,
@@ -2240,6 +2244,7 @@ export interface BuildServeWebApiOptions {
   amendments: import('@ethosagent/web-api').AmendmentReader;
   jobStore: import('@ethosagent/types').JobStore | undefined;
   jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
+  jobControl: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'] | undefined;
   backgroundExecutor:
     | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
     | undefined;
@@ -2320,6 +2325,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     amendments,
     jobStore,
     jobRunners,
+    jobControl,
     backgroundExecutor,
     setOnSkillProposed,
     onMemoryCaptured,
@@ -2546,6 +2552,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     ...(goals ? { goals } : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(jobRunners ? { jobRunners } : {}),
+    ...(jobControl ? { jobControl } : {}),
     // I15/I18 — the run card's liveness feed and the completion hand-back.
     // Both ride the executor's EXISTING subscription seams (`onRunUpdate`,
     // `onComplete`); neither is a new notification bus (G9/D11/D20, D27).

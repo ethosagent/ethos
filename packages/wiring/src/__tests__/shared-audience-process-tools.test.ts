@@ -70,6 +70,8 @@ const RELAY_TOOLS_ALLOWED: Record<string, string> = {
   task_status: 'reads a background job this session started',
   task_result: 'reads a background job this session started',
   task_cancel: 'cancels a background job this session started',
+  task_steer:
+    'steers a background job this session started; the audience gate (jobActionAllowed) refuses a shared room on a private job',
   task_logs: 'reads a background job this session started',
   a2a_send:
     'an external A2A peer; an Ethos peer runs every inbound task shared (D13, ' +

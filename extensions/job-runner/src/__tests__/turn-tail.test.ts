@@ -11,7 +11,7 @@ import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import { SQLiteJobStore } from '@ethosagent/job-store';
 import type { CreateBackgroundJobInput } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { BackgroundExecutor, type BackgroundExecutorConfig } from '../index';
+import { BackgroundExecutor, type BackgroundExecutorConfig, JOB_OBSERVE_MS } from '../index';
 
 const OWNER = 'owner-tail';
 
@@ -167,5 +167,35 @@ describe('BackgroundExecutor drains the child turn past `done` (F07)', () => {
     expect(finished?.status).toBe('done');
     expect(finished?.summary).toBe('The thing is done.');
     expect(t.state.tailRan).toBe(true);
+  });
+});
+
+describe('BackgroundExecutor observe timer (background-job-steer D7)', () => {
+  it('is cleared when the run ends: no interval outlives the job', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const t = tailedLoop();
+    const exec = new BackgroundExecutor({ store, loop: t.loop, owner: OWNER, config: cfg() });
+    const job = await store.create(createInput());
+    const set = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    try {
+      exec.start();
+      exec.nudge();
+      await vi.waitFor(() => expect(t.state.parked).toBe(true), { timeout: 2000 });
+      t.release();
+      await vi.waitFor(async () => expect((await store.get(job.id))?.status).toBe('done'), {
+        timeout: 2000,
+      });
+      // Per-run intervals: the heartbeat and the observe tick. Both cleared.
+      const observeTimers = set.mock.results
+        .filter((_, i) => set.mock.calls[i]?.[1] === JOB_OBSERVE_MS)
+        .map((r) => r.value);
+      expect(observeTimers).toHaveLength(1);
+      expect(cleared.mock.calls.map((c) => c[0])).toContain(observeTimers[0]);
+    } finally {
+      set.mockRestore();
+      cleared.mockRestore();
+      await exec.shutdown();
+    }
   });
 });

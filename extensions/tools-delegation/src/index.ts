@@ -9,6 +9,7 @@ import { type AgentLoop, runIsTainted } from '@ethosagent/core';
 import type {
   BackgroundJob,
   BackgroundJobEvent,
+  BackgroundJobStatus,
   JobRunnerRegistry,
   JobStore,
   SecretsResolver,
@@ -16,6 +17,7 @@ import type {
   Tool,
   ToolContext,
   ToolResult,
+  TurnAudience,
 } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
 
@@ -184,6 +186,38 @@ async function runSubAgent(
 // ---------------------------------------------------------------------------
 
 /**
+ * Outcomes of the injected steer/stop. Re-declared structurally (not imported)
+ * because this package must not depend on `@ethosagent/job-runner`; wiring
+ * passes `JobControl.steer/stop`, whose `SteerOutcome`/`StopOutcome` are
+ * assignable to these.
+ */
+export type TaskSteerOutcome =
+  | { ok: true; steerId: number }
+  | {
+      ok: false;
+      reason:
+        | 'not_found'
+        | 'finished'
+        | 'remote'
+        | 'unsupported'
+        | 'full'
+        | 'too_long'
+        | 'not_available';
+      status?: BackgroundJobStatus;
+    };
+
+/** Every refusal reason `outcomeError` words. */
+type TaskRefusal = Extract<TaskSteerOutcome, { ok: false }>['reason'];
+
+export type TaskStopOutcome =
+  | { ok: true; wasRunning: true }
+  | {
+      ok: false;
+      reason: Extract<TaskRefusal, 'not_found' | 'finished' | 'remote'>;
+      status?: BackgroundJobStatus;
+    };
+
+/**
  * Dependencies the tool layer needs to spawn and inspect background jobs.
  * Injected at wiring time; when absent the background surface degrades to
  * `not_available`. `nudge` is `executor.nudge` passed structurally so this
@@ -226,6 +260,14 @@ export interface BackgroundToolDeps {
    * own lookup. Absent means only the default runner exists here.
    */
   runners?: JobRunnerRegistry;
+  /**
+   * Queue a steer for a job (wiring binds `JobControl.steer` with source
+   * `'tool'`). The audience gate lives behind it, not here. Absent means
+   * `task_steer` reports `not_available`.
+   */
+  steer?: (job: BackgroundJob, text: string, audience: TurnAudience) => Promise<TaskSteerOutcome>;
+  /** Stop a job through the shared audience gate (wiring binds `JobControl.stop`). */
+  stop?: (job: BackgroundJob, audience: TurnAudience) => Promise<TaskStopOutcome>;
 }
 
 /** The runner a background job runs on when `runner` is omitted. */
@@ -261,6 +303,11 @@ async function fetchScopedJob(
   if (!job) return null;
   if (job.rootSessionKey !== (ctx.rootSessionKey ?? ctx.sessionKey)) return null;
   return job;
+}
+
+/** No audience means shared: fail closed (plan D11). */
+function audienceOf(ctx: ToolContext): TurnAudience {
+  return ctx.roomAudience ?? 'shared';
 }
 
 function summarizeJob(job: BackgroundJob, staleMs: number): Record<string, unknown> {
@@ -355,6 +402,8 @@ function formatEvent(e: BackgroundJobEvent): string {
       return `spend $${String(p.spendUsd ?? p.usd ?? '')}`;
     case 'cancel_requested':
       return 'cancel requested';
+    case 'steer':
+      return `steer #${String(p.steerId ?? '?')} (${String(p.source ?? '?')}, ${String(p.chars ?? '?')} chars)`;
     case 'recovered':
       return 'recovered (was falsely marked stale)';
     case 'done':
@@ -1641,7 +1690,17 @@ export function createTaskResultTool(background?: BackgroundToolDeps): Tool {
         return { ok: true, value: job.summary ?? '(no summary)' };
       }
       if (TERMINAL_STATUSES.has(job.status)) {
-        return { ok: true, value: job.error ?? `job ${job.status}` };
+        let value = job.error ?? `job ${job.status}`;
+        if (job.status === 'aborted') {
+          if (job.summary) value += `\npartial output:\n${job.summary}`;
+          const unread = (await background.store.listSteers?.(job.id))?.filter(
+            (s) => s.state === 'unread',
+          ).length;
+          if (unread) {
+            value += `\n${unread} ${unread === 1 ? 'steer was' : 'steers were'} never read by the job`;
+          }
+        }
+        return { ok: true, value };
       }
       // Non-terminal is not an error — report progress.
       return {
@@ -1674,8 +1733,92 @@ export function createTaskCancelTool(background?: BackgroundToolDeps): Tool {
       if (!id) return { ok: false, code: 'input_invalid', error: 'id is required' };
       const job = await fetchScopedJob(background.store, id, ctx);
       if (!job) return JOB_NOT_FOUND;
+      if (background.stop) {
+        const out = await background.stop(job, audienceOf(ctx));
+        if (out.ok) return { ok: true, value: 'cancel requested; the job will stop shortly' };
+        return outcomeError(out.reason, out.status);
+      }
+      // No injected `stop`: mirrors `JobControl.stop`'s terminal refusal for stores/hosts without a JobControl.
+      if (TERMINAL_STATUSES.has(job.status)) return outcomeError('finished', job.status);
       await background.store.requestCancel(id);
       return { ok: true, value: 'cancel requested; the job will stop shortly' };
+    },
+  };
+}
+
+/** One message per refusal reason; `not_found` is byte-identical to `JOB_NOT_FOUND`. */
+function outcomeError(reason: TaskRefusal, status?: BackgroundJobStatus): ToolResult {
+  switch (reason) {
+    case 'not_found':
+      return JOB_NOT_FOUND;
+    case 'finished':
+      return {
+        ok: false,
+        code: 'input_invalid',
+        error: `job already finished${status ? ` (${status})` : ''}`,
+      };
+    case 'remote':
+      return {
+        ok: false,
+        code: 'not_available',
+        error: 'job runs on a remote peer; control it there',
+      };
+    case 'unsupported':
+      return {
+        ok: false,
+        code: 'not_available',
+        error: "this job's runner does not support steering",
+      };
+    case 'full':
+      return {
+        ok: false,
+        code: 'input_invalid',
+        error: 'too many unread steers queued; wait for the job to read them',
+      };
+    case 'too_long':
+      return { ok: false, code: 'input_invalid', error: 'steer text is too long; shorten it' };
+    case 'not_available':
+      return {
+        ok: false,
+        code: 'not_available',
+        error: 'steering is not available in this deployment',
+      };
+  }
+}
+
+export function createTaskSteerTool(background?: BackgroundToolDeps): Tool {
+  return {
+    name: 'task_steer',
+    description:
+      'Send a correction or extra instruction to a RUNNING background job. The job reads it ' +
+      'at its next turn boundary, not instantly. Use task_cancel to stop it instead.',
+    toolset: 'delegation',
+    maxResultChars: 4_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Job id.' },
+        text: { type: 'string', description: 'The instruction to deliver to the job.' },
+      },
+      required: ['id', 'text'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!background) return NOT_AVAILABLE;
+      const { id, text } = (args ?? {}) as { id?: string; text?: string };
+      if (!id) return { ok: false, code: 'input_invalid', error: 'id is required' };
+      if (typeof text !== 'string' || !text.trim()) {
+        return { ok: false, code: 'input_invalid', error: 'text is required' };
+      }
+      const job = await fetchScopedJob(background.store, id, ctx);
+      if (!job) return JOB_NOT_FOUND;
+      if (!background.steer) return outcomeError('not_available');
+      const out = await background.steer(job, text.trim(), audienceOf(ctx));
+      if (!out.ok) return outcomeError(out.reason, out.status);
+      return {
+        ok: true,
+        value: `steer #${out.steerId} queued; the job reads it at its next turn boundary`,
+      };
     },
   };
 }
@@ -1741,6 +1884,7 @@ export function createDelegationTools(
     createTaskStatusTool(background),
     createTaskResultTool(background),
     createTaskCancelTool(background),
+    createTaskSteerTool(background),
     createTaskLogsTool(background),
   ];
 }

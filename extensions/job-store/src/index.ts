@@ -3,15 +3,23 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database, { migrate } from '@ethosagent/sqlite';
 import type {
+  AddSteerResult,
   BackgroundJob,
   BackgroundJobEvent,
   BackgroundJobEventType,
   BackgroundJobStatus,
   CreateBackgroundJobInput,
   GetJobEventsOptions,
+  JobSteer,
+  JobSteerSource,
+  JobSteerState,
   JobStore,
 } from '@ethosagent/types';
-import { JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
+import {
+  JOB_ABORTED_BY_SHUTDOWN,
+  JOB_STEER_MAX_CHARS,
+  JOB_STEER_MAX_PENDING,
+} from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -75,6 +83,26 @@ const SCHEMA = `
     claimed_at INTEGER NOT NULL
   ) STRICT;
 
+  -- The steer queue (plan background-job-steer D2/D18(a)). In the BASELINE, not
+  -- a numbered migration: migrate execs the baseline on every open, so
+  -- CREATE TABLE IF NOT EXISTS reaches old and new databases alike, and
+  -- user_version stays 10 (a bump would lock older builds sharing ~/.ethos out
+  -- of jobs.db, D18(a)). NO foreign key to jobs: foreign_keys is ON, and an
+  -- older build's pruneTerminal deletes jobs rows without knowing this table;
+  -- an FK would make that delete fail. job_notices has no FK for the same
+  -- reason. pruneTerminal here also deletes orphans.
+  CREATE TABLE IF NOT EXISTS job_steers (
+    id                INTEGER PRIMARY KEY,
+    job_id            TEXT NOT NULL,
+    text              TEXT NOT NULL,
+    state             TEXT NOT NULL DEFAULT 'pending',
+    source            TEXT NOT NULL,
+    requester_user_id TEXT,
+    created_at        INTEGER NOT NULL,
+    read_at           INTEGER
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS job_steers_job ON job_steers(job_id, state, id);
   CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id, seq);
   CREATE INDEX IF NOT EXISTS job_notices_job ON job_notices(job_id);
   CREATE INDEX IF NOT EXISTS jobs_root_status ON jobs(root_session_key, status);
@@ -300,6 +328,37 @@ function parseToolsetNarrowing(raw: string | null): BackgroundJob['toolsetNarrow
 function parseRoomAudience(raw: string | null): BackgroundJob['roomAudience'] {
   if (raw === null) return undefined;
   return raw === 'private' ? 'private' : 'shared';
+}
+
+interface JobSteerRow {
+  id: number;
+  job_id: string;
+  text: string;
+  state: string;
+  source: string;
+  requester_user_id: string | null;
+  created_at: number;
+  read_at: number | null;
+}
+
+const STEER_STATES: readonly JobSteerState[] = ['pending', 'read', 'unread'];
+const STEER_SOURCES: readonly JobSteerSource[] = ['cli', 'gateway', 'web', 'tool'];
+
+function rowToSteer(r: JobSteerRow): JobSteer {
+  // Only this store writes the table, from typed values; an unrecognised
+  // hand-edited value reads as the conservative choice (unread / tool).
+  const state = STEER_STATES.find((s) => s === r.state) ?? 'unread';
+  const source = STEER_SOURCES.find((s) => s === r.source) ?? 'tool';
+  return {
+    id: r.id,
+    jobId: r.job_id,
+    text: r.text,
+    state,
+    source,
+    ...(r.requester_user_id !== null ? { requesterUserId: r.requester_user_id } : {}),
+    createdAt: r.created_at,
+    ...(r.read_at !== null ? { readAt: r.read_at } : {}),
+  };
 }
 
 function rowToEvent(r: JobEventRow): BackgroundJobEvent {
@@ -560,9 +619,143 @@ export class SQLiteJobStore implements JobStore {
       if (row.status === 'stale') {
         this.appendEventSync(id, 'recovered', {});
       }
-      this.appendEventSync(id, terminal, {});
+      this.recordTerminalSync(id, terminal, {});
     });
     tx();
+  }
+
+  /**
+   * Append a terminal event and sweep `pending → unread` for a job leaving the
+   * live states. Must run inside the transition's own transaction, so
+   * `addSteer` (which checks status in its transaction) can never insert a
+   * steer this sweep misses. Every terminal transition goes through here.
+   */
+  private recordTerminalSync(
+    jobId: string,
+    eventType: BackgroundJobEventType,
+    payload: Record<string, unknown>,
+  ): void {
+    this.appendEventSync(jobId, eventType, payload);
+    this.sweepSteers(jobId);
+  }
+
+  private sweepSteers(jobId: string): void {
+    this.db
+      .prepare(`UPDATE job_steers SET state = 'unread' WHERE job_id = ? AND state = 'pending'`)
+      .run(jobId);
+  }
+
+  async addSteer(
+    jobId: string,
+    input: { text: string; source: JobSteerSource; requesterUserId?: string },
+  ): Promise<AddSteerResult> {
+    // BEGIN IMMEDIATE, not the shim's default deferred BEGIN: this reads the job
+    // status then INSERTs, and in WAL mode a deferred read-then-write upgrade
+    // fails with SQLITE_BUSY (busy_timeout does not help a stale snapshot) when
+    // another process commits `finish` in between. Taking the write lock up
+    // front makes that writer wait, then this read sees `finished`.
+    const tx = this.db.transaction((): AddSteerResult => {
+      const job = this.db
+        .prepare(
+          `SELECT status, remote_job_id, status IN ${ACTIVE_STATUSES} AS active
+           FROM jobs WHERE id = ?`,
+        )
+        .get(jobId) as { status: string; remote_job_id: string | null; active: number } | undefined;
+      if (!job) return { ok: false, reason: 'not_found' };
+      if (job.remote_job_id !== null) return { ok: false, reason: 'remote' };
+      if (job.active !== 1) {
+        return { ok: false, reason: 'finished', status: job.status as BackgroundJobStatus };
+      }
+      if (input.text.length > JOB_STEER_MAX_CHARS) return { ok: false, reason: 'too_long' };
+      const pending = this.db
+        .prepare(`SELECT COUNT(*) AS n FROM job_steers WHERE job_id = ? AND state = 'pending'`)
+        .get(jobId) as { n: number };
+      if (pending.n >= JOB_STEER_MAX_PENDING) return { ok: false, reason: 'full' };
+
+      const createdAt = Date.now();
+      const result = this.db
+        .prepare(
+          `INSERT INTO job_steers (job_id, text, state, source, requester_user_id, created_at)
+           VALUES (?, ?, 'pending', ?, ?, ?)`,
+        )
+        .run(jobId, input.text, input.source, input.requesterUserId ?? null, createdAt);
+      const id = Number(result.lastInsertRowid);
+      this.appendEventSync(jobId, 'steer', {
+        steerId: id,
+        chars: input.text.length,
+        source: input.source,
+      });
+      return {
+        ok: true,
+        steer: rowToSteer({
+          id,
+          job_id: jobId,
+          text: input.text,
+          state: 'pending',
+          source: input.source,
+          requester_user_id: input.requesterUserId ?? null,
+          created_at: createdAt,
+          read_at: null,
+        }),
+      };
+    });
+    return tx.immediate();
+  }
+
+  // Polled once a second per running job: the one statement worth caching.
+  private pendingSteersStmt?: ReturnType<Database.Database['prepare']>;
+
+  async listPendingSteers(jobId: string, afterId: number): Promise<JobSteer[]> {
+    this.pendingSteersStmt ??= this.db.prepare(
+      `SELECT * FROM job_steers WHERE job_id = ? AND state = 'pending' AND id > ?
+       ORDER BY id ASC`,
+    );
+    const rows = this.pendingSteersStmt.all(jobId, afterId) as JobSteerRow[];
+    return rows.map(rowToSteer);
+  }
+
+  async markSteersRead(jobId: string, ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      const stmt = this.db.prepare(
+        `UPDATE job_steers SET state = 'read', read_at = ?
+         WHERE job_id = ? AND id = ? AND state = 'pending'`,
+      );
+      for (const id of ids) stmt.run(now, jobId, id);
+    });
+    tx();
+  }
+
+  async listSteers(jobId: string): Promise<JobSteer[]> {
+    const rows = this.db
+      .prepare('SELECT * FROM job_steers WHERE job_id = ? ORDER BY id ASC')
+      .all(jobId) as JobSteerRow[];
+    return rows.map(rowToSteer);
+  }
+
+  async listByOrigin(
+    origin: { platform: string; botKey: string; chatId: string; threadId?: string },
+    opts?: { limit?: number },
+  ): Promise<BackgroundJob[]> {
+    const limit = Math.max(0, Math.floor(opts?.limit ?? 50));
+    // `IS ?` is NULL-safe equality: an undefined thread matches only rows with
+    // no thread, a thread id matches only that thread.
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE origin_platform = ? AND origin_bot_key = ? AND origin_chat_id = ?
+           AND origin_thread_id IS ?
+         ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(
+        origin.platform,
+        origin.botKey,
+        origin.chatId,
+        origin.threadId ?? null,
+        limit,
+      ) as JobRow[];
+    return rows.map(rowToJob);
   }
 
   async listByRoot(rootSessionKey: string): Promise<BackgroundJob[]> {
@@ -657,7 +850,7 @@ export class SQLiteJobStore implements JobStore {
           )
           .run(id);
         if (result.changes === 1) {
-          this.appendEventSync(id, 'stale', {});
+          this.recordTerminalSync(id, 'stale', {});
           transitioned.push(id);
         }
       }
@@ -685,7 +878,7 @@ export class SQLiteJobStore implements JobStore {
           )
           .run(id);
         if (result.changes === 1) {
-          this.appendEventSync(id, 'expired', {});
+          this.recordTerminalSync(id, 'expired', {});
           transitioned.push(id);
         }
       }
@@ -793,6 +986,10 @@ export class SQLiteJobStore implements JobStore {
              AND COALESCE(finished_at, created_at) < ?`,
         )
         .run(cutoffMs);
+
+      // job_steers has no FK (D2): sweep the steers of the jobs just deleted
+      // (and any an older build's prune orphaned) once the jobs rows are gone.
+      this.db.prepare('DELETE FROM job_steers WHERE job_id NOT IN (SELECT id FROM jobs)').run();
       return result.changes;
     });
     return prune();
@@ -842,6 +1039,19 @@ export class SQLiteJobStore implements JobStore {
     if (opts?.beforeSeq !== undefined) {
       where += ' AND seq < ?';
       params.push(opts.beforeSeq);
+    }
+    if (opts?.afterSeq !== undefined) {
+      // Forward tail: the OLDEST `limit` rows after the cursor, ascending, so
+      // a poller paging forward never skips rows.
+      where += ' AND seq > ?';
+      params.push(opts.afterSeq);
+      if (opts.limit !== undefined) {
+        params.push(Math.max(0, Math.floor(opts.limit)));
+        const rows = this.db
+          .prepare(`SELECT * FROM job_events WHERE ${where} ORDER BY seq ASC LIMIT ?`)
+          .all(...params) as JobEventRow[];
+        return rows.map(rowToEvent);
+      }
     }
 
     if (opts?.limit === undefined) {

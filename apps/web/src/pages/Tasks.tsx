@@ -5,6 +5,9 @@ import { useParams } from 'react-router-dom';
 import { useRecentSessions } from '../features/sessions/api/queries';
 import { useTaskCancel } from '../features/tasks/api/mutations';
 import { useTaskDetail, useTasksList } from '../features/tasks/api/queries';
+import { TaskSteerInput } from '../features/tasks/components/TaskSteerInput';
+import { SteersList, TranscriptPane } from '../features/tasks/components/TaskSteersAndTranscript';
+import { canSteerJob } from '../lib/task-steer';
 import {
   filterSessionsByPersonality,
   filterTasksForLibrary,
@@ -199,6 +202,23 @@ function TaskDetailDrawer({ id, onClose }: { id: string | null; onClose: () => v
               <pre style={{ ...preStyle, color: 'var(--error)' }}>{data.error}</pre>
             </section>
           )}
+
+          {canSteerJob(data.status, data.capabilities) ? (
+            <section>
+              <SectionLabel>Steer</SectionLabel>
+              <TaskSteerInput jobId={data.id} />
+            </section>
+          ) : null}
+
+          <section>
+            <SectionLabel>Steers ({data.steers.length})</SectionLabel>
+            <SteersList steers={data.steers} />
+          </section>
+
+          <section>
+            <SectionLabel>Transcript</SectionLabel>
+            <TranscriptPane jobId={data.id} live={ACTIVE.has(data.status)} />
+          </section>
 
           <section>
             <SectionLabel>Event trail ({data.events.length})</SectionLabel>

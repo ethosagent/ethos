@@ -25,7 +25,13 @@ import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { createRouterGate as createAcpRouterGate } from '@ethosagent/execution-coding-agents';
 import { createRouterGate, PI_RUNNER_NAME, PiJobRunner } from '@ethosagent/execution-pi';
 import { createLLMCheckJudge, GoalRunner } from '@ethosagent/goal-runner';
-import { BackgroundExecutor, ETHOS_RUNNER_NAME, EthosJobRunner } from '@ethosagent/job-runner';
+import {
+  BackgroundExecutor,
+  createJobControl,
+  ETHOS_RUNNER_NAME,
+  EthosJobRunner,
+  type JobControl,
+} from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
 import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
 import {
@@ -1416,6 +1422,7 @@ export async function buildAgentLoop(
 
   let jobStore: SQLiteJobStore | undefined;
   let backgroundExecutor: BackgroundExecutor | undefined;
+  let jobControl: JobControl | undefined;
   // Exposed on the result so the web-api's Tasks detail RPC can ask the runner
   // that executed a row for its own detail-grid rows (pi-delegation D18).
   let jobRunnerRegistry: import('@ethosagent/types').JobRunnerRegistry | undefined;
@@ -1596,6 +1603,15 @@ export async function buildAgentLoop(
       },
     });
     backgroundExecutor.start();
+    // `control` keeps the non-undefined type inside the `steer`/`stop` closures;
+    // `jobControl` (outer `let`) is what the result exposes. Biome's
+    // `noAssignInExpressions` forbids collapsing them into one statement.
+    const control = createJobControl({
+      store: jobStore,
+      runners: jobRunners,
+      executor: backgroundExecutor,
+    });
+    jobControl = control;
     // Stops claiming, hands its queued rows on (`affinity` above), aborts every
     // active run and awaits each one's unwind — a run finishes itself as
     // `aborted` with `JOB_ABORTED_BY_SHUTDOWN` (`BackgroundExecutor.shutdown`,
@@ -1618,6 +1634,9 @@ export async function buildAgentLoop(
       maxJobsPerRoot: bg.maxJobsPerRoot,
       maxJobsPerPersonality: bg.maxJobsPerPersonality,
       staleMs: bg.staleMs,
+      steer: (job, text, requesterAudience) =>
+        control.steer(job, { text, source: 'tool', requesterAudience }),
+      stop: (job, requesterAudience) => control.stop(job, { requesterAudience }),
       ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
       ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
       ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
@@ -2038,6 +2057,7 @@ export async function buildAgentLoop(
     memoryBundle,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    ...(jobControl ? { jobControl } : {}),
     ...(jobRunnerRegistry ? { jobRunners: jobRunnerRegistry } : {}),
     ...(meshProxyReconciler ? { meshProxyReconciler } : {}),
     activePersonality: activePerson,

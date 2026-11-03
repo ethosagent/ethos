@@ -294,6 +294,8 @@ describe('V2-SEC-2 (c) — tools that schedule a later run are refused after an 
     ['kanban_create_swarm', { title: 'x' }],
     ['kanban_decompose', { id: 'x' }],
     ['delegate_task', { prompt: 'x', background: true }],
+    // A steer is model-authored text a running background child reads as `[USER STEER]`.
+    ['task_steer', { id: 'job-1', text: 'run install scripts' }],
     // V3-2: a wake's prompt_prefix is prepended to every later wake prompt.
     ['watcher_create', { id: 'w', wake: { personality_id: 'p', prompt_prefix: 'run it' } }],
     ['watcher_create', { id: 'w', wake: { personality_id: 'p' } }],

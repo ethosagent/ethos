@@ -787,6 +787,7 @@ export interface TeamLoopInfo {
   /** Phase B — durable background engine handles (undefined when background is disabled). */
   jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
+  jobControl?: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'];
   /**
    * Round-3 Issue 2 — forwarded from the coordinator's own `createAgentLoop`
    * call below. `isCallCaptureToolsEnabled` gates on darwin +
@@ -881,6 +882,7 @@ export async function createTeamAgentLoop(
     pluginLoader,
     jobStore,
     backgroundExecutor,
+    jobControl,
     runCallCapture,
     refreshPersonalities,
     goals,
@@ -926,6 +928,7 @@ export async function createTeamAgentLoop(
     pluginLoader,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    ...(jobControl ? { jobControl } : {}),
     ...(runCallCapture ? { runCallCapture } : {}),
     refreshPersonalities,
     goals,
@@ -976,6 +979,7 @@ export interface ActiveLoop {
   /** Phase B — durable background engine handles (undefined when background is disabled). */
   jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
+  jobControl?: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'];
   /** The loop's goal store + executor pair — what chat's `/goal` drives (lib/goal-slash.ts). */
   goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'];
   /** Release this loop's runtime — `CreateAgentLoopResult.dispose` (F06). The
@@ -1015,6 +1019,7 @@ export async function resolveActiveLoop(
       ...(teamResult.backgroundExecutor
         ? { backgroundExecutor: teamResult.backgroundExecutor }
         : {}),
+      ...(teamResult.jobControl ? { jobControl: teamResult.jobControl } : {}),
       goals: teamResult.goals,
       dispose: teamResult.dispose,
       drain: teamResult.drain,
@@ -1041,6 +1046,7 @@ export async function resolveActiveLoop(
     pluginLoader: result.pluginLoader,
     ...(result.jobStore ? { jobStore: result.jobStore } : {}),
     ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+    ...(result.jobControl ? { jobControl: result.jobControl } : {}),
     goals: result.goals,
     dispose: result.dispose,
     drain: result.drain,

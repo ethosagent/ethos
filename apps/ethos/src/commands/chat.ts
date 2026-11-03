@@ -25,13 +25,24 @@ import type { SplashInventory } from '@ethosagent/tui';
 import {
   type Attachment,
   type BackgroundJob,
+  type JobSteer,
   type JobStore,
   type NotificationAdapter,
   type SteerSink,
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
-import { createLazyProvider, firstRefusal, notPermittedRefusal } from '@ethosagent/wiring';
+import {
+  createLazyProvider,
+  firstRefusal,
+  formatJobEventLine,
+  isJobRef,
+  notPermittedRefusal,
+  resolveJobRef,
+  steerRefusalText,
+  stopRefusalText,
+  unreadSteerPreview,
+} from '@ethosagent/wiring';
 import { ApprovalCoordinator } from '../approval-coordinator';
 import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
@@ -203,6 +214,8 @@ interface ChatState {
   /** Phase B — durable background engine handles (undefined when background is disabled). */
   jobStore?: JobStore;
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
+  /** One owner of the steer/stop/tail request policy (plan background-job-steer D12). */
+  jobControl?: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'];
   /** Total in-flight iterations seen this turn (for steer pre-first-iteration fallback). */
   iterationsThisTurn: number;
   /**
@@ -358,6 +371,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     pluginLoader,
     jobStore,
     backgroundExecutor,
+    jobControl,
     goals,
     drain,
     dispose,
@@ -633,6 +647,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     draining: false,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    ...(jobControl ? { jobControl } : {}),
     lines,
     awaitingConsent: false,
     awaitingClarify: false,
@@ -760,12 +775,25 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
   // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
   const backgroundCompleteHandler = (job: BackgroundJob): void => {
-    const noticeLines = backgroundCompletionLines(job);
-    if (!noticeLines) return;
-    out('\n');
-    for (const line of noticeLines) out(`${c.dim}${line}${c.reset}\n`);
-    if (config.displayBellOnComplete) out('\x07');
-    reprompt();
+    // Same gate as `backgroundCompletionLines`: only done/failed are surfaced.
+    if (job.status !== 'done' && job.status !== 'failed') return;
+    // Fire-and-forget: unread steers are a nice-to-have on the notice, so a
+    // failed read prints the notice without them rather than dropping it.
+    void (async () => {
+      let unread: JobSteer[] = [];
+      try {
+        unread = ((await state.jobControl?.steers(job)) ?? []).filter((s) => s.state === 'unread');
+      } catch (err) {
+        out(
+          `${c.dim}[unread steers unavailable: ${err instanceof Error ? err.message : String(err)}]${c.reset}\n`,
+        );
+      }
+      out('\n');
+      for (const line of backgroundCompletionLines(job, unread) ?? [])
+        out(`${c.dim}${line}${c.reset}\n`);
+      if (config.displayBellOnComplete) out('\x07');
+      reprompt();
+    })();
   };
   backgroundExecutor?.onComplete(backgroundCompleteHandler);
 
@@ -899,6 +927,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         state.modelName = modelId;
         state.jobStore = next.runtime.jobStore;
         state.backgroundExecutor = next.runtime.backgroundExecutor;
+        state.jobControl = next.runtime.jobControl;
         slashCtx.notificationRouter = next.runtime.notificationRouter;
         slashCtx.pluginLoader = next.runtime.pluginLoader;
         slashCtx.goals = next.runtime.goals;
@@ -1722,6 +1751,9 @@ interface SlashHandlerContext {
   switchModel?: (modelId: string) => Promise<ModelSwitchOutcome>;
 }
 
+const UNREAD_STEER_LINES = 3;
+const UNREAD_STEER_CHARS = 120;
+
 /**
  * The idle-prompt completion notice for a finished background job, as plain
  * lines (the caller dims them), or `null` for a status that stays silent —
@@ -1730,7 +1762,10 @@ interface SlashHandlerContext {
  * already in the parent session, so a `'parent'` job shows the same notice.
  * Pinned by `__tests__/chat-background-completion.test.ts`.
  */
-export function backgroundCompletionLines(job: BackgroundJob): string[] | null {
+export function backgroundCompletionLines(
+  job: BackgroundJob,
+  unread: readonly JobSteer[] = [],
+): string[] | null {
   if (job.status !== 'done' && job.status !== 'failed') return null;
   const header = `bg:${job.id.slice(0, 8)}`;
   const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
@@ -1740,6 +1775,12 @@ export function backgroundCompletionLines(job: BackgroundJob): string[] | null {
     for (const line of body.split('\n').slice(0, 10)) lines.push(`│ ${line}`);
     if (body.split('\n').length > 10) lines.push('│ ... (truncated)');
   }
+  const { shown, more } = unreadSteerPreview(unread, {
+    lines: UNREAD_STEER_LINES,
+    chars: UNREAD_STEER_CHARS,
+  });
+  for (const text of shown) lines.push(`│ unread steer: ${text}`);
+  if (more > 0) lines.push(`│ ... and ${more} more unread steer${more === 1 ? '' : 's'}`);
   lines.push('╰─');
   return lines;
 }
@@ -2017,6 +2058,8 @@ async function handleSlashCommand(
         out(`${c.dim}Usage: /steer <text>${c.reset}\n`);
         break;
       }
+      // `/steer <job-ref> <text>` steers a background job, busy or idle.
+      if (await steerJobFromSlash(arg, state)) break;
       if (!state.abort) {
         state.inputQueue.push(arg);
         out(`${c.dim}[idle — /steer queued as a turn]${c.reset}\n`);
@@ -2360,7 +2403,63 @@ async function printCompactStatus(sessionKey: string): Promise<void> {
 // /background command handler — durable background engine (Phase B)
 // ---------------------------------------------------------------------------
 
-async function handleBackgroundCommand(arg: string, state: ChatState): Promise<void> {
+type JobCommandState = Pick<
+  ChatState,
+  'jobStore' | 'backgroundExecutor' | 'jobControl' | 'sessionKey'
+>;
+
+const id8 = (job: BackgroundJob): string => job.id.slice(0, 8);
+
+/** Resolve `ref` within `jobs`, printing the not-found / ambiguity text; returns the job only when it is unique. */
+function jobOrExplain(jobs: readonly BackgroundJob[], ref: string): BackgroundJob | null {
+  const res = resolveJobRef(jobs, ref);
+  if (res.kind === 'job') return res.job;
+  if (res.kind === 'none') {
+    out(`${c.dim}no job ${ref} in this session${c.reset}\n`);
+    return null;
+  }
+  out(`${c.dim}job ${ref} is ambiguous — matches:${c.reset}\n`);
+  for (const j of jobs.filter((x) => res.ids.includes(x.id))) {
+    out(`${c.dim}  ${j.id}  [${j.status}]  ${j.label ?? j.prompt.slice(0, 60)}${c.reset}\n`);
+  }
+  return null;
+}
+
+async function steerJob(
+  control: NonNullable<ChatState['jobControl']>,
+  job: BackgroundJob,
+  text: string,
+): Promise<void> {
+  const res = await control.steer(job, { text, source: 'cli', requesterAudience: 'private' });
+  if (res.ok) {
+    out(`${c.dim}↩ noted for job ${id8(job)} — it reads this at its next step.${c.reset}\n`);
+    return;
+  }
+  const refusal =
+    res.reason === 'not_found' ? `no job ${id8(job)} in this session` : steerRefusalText(job, res);
+  out(`${c.dim}${refusal}${c.reset}\n`);
+}
+
+/**
+ * `/steer <ref> <text>`: true when the first token is ref-shaped AND names a job
+ * in this root (the steer, or an ambiguity list, was printed). False means the
+ * caller runs today's foreground steer (plan D13 back-compat).
+ */
+export async function steerJobFromSlash(arg: string, state: JobCommandState): Promise<boolean> {
+  const { jobStore, jobControl } = state;
+  if (!jobStore || !jobControl) return false;
+  const m = /^(\S+)\s+([\s\S]*)$/.exec(arg.trim());
+  const ref = m?.[1];
+  const text = m?.[2]?.trim();
+  if (!ref || !text || !isJobRef(ref)) return false;
+  const jobs = await jobStore.listByRoot(state.sessionKey);
+  if (resolveJobRef(jobs, ref).kind === 'none') return false;
+  const job = jobOrExplain(jobs, ref);
+  if (job) await steerJob(jobControl, job, text);
+  return true;
+}
+
+export async function handleBackgroundCommand(arg: string, state: JobCommandState): Promise<void> {
   const jobStore = state.jobStore;
   const executor = state.backgroundExecutor;
   if (!jobStore || !executor) {
@@ -2386,11 +2485,48 @@ async function handleBackgroundCommand(arg: string, state: ChatState): Promise<v
     return;
   }
 
-  if (arg.startsWith('cancel ')) {
-    const taskId = arg.slice('cancel '.length).trim();
-    // Cross-process/async: set the cancel flag; the executor honors it shortly.
-    await jobStore.requestCancel(taskId);
-    out(`${c.dim}[background task ${taskId} cancelled]${c.reset}\n`);
+  // steer|stop|tail <ref> — a sub-word applies only when the next token is
+  // ref-shaped (D13), so `/background steer the boat` still spawns a job.
+  // `cancel` was always a command, so it keeps that for any token (D10: now
+  // scope-checked rather than a blind requestCancel).
+  const parts = /^(\S+)(?:\s+(\S+)(?:\s+([\s\S]*))?)?$/.exec(arg.trim());
+  const sub = parts?.[1];
+  const ref = parts?.[2];
+  const text = (parts?.[3] ?? '').trim();
+  const isCancel = sub === 'cancel' && ref !== undefined;
+  const isRefCommand =
+    (sub === 'steer' || sub === 'stop' || sub === 'tail') && ref !== undefined && isJobRef(ref);
+  if (isCancel || isRefCommand) {
+    const control = state.jobControl;
+    if (!control) {
+      out(`${c.dim}[job control not available]${c.reset}\n`);
+      return;
+    }
+    if (sub === 'steer' && !text) {
+      out(`${c.dim}Usage: /background steer <id> <text>${c.reset}\n`);
+      return;
+    }
+    const job = jobOrExplain(await jobStore.listByRoot(root), ref);
+    if (!job) return;
+    if (sub === 'steer') {
+      await steerJob(control, job, text);
+    } else if (sub === 'tail') {
+      const res = await control.tail(job, { requesterAudience: 'private', audience: 'operator' });
+      if (!res.ok) {
+        out(`${c.dim}no job ${ref} in this session${c.reset}\n`);
+        return;
+      }
+      out(`${c.dim}job ${id8(job)} · ${job.status} · $${job.spendUsd.toFixed(4)}${c.reset}\n`);
+      for (const ev of res.events) out(`${c.dim}  ${formatJobEventLine(ev)}${c.reset}\n`);
+    } else {
+      const res = await control.stop(job, { requesterAudience: 'private' });
+      const msg = res.ok
+        ? `✓ Stopping job ${id8(job)}.`
+        : res.reason === 'not_found'
+          ? `no job ${ref} in this session`
+          : stopRefusalText(job, res);
+      out(`${c.dim}${msg}${c.reset}\n`);
+    }
     return;
   }
 

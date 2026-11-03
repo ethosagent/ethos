@@ -4,6 +4,7 @@ import { Button } from 'antd';
 import { useState } from 'react';
 import { useTaskCancel } from '../../features/tasks/api/mutations';
 import { useTaskDetail } from '../../features/tasks/api/queries';
+import { TaskSteerInput } from '../../features/tasks/components/TaskSteerInput';
 import {
   type ClarifyQueueState,
   questionForRun,
@@ -13,6 +14,7 @@ import {
 import { type RunState, type RunsState, runCardView } from '../../lib/pi-run-reducer';
 import { resolveRunner, runnerAccentVars } from '../../lib/runners';
 import { useResolvedTokens } from '../../lib/skin-tokens';
+import { canInterruptRun } from '../../lib/task-steer';
 import { RUN_COPY } from '../../lib/worker-copy';
 import { ClarifyCard } from './ClarifyCard';
 
@@ -82,8 +84,11 @@ export function RunCard({ run, question, resolved, onAnswered }: RunCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(true);
   const detail = useTaskDetail(run.jobId, { live: false });
   const cancel = useTaskCancel();
+  const [steerOpen, setSteerOpen] = useState(false);
 
   const row = detail.data ?? undefined;
+  // Hidden until the row's capabilities say the runner can take a steer (D16).
+  const canInterrupt = canInterruptRun(view.buttons, row?.capabilities);
   const label = row?.label ?? shortId(run.jobId);
   const nowLine = resolveNowLine(run.status, run.now);
 
@@ -167,7 +172,18 @@ export function RunCard({ run, question, resolved, onAnswered }: RunCardProps) {
 
       {detailsOpen ? <DetailGrid run={run} detail={row} /> : null}
 
+      {steerOpen && canInterrupt ? (
+        <div className="run-card-steer">
+          <TaskSteerInput jobId={run.jobId} autoFocus />
+        </div>
+      ) : null}
+
       <div className="run-card-buttons">
+        {canInterrupt ? (
+          <Button size="small" onClick={() => setSteerOpen((v) => !v)}>
+            Interrupt
+          </Button>
+        ) : null}
         {view.buttons.includes('cancel') ? (
           <Button
             size="small"

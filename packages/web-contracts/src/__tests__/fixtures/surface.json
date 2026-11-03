@@ -86,6 +86,7 @@
     "IdentityMapEntrySchema",
     "ItemListCardPayloadSchema",
     "JobStatusSchema",
+    "JobSteerSchema",
     "KEY_CATEGORY_IDS",
     "KanbanAgentSchema",
     "KanbanBoardSnapshotSchema",
@@ -583,8 +584,10 @@
     },
     "tasks": {
       "list": "69da3e3912b8ce04e257741efbb819123705a71f7af7497074e0164d0fb91c0a",
-      "get": "d98b8b9ea0695f74e18709439400af5753fafd61d0b546afc991ae5cef7a9945",
-      "cancel": "ec2e72b9bad9296d2f508702aa7494a4534d5686c232a6996435911db42400bd"
+      "get": "43887f3fbd9eedce69dfebc7103d60186984cebed5a513050bf34e8e31b1aff4",
+      "cancel": "ec2e72b9bad9296d2f508702aa7494a4534d5686c232a6996435911db42400bd",
+      "steer": "b907fd57c1c6fc12457ad091f901208b34644cd05c3c47bd59a404a61f5fdb41",
+      "events": "42afbca05367c0e1f198ae2f5c80a77cb54e065995e07c983e09f39a544dc85f"
     },
     "digest": {
       "latest": "8279a368f731b43e6ef0fcb18af2109663ba0021cda01a7213ecfb284feda679",
@@ -730,9 +733,9 @@
     "ApprovalRequestSchema": "868a6d6edda29eeafb823ced63a31c8a1688fd0d4b71822bb670e2b8cc778fe7",
     "ApprovalResolvedEventSchema": "df9b728cc9f346d9d96c49d01d07b4bbbdb8668c4a6ab248ebdf80634501080e",
     "ApprovalScopeSchema": "5f29845702164c6f62f3340467778cf810bf85f1edbca45fc35dd1ce08e25261",
-    "BackgroundJobDetailSchema": "8aebcb43fb8fab91243589ea7b12c2a33da399b2e324c7164c2b7c97418136b9",
-    "BackgroundJobEventSchema": "2ca2ed26bc2d8e23c91821a9d0c9a3dc0a7351021fa5ea405c874c998ca328c0",
-    "BackgroundJobEventTypeSchema": "d278cdb18b5e7e0346442793d5d422f24bc64dde0b569888f0db093516dc63a7",
+    "BackgroundJobDetailSchema": "e158da14c6288104663b6c56c13a7160f49c98c9bf706db6164b76706ecda152",
+    "BackgroundJobEventSchema": "1fffcdf0c09991f79c86e2271f997dd90b1355b85ce85f5f757fb5cfbf229ca1",
+    "BackgroundJobEventTypeSchema": "d761df04d606cace36bbaeb490ebdcc2b7a0c64534d5ac707a6426c4725fe6ae",
     "BackgroundJobStatusSchema": "0bb45d31ada5262efd4a578abf4c8a2989f0dc2906618b3714b90c11aca7f1c9",
     "BackgroundJobSummarySchema": "6aa4379300252a1bc10dd23722abcdc12a46a33adda07dca843c681edcfa3330",
     "BatchRunInfoSchema": "1d939711d24b6d1c976288dcfb51f3a75fae258e5398e099e9eff2c42670c3f5",
@@ -792,6 +795,7 @@
     "IdentityMapEntrySchema": "a38200c4a68eaf17ad29bbcd4e665d96ee185f626777f8cd91e28b35eeedd94f",
     "ItemListCardPayloadSchema": "e03fb7ad6c75e60a9754d6a53b949f47b6f9409ca14cdcafbc9291b771546ea0",
     "JobStatusSchema": "1fa416ebb3d5b30d8e2671a2011b753a9f74796911ae1666a9e767c3b4bddebf",
+    "JobSteerSchema": "5a2f33837272f9e263d9a78070479f2061f79e91acbae55dd54745e6f5acf59c",
     "KanbanAgentSchema": "3c8511b35eef49bb790bb367f5c313a89e33ea12bec77078a91e17ecb5444651",
     "KanbanBoardSnapshotSchema": "70b06bf0faf9fdba8c19853f1aab74f6e6c72532bba90d0b9005f059f577edd9",
     "KanbanCommentSchema": "5aca7f462478b5fb3e068223168d187ff1b9aa08eeff98a2b63a4adb55df682a",

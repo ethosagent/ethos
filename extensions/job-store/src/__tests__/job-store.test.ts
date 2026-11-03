@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type CreateBackgroundJobInput, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
+import {
+  type CreateBackgroundJobInput,
+  JOB_ABORTED_BY_SHUTDOWN,
+  JOB_STEER_MAX_CHARS,
+  JOB_STEER_MAX_PENDING,
+  type JobStore,
+} from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SQLiteJobStore } from '../index';
 
@@ -25,24 +31,28 @@ function baseInput(overrides: Partial<CreateBackgroundJobInput> = {}): CreateBac
   };
 }
 
-describe('SQLiteJobStore', () => {
-  const tmpFiles: string[] = [];
+const tmpFiles: string[] = [];
 
-  afterEach(() => {
-    for (const f of tmpFiles) {
-      for (const suffix of ['', '-wal', '-shm']) {
-        if (existsSync(f + suffix)) rmSync(f + suffix);
-      }
+afterEach(() => {
+  for (const f of tmpFiles) {
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (existsSync(f + suffix)) rmSync(f + suffix);
     }
-    tmpFiles.length = 0;
-  });
-
-  function tmpStore(): SQLiteJobStore {
-    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
-    tmpFiles.push(path);
-    return new SQLiteJobStore(path);
   }
+  tmpFiles.length = 0;
+});
 
+function tmpPath(): string {
+  const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+  tmpFiles.push(path);
+  return path;
+}
+
+function tmpStore(): SQLiteJobStore {
+  return new SQLiteJobStore(tmpPath());
+}
+
+describe('SQLiteJobStore', () => {
   it('create → get round-trips all fields and records a queued event', async () => {
     const store = new SQLiteJobStore(':memory:');
     const created = await store.create(baseInput());
@@ -1165,5 +1175,289 @@ describe('SQLiteJobStore — handing queued rows back (F06)', () => {
     expect(claimed?.id).toBe(job.id);
     expect(claimed?.status).toBe('running');
     expect(claimed?.owner).toBe('exec-B');
+  });
+});
+
+describe('SQLiteJobStore — steer queue', () => {
+  const note = { text: 'skip the tests', source: 'cli' as const };
+
+  async function running(store: SQLiteJobStore, overrides: Partial<CreateBackgroundJobInput> = {}) {
+    const job = await store.create(baseInput(overrides));
+    const claimed = await store.claimNextQueued('proc-A');
+    expect(claimed?.id).toBe(job.id);
+    return job;
+  }
+
+  async function steersOf(store: SQLiteJobStore, id: string) {
+    return (await store.listSteers?.(id)) ?? [];
+  }
+
+  it('addSteer on a running job is ok and appends one steer event', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    const r = await store.addSteer?.(job.id, { ...note, requesterUserId: 'u1' });
+    expect(r?.ok).toBe(true);
+    if (!r?.ok) throw new Error('expected ok');
+    expect(r.steer).toMatchObject({
+      jobId: job.id,
+      text: 'skip the tests',
+      state: 'pending',
+      source: 'cli',
+      requesterUserId: 'u1',
+    });
+    const events = (await store.getEvents(job.id)).filter((e) => e.eventType === 'steer');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toEqual({ steerId: r.steer.id, chars: 14, source: 'cli' });
+    store.close();
+  });
+
+  it('addSteer is accepted on queued and blocked jobs', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const queued = await store.create(baseInput());
+    expect((await store.addSteer?.(queued.id, note))?.ok).toBe(true);
+    await store.claimNextQueued('proc-A');
+    await store.markBlocked(queued.id, 'req-1');
+    expect((await store.addSteer?.(queued.id, note))?.ok).toBe(true);
+    store.close();
+  });
+
+  it('addSteer on a second handle sees a finish committed by the first, and its steers are swept', async () => {
+    const path = tmpPath();
+    const a = new SQLiteJobStore(path);
+    const b = new SQLiteJobStore(path);
+    try {
+      const job = await running(a);
+      const queued = await b.addSteer?.(job.id, note);
+      expect(queued?.ok).toBe(true);
+      await a.finish(job.id, 'done', {});
+      expect(await b.addSteer?.(job.id, note)).toEqual({
+        ok: false,
+        reason: 'finished',
+        status: 'done',
+      });
+      expect((await steersOf(b, job.id)).map((x) => x.state)).toEqual(['unread']);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it('addSteer refuses terminal statuses, missing ids and remote rows', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    for (const terminal of ['done', 'failed', 'aborted'] as const) {
+      const job = await running(store);
+      await store.finish(job.id, terminal, {});
+      expect(await store.addSteer?.(job.id, note)).toEqual({
+        ok: false,
+        reason: 'finished',
+        status: terminal,
+      });
+    }
+    const stale = await running(store);
+    await store.reclaimStale(0);
+    expect((await store.get(stale.id))?.status).toBe('stale');
+    expect(await store.addSteer?.(stale.id, note)).toEqual({
+      ok: false,
+      reason: 'finished',
+      status: 'stale',
+    });
+    const expired = await store.create(baseInput());
+    await store.expireQueued(0);
+    expect(await store.addSteer?.(expired.id, note)).toEqual({
+      ok: false,
+      reason: 'finished',
+      status: 'expired',
+    });
+    expect(await store.addSteer?.('nope', note)).toEqual({ ok: false, reason: 'not_found' });
+    const proxy = await store.create(baseInput({ remotePeer: 'h:1', remoteJobId: 'r1' }));
+    expect((await store.addSteer?.(proxy.id, note))?.ok).toBe(false);
+    expect(await store.addSteer?.(proxy.id, note)).toMatchObject({ reason: 'remote' });
+    store.close();
+  });
+
+  it('caps pending at JOB_STEER_MAX_PENDING and frees a slot when one is read', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    const ids: number[] = [];
+    for (let i = 0; i < JOB_STEER_MAX_PENDING; i++) {
+      const r = await store.addSteer?.(job.id, note);
+      if (!r?.ok) throw new Error('expected ok');
+      ids.push(r.steer.id);
+    }
+    expect(await store.addSteer?.(job.id, note)).toMatchObject({ ok: false, reason: 'full' });
+    await store.markSteersRead?.(job.id, [ids[0] as number]);
+    expect((await store.addSteer?.(job.id, note))?.ok).toBe(true);
+    store.close();
+  });
+
+  it('rejects text over JOB_STEER_MAX_CHARS and accepts exactly the cap', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    expect(
+      await store.addSteer?.(job.id, { ...note, text: 'x'.repeat(JOB_STEER_MAX_CHARS + 1) }),
+    ).toMatchObject({ ok: false, reason: 'too_long' });
+    expect(
+      (await store.addSteer?.(job.id, { ...note, text: 'x'.repeat(JOB_STEER_MAX_CHARS) }))?.ok,
+    ).toBe(true);
+    store.close();
+  });
+
+  it('listPendingSteers returns ids ascending and honours afterId', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    const ids: number[] = [];
+    for (const text of ['a', 'b', 'c']) {
+      const r = await store.addSteer?.(job.id, { ...note, text });
+      if (!r?.ok) throw new Error('expected ok');
+      ids.push(r.steer.id);
+    }
+    const all = await store.listPendingSteers?.(job.id, 0);
+    expect(all?.map((s) => s.id)).toEqual(ids);
+    expect(all?.map((s) => s.text)).toEqual(['a', 'b', 'c']);
+    const after = await store.listPendingSteers?.(job.id, ids[1] as number);
+    expect(after?.map((s) => s.id)).toEqual([ids[2]]);
+    store.close();
+  });
+
+  it('finish sweeps pending to unread, leaves read alone, and is atomic with addSteer', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    const a = await store.addSteer?.(job.id, note);
+    const b = await store.addSteer?.(job.id, note);
+    if (!a?.ok || !b?.ok) throw new Error('expected ok');
+    await store.markSteersRead?.(job.id, [a.steer.id]);
+    await store.finish(job.id, 'done', {});
+    const states = (await steersOf(store, job.id)).map((s) => s.state);
+    expect(states).toEqual(['read', 'unread']);
+    expect(await store.addSteer?.(job.id, note)).toMatchObject({
+      ok: false,
+      reason: 'finished',
+      status: 'done',
+    });
+    expect(await store.listPendingSteers?.(job.id, 0)).toEqual([]);
+    store.close();
+  });
+
+  it('reclaimStale and expireQueued sweep pending to unread', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const r = await running(store);
+    await store.addSteer?.(r.id, note);
+    await store.reclaimStale(0);
+    expect((await steersOf(store, r.id)).map((s) => s.state)).toEqual(['unread']);
+
+    const q = await store.create(baseInput());
+    await store.addSteer?.(q.id, note);
+    await store.expireQueued(0);
+    expect((await steersOf(store, q.id)).map((s) => s.state)).toEqual(['unread']);
+    store.close();
+  });
+
+  it('markSteersRead moves only pending rows and stamps readAt', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    const a = await store.addSteer?.(job.id, note);
+    const b = await store.addSteer?.(job.id, note);
+    if (!a?.ok || !b?.ok) throw new Error('expected ok');
+    await store.markSteersRead?.(job.id, [a.steer.id]);
+    const [first] = await steersOf(store, job.id);
+    expect(first?.state).toBe('read');
+    expect(typeof first?.readAt).toBe('number');
+    await store.markSteersRead?.(job.id, []);
+    await store.finish(job.id, 'done', {});
+    // unread stays unread
+    await store.markSteersRead?.(job.id, [b.steer.id]);
+    expect((await steersOf(store, job.id)).map((s) => s.state)).toEqual(['read', 'unread']);
+    store.close();
+  });
+
+  it('pruneTerminal removes steers of pruned jobs and orphans, keeps live ones', async () => {
+    const path = tmpPath();
+    const store = new SQLiteJobStore(path);
+    const old = await running(store);
+    await store.addSteer?.(old.id, note);
+    await store.finish(old.id, 'done', {});
+    const live = await running(store);
+    await store.addSteer?.(live.id, note);
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw
+      .prepare(
+        `INSERT INTO job_steers (job_id, text, state, source, created_at)
+         VALUES ('ghost', 'x', 'unread', 'cli', 1)`,
+      )
+      .run();
+    const count = () =>
+      (raw.prepare('SELECT COUNT(*) AS n FROM job_steers').get() as { n: number }).n;
+    expect(count()).toBe(3);
+    expect(await store.pruneTerminal(Date.now() + 1000)).toBe(1);
+    expect(count()).toBe(1);
+    expect(await steersOf(store, live.id)).toHaveLength(1);
+    raw.close();
+    store.close();
+  });
+
+  it('has no FK: an older build deleting a jobs row with steers does not error', async () => {
+    const path = tmpPath();
+    const store = new SQLiteJobStore(path);
+    const job = await running(store);
+    await store.addSteer?.(job.id, note);
+    store.close();
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.pragma('foreign_keys = ON');
+    raw.prepare('DELETE FROM job_events WHERE job_id = ?').run(job.id);
+    expect(() => raw.prepare('DELETE FROM jobs WHERE id = ?').run(job.id)).not.toThrow();
+    raw.close();
+  });
+
+  it('a v10 db without job_steers gets the table and keeps user_version 10', async () => {
+    const path = tmpPath();
+    new SQLiteJobStore(path).close();
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.exec('DROP TABLE job_steers');
+    raw.close();
+    const store = new SQLiteJobStore(path);
+    const job = await running(store);
+    expect((await store.addSteer?.(job.id, note))?.ok).toBe(true);
+    store.close();
+    const after = new Database(path);
+    expect((after.pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version).toBe(
+      10,
+    );
+    after.close();
+  });
+
+  it('getEvents afterSeq is exclusive, ascending and honours limit', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await running(store);
+    for (let i = 0; i < 5; i++) await store.appendEvent(job.id, 'text', { text: `t${i}` });
+    const all = await store.getEvents(job.id);
+    const cut = all[2]?.seq as number;
+    const after = await store.getEvents(job.id, { afterSeq: cut });
+    expect(after.map((e) => e.seq)).toEqual(all.slice(3).map((e) => e.seq));
+    const limited = await store.getEvents(job.id, { afterSeq: cut, limit: 2 });
+    expect(limited.map((e) => e.seq)).toEqual(all.slice(3, 5).map((e) => e.seq));
+    store.close();
+  });
+
+  it('listByOrigin matches the thread exactly and returns newest first', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const withThread = await store.create(baseInput({ originThreadId: 't1' }));
+    const noThread = await store.create(baseInput({ originThreadId: undefined }));
+    await store.create(baseInput({ originChatId: 'other', originThreadId: 't1' }));
+    await store.create(baseInput({ originBotKey: 'bot-2', originThreadId: 't1' }));
+    const origin = { platform: 'telegram', botKey: 'bot-1', chatId: 'chat-9' };
+    const t1 = await store.listByOrigin?.({ ...origin, threadId: 't1' });
+    expect(t1?.map((j) => j.id)).toEqual([withThread.id]);
+    const none = await store.listByOrigin?.(origin);
+    expect(none?.map((j) => j.id)).toEqual([noThread.id]);
+    expect(await store.listByOrigin?.({ ...origin, threadId: 't2' })).toEqual([]);
+    store.close();
+  });
+
+  it('the steer methods are optional on the JobStore contract', () => {
+    const minimal: Pick<JobStore, 'addSteer'> = {};
+    expect(minimal.addSteer).toBeUndefined();
   });
 });

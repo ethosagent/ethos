@@ -21,7 +21,7 @@ export const ETHOS_RUNNER_NAME = 'ethos';
  * existing SteerSink, and containment is the in-process `ScopedFs` / toolset
  * allowlist rather than a sandbox.
  */
-const ETHOS_CAPABILITIES: RunnerCapabilities = {
+export const ETHOS_RUNNER_CAPABILITIES: RunnerCapabilities = {
   interactionKinds: ['input', 'pick'],
   answerScopes: ['once'],
   takeover: 'none',
@@ -61,7 +61,7 @@ export function jobRoomAudience(
  */
 export class EthosJobRunner implements JobRunner {
   readonly name = ETHOS_RUNNER_NAME;
-  readonly capabilities = ETHOS_CAPABILITIES;
+  readonly capabilities = ETHOS_RUNNER_CAPABILITIES;
 
   constructor(private readonly loop: AgentLoop) {}
 
@@ -70,7 +70,7 @@ export class EthosJobRunner implements JobRunner {
   }
 
   describe(_job: BackgroundJob): DetailRow[] {
-    return [{ label: 'transport', value: ETHOS_CAPABILITIES.transport }];
+    return [{ label: 'transport', value: ETHOS_RUNNER_CAPABILITIES.transport }];
   }
 
   run(job: BackgroundJob, ctx: JobRunnerContext): AsyncIterable<AgentEvent> {
@@ -84,6 +84,8 @@ export class EthosJobRunner implements JobRunner {
       rootSessionKey: job.rootSessionKey,
       jobId: job.id,
       abortSignal: ctx.signal,
+      // D1/D16: the durable per-job steer queue; the loop drains it at its seams.
+      steerSink: ctx.steerSink,
       // A turn a shared turn causes is shared (G1-6). No `initiator`: children
       // never inherit it.
       roomAudience: jobRoomAudience(job),

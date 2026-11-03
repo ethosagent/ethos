@@ -4,8 +4,11 @@ import type {
   BackgroundJobEventType,
   CreateBackgroundJobInput,
   GetJobEventsOptions,
+  JobSteer,
   JobStore,
+  RunnerCapabilities,
 } from '@ethosagent/types';
+import type { CreateAgentLoopResult } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { TasksService } from '../tasks.service';
 
@@ -81,8 +84,47 @@ class FakeJobStore implements JobStore {
     const list = this.events.get(jobId) ?? [];
     // The service reads a bounded tail (I21); the double honours it rather than
     // returning everything and letting a broken bound pass unnoticed.
-    return opts?.limit === undefined ? list : list.slice(-opts.limit);
+    const cursor = opts?.afterSeq;
+    const after = cursor === undefined ? list : list.filter((e) => e.seq > cursor);
+    return opts?.limit === undefined ? after : after.slice(-opts.limit);
   }
+}
+
+type Control = NonNullable<CreateAgentLoopResult['jobControl']>;
+
+const STEER_CAPS: RunnerCapabilities = {
+  interactionKinds: [],
+  answerScopes: [],
+  takeover: 'none',
+  resume: 'none',
+  steer: true,
+  sandbox: 'none',
+  transport: 'in-process',
+};
+
+/** Records calls and returns canned outcomes; the real JobControl lives in job-runner. */
+function fakeControl(over: Partial<Control> = {}): Control & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    capabilitiesFor: () => STEER_CAPS,
+    steer: async (_job, req) => {
+      calls.push(`steer:${req.source}:${req.requesterAudience}:${req.text}`);
+      return { ok: true, steerId: 7 };
+    },
+    stop: async (_job, req) => {
+      calls.push(`stop:${req.requesterAudience}`);
+      return { ok: true, wasRunning: true };
+    },
+    tail: async (_job, req) => {
+      calls.push(`tail:${req.audience}:${req.afterSeq}:${req.limit}`);
+      return { ok: true, events: [makeEvent({ id: 9, seq: 5, eventType: 'text' })] };
+    },
+    steers: async (): Promise<JobSteer[]> => [
+      { id: 7, jobId: 'job-1', text: 'hi', state: 'pending', source: 'web', createdAt: 5 },
+    ],
+    ...over,
+  };
 }
 
 function makeJob(over: Partial<BackgroundJob> = {}): BackgroundJob {
@@ -175,5 +217,103 @@ describe('TasksService', () => {
     expect(await svc.list('web:root')).toEqual([]);
     expect(await svc.get('job-1')).toBeNull();
     expect(await svc.cancel('job-1')).toEqual({ ok: false });
+  });
+
+  describe('with a JobControl', () => {
+    it('steer maps the outcome and steers as a private web requester', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob());
+      const control = fakeControl();
+      const svc = new TasksService({ store, control });
+      expect(await svc.steer('job-1', 'only apps/')).toEqual({ ok: true, steerId: 7 });
+      expect(control.calls).toEqual(['steer:web:private:only apps/']);
+    });
+
+    it('steer passes a refusal through and reports not_found / not_available', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob());
+      const control = fakeControl({
+        steer: async () => ({ ok: false, reason: 'finished', status: 'done' }),
+      });
+      expect(await new TasksService({ store, control }).steer('job-1', 'x')).toEqual({
+        ok: false,
+        reason: 'finished',
+        status: 'done',
+      });
+      expect(await new TasksService({ store, control }).steer('nope', 'x')).toEqual({
+        ok: false,
+        reason: 'not_found',
+      });
+      expect(await new TasksService({ store }).steer('job-1', 'x')).toEqual({
+        ok: false,
+        reason: 'not_available',
+      });
+    });
+
+    it('get carries capabilities for a default-runner row and the steers', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob()); // no `runner` field: the default-runner row
+      const detail = await new TasksService({ store, control: fakeControl() }).get('job-1');
+      expect(detail?.capabilities?.steer).toBe(true);
+      expect(detail?.steers).toEqual([
+        {
+          id: 7,
+          jobId: 'job-1',
+          text: 'hi',
+          state: 'pending',
+          source: 'web',
+          requesterUserId: null,
+          createdAt: 5,
+          readAt: null,
+        },
+      ]);
+    });
+
+    it('get without a control reports no capabilities and no steers', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob());
+      const detail = await new TasksService({ store }).get('job-1');
+      expect(detail?.capabilities).toBeNull();
+      expect(detail?.steers).toEqual([]);
+    });
+
+    it('events returns rows after the cursor through the operator tail', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob());
+      const control = fakeControl();
+      const res = await new TasksService({ store, control }).events('job-1', 4, 100);
+      expect(res.ok && res.events.map((e) => e.seq)).toEqual([5]);
+      expect(control.calls).toEqual(['tail:operator:4:100']);
+    });
+
+    it('events without a control reads the store after the cursor', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob(), [
+        makeEvent({ id: 1, seq: 1 }),
+        makeEvent({ id: 2, seq: 2 }),
+        makeEvent({ id: 3, seq: 3 }),
+      ]);
+      const res = await new TasksService({ store }).events('job-1', 1);
+      expect(res.ok && res.events.map((e) => e.seq)).toEqual([2, 3]);
+      expect(await new TasksService({ store }).events('nope')).toEqual({
+        ok: false,
+        reason: 'not_found',
+      });
+    });
+
+    it('cancel routes through stop, and is not ok for a finished job', async () => {
+      const store = new FakeJobStore();
+      store.seed(makeJob());
+      const control = fakeControl();
+      expect(await new TasksService({ store, control }).cancel('job-1')).toEqual({ ok: true });
+      expect(control.calls).toEqual(['stop:private']);
+      expect(store.canceled).toEqual([]);
+      const finished = fakeControl({
+        stop: async () => ({ ok: false, reason: 'finished', status: 'done' }),
+      });
+      expect(await new TasksService({ store, control: finished }).cancel('job-1')).toEqual({
+        ok: false,
+      });
+    });
   });
 });

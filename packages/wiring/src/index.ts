@@ -1839,6 +1839,8 @@ export interface CreateAgentLoopResult {
   /** Detached background executor — present only when enabled. Hosts register
    *  completion handlers on it; `dispose()` shuts it down. */
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
+  /** Audience-gated steer/stop/tail over background jobs — present only when enabled. */
+  jobControl?: import('@ethosagent/job-runner').JobControl;
   /** Resolved job runners — present only when the background subsystem is enabled.
    *  The web-api Tasks detail RPC asks the runner that executed a row for its own
    *  detail-grid rows (pi-delegation D18). */
@@ -2153,6 +2155,17 @@ export {
 // hosts (`ethos gateway`, `ethos serve`) reach the exporter through wiring
 // (ARCHITECTURE.md Law 5), the same way they reach the notify queue.
 export { OtlpPollLoop, resolveOtlpSettings } from '@ethosagent/export-otlp';
+// CLI chat (apps may not import extensions): job steer/stop/tail rendering + test seams.
+export {
+  createJobControl,
+  formatJobEventLine,
+  isJobRef,
+  resolveJobRef,
+  steerRefusalText,
+  stopRefusalText,
+  unreadSteerPreview,
+} from '@ethosagent/job-runner';
+export { SQLiteJobStore } from '@ethosagent/job-store';
 export {
   isGated,
   type MemoryApprovalMode,

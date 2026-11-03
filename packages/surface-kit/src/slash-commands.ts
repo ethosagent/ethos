@@ -210,7 +210,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: 'stop',
     description: 'Abort the current response',
-    usage: '/stop',
+    usage: '/stop [id]',
     surfaces: ['gateway'],
   },
   {
@@ -234,7 +234,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: 'background',
     description: 'Spawn a background agent task',
-    usage: '/background <prompt>',
+    usage: '/background <prompt> | list | steer <id> <text> | stop <id> | tail <id>',
     surfaces: ['cli', 'gateway'],
   },
   {
