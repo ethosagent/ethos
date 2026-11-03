@@ -2868,7 +2868,7 @@ function parseOutboundChannels(raw: string): string[] {
 /**
  * The shape of one `mcp_export.expose_tools` entry the update path will write.
  * Kept in step with the `personalities.update` input in
- * `packages/web-contracts/src/router.ts` (`McpExportToolNameInput`), which
+ * `packages/web-contracts/src/routes/personalities.ts` (`McpExportToolNameInput`), which
  * refuses the same names at the wire.
  */
 const MCP_EXPORT_TOOL_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;

@@ -12,7 +12,7 @@
  * spaces, and any special characters.
  *
  * COPIED into `MCP_EXPORT_SCOPE_REGEX` in
- * `packages/web-contracts/src/schemas.ts`, as the id half of the
+ * `packages/web-contracts/src/schema/api-keys.ts`, as the id half of the
  * `mcp:<personality-id>` API-key scope. That package is a zero-dependency
  * contract package and cannot import this one (ARCHITECTURE.md Law 1,
  * dependency direction), so the two are duplicated on purpose and MUST change

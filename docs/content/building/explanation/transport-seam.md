@@ -4,7 +4,7 @@ description: "The SDK hides its transport behind a seam — RPC calls flow throu
 kind: explanation
 audience: developer
 slug: transport-seam
-updated: 2026-05-13
+updated: 2026-11-03
 ---
 
 ## Context
@@ -41,7 +41,7 @@ Every procedure in the contract takes a plain object as input and returns a plai
 
 This discipline means every procedure is callable as a plain function: `service.sessions.get({ id: '...' })`. HTTP is just one way to invoke it. The server already works this way internally — the oRPC server layer deserializes the HTTP request into the input object, calls the service function, and serializes the output back to HTTP. The service functions themselves are transport-agnostic.
 
-The same discipline applies to the contract schemas. Zod schemas in `router.ts` define shapes that are JSON-serializable by construction. No `Date` objects (use ISO-8601 strings), no `Buffer` (use base64 strings or separate upload endpoints), no `Map` or `Set` (use records and arrays). This is not an accident — it is a prerequisite for transport flexibility.
+The same discipline applies to the contract schemas. Zod schemas in `packages/web-contracts/src/schema/` (re-exported by `schemas.ts`) define shapes that are JSON-serializable by construction. No `Date` objects (use ISO-8601 strings), no `Buffer` (use base64 strings or separate upload endpoints), no `Map` or `Set` (use records and arrays). This is not an accident — it is a prerequisite for transport flexibility.
 
 ## Why the seam matters
 

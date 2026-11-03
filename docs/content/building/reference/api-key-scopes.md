@@ -11,7 +11,7 @@ A scope is one permission on one API key. Each key carries a set of them, and th
 
 ## Source {#source}
 
-`ApiKeyScopeSchema` is defined in [`packages/web-contracts/src/schemas.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/schemas.ts).
+`ApiKeyScopeSchema` is defined in [`packages/web-contracts/src/schema/api-keys.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/schema/api-keys.ts).
 
 ## Scope table {#table}
 

@@ -24,7 +24,17 @@ const page = readdirSync(panesDir)
   .sort()
   .map((f) => readFileSync(join(panesDir, f), 'utf8'))
   .join('\n');
-const router = readFileSync(join(root, 'packages', 'web-contracts', 'src', 'router.ts'), 'utf8');
+// The router was split: `router.ts` only assembles `contract`; the namespaces
+// (and the validation lines / doc comments asserted below) live in `routes/*.ts`.
+const contractSrc = join(root, 'packages', 'web-contracts', 'src');
+const routesDir = join(contractSrc, 'routes');
+const router = [
+  readFileSync(join(contractSrc, 'router.ts'), 'utf8'),
+  ...readdirSync(routesDir)
+    .filter((f) => f.endsWith('.ts'))
+    .sort()
+    .map((f) => readFileSync(join(routesDir, f), 'utf8')),
+].join('\n');
 
 /**
  * The block for a named field, up to its closing `</Form.Item>` tag. Starts

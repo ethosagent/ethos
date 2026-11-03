@@ -1,6 +1,6 @@
 import type { ConfigGetData } from '../lib/config-types';
 
-/** Every field `ConfigGetOutput` (`packages/web-contracts/src/router.ts`)
+/** Every field `ConfigGetOutput` (`packages/web-contracts/src/routes/config.ts`)
  *  declares, defaulted the way an unconfigured deployment reads. Mechanical,
  *  not hand-picked — each value is the schema's own "unset" shape (`null` for
  *  every `.nullable()` scalar, `{}` / `[]` for every record / array).

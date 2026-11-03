@@ -78,7 +78,7 @@ export function orderLabel(position: number): string {
  * on purpose. Onboarding's AuthStep prompts every entry that is not device-auth
  * or keyless for an API key and has no API version field, its `authType` union
  * has no AWS-credential member, and `bedrock` is not a `ProviderId`
- * (packages/web-contracts/src/schemas.ts) — the catalog test that every
+ * (packages/web-contracts/src/schema/onboarding.ts) — the catalog test that every
  * `wiresAs` parses as one would fail. So azure and bedrock are Settings-only.
  */
 export interface SettingsOnlyProviderType

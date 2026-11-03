@@ -4,7 +4,7 @@ description: "The outbound_policy personality field: its three sub-keys, the sen
 kind: reference
 audience: developer
 slug: outbound-policy
-updated: 2026-09-13
+updated: 2026-11-03
 ---
 
 `outbound_policy` is the [personality](../../getting-started/glossary.md#personality) field (a directory of files that decides an agent's tools, memory, and model) that turns an agent-initiated `send_message` into a queued proposal instead of a send. A human approves one exact revision of one text to one destination from one bot, and only then does it go out.
@@ -23,7 +23,7 @@ The queue is durable SQLite at `~/.ethos/outbox.db`. The agent's [tool](../../ge
 | Sender, reviewer, dispatcher, cards | [`apps/ethos/src/lib/outbox-wiring.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/outbox-wiring.ts) |
 | Delivery | [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts) — `Gateway.deliverPublication` |
 | Terminal approval surface | [`apps/ethos/src/commands/outbox.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/outbox.ts) — `ethos outbox list \| show \| approve \| reject` |
-| Web approval surface | [`packages/web-contracts/src/router.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/router.ts) (`outbox.*`), [`apps/web-api/src/services/outbox.service.ts`](https://github.com/ethosagent/ethos/blob/main/apps/web-api/src/services/outbox.service.ts), [`apps/web/src/pages/Outbox.tsx`](https://github.com/ethosagent/ethos/blob/main/apps/web/src/pages/Outbox.tsx) |
+| Web approval surface | [`packages/web-contracts/src/routes/delivery.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/routes/delivery.ts) (`outbox.*`), [`apps/web-api/src/services/outbox.service.ts`](https://github.com/ethosagent/ethos/blob/main/apps/web-api/src/services/outbox.service.ts), [`apps/web/src/pages/Outbox.tsx`](https://github.com/ethosagent/ethos/blob/main/apps/web/src/pages/Outbox.tsx) |
 
 ## Fields {#fields}
 

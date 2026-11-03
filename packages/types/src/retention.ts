@@ -46,7 +46,7 @@ export interface RetentionConfig {
  * else — lives in an extension no package may import, so every validating
  * surface would otherwise keep its own copy. Two already do
  * (`RETENTION_DURATION_RE` in `apps/web-api/src/services/config.service.ts`,
- * `RetentionDurationSchema` in `packages/web-contracts/src/router.ts`); they
+ * `RetentionDurationSchema` in `packages/web-contracts/src/routes/_shared.ts`); they
  * are byte-identical to this and must change with it.
  *
  * Checked on the config-load path by `buildRetentionConfig`

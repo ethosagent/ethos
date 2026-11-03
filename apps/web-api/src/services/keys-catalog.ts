@@ -80,7 +80,7 @@ export interface KeyCatalogEntry {
  *
  * It is the FIRST of three gates on the same two fields, and not the only one:
  * `BLOB_DETAIL_KEYS` in `keys.service.ts` filters again on the way out, and
- * `KeyBlobDetailsSchema` in `packages/web-contracts/src/router.ts` is a closed
+ * `KeyBlobDetailsSchema` in `packages/web-contracts/src/routes/keys.ts` is a closed
  * schema that REJECTS an unknown key at the contract boundary. That last gate
  * is what makes a refactor of this function unable to leak on its own.
  */

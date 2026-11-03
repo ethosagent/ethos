@@ -4,7 +4,7 @@ description: "Every contract namespace with its stability tier and the procedure
 kind: reference
 audience: developer
 slug: stability-tier-table
-updated: 2026-05-13
+updated: 2026-11-03
 ---
 
 ## Synopsis {#synopsis}
@@ -54,4 +54,4 @@ The Ethos control-plane contract assigns each namespace a stability tier. Stable
 - The `chat.send` RPC is fire-and-forget -- the agent's response streams over [SSE](./sdk-event-stream.md), not the RPC response.
 - The `platforms` namespace includes multi-bot CRUD for Telegram and Slack alongside the base platform operations.
 - The `eval` namespace is aliased as `evalNs` internally to avoid collision with JavaScript's `eval` keyword.
-- Stability tiers are declared as JSDoc `@stable`/`@experimental` tags in [`packages/web-contracts/src/router.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/router.ts).
+- Stability tiers are declared as JSDoc `@stable`/`@experimental` tags in the per-group files under [`packages/web-contracts/src/routes/`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/routes), assembled into the contract by `router.ts`.

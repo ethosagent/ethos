@@ -4,12 +4,12 @@ description: "What the @stable and @experimental tags on contract namespaces pro
 kind: explanation
 audience: developer
 slug: stability-tiers
-updated: 2026-05-13
+updated: 2026-11-03
 ---
 
 ## Context
 
-The contract in `packages/web-contracts/src/router.ts` defines every RPC namespace the web API serves. Each namespace carries a JSDoc tag — either `@stable` or `@experimental` — that communicates a compatibility promise to SDK consumers and external dashboard builders.
+The contract assembled in `packages/web-contracts/src/router.ts` from the per-group files in `packages/web-contracts/src/routes/` defines every RPC namespace the web API serves. Each namespace carries a JSDoc tag — either `@stable` or `@experimental` — that communicates a compatibility promise to SDK consumers and external dashboard builders.
 
 The tags are not decorative. They gate what changes require a major version bump and what changes can land in a patch.
 

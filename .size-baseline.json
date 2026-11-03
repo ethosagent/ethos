@@ -1677,11 +1677,6 @@
       "lines": 504
     },
     {
-      "path": "packages/web-contracts/src/router.ts",
-      "kind": "source",
-      "lines": 6544
-    },
-    {
       "path": "packages/wiring/src/__tests__/amendments.test.ts",
       "kind": "test",
       "lines": 1190

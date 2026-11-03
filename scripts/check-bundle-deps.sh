@@ -101,7 +101,7 @@ const sourceFiles = (dir) => {
 };
 
 // Remove `//` and `/* */` comments. Prose in a comment is not an import: a JSDoc
-// line reading `from "unset"` (packages/web-contracts/src/schemas.ts) is a valid
+// line reading `from "unset"` (packages/web-contracts/src/schema/recipes.ts) is a valid
 // bare specifier as far as `toModuleName` can tell, so it has to be gone before
 // the extraction regexes run.
 //

@@ -4,7 +4,7 @@ description: "The reasoning behind choosing oRPC as the RPC framework for the Et
 kind: explanation
 audience: developer
 slug: why-orpc
-updated: 2026-05-13
+updated: 2026-11-03
 ---
 
 ## Context
@@ -35,7 +35,7 @@ A hand-written REST API with OpenAPI code generation is viable. The Ethos server
 
 The problem with REST-first is the contract direction. You either write the OpenAPI spec and generate server stubs (spec-first), or write the handlers and generate the spec (code-first). Spec-first means maintaining a YAML file that drifts from the implementation. Code-first means the spec is a byproduct that no one reviews.
 
-oRPC sidesteps this: the Zod schemas in `packages/web-contracts/src/router.ts` are the single source of truth. The OpenAPI spec is generated from them automatically via `@orpc/openapi`. The REST-shaped endpoints at `/openapi/sessions/list` hit the same service layer and validate through the same Zod schemas — contract drift between the RPC and OpenAPI surfaces is structurally impossible.
+oRPC sidesteps this: the Zod schemas in `packages/web-contracts/src/schema/` (re-exported by `schemas.ts`) are the single source of truth. The OpenAPI spec is generated from them automatically via `@orpc/openapi`. The REST-shaped endpoints at `/openapi/sessions/list` hit the same service layer and validate through the same Zod schemas — contract drift between the RPC and OpenAPI surfaces is structurally impossible.
 
 ## What oRPC buys
 
@@ -53,13 +53,13 @@ oRPC sidesteps this: the Zod schemas in `packages/web-contracts/src/router.ts` a
 
 **Ecosystem maturity.** oRPC is younger than tRPC and GraphQL. Tooling (devtools, middleware ecosystem, community recipes) is thinner. The bet is that the contract-first model is worth the smaller ecosystem.
 
-**Learning curve for contributors.** Developers familiar with tRPC or Express need to learn the `oc.input().output()` contract DSL and the `implement(contract)` server wiring. The surface is small — the full contract lives in one file (`router.ts`) — but it is unfamiliar.
+**Learning curve for contributors.** Developers familiar with tRPC or Express need to learn the `oc.input().output()` contract DSL and the `implement(contract)` server wiring. The surface is small — the full contract assembles in one file (`router.ts`) — but it is unfamiliar.
 
 **Zod coupling.** The contract schemas are Zod objects. If Zod's API changes (it did between v3 and v4), the contract schemas need migration. This is manageable — the schemas are pure data definitions with no runtime logic — but it is a dependency to track.
 
 ## The contract file in practice
 
-The entire contract lives in one file: `packages/web-contracts/src/router.ts`. Each namespace is a plain object of `oc.input(ZodSchema).output(ZodSchema)` declarations. The file is long (800+ lines at the time of writing) but flat — no inheritance, no middleware chains, no decorators. A developer who wants to understand the API reads this one file.
+The contract is assembled in one file: `packages/web-contracts/src/router.ts` mounts every namespace under a single `contract` object. Each namespace is a plain object of `oc.input(ZodSchema).output(ZodSchema)` declarations, kept in a per-group file under `packages/web-contracts/src/routes/`, and the Zod schemas live in `packages/web-contracts/src/schema/`. The files are flat — no inheritance, no middleware chains, no decorators. A developer who wants to understand the API reads `router.ts` for the namespace list, then the `routes/` file for the group they care about.
 
 The comment block at the top of `router.ts` summarizes the architecture:
 
@@ -68,14 +68,14 @@ The comment block at the top of `router.ts` summarizes the architecture:
 > `ContractRouterClient<typeof contract>`. Both ends fail to compile if the
 > shapes drift.
 
-This is the core value proposition: one file defines the contract, two consumers compile against it, drift is a compile error.
+This is the core value proposition: one `contract` object defines the API, two consumers compile against it, drift is a compile error.
 
 ## Consequences for SDK consumers
 
 A dashboard builder who depends on `@ethosagent/sdk` gets:
 
 1. **Type-checked RPC calls** — `client.rpc.personalities.get({ id })` returns a typed `{ personality, soulMd }`. No manual response parsing.
-2. **Stability guarantees tied to the contract** — namespaces tagged `@stable` in `router.ts` promise additive-only changes. See [Stability tiers](stability-tiers.md).
+2. **Stability guarantees tied to the contract** — namespaces tagged `@stable` in `packages/web-contracts/src/routes/` promise additive-only changes. See [Stability tiers](stability-tiers.md).
 3. **OpenAPI as an escape hatch** — if the SDK's oRPC client does not fit their stack (e.g., they are building in Python), the same endpoints are reachable as plain REST via `/openapi/`.
 4. **No code generation step** — unlike GraphQL or OpenAPI-codegen workflows, there is no build-time generation. Types flow through the TypeScript compiler directly.
 5. **Dual auth support** — the same contract serves cookie-authenticated web UIs and bearer-token-authenticated external dashboards. The SDK constructor accepts either a `baseUrl` alone (cookie mode) or a `baseUrl` plus `apiKey` (bearer mode). The contract does not change between auth modes — only the available namespaces differ (experimental namespaces are cookie-only).

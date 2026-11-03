@@ -28,7 +28,7 @@ const MAX_VALUE_BYTES = 8 * 1024;
 const CUSTOM_ID_PREFIX = 'custom:';
 
 /** The only fields a `blob` entry may expose. Runtime half of the allowlist
- *  `KeyBlobDetailsSchema` (`packages/web-contracts/src/router.ts`) closes at
+ *  `KeyBlobDetailsSchema` (`packages/web-contracts/src/routes/keys.ts`) closes at
  *  the contract boundary — defence in depth, and the two must stay in step. */
 const BLOB_DETAIL_KEYS = [
   'accountId',
@@ -56,7 +56,7 @@ export interface KeyEntryView {
   /** `blob` entries only: the subset the entry's `parse` allowlist chose to
    *  surface. Absent when the blob is unset or unparseable. Never the raw
    *  document. The type is the CLOSED contract shape (`KeyBlobDetailsSchema`
-   *  in `packages/web-contracts/src/router.ts`), not an open string map — an
+   *  in `packages/web-contracts/src/routes/keys.ts`), not an open string map — an
    *  unknown key does not typecheck here and is rejected there. */
   details?: KeyBlobDetails;
   /** True when every ref the entry claims holds a value. */
@@ -223,7 +223,7 @@ export class KeysService {
       // picks fields out of the token document; BLOB_DETAIL_KEYS below is the
       // runtime allowlist on what leaves this service, so a future parse that
       // returns more cannot widen the response; and `KeyBlobDetailsSchema` in
-      // `packages/web-contracts/src/router.ts` is the closed contract schema,
+      // `packages/web-contracts/src/routes/keys.ts` is the closed contract schema,
       // which REJECTS an unknown key at the boundary rather than dropping it.
       // Changing one of the three means changing the others.
       const raw = await this.opts.secrets.get(entry.refPattern);
