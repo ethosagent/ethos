@@ -152,7 +152,13 @@ function collectPages(): Page[] {
 // llms.txt — link index (≤50KB)
 // ---------------------------------------------------------------------------
 
-function renderLinkIndex(pages: Page[]): string {
+function renderLinkIndex(allPages: Page[]): string {
+  // Index pages link their subpages; llms.txt stays a map, llms-full.txt carries the bodies.
+  const stems = new Set(allPages.map((p) => p.relPath.replace(/\.(md|mdx)$/, '')));
+  const pages = allPages.filter((p) => {
+    const parts = p.relPath.replace(/\.(md|mdx)$/, '').split(sep);
+    return !parts.slice(0, -1).some((_, i) => stems.has(parts.slice(0, i + 1).join(sep)));
+  });
   const sections: Record<string, Page[]> = {};
   for (const p of pages) {
     const segment = p.relPath.split(sep)[0];
@@ -270,6 +276,7 @@ function stripMdxComments(body: string): string {
 function main(): void {
   const pages = collectPages();
   const llmsTxt = renderLinkIndex(pages);
+  const indexed = llmsTxt.split('\n').filter((l) => l.startsWith('- [')).length;
   const llmsFull = renderFullContent(pages);
 
   // Hard-fail when the index breaches its budget — agents that prefetch
@@ -294,7 +301,7 @@ function main(): void {
 
   // Single-line summary so the build log shows what shipped.
   console.log(
-    `[llms] wrote ${pages.length} pages → llms.txt (${(txtBytes / 1024).toFixed(1)} KB) · llms-full.txt (${(fullBytes / 1024).toFixed(1)} KB)`,
+    `[llms] wrote ${pages.length} pages → llms.txt (${indexed} links, ${(txtBytes / 1024).toFixed(1)} KB) · llms-full.txt (${(fullBytes / 1024).toFixed(1)} KB)`,
   );
 }
 

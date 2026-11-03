@@ -582,46 +582,6 @@
       "lines": 270
     },
     {
-      "path": "docs/content/building/reference/browser-tools.md",
-      "kind": "doc",
-      "lines": 269
-    },
-    {
-      "path": "docs/content/building/reference/cron-tools.md",
-      "kind": "doc",
-      "lines": 214
-    },
-    {
-      "path": "docs/content/building/reference/llm-provider-interface.md",
-      "kind": "doc",
-      "lines": 250
-    },
-    {
-      "path": "docs/content/building/reference/outbound-policy.md",
-      "kind": "doc",
-      "lines": 270
-    },
-    {
-      "path": "docs/content/building/reference/plugin-sdk.md",
-      "kind": "doc",
-      "lines": 223
-    },
-    {
-      "path": "docs/content/building/reference/tool-capabilities.md",
-      "kind": "doc",
-      "lines": 307
-    },
-    {
-      "path": "docs/content/building/reference/tool-interface.md",
-      "kind": "doc",
-      "lines": 350
-    },
-    {
-      "path": "docs/content/building/reference/vision-tools.md",
-      "kind": "doc",
-      "lines": 227
-    },
-    {
       "path": "docs/content/building/tutorials/add-a-channel-adapter.md",
       "kind": "doc",
       "lines": 525
@@ -650,11 +610,6 @@
       "path": "docs/content/getting-started/architecture-90-seconds.md",
       "kind": "doc",
       "lines": 211
-    },
-    {
-      "path": "docs/content/getting-started/glossary.md",
-      "kind": "doc",
-      "lines": 232
     },
     {
       "path": "docs/content/platforms/discord.md",
@@ -845,26 +800,6 @@
       "path": "docs/content/using/quickstart.md",
       "kind": "doc",
       "lines": 231
-    },
-    {
-      "path": "docs/content/using/reference/cli.md",
-      "kind": "doc",
-      "lines": 778
-    },
-    {
-      "path": "docs/content/using/reference/config-yaml.md",
-      "kind": "doc",
-      "lines": 1617
-    },
-    {
-      "path": "docs/content/using/reference/mcp-config.md",
-      "kind": "doc",
-      "lines": 384
-    },
-    {
-      "path": "docs/content/using/reference/personality-yaml.md",
-      "kind": "doc",
-      "lines": 534
     },
     {
       "path": "docs/content/using/tutorials/first-agent.md",

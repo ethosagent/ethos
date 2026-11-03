@@ -4,7 +4,7 @@ description: "Action-dispatch cron tool — create, list, get, read_run, update,
 kind: reference
 audience: developer
 slug: cron-tools
-updated: 2026-09-29
+updated: 2026-11-03
 ---
 
 # Cron tool
@@ -156,55 +156,18 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 | `input_invalid` | `update`/`pause`/`resume`/`run`/`remove` on a `source: 'system'` job | Manage it in `~/.ethos/config.yaml` |
 | `execution_failed` | `run` and the agent's run produces an error | Investigate the prompt or model |
 
-## Examples {#examples}
+## Subpages {#subpages}
 
-### Morning briefing {#example-morning-briefing}
-
-```text
-cron({
-  action: "create",
-  name: "Morning briefing",
-  schedule: "0 8 * * 1-5",
-  prompt: "Summarise overnight Slack alerts, the deploy log, and pending PRs."
-})
-```
-
-### List all jobs {#example-list}
-
-```text
-cron({ action: "list" })
-```
-
-### Get job detail with run history {#example-get}
-
-```text
-cron({ action: "get", id: "morning-briefing" })
-```
-
-### Read a specific run's output {#example-read-run}
-
-```text
-cron({ action: "read_run", id: "morning-briefing", at: "2026-05-21T08:00:00.000Z" })
-```
-
-### Pause and resume {#example-pause-resume}
-
-```text
-cron({ action: "pause", id: "morning-briefing" })
-cron({ action: "resume", id: "morning-briefing" })
-```
-
-### Run immediately {#example-run}
-
-```text
-cron({ action: "run", id: "morning-briefing" })
-```
-
-### Remove {#example-remove}
-
-```text
-cron({ action: "remove", id: "morning-briefing" })
-```
+| Section | Page |
+| --- | --- |
+| <a id="examples"></a>[Examples](cron-tools/examples.md#examples) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-morning-briefing"></a>[Morning briefing](cron-tools/examples.md#example-morning-briefing) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-list"></a>[List all jobs](cron-tools/examples.md#example-list) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-get"></a>[Get job detail with run history](cron-tools/examples.md#example-get) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-read-run"></a>[Read a specific run's output](cron-tools/examples.md#example-read-run) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-pause-resume"></a>[Pause and resume](cron-tools/examples.md#example-pause-resume) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-run"></a>[Run immediately](cron-tools/examples.md#example-run) | [Cron tools: examples](cron-tools/examples.md) |
+| <a id="example-remove"></a>[Remove](cron-tools/examples.md#example-remove) | [Cron tools: examples](cron-tools/examples.md) |
 
 ## See also {#see-also}
 
