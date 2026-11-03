@@ -274,7 +274,7 @@ describe('check-agent-files', () => {
       [`${dir}/package.json`]: '{}\n',
       ...(readme ? { [`${dir}/README.md`]: '# x\n' } : {}),
     });
-    const CEILING = 102; // ALLOWANCES['readme-missing'] in scripts/check-agent-files.mjs
+    const CEILING = 69; // ALLOWANCES['readme-missing'] in scripts/check-agent-files.mjs
 
     it('missing README fails without allowance', () => {
       const r = expectFail(

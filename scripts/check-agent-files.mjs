@@ -40,7 +40,7 @@ const ALLOWANCES = {
   'arch-lines': { [ARCH]: { max: 518, why: ARCH_WHY } },
   'arch-tokens': { [ARCH]: { max: 27_957, why: ARCH_WHY } },
   // A ceiling on the missing count (not a path list): shrinks as READMEs land, Task 13 deletes it.
-  'readme-missing': { [PKG_ROOTS_KEY]: { max: 102, why: 'package READMEs not yet written' } },
+  'readme-missing': { [PKG_ROOTS_KEY]: { max: 69, why: 'package READMEs not yet written' } },
 };
 
 const violations = [];

@@ -1117,11 +1117,6 @@
       "lines": 567
     },
     {
-      "path": "extensions/observability-sqlite/README.md",
-      "kind": "readme",
-      "lines": 193
-    },
-    {
       "path": "extensions/observability-sqlite/src/__tests__/retention.test.ts",
       "kind": "test",
       "lines": 792
@@ -1182,19 +1177,9 @@
       "lines": 892
     },
     {
-      "path": "extensions/platform-callcapture/README.md",
-      "kind": "readme",
-      "lines": 1540
-    },
-    {
       "path": "extensions/platform-callcapture/src/__tests__/daemon.test.ts",
       "kind": "test",
       "lines": 1255
-    },
-    {
-      "path": "extensions/platform-discord/README.md",
-      "kind": "readme",
-      "lines": 374
     },
     {
       "path": "extensions/platform-discord/src/__tests__/clarify-surface.test.ts",
@@ -1205,11 +1190,6 @@
       "path": "extensions/platform-discord/src/index.ts",
       "kind": "source",
       "lines": 986
-    },
-    {
-      "path": "extensions/platform-slack/README.md",
-      "kind": "readme",
-      "lines": 370
     },
     {
       "path": "extensions/platform-slack/src/__tests__/clarify-surface.test.ts",
@@ -1225,11 +1205,6 @@
       "path": "extensions/platform-slack/src/adapter.ts",
       "kind": "source",
       "lines": 1805
-    },
-    {
-      "path": "extensions/platform-telegram/README.md",
-      "kind": "readme",
-      "lines": 194
     },
     {
       "path": "extensions/platform-telegram/src/__tests__/clarify-surface.test.ts",
@@ -1262,19 +1237,9 @@
       "lines": 2221
     },
     {
-      "path": "extensions/platform-voice/README.md",
-      "kind": "readme",
-      "lines": 213
-    },
-    {
       "path": "extensions/platform-voice/src/__tests__/sip-webhook.test.ts",
       "kind": "test",
       "lines": 623
-    },
-    {
-      "path": "extensions/platform-whatsapp/README.md",
-      "kind": "readme",
-      "lines": 203
     },
     {
       "path": "extensions/platform-whatsapp/src/__tests__/channel-mode.test.ts",
@@ -1472,11 +1437,6 @@
       "lines": 591
     },
     {
-      "path": "extensions/tools-process/README.md",
-      "kind": "readme",
-      "lines": 152
-    },
-    {
       "path": "extensions/tools-process/src/__tests__/guard.test.ts",
       "kind": "test",
       "lines": 587
@@ -1495,11 +1455,6 @@
       "path": "extensions/tools-terminal/src/__tests__/tools-terminal.test.ts",
       "kind": "test",
       "lines": 552
-    },
-    {
-      "path": "extensions/tools-vision/README.md",
-      "kind": "readme",
-      "lines": 208
     },
     {
       "path": "extensions/tools-vision/src/__tests__/integration.test.ts",
@@ -1705,11 +1660,6 @@
       "path": "packages/safety/groundtruth/src/__tests__/auditor.test.ts",
       "kind": "test",
       "lines": 571
-    },
-    {
-      "path": "packages/sdk/README.md",
-      "kind": "readme",
-      "lines": 179
     },
     {
       "path": "packages/storage-fs/src/__tests__/scoped-storage.test.ts",

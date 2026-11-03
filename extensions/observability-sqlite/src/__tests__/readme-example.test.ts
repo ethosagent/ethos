@@ -1,5 +1,5 @@
-// Verifies the quick-start example in the package README runs.
-// If the README's snippet diverges from the public API, this test fails.
+// Verifies the quick-start example in docs/quick-start.md runs.
+// If the documented snippet diverges from the public API, this test fails.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
