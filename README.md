@@ -138,6 +138,7 @@ Bots are bound to a personality at config time. The default binding locks `/pers
 | [Use Ethos as an MCP server](https://ethosagent.ai/docs/using/how-to/use-as-mcp-server) | Expose personalities to Claude Desktop, Cursor, and other MCP clients. |
 | [Deploy on EC2](https://ethosagent.ai/docs/using/how-to/deploy-on-ec2) | A full production walkthrough including IAM, secrets, log rotation, backup. |
 | [Tool capability framework](https://ethosagent.ai/docs/building/explanation/why-capabilities) | The declarative contract every tool implements: network, secrets, storage, fs_reach, process. |
+| [Migrate from OpenClaw or Hermes](https://ethosagent.ai/docs/using/how-to/migrate-from-openclaw) | `ethos claw migrate` carries memory, skills, platform tokens and provider keys into the Ethos layout. Command summary: [docs/readme/migrating-from-openclaw-or-hermes.md](docs/readme/migrating-from-openclaw-or-hermes.md). |
 
 ## The security boundary
 
@@ -148,32 +149,6 @@ Bots are bound to a personality at config time. The default binding locks `/pers
             private memory in shared conversations
 -->
 Ethos publishes a closed list of thirteen security guarantees, and each one names the `file:line` that enforces it, the adjacent thing it explicitly does *not* cover, and what you should add yourself if you need more. Together they bound what an agent may invoke and what its tools reach once running (tool allowlist, capability scoping), where it may read, write, and connect (filesystem reach, network egress), what it can be talked into by content it did not author (injection defense, channel admission), what it may hold and what leaves in the clear (secrets, redaction, audit), what private memory a shared conversation can reach (private memory in shared conversations), and what stands between the model and a dangerous call (approval gating, execution posture, watcher). Behind the list sits a three-tier partition of the source: a guaranteed security kernel, guarded surfaces that sit on a trust boundary, and extensions that inherit exactly what the kernel enforces and nothing more. Every workspace package carries its tier in [`.architecture-state.yaml`](.architecture-state.yaml), committed and dated, so scope is a lookup rather than an argument. The list of things that are deliberately *not* boundaries is published in the same place — the approval gate against an adversarial LLM, credential redaction, the plugin scanner, the classifier's regex tier — because the absences are what a reader most reasonably gets wrong. Start at [What does Ethos guarantee?](https://ethosagent.ai/docs/security/security-boundary), and read [SECURITY.md](SECURITY.md) before filing a report: it carries the same four-verdict decision table a maintainer uses, so you can reach the verdict yourself.
-
-## Migrating from OpenClaw or Hermes
-
-`ethos claw migrate` carries memory, skills, platform tokens, and provider keys from an existing OpenClaw or Hermes install into the Ethos layout. Dry-run first:
-
-```bash
-ethos claw migrate --dry-run     # preview the plan; touches nothing
-ethos claw migrate               # apply
-```
-
-What moves cleanly:
-
-- `MEMORY.md` and `USER.md` → the new personality's memory scope, identical semantics.
-- `SOUL.md` (OpenClaw) → a `migrated` personality with `SOUL.md` derived from it; built-in matches resolve automatically (`engineer.md` lands on the built-in `engineer`, etc.).
-- Platform tokens (Telegram bot tokens, Slack app credentials, Discord tokens) → the new `SecretsResolver` with `chmod 0600`, referenced from `config.yaml` as `${secrets:slack/<bot>/botToken}`.
-- Provider API keys → `~/.ethos/secrets/providers/<provider>/apiKey`.
-- Skills directory → unchanged path semantics; OpenClaw-compat parses `SKILL.md` frontmatter, env substitutions, and OS gates, so existing clawhub skills install and run without modification.
-
-Idempotent — safe to re-run. What does not move (and why is documented in the migration guide):
-
-- Anything that was inline plaintext in `config.yaml` migrates to the secrets resolver; the config file gets rewritten to use `${secrets:...}` refs.
-- Personality boundary settings (`fs_reach`, `safety.network.allow`) are *added* on migration with safe defaults; review them before the first bot run.
-
-Full migration reference: [Migrate from OpenClaw →](https://ethosagent.ai/docs/using/how-to/migrate-from-openclaw).
-
-You can also stay on your existing setup and install Ethos-native skills *into* OpenClaw or Hermes — every Ethos skill is `SKILL.md`-shaped and runs unmodified. The migration command is for operators who want the full personality-is-architecture model.
 
 ## Contributing
 

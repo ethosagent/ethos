@@ -8,7 +8,7 @@ import { createCallConcurrencyLimiter, decideInboundCall } from '../sip/inbound-
 // resolves correctly all the way to `decideInboundCall`'s return value, and
 // NOTHING downstream ever acts on it — `SipRealtimeBridge.prewarm()` has zero
 // production call sites, because `createSipRealtimeBridge` is never
-// constructed outside its own tests (already recorded in TESTING.md:864).
+// constructed outside its own tests (already recorded in docs/testing/telephony.md, "The three inert knobs").
 //
 // Settings → Voice renders the "Accepted, currently unread" callout on this
 // field (Phase 7, `settings-callouts.test.ts`), which is a claim about the

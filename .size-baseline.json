@@ -2,26 +2,6 @@
   "version": 1,
   "entries": [
     {
-      "path": "DESIGN.md",
-      "kind": "doc",
-      "lines": 707
-    },
-    {
-      "path": "README.md",
-      "kind": "doc",
-      "lines": 223
-    },
-    {
-      "path": "RELEASE.md",
-      "kind": "doc",
-      "lines": 301
-    },
-    {
-      "path": "TESTING.md",
-      "kind": "doc",
-      "lines": 1371
-    },
-    {
       "path": "apps/acp-server/src/__tests__/notify.test.ts",
       "kind": "test",
       "lines": 544
@@ -415,11 +395,6 @@
       "path": "apps/web/src/components/personality/__tests__/mcp-export-section.test.ts",
       "kind": "test",
       "lines": 555
-    },
-    {
-      "path": "apps/web/src/features/voice/README.md",
-      "kind": "doc",
-      "lines": 213
     },
     {
       "path": "apps/web/src/features/voice/__tests__/realtime-control-channel.test.ts",
@@ -910,11 +885,6 @@
       "path": "docs/src/components/OrbitHero/index.tsx",
       "kind": "source",
       "lines": 821
-    },
-    {
-      "path": "examples/plugins/README.md",
-      "kind": "doc",
-      "lines": 421
     },
     {
       "path": "extensions/channel-transcript-sqlite/src/__tests__/channel-transcript.test.ts",
@@ -1820,11 +1790,6 @@
       "path": "packages/wiring/src/voice-stack.ts",
       "kind": "source",
       "lines": 866
-    },
-    {
-      "path": "sandbox/README.md",
-      "kind": "doc",
-      "lines": 227
     }
   ]
 }
