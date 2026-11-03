@@ -268,4 +268,41 @@ describe('check-agent-files', () => {
       expectFail({ ...clean(), 'docs/decisions/0001-a.md': lines(10) }, 'adr-index-missing');
     });
   });
+
+  describe('package README presence', () => {
+    const pkg = (dir: string, readme = false): Record<string, string> => ({
+      [`${dir}/package.json`]: '{}\n',
+      ...(readme ? { [`${dir}/README.md`]: '# x\n' } : {}),
+    });
+    const CEILING = 102; // ALLOWANCES['readme-missing'] in scripts/check-agent-files.mjs
+
+    it('missing README fails without allowance', () => {
+      const r = expectFail(
+        { ...clean(), ...pkg('packages/a') },
+        'readme-missing packages/a',
+        '--no-allowances',
+      );
+      expect(r.stderr).not.toContain('(allowed');
+    });
+
+    it('missing README is allowed under the ceiling', () => {
+      const r = run(fixture({ ...clean(), ...pkg('packages/safety/a') }));
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('readme-missing packages/safety/a');
+    });
+
+    it('more missing READMEs than the ceiling fails', () => {
+      const many = Array.from({ length: CEILING + 1 }, (_, i) => pkg(`extensions/e${i}`));
+      const r = expectFail(Object.assign(clean(), ...many), 'readme-missing');
+      expect(r.stderr).toContain(`past its allowance of ${CEILING}`);
+    });
+
+    it('a package with a README passes', () => {
+      expectPass({ ...clean(), ...pkg('apps/a', true), ...pkg('packages/a', true) });
+    });
+
+    it('a dir without package.json is ignored', () => {
+      expectPass({ ...clean(), 'packages/safety/README.txt': 'x\n', 'extensions/b/src/i.ts': '' });
+    });
+  });
 });

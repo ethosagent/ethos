@@ -15,7 +15,10 @@ const EXEMPT = Object.freeze([
   'ARCHITECTURE.md',
   'docs/decisions/',
 ]);
-const WORKSPACE_ROOT = /^(packages\/safety\/[^/]+|packages\/[^/]+|extensions\/[^/]+|apps\/[^/]+)$/;
+// The plan's four workspace roots: a deliberate subset of pnpm-workspace.yaml (plugins/*,
+// examples/* and docs are not gated). A workspace dir is a direct child of one of them.
+export const WORKSPACE_ROOTS = Object.freeze(['packages', 'packages/safety', 'extensions', 'apps']);
+const isWorkspaceDir = (dir) => WORKSPACE_ROOTS.includes(dir.slice(0, dir.lastIndexOf('/')));
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist']);
 
 function walk(root, rel) {
@@ -43,7 +46,7 @@ export function classify(root, path) {
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
     if (
       path.endsWith('/README.md') &&
-      WORKSPACE_ROOT.test(dir) &&
+      isWorkspaceDir(dir) &&
       existsSync(join(root, dir, 'package.json'))
     ) {
       return 'readme';
