@@ -41,13 +41,13 @@ Download the installer for your platform from the releases page.
 
 ## Local mode {#local-mode}
 
-Local mode is the default. The app starts an embedded `web-api` process, equivalent to running `ethos serve --web` from the CLI. No separate server installation is required.
+Local mode is the default. The app starts an embedded `web-api` process, equivalent to running `ethos serve` from the CLI. No separate server installation is required.
 
 Sessions are stored in `~/.ethos/` — the same directory the CLI uses. Switching between the desktop app and `ethos chat` from the same working directory shares conversation history through the standard [session](../getting-started/glossary.md#session) keying model.
 
 ## Remote mode {#remote-mode}
 
-Connect to a remote Ethos server instead of running locally. The connection target is any running `ethos serve --web` or `ethos run-all` instance — a VPS, home server, or team deployment.
+Connect to a remote Ethos server instead of running locally. The connection target is any running `ethos serve` or `ethos run-all` instance — a VPS, home server, or team deployment.
 
 Configure the connection:
 

@@ -33,17 +33,13 @@ This creates a symlink so the host loads your source directly. Changes take effe
 
 ### Test the plugin
 
-Restart ethos to pick up the new plugin:
-
-```bash
-ethos restart
-```
+Restart ethos to pick up the new plugin: stop the running `ethos` process (Ctrl+C) and start it again with `ethos`, or stop and re-run `ethos gateway start` if the gateway is running.
 
 Verify registration:
 
 ```bash
 ethos plugin list          # should show my-notes with 1 tool
-ethos doctor my-notes      # should pass the notes-db health check
+ethos doctor               # runs every plugin health check, including notes-db
 ```
 
 Try the slash commands:

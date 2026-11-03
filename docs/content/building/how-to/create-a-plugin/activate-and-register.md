@@ -147,7 +147,7 @@ api.registerHealthCheck({
 });
 ```
 
-`ethos doctor my-plugin` runs all registered health checks.
+`ethos doctor` runs all registered health checks.
 
 ### 14. Register slash commands (optional)
 

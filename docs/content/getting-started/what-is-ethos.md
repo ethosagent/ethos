@@ -45,7 +45,7 @@ Beyond personalities, the framework ships:
 
 - **CLI** — `ethos chat` with streaming output, slash commands, and [zero mode](../using/how-to/use-zero-mode.md) (`ethos -z "prompt"`) for one-shot scripting.
 - **Inline context** — [`@file` and `@url` references](../using/how-to/use-inline-context-refs.md) that auto-inline files and URLs as context before the LLM sees the prompt.
-- **Web dashboard** — full React SPA (`ethos serve --web`) with chat, session browser, personality management, skills library, MCP server config, plugin management, memory viewer, team boards, mesh visualization, cron job scheduling, activity feed, batch/eval runs, and custom dashboards with plugin data sources. See [Use the web dashboard](../using/how-to/use-web-dashboard.md).
+- **Web dashboard** — full React SPA (`ethos serve`) with chat, session browser, personality management, skills library, MCP server config, plugin management, memory viewer, team boards, mesh visualization, cron job scheduling, activity feed, batch/eval runs, and custom dashboards with plugin data sources. See [Use the web dashboard](../using/how-to/use-web-dashboard.md).
 - **Desktop app** — Electron app with system tray, quick-chat overlay, global shortcuts, auto-update, and OS keychain integration. Runs local or remote. See [Desktop app](../platforms/desktop.md).
 - **VS Code extension** — sidebar panel that brings the agent into the editor.
 - **Nine surfaces** — CLI, web dashboard, desktop app, VS Code extension, and five channel adapters (Telegram, Discord, Slack, WhatsApp, Email). Same agent, same memory, same sessions across all of them.

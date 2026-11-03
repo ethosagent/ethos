@@ -29,7 +29,7 @@ The personality can call the server's tools. Tokens are stored per-personality a
 - `ethos` installed and a provider configured ([Configure an LLM provider](configure-providers.md)).
 - At least one personality created (`ethos personality list` shows it).
 - For OAuth-protected servers: a browser reachable from the machine running `ethos` (the PKCE flow opens a tab).
-- For the web path: `ethos serve --web` running.
+- For the web path: `ethos serve` running.
 
 ## Steps — CLI path
 

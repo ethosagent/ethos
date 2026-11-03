@@ -27,7 +27,7 @@ The personality's **MCP export** section shows the resolved export, a one-time c
 The personality's page in the web dashboard shows the same resolved export as `ethos personality show`, plus the clients holding a key, their recent calls, and the calls that were refused. Start the dashboard:
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 It serves on port 3000 by default ([Use the web dashboard](../use-web-dashboard.md)). Open the personality's **Identity** pane (`/p/<id>/identity`) and scroll to **MCP export**. The section is `McpExportSection` (`apps/web/src/components/personality/McpExportSection.tsx`), fed by the `personalities.mcpExport` RPC (`PersonalitiesService.mcpExport`, `apps/web-api/src/services/personalities.service.ts`).

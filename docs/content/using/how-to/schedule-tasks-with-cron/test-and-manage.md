@@ -77,7 +77,7 @@ ethos cron delete morning-briefing
 
 ### 7. Manage from the web dashboard
 
-If `ethos serve --web` is running, the **Cron** tab in the web dashboard shows all jobs. From there you can:
+If `ethos serve` is running, the **Cron** tab in the web dashboard shows all jobs. From there you can:
 
 - View run history and output for each job.
 - Pause and resume jobs with a toggle.

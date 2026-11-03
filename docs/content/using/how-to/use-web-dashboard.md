@@ -34,13 +34,13 @@ A running dashboard at `http://localhost:3000` where you can create and edit per
 ### 1. Start the dashboard
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 The dashboard starts on port 3000 by default. To use a different port:
 
 ```bash
-ethos serve --web --port 8080
+ethos serve --web-port 8080
 ```
 
 For remote machines, open an SSH tunnel:
@@ -109,7 +109,7 @@ Open `http://localhost:3000` in your browser. The dashboard loads with the sideb
 
 ## Troubleshoot
 
-**Dashboard doesn't load at `localhost:3000`** — Verify `ethos serve --web` is running. Check the terminal for errors. If port 3000 is in use, specify a different port with `--port`.
+**Dashboard doesn't load at `localhost:3000`** — Verify `ethos serve` is running. Check the terminal for errors. If port 3000 is in use, specify a different port with `--web-port`.
 
 **Personalities tab is empty** — No personalities exist yet. Create one with the wizard or from the CLI:
 

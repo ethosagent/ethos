@@ -112,7 +112,7 @@ The resulting directory tree:
 ```bash
 ethos plugin list              # shows plugin id and tool count
 ethos personality show finance-analyst
-ethos doctor my-plugin         # runs health checks, reports monitor status
+ethos doctor                   # runs health checks, reports monitor status
 ```
 
 ## Troubleshoot

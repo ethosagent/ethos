@@ -19,7 +19,7 @@ The dashboard is scoped to one team. Its rail shows the members, its column show
 ## Prereqs
 
 - A team manifest at `~/.ethos/teams/<team>/team.yaml` — see [Run a team with a shared kanban board](run-a-team-with-kanban.md).
-- The dashboard running: `ethos serve --web` ([Use the web dashboard](use-web-dashboard.md)).
+- The dashboard running: `ethos serve` ([Use the web dashboard](use-web-dashboard.md)).
 - The team's supervisor started with `ethos team start <team>`. A stopped team still appears everywhere below; its panes just say so.
 
 ## 1. Pick a scope

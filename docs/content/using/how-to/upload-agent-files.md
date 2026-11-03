@@ -28,7 +28,7 @@ The file sits in the personality's working directory on the server, listed in th
 ### 1. Open Documents and pick the root
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 ```

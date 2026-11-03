@@ -90,6 +90,6 @@ Expected: the response prints, then `exit code: 0`.
 
 ## Troubleshoot
 
-**`--session` returns stale context.** -- The session ID is a string key, not a path. Verify the exact ID with `ethos session list`. Session IDs are case-sensitive.
+**`--session` returns stale context.** -- The session ID is a string key, not a path. Verify the exact ID with `ethos sessions list`. Session IDs are case-sensitive.
 
 **`personality not found: <id>`.** -- The personality directory does not exist at `~/.ethos/personalities/<id>/` or is missing `config.yaml`. Run `ethos personality list` to see available personalities.

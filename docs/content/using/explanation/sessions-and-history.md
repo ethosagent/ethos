@@ -33,7 +33,7 @@ The same logic extends to channel adapters with their own keying — `telegram:<
 
 When the user runs `/new` mid-chat, the next message uses a key of `cli:<cwd-basename>:<Date.now()>`. The original session row still exists; the new key is a fresh row. The chat now sees only the new turns. The dedup cache for the previous key is also flushed so the same response text can be sent again under the new key without colliding with the 30-second TTL.
 
-The reason to keep the old session row (instead of deleting it) is that history is durable. A user who started over does not want to lose the previous conversation in case it mattered after all. `ethos session list` surfaces both rows; the timestamped one is the new thread.
+The reason to keep the old session row (instead of deleting it) is that history is durable. A user who started over does not want to lose the previous conversation in case it mattered after all. `ethos sessions list` surfaces both rows; the timestamped one is the new thread.
 
 `/personality <id>` does *not* fork the session. The conversation thread stays continuous; only the role changes. That separation is intentional — switching hats does not start a new task.
 
@@ -134,4 +134,4 @@ Alternatives considered:
 - [Why MEMORY.md and USER.md?](memory-model.md) — the other persistence store, with a different contract
 - [Why is personality the unit?](what-is-a-personality.md) — what does *not* change when you switch
 - [Slash commands reference](../reference/slash-commands.md) — `/new`, `/personality`, and friends
-- [CLI reference](../reference/cli.md) — `ethos session list` and related subcommands
+- [CLI reference](../reference/cli.md) — `ethos sessions list` and related subcommands

@@ -123,7 +123,7 @@ Type `say hello` and verify a streamed reply appears.
 **Dashboard from Windows browser**: start the web server inside WSL2:
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 Open `http://localhost:3000` in a Windows browser. On Windows 11 22H2+ with default networking settings, localhost forwards automatically. On older builds, use the WSL2 VM's IP instead (`ip -4 addr show eth0 | grep inet`).

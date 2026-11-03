@@ -166,6 +166,6 @@ ethos chat
 
 **File content appears truncated.** — Files over 8 000 characters are truncated by design. Reference smaller, more targeted files, or split your question across multiple messages that each reference a different section of the codebase.
 
-**Web composer file picker does not appear.** — The popover triggers on the `@` character in the web message input. Ensure you are running `ethos serve --web` and using the web dashboard at `http://localhost:3000`. The file picker is not available in the CLI.
+**Web composer file picker does not appear.** — The popover triggers on the `@` character in the web message input. Ensure you are running `ethos serve` and using the web dashboard at `http://localhost:3000`. The file picker is not available in the CLI.
 
 **Multiple `@` references but only one file inlined.** — Each reference must be separated by whitespace. `@src/a.ts@src/b.ts` is parsed as a single (invalid) path. Add a space: `@src/a.ts @src/b.ts`.

@@ -14,7 +14,7 @@ This page covers how every surface consumes the same event stream.
 
 `AgentLoop` is a library. It does not know what is consuming its events. Nine surfaces ship today — all of them thin wrappers that feed user input into the loop and render whichever `AgentEvent` subset matters for their medium.
 
-<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 680 448" role="img" aria-label="Surface architecture diagram. AgentLoop, an AsyncGenerator of AgentEvent, feeds web-api (Hono plus oRPC, HTTP plus SSE for browser clients), which feeds two apps: Web (React, ethos serve --web) and Desktop (Electron, native tray and global shortcuts). A separate group of direct consumers holds CLI (readline REPL), TUI in Ink (React-Ink terminal dashboard), VS Code extension (sidebar panel in editor), MCP server (serves Ethos as MCP tools), and ACP server (Agent Communication Protocol). A second group holds the channel adapters reached via the gateway: Telegram, Discord, Slack, WhatsApp, and Email." font-family="Geist Mono,monospace">
+<figure class="ethos-figure"><div class="ethos-figure-pad"><svg viewBox="0 0 680 448" role="img" aria-label="Surface architecture diagram. AgentLoop, an AsyncGenerator of AgentEvent, feeds web-api (Hono plus oRPC, HTTP plus SSE for browser clients), which feeds two apps: Web (React, ethos serve) and Desktop (Electron, native tray and global shortcuts). A separate group of direct consumers holds CLI (readline REPL), TUI in Ink (React-Ink terminal dashboard), VS Code extension (sidebar panel in editor), MCP server (serves Ethos as MCP tools), and ACP server (Agent Communication Protocol). A second group holds the channel adapters reached via the gateway: Telegram, Discord, Slack, WhatsApp, and Email." font-family="Geist Mono,monospace">
 <defs><marker id="arch90-surface-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#70706B"/></marker></defs>
 <rect x="140" y="10" width="400" height="52" rx="10" fill="#9BDDB4" fill-opacity="0.08" stroke="#9BDDB4"/>
 <line x1="340" y1="62" x2="340" y2="86" stroke="#70706B" marker-end="url(#arch90-surface-arrow)"/>
@@ -46,7 +46,7 @@ This page covers how every surface consumes the same event stream.
 <g font-size="11" fill="var(--ethos-text-secondary)">
 <text x="340" y="50" text-anchor="middle">AsyncGenerator&lt;AgentEvent&gt;</text>
 <text x="340" y="130" text-anchor="middle">HTTP + SSE for browser clients</text>
-<text x="215" y="210" text-anchor="middle">ethos serve --web</text>
+<text x="215" y="210" text-anchor="middle">ethos serve</text>
 <text x="465" y="210" text-anchor="middle">native tray, global shortcuts</text>
 <text x="92" y="326" text-anchor="middle">readline</text>
 <text x="92" y="342" text-anchor="middle">REPL</text>

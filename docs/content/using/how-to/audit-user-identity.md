@@ -32,7 +32,7 @@ The first time a platform identity sends a message, the gateway calls `IdentityM
 
 ### 1. See known users in the web dashboard
 
-1. Start the dashboard: `ethos serve --web`.
+1. Start the dashboard: `ethos serve`.
 2. Open **Memory**, stay on the **Files** tab, and select the **USER.md** tab.
 3. Open the **User** dropdown next to the personality picker.
 

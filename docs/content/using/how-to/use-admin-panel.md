@@ -27,7 +27,7 @@ A running admin panel at `http://localhost:3000/admin` where you can view channe
 ### 1. Start the admin panel
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 The web server starts on port 3000 by default. Navigate to `http://localhost:3000/admin` in your browser.
@@ -35,7 +35,7 @@ The web server starts on port 3000 by default. Navigate to `http://localhost:300
 To use a different port:
 
 ```bash
-ethos serve --web --port 8080
+ethos serve --web-port 8080
 ```
 
 The admin panel shares the same auth as the rest of the API. Include the bearer token in the `Authorization` header for programmatic access, or enter it in the login prompt when the browser redirects.
@@ -177,7 +177,7 @@ For SSE servers, verify the endpoint responds:
 curl -I https://mcp.linear.app
 ```
 
-**Changes in the admin panel don't appear in CLI** — Both read from the same `~/.ethos/config.yaml`. Changes apply immediately. If they don't, restart `ethos serve --web` to clear any cached state.
+**Changes in the admin panel don't appear in CLI** — Both read from the same `~/.ethos/config.yaml`. Changes apply immediately. If they don't, restart `ethos serve` to clear any cached state.
 
 ## See also
 

@@ -122,4 +122,4 @@ Ethos MCP doctor
 - [Set up MCP for a personality](set-up-mcp-for-a-personality.md) — the other direction: Ethos as an MCP client.
 - [MCP configuration reference](../reference/mcp-config.md) — `~/.ethos/mcp.json` in full.
 - [outbound_policy](../../building/reference/outbound-policy.md) — the other field that bounds what an agent may do on your behalf.
-- [Use the web dashboard](use-web-dashboard.md) — starting `ethos serve --web` and finding a personality's page.
+- [Use the web dashboard](use-web-dashboard.md) — starting `ethos serve` and finding a personality's page.

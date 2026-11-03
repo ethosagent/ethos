@@ -74,7 +74,7 @@ The personality registry is mtime-cached and refreshed before each turn, so the 
 Start the dashboard, if it is not already up:
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 ```
@@ -106,7 +106,7 @@ The toolbar beside the root path carries **New folder** and **Upload**, for putt
 
 Click **Download** on a row. The browser fetches `GET /documents/download` and saves the file under its original name.
 
-The link is authenticated by the dashboard's session cookie, so it works in any browser pointed at `ethos serve --web` — including through an SSH tunnel or a reverse proxy. It does **not** work in the desktop app's remote mode; see [Troubleshoot](#troubleshoot).
+The link is authenticated by the dashboard's session cookie, so it works in any browser pointed at `ethos serve` — including through an SSH tunnel or a reverse proxy. It does **not** work in the desktop app's remote mode; see [Troubleshoot](#troubleshoot).
 
 ### 5. Delete a file
 

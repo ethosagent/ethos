@@ -26,7 +26,7 @@ The token lands at `~/.ethos/personalities/<id>/mcp/<name>/`, the server is in t
 ### 1. Open the web dashboard
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 Navigate to `http://localhost:3000` (or the configured port).

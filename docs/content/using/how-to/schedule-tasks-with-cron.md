@@ -20,7 +20,7 @@ A cron job fires on schedule, runs the [personality](../../getting-started/gloss
 
 - `ethos` installed and a provider configured ([Configure an LLM provider](configure-providers.md)).
 - A personality with `cron` in its `toolset.yaml`.
-- A persistent process running: `ethos gateway start` or `ethos serve --web`. The cron scheduler needs a long-lived process — `ethos chat` is ephemeral and does not wire a scheduler.
+- A persistent process running: `ethos gateway start` or `ethos serve`. The cron scheduler needs a long-lived process — `ethos chat` is ephemeral and does not wire a scheduler.
 
 
 ## Parts
@@ -58,7 +58,7 @@ ethos gateway start
 Or, if you only need the web UI and cron (no Telegram/Slack bots):
 
 ```bash
-ethos serve --web
+ethos serve
 ```
 
 The cron tool is unavailable in `ethos chat` because chat sessions are ephemeral. Jobs created in an ephemeral process would never fire.
@@ -120,7 +120,7 @@ The output should match what you'd expect from the prompt running through the pe
 
 ## Troubleshoot
 
-**`not_available: cron tool requires a scheduler`** — The personality lists `cron` in `toolset.yaml` but the process has no scheduler wired. Switch from `ethos chat` to `ethos gateway start` or `ethos serve --web`.
+**`not_available: cron tool requires a scheduler`** — The personality lists `cron` in `toolset.yaml` but the process has no scheduler wired. Switch from `ethos chat` to `ethos gateway start` or `ethos serve`.
 
 **`input_invalid: invalid cron expression`** — The schedule string is not a valid 5-field cron expression. Use the format `minute hour day month weekday`. Examples: `0 8 * * 1-5` (8am weekdays), `*/15 * * * *` (every 15 minutes), `0 9 * * 1` (9am Mondays).
 
