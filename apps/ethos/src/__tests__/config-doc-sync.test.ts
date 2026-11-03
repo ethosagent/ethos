@@ -33,15 +33,18 @@
 // UNDOCUMENTED_* roster below, which is a one-way ratchet: a parked field
 // that gains docs fails until its entry is removed.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'index.ts');
 const PERSONALITY_SRC = join(REPO_ROOT, 'packages', 'types', 'src', 'personality.ts');
-// New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md;
-// PersonalityConfig fields live in using/reference/personality-yaml.md.
+// New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md
+// (an index) plus its subpages under using/reference/config-yaml/*.md;
+// PersonalityConfig fields live in using/reference/personality-yaml.md plus
+// personality-yaml/*.md. Each set is read together as one documented text
+// (see readSplitReference).
 const CONFIG_REFERENCE_DOC = join(
   REPO_ROOT,
   'docs',
@@ -49,6 +52,22 @@ const CONFIG_REFERENCE_DOC = join(
   'using',
   'reference',
   'config-yaml.md',
+);
+const CONFIG_REFERENCE_DIR = join(
+  REPO_ROOT,
+  'docs',
+  'content',
+  'using',
+  'reference',
+  'config-yaml',
+);
+const PERSONALITY_REFERENCE_DIR = join(
+  REPO_ROOT,
+  'docs',
+  'content',
+  'using',
+  'reference',
+  'personality-yaml',
 );
 const PERSONALITY_REFERENCE_DOC = join(
   REPO_ROOT,
@@ -357,11 +376,30 @@ function safeRead(path: string): string {
   return existsSync(path) ? readFileSync(path, 'utf-8') : '';
 }
 
+/** An index page plus every subpage in its sibling directory, sorted, joined. */
+function readSplitReference(indexPath: string, dir: string): string {
+  const subpages = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((name) => name.endsWith('.md'))
+        .sort()
+        .map((name) => readFileSync(join(dir, name), 'utf-8'))
+    : [];
+  return [safeRead(indexPath), ...subpages].join('\n');
+}
+
+function readConfigReference(): string {
+  return readSplitReference(CONFIG_REFERENCE_DOC, CONFIG_REFERENCE_DIR);
+}
+
+function readPersonalityReference(): string {
+  return readSplitReference(PERSONALITY_REFERENCE_DOC, PERSONALITY_REFERENCE_DIR);
+}
+
 describe('config surface doc-sync', () => {
-  describe('EthosConfig fields are documented in config-yaml.md', () => {
+  describe('EthosConfig fields are documented in config-yaml.md (index + subpages)', () => {
     const src = readFileSync(ETHOS_CONFIG_SRC, 'utf-8');
     const fields = extractFields(src, 'EthosConfig');
-    const doc = safeRead(CONFIG_REFERENCE_DOC);
+    const doc = readConfigReference();
 
     for (const field of fields) {
       if (field.internal) continue;
@@ -389,10 +427,10 @@ describe('config surface doc-sync', () => {
     }
   });
 
-  describe('PersonalityConfig fields are documented in personality-yaml.md', () => {
+  describe('PersonalityConfig fields are documented in personality-yaml.md (index + subpages)', () => {
     const src = readFileSync(PERSONALITY_SRC, 'utf-8');
     const fields = extractFields(src, 'PersonalityConfig');
-    const doc = safeRead(PERSONALITY_REFERENCE_DOC);
+    const doc = readPersonalityReference();
 
     for (const field of fields) {
       if (field.internal) continue;
@@ -429,7 +467,7 @@ describe('config surface doc-sync', () => {
     const REMOVED_PERSONALITY_FIELDS: string[] = [];
 
     it('config-yaml.md does not document removed EthosConfig fields', () => {
-      const doc = safeRead(CONFIG_REFERENCE_DOC);
+      const doc = readConfigReference();
       for (const field of REMOVED_ETHOS_FIELDS) {
         expect(
           isDocumented(field, doc),
@@ -439,7 +477,7 @@ describe('config surface doc-sync', () => {
     });
 
     it('personality-yaml.md does not document removed PersonalityConfig fields', () => {
-      const doc = safeRead(PERSONALITY_REFERENCE_DOC);
+      const doc = readPersonalityReference();
       for (const field of REMOVED_PERSONALITY_FIELDS) {
         expect(
           isDocumented(field, doc),

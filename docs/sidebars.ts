@@ -49,9 +49,7 @@ const sidebars: SidebarsConfig = {
               label: 'Install Ethos on Windows (WSL2)',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/install-on-windows-wsl2' },
-              items: [
-                'using/how-to/install-on-windows-wsl2/files-networking-gateway',
-              ],
+              items: ['using/how-to/install-on-windows-wsl2/files-networking-gateway'],
             },
             'using/how-to/configure-providers',
             {
@@ -59,9 +57,7 @@ const sidebars: SidebarsConfig = {
               label: 'Run Ethos on AWS Bedrock',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/use-aws-bedrock' },
-              items: [
-                'using/how-to/use-aws-bedrock/iam-and-config',
-              ],
+              items: ['using/how-to/use-aws-bedrock/iam-and-config'],
             },
             'using/how-to/configure-local-serving',
             'using/how-to/qualify-a-local-model',
@@ -78,18 +74,14 @@ const sidebars: SidebarsConfig = {
               label: 'Deploy Ethos in production',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/deploy-in-production' },
-              items: [
-                'using/how-to/deploy-in-production/pm2-and-operate',
-              ],
+              items: ['using/how-to/deploy-in-production/pm2-and-operate'],
             },
             {
               type: 'category',
               label: 'Deploy Ethos on AWS EC2',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/deploy-on-ec2' },
-              items: [
-                'using/how-to/deploy-on-ec2/service-and-operate',
-              ],
+              items: ['using/how-to/deploy-on-ec2/service-and-operate'],
             },
             {
               type: 'category',
@@ -117,9 +109,7 @@ const sidebars: SidebarsConfig = {
               label: 'Use zero mode',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/use-zero-mode' },
-              items: [
-                'using/how-to/use-zero-mode/personality-session-model',
-              ],
+              items: ['using/how-to/use-zero-mode/personality-session-model'],
             },
           ],
         },
@@ -133,9 +123,7 @@ const sidebars: SidebarsConfig = {
               label: 'Run multiple bots from one Ethos process',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/run-multiple-bots' },
-              items: [
-                'using/how-to/run-multiple-bots/isolation-and-start',
-              ],
+              items: ['using/how-to/run-multiple-bots/isolation-and-start'],
             },
             'using/how-to/run-channels-over-webhooks',
             'using/how-to/receive-files-via-telegram',
@@ -165,9 +153,7 @@ const sidebars: SidebarsConfig = {
               label: 'Give an agent a phone number',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/answer-phone-calls' },
-              items: [
-                'using/how-to/answer-phone-calls/run-and-verify',
-              ],
+              items: ['using/how-to/answer-phone-calls/run-and-verify'],
             },
           ],
         },
@@ -204,18 +190,14 @@ const sidebars: SidebarsConfig = {
               label: 'Manage skill evolution',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/manage-skill-evolution' },
-              items: [
-                'using/how-to/manage-skill-evolution/reject-rollback-archive',
-              ],
+              items: ['using/how-to/manage-skill-evolution/reject-rollback-archive'],
             },
             {
               type: 'category',
-              label: 'Review a personality\'s change request',
+              label: "Review a personality's change request",
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/review-personality-change-requests' },
-              items: [
-                'using/how-to/review-personality-change-requests/apply-decline-rollback',
-              ],
+              items: ['using/how-to/review-personality-change-requests/apply-decline-rollback'],
             },
             'using/how-to/run-a-birth-ritual',
             {
@@ -271,9 +253,7 @@ const sidebars: SidebarsConfig = {
               label: 'Use the web dashboard',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/use-web-dashboard' },
-              items: [
-                'using/how-to/use-web-dashboard/cron-mcp-chat-admin',
-              ],
+              items: ['using/how-to/use-web-dashboard/cron-mcp-chat-admin'],
             },
             'using/how-to/use-admin-panel',
             'using/how-to/retrieve-agent-files',
@@ -292,18 +272,14 @@ const sidebars: SidebarsConfig = {
               label: 'Set up approval gates for dangerous tool calls',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/set-up-approval-gates' },
-              items: [
-                'using/how-to/set-up-approval-gates/approval-surfaces',
-              ],
+              items: ['using/how-to/set-up-approval-gates/approval-surfaces'],
             },
             {
               type: 'category',
               label: 'Use a decision model',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/use-a-decision-model' },
-              items: [
-                'using/how-to/use-a-decision-model/read-and-ask',
-              ],
+              items: ['using/how-to/use-a-decision-model/read-and-ask'],
             },
             'using/how-to/approve-posts-before-sending',
             'using/how-to/audit-user-identity',
@@ -319,9 +295,7 @@ const sidebars: SidebarsConfig = {
               label: 'Back up and restore an Ethos install',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/back-up-and-restore' },
-              items: [
-                'using/how-to/back-up-and-restore/restore',
-              ],
+              items: ['using/how-to/back-up-and-restore/restore'],
             },
             'using/how-to/recover-messages-after-a-crash',
             'using/how-to/monitor-with-grafana',
@@ -330,9 +304,7 @@ const sidebars: SidebarsConfig = {
               label: 'Export traces to an OpenTelemetry collector',
               collapsed: true,
               link: { type: 'doc', id: 'using/how-to/export-traces-otlp' },
-              items: [
-                'using/how-to/export-traces-otlp/backends-privacy-delivery',
-              ],
+              items: ['using/how-to/export-traces-otlp/backends-privacy-delivery'],
             },
             'using/how-to/safe-mode',
           ],
@@ -465,9 +437,7 @@ const sidebars: SidebarsConfig = {
               label: 'Publish a plugin',
               collapsed: true,
               link: { type: 'doc', id: 'building/how-to/publish-a-plugin' },
-              items: [
-                'building/how-to/publish-a-plugin/test-and-publish',
-              ],
+              items: ['building/how-to/publish-a-plugin/test-and-publish'],
             },
             'building/how-to/register-plugin-commands',
             'building/how-to/register-plugin-data-source',
@@ -477,9 +447,7 @@ const sidebars: SidebarsConfig = {
               label: 'Write a memory backend plugin',
               collapsed: true,
               link: { type: 'doc', id: 'building/how-to/write-a-memory-backend-plugin' },
-              items: [
-                'building/how-to/write-a-memory-backend-plugin/register-and-configure',
-              ],
+              items: ['building/how-to/write-a-memory-backend-plugin/register-and-configure'],
             },
             {
               type: 'category',
@@ -520,9 +488,7 @@ const sidebars: SidebarsConfig = {
               label: 'Author a Canvas template',
               collapsed: true,
               link: { type: 'doc', id: 'building/how-to/author-a-canvas-template' },
-              items: [
-                'building/how-to/author-a-canvas-template/limits-and-render',
-              ],
+              items: ['building/how-to/author-a-canvas-template/limits-and-render'],
             },
           ],
         },
@@ -662,18 +628,14 @@ const sidebars: SidebarsConfig = {
               label: 'Security overview',
               collapsed: true,
               link: { type: 'doc', id: 'security/overview' },
-              items: [
-                'security/overview/trade-offs',
-              ],
+              items: ['security/overview/trade-offs'],
             },
             {
               type: 'category',
               label: 'Security boundary',
               collapsed: true,
               link: { type: 'doc', id: 'security/security-boundary' },
-              items: [
-                'security/security-boundary/beyond-the-register',
-              ],
+              items: ['security/security-boundary/beyond-the-register'],
             },
             {
               type: 'category',

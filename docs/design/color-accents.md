@@ -40,13 +40,7 @@ when you have walked into a different room.
 team **Chat** pane carries the coordinator's accent, because it is the coordinator's
 surface. The rail stays neutral at every altitude.
 
-| Personality | Hex | Reasoning |
-|---|---|---|
-| researcher | `#4A9EFF` | Blue — knowledge, exploration |
-| engineer | `#4ADE80` | Green — making, building |
-| reviewer | `#F59E0B` | Amber — caution, judgment |
-| coach | `#E879F9` | Magenta — encouragement, clarity |
-| operator | `#94A3B8` | Grey — operational, neutral |
+The personality accent table lives in [DESIGN.md](../../DESIGN.md#color).
 
 ### Runner accent (a foreign process is not a personality)
 

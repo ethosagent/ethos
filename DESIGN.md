@@ -80,6 +80,14 @@ saturation so a 5:1 red reads as brick rather than siren beside the ochre and
 the forest green. `--info` on paper-warm is 2.63:1 and is a known shortfall —
 see the 2026-09-04 decisions-log row.
 
+| Personality | Hex | Reasoning |
+|---|---|---|
+| researcher | `#4A9EFF` | Blue — knowledge, exploration |
+| engineer | `#4ADE80` | Green — making, building |
+| reviewer | `#F59E0B` | Amber — caution, judgment |
+| coach | `#E879F9` | Magenta — encouragement, clarity |
+| operator | `#94A3B8` | Grey — operational, neutral |
+
 ## Spacing
 
 Base unit: **8px**. Density: **comfortable** — not data-dashboard compact, not marketing-spacious. Linear-density.
