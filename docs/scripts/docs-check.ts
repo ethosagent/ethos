@@ -110,13 +110,13 @@ const REQUIRED_SECTIONS: Record<Kind, ReadonlyArray<string>> = {
   decision: [], // decision uses a special check: exactly one "(Recommended)" + a trade-off table.
 };
 
-// `tutorial` and `how-to` get a length ceiling per DOCS.md §Page types.
+// Every kind has a 200-line ceiling (warning only) per the Page types table in .agents/skills/docs/SKILL.md and the Context Budget Playbook; the failing gate is scripts/check-source-size.mjs (kind doc, 200).
 const LENGTH_CEILINGS: Record<Kind, number> = {
-  tutorial: 700,
-  'how-to': 300,
-  reference: 500,
-  explanation: 400,
-  decision: 250,
+  tutorial: 200,
+  'how-to': 200,
+  reference: 200,
+  explanation: 200,
+  decision: 200,
 };
 const LENGTH_MIN_WARN = 50;
 
