@@ -1,5 +1,5 @@
-// The decision provider contract (ARCHITECTURE.md §IV "Decision Provider
-// Authoring", §VII roster; plan decision-provider-jev §4, D4). A decision
+// The decision provider contract (docs/decisions/0007-decision-provider-authoring.md,
+// moved from ARCHITECTURE.md §IV; §VII roster; plan decision-provider-jev §4, D4). A decision
 // provider answers typed questions about a piece of state and returns typed
 // values with probabilities, never text. Frozen at one method: the gate is
 // `__tests__/decision-provider-method-count.test.ts`, cross-checked against

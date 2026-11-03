@@ -1,7 +1,8 @@
 // `createTypesafeDecisionProvider` — the Jev DecisionProvider (plan §5).
 //
-// A thin adapter over ./transport, per ARCHITECTURE.md §IV's
-// thin-adapter-over-a-transport pattern. `decide()` is:
+// A thin adapter over ./transport, per the thin-adapter-over-a-transport
+// pattern in docs/decisions/0007-decision-provider-authoring.md (moved from
+// ARCHITECTURE.md §IV). `decide()` is:
 // validate → size guard → breaker → one POST → map. Errors are data, never
 // thrown (§4): every step returns `{ ok: false, code, message }`, and the whole
 // body is wrapped so an unexpected throw becomes `unavailable`. Pinned by

@@ -83,10 +83,6 @@ The primary mental model.
             └───────────────────────────────────┘   internal deps
 ```
 
-**Contracts** are the floor: pure TypeScript interfaces, value types,
-discriminated unions. They have no internal dependencies. Everything
-else depends on them.
-
 **Security kernel** is the layer that implements the safety primitives
 §V mandates. It depends on contracts only and imports nothing above
 itself. Core does not import it at runtime: core consumes kernel
@@ -95,59 +91,25 @@ binds an implementation to that seam. This is a restriction on core, not
 a licence for anyone else — a kernel that core could import directly
 would make the engine unswappable and the kernel unreplaceable.
 
-**Core** is the framework engine: the agent loop, the registries, the
-default context engines, and the enforcement points at which the §V
-safety primitives are applied. Core depends on contracts only.
-
-**Extensions** are concrete implementations of contracts: providers,
-tools, memory backends, platform adapters, persistence stores, content
-bundles. Extensions depend on contracts, on the security kernel, and on
-core; they do not assume the presence of sibling extensions outside the
-patterns in §IV.
-
-**Wiring** is the composition layer: the only layer that imports
-extensions by name, assembles them into a running system, and binds a
-security-kernel implementation to the seam core is constructed with.
-
-**Apps** are user-facing entry points: CLIs, TUIs, web clients, IDE
-extensions, protocol servers. Apps drive wiring; they do not bypass it.
-
-The layering is total: every module the framework owns belongs to
-exactly one layer, and its imports are constrained by the layer's
-position in this diagram.
-
-A module that opens a network listener or otherwise serves a protocol is
-an app, regardless of which workspace directory it currently occupies.
-
-Layer membership is determined by role, not by directory. The
-operational state of the codebase may diverge from layer boundaries
-during a refactor; the constitution describes the target.
-
 Apps may carry their own thin wiring adapter, provided the shared
 topology lives in `packages/wiring/` and the app adapter only adds
 app-specific singletons.
 
-An app belongs in this monorepo only if it is a first-party Ethos
-surface. Third-party integrations live in their own repositories against
-the published contracts.
+Layer roles, the totality rule and the first-party rule: [ADR 0001](docs/decisions/0001-runtime-boundary-layers.md).
 
 ------------------------------------------------------------------------
 
 ## III. Architectural Laws
 
-Each law is a one-sentence rule with a one-sentence rationale. Laws are
-binding. Each law names what enforces it: an archcheck rule id from
+Each law is a one-sentence rule. Laws are binding. Each law names what enforces it: an archcheck rule id from
 `architecture.config.ts` (§IX), a test, or "not mechanically enforced
 (known gap)" — a law with no enforcer is recorded as a gap, never implied
-to be checked.
+to be checked. Rationale: Laws 1, 2, 3, 5 in [ADR 0002](docs/decisions/0002-law-rationale-dependency-direction.md); Laws 4, 7, 8 in [ADR 0003](docs/decisions/0003-law-rationale-extensions-storage-tools.md); Laws 6, 9, 10, 11 in [ADR 0004](docs/decisions/0004-law-rationale-schema-style-kernel.md).
 
 ### Law 1 — Contracts are pure
 Modules in the contracts layer must not depend on any other internal
 workspace package. External runtime dependencies are permitted only when
 they author the schema language itself (zod, oRPC, Protobuf-TS).
-*Rationale:* a contract that imports a sibling becomes structurally
-bound to it; a contract that depends on a typed-DSL library is still a
-contract.
 *Enforced by:* archcheck `l1-contracts-pure` (the contracts layer may
 import no internal layer; external packages sit outside the layer graph).
 
@@ -155,8 +117,7 @@ import no internal layer; external packages sit outside the layer graph).
 The core layer imports contracts only. It does not import an LLM
 provider, a tool, a memory backend, a session store, a platform adapter,
 a persistence backend, or any extension that implements an injection
-seam. *Rationale:* the engine must be swappable independent of what is
-plugged into it.
+seam.
 *Enforced by:* archcheck `l2-core-no-concrete` (core may import contracts
 and the security kernel only) and
 `packages/core/src/__tests__/no-kernel-runtime-imports.test.ts`. §II lets
@@ -168,8 +129,6 @@ runtime imports of the kernel packages (the `security-kernel` layer in
 
 ### Law 3 — Wiring is the only composition root
 Only wiring modules import concrete extensions by name and assemble them.
-*Rationale:* the system's runtime topology must exist in exactly one
-place.
 *Enforced by:* archcheck `l3-wiring-composes` (wiring may import every
 layer and owns the report for a file in no layer), with the deny side in
 every other layer rule — `l5-apps-through-wiring`,
@@ -181,9 +140,7 @@ app wiring adapters §II permits.
 An extension is a replaceable module that implements one or more
 contracts. Extensions may depend on sibling extensions. The §IV patterns
 are guidance for healthy sibling dependencies, not validator-enforced
-categories. *Rationale:* requiring contract mediation for every
-cross-extension call has higher cost than benefit when the boundary is
-not a security boundary.
+categories.
 *Enforced by:* archcheck `extensions-implement-contracts` (an extension
 never reaches wiring or apps; sibling extensions share a layer, so their
 edges are allowed). That an extension implements a contract is not
@@ -191,8 +148,7 @@ mechanically enforced (known gap).
 
 ### Law 5 — Apps do not bypass wiring
 An app imports wiring and contracts. An app does not import a concrete
-extension directly. *Rationale:* a second composition root re-creates
-the topology and breaks the substitution model.
+extension directly.
 *Enforced by:* archcheck `l5-apps-through-wiring` (runtime imports;
 `import type` is exempt), `app-entry-modules-compose` (the entry modules
 that are an app's thin wiring adapter) and `web-api-rpc-is-thin`.
@@ -203,9 +159,6 @@ Violations that predate archcheck are recorded in
 A personality's behaviour is fully determined by the fields of the
 frozen personality schema. Code does not read personality identity from
 prompt text, filename heuristics, or any unschematised source.
-*Rationale:* personality is the framework's primary axis of variation;
-if the schema does not express a capability, the framework does not
-honour it.
 *Enforced by:* the schema half by
 `packages/types/src/__tests__/personality-field-count.test.ts` (the
 frozen field count). That no code reads identity from prompt text or
@@ -215,9 +168,7 @@ filenames is not mechanically enforced (known gap).
 Modules that read or write user-authored files on a personality's behalf
 use the Storage contract. All other filesystem access — internal state,
 logs, pidfiles, journals, database-driver files, system paths,
-build-time tooling — may use raw `node:fs`. *Rationale:* Storage exists
-to make personality `fs_reach` enforceable; outside that boundary it
-adds complexity without safety gain.
+build-time tooling — may use raw `node:fs`.
 *Enforced by:* `apps/ethos/src/__tests__/no-raw-fs.test.ts` (the raw
 `node:fs` scan and its reasoned allowlist) and
 `scripts/check-tool-imports.sh` (tool packages; runs at pre-push and in
@@ -234,15 +185,12 @@ covers the same boundary for library files outside that program, such as
 The tool registry filters tool definitions presented to the model by
 personality toolset and rejects calls outside the allowlist at execution
 time. Rejected calls produce typed error results that maintain the
-model's message contract. *Rationale:* a permissive registry undermines
-the personality schema.
+model's message contract.
 *Enforced by:* `packages/core/src/__tests__/tool-registry.test.ts`
 (filtering at definition time and rejection at execution time).
 
 ### Law 9 — Imports are extensionless internally
-Internal relative imports omit the file extension. *Rationale:* the
-codebase runs without a build step in development; extensionful imports
-break that contract and force a build dependency on every contributor.
+Internal relative imports omit the file extension.
 *Enforced by:* not mechanically enforced (known gap). No lint rule,
 test or archcheck rule inspects import specifiers for an extension, and
 tsx resolves both forms, so an extensioned import does not fail in dev.
@@ -250,18 +198,14 @@ tsx resolves both forms, so an extensioned import does not fail in dev.
 ### Law 10 — Library code is silent
 Library code outside designated app entry points uses the `Logger`
 contract for all output. `console.*` is permitted only in app entry
-modules and in build/test tooling. *Rationale:* silent libraries
-compose; chatty libraries pollute every embedder.
+modules and in build/test tooling.
 *Enforced by:* archcheck `l10-silent-libraries` over `packages/**` and
 `extensions/**`, with named exceptions in `architecture.config.ts`.
 `apps/**` is not scanned (not mechanically enforced there).
 
 ### Law 11 — Kernel guarantees are not weakenable from outside
 A module outside the security kernel must not be able to weaken a
-guarantee the kernel enforces. *Rationale:* a guarantee an extension can
-switch off was never a guarantee, and the failure is silent — which is
-how a shipped control claim survived in the documentation after the code
-stopped implementing it.
+guarantee the kernel enforces.
 
 Like §V, this law has no exception path under §VIII: an exception to it
 is, by definition, a module that can weaken a kernel guarantee.
@@ -276,107 +220,12 @@ sidecar entry naming Law 11.
 
 ## IV. Extension Patterns
 
-The patterns below are operational guidance — common shapes that
-healthy sibling dependencies take. They are recommendations, not
-validator-enforced categories. A new pattern does not require an
-amendment; it is simply a new common shape.
+The patterns are operational guidance, not validator-enforced categories. A new pattern needs no amendment.
 
-**Pattern A — Wrapper.**
-A tool-layer extension wraps a single service-layer extension to expose
-its capability to the model. The wrapper has no behaviour beyond
-translating between the service and the tool contract.
-
-**Pattern B — Safety decoration.**
-An extension that crosses a trust boundary depends on the safety
-extension that polices that boundary. The dependency is structural: the
-boundary cannot be optional or runtime-injectable.
-
-**Pattern C — Content bundle.**
-An extension that ships static content (skills, prompts, manifests)
-depends on the loader extension that interprets that content. The
-root-level `skills/` package (`@ethosagent/skills-library`) is the
-bundled skill library, organized into category folders
-(`software-development/`, `github/`, `framework/`).
-`~/.ethos/skills/` is the user's own skill directory.
-
-**Pattern D — Protocol bridge.**
-An extension that adapts an external protocol depends on the contract
-module for that protocol, not on any sibling implementation of the same
-protocol.
-
-### LLM Provider Authoring
-
-A new LLM provider is a thin adapter that maps personality routing to a
-transport function. A provider must not contain a streaming loop. If the
-wire protocol is already supported by an existing transport, reuse it. If
-it is not, extract a new transport first, then write the provider against
-it.
-
-**Decision tree — which transport to use:**
-
-- Provider speaks the OpenAI Chat Completions wire format → use
-  `streamChatCompletions` from `@ethosagent/llm-openai-compat`.
-- Provider speaks the Anthropic Messages wire format → use
-  `streamAnthropicMessages` from `@ethosagent/llm-anthropic`.
-- Provider speaks the OpenAI Responses API (SSE) → use
-  `streamResponsesApi` from `@ethosagent/llm-codex`.
-- Provider speaks the AWS Bedrock Converse API → use
-  `streamBedrockConverse` from `@ethosagent/llm-bedrock`.
-- None of the above → write a new transport, then write the provider.
-
-**Transport table:**
-
-| Transport | Package | Wire protocol |
-|---|---|---|
-| `streamChatCompletions` | `@ethosagent/llm-openai-compat` | OpenAI Chat Completions |
-| `streamAnthropicMessages` | `@ethosagent/llm-anthropic` | Anthropic Messages API |
-| `streamResponsesApi` | `@ethosagent/llm-codex` | OpenAI Responses API (SSE) |
-| `streamBedrockConverse` | `@ethosagent/llm-bedrock` | AWS Bedrock Converse API |
-
-### Decision Provider Authoring
-
-A decision provider answers typed questions about a piece of state and
-returns typed values with probabilities. It writes no text, so it is a
-sibling of the LLM provider contract, not an implementation of it. A new
-decision provider is a thin adapter over a transport function, in its own
-package at `extensions/decision-<vendor>/`. The provider maps the
-contract's request onto the vendor's wire format and the vendor's response
-back onto the contract; the transport function is the only code that
-touches the wire.
-
-- **One request per call.** `decide` makes at most one request and never
-  retries. A rate-limit or overload status returns its code at once.
-  Fallback belongs to the call site, which owns its fail direction; the
-  provider owns only how it fails.
-- **Errors are data.** `decide` never throws. Every failure is
-  `{ ok: false, code, message }` with one of ten codes: `auth`,
-  `invalid`, `rate_limited`, `overloaded`, `timeout`, `aborted`,
-  `malformed`, `too_large`, `unavailable`, `breaker_open`. A network
-  failure or an unmapped status is `unavailable`; `breaker_open` means
-  the provider's own breaker refused the call and sent nothing. A missing or mistyped answer is
-  `malformed`, never a defaulted value.
-- **Question names are provider-neutral.** The contract's question types
-  are `boolean`, `choice` and `score`. A vendor's wire names appear only
-  inside that vendor's package.
-- **Confidence is uniform.** Every answer carries a `confidence` in 0..1.
-  Where the vendor returns none, the adapter derives one (for a boolean,
-  `|2p − 1|`), so every call site thresholds the same way.
-- **A breaker may only remove influence.** A provider that keeps failing
-  may stop calling the network for a cool-down; while it does, `decide`
-  returns an error code and the call site takes its fallback. The breaker
-  lives in the extension and never produces an answer.
-- **Redaction, thresholds and shadow mode are not the provider's.** They
-  live in Tier 0 wiring, `runDecisionSite` in
-  `packages/wiring/src/decision-site.ts`, which redacts the state before
-  `decide`, acts on an answer only at or above the site's confidence
-  threshold, and in shadow mode records the answer without acting on it.
-  An extension cannot relax them (Law 11).
-
-**Transport table:**
-
-| Transport | Package | Wire protocol |
-|---|---|---|
-| `postSystemOne` | `@ethosagent/decision-typesafe` | TypeSafe `/v1/systemone` |
+- Patterns A-D (wrapper, safety decoration, content bundle, protocol bridge): [ADR 0005](docs/decisions/0005-extension-patterns.md).
+- "LLM Provider Authoring" (thin adapter over a transport): [ADR 0006](docs/decisions/0006-llm-provider-authoring.md).
+- "Decision Provider Authoring" (typed answers, errors as data): [ADR 0007](docs/decisions/0007-decision-provider-authoring.md).
+- Task guides: `docs/content/building/`.
 
 ------------------------------------------------------------------------
 
@@ -543,50 +392,9 @@ The personality schema is the worked example. [Personality governance](docs/cont
 | Pause lifecycle contract | Any two repository maintainers | Adding, removing, or renaming a method on `PauseLifecycle` | Method-count test (`pause-lifecycle-method-count`) |
 | Decision provider contract | Any two repository maintainers | Adding, removing, or renaming a method on `DecisionProvider` (`packages/types/src/decision.ts`) | Method-count test (`decision-provider-method-count`) |
 
-Adding an **optional** method to `ContextEngine` is a §VI **Substantive** change:
-it needs two-maintainer approval, the drift gate bumped in the same commit, and
-a CHANGELOG entry naming the class. It does **not** bump
-`PLUGIN_CONTRACT_MAJOR` — per `packages/plugin-contract/src/version.ts`, only a
-field rename, a field removal, or a *required*-field addition does. Adding a
-**required** method additionally breaks every engine registered out-of-tree via
-`EthosPluginApi.registerContextEngine`, so it drags in the Plugin contract row
-above and its contract-major bump.
-
-Adding a **variant** to the `CompletionChunk` union is also a §VI
-**Substantive** change under the LLM provider contract row. The `compaction`
-variant (openclaw-9.5-adoption item 7, D31) was added that way: owner-approved,
-the drift gate (`llm-provider-drift.test.ts`) moved from 8 to 9 in the same
-commit and now checks the union against the `frozen_variants` manifest in §IX
-as well as its own list, and a CHANGELOG entry names the class. A new variant
-is additive for consumers that ignore unknown chunk types, but a consumer that
-validates types against a fixed set (`checkChunkVariants` in
-`packages/wiring/src/conformance/index.ts`) must learn it in the same change.
-[LLM provider governance](docs/content/building/explanation/llm-provider-governance.md)
-records the amendment and its sign-off state.
-
 ### Bump obligations
 
-Every schema bump requires, in the same commit:
-
-1. The owner's approval per the schema's row.
-2. The drift gate updated in lockstep.
-3. A migration document or CHANGELOG entry stating the obligation on
-   downstream code.
-4. No-overlap deprecation: removed fields are removed in the same
-   release as their replacement, unless the migration document
-   explicitly authorises overlap and bounds it to a single release.
-
-### Categories that may never become frozen-schema fields
-
-These categories belong to skills, tools, memory, or per-channel adapter
-configuration. They may not become top-level fields on the personality,
-plugin, or provider schemas.
-
-- Voice, speech synthesis, audio output configuration.
-- Emotion, mood, sentiment tags.
-- Per-channel display affordances or response templates.
-- Anything that grants the model a capability the toolset does not
-  already express.
+Bump obligations, worked examples for `ContextEngine` and `CompletionChunk`, and the categories that may never become frozen-schema fields: [ADR 0008](docs/decisions/0008-frozen-schema-bump-rules.md).
 
 ------------------------------------------------------------------------
 
@@ -635,16 +443,12 @@ Active exceptions are tracked outside this document. The constitution
 defines the policy; one file holds each entry, never two.
 
 - **Exceptions to a rule archcheck enforces** live in
-  `architecture.config.ts` `exceptions:` and nowhere else. archcheck's
-  entry has four fields, so the §VIII fields map onto them: `scope` →
-  `path` (one exact file, never a glob); `review_by` → `expires` (archcheck
-  fails the run and names the owner once it passes); `owner` → `owner`;
-  `id`, `law`, `created`, `reason` and `removal_condition` → `reason`,
-  written as `EX-NNN (<law>, created <date>): <why, citing the code that
-  justifies it>. Removal condition: <observable condition>.`
+  `architecture.config.ts` `exceptions:` and nowhere else.
 - **Exceptions to a law another gate enforces** live in the operational
   state sidecar (`.architecture-state.yaml`), whose shape
   `scripts/check-architecture.mjs` checks against the fields above.
+
+How the §VIII fields map onto an archcheck entry: [ADR 0009](docs/decisions/0009-archcheck-exception-field-mapping.md).
 
 ------------------------------------------------------------------------
 
@@ -655,60 +459,16 @@ mechanical projection, and neither restates the other.
 
 ### The operating model
 
-- **This document is the guideline.** It says why each law exists, and
-  every law in §III names its enforcer or its known gap.
-- **`architecture.config.ts` is the enforced projection** of §II and of
-  the §III laws that can be read from imports and syntax: the layer
-  table, the banned constructs, and the exceptions to them. The layer
-  paths, the app entry modules and the vendored shim live there and
-  nowhere else. [archcheck](https://www.npmjs.com/package/archcheck)
-  checks it:
-  - at **pre-commit**, on the changed files
-    (`archcheck --changed --format verdict`, `lefthook.yml`);
-  - at **pre-push**, on the whole repository (`archcheck`,
-    `archcheck emit --check`, and the baseline-shrink check);
-  - in **`pnpm test`**, through
-    `packages/types/src/__tests__/archcheck.test.ts` (the live run) and
-    `packages/types/src/__tests__/archcheck-fixtures.test.ts` (every
-    error rule is proven to fire on a fixture in `archcheck-fixtures/`);
-  - in **CI**, in the `architecture` job (SARIF upload, `emit --check`,
-    and the baseline-shrink check).
-- **Violations that predate archcheck** are recorded in
-  `.archcheck/baseline.json`. The baseline only shrinks: a fixed finding
-  makes archcheck exit 4 until `archcheck baseline --prune` runs, and a
-  new or grown entry fails `scripts/check-archcheck-baseline.mjs` (pre-push
-  and CI) unless the commit that grew it carries an
-  `Architecture-Approved-By:` trailer.
-- **Changing a rule, an exception or the baseline requires the
-  maintainer's approval.** Three mechanisms hold that line: the
-  `Architecture-Approved-By:` trailer, which the baseline-shrink check
-  reads; CI, which refuses baseline growth without it; and the Claude
-  guard hook (`scripts/guard-architecture.sh`, registered in
-  `.claude/settings.json`), which blocks an agent from editing
-  `architecture.config.ts`, `.archcheck/baseline.json`,
-  `archcheck-fixtures/`, the archcheck gate tests, the baseline check,
-  the hook itself or its registration in `.claude/settings.json`, and
-  from running `baseline --write` or skipping hooks. An edit to the
-  manifest itself is gated by review and the hook; no script parses a
-  trailer for it.
-- **`scripts/check-architecture.mjs`** is the second checker. It reads the
-  YAML block below and `.architecture-state.yaml`, and checks what
-  archcheck cannot express: tier completeness, the guarantee register
-  against its enforcement points (both directions), claims about the
-  register made elsewhere, §VIII exception shape for sidecar entries, and
-  stale kernel paths. It runs in `pnpm test`
-  (`packages/types/src/__tests__/architecture-rules.test.ts`).
+- **`architecture.config.ts`** is the enforced projection of §II and of the §III laws readable from imports and syntax. archcheck checks it at pre-commit, at pre-push, in `pnpm test` (`packages/types/src/__tests__/archcheck.test.ts`, `archcheck-fixtures.test.ts`) and in CI's `architecture` job.
+- **`.archcheck/baseline.json`** holds violations that predate archcheck. It only shrinks; `scripts/check-archcheck-baseline.mjs` fails growth.
+- **Changing a rule, an exception or the baseline requires the maintainer's approval.** `scripts/guard-architecture.sh` blocks agent edits to the manifest and the baseline.
+- **`scripts/check-architecture.mjs`** is the second checker. It reads the YAML block below and `.architecture-state.yaml`. It runs in `pnpm test` (`packages/types/src/__tests__/architecture-rules.test.ts`).
+
+The full operating model and the 2026-09-26 amendment note: [ADR 0010](docs/decisions/0010-validator-operating-model.md).
 
 What neither checker sees: `apps/web`, `apps/desktop` and
 `apps/vscode-extension` are excluded from the root `tsconfig.json` that
 archcheck reads, so no layer rule covers them (known gap).
-
-*Amended 2026-09-26 (§VI class: Substantive).* The layer and law rules
-moved out of the YAML block below into `architecture.config.ts`, enforced
-by archcheck; `scripts/check-architecture.mjs` dropped its `layers` check;
-`.architecture-state.yaml` dropped `layers:`, `vendored:` and
-`app_entry_modules:`; and exceptions to archcheck-enforced rules moved to
-the manifest (§VIII). Recorded in `CHANGELOG.md`.
 
 ### The archcheck rules
 
@@ -952,6 +712,7 @@ and may be edited freely; they are not constitutional.
   schema-bump workflows, doc-sync rule.
 - [DESIGN.md](./DESIGN.md) — visual and UX design system.
 - [.agents/skills/docs/SKILL.md](./.agents/skills/docs/SKILL.md) — documentation information architecture (the `/docs` skill).
+- [docs/decisions/README.md](./docs/decisions/README.md) — decision records: the rationale and extension-pattern prose moved out of this document.
 - `architecture.config.ts` — the enforced projection of §II and §III
   that archcheck checks (§IX). Changes need the maintainer's approval.
 - `.architecture-state.yaml` — the operational sidecar referenced from

@@ -4,7 +4,7 @@ Material changes to `@ethosagent/cli` and its workspace packages. Release-versio
 
 ## Unreleased
 
-Nothing yet.
+- ARCHITECTURE.md: Clarifying amendment — rationale and extension-pattern prose moved to docs/decisions/
 
 ## 0.9.0 — 2026-09-29
 

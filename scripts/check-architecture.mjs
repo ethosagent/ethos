@@ -40,6 +40,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
+import { findRulesFence } from './lib/rules-fence.mjs';
 
 const CHECKS = ['tiers', 'register', 'register-claims', 'exceptions', 'stale-paths'];
 
@@ -97,20 +98,13 @@ function notEnforced(rule, why) {
  * rules block, even if it parses.
  */
 export function parseRulesBlock(markdown) {
-  // Anchored to line starts: §IX's own parser-contract comment contains the
-  // literal "```yaml" mid-line, and an unanchored non-greedy match closes on it.
-  const fence = /^```yaml\n([\s\S]*?)^```/gm;
-  let m = fence.exec(markdown);
-  while (m !== null) {
-    const body = m[1];
-    const firstLine = body.split('\n').find((l) => l.trim() !== '');
-    if (firstLine?.trim() === '# ARCHITECTURE-RULES v1') return YAML.parse(body);
-    m = fence.exec(markdown);
-  }
-  throw new Error(
-    'ARCHITECTURE.md §IX: no ```yaml fence whose first non-blank line is "# ARCHITECTURE-RULES v1". ' +
-      'The parser contract in §IX is the authority on this shape.',
-  );
+  const m = findRulesFence(markdown);
+  if (!m)
+    throw new Error(
+      'ARCHITECTURE.md §IX: no ```yaml fence whose first non-blank line is "# ARCHITECTURE-RULES v1". ' +
+        'The parser contract in §IX is the authority on this shape.',
+    );
+  return YAML.parse(m[1]);
 }
 
 // ---------------------------------------------------------------------------

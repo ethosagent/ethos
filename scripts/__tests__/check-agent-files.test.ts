@@ -22,8 +22,8 @@ function fixture(files: Record<string, string>): string {
   return dir;
 }
 
-function run(dir: string) {
-  const r = spawnSync(process.execPath, [SCRIPT, '--root', dir], { encoding: 'utf8' });
+function run(dir: string, ...extra: string[]) {
+  const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, ...extra], { encoding: 'utf8' });
   return { status: r.status, stderr: r.stderr, stdout: r.stdout };
 }
 
@@ -35,7 +35,26 @@ function skill(totalLines: number, description: string): string {
 
 const rule = (n: number) => `---\npaths:\n  - 'src/**'\n---\n${lines(n - 4)}`;
 const claude150 = lines(150);
+const adrIndex = '# Decisions\n0001-a.md\n';
 const twinned = (content: string) => ({ 'CLAUDE.md': content, 'AGENTS.md': content });
+
+// ARCHITECTURE.md whose counted prose is exactly `counted` lines: the rules yaml body (200 lines) and
+// the archcheck table interior (30 lines) sit on top and must not be counted.
+function arch(counted: number, width = 10): string {
+  const prose = Array.from({ length: counted - 4 }, () => 'x'.repeat(width));
+  const body = Array.from({ length: 200 }, () => 'k: v'.padEnd(width, 'v'));
+  const table = Array.from({ length: 30 }, () => '| row |');
+  return `${[
+    ...prose,
+    '<!-- archcheck:begin rules-table -->',
+    ...table,
+    '<!-- archcheck:end rules-table -->',
+    '```yaml',
+    '# ARCHITECTURE-RULES v1',
+    ...body,
+    '```',
+  ].join('\n')}\n`;
+}
 
 function clean(): Record<string, string> {
   return {
@@ -45,10 +64,26 @@ function clean(): Record<string, string> {
   };
 }
 
-function expectFail(files: Record<string, string>, rule: string) {
-  const r = run(fixture(files));
+// No rule reads ADR content; line count is all that matters.
+const adrCase = (n: number): Record<string, string> => ({
+  ...clean(),
+  'docs/decisions/README.md': adrIndex,
+  'docs/decisions/0001-a.md': lines(n),
+});
+
+function expectFail(files: Record<string, string>, rule: string, ...extra: string[]) {
+  const r = run(fixture(files), ...extra);
   expect(r.status).toBe(1);
   expect(r.stderr).toContain(rule);
+  return r;
+}
+
+const withArch = (md: string) => ({ ...clean(), 'ARCHITECTURE.md': md });
+
+function expectPass(files: Record<string, string>) {
+  const r = run(fixture(files));
+  expect(r.stderr).toBe('');
+  expect(r.status).toBe(0);
   return r;
 }
 
@@ -155,5 +190,82 @@ describe('check-agent-files', () => {
       'skill-desc',
     );
     expect(r.stderr).toContain('missing description');
+  });
+
+  describe('architecture and decision records', () => {
+    const CEILING = 518; // ALLOWANCES['arch-lines'] in scripts/check-agent-files.mjs
+
+    it('300 counted lines with a 200-line yaml body and a table passes', () => {
+      expectPass(withArch(arch(300)));
+    });
+
+    it('301 counted lines fails arch-lines', () => {
+      const r = expectFail(withArch(arch(301)), 'arch-lines', '--no-allowances');
+      expect(r.stderr).toContain('ARCHITECTURE.md');
+    });
+
+    it('a ```yaml fence that is not the rules block is counted as prose', () => {
+      const md = `${lines(2000)}\`\`\`yaml\na: 1\n${lines(2000)}\`\`\`\n`;
+      expectFail(withArch(md), 'arch-lines');
+    });
+
+    it('more than 20,000 counted chars fails arch-tokens', () => {
+      expectFail(withArch(arch(250, 90)), 'arch-tokens', '--no-allowances');
+    });
+
+    it('20,000 counted chars or fewer passes arch-tokens', () => {
+      expectPass(withArch(arch(250, 70)));
+    });
+
+    it('--no-allowances ignores an allowance, a default run honours it', () => {
+      const dir = fixture(withArch(arch(301)));
+      const strict = run(dir, '--no-allowances');
+      expect(strict.status).toBe(1);
+      expect(strict.stderr).toContain('arch-lines');
+      expect(strict.stderr).not.toContain('(allowed');
+      const lax = run(dir);
+      expect(lax.status).toBe(0);
+      expect(lax.stdout).toContain('arch-lines ARCHITECTURE.md');
+      expect(lax.stdout).toContain('(allowed');
+    });
+
+    it('growing past the allowance fails', () => {
+      expectFail(withArch(arch(5000)), 'arch-lines');
+    });
+
+    it('an overage exactly at the allowance ceiling is allowed, one more line fails', () => {
+      const atMax = run(fixture(withArch(arch(CEILING))));
+      expect(atMax.status).toBe(0);
+      expect(atMax.stdout).toContain('(allowed');
+      const over = expectFail(withArch(arch(CEILING + 1)), 'arch-lines');
+      expect(over.stderr).toContain('past its allowance');
+    });
+
+    it('121-line ADR fails adr-lines, 120 passes', () => {
+      expectPass(adrCase(120));
+      expectFail(adrCase(121), 'adr-lines');
+    });
+
+    it('151-line index fails adr-index-lines', () => {
+      expectFail({ ...clean(), 'docs/decisions/README.md': lines(151) }, 'adr-index-lines');
+    });
+
+    it('an ADR missing from the index fails adr-index-missing', () => {
+      const r = expectFail(
+        {
+          ...clean(),
+          'docs/decisions/README.md': adrIndex,
+          'docs/decisions/0001-a.md': lines(10),
+          'docs/decisions/0002-b.md': lines(10),
+        },
+        'adr-index-missing',
+      );
+      expect(r.stderr).toContain('0002-b.md');
+      expect(r.stderr).not.toContain('adr-index-missing docs/decisions/0001-a.md');
+    });
+
+    it('ADRs without any index fail adr-index-missing', () => {
+      expectFail({ ...clean(), 'docs/decisions/0001-a.md': lines(10) }, 'adr-index-missing');
+    });
   });
 });
