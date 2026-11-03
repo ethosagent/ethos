@@ -7,19 +7,24 @@ import { join } from 'node:path';
 import { readConfig } from '@ethosagent/config';
 import { type MemoryMeta, parseMemoryMeta, supersedeSlug } from '@ethosagent/nightly-loop';
 import type { MemoryContext, Storage } from '@ethosagent/types';
+import { writeJson, writeJsonError } from '../json-output';
 import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
+/** `ethos memory supersede <slug> --by <slug> [--personality <id>] [--json]` */
 export async function runMemorySupersede(args: string[]): Promise<void> {
   const flag = (name: string): string | undefined => {
     const i = args.indexOf(name);
     return i >= 0 ? args[i + 1] : undefined;
   };
+  const jsonMode = args.includes('--json');
   const bySlug = flag('--by');
   const flagValues = new Set([flag('--personality'), bySlug]);
   const slug = args.find((a) => !a.startsWith('-') && !flagValues.has(a));
   if (!slug || !bySlug) {
-    console.error('Usage: ethos memory supersede <slug> --by <slug> [--personality <id>]');
+    const usage = 'Usage: ethos memory supersede <slug> --by <slug> [--personality <id>] [--json]';
+    if (jsonMode) writeJsonError('INVALID_INPUT', usage);
+    console.error(usage);
     process.exit(1);
   }
 
@@ -47,13 +52,25 @@ export async function runMemorySupersede(args: string[]): Promise<void> {
   });
 
   if (!result.ok) {
-    console.error(`No active section with slug "${slug}" in ${personalityId}'s memory.`);
-    if (result.availableSlugs.length > 0) {
-      console.error(`Active slugs: ${result.availableSlugs.join(', ')}`);
-    }
+    const missing = `No active section with slug "${slug}" in ${personalityId}'s memory.`;
+    const slugs = result.availableSlugs.join(', ');
+    const known = slugs ? `Active slugs: ${slugs}` : '';
+    if (jsonMode) writeJsonError('NOT_FOUND', known ? `${missing} ${known}` : missing);
+    console.error(missing);
+    if (known) console.error(known);
     process.exit(1);
   }
 
+  if (jsonMode) {
+    writeJson({
+      ok: true,
+      slug,
+      supersededBy: bySlug,
+      fromKey: result.fromKey,
+      personality: personalityId,
+    });
+    return;
+  }
   console.log(`Superseded "${slug}" (from ${result.fromKey}) by "${bySlug}" → archived.`);
 }
 

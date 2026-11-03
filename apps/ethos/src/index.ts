@@ -68,7 +68,7 @@ import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { runWhy } from './commands/why';
 import { appendErrorLog, errorLogPath } from './error-log';
-import { writeJson } from './json-output';
+import { writeJson, writeJsonError } from './json-output';
 import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
 import { loadRequiredConfig } from './managed-mode';
 import { getSecretsResolver, getStorage } from './wiring';
@@ -1055,6 +1055,9 @@ try {
       },
     })}\n`,
   );
+  // --json callers parse stdout: a throw still owes them exactly one error doc
+  // (writeJsonError writes it and exits 1). Pinned by __tests__/cli-json-throw.test.ts.
+  if (args.includes('--json')) writeJsonError(e.code, e.cause);
   process.exit(1);
 }
 

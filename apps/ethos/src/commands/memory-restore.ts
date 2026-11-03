@@ -5,11 +5,12 @@
 import { readConfig } from '@ethosagent/config';
 import { restoreArchivedSlug } from '@ethosagent/nightly-loop';
 import type { MemoryContext } from '@ethosagent/types';
+import { writeJson, writeJsonError } from '../json-output';
 import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 /**
- * `ethos memory restore <slug> [--personality <id>]`
+ * `ethos memory restore <slug> [--personality <id>] [--json]`
  *
  * Finds the archived section with the given slug (most-recent when the archive
  * holds duplicates), appends it back to the file it came from, and rewrites the
@@ -21,9 +22,12 @@ export async function runMemoryRestore(args: string[]): Promise<void> {
     const i = args.indexOf(name);
     return i >= 0 ? args[i + 1] : undefined;
   };
+  const jsonMode = args.includes('--json');
   const slug = args.find((a) => !a.startsWith('-') && a !== flag('--personality'));
   if (!slug) {
-    console.error('Usage: ethos memory restore <slug> [--personality <id>]');
+    const usage = 'Usage: ethos memory restore <slug> [--personality <id>] [--json]';
+    if (jsonMode) writeJsonError('INVALID_INPUT', usage);
+    console.error(usage);
     process.exit(1);
   }
 
@@ -43,12 +47,18 @@ export async function runMemoryRestore(args: string[]): Promise<void> {
 
   const result = await restoreArchivedSlug(mem, ctx, slug);
   if (!result.ok) {
-    console.error(`No archived section with slug "${slug}" in ${personalityId}'s memory.`);
-    if (result.availableSlugs.length > 0) {
-      console.error(`Archived slugs: ${result.availableSlugs.join(', ')}`);
-    }
+    const missing = `No archived section with slug "${slug}" in ${personalityId}'s memory.`;
+    const slugs = result.availableSlugs.join(', ');
+    const known = slugs ? `Archived slugs: ${slugs}` : '';
+    if (jsonMode) writeJsonError('NOT_FOUND', known ? `${missing} ${known}` : missing);
+    console.error(missing);
+    if (known) console.error(known);
     process.exit(1);
   }
 
+  if (jsonMode) {
+    writeJson({ ok: true, slug, restoredTo: result.restoredTo, personality: personalityId });
+    return;
+  }
   console.log(`Restored "${slug}" to ${result.restoredTo}.`);
 }
