@@ -1682,11 +1682,6 @@
       "lines": 6544
     },
     {
-      "path": "packages/web-contracts/src/schemas.ts",
-      "kind": "source",
-      "lines": 2763
-    },
-    {
       "path": "packages/wiring/src/__tests__/amendments.test.ts",
       "kind": "test",
       "lines": 1190
