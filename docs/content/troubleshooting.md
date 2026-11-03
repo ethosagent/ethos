@@ -4,10 +4,53 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-09-28
+updated: 2026-11-03
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
+
+## Parts {#parts}
+
+| Part | Covers |
+|---|---|
+| This page | Synopsis; install and setup, provider and API keys, personality, sessions and memory. |
+| [Troubleshooting: tools, skills and plugins](./troubleshooting/tools-and-skills.md) | Tools and boundaries; skills and plugins. |
+| [Troubleshooting: channels, gateway and cron](./troubleshooting/channels-and-cron.md) | Channels and gateway; cron and jobs. |
+| [Troubleshooting: error reference](./troubleshooting/error-reference.md) | Error reference: every registered error code. |
+
+## Where things moved {#where-things-moved}
+
+| Section | Page |
+|---|---|
+| <a id="tools-and-boundaries"></a>[Tools and boundaries](troubleshooting/tools-and-skills.md#tools-and-boundaries) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="tool-not-found"></a>[`Tool 'X' not found`](troubleshooting/tools-and-skills.md#tool-not-found) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="tool-rejected"></a>[`TOOL_REJECTED`](troubleshooting/tools-and-skills.md#tool-rejected) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="boundary-error"></a>[`BoundaryError` (fs_reach violation)](troubleshooting/tools-and-skills.md#boundary-error) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="budget-exceeded"></a>[`BUDGET_EXCEEDED`](troubleshooting/tools-and-skills.md#budget-exceeded) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="multiple-in-progress"></a>[`MULTIPLE_IN_PROGRESS` (todo tool)](troubleshooting/tools-and-skills.md#multiple-in-progress) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="tool-results-truncated"></a>[Tool results are truncated](troubleshooting/tools-and-skills.md#tool-results-truncated) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="skills-and-plugins"></a>[Skills and plugins](troubleshooting/tools-and-skills.md#skills-and-plugins) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="skill-not-found"></a>[`SKILL_NOT_FOUND`](troubleshooting/tools-and-skills.md#skill-not-found) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="skill-install-failed"></a>[`SKILL_INSTALL_FAILED`](troubleshooting/tools-and-skills.md#skill-install-failed) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="skill-exists"></a>[`SKILL_EXISTS`](troubleshooting/tools-and-skills.md#skill-exists) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="plugin-contract-incompatible"></a>[`PLUGIN_CONTRACT_INCOMPATIBLE`](troubleshooting/tools-and-skills.md#plugin-contract-incompatible) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="plugin-install-failed"></a>[`PLUGIN_INSTALL_FAILED`](troubleshooting/tools-and-skills.md#plugin-install-failed) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="workspace-plugin-import-outside"></a>[Workspace plugin "may not import … outside the plugin folder"](troubleshooting/tools-and-skills.md#workspace-plugin-import-outside) | [Troubleshooting: tools, skills and plugins](troubleshooting/tools-and-skills.md) |
+| <a id="channels-and-gateway"></a>[Channels and gateway](troubleshooting/channels-and-cron.md#channels-and-gateway) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="duplicate-outbound"></a>[Duplicate outbound message on a channel adapter](troubleshooting/channels-and-cron.md#duplicate-outbound) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="bot-not-responding"></a>[Telegram or Discord bot does not respond](troubleshooting/channels-and-cron.md#bot-not-responding) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="team-manifest-invalid"></a>[`TEAM_MANIFEST_INVALID`](troubleshooting/channels-and-cron.md#team-manifest-invalid) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="ffmpeg-not-found"></a>[`ffmpeg not found` at gateway startup](troubleshooting/channels-and-cron.md#ffmpeg-not-found) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="voice-note-missing"></a>[Text reply arrives but the voice note does not](troubleshooting/channels-and-cron.md#voice-note-missing) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="voice-note-redelivered"></a>[A voice note arrives twice, or long after the fact](troubleshooting/channels-and-cron.md#voice-note-redelivered) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="voice-in-empty"></a>[A voice memo is answered as if it were empty](troubleshooting/channels-and-cron.md#voice-in-empty) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="cron-and-jobs"></a>[Cron and jobs](troubleshooting/channels-and-cron.md#cron-and-jobs) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="job-not-found"></a>[`JOB_NOT_FOUND`](troubleshooting/channels-and-cron.md#job-not-found) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="job-lock-failed"></a>[`JOB_LOCK_FAILED`](troubleshooting/channels-and-cron.md#job-lock-failed) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="cron-invalid"></a>[`CRON_INVALID`](troubleshooting/channels-and-cron.md#cron-invalid) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="cron-already-running"></a>[`Job "<id>" is already running`](troubleshooting/channels-and-cron.md#cron-already-running) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="cron-target-not-allowed"></a>[`CRON_TARGET_NOT_ALLOWED`](troubleshooting/channels-and-cron.md#cron-target-not-allowed) | [Troubleshooting: channels, gateway and cron](troubleshooting/channels-and-cron.md) |
+| <a id="error-reference"></a>[Error reference](troubleshooting/error-reference.md#error-reference) | [Troubleshooting: error reference](troubleshooting/error-reference.md) |
 
 ## Synopsis {#synopsis}
 
@@ -18,7 +61,7 @@ User-facing errors are rendered by `formatError` in [`packages/types/src/errors.
   → Pass a positive integer, e.g. --concurrency 4.
 ```
 
-The [Error reference table](#error-reference) at the bottom lists every registered code. Entries above cover the symptoms users hit most often — install, provider, [personality](getting-started/glossary.md#personality), [session](getting-started/glossary.md#session), [tool](getting-started/glossary.md#tool), [skill](getting-started/glossary.md#skill), and channel adapter failures. For a local diagnostics view, run `ethos logs summary` or `ethos logs bundle`.
+The [Error reference table](troubleshooting/error-reference.md#error-reference) at the bottom lists every registered code. Entries above cover the symptoms users hit most often — install, provider, [personality](getting-started/glossary.md#personality), [session](getting-started/glossary.md#session), [tool](getting-started/glossary.md#tool), [skill](getting-started/glossary.md#skill), and channel adapter failures. For a local diagnostics view, run `ethos logs summary` or `ethos logs bundle`.
 
 ## Install and setup {#install-and-setup}
 
@@ -134,255 +177,6 @@ Cause · Same-millisecond inserts need rowid tie-breaking. The current SQLite st
 Fix · Back up (`cp ~/.ethos/sessions.db ~/.ethos/sessions.db.bak`), then delete (`rm ~/.ethos/sessions.db`). A fresh DB is created on the next run.
 
 Prevent · Upgrade the CLI before reusing a database written by a build older than 0.2.0.
-
-## Tools and boundaries {#tools-and-boundaries}
-
-### `Tool 'X' not found` {#tool-not-found}
-
-Cause · The named [tool](getting-started/glossary.md#tool) is not registered, or it is registered but not in the personality's `toolset.yaml`.
-
-Fix ·
-1. In chat, run `/tools` to list every registered tool the personality can see.
-2. Add the tool to `toolset.yaml` if you want this personality to use it.
-3. If the tool needs an env var (e.g. an API key), confirm `isAvailable()` returns `true`.
-
-### `TOOL_REJECTED` {#tool-rejected}
-
-Cause · A `before_tool_call` [hook](getting-started/glossary.md#hook) chose not to let the tool run. The hook's reason appears in the printed cause line.
-
-Fix · Read the cause string — it names the hook. Adjust the hook config (or the tool call) so the boundary is satisfied.
-
-### `BoundaryError` (fs_reach violation) {#boundary-error}
-
-Cause · A file tool tried to read or write a path outside the personality's [fs_reach](getting-started/glossary.md#fs-reach) allowlist. `ScopedStorage` raises this; the surface translates it into a user-facing tool error.
-
-Fix · Add the path (or a parent) to `fs_reach`, or move the file under an existing allowed path. If the path is sensitive on purpose, leave the boundary alone and work on a copy under the allowlist.
-
-Prevent · Default-deny is intentional — broaden the allowlist deliberately, not reactively.
-
-### `BUDGET_EXCEEDED` {#budget-exceeded}
-
-Cause · The session crossed a token, tool-call, or cost budget configured on the personality. Session-scoped only in v1.
-
-Fix · Run `/new` to reset the budget counter, or raise the budget in personality config.
-
-### `MULTIPLE_IN_PROGRESS` (todo tool) {#multiple-in-progress}
-
-Cause · The `todo` tool was asked to mark a second item `in_progress` while another is already in that state. Only one task may be in progress at a time.
-
-Fix · Mark the existing in-progress task `done` or `pending`, then flip the new one to `in_progress`.
-
-### Tool results are truncated {#tool-results-truncated}
-
-Cause · Tool output exceeded the per-call slice of the turn's result budget. `ToolRegistry.executeParallel()` post-trims and appends `[truncated — N chars total]`. Default total is 80,000 characters per turn, split evenly across concurrent calls.
-
-Fix · Paginate ("read the file 100 lines at a time"), reduce parallel tool calls, or raise `resultBudgetChars` in `AgentLoop` config (raises token costs).
-
-## Skills and plugins {#skills-and-plugins}
-
-### `SKILL_NOT_FOUND` {#skill-not-found}
-
-Cause · The [skill](getting-started/glossary.md#skill) id passed to a Skills tab action is not under `~/.ethos/skills/` — often the file was deleted out-of-band.
-
-Fix · Refresh the Skills tab. If still missing, re-install: `ethos skills install <slug-or-url>`.
-
-### `SKILL_INSTALL_FAILED` {#skill-install-failed}
-
-Cause · `ethos skills install` could not complete. The temp directory is rolled back, so nothing is left half-installed.
-
-Fix · Re-run the install — most failures are network blips. If the source URL is wrong, fix the slug. If repeated, check `~/.ethos/logs/errors.jsonl`.
-
-### `SKILL_EXISTS` {#skill-exists}
-
-Cause · A new skill collides with an existing file under `~/.ethos/skills/`.
-
-Fix · Pick a different id, or open the existing skill from the Library panel and edit it in place.
-
-### `PLUGIN_CONTRACT_INCOMPATIBLE` {#plugin-contract-incompatible}
-
-Cause · A plugin declares a `pluginContractMajor` not supported by this CLI.
-
-Fix · Upgrade the plugin or the CLI per `packages/plugin-contract/MIGRATIONS.md`. Check both with `ethos plugins list` and `ethos --version`.
-
-### `PLUGIN_INSTALL_FAILED` {#plugin-install-failed}
-
-Cause · `ethos plugins install` could not record the capability grant. Installing a plugin runs its code in your Ethos process, so the install refuses to proceed without a grant on record — and stdin is not a TTY, so nobody could be asked. The web Plugins page returns the same code, as HTTP 500, when the server's `npm pack` or `npm install` fails for a reason other than the registry or a missing npm; the message quotes npm's own error code and summary. If a failed `npm install` left files behind, the server undoes it the same way as the later failures below, so an ungranted package does not load on the next start. It also returns it when `npm install` succeeded but a later step failed — rewriting the plugins folder's `package.json` or `package-lock.json`, recording the grant, or writing the personality's `plugins.lock` pin. The server then rolls the install back, because a package with no grant still loads on the next start. If an earlier copy of the plugin was installed, the rollback removes it too: the server reinstalls it from a verified `plugins.lock` tarball pin when one exists. A grant or pin the attempt wrote is put back as it was before — the earlier record exactly, or no record at all, never a revocation. `ethos plugin install` undoes a failed install the same way, and prints the same end state without an error code. It records the grant before anything is installed, so it also puts the earlier grant back when the download, the digest check or `npm install` fails. The message says which end state it reached — restored, removed, or left on disk.
-
-Fix · Re-run interactively and answer the prompt, or pass `--yes` to record the grant unattended. A `--yes` grant is stored with `consent: 'flag'`, so a later reader can see nobody was at the keyboard. From the web, fix what npm's quoted error reports (npm's full log is under `_logs/` in the server's `npm config get cache` directory), then install again. If the message says the earlier copy was removed, reinstall it with the `ethos plugin install <package>@<version>` command it gives. If it says a package was left on disk, run the `npm uninstall --prefix …` command it gives before restarting the server (or, from the CLI, before starting ethos again). If it says a grant or a pin could not be put back, check the grant with `ethos plugin grants` and the `plugins.lock` file it names.
-
-Prevent · On CI and managed hosts, pass `--yes` in the install command rather than relying on a prompt that will never render.
-
-### Workspace plugin "may not import … outside the plugin folder" {#workspace-plugin-import-outside}
-
-Cause · A trusted plugin under `<cwd>/.ethos/plugins` or `<cwd>/node_modules` imports a file outside its own folder: a relative `../lib/x.js`, or a dependency hoisted to the project's `node_modules`. Its trust grant hashes only its folder, so the import is refused before any of that code runs (`guardWorkspacePluginImports` in `extensions/plugin-loader/src/workspace-import-guard.ts`). A `skills_dir` outside the folder is refused the same way.
-
-Fix ·
-1. Copy the imported files, or install the dependency, inside the plugin's folder (a nested `node_modules/` is part of the hash).
-2. Review the plugin, then run `ethos plugin trust` in the project directory.
-
-## Channels and gateway {#channels-and-gateway}
-
-### Duplicate outbound message on a channel adapter {#duplicate-outbound}
-
-Cause · The [gateway](getting-started/glossary.md#gateway) dedupes outbound messages with a 30-second TTL. A reply is keyed by `(sessionId, sha256(content), inbound message)`, so one reply sent twice is dropped while identical replies to two different messages both send (`replyDedupScope` in `extensions/gateway/src/index.ts`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). Notices and agent-initiated sends (`send_message`) are keyed by `(sessionId, sha256(content))`: the same text to the same session within the window is silently dropped.
-
-Fix · For an intentional retransmission of a notice or `send_message`, vary the text or wait the TTL. To disable, set `GatewayConfig.outboundDedupTtlMs: 0` or `ETHOS_DEDUP_LEGACY=1` (one-release rollback hatch).
-
-Prevent · Do not roll adapter-local dedup. The gateway is the single dedup path; adapter dedup is a bug.
-
-### Telegram or Discord bot does not respond {#bot-not-responding}
-
-Cause · The bot's token is invalid or the bot is not added to the channel. An adapter that fails to start does not stop the other bots. A transient failure (a network error) is retried in the background, from 5 seconds up to every 5 minutes, until the adapter starts. A refused credential (`401`, `TokenInvalid`, `invalid_auth`) is logged as permanent and not retried (`startAdaptersIsolated` in `apps/ethos/src/commands/gateway.ts`). When every adapter's credential is refused, `ethos gateway start` exits with code `78`, which `ethos run-all` and the service templates do not restart. `ethos boot` keeps the web UI, cron and serve running and warns `no chat adapter started`, so you can fix the token in Settings.
-
-Fix · Look in `~/.ethos/logs/gateway.log` for `adapter <id> failed to start` or `failed permanently`. For a permanent failure, re-run `ethos setup messaging`, paste a fresh token, and restart the gateway. Confirm the bot is in the target chat with the required permissions.
-
-### `TEAM_MANIFEST_INVALID` {#team-manifest-invalid}
-
-Cause · `team.yaml` failed to parse or failed schema validation. The offending field is named in the cause.
-
-Fix · Fix the named field in `team.yaml` and re-run `ethos team start`.
-
-### `ffmpeg not found` at gateway startup {#ffmpeg-not-found}
-
-Cause · `ffmpeg` is not on the gateway's `PATH`. It is an optional runtime dependency: the gateway starts and runs without it, but it can only deliver a voice note whose container the TTS provider already produces, and it can only hand speech-to-text the platform's raw bytes.
-
-Fix ·
-1. Install it: `brew install ffmpeg`, `sudo apt-get install -y ffmpeg`, or `sudo dnf install -y ffmpeg`.
-2. Confirm with `ffmpeg -version`.
-3. If it is installed somewhere the gateway's `PATH` does not reach, set `voice.transcode.ffmpegPath` to the absolute path in `~/.ethos/config.yaml`.
-4. Restart the gateway. The notice disappears.
-
-Prevent · Add `ffmpeg` to the host's provisioning. The shipped Docker image does not include it — see [Run Ethos in Docker](using/how-to/run-in-docker.md#prerequisites).
-
-### Text reply arrives but the voice note does not {#voice-note-missing}
-
-Cause · The reply was skipped, not lost, and the gateway recorded why. The four usual reasons: the platform was silenced with `voice.channels.<platform>.ttsOut: false`; the adapter declares no voice caps; the synthesized format is not one the adapter accepts and there is no `ffmpeg` to convert it; or the audio exceeded the platform's `maxBytes`.
-
-Fix ·
-1. Check `voice.channels.<platform>.ttsOut` — an explicit `false` outranks `/voice all`.
-2. Check the channel supports voice out at all in the [capability matrix](platforms/capability-matrix.md#voice-caps).
-3. Install `ffmpeg` (above).
-4. Check the conversation's mode with `/voice`.
-
-Prevent · Run `ethos doctor` after changing voice providers; it reports which STT and TTS actually resolved.
-
-### A voice note arrives twice, or long after the fact {#voice-note-redelivered}
-
-Cause · Voice delivery is at-least-once. A synthesized reply whose send was never confirmed stays as a `pending` obligation in the delivery ledger and is re-sent at the next gateway start, bypassing the dedup cache on purpose.
-
-Fix · Nothing, if it arrived. If pending obligations are accumulating, the underlying sends are failing — check the gateway log and the delivery readout in **Settings → Voice**.
-
-Prevent · Bound the backlog with [`voice.artifacts.abandonAfterDays`](using/reference/config-yaml.md#voice-artifacts) and `voice.artifacts.maxTotalMb`. See [Why does a redelivered voice note re-send the recording?](building/explanation/why-voice-replies-redeliver.md).
-
-### A voice memo is answered as if it were empty {#voice-in-empty}
-
-Cause · The turn ran but carried no transcript, so it degraded to `(voice message)` rather than being dropped. Either no speech-to-text provider resolved, or the provider returned nothing usable, or the upload was never classified as audio in the first place.
-
-Fix ·
-1. Run `ethos doctor` and read its Voice section — it names the STT provider that actually resolved.
-2. Check the recording's container. A `.webm` upload is treated as video on Slack and Discord and never reaches transcription; re-record as `.ogg`, `.m4a`, or `.mp3`.
-3. Install `ffmpeg` (above) so the audio is normalized into a container the provider accepts.
-
-Prevent · Check the [capability matrix](platforms/capability-matrix.md#matrix) before assuming symmetry — voice in and voice out are separate capabilities.
-
-## Cron and jobs {#cron-and-jobs}
-
-### `JOB_NOT_FOUND` {#job-not-found}
-
-Cause · The cron job id passed to `ethos cron remove`, `run`, or `disable` does not exist.
-
-Fix · Run `ethos cron list` and copy the exact id.
-
-### `JOB_LOCK_FAILED` {#job-lock-failed}
-
-Cause · Another cron-mutating command is holding the lock.
-
-Fix · Wait and re-run. If it repeats, check for a stuck `ethos cron` process and kill it.
-
-### `CRON_INVALID` {#cron-invalid}
-
-Cause · The cron expression failed validation.
-
-Fix · Use a valid 5-field cron expression. Test on `https://crontab.guru` before re-running.
-
-### `Job "<id>" is already running` {#cron-already-running}
-
-Cause · `ethos cron run` or "Run now" was refused because a run of that job is still executing. A job never runs twice at once (`CronScheduler.runJobNow` in `extensions/cron/src/index.ts`). A run left behind by a crashed process does not cause this; that marker is ignored.
-
-Fix · Wait for the run to finish, then run the job again. `ethos cron list` shows the job's last run.
-
-### `CRON_TARGET_NOT_ALLOWED` {#cron-target-not-allowed}
-
-Cause · A cron job's output had no bot to deliver it. Either no bot on that platform is bound to the job's personality, or the job predates recorded bots and the platform now has several (`createCronDeliver` in `apps/ethos/src/lib/cron-deliver.ts`).
-
-Fix · Recreate the job from the chat it should reply to, so it records which bot to use.
-
-## Error reference {#error-reference}
-
-The full list of registered codes. Every code shipped in `@ethosagent/types` `EthosErrorCode` appears here.
-
-| Code | Cause | Action |
-|---|---|---|
-| `CONFIG_MISSING` | `~/.ethos/config.yaml` is absent or unreadable. | Run `ethos setup`. |
-| `CONFIG_INVALID` | Config parsed but missing required fields. | Re-run `ethos setup`, or edit the file. |
-| `CONFIG_CONFLICT` | The provider chain changed (another tab, or `ethos fallback`) after the page you saved from loaded it. Nothing was written. | Reload Settings, check the chain, and save again. |
-| `PERSONALITY_NOT_FOUND` | Personality id does not exist. | `ethos personality list` and pick a valid id. |
-| `PROVIDER_AUTH_FAILED` | LLM provider rejected the key. | Re-export the API key or run `ethos setup keys`. |
-| `LLM_ERROR` | Provider returned a non-recoverable error mid-stream. | Re-run. If repeated, file a bug with the cause. |
-| `STREAM_TIMEOUT` | The LLM streamed nothing for the watchdog window. | Re-run; tune `streamingTimeoutMs` if your network is slow. |
-| `INVALID_INPUT` | A required CLI flag is missing or out of range. | Read the printed `Usage:` and re-run. |
-| `INVALID_PROVIDER` | `--provider` names a provider Ethos does not ship. | Use one of the providers listed in the cause. |
-| `INVALID_TOOLSET` | `--toolsets` names a toolset that does not exist. | Use one of the toolsets listed in the cause. |
-| `FILE_NOT_FOUND` | A path passed to a CLI flag does not exist. | Verify the path and re-run. |
-| `BATCH_INVALID_LINE` | A line in the batch JSONL file is malformed. | Fix the named line and re-run `ethos batch`. |
-| `EVAL_INVALID_LINE` | A line in the eval JSONL file is malformed. | Fix the named line and re-run `ethos eval run`. |
-| `TOOL_REJECTED` | A `before_tool_call` hook blocked the tool. | Adjust the hook config or the tool call. |
-| `TOOL_EXECUTION_FAILED` | A tool returned `{ ok: false }`. | Treat the printed cause as the tool's diagnostic. |
-| `SUBAGENT_TASK_DUPLICATED` | A delegated task duplicated across the child prompt. | Bug — file an issue with the parent personality and prompt. |
-| `JOB_NOT_FOUND` | Cron job id does not exist. | `ethos cron list` and copy the exact id. |
-| `JOB_DUPLICATE` | New cron job uses a taken id. | Pick a different id or remove the existing job. |
-| `JOB_LOCK_FAILED` | Another cron command holds the lock. | Wait and re-run; kill stuck `ethos cron` processes. |
-| `CRON_INVALID` | Cron expression failed validation. | Use a valid 5-field expression (see `crontab.guru`). |
-| `CRON_PERSONALITY_MISSING` | The personality named on a cron job no longer exists. | Update the job to a current personality id. |
-| `CRON_RUN_FAILED` | A cron job's turn ended in an error event. | `ethos cron list`, then check the job's personality and prompt. |
-| `CRON_TARGET_NOT_ALLOWED` | A cron job asked to deliver into a chat that is not an approved target for that bot and personality. | Pick a target from the picker; add the chat to `channel_filter.<platform>` or message the bot once so the chat is known. |
-| `RECIPE_NOT_FOUND` | No recipe with that id is shipped in the curated catalog. | Call `recipes.list` (Library → Recipes) and use an id from it. |
-| `RECIPE_INVALID` | A shipped recipe bundle failed its own schema. | Report it — the catalog is first-party, so this is a packaging bug. |
-| `RECIPE_STALE` | You previewed one version of a recipe and installed against a newer one. | Re-open the recipe, read what changed, and install again. |
-| `RECIPE_BLOCKED` | A recipe install was refused because a prerequisite is unmet or a required field is empty. | Work through the preflight list — each row names the exact action — then install again. |
-| `RECIPE_CHANNEL_SETUP_FAILED` | A recipe's inline channel setup could not complete: the bot token was refused, the platform was unreachable, or the chat you picked has not actually messaged that bot. | Re-check the token with @BotFather, then send your bot a message and press "Check for your message" again. Nothing was created. |
-| `MCP_TRANSPORT_INVALID` | An MCP server entry is missing `command` (stdio) or `url` (sse). | Edit the MCP server entry in `~/.ethos/config.yaml`. |
-| `MCP_SERVER_NOT_FOUND` | The named MCP server is not attached to that personality. | Attach the server first, then set its token. |
-| `SECRETS_UNAVAILABLE` | The server has no secrets resolver wired. | Start the server with secrets configured. |
-| `REGISTRY_FETCH_FAILED` | `ethos upgrade` could not reach the npm registry (`npm_config_registry`, default `registry.npmjs.org`). | Check network. Install manually: `npm i -g @ethosagent/cli@latest`. |
-| `NETWORK_ERROR` | A non-registry network call failed. | Re-run. Check your connection. |
-| `SKILL_INSTALL_FAILED` | `ethos skills install` did not complete. | Re-run; verify the source slug. |
-| `SKILL_NOT_FOUND` | Skill id is not under `~/.ethos/skills/`. | Refresh the Skills tab; the file may have been deleted. |
-| `SKILL_EXISTS` | A new skill collides with an existing file. | Pick a different id, or open and edit the existing skill. |
-| `SKILL_READONLY` | System skills cannot be edited or deleted. | Duplicate into `~/.ethos/skills/`, then edit the copy. |
-| `MISSING_SKILL` | A name passed to `-s` is not a plain filename under `~/.ethos/skills/`. | Use a bare skill name; confirm `<name>.md` exists. |
-| `PERSONALITY_EXISTS` | Personality id is already taken. | Pick a different id. |
-| `PERSONALITY_READ_ONLY` | Built-in personalities cannot be modified directly. | Duplicate, then edit the copy. |
-| `PLUGIN_CONTRACT_INCOMPATIBLE` | Plugin declares an unsupported `pluginContractMajor`. | Upgrade the plugin or CLI per the migration guide. |
-| `PLUGIN_INSTALL_FAILED` | The CLI install needs a recorded capability grant and stdin is not a TTY, or npm recorded no sha512 digest to hold it to. From the web, the server's `npm pack` or `npm install` failed (a dependency it cannot resolve, disk, permissions), and the message quotes npm's code; anything a failed `npm install` left behind was rolled back. It is also returned when a step after a successful `npm install` failed, including writing the personality's `plugins.lock` pin; the install was rolled back, any grant or pin the attempt wrote was put back as it was, and the message says whether an earlier copy was restored from its verified pin, removed, or left on disk. `ethos plugin install` undoes a failed install the same way. | CLI: install interactively, pass `--yes`, or install a published package by name. Web: fix what the message reports, then install again. Run the reinstall or `npm uninstall --prefix …` command it gives, if any. |
-| `PLUGIN_SPEC_UNVERIFIABLE` | The spec names no published version with a sha512 digest, so the install cannot be verified. Nothing was installed. | Ask for a published version — list them with `npm view <package> versions`. |
-| `PLUGIN_PACKAGE_NOT_FOUND` | The registry has no package by that name that the server can read. Nothing was installed. | Check the spelling. For a private package, give the server's npm a token that can read it. |
-| `PLUGIN_REGISTRY_FAILED` | npm got no usable answer from the registry — no connection, or a registry error — while resolving, downloading, or installing. Nothing from the attempt is left installed: if a failed `npm install` left files behind, the server rolled them back, and the message says the end state it confirmed. | Check the server's network or npm proxy settings, then retry. |
-| `PLUGIN_INTEGRITY_MISMATCH` | The downloaded tarball does not match the registry's published digest. Nothing was installed, granted, or pinned. | Retry. If it is refused again, do not install the package. |
-| `PLUGIN_PACKAGE_MISMATCH` | npm installed a `package.json` naming a different package or version than the one verified. The install was rolled back; nothing was granted or pinned. If an earlier copy of the plugin was installed, the rollback removed it too, and the message says whether it was reinstalled from its verified `plugins.lock` pin or left removed. If the rollback failed, the message says the package was left on disk and will load on the next start. | Do not install the package. If the message says the earlier copy was removed, reinstall it with the `ethos plugin install …` command it gives. If it says a package was left on disk, run the `npm uninstall --prefix …` command it gives before restarting the server. |
-| `TEAM_MANIFEST_INVALID` | `team.yaml` failed schema validation. | Fix the named field and re-run `ethos team start`. |
-| `IMPORT_BLOCKED` | A restore was refused: an archive entry escapes the data dir or is not a regular file, the archive failed its manifest checksum, or a database it would replace is open in another process. | Read the printed cause. For a checksum failure, use a different archive. For an in-use database, stop `ethos chat` / `serve` / `gateway` / the desktop app and retry. See [Back up and restore](using/how-to/back-up-and-restore.md). |
-| `IMPORT_NEWER_SCHEMA` | A SQLite store on disk, or a backup archive, was written by a newer Ethos than the one reading it. | Upgrade Ethos to a build that understands it, then retry. |
-| `MEMORY_CONFLICT` | A memory entry changed on disk between your read and your write. | Re-read the entry and retry the write. |
-| `UNAUTHORIZED` | A web API request lacks valid auth. | Sign in again from the web UI. |
-| `FORBIDDEN` | Authenticated, but the caller may not perform this action. | Use an account with the required role. |
-| `NOT_FOUND` | A web API resource id does not resolve. | Refresh the list and re-select. |
-| `NOT_CONFIGURED` | The server was started without a piece the route needs (LLM, storage, memory). | Restart the server with that component configured. |
-| `SESSION_NOT_FOUND` | The session id passed to the web API does not exist. | Refresh the session list. |
-| `WORKDIR_NOT_CONFIGURED` | The personality has no declared `fs_reach.workdir`, so Documents has no root to browse or write to. | Set `fs_reach.workdir` in the personality's `config.yaml`. |
-| `DOCUMENT_EXISTS` | A Documents upload targeted a path that already has a file, and `overwrite` was not set. | Pick a different filename, or retry with overwrite enabled. |
-| `PAYLOAD_TOO_LARGE` | An upload body exceeded the route's size cap (100MB for a Documents upload). | Upload a smaller file. |
-| `INTERNAL` | An unexpected error escaped to the surface. | Re-run. If repeated, file an issue with the printed `details`. |
 
 ## Getting help {#getting-help}
 

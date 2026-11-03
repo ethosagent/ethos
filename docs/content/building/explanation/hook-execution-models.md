@@ -4,7 +4,7 @@ description: "Void, Modifying, and Claiming hooks each fit a different kind of c
 kind: explanation
 audience: developer
 slug: hook-execution-models
-updated: 2026-05-12
+updated: 2026-11-03
 ---
 
 ## Context
@@ -14,6 +14,13 @@ Ethos lets you intercept the [turn](../../getting-started/glossary.md#turn) cycl
 The framework calls a registered handler a [hook](../../getting-started/glossary.md#hook). What surprises new contributors is that not every hook fires the same way. There are three execution models — Void, Modifying, and Claiming — and the model is not a runtime flag. It is a property of the hook point itself, baked into the type system. `session_start` is a Void hook. `before_prompt_build` is a Modifying hook. `inbound_claim` is a Claiming hook. You do not get to choose.
 
 This page is about why three rather than one. What each model is for. The failure mode each one is designed to handle. And the small set of consequences for code that registers them.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Context, the Void and Modifying models, failure semantics, the registry, picking a model, trade-offs. |
+| [Why does a Claiming hook stop at the first claim?](./hook-execution-models/claiming-model.md) | The Claiming model. |
 
 ## Discussion
 
@@ -112,43 +119,6 @@ Failure mode by design: handler errors are caught, the merged result keeps what 
 There is a non-obvious failure mode worth calling out. A `before_tool_call` hook that wants to reject a tool call **must return `{ error: '...' }`**, not just log and continue. The `AgentLoop` reads the merged result and, when `error` is set, persists a synthetic `tool_result` with `is_error: true` (every `tool_use` block needs a matching `tool_result` block — the Anthropic message contract requires it). If the hook only emits a `tool_end` event but leaves the rejection out of the merged result, the tool still runs.
 
 The CLAUDE.md "Learnings from building this codebase" calls this out explicitly: *the hook fires before `executeParallel`. If you only emit `tool_end ok:false` but still add the tool to `execInputs`, the tool runs anyway. The correct pattern: check `beforeResult.error` → add to a rejected list → exclude from `execInputs`.*
-
-### The Claiming model: sequential, stop at first claim
-
-`HookRegistry.fireClaiming<K>` is the model for routing decisions. Handlers run sequentially; the chain stops as soon as one returns `{ handled: true }`.
-
-```typescript
-for (const h of handlers) {
-  try {
-    const result = (await h.handler(payload)) as ClaimingHooks[K][1];
-    if (result && (result as { handled: boolean }).handled) {
-      return result;
-    }
-  } catch {
-    // fail-open: try next handler
-  }
-}
-return { handled: false } as ClaimingHooks[K][1];
-```
-
-If no handler claims, the framework returns `{ handled: false }` and the caller proceeds with default behaviour. The pattern is "first one to claim wins"; the design is the answer to "which subsystem owns this".
-
-Claiming hook points: `inbound_claim`, `before_dispatch`.
-
-Pattern of use — the gateway's telegram adapter claiming a Telegram update:
-
-```typescript
-hooks.registerClaiming('inbound_claim', async (payload) => {
-  const msg = payload.message;
-  if (msg.platform !== 'telegram') return { handled: false };
-  await handleTelegramUpdate(msg);
-  return { handled: true };
-});
-```
-
-Failure mode by design: handler errors are caught, the chain continues. A handler that claims by accident (it intended to return `false` but threw) gets skipped, and the next handler has a chance. The framework's contract is "the first handler that successfully returns `{ handled: true }` wins"; bugs that prevent a handler from returning `true` mean the next handler gets a shot.
-
-The non-obvious property: order of registration matters. Claiming hooks are not commutative. Two adapters that both register an `inbound_claim` for "anything" — the first-registered wins. The wiring layer is where you control which adapter registers first; the framework deliberately exposes the ordering to the caller because routing decisions are first-class.
 
 ### How the model determines failure semantics
 

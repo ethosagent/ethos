@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-11-02
+updated: 2026-11-03
 ---
 
 ## Task
@@ -25,7 +25,7 @@ Run the Ethos [gateway](../getting-started/glossary.md#gateway) against a Slack 
 - `ethos chat` works locally with a configured LLM provider.
 - A Slack app created at `https://api.slack.com/apps` → **Create New App** → **From scratch**.
 - The app installed to the target workspace; the bot user added to at least one channel.
-- The bot's **Event Subscriptions** matched to the channel modes you intend to use — Slack sends an app only the events it subscribed to, and a missing subscription is silent. See [Platform prerequisites for unaddressed channel messages](#1a-platform-prerequisites-for-unaddressed-channel-messages).
+- The bot's **Event Subscriptions** matched to the channel modes you intend to use — Slack sends an app only the events it subscribed to, and a missing subscription is silent. See [Platform prerequisites for unaddressed channel messages](slack/unaddressed-messages.md#1a-platform-prerequisites-for-unaddressed-channel-messages).
 - Three secrets in hand: bot token (`xoxb-…`), app-level token (`xapp-…`) with `connections:write`, and the signing secret.
 
 ## Source
@@ -35,6 +35,25 @@ Run the Ethos [gateway](../getting-started/glossary.md#gateway) against a Slack 
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
 - `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
 - `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new SlackAdapter({ botToken, appToken, signingSecret })`).
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | Steps 1-3: create the app, wire secrets, start the gateway; then Verify, Troubleshoot and errors. |
+| [Slack adapter: unaddressed channel messages](./slack/unaddressed-messages.md) | Step 1a: platform prerequisites for unaddressed channel messages. |
+| [Slack adapter: routing, allowlist and multi-workspace](./slack/routing-and-access.md) | Steps 4-6: routing, plugin commands, allowlist, `/ethos` and App Home, multi-workspace. |
+
+## Where things moved
+
+| Section | Page |
+|---|---|
+| <a id="1a-platform-prerequisites-for-unaddressed-channel-messages"></a>[1a. Platform prerequisites for unaddressed channel messages](slack/unaddressed-messages.md#1a-platform-prerequisites-for-unaddressed-channel-messages) | [Slack adapter: unaddressed channel messages](slack/unaddressed-messages.md) |
+| <a id="4-understand-routing"></a>[4. Understand routing](slack/routing-and-access.md#4-understand-routing) | [Slack adapter: routing, allowlist and multi-workspace](slack/routing-and-access.md) |
+| <a id="4a-plugin-commands"></a>[4a. Plugin commands](slack/routing-and-access.md#4a-plugin-commands) | [Slack adapter: routing, allowlist and multi-workspace](slack/routing-and-access.md) |
+| <a id="5-restrict-who-can-talk-to-the-bot"></a>[5. Restrict who can talk to the bot](slack/routing-and-access.md#5-restrict-who-can-talk-to-the-bot) | [Slack adapter: routing, allowlist and multi-workspace](slack/routing-and-access.md) |
+| <a id="5a-restrict-who-can-run-ethos-and-open-app-home"></a>[5a. Restrict who can run `/ethos` and open App Home](slack/routing-and-access.md#5a-restrict-who-can-run-ethos-and-open-app-home) | [Slack adapter: routing, allowlist and multi-workspace](slack/routing-and-access.md) |
+| <a id="6-drive-multi-workspace-deployments"></a>[6. Drive multi-workspace deployments](slack/routing-and-access.md#6-drive-multi-workspace-deployments) | [Slack adapter: routing, allowlist and multi-workspace](slack/routing-and-access.md) |
 
 ## Steps
 
@@ -60,58 +79,10 @@ In `https://api.slack.com/apps`:
 5. Under **Event Subscriptions** → **Enable Events**, subscribe to bot events:
    - `app_mention` — someone `@mentions` the bot.
    - `message.im` — someone DMs the bot.
-   - `message.channels` — a message is posted in a public channel the bot is in. Only needed for channel modes that read messages nobody addressed to the bot; see [Platform prerequisites for unaddressed channel messages](#1a-platform-prerequisites-for-unaddressed-channel-messages).
+   - `message.channels` — a message is posted in a public channel the bot is in. Only needed for channel modes that read messages nobody addressed to the bot; see [Platform prerequisites for unaddressed channel messages](slack/unaddressed-messages.md#1a-platform-prerequisites-for-unaddressed-channel-messages).
    - `message.groups` — the same for private channels.
 6. Under **Install App**, install to the workspace. Copy the **Bot User OAuth Token** (`xoxb-…`).
 7. Under **Basic Information**, copy the **Signing Secret**.
-
-### 1a. Platform prerequisites for unaddressed channel messages
-
-Slack delivers an app only the events that app subscribed to, and delivers nothing at all to say a subscription is missing. An app subscribed to `app_mention` and `message.im` alone hears mentions and DMs perfectly and is deaf to everything else in a channel — which is exactly right until a channel is set to a mode that reads messages nobody addressed to the bot.
-
-Two things gate that, and both are on the Slack side:
-
-| Requirement | Where | Covers |
-|---|---|---|
-| `message.channels` event subscription | **Event Subscriptions** → **Subscribe to bot events** | Messages in public channels |
-| `message.groups` event subscription | same | Messages in private channels |
-| `channels:history` bot scope | **OAuth & Permissions** → **Bot Token Scopes** | Reading public-channel message content |
-| `groups:history` bot scope | same | Reading private-channel message content |
-| Bot is a member of the channel | Invite the bot in Slack | Both — the events follow membership |
-
-The scopes are already in [step 1](#1-create-the-slack-app); the two `message.*` subscriptions are the pair most often left off, because mentions and DMs work without them.
-
-Slack grants a `message.*` subscription only when the matching `*:history` scope is already on the app. Adding the scope is what forces a reinstall, and reinstalling issues a new bot token — update `slackBotToken` in `~/.ethos/config.yaml` afterwards.
-
-Read a channel's current mode from inside it:
-
-```
-/ethos channel-mode
-```
-
-```
-Channel mode: mention_only
-#build-updates currently uses mention_only (app default).
-Set with: /ethos channel-mode all, /ethos channel-mode thread_follow, /ethos channel-mode mention_only, or /ethos channel-mode observe (records every message, never replies).
-```
-
-`/ethos channel-mode <mode>` sets it, and the setting is a per-channel override on top of the app default. Set that app-wide default with [`slack.apps.<i>.defaultChannelMode`](../using/reference/config-yaml.md#slack-apps) — the same four values, `mention_only` when the key is absent, read at gateway startup. `mention_only` is the default and needs neither subscription; `thread_follow`, `all`, and `observe` all read messages the bot was not addressed in, and all need `message.channels` (public) or `message.groups` (private) for the channel in question. `observe` additionally never replies — the bot reads the channel and says nothing in it.
-
-Silence under `observe` covers every surface, not only replies to messages:
-
-| Surface | Under `observe` |
-|---|---|
-| Messages and `@mentions` | Recorded to the transcript, never answered, no receipt reaction |
-| The greeting the bot posts when you invite it | Not posted |
-| Unfurling an Ethos link someone pastes | Not unfurled |
-| `/ethos ask` | Refused, with a reply only the person who ran it can see |
-| A DM to the bot | Answered normally — a DM is not a room |
-
-To ask this bot something while a channel is observed, DM it or change the mode. The DM answers even when `defaultChannelMode: observe` makes `observe` the mode a DM resolves to: there is no third party in a one-to-one conversation for the mode to be protecting, so `link_shared` unfurls and `/ethos ask` work there too.
-
-A stored mode this build cannot read is stricter than `observe`: nothing reaches the room, and nothing is recorded either. Three things produce one — a typo such as `obserev`, a mode a newer Ethos wrote into the same override file, and a mode that is real on a different platform (`regex_match` is Telegram's; Slack has no such mode, so a line copied from a Telegram override file is unreadable here). If a channel has gone quiet unexpectedly, run `/ethos channel-mode`, which prints the stored string verbatim rather than the default it is not. `/ethos help`, the App Home tab, and the `/ethos ask` refusal show the same value.
-
-Only users on the `/ethos` allowlist can run this; see [step 5a](#5a-restrict-who-can-run-ethos-and-open-app-home).
 
 ### 2. Wire the secrets
 
@@ -131,90 +102,6 @@ ethos gateway start
 ```
 
 Expected boot lines include `⚡️ Bolt app started`. Socket Mode means no reverse proxy, no domain, no inbound port. For production with the web dashboard alongside, use `ethos run-all` under PM2 — see [Deploy in production](../using/how-to/deploy-in-production.md). For just the Slack gateway by itself under `launchd` / `systemd` / `pm2`, see [Run Ethos as a daemon](../using/how-to/run-as-daemon.md).
-
-### 4. Understand routing
-
-`SlackAdapter.start()` subscribes to two events (`extensions/platform-slack/src/index.ts`):
-
-- `message` — fires for every DM the bot can see. The adapter accepts messages with `channel_type === 'im'`; everything else is ignored at this layer.
-- `app_mention` — fires for `@mentions` in channels. The adapter strips the `<@UXXXXXXXX>` token before forwarding.
-
-| Source | `chatId` | `isDm` | `isGroupMention` | Effective session key |
-|---|---|---|---|---|
-| Channel `@mention` | channel id `C…` | `false` | `true` | `slack:<channel-id>` |
-| Thread (channel mention with `thread_ts`) | channel id | `false` | `true` | `slack:<channel-id>` (replies go to the thread) |
-| DM | channel id `D…` (type `im`) | `true` | `false` | `slack:<channel-id>` |
-
-With [`slack.apps.<i>.mentionByName: true`](../using/reference/config-yaml.md#mention-by-name), a channel message that names the bound personality as a whole word ("hey Owl, …") counts as a mention too (`isGroupMention: true`). Such a message is not an `app_mention`, so the adapter sees it only with the `message.channels` / `message.groups` subscriptions from [step 1a](#1a-platform-prerequisites-for-unaddressed-channel-messages). A message that reaches the agent only by naming it gets no receipt reaction.
-
-When the inbound message has a `thread_ts` or the `replyToId` is set, the adapter passes `thread_ts` to `chat.postMessage` so the reply lands in the same thread. New top-level mentions start a new thread when the agent's reply spans multiple chunks.
-
-The adapter skips messages with any `subtype` (bot messages, edits, joins) — Bolt surfaces those as `message` events too. Bot- and workflow-authored posts are the one exception: allowlist their `bot_id` under [`slack.apps.<i>.allowedBotIds`](../using/reference/config-yaml.md#slack-apps) and they reach the agent.
-
-### 4a. Plugin commands
-
-Plugin commands registered via `registerSlashCommand()` are dispatched through the gateway's text-matching pipeline — the same path as built-in `/` commands.
-
-Unlike Telegram and Discord, Slack requires manual slash command registration in the Slack app dashboard (`api.slack.com`). The gateway logs the list of commands that need registration at startup so operators can sync them. See [Register plugin slash commands](../building/how-to/register-plugin-commands.md) for the full walkthrough.
-
-### 5. Restrict who can talk to the bot
-
-Configure under `channel_filter.slack` (`packages/safety/channel/src/channel-filter.ts`):
-
-```yaml
-# Slack user id — always allowed
-channel_filter.slack.ownerUserId: U01ABCDEFGH
-# comma-separated user ids or whole channel ids
-channel_filter.slack.recipientAllowlist: U02ABCDEFGH,C03ABCDEFGH
-# pairing | decline | allowlist | queue | reject | silent-drop
-channel_filter.slack.dmPolicy: pairing
-# strip quoted text from non-allowlisted senders
-channel_filter.slack.contextVisibility: allowlist
-```
-
-Each field is one flat `channel_filter.slack.<field>: <value>` line.
-
-Field meanings:
-
-- `ownerUserId` — bypasses every gate, including the channel mention gate.
-- `recipientAllowlist` — Slack user ids and channel ids that are also allowed.
-- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `decline` replies once per sender per 24 h with a polite refusal (`declineMessage` sets the wording); `allowlist`, `queue`, `reject` and `silent-drop` drop the message without a reply. See the [Telegram adapter](telegram.md) for the full policy list.
-- `contextVisibility: allowlist` — strips quoted Slack-thread content from non-allowlisted senders before the agent sees it.
-
-From inside `ethos chat`:
-
-```
-/communications
-/allow 7H3K-9XQ2
-/deny slack U02ABCDEFGH
-```
-
-### 5a. Restrict who can run `/ethos` and open App Home
-
-`/ethos` and the App Home tab never become inbound messages, so the filter above does not see them. They get their own gate, and it is default-deny: the allowlist is `ownerUserId` + `recipientAllowlist` from the block above, optionally narrowed by [`slack.apps.<i>.allowedSlashUsers`](../using/reference/config-yaml.md#slack-apps).
-
-```yaml
-slack.apps.0.allowedSlashUsers: U01ABCDEFGH,U02ABCDEFGH
-```
-
-A user who is not on that allowlist gets an ephemeral "You are not authorized to use this command" and an App Home tab whose memory, session, kanban, and channel sections are replaced by a notice. Configure `ownerUserId` before rolling out: with no `channel_filter.slack` entry, nobody — including you — can run `/ethos memory add`, `/ethos channel-mode`, or read the bot's memory from App Home.
-
-### 6. Drive multi-workspace deployments
-
-A Slack app is installed per workspace. Each installation issues its own bot token. To run the same Ethos app across several workspaces:
-
-- Run several gateways with separate `~/.ethos/` directories:
-
-```bash
-HOME=/srv/ethos-workspace-a ethos gateway start &
-HOME=/srv/ethos-workspace-b ethos gateway start &
-```
-
-Each `HOME` carries its own `slackBotToken`, `slackAppToken`, `slackSigningSecret`, SQLite store, logs, and pairing database. The bots stay isolated; sessions never cross.
-
-- Or run one gateway against one workspace and add Telegram or Discord tokens alongside. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply — `replyDedupScope`) suppresses a duplicate send on the same session across every adapter.
-
-A single Slack adapter instance binds to one bot token. Multi-tenant Slack distribution (one app, many workspaces, OAuth per workspace) is not yet wired through `apps/ethos/src/commands/gateway.ts`.
 
 ## Verify
 
@@ -260,7 +147,7 @@ Either `app_mention` / `message.im` are not subscribed in **Event Subscriptions*
 Slack scopes are per-channel for `channels:history` and `groups:history`. Invite the bot to each channel you want it active in. `app_mention` works regardless of channel membership, but reading thread history does not.
 
 **Bot answers mentions in a channel but ignores it in `all`, `thread_follow`, or `observe` mode.**
-The app is not subscribed to `message.channels` (public channel) or `message.groups` (private channel), so Slack never sends those messages. Mentions arrive over `app_mention`, which is why the channel looks half-alive. Add the subscription under **Event Subscriptions** → **Subscribe to bot events**; see [Platform prerequisites for unaddressed channel messages](#1a-platform-prerequisites-for-unaddressed-channel-messages).
+The app is not subscribed to `message.channels` (public channel) or `message.groups` (private channel), so Slack never sends those messages. Mentions arrive over `app_mention`, which is why the channel looks half-alive. Add the subscription under **Event Subscriptions** → **Subscribe to bot events**; see [Platform prerequisites for unaddressed channel messages](slack/unaddressed-messages.md#1a-platform-prerequisites-for-unaddressed-channel-messages).
 
 **HTTP 429 / `ratelimited` from `chat.postMessage`.**
 Slack's tier-3 rate limit is ~50 calls per minute per workspace. Streaming edits stay under this because `reflowChunks` edits in place. Sustained 429s mean two gateways share a bot token or a [personality](../getting-started/glossary.md#personality) is auto-replying. Check `ethos errors` and the running gateway count.

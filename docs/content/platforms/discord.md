@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-11-02
+updated: 2026-11-03
 ---
 
 ## Task
@@ -28,7 +28,7 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 
 - Token validation via `users/@me` (`extensions/platform-discord/src/validate.ts`).
 - `Guilds` / `GuildMessages` / `MessageContent` / `DirectMessages` intent setup.
-- Channel modes in guild channels — `mention_only` (the default), `thread_follow`, `all`, `observe` — set server-wide with [`discord.defaultChannelMode`](../using/reference/config-yaml.md#discord-default-channel-mode). See [step 4a](#4a-set-the-default-channel-mode).
+- Channel modes in guild channels — `mention_only` (the default), `thread_follow`, `all`, `observe` — set server-wide with [`discord.defaultChannelMode`](../using/reference/config-yaml.md#discord-default-channel-mode). See [step 4a](discord/routing.md#4a-set-the-default-channel-mode).
 - DM routing.
 - Outbound chunking to Discord's 2,000-char cap with edit-in-place streaming.
 - Clarify questions surface as buttons + modals, with the handler split across two modules — `extensions/platform-discord/src/clarify-blocks.ts` (component builders) and `extensions/platform-discord/src/clarify-interactions.ts` (button + modal callback handlers).
@@ -44,7 +44,7 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 |---|---|---|
 | `botKey` on `InboundMessage` | Stamped by the adapter; gateway routes by `${platform}:${botKey}:${chatId}`. | Not populated. Multi-bot Discord deployments collapse to one lane. See [Run multiple bots](../using/how-to/run-multiple-bots.md). |
 | Thread routing | Slack uses `thread_ts`; Telegram uses forum topics. Each gets a distinct `threadId`. | Discord threads are flattened into the parent channel; replies land in the parent, not the thread. |
-| Per-channel mode command | Slack's `/ethos channel-mode <mode>` writes a per-channel override. | No writer. The mode is server-wide via `discord.defaultChannelMode`; `/ethos help` reads the effective mode but nothing sets it. See [step 4a](#4a-set-the-default-channel-mode). |
+| Per-channel mode command | Slack's `/ethos channel-mode <mode>` writes a per-channel override. | No writer. The mode is server-wide via `discord.defaultChannelMode`; `/ethos help` reads the effective mode but nothing sets it. See [step 4a](discord/routing.md#4a-set-the-default-channel-mode). |
 | Approval surface | Slack renders the `before_ticket_complete` hook as an approval card. | Not implemented — Discord users can't participate in `kanban_complete` approvals. |
 
 The parity plan is shipping in nine independent moves; expect this matrix to shrink rather than grow. If you are operating a Discord-only deployment and one of the gaps blocks you, that's the gap to file against next.
@@ -63,6 +63,24 @@ The parity plan is shipping in nine independent moves; expect this matrix to shr
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
 - `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
 - `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new DiscordAdapter({ token: config.discordToken })`).
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| This page | What is shipped; steps 1-3: token, start the gateway, intents; then Verify, Troubleshoot and errors. |
+| [Discord adapter: routing and channel mode](./discord/routing.md) | Steps 4-4a: routing and the default channel mode. |
+| [Discord adapter: allowlist, permissions and multi-server](./discord/access.md) | Steps 5-7: allowlist, required bot permissions, multi-server deployments. |
+
+## Where things moved
+
+| Section | Page |
+|---|---|
+| <a id="4-understand-routing"></a>[4. Understand routing](discord/routing.md#4-understand-routing) | [Discord adapter: routing and channel mode](discord/routing.md) |
+| <a id="4a-set-the-default-channel-mode"></a>[4a. Set the default channel mode](discord/routing.md#4a-set-the-default-channel-mode) | [Discord adapter: routing and channel mode](discord/routing.md) |
+| <a id="5-restrict-who-can-talk-to-the-bot"></a>[5. Restrict who can talk to the bot](discord/access.md#5-restrict-who-can-talk-to-the-bot) | [Discord adapter: allowlist, permissions and multi-server](discord/access.md) |
+| <a id="6-required-bot-permissions"></a>[6. Required bot permissions](discord/access.md#6-required-bot-permissions) | [Discord adapter: allowlist, permissions and multi-server](discord/access.md) |
+| <a id="7-drive-multi-server-deployments"></a>[7. Drive multi-server deployments](discord/access.md#7-drive-multi-server-deployments) | [Discord adapter: allowlist, permissions and multi-server](discord/access.md) |
 
 ## Steps
 
@@ -97,110 +115,6 @@ Expected boot lines include `✓ Discord online`. For production with the web da
 `Partials.Channel` and `Partials.Message` are also requested so DMs work without a cache prefetch.
 
 If `✓ Discord online` prints but the bot ignores every mention, **Message Content Intent is off in the Developer Portal**. Toggle it on, restart the gateway.
-
-### 4. Understand routing
-
-`messageHandler` produces an `InboundMessage` per `MessageCreate`. The gateway keys per `(platform, chatId)`:
-
-| Source | `chatId` | `isDm` | `isGroupMention` | Effective session key |
-|---|---|---|---|---|
-| Server channel, bot is `@mentioned` | channel id | `false` | `true` | `discord:<channel-id>` |
-| Server thread, bot is `@mentioned` | parent channel id | `false` | `true` | `discord:<channel-id>` (collapses with the parent channel — `threadId` routing is on the [parity plan](#whats-shipped-vs-in-flight)) |
-| Server channel, no mention | channel id | `false` | `false` | dropped under `mention_only` (the default mode) — see [step 4a](#4a-set-the-default-channel-mode) |
-| DM | DM channel id | `true` | `false` | `discord:<channel-id>` |
-
-The adapter strips the `<@botId>` prefix before passing text to the agent, so `@Ethos summarise the channel` arrives as `summarise the channel`.
-
-### 4a. Set the default channel mode
-
-What the bot does with a guild message nobody addressed to it is one key. Discord is single-bot — the token is the top-level `discordToken` — so the mode is top-level too, not an indexed roster entry the way Telegram's and Slack's are:
-
-```yaml
-# ~/.ethos/config.yaml
-discord.defaultChannelMode: observe
-```
-
-Four values, and they apply to every channel the bot can see:
-
-| Mode | Replies to | Records |
-|---|---|---|
-| `mention_only` (default) | messages that `@mention` the bot | those messages |
-| `thread_follow` | mentions, plus every message in a thread the bot has posted in | those messages |
-| `all` | every message in the channel | every message |
-| `observe` | nothing, not even an explicit `@mention` | every message |
-
-DMs are answered under every mode. An out-of-range value is a parse error — `ethos gateway` prints `discord: invalid defaultChannelMode '<value>'` and exits non-zero rather than falling back. Restart the gateway after editing; the key is read at startup.
-
-`all` is rarely what you want on a busy server: Discord rate limits scale per channel, and Ethos has no per-[personality](../getting-started/glossary.md#personality) cost cap that limits guild-wide replies.
-
-Nothing extra is needed on the Discord side. The **Message Content Intent** from [step 3](#3-confirm-intents) is what makes message text visible at all, and it covers unaddressed messages as much as mentions — unlike Slack, which needs a separate `message.channels` subscription, and Telegram, which needs Group Privacy off.
-
-**There is no per-channel command on Discord.** Slack's `/ethos channel-mode` has no Discord equivalent, so this key is the only way to set a mode today and it cannot be narrowed to one channel. `/ethos help` prints the channel's effective mode read-only. Field details are in [`discord.defaultChannelMode`](../using/reference/config-yaml.md#discord-default-channel-mode).
-
-### 5. Restrict who can talk to the bot
-
-Configure under `channel_filter.discord` (`packages/safety/channel/src/channel-filter.ts`):
-
-```yaml
-# Discord snowflake — always allowed
-channel_filter.discord.ownerUserId: 234567890123456789
-# comma-separated user snowflakes or whole channel snowflakes
-channel_filter.discord.recipientAllowlist: 345678901234567890,456789012345678901
-# pairing | decline | allowlist | queue | reject | silent-drop
-channel_filter.discord.dmPolicy: pairing
-# strip quoted text from non-allowlisted senders
-channel_filter.discord.contextVisibility: allowlist
-```
-
-Each field is one flat `channel_filter.discord.<field>: <value>` line.
-
-Field meanings:
-
-- `ownerUserId` — bypasses every gate, including the mention gate inside guilds.
-- `recipientAllowlist` — user and channel snowflakes that are also allowed.
-- `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `decline` replies once per sender per 24 h with a polite refusal (`declineMessage` sets the wording); `allowlist`, `queue`, `reject` and `silent-drop` drop the message without a reply. See the [Telegram adapter](telegram.md) for the full policy list.
-- `contextVisibility: allowlist` — strips replied-to content from non-allowlisted senders before the agent sees it.
-
-From inside `ethos chat`:
-
-```
-/communications
-/allow 7H3K-9XQ2
-/deny discord 234567890123456789
-```
-
-### 6. Required bot permissions
-
-Invite the bot with these permissions (combined as the integer in the OAuth URL builder):
-
-| Permission | Why |
-|---|---|
-| `View Channels` | Required to receive any event in a channel. |
-| `Send Messages` | Required for replies. |
-| `Send Messages in Threads` | Replies in threads when the source message was in a thread. |
-| `Read Message History` | Lets the bot inspect the message it is replying to. |
-| `Embed Links` | Discord auto-embeds links the agent emits. |
-| `Add Reactions` | The receipt reaction on inbound messages. Without it the reaction fails silently and replies are unaffected. |
-| `Use Application Commands` | Required for plugin slash commands registered as Discord application commands. |
-
-Skip `Administrator`. The gateway has no need for moderation or member-management permissions; granting them widens the blast radius for nothing.
-
-### 7. Drive multi-server deployments
-
-Discord allows one gateway connection per bot token. To run several bots from one host:
-
-- **One bot across many guilds (`Guilds` intent supports any number) with one gateway.** This is the path Discord supports natively. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`, plus the inbound message on a reply — `replyDedupScope`) covers every guild and DM the bot serves.
-
-- **Two or more Discord bots — run them under separate `~/.ethos/` roots, not in one process.**
-
-```bash
-HOME=/srv/ethos-guild-a ethos gateway start &
-HOME=/srv/ethos-guild-b ethos gateway start &
-```
-
-Each `HOME` gets its own `config.yaml`, SQLite store, logs, and pairing database. The bots stay isolated; sessions never cross.
-
-The multi-bot-in-one-process pattern that [Telegram and Slack support](../using/how-to/run-multiple-bots.md) does not work for Discord yet — the adapter doesn't stamp `botKey` on inbound messages (see the [parity matrix](#whats-shipped-vs-in-flight)). Two Discord bots in one Ethos process today collapse onto a single lane key and route to whichever loop was constructed first. Until that ships, separate `HOME` roots are the only safe way to run multiple Discord bots from one host.
 
 ## Verify
 

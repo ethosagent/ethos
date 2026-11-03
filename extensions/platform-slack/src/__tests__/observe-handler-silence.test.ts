@@ -1,7 +1,7 @@
 // The three Slack handlers that could put content into an observed channel
 // without ever consulting the channel mode.
 //
-// `docs/content/platforms/slack.md` promises that under `observe` "the bot
+// `docs/content/platforms/slack/unaddressed-messages.md` promises that under `observe` "the bot
 // reads the channel and says nothing in it". Three registered handlers
 // contradicted that, and none of them was on the message path that
 // `apps/ethos/src/__tests__/observe-silence-conformance.test.ts` drove:
@@ -306,7 +306,7 @@ describe('an unreadable stored mode stays diagnosable on ungated surfaces', () =
 // 4. The other half of the promise: a DM is not a room
 // ---------------------------------------------------------------------------
 
-// `docs/content/platforms/slack.md` tells the reader "to ask this bot something
+// `docs/content/platforms/slack/unaddressed-messages.md` tells the reader "to ask this bot something
 // while a channel is observed, DM it". That sentence was false for the
 // deployment it was written for. `canSpeakInChannel` hard-coded `isDm: false`,
 // discarding `evaluateChannelMode`'s first and load-bearing test — so with

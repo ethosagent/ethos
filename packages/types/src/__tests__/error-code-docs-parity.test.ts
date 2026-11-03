@@ -15,21 +15,20 @@
 // Mirrors the personality-field-count / memory-method-count gate pattern:
 // parse the source text, compare against the published artefact.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ERRORS_SOURCE = join(import.meta.dirname, '..', 'errors.ts');
-const TROUBLESHOOTING = join(
-  import.meta.dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  'docs',
-  'content',
-  'troubleshooting.md',
-);
+const CONTENT = join(import.meta.dirname, '..', '..', '..', '..', 'docs', 'content');
+// The index page plus its subpages: the error-reference table lives on
+// `troubleshooting/error-reference.md`.
+const TROUBLESHOOTING_PAGES = [
+  join(CONTENT, 'troubleshooting.md'),
+  ...readdirSync(join(CONTENT, 'troubleshooting'))
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => join(CONTENT, 'troubleshooting', f)),
+];
 
 /** Extract the string-literal members of the `EthosErrorCode` union. */
 function extractErrorCodes(src: string): string[] {
@@ -50,7 +49,7 @@ function extractErrorCodes(src: string): string[] {
 
 describe('EthosErrorCode ↔ troubleshooting.md parity gate', () => {
   const codes = extractErrorCodes(readFileSync(ERRORS_SOURCE, 'utf-8'));
-  const doc = readFileSync(TROUBLESHOOTING, 'utf-8');
+  const doc = TROUBLESHOOTING_PAGES.map((f) => readFileSync(f, 'utf-8')).join('\n');
 
   it('parses a plausible number of codes from the union', () => {
     // Guard against a silently-empty match making the parity check vacuous.

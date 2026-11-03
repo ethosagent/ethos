@@ -6,6 +6,16 @@ import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 // a colored dot (researcher / engineer / reviewer / neutral). The flat how-to
 // list is regrouped into collapsed topical subcategories; every page id that
 // was reachable before stays reachable here.
+/** A page split into subpages: the index doc is the category link.
+ * Parts are id suffixes: '/x' or '-2-x'. */
+const splitDoc = (id: string, label: string, parts: string[]) => ({
+  type: 'category' as const,
+  label,
+  collapsed: true,
+  link: { type: 'doc' as const, id },
+  items: parts.map((part) => `${id}${part}`),
+});
+
 const sidebars: SidebarsConfig = {
   docsSidebar: [
     {
@@ -16,7 +26,11 @@ const sidebars: SidebarsConfig = {
       items: [
         'intro',
         'getting-started/what-is-ethos',
-        'getting-started/architecture-90-seconds',
+        splitDoc(
+          'getting-started/architecture-90-seconds',
+          'What does Ethos look like in 90 seconds?',
+          ['/surfaces-and-events'],
+        ),
         'getting-started/why-ethos',
         'getting-started/glossary',
       ],
@@ -27,15 +41,23 @@ const sidebars: SidebarsConfig = {
       collapsible: false,
       className: 'sidebar-group sidebar-group--using',
       items: [
-        'using/quickstart',
+        splitDoc('using/quickstart', 'Quickstart', ['-2-first-message']),
         {
           type: 'category',
           label: 'Tutorials',
           collapsed: true,
           items: [
-            'using/tutorials/first-agent',
-            'using/tutorials/first-personality',
-            'using/tutorials/first-deploy-telegram',
+            splitDoc('using/tutorials/first-agent', 'Build your first agent', [
+              '-2-sessions-and-personalities',
+            ]),
+            splitDoc('using/tutorials/first-personality', 'Create your first personality', [
+              '-2-switch-and-isolate',
+              '-3-duplicate-and-patterns',
+            ]),
+            splitDoc('using/tutorials/first-deploy-telegram', 'Deploy your first Telegram agent', [
+              '-2-daemon',
+              '-3-operate',
+            ]),
           ],
         },
         {
@@ -44,21 +66,13 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/install-on-windows',
-            {
-              type: 'category',
-              label: 'Install Ethos on Windows (WSL2)',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/install-on-windows-wsl2' },
-              items: ['using/how-to/install-on-windows-wsl2/files-networking-gateway'],
-            },
+            splitDoc('using/how-to/install-on-windows-wsl2', 'Install Ethos on Windows (WSL2)', [
+              '/files-networking-gateway',
+            ]),
             'using/how-to/configure-providers',
-            {
-              type: 'category',
-              label: 'Run Ethos on AWS Bedrock',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/use-aws-bedrock' },
-              items: ['using/how-to/use-aws-bedrock/iam-and-config'],
-            },
+            splitDoc('using/how-to/use-aws-bedrock', 'Run Ethos on AWS Bedrock', [
+              '/iam-and-config',
+            ]),
             'using/how-to/configure-local-serving',
             'using/how-to/qualify-a-local-model',
             'using/how-to/use-chatgpt-subscription-via-codex',
@@ -69,48 +83,22 @@ const sidebars: SidebarsConfig = {
           label: 'Deploy & run',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Deploy Ethos in production',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/deploy-in-production' },
-              items: ['using/how-to/deploy-in-production/pm2-and-operate'],
-            },
-            {
-              type: 'category',
-              label: 'Deploy Ethos on AWS EC2',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/deploy-on-ec2' },
-              items: ['using/how-to/deploy-on-ec2/service-and-operate'],
-            },
-            {
-              type: 'category',
-              label: 'Run Ethos in Docker',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/run-in-docker' },
-              items: [
-                'using/how-to/run-in-docker/configuration',
-                'using/how-to/run-in-docker/healthcheck-run-kubernetes',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Run Ethos as a daemon',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/run-as-daemon' },
-              items: [
-                'using/how-to/run-as-daemon/launchd',
-                'using/how-to/run-as-daemon/systemd',
-                'using/how-to/run-as-daemon/windows-and-pm2',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Use zero mode',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/use-zero-mode' },
-              items: ['using/how-to/use-zero-mode/personality-session-model'],
-            },
+            splitDoc('using/how-to/deploy-in-production', 'Deploy Ethos in production', [
+              '/pm2-and-operate',
+            ]),
+            splitDoc('using/how-to/deploy-on-ec2', 'Deploy Ethos on AWS EC2', [
+              '/service-and-operate',
+            ]),
+            splitDoc('using/how-to/run-in-docker', 'Run Ethos in Docker', [
+              '/configuration',
+              '/healthcheck-run-kubernetes',
+            ]),
+            splitDoc('using/how-to/run-as-daemon', 'Run Ethos as a daemon', [
+              '/launchd',
+              '/systemd',
+              '/windows-and-pm2',
+            ]),
+            splitDoc('using/how-to/use-zero-mode', 'Use zero mode', ['/personality-session-model']),
           ],
         },
         {
@@ -118,13 +106,9 @@ const sidebars: SidebarsConfig = {
           label: 'Channels & bots',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Run multiple bots from one Ethos process',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/run-multiple-bots' },
-              items: ['using/how-to/run-multiple-bots/isolation-and-start'],
-            },
+            splitDoc('using/how-to/run-multiple-bots', 'Run multiple bots from one Ethos process', [
+              '/isolation-and-start',
+            ]),
             'using/how-to/run-channels-over-webhooks',
             'using/how-to/receive-files-via-telegram',
             'using/how-to/receive-files-via-slack',
@@ -138,23 +122,13 @@ const sidebars: SidebarsConfig = {
           items: [
             'using/how-to/local-voice',
             'using/how-to/voice-notes-on-channels',
-            {
-              type: 'category',
-              label: 'Run a wake satellite',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/run-a-wake-satellite' },
-              items: [
-                'using/how-to/run-a-wake-satellite/edge-stt-and-settings',
-                'using/how-to/run-a-wake-satellite/microphone-and-playout',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Give an agent a phone number',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/answer-phone-calls' },
-              items: ['using/how-to/answer-phone-calls/run-and-verify'],
-            },
+            splitDoc('using/how-to/run-a-wake-satellite', 'Run a wake satellite', [
+              '/edge-stt-and-settings',
+              '/microphone-and-playout',
+            ]),
+            splitDoc('using/how-to/answer-phone-calls', 'Give an agent a phone number', [
+              '/run-and-verify',
+            ]),
           ],
         },
         {
@@ -167,16 +141,10 @@ const sidebars: SidebarsConfig = {
             'using/how-to/use-team-memory',
             'using/how-to/group-chat-memory',
             'using/how-to/get-to-know-new-users',
-            {
-              type: 'category',
-              label: 'Peer two Ethos agents over A2A',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/peer-two-ethos-agents' },
-              items: [
-                'using/how-to/peer-two-ethos-agents/peer-identities',
-                'using/how-to/peer-two-ethos-agents/send-and-audit',
-              ],
-            },
+            splitDoc('using/how-to/peer-two-ethos-agents', 'Peer two Ethos agents over A2A', [
+              '/peer-identities',
+              '/send-and-audit',
+            ]),
           ],
         },
         {
@@ -185,31 +153,19 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/use-skills',
-            {
-              type: 'category',
-              label: 'Manage skill evolution',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/manage-skill-evolution' },
-              items: ['using/how-to/manage-skill-evolution/reject-rollback-archive'],
-            },
-            {
-              type: 'category',
-              label: "Review a personality's change request",
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/review-personality-change-requests' },
-              items: ['using/how-to/review-personality-change-requests/apply-decline-rollback'],
-            },
+            splitDoc('using/how-to/manage-skill-evolution', 'Manage skill evolution', [
+              '/reject-rollback-archive',
+            ]),
+            splitDoc(
+              'using/how-to/review-personality-change-requests',
+              "Review a personality's change request",
+              ['/apply-decline-rollback'],
+            ),
             'using/how-to/run-a-birth-ritual',
-            {
-              type: 'category',
-              label: 'Schedule tasks with cron',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/schedule-tasks-with-cron' },
-              items: [
-                'using/how-to/schedule-tasks-with-cron/test-and-manage',
-                'using/how-to/schedule-tasks-with-cron/job-behavior',
-              ],
-            },
+            splitDoc('using/how-to/schedule-tasks-with-cron', 'Schedule tasks with cron', [
+              '/test-and-manage',
+              '/job-behavior',
+            ]),
             'using/how-to/loop-over-tools-in-code',
             'using/how-to/run-tools-over-ssh',
           ],
@@ -219,27 +175,15 @@ const sidebars: SidebarsConfig = {
           label: 'Integrations & MCP',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Use Ethos as an MCP server',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/use-as-mcp-server' },
-              items: [
-                'using/how-to/use-as-mcp-server/export-a-personality',
-                'using/how-to/use-as-mcp-server/keys-and-http',
-                'using/how-to/use-as-mcp-server/dashboard',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Set up MCP for a personality',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/set-up-mcp-for-a-personality' },
-              items: [
-                'using/how-to/set-up-mcp-for-a-personality/web-path',
-                'using/how-to/set-up-mcp-for-a-personality/bearer-token',
-              ],
-            },
+            splitDoc('using/how-to/use-as-mcp-server', 'Use Ethos as an MCP server', [
+              '/export-a-personality',
+              '/keys-and-http',
+              '/dashboard',
+            ]),
+            splitDoc('using/how-to/set-up-mcp-for-a-personality', 'Set up MCP for a personality', [
+              '/web-path',
+              '/bearer-token',
+            ]),
             'using/how-to/migrate-from-openclaw',
           ],
         },
@@ -248,13 +192,9 @@ const sidebars: SidebarsConfig = {
           label: 'Dashboard & files',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Use the web dashboard',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/use-web-dashboard' },
-              items: ['using/how-to/use-web-dashboard/cron-mcp-chat-admin'],
-            },
+            splitDoc('using/how-to/use-web-dashboard', 'Use the web dashboard', [
+              '/cron-mcp-chat-admin',
+            ]),
             'using/how-to/use-admin-panel',
             'using/how-to/retrieve-agent-files',
             'using/how-to/upload-agent-files',
@@ -267,20 +207,14 @@ const sidebars: SidebarsConfig = {
           label: 'Approvals & identity',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Set up approval gates for dangerous tool calls',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/set-up-approval-gates' },
-              items: ['using/how-to/set-up-approval-gates/approval-surfaces'],
-            },
-            {
-              type: 'category',
-              label: 'Use a decision model',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/use-a-decision-model' },
-              items: ['using/how-to/use-a-decision-model/read-and-ask'],
-            },
+            splitDoc(
+              'using/how-to/set-up-approval-gates',
+              'Set up approval gates for dangerous tool calls',
+              ['/approval-surfaces'],
+            ),
+            splitDoc('using/how-to/use-a-decision-model', 'Use a decision model', [
+              '/read-and-ask',
+            ]),
             'using/how-to/approve-posts-before-sending',
             'using/how-to/audit-user-identity',
           ],
@@ -290,22 +224,16 @@ const sidebars: SidebarsConfig = {
           label: 'Ops & recovery',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Back up and restore an Ethos install',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/back-up-and-restore' },
-              items: ['using/how-to/back-up-and-restore/restore'],
-            },
+            splitDoc('using/how-to/back-up-and-restore', 'Back up and restore an Ethos install', [
+              '/restore',
+            ]),
             'using/how-to/recover-messages-after-a-crash',
             'using/how-to/monitor-with-grafana',
-            {
-              type: 'category',
-              label: 'Export traces to an OpenTelemetry collector',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/how-to/export-traces-otlp' },
-              items: ['using/how-to/export-traces-otlp/backends-privacy-delivery'],
-            },
+            splitDoc(
+              'using/how-to/export-traces-otlp',
+              'Export traces to an OpenTelemetry collector',
+              ['/backends-privacy-delivery'],
+            ),
             'using/how-to/safe-mode',
           ],
         },
@@ -314,64 +242,40 @@ const sidebars: SidebarsConfig = {
           label: 'Reference',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'CLI reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/reference/cli' },
-              items: [
-                'using/reference/cli/setup-and-chat',
-                'using/reference/cli/gateway-and-serve',
-                'using/reference/cli/evolve-and-learn',
-                'using/reference/cli/operations',
-                'using/reference/cli/diagnostics',
-                'using/reference/cli/maintenance',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'config.yaml reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/reference/config-yaml' },
-              items: [
-                'using/reference/config-yaml/provider-and-model',
-                'using/reference/config-yaml/model-registry',
-                'using/reference/config-yaml/memory',
-                'using/reference/config-yaml/telegram-slack-teams',
-                'using/reference/config-yaml/discord-slack-whatsapp',
-                'using/reference/config-yaml/bot-settings',
-                'using/reference/config-yaml/email-and-web',
-                'using/reference/config-yaml/runtime-and-retention',
-                'using/reference/config-yaml/operations',
-                'using/reference/config-yaml/learning',
-                'using/reference/config-yaml/voice',
-                'using/reference/config-yaml/voice-telephony',
-                'using/reference/config-yaml/voice-wake',
-                'using/reference/config-yaml/background-and-browser',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'MCP config reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/reference/mcp-config' },
-              items: [
-                'using/reference/mcp-config/auth-and-secrets',
-                'using/reference/mcp-config/scoping-and-examples',
-              ],
-            },
+            splitDoc('using/reference/cli', 'CLI reference', [
+              '/setup-and-chat',
+              '/gateway-and-serve',
+              '/evolve-and-learn',
+              '/operations',
+              '/diagnostics',
+              '/maintenance',
+            ]),
+            splitDoc('using/reference/config-yaml', 'config.yaml reference', [
+              '/provider-and-model',
+              '/model-registry',
+              '/memory',
+              '/telegram-slack-teams',
+              '/discord-slack-whatsapp',
+              '/bot-settings',
+              '/email-and-web',
+              '/runtime-and-retention',
+              '/operations',
+              '/learning',
+              '/voice',
+              '/voice-telephony',
+              '/voice-wake',
+              '/background-and-browser',
+            ]),
+            splitDoc('using/reference/mcp-config', 'MCP config reference', [
+              '/auth-and-secrets',
+              '/scoping-and-examples',
+            ]),
             'using/reference/messaging-json',
-            {
-              type: 'category',
-              label: 'Personality config reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'using/reference/personality-yaml' },
-              items: [
-                'using/reference/personality-yaml/identity-and-execution',
-                'using/reference/personality-yaml/tools-and-context',
-                'using/reference/personality-yaml/safety-voice-display',
-              ],
-            },
+            splitDoc('using/reference/personality-yaml', 'Personality config reference', [
+              '/identity-and-execution',
+              '/tools-and-context',
+              '/safety-voice-display',
+            ]),
             'using/reference/slash-commands',
           ],
         },
@@ -380,11 +284,23 @@ const sidebars: SidebarsConfig = {
           label: 'Explanation',
           collapsed: true,
           items: [
-            'using/explanation/what-is-a-personality',
+            splitDoc(
+              'using/explanation/what-is-a-personality',
+              'Why is personality the unit, not a system prompt?',
+              ['/isolation-and-switching'],
+            ),
             'using/explanation/built-in-personalities',
-            'using/explanation/what-is-a-skill',
+            splitDoc(
+              'using/explanation/what-is-a-skill',
+              'Why skills, separate from tools and personalities?',
+              ['/evolution-and-gating'],
+            ),
             'using/explanation/learning-inbox',
-            'using/explanation/memory-model',
+            splitDoc(
+              'using/explanation/memory-model',
+              'Why MEMORY.md and USER.md, not a vector store?',
+              ['/shared-rooms'],
+            ),
             'using/explanation/user-profiles',
             'using/explanation/dreaming',
             'using/explanation/sessions-and-history',
@@ -400,19 +316,39 @@ const sidebars: SidebarsConfig = {
       collapsible: false,
       className: 'sidebar-group sidebar-group--building',
       items: [
-        'building/quickstart',
+        splitDoc('building/quickstart', 'Quickstart', ['-2-add-a-tool']),
         {
           type: 'category',
           label: 'Tutorials',
           collapsed: true,
           items: [
-            'building/tutorials/write-your-first-tool',
+            splitDoc('building/tutorials/write-your-first-tool', 'Write your first tool', [
+              '-2-write-install-wire',
+              '-3-try-it-and-test',
+              '-4-progress-and-shape',
+            ]),
             'building/tutorials/first-custom-tool-with-capabilities',
-            'building/tutorials/add-an-llm-provider',
-            'building/tutorials/add-a-channel-adapter',
+            splitDoc('building/tutorials/add-an-llm-provider', 'Add an LLM provider', [
+              '-2-implement-the-provider',
+              '-3-wire-and-run',
+              '-4-tests-and-real-providers',
+            ]),
+            splitDoc('building/tutorials/add-a-channel-adapter', 'Add a channel adapter', [
+              '-2-implement-and-wire',
+              '-3-config-and-test',
+              '-4-sessions-streaming-voice',
+            ]),
             'building/tutorials/first-mission-control',
-            'building/tutorials/build-custom-dashboard',
-            'building/tutorials/build-a-plugin-home-panel',
+            splitDoc(
+              'building/tutorials/build-custom-dashboard',
+              'Build a custom ops dashboard with the SDK',
+              ['-2-send-and-assemble'],
+            ),
+            splitDoc('building/tutorials/build-a-plugin-home-panel', 'Build a plugin Home panel', [
+              '-2-panel-and-oauth',
+              '-3-tool-calls-tokens-chart',
+              '-4-build-and-verify',
+            ]),
           ],
         },
         {
@@ -420,61 +356,36 @@ const sidebars: SidebarsConfig = {
           label: 'How-to',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Create a plugin',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/create-a-plugin' },
-              items: [
-                'building/how-to/create-a-plugin/activate-and-register',
-                'building/how-to/create-a-plugin/test-and-install',
-                'building/how-to/create-a-plugin/local-dev-entry-point',
-                'building/how-to/create-a-plugin/local-dev-install-and-iterate',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Publish a plugin',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/publish-a-plugin' },
-              items: ['building/how-to/publish-a-plugin/test-and-publish'],
-            },
+            splitDoc('building/how-to/create-a-plugin', 'Create a plugin', [
+              '/activate-and-register',
+              '/test-and-install',
+              '/local-dev-entry-point',
+              '/local-dev-install-and-iterate',
+            ]),
+            splitDoc('building/how-to/publish-a-plugin', 'Publish a plugin', ['/test-and-publish']),
             'building/how-to/register-plugin-commands',
             'building/how-to/register-plugin-data-source',
             'building/how-to/write-an-llm-provider-plugin',
-            {
-              type: 'category',
-              label: 'Write a memory backend plugin',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/write-a-memory-backend-plugin' },
-              items: ['building/how-to/write-a-memory-backend-plugin/register-and-configure'],
-            },
-            {
-              type: 'category',
-              label: 'Add a memory provider',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/add-a-memory-provider' },
-              items: [
-                'building/how-to/add-a-memory-provider/implement',
-                'building/how-to/add-a-memory-provider/register-and-test',
-              ],
-            },
+            splitDoc(
+              'building/how-to/write-a-memory-backend-plugin',
+              'Write a memory backend plugin',
+              ['/register-and-configure'],
+            ),
+            splitDoc('building/how-to/add-a-memory-provider', 'Add a memory provider', [
+              '/implement',
+              '/register-and-test',
+            ]),
             'building/how-to/add-a-hook',
             'building/how-to/add-a-skill',
             'building/how-to/add-a-filesystem-tool',
             'building/how-to/add-a-network-tool',
             'building/how-to/add-a-stateful-tool',
             'building/how-to/point-sdk-at-ethos',
-            {
-              type: 'category',
-              label: 'Serve Ethos as an OpenAI-compatible backend',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/openai-server-chat' },
-              items: [
-                'building/how-to/openai-server-chat/clients-and-routing',
-                'building/how-to/openai-server-chat/retries-and-capabilities',
-              ],
-            },
+            splitDoc(
+              'building/how-to/openai-server-chat',
+              'Serve Ethos as an OpenAI-compatible backend',
+              ['/clients-and-routing', '/retries-and-capabilities'],
+            ),
             'building/how-to/connect-open-webui',
             'building/how-to/add-a-panel',
             'building/how-to/display-live-tool-events',
@@ -483,13 +394,9 @@ const sidebars: SidebarsConfig = {
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
             'building/how-to/consume-attachments-in-a-tool',
-            {
-              type: 'category',
-              label: 'Author a Canvas template',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/how-to/author-a-canvas-template' },
-              items: ['building/how-to/author-a-canvas-template/limits-and-render'],
-            },
+            splitDoc('building/how-to/author-a-canvas-template', 'Author a Canvas template', [
+              '/limits-and-render',
+            ]),
           ],
         },
         {
@@ -498,72 +405,40 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'building/reference/agent-event',
-            {
-              type: 'category',
-              label: 'Tool interface reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/tool-interface' },
-              items: [
-                'building/reference/tool-interface/tool-and-result',
-                'building/reference/tool-interface/tool-context',
-                'building/reference/tool-interface/result-reducers',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'LLM provider interface reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/llm-provider-interface' },
-              items: ['building/reference/llm-provider-interface/completion-types'],
-            },
+            splitDoc('building/reference/tool-interface', 'Tool interface reference', [
+              '/tool-and-result',
+              '/tool-context',
+              '/result-reducers',
+            ]),
+            splitDoc(
+              'building/reference/llm-provider-interface',
+              'LLM provider interface reference',
+              ['/completion-types'],
+            ),
             'building/reference/hook-registry',
             'building/reference/tool-registry',
             'building/reference/storage-interface',
-            {
-              type: 'category',
-              label: 'Plugin SDK reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/plugin-sdk' },
-              items: ['building/reference/plugin-sdk/helpers-and-testing'],
-            },
+            splitDoc('building/reference/plugin-sdk', 'Plugin SDK reference', [
+              '/helpers-and-testing',
+            ]),
             'building/reference/personality-registry',
             'building/reference/kanban-tools',
             'building/reference/team-tools',
             'building/reference/image-tools',
-            {
-              type: 'category',
-              label: 'Vision tools reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/vision-tools' },
-              items: ['building/reference/vision-tools/examples-and-video'],
-            },
-            {
-              type: 'category',
-              label: 'Browser tools reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/browser-tools' },
-              items: ['building/reference/browser-tools/profiles-and-login'],
-            },
+            splitDoc('building/reference/vision-tools', 'Vision tools reference', [
+              '/examples-and-video',
+            ]),
+            splitDoc('building/reference/browser-tools', 'Browser tools reference', [
+              '/profiles-and-login',
+            ]),
             'building/reference/messaging-tools',
-            {
-              type: 'category',
-              label: 'Outbound policy reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/outbound-policy' },
-              items: [
-                'building/reference/outbound-policy/lifecycle',
-                'building/reference/outbound-policy/review-and-delivery',
-              ],
-            },
+            splitDoc('building/reference/outbound-policy', 'Outbound policy reference', [
+              '/lifecycle',
+              '/review-and-delivery',
+            ]),
             'building/reference/card-catalog',
             'building/reference/skills-tools',
-            {
-              type: 'category',
-              label: 'Cron tools reference',
-              collapsed: true,
-              link: { type: 'doc', id: 'building/reference/cron-tools' },
-              items: ['building/reference/cron-tools/examples'],
-            },
+            splitDoc('building/reference/cron-tools', 'Cron tools reference', ['/examples']),
             'building/reference/watcher-tools',
             'building/reference/sdk-client',
             'building/reference/sdk-event-stream',
@@ -578,16 +453,32 @@ const sidebars: SidebarsConfig = {
           label: 'Explanation',
           collapsed: true,
           items: [
-            'building/explanation/personality-as-architecture',
+            splitDoc(
+              'building/explanation/personality-as-architecture',
+              'Why is personality architecture, not a system prompt?',
+              ['/filesystem-and-model', '/wiring-and-schema', '/plugins-identity-skills'],
+            ),
             'building/explanation/personality-governance',
             'building/explanation/decision-provider-governance',
             'building/explanation/tool-shape',
             'building/explanation/injection-at-construction',
-            'building/explanation/hook-execution-models',
+            splitDoc(
+              'building/explanation/hook-execution-models',
+              'Why are hooks split into three execution models?',
+              ['/claiming-model'],
+            ),
             'building/explanation/tool-result-budget',
-            'building/explanation/context-cost-optimization',
+            splitDoc(
+              'building/explanation/context-cost-optimization',
+              'Why does Ethos cost so much less to run than a naive agent loop?',
+              ['/layers-5-to-7'],
+            ),
             'building/explanation/audience-boundary',
-            'building/explanation/teams-and-meshes',
+            splitDoc(
+              'building/explanation/teams-and-meshes',
+              'When should you use a mesh of agents, not one?',
+              ['/code-review-example', '/routing-and-lifecycle'],
+            ),
             'building/explanation/why-orpc',
             'building/explanation/personality-from-outside',
             'building/explanation/sdk-memory-model',
@@ -612,9 +503,12 @@ const sidebars: SidebarsConfig = {
           items: [
             'platforms/cli',
             'platforms/desktop',
-            'platforms/telegram',
-            'platforms/discord',
-            'platforms/slack',
+            splitDoc('platforms/telegram', 'Telegram adapter', ['/routing', '/access']),
+            splitDoc('platforms/discord', 'Discord adapter', ['/routing', '/access']),
+            splitDoc('platforms/slack', 'Slack adapter', [
+              '/unaddressed-messages',
+              '/routing-and-access',
+            ]),
             'platforms/capability-matrix',
           ],
         },
@@ -623,84 +517,46 @@ const sidebars: SidebarsConfig = {
           label: 'Security',
           collapsed: true,
           items: [
-            {
-              type: 'category',
-              label: 'Security overview',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/overview' },
-              items: ['security/overview/trade-offs'],
-            },
-            {
-              type: 'category',
-              label: 'Security boundary',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/security-boundary' },
-              items: ['security/security-boundary/beyond-the-register'],
-            },
-            {
-              type: 'category',
-              label: 'Security white paper',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/white-paper' },
-              items: [
-                'security/white-paper/request-protection',
-                'security/white-paper/defenses-and-responsibilities',
-              ],
-            },
+            splitDoc('security/overview', 'Security overview', ['/trade-offs']),
+            splitDoc('security/security-boundary', 'Security boundary', ['/beyond-the-register']),
+            splitDoc('security/white-paper', 'Security white paper', [
+              '/request-protection',
+              '/defenses-and-responsibilities',
+            ]),
             'security/threat-model',
-            {
-              type: 'category',
-              label: 'Security controls',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/controls' },
-              items: [
-                'security/controls/channel',
-                'security/controls/tools',
-                'security/controls/filesystem',
-                'security/controls/network',
-                'security/controls/injection-watcher-redaction',
-                'security/controls/install',
-                'security/controls/audit-and-access',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Production hardening checklist',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/production-hardening-checklist' },
-              items: [
-                'security/production-hardening-checklist/secrets-filesystem-network',
-                'security/production-hardening-checklist/channels-injection-observability',
-                'security/production-hardening-checklist/keys-origins-plugins',
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Least-privilege tokens',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/least-privilege-tokens' },
-              items: [
-                'security/least-privilege-tokens/chat-platforms',
-                'security/least-privilege-tokens/work-tools',
-              ],
-            },
+            splitDoc('security/controls', 'Security controls', [
+              '/channel',
+              '/tools',
+              '/filesystem',
+              '/network',
+              '/injection-watcher-redaction',
+              '/install',
+              '/audit-and-access',
+            ]),
+            splitDoc('security/production-hardening-checklist', 'Production hardening checklist', [
+              '/secrets-filesystem-network',
+              '/channels-injection-observability',
+              '/keys-origins-plugins',
+            ]),
+            splitDoc('security/least-privilege-tokens', 'Least-privilege tokens', [
+              '/chat-platforms',
+              '/work-tools',
+            ]),
             'security/api-mediated-access',
             'security/process-isolation',
-            {
-              type: 'category',
-              label: 'Security hardening log',
-              collapsed: true,
-              link: { type: 'doc', id: 'security/security-fixes' },
-              items: [
-                'security/security-fixes/fixes-1-8',
-                'security/security-fixes/fixes-9-16',
-                'security/security-fixes/promptware',
-              ],
-            },
+            splitDoc('security/security-fixes', 'Security hardening log', [
+              '/fixes-1-8',
+              '/fixes-9-16',
+              '/promptware',
+            ]),
             'security/responsible-disclosure',
           ],
         },
-        'troubleshooting',
+        splitDoc('troubleshooting', 'Troubleshooting', [
+          '/tools-and-skills',
+          '/channels-and-cron',
+          '/error-reference',
+        ]),
         'changelog',
       ],
     },
