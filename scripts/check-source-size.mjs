@@ -11,8 +11,9 @@
 //   --write-initial  create the baseline from the current tree; refuses if it already exists
 // Exit 0 clean, 1 on violations (stderr, one per line).
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { classify, lineCount, listFiles } from './lib/source-files.mjs';
 
 const args = process.argv.slice(2);
 const flagValue = (flag) => {
@@ -28,20 +29,6 @@ const TRAILER = 'Size-Baseline-Approved-By';
 const SOURCE_WARN = 300;
 const LIMITS = { source: 800, test: 500, doc: 200, readme: 120, skill: 300 };
 const KINDS = Object.keys(LIMITS);
-const EXEMPT = Object.freeze([
-  'docs/content/changelog.md',
-  'CHANGELOG.md',
-  'docs/superpowers/plans/',
-  'plan/',
-  '.agents/skills/',
-  'CLAUDE.md',
-  'AGENTS.md',
-  'ARCHITECTURE.md',
-  'docs/decisions/',
-]);
-const WORKSPACE_ROOT = /^(packages\/safety\/[^/]+|packages\/[^/]+|extensions\/[^/]+|apps\/[^/]+)$/;
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist']);
-
 function git(cwd, gitArgs) {
   return execFileSync('git', gitArgs, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
@@ -56,53 +43,10 @@ function tryGit(gitArgs) {
   }
 }
 
-function walk(rel) {
-  const out = [];
-  for (const e of readdirSync(join(root, rel), { withFileTypes: true })) {
-    const childRel = rel === '' ? e.name : `${rel}/${e.name}`;
-    if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name)) out.push(...walk(childRel));
-    } else out.push(childRel);
-  }
-  return out;
-}
-
-function listFiles() {
-  if (rootGiven) return walk('');
-  return git(root, ['ls-files', '-z']).split('\0').filter(Boolean);
-}
-
-function classify(path) {
-  if (EXEMPT.some((e) => (e.endsWith('/') ? path.startsWith(e) : path === e))) return null;
-  if (/(^|\/)(node_modules|dist)\//.test(path)) return null;
-  if (path.endsWith('.md')) {
-    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-    if (
-      path.endsWith('/README.md') &&
-      WORKSPACE_ROOT.test(dir) &&
-      existsSync(join(root, dir, 'package.json'))
-    ) {
-      return 'readme';
-    }
-    if (/^skills\/(.*\/)?SKILL\.md$/.test(path)) return 'skill';
-    return 'doc';
-  }
-  if (/\.(ts|tsx)$/.test(path) && !path.endsWith('.d.ts')) {
-    return /\.test\.tsx?$/.test(path) || path.split('/').includes('__tests__') ? 'test' : 'source';
-  }
-  return null;
-}
-
-function lineCount(text) {
-  if (text === '') return 0;
-  const n = text.split('\n').length;
-  return text.endsWith('\n') ? n - 1 : n;
-}
-
 function measure() {
   const out = [];
-  for (const path of listFiles().sort()) {
-    const kind = classify(path);
+  for (const path of listFiles(root, rootGiven).sort()) {
+    const kind = classify(root, path);
     // existsSync skips files deleted in the working tree but still listed by `git ls-files`.
     if (!kind || !existsSync(join(root, path))) continue;
     out.push({ path, kind, lines: lineCount(readFileSync(join(root, path), 'utf8')) });
