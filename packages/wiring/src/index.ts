@@ -65,6 +65,8 @@ import {
 } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
+import { reportSessionRowIssue } from './session-row-issue-sink';
+import { describeSessionsDbHolders } from './sessions-repair/holders';
 import {
   buildSummarizerSystemPrompt,
   capSummary,
@@ -2128,6 +2130,8 @@ export function createSessionStore(
     ...(opts.retention?.minVacuumIntervalDays !== undefined
       ? { minVacuumIntervalDays: opts.retention.minVacuumIntervalDays }
       : {}),
+    onRowIssue: reportSessionRowIssue,
+    describeHolders: () => describeSessionsDbHolders(opts.dataDir),
   });
 }
 
@@ -2181,7 +2185,13 @@ export { parseDuration } from '@ethosagent/observability-sqlite';
 // apps/ethos/src/commands/zero-stream.ts) — re-exported so apps reach the
 // safety package through wiring (ARCHITECTURE.md Law 5).
 export { redactString } from '@ethosagent/safety-redact';
+// Raw-handle FTS health helpers for apps (doctor, sessions repair): functions
+// only, so the diagnostics-never-migrate class scan sees no store class.
 export {
+  classifyIntegrity,
+  type FtsProbe,
+  type IntegrityClass,
+  probeMessagesFts,
   summarizeUsageRows,
   type UsageAggregateRow,
   type UsageTotals,
@@ -2216,6 +2226,16 @@ export {
   type MemoryBackendSelection,
   type MemoryBundle,
 } from './memory-backend';
+// `ethos sessions repair` engine (plan session-db-repair §5.3): the CLI shim
+// reaches it through wiring (`l5-apps-through-wiring`). Only what apps import.
+export { setSessionRowIssueSink } from './session-row-issue-sink';
+export {
+  diagnoseSessionsDb,
+  integrityVerdict,
+  repairSessionsDb,
+  rowsSummary,
+  type SessionsDbReport,
+} from './sessions-repair/repair';
 
 // ---------------------------------------------------------------------------
 // Danger predicate (shared between CLI guard + web approval flow)

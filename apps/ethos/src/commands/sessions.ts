@@ -9,6 +9,7 @@ import {
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { runSessionsRepair } from './sessions-repair';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -324,6 +325,15 @@ function timeAgo(date: Date): string {
 }
 
 export async function runSessionsCommand(sub: string, argv: string[]): Promise<void> {
+  // `repair` must run BEFORE the store below is constructed: that constructor
+  // migrates, and a repair tool never migrates the file it is diagnosing.
+  // Pinned by __tests__/sessions-repair.test.ts ("runSessionsCommand repair leaves an
+  // old-schema file unmigrated").
+  if (sub === 'repair') {
+    const code = await runSessionsRepair(argv);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
   const dbPath = join(ethosDir(), 'sessions.db');
   const store = new SQLiteSessionStore(dbPath);
 
@@ -416,7 +426,7 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
 
       default:
         console.error(`Unknown sessions subcommand: ${sub}`);
-        console.log('Usage: ethos sessions [list | show | rename | delete | search]');
+        console.log('Usage: ethos sessions [list | show | rename | delete | search | repair]');
         process.exit(1);
     }
   } finally {

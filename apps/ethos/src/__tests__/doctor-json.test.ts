@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { divergeFts, seedSessionsDb } from '../commands/__tests__/sessions-db-fixture';
+import { checkDatabaseIntegrity, computeDoctorExit, sessionsFtsOf } from '../commands/doctor';
 
 // Shape test for the doctor --json output contract.
 // Full command path is not tested here since it loads real SDKs
@@ -107,5 +112,47 @@ describe('ethos doctor --json output shape', () => {
     const coreFailures = sdks.filter((s) => s.required && !s.loadable);
     const exitCode = coreFailures.length > 0 ? 1 : 0;
     expect(exitCode).toBe(1);
+  });
+});
+
+describe('doctor sessionsFts (plan session-db-repair D4)', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  const clean = {
+    coreFailure: false,
+    configuredMissing: false,
+    awsFailed: false,
+    requiredSecretMissing: false,
+    dbUnopenable: false,
+    gatewayStale: false,
+    channelRejected: false,
+    channelUnreachable: false,
+  };
+
+  it('sessionsFts is present and does not affect the exit code', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'doctor-json-fts-'));
+    dirs.push(dir);
+    divergeFts(await seedSessionsDb(dir));
+    const fts = sessionsFtsOf(await checkDatabaseIntegrity(dir));
+    expect(Object.keys(fts ?? {}).sort()).toEqual([
+      'dangling',
+      'indexedDocs',
+      'messages',
+      'unindexed',
+    ]);
+    expect(computeDoctorExit({ ...clean })).toBe(0);
+  });
+
+  it('drift > 0 is reported, and computeDoctorExit takes no drift input (signature pin)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'doctor-json-fts-'));
+    dirs.push(dir);
+    divergeFts(await seedSessionsDb(dir));
+    const fts = sessionsFtsOf(await checkDatabaseIntegrity(dir));
+    expect((fts?.unindexed ?? 0) + (fts?.dangling ?? 0)).toBeGreaterThan(0);
+    // computeDoctorExit has no drift input: nothing derived from the probe can reach it.
+    expect(computeDoctorExit({ ...clean, dbIntegrityFailed: false })).toBe(0);
   });
 });

@@ -1,6 +1,7 @@
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { isEthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import type { SessionsRepository } from '../../features/sessions/repository';
+import { SessionsRepository } from '../../features/sessions/repository';
 import { SessionsService } from '../../features/sessions/service';
 
 // Service tests run with mocked repositories — no HTTP, no FS, no SQLite.
@@ -82,6 +83,24 @@ describe('SessionsService', () => {
     const result = await service.list({});
     expect(result.items[0]?.createdAt).toBe('2026-04-01T00:00:00.000Z');
     expect(result.items[0]?.updatedAt).toBe('2026-04-02T00:00:00.000Z');
+  });
+
+  it('a session with an unparseable timestamp lists without a RangeError', async () => {
+    // Real store: the store degrades the bad timestamp to epoch, so the wire
+    // conversion's toISOString() has a valid Date to format.
+    const store = new SQLiteSessionStore(':memory:');
+    try {
+      const created = await store.createSession({ ...aSession, key: 'cli:bad-ts' });
+      (store as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+        .prepare('UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?')
+        .run('garbage', 'garbage', created.id);
+      const service = new SessionsService({ sessions: new SessionsRepository(store) });
+      const result = await service.list({});
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]?.createdAt).toBe('1970-01-01T00:00:00.000Z');
+    } finally {
+      store.close();
+    }
   });
 
   it('get throws SESSION_NOT_FOUND when the repository returns null', async () => {

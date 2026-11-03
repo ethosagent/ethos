@@ -99,8 +99,9 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import Database from '@ethosagent/sqlite';
+import type Database from '@ethosagent/sqlite';
 import { EthosError } from '@ethosagent/types';
+import { acquireDatabaseLockGate, DatabaseInUseError } from '../sessions-repair/gate';
 import { classifyHolder, currentBootId } from './holder-identity';
 import { MANIFEST_PATH, MANIFEST_VERSION, verifyArchive } from './manifest';
 import { ALL_SCOPES, classifyPath, isDatabasePath, type ScopeName } from './scopes';
@@ -375,22 +376,23 @@ function containedPath(root: string, rel: string): string {
  * lock.
  */
 function lockDatabase(dbPath: string): Database.Database | null {
-  if (!existsSync(dbPath)) return null;
-  let db: Database.Database | undefined;
   try {
-    db = new Database(dbPath);
-    db.exec('PRAGMA locking_mode = EXCLUSIVE');
-    db.exec('BEGIN IMMEDIATE');
-    db.exec('COMMIT');
-    return db;
+    return acquireDatabaseLockGate(dbPath);
   } catch (err) {
-    db?.close();
+    // Restore turns ANY gate failure into IMPORT_BLOCKED; the gate itself only
+    // wraps busy/locked as DatabaseInUseError and rethrows the rest raw.
+    const lockError =
+      err instanceof DatabaseInUseError
+        ? err.lockError
+        : err instanceof Error
+          ? err.message
+          : String(err);
     throw new EthosError({
       code: 'IMPORT_BLOCKED',
       cause: `${basename(dbPath)} is in use by another process`,
       action:
         'Stop anything using this Ethos home (ethos chat, serve, gateway, the desktop app) and retry.',
-      details: { path: dbPath, lockError: err instanceof Error ? err.message : String(err) },
+      details: { path: dbPath, lockError },
     });
   }
 }

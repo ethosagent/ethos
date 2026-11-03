@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import Database from '@ethosagent/sqlite';
 import { WAL_STORES } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FTS_DOWN_CONSEQUENCE } from '../../lib/sessions-db-advice';
 import {
   checkDatabaseIntegrity,
   checkSecretsDirMode,
@@ -14,8 +15,11 @@ import {
   checkTeamsDir,
   computeDoctorExit,
   describeSecretsDirMode,
+  integrityAdvice,
+  sessionsFtsOf,
 } from '../doctor';
 import { backupDir, countCronJobs, lastBackup } from '../status';
+import { blankFtsBlocks, divergeFts, seedSessionsDb, smashHeap } from './sessions-db-fixture';
 
 let stateDir: string;
 let prevStateDir: string | undefined;
@@ -51,12 +55,20 @@ describe('doctor — PRAGMA integrity_check per store', () => {
   });
 
   it('passes a healthy database', async () => {
-    makeDb(join(stateDir, 'sessions.db'));
+    makeDb(join(stateDir, 'goals.db'));
     const results = await checkDatabaseIntegrity(stateDir);
-    expect(results.find((r) => r.database === 'sessions.db')).toEqual({
-      database: 'sessions.db',
+    expect(results.find((r) => r.database === 'goals.db')).toEqual({
+      database: 'goals.db',
       status: 'ok',
     });
+  });
+
+  it('a throwing drift probe is surfaced, not swallowed, and the store stays ok', async () => {
+    makeDb(join(stateDir, 'sessions.db')); // integrity ok, but no messages table to probe
+    const row = (await checkDatabaseIntegrity(stateDir)).find((r) => r.database === 'sessions.db');
+    expect(row?.status).toBe('ok');
+    expect(row?.ftsProbeError).toContain('messages');
+    expect(row?.fts).toBeUndefined();
   });
 
   it('fails a database that is not one', async () => {
@@ -237,5 +249,76 @@ describe('status — last backup', () => {
     await mkdir(backupDir(), { recursive: true });
     await writeFile(join(backupDir(), '.lock'), '');
     expect(lastBackup()).toBeNull();
+  });
+});
+
+describe('doctor — sessions.db FTS damage (plan session-db-repair 4.2)', () => {
+  it('an FTS-damaged sessions.db is reported failed with kind fts', async () => {
+    blankFtsBlocks(await seedSessionsDb(stateDir));
+    const row = (await checkDatabaseIntegrity(stateDir)).find((r) => r.database === 'sessions.db');
+    expect(row?.status).toBe('failed');
+    expect(row?.kind).toBe('fts');
+  });
+
+  it('a heap-corrupted file is kind heap (keeps the restore advice)', async () => {
+    smashHeap(await seedSessionsDb(stateDir, 5000));
+    const row = (await checkDatabaseIntegrity(stateDir)).find((r) => r.database === 'sessions.db');
+    expect(row?.status).toBe('failed');
+    expect(row?.kind).toBe('heap');
+  });
+
+  it('a file that is not SQLite is kind unknown', async () => {
+    await writeFile(join(stateDir, 'sessions.db'), 'this is not a SQLite file');
+    const row = (await checkDatabaseIntegrity(stateDir)).find((r) => r.database === 'sessions.db');
+    expect(row?.kind).toBe('unknown');
+  });
+
+  it('other stores never carry a kind', async () => {
+    await writeFile(join(stateDir, 'goals.db'), 'this is not a SQLite file');
+    const row = (await checkDatabaseIntegrity(stateDir)).find((r) => r.database === 'goals.db');
+    expect(row?.status).toBe('failed');
+    expect(row?.kind).toBeUndefined();
+  });
+
+  it('integrityAdvice names sessions repair for fts/index and ethos import for heap/unknown', () => {
+    const fts = { database: 'sessions.db', status: 'failed', kind: 'fts' } as const;
+    const heap = { database: 'sessions.db', status: 'failed', kind: 'heap' } as const;
+    const other = { database: 'goals.db', status: 'failed' } as const;
+    const ok = { database: 'jobs.db', status: 'ok' } as const;
+
+    const ftsAdvice = integrityAdvice([fts, ok]);
+    expect(ftsAdvice).toContain(FTS_DOWN_CONSEQUENCE);
+    expect(ftsAdvice.some((l) => l.includes('ethos sessions repair --apply'))).toBe(true);
+    expect(ftsAdvice.some((l) => l.includes('ethos import'))).toBe(false);
+
+    const indexAdvice = integrityAdvice([{ ...fts, kind: 'index' }]);
+    expect(indexAdvice).not.toContain(FTS_DOWN_CONSEQUENCE);
+    expect(indexAdvice.some((l) => l.includes('ethos sessions repair --apply'))).toBe(true);
+
+    for (const bad of [[heap], [other]]) {
+      const advice = integrityAdvice(bad);
+      expect(advice.some((l) => l.includes('ethos import <archive>'))).toBe(true);
+      expect(advice.some((l) => l.includes('sessions repair'))).toBe(false);
+    }
+    const mixed = integrityAdvice([fts, other]);
+    expect(mixed.some((l) => l.includes('sessions repair --apply'))).toBe(true);
+    expect(mixed.some((l) => l.includes('ethos import'))).toBe(true);
+    expect(integrityAdvice([ok])).toEqual([]);
+  });
+
+  it('the drift probe reports unindexed rows and a healthy store as zero', async () => {
+    const db = await seedSessionsDb(stateDir);
+    expect(sessionsFtsOf(await checkDatabaseIntegrity(stateDir))).toMatchObject({
+      unindexed: 0,
+      dangling: 0,
+      messages: 20,
+    });
+    divergeFts(db);
+    const drift = sessionsFtsOf(await checkDatabaseIntegrity(stateDir));
+    expect((drift?.unindexed ?? 0) + (drift?.dangling ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('the drift probe skips a missing sessions.db', async () => {
+    expect(sessionsFtsOf(await checkDatabaseIntegrity(stateDir))).toBeNull();
   });
 });

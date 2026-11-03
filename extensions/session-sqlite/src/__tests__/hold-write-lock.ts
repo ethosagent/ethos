@@ -7,8 +7,16 @@ import { Worker } from 'node:worker_threads';
  * never release while the call under test blocks. Plain CommonJS source, so no
  * TypeScript transform is involved in the worker. Same shape as
  * `extensions/goal-store/src/__tests__/lease.test.ts`.
+ *
+ * `commitSql` runs inside the held transaction just before COMMIT, so the peer
+ * COMMITs a real write. A peer that commits is what makes another connection's
+ * deferred read-then-write transaction stale (SQLITE_BUSY_SNAPSHOT, 517).
  */
-export async function holdWriteLock(dbPath: string, holdMs = 300): Promise<Worker> {
+export async function holdWriteLock(
+  dbPath: string,
+  holdMs = 300,
+  commitSql?: string,
+): Promise<Worker> {
   const holder = new Worker(
     `const { DatabaseSync } = require('node:sqlite');
      const { workerData, parentPort } = require('node:worker_threads');
@@ -17,9 +25,10 @@ export async function holdWriteLock(dbPath: string, holdMs = 300): Promise<Worke
      db.exec('BEGIN IMMEDIATE');
      parentPort.postMessage('held');
      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, workerData.holdMs);
+     if (workerData.commitSql) db.exec(workerData.commitSql);
      db.exec('COMMIT');
      db.close();`,
-    { eval: true, workerData: { dbPath, holdMs } },
+    { eval: true, workerData: { dbPath, holdMs, commitSql } },
   );
   await new Promise<void>((resolve, reject) => {
     holder.once('message', () => resolve());

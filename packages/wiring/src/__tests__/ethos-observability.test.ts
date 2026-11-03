@@ -310,6 +310,30 @@ describe('EthosObservability', () => {
       ]);
     });
 
+    it('recordStorageRowIssue emits storage.row_issue at warn with metadata only', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      expect(ETHOS_EVENT_CATEGORIES).toContain('storage.row_issue');
+      obs.recordStorageRowIssue({
+        table: 'messages',
+        id: 'm1',
+        column: 'tool_calls',
+        reason: 'invalid_json',
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        category: 'storage.row_issue',
+        severity: 'warn',
+        details: { table: 'messages', id: 'm1', column: 'tool_calls', reason: 'invalid_json' },
+      });
+      expect(Object.keys(events[0]?.details ?? {}).sort()).toEqual([
+        'column',
+        'id',
+        'reason',
+        'table',
+      ]);
+    });
+
     it('recordDecisionToolCall emits decision.tool — info on ok, warn otherwise (decision-tool D7)', () => {
       const { writer, events } = makeFakeWriter();
       const obs = new EthosObservability(writer);

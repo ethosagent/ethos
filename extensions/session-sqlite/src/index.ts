@@ -15,6 +15,7 @@ import type {
   StoredDecision,
   StoredMessage,
 } from '@ethosagent/types';
+import { EthosError } from '@ethosagent/types';
 import { appendDecisionRow, readDecisionRows, SESSION_DECISIONS_SCHEMA } from './decisions';
 import { SqliteKeyValueStore } from './kv-store';
 import { readMessagePage } from './message-page';
@@ -29,6 +30,14 @@ export {
   SqliteApiKeyStore,
 } from './api-key-store';
 export { SQLiteContextLog } from './context-log';
+export {
+  classifyIntegrity,
+  deepCheckMessagesFts,
+  type FtsProbe,
+  type IntegrityClass,
+  probeMessagesFts,
+  rebuildMessagesFts,
+} from './fts-health';
 export {
   decideMigration,
   type MigrateSessionKeysOptions,
@@ -242,16 +251,60 @@ export interface SQLiteSessionStoreOptions {
   minVacuumIntervalDays?: number;
   /** Test seam for the interval clock. */
   now?: () => number;
+  /**
+   * Called when a row read degrades (bad JSON column, unparseable timestamp).
+   * Fires once per `table:id:column` per store instance. The issue carries ids
+   * and column names only, never row content. Pinned by
+   * `__tests__/row-tolerance.test.ts`.
+   */
+  onRowIssue?: (issue: RowIssue) => void;
+  /**
+   * Names the processes with sessions.db open. Called only after a write has
+   * failed with a busy error; a throw or rejection is swallowed so it can never
+   * mask the `DB_BUSY` error. Pinned by `__tests__/busy-error.test.ts`.
+   */
+  describeHolders?: () => Promise<string[]>;
 }
+
+/** One field of one row that was read in degraded form. Carries no row content. */
+export interface RowIssue {
+  table: 'sessions' | 'messages';
+  id: string;
+  column: 'metadata' | 'tool_calls' | 'content_blocks' | 'created_at' | 'updated_at' | 'timestamp';
+  reason: 'invalid_json' | 'invalid_timestamp';
+}
+
+type RowIssueSink = (issue: RowIssue) => void;
+
+/** Cap on the per-store dedup set so a long-lived process cannot grow it without bound. */
+const ROW_ISSUE_CAP = 1000;
+
+/**
+ * The `user_version` this build migrates `sessions.db` to. `ethos sessions repair`
+ * reads it to refuse a database written by a newer build (same refusal `migrate()`
+ * makes). Pinned by wiring `sessions-repair/__tests__/repair.test.ts`
+ * ("a newer user_version is refused").
+ */
+export const SESSIONS_DB_SCHEMA_VERSION = 1;
+
+/** How long a busy write waits before it fails (the `busy_timeout` pragma, ms). */
+const BUSY_TIMEOUT_MS = 5000;
 
 /** `store_meta` key holding the epoch-ms timestamp of the last automatic vacuum. */
 const LAST_VACUUM_KEY = 'last_vacuum_at';
 
-/** SQLITE_BUSY (5) / SQLITE_LOCKED (6) — a peer holds the write lock right now. */
-function isLockedError(err: unknown): boolean {
+/**
+ * SQLITE_BUSY (5) / SQLITE_LOCKED (6) and their extended codes (for example
+ * 261 BUSY_RECOVERY, 517 BUSY_SNAPSHOT) — a peer holds the lock right now.
+ * Masks `& 0xff` like the shim's own `isBusy`. Pinned by
+ * `__tests__/busy-error.test.ts`.
+ */
+export function isSqliteBusy(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const code = (err as { errcode?: unknown }).errcode;
-  return code === 5 || code === 6;
+  if (typeof code !== 'number') return false;
+  const primary = code & 0xff;
+  return primary === 5 || primary === 6;
 }
 
 export class SQLiteSessionStore implements SessionStore {
@@ -259,15 +312,49 @@ export class SQLiteSessionStore implements SessionStore {
   private readonly vacuumAfterPrune: boolean;
   private readonly minVacuumIntervalMs: number;
   private readonly now: () => number;
+  private readonly dbPath: string;
+  private readonly describeHolders: (() => Promise<string[]>) | undefined;
+  /** Per-store dedup (once per table:id:column); undefined when no `onRowIssue` is configured. */
+  private readonly noteRowIssue: RowIssueSink | undefined;
+  private readonly rowToSession = (r: SessionRow): Session => rowToSession(r, this.noteRowIssue);
+  private readonly rowToMessage = (r: MessageRow): StoredMessage =>
+    rowToMessage(r, this.noteRowIssue);
 
   constructor(dbPath: string, opts: SQLiteSessionStoreOptions = {}) {
+    this.dbPath = dbPath;
+    const onRowIssue = opts.onRowIssue;
+    if (onRowIssue) {
+      const seen = new Set<string>();
+      this.noteRowIssue = (issue) => {
+        const key = `${issue.table}:${issue.id}:${issue.column}`;
+        if (seen.has(key) || seen.size >= ROW_ISSUE_CAP) return;
+        seen.add(key);
+        onRowIssue(issue);
+      };
+    }
+    this.describeHolders = opts.describeHolders;
     this.db = new Database(dbPath);
     // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
     // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
-    this.db.pragma('busy_timeout = 5000');
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.migrate();
+    try {
+      this.db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('foreign_keys = ON');
+      // migrate() always ends in `addColumns` under BEGIN IMMEDIATE, so opening
+      // the store takes the write lock even on an up-to-date database.
+      this.migrate();
+    } catch (err) {
+      if (!isSqliteBusy(err)) {
+        this.db.close();
+        throw err;
+      }
+      // Synchronous constructor: `describeHolders` is async and cannot be
+      // awaited here, so holders stay [] and the generic "another Ethos
+      // process" wording is used. Pinned by `__tests__/busy-error.test.ts`.
+      const busy = this.busyError(err, []);
+      this.db.close();
+      throw busy;
+    }
     this.vacuumAfterPrune = opts.vacuumAfterPrune === true;
     this.minVacuumIntervalMs = Math.max(0, opts.minVacuumIntervalDays ?? 0) * 86_400_000;
     this.now = opts.now ?? Date.now;
@@ -284,7 +371,7 @@ export class SQLiteSessionStore implements SessionStore {
     // verbatim inside SESSION_SCHEMA.
     migrate(this.db, {
       name: 'session-sqlite',
-      targetVersion: 1,
+      targetVersion: SESSIONS_DB_SCHEMA_VERSION,
       baseline: SESSION_SCHEMA,
       migrations: {},
     });
@@ -395,54 +482,107 @@ export class SQLiteSessionStore implements SessionStore {
   // Session CRUD
   // ---------------------------------------------------------------------------
 
+  /** The handle's actual `busy_timeout` (a host or test may have changed it); failure path only. */
+  private busyTimeoutMs(): number {
+    try {
+      const rows = this.db.pragma('busy_timeout') as { timeout: number }[];
+      return rows[0]?.timeout ?? BUSY_TIMEOUT_MS;
+    } catch {
+      return BUSY_TIMEOUT_MS;
+    }
+  }
+
+  /**
+   * Run a synchronous write and translate a busy failure (the
+   * `busy_timeout` expired, or a stale snapshot) into `DB_BUSY`. Any other
+   * error propagates untouched. Used by the hot write methods only; the
+   * maintenance methods keep raw errors. Pinned by `__tests__/busy-error.test.ts`.
+   */
+  private async run<T>(op: () => T): Promise<T> {
+    try {
+      return op();
+    } catch (err) {
+      if (!isSqliteBusy(err)) throw err;
+      let holders: string[] = [];
+      if (this.describeHolders) {
+        try {
+          holders = await this.describeHolders();
+        } catch {
+          // Best effort: naming the holders must never mask the busy error.
+          holders = [];
+        }
+      }
+      throw this.busyError(err, holders);
+    }
+  }
+
+  /** The one `DB_BUSY` builder shared by `run()` and the constructor. */
+  private busyError(err: unknown, holders: string[]): EthosError {
+    const errcode = (err as { errcode: number }).errcode;
+    const waitedMs = this.busyTimeoutMs();
+    const named = holders.length > 0 ? holders.join(', ') : 'another Ethos process';
+    return new EthosError({
+      code: 'DB_BUSY',
+      cause: `sessions.db is locked by another process (waited ${waitedMs / 1000}s)`,
+      action: `Processes with it open: ${named}. Retry, or stop the one running a long operation (VACUUM, data recompute-costs).`,
+      details: { path: this.dbPath, errcode, waitedMs, holders },
+    });
+  }
+
   async createSession(data: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db
-      .prepare(
-        `INSERT INTO sessions
+    await this.run(() =>
+      this.db
+        .prepare(
+          `INSERT INTO sessions
          (id, key, platform, model, provider, personality_id, parent_session_id, working_dir,
           title, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
           estimated_cost_usd, api_call_count, compaction_count, metadata, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        id,
-        data.key,
-        data.platform,
-        data.model,
-        data.provider,
-        data.personalityId ?? null,
-        data.parentSessionId ?? null,
-        data.workingDir ?? null,
-        data.title ?? null,
-        data.usage.inputTokens,
-        data.usage.outputTokens,
-        data.usage.cacheReadTokens,
-        data.usage.cacheCreationTokens,
-        data.usage.estimatedCostUsd,
-        data.usage.apiCallCount,
-        data.usage.compactionCount,
-        data.metadata ? JSON.stringify(data.metadata) : null,
-        now,
-        now,
-      );
+        )
+        .run(
+          id,
+          data.key,
+          data.platform,
+          data.model,
+          data.provider,
+          data.personalityId ?? null,
+          data.parentSessionId ?? null,
+          data.workingDir ?? null,
+          data.title ?? null,
+          data.usage.inputTokens,
+          data.usage.outputTokens,
+          data.usage.cacheReadTokens,
+          data.usage.cacheCreationTokens,
+          data.usage.estimatedCostUsd,
+          data.usage.apiCallCount,
+          data.usage.compactionCount,
+          data.metadata ? JSON.stringify(data.metadata) : null,
+          now,
+          now,
+        ),
+    );
 
     return { ...data, id, createdAt: new Date(now), updatedAt: new Date(now) };
   }
 
   async getSession(id: string): Promise<Session | null> {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
-    return row ? rowToSession(row as SessionRow) : null;
+    return row ? this.rowToSession(row as SessionRow) : null;
   }
 
   async getSessionByKey(key: string): Promise<Session | null> {
     const row = this.db.prepare('SELECT * FROM sessions WHERE key = ?').get(key);
-    return row ? rowToSession(row as SessionRow) : null;
+    return row ? this.rowToSession(row as SessionRow) : null;
   }
 
   async updateSession(id: string, patch: Partial<Session>): Promise<void> {
+    return this.run(() => this.updateSessionSync(id, patch));
+  }
+
+  private updateSessionSync(id: string, patch: Partial<Session>): void {
     const now = new Date().toISOString();
     const sets: string[] = ['updated_at = ?'];
     const values: unknown[] = [now];
@@ -539,7 +679,7 @@ export class SQLiteSessionStore implements SessionStore {
       )
       .all(...values, limit, offset);
 
-    return (rows as SessionRow[]).map(rowToSession);
+    return (rows as SessionRow[]).map(this.rowToSession);
   }
 
   // ---------------------------------------------------------------------------
@@ -550,36 +690,38 @@ export class SQLiteSessionStore implements SessionStore {
     const id = randomUUID();
     const timestamp = new Date().toISOString();
 
-    this.db
-      .prepare(
-        `INSERT INTO messages
+    await this.run(() =>
+      this.db
+        .prepare(
+          `INSERT INTO messages
          (id, session_id, role, content, tool_call_id, tool_name, tool_calls,
           content_blocks, input_tokens, output_tokens, cache_read_tokens,
           cache_creation_tokens, estimated_cost_usd, request_system_tokens,
           request_tools_tokens, request_messages_tokens, trace_id, is_error, timestamp)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        id,
-        data.sessionId,
-        data.role,
-        data.content,
-        data.toolCallId ?? null,
-        data.toolName ?? null,
-        data.toolCalls ? JSON.stringify(data.toolCalls) : null,
-        data.contentBlocks ? JSON.stringify(data.contentBlocks) : null,
-        data.usage?.inputTokens ?? null,
-        data.usage?.outputTokens ?? null,
-        data.usage?.cacheReadTokens ?? null,
-        data.usage?.cacheCreationTokens ?? null,
-        data.usage?.estimatedCostUsd ?? null,
-        data.usage?.requestTokens?.system ?? null,
-        data.usage?.requestTokens?.tools ?? null,
-        data.usage?.requestTokens?.messages ?? null,
-        data.traceId ?? null,
-        data.isError === undefined ? null : data.isError ? 1 : 0,
-        timestamp,
-      );
+        )
+        .run(
+          id,
+          data.sessionId,
+          data.role,
+          data.content,
+          data.toolCallId ?? null,
+          data.toolName ?? null,
+          data.toolCalls ? JSON.stringify(data.toolCalls) : null,
+          data.contentBlocks ? JSON.stringify(data.contentBlocks) : null,
+          data.usage?.inputTokens ?? null,
+          data.usage?.outputTokens ?? null,
+          data.usage?.cacheReadTokens ?? null,
+          data.usage?.cacheCreationTokens ?? null,
+          data.usage?.estimatedCostUsd ?? null,
+          data.usage?.requestTokens?.system ?? null,
+          data.usage?.requestTokens?.tools ?? null,
+          data.usage?.requestTokens?.messages ?? null,
+          data.traceId ?? null,
+          data.isError === undefined ? null : data.isError ? 1 : 0,
+          timestamp,
+        ),
+    );
 
     return { ...data, id, timestamp: new Date(timestamp) };
   }
@@ -611,14 +753,14 @@ export class SQLiteSessionStore implements SessionStore {
             )
             .all(sessionId, offset);
 
-    return (rows as MessageRow[]).map(rowToMessage);
+    return (rows as MessageRow[]).map(this.rowToMessage);
   }
 
   async getMessagePage(
     sessionId: string,
     options: MessagePageOptions,
   ): Promise<MessagePage | null> {
-    return readMessagePage<MessageRow>(this.db, sessionId, options, rowToMessage);
+    return readMessagePage<MessageRow>(this.db, sessionId, options, this.rowToMessage);
   }
 
   // ---------------------------------------------------------------------------
@@ -629,7 +771,7 @@ export class SQLiteSessionStore implements SessionStore {
     sessionId: string,
     event: Extract<AgentEvent, { type: 'decision' }>,
   ): Promise<StoredDecision> {
-    return appendDecisionRow(this.db, sessionId, event);
+    return this.run(() => appendDecisionRow(this.db, sessionId, event));
   }
 
   async getDecisions(
@@ -660,7 +802,9 @@ export class SQLiteSessionStore implements SessionStore {
     }
 
     values.push(sessionId);
-    this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    await this.run(() =>
+      this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -709,7 +853,7 @@ export class SQLiteSessionStore implements SessionStore {
       messageId: r.id,
       snippet: extractSnippet(r.content, query),
       score: -r.score, // bm25 returns negative; flip so higher = better
-      timestamp: new Date(r.timestamp),
+      timestamp: parseDateColumn(r.timestamp, 'messages', r.id, 'timestamp', this.noteRowIssue),
     }));
   }
 
@@ -722,28 +866,30 @@ export class SQLiteSessionStore implements SessionStore {
   ): Promise<CompressionEvent> {
     const id = randomUUID();
     const createdAt = new Date();
-    this.db
-      .prepare(
-        `INSERT INTO compressions
+    await this.run(() =>
+      this.db
+        .prepare(
+          `INSERT INTO compressions
          (id, session_id, created_at, engine_name, original_count, kept_count,
           summary_text, kept_from_message_id, summary_tokens, pre_total_tokens,
           post_total_tokens, duration_ms)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        id,
-        event.sessionId,
-        createdAt.toISOString(),
-        event.engineName,
-        event.originalCount,
-        event.keptCount,
-        event.summaryText ?? null,
-        event.keptFromMessageId ?? null,
-        event.summaryTokens,
-        event.preTotalTokens,
-        event.postTotalTokens,
-        event.durationMs,
-      );
+        )
+        .run(
+          id,
+          event.sessionId,
+          createdAt.toISOString(),
+          event.engineName,
+          event.originalCount,
+          event.keptCount,
+          event.summaryText ?? null,
+          event.keptFromMessageId ?? null,
+          event.summaryTokens,
+          event.preTotalTokens,
+          event.postTotalTokens,
+          event.durationMs,
+        ),
+    );
     return { ...event, id, createdAt };
   }
 
@@ -764,20 +910,25 @@ export class SQLiteSessionStore implements SessionStore {
   async recordTurnStart(
     sessionId: string,
   ): Promise<{ turnNumber: number; lastCompactionTurn: number }> {
-    const row = this.db
-      .prepare(
-        `UPDATE sessions SET turn_count = turn_count + 1
+    const row = await this.run(
+      () =>
+        this.db
+          .prepare(
+            `UPDATE sessions SET turn_count = turn_count + 1
          WHERE id = ?
          RETURNING turn_count AS turnNumber, last_compaction_turn AS lastCompactionTurn`,
-      )
-      .get(sessionId) as { turnNumber: number; lastCompactionTurn: number } | undefined;
+          )
+          .get(sessionId) as { turnNumber: number; lastCompactionTurn: number } | undefined,
+    );
     return row ?? { turnNumber: 0, lastCompactionTurn: 0 };
   }
 
   async recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void> {
-    this.db
-      .prepare('UPDATE sessions SET last_compaction_turn = ? WHERE id = ?')
-      .run(turnNumber, sessionId);
+    await this.run(() =>
+      this.db
+        .prepare('UPDATE sessions SET last_compaction_turn = ? WHERE id = ?')
+        .run(turnNumber, sessionId),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -795,6 +946,10 @@ export class SQLiteSessionStore implements SessionStore {
    * `__tests__/undo-turns.test.ts`.
    */
   async undoTurns(sessionId: string, n: number): Promise<number> {
+    return this.run(() => this.undoTurnsSync(sessionId, n));
+  }
+
+  private undoTurnsSync(sessionId: string, n: number): number {
     if (n < 1) return 0;
     const users = this.db
       .prepare(
@@ -820,12 +975,14 @@ export class SQLiteSessionStore implements SessionStore {
     // The session's token/cost columns are a derived cache of the surviving
     // `messages` rows (analytics decision 9), so the soft-delete and the
     // rollup subtraction have to land together or the cache goes stale.
-    this.db.transaction(() => {
-      this.subtractMessageUsage(sessionId, toDelete);
-      this.db
-        .prepare(`UPDATE messages SET deleted_at = ? WHERE id IN (${placeholders})`)
-        .run(now, ...toDelete);
-    })();
+    this.db
+      .transaction(() => {
+        this.subtractMessageUsage(sessionId, toDelete);
+        this.db
+          .prepare(`UPDATE messages SET deleted_at = ? WHERE id IN (${placeholders})`)
+          .run(now, ...toDelete);
+      })
+      .immediate();
     return turns;
   }
 
@@ -998,7 +1155,7 @@ export class SQLiteSessionStore implements SessionStore {
             'SELECT *, rowid AS _row FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT 1',
           )
           .get();
-    return row ? rowToSession(row as SessionRow) : null;
+    return row ? this.rowToSession(row as SessionRow) : null;
   }
 
   async findByTitle(query: string): Promise<Session[]> {
@@ -1007,13 +1164,13 @@ export class SQLiteSessionStore implements SessionStore {
     const exact = this.db
       .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
       .all(lower) as SessionRow[];
-    if (exact.length > 0) return exact.map(rowToSession);
+    if (exact.length > 0) return exact.map(this.rowToSession);
     // 2. Fragment match (case-insensitive substring). `instr`, not LIKE, so a
     //    `%` or `_` in the query matches only itself.
     const fragment = this.db
       .prepare('SELECT * FROM sessions WHERE instr(LOWER(title), ?) > 0')
       .all(lower) as SessionRow[];
-    return fragment.map(rowToSession);
+    return fragment.map(this.rowToSession);
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {
@@ -1054,7 +1211,7 @@ export class SQLiteSessionStore implements SessionStore {
       if (!this.claimVacuumWindow()) return;
       await this.vacuum();
     } catch (err) {
-      if (isLockedError(err)) return;
+      if (isSqliteBusy(err)) return;
       throw err;
     }
   }
@@ -1273,7 +1430,39 @@ interface CompressionRow {
   duration_ms: number;
 }
 
-function rowToSession(r: SessionRow): Session {
+/** `JSON.parse` that degrades a SyntaxError to `undefined` and reports it. Any other error propagates. */
+function parseJsonColumn<T>(
+  raw: string | null,
+  table: RowIssue['table'],
+  id: string,
+  column: RowIssue['column'],
+  report: RowIssueSink | undefined,
+): T | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+    report?.({ table, id, column, reason: 'invalid_json' });
+    return undefined;
+  }
+}
+
+/** An unparseable timestamp becomes epoch (an honest "unknown") and is reported. */
+function parseDateColumn(
+  raw: string,
+  table: RowIssue['table'],
+  id: string,
+  column: RowIssue['column'],
+  report: RowIssueSink | undefined,
+): Date {
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) return date;
+  report?.({ table, id, column, reason: 'invalid_timestamp' });
+  return new Date(0);
+}
+
+function rowToSession(r: SessionRow, report: RowIssueSink | undefined): Session {
   return {
     id: r.id,
     key: r.key,
@@ -1294,13 +1483,19 @@ function rowToSession(r: SessionRow): Session {
       apiCallCount: r.api_call_count,
       compactionCount: r.compaction_count,
     },
-    metadata: r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : undefined,
-    createdAt: new Date(r.created_at),
-    updatedAt: new Date(r.updated_at),
+    metadata: parseJsonColumn<Record<string, unknown>>(
+      r.metadata,
+      'sessions',
+      r.id,
+      'metadata',
+      report,
+    ),
+    createdAt: parseDateColumn(r.created_at, 'sessions', r.id, 'created_at', report),
+    updatedAt: parseDateColumn(r.updated_at, 'sessions', r.id, 'updated_at', report),
   };
 }
 
-function rowToMessage(r: MessageRow): StoredMessage {
+function rowToMessage(r: MessageRow, report: RowIssueSink | undefined): StoredMessage {
   return {
     id: r.id,
     sessionId: r.session_id,
@@ -1308,10 +1503,20 @@ function rowToMessage(r: MessageRow): StoredMessage {
     content: r.content,
     toolCallId: r.tool_call_id ?? undefined,
     toolName: r.tool_name ?? undefined,
-    toolCalls: r.tool_calls ? (JSON.parse(r.tool_calls) as StoredMessage['toolCalls']) : undefined,
-    contentBlocks: r.content_blocks
-      ? (JSON.parse(r.content_blocks) as StoredMessage['contentBlocks'])
-      : undefined,
+    toolCalls: parseJsonColumn<NonNullable<StoredMessage['toolCalls']>>(
+      r.tool_calls,
+      'messages',
+      r.id,
+      'tool_calls',
+      report,
+    ),
+    contentBlocks: parseJsonColumn<NonNullable<StoredMessage['contentBlocks']>>(
+      r.content_blocks,
+      'messages',
+      r.id,
+      'content_blocks',
+      report,
+    ),
     usage:
       r.input_tokens != null
         ? {
@@ -1336,7 +1541,7 @@ function rowToMessage(r: MessageRow): StoredMessage {
     traceId: r.trace_id ?? undefined,
     // NULL is "never recorded", not "succeeded" — see StoredMessage.isError.
     isError: r.is_error === null ? undefined : r.is_error !== 0,
-    timestamp: new Date(r.timestamp),
+    timestamp: parseDateColumn(r.timestamp, 'messages', r.id, 'timestamp', report),
   };
 }
 

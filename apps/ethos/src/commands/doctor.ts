@@ -50,12 +50,14 @@ import {
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
+import type { FtsProbe, IntegrityClass } from '@ethosagent/wiring';
 import {
   buildExecutionPosture,
   type ContainerizedDetectionInput,
   resolveCharacterSheetDecisions,
 } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
+import { FTS_DOWN_CONSEQUENCE } from '../lib/sessions-db-advice';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
 import { createLLM, getSecretsResolver, getStorage } from '../wiring';
@@ -464,7 +466,28 @@ export interface IntegrityResult {
   status: 'ok' | 'absent' | 'failed';
   /** What `PRAGMA integrity_check` said, or why it could not be run. */
   detail?: string;
+  /**
+   * Set only for a failed `sessions.db`: which repair class the verdict is
+   * (`classifyIntegrity`). `fts`/`index` are fixed by `ethos sessions repair`;
+   * `heap`/`unknown` need a restore. Pinned by doctor-status-stores.test.ts.
+   */
+  kind?: Exclude<IntegrityClass, 'ok'>;
+  /**
+   * Set only for an `ok` `sessions.db` that has an FTS index: row-set drift
+   * between `messages` and `messages_fts_docsize`, probed on the same handle as
+   * the integrity check. A heuristic that NEVER changes `computeDoctorExit` (D4,
+   * pinned by doctor-json.test.ts "exit stays 0 with drift > 0").
+   */
+  fts?: SessionsFtsDrift;
+  /**
+   * Set only for an `ok` `sessions.db` whose drift probe threw: the probe could
+   * not run, so no drift verdict exists. Never affects `computeDoctorExit`.
+   * Pinned by doctor-status-stores.test.ts ("a throwing drift probe is surfaced").
+   */
+  ftsProbeError?: string;
 }
+
+export type SessionsFtsDrift = Omit<FtsProbe, 'ftsPresent'>;
 
 /** What one `WAL_STORES` pattern names on THIS machine. */
 interface StoreExpansion {
@@ -514,7 +537,9 @@ function expandStorePath(dataDir: string, pattern: string): StoreExpansion {
  * different questions.
  */
 export async function checkDatabaseIntegrity(dataDir: string): Promise<IntegrityResult[]> {
-  const { WAL_STORES } = await import('@ethosagent/wiring');
+  const { WAL_STORES, classifyIntegrity, integrityVerdict, probeMessagesFts } = await import(
+    '@ethosagent/wiring'
+  );
   const { default: Database } = await import('@ethosagent/sqlite');
 
   const paths = new Set<string>();
@@ -543,28 +568,98 @@ export async function checkDatabaseIntegrity(dataDir: string): Promise<Integrity
       // would report a healthy store as corrupt. `integrity_check` itself
       // writes nothing.
       db = new Database(full);
-      const rows: unknown[] = db.prepare('PRAGMA integrity_check').all();
-      const first = rows[0];
-      const verdict =
-        first && typeof first === 'object' && 'integrity_check' in first
-          ? String(first.integrity_check)
-          : 'no result';
-      out.push(
-        verdict === 'ok'
-          ? { database: rel, status: 'ok' }
-          : { database: rel, status: 'failed', detail: verdict },
-      );
+      const handle = db;
+      const verdict = integrityVerdict(handle);
+      if (verdict.trim() === 'ok') {
+        let drift: DriftProbe | undefined;
+        if (rel === 'sessions.db') {
+          // Plan D6: the probe is read-only SQL; query_only makes that a guarantee.
+          // Set after integrity_check, on a handle that closes right after.
+          handle.exec('PRAGMA query_only = ON');
+          drift = driftOf(() => probeMessagesFts(handle));
+        }
+        out.push({
+          database: rel,
+          status: 'ok',
+          ...(drift?.fts ? { fts: drift.fts } : {}),
+          ...(drift?.error ? { ftsProbeError: drift.error } : {}),
+        });
+      } else {
+        const result: IntegrityResult = {
+          database: rel,
+          status: 'failed',
+          detail: verdict.split('\n')[0] || 'no result',
+        };
+        if (rel === 'sessions.db') {
+          const kind = classifyIntegrity(verdict, handle);
+          if (kind !== 'ok') result.kind = kind;
+        }
+        out.push(result);
+      }
     } catch (err) {
       out.push({
         database: rel,
         status: 'failed',
         detail: err instanceof Error ? err.message : String(err),
+        ...(rel === 'sessions.db' ? { kind: 'unknown' as const } : {}),
       });
     } finally {
       db?.close();
     }
   }
   return out;
+}
+
+/**
+ * FTS drift from a probe on the already-open `sessions.db` handle: undefined when there is
+ * no FTS table, `{ error }` when the probe threw (surfaced, never swallowed). Read-only SQL on the caller's raw handle, never
+ * `SQLiteSessionStore`, so it cannot migrate or write (pinned by
+ * diagnostics-never-migrate.test.ts).
+ */
+function driftOf(probe: () => FtsProbe): DriftProbe | undefined {
+  try {
+    const p = probe();
+    if (!p.ftsPresent) return undefined;
+    return {
+      fts: {
+        messages: p.messages,
+        indexedDocs: p.indexedDocs,
+        unindexed: p.unindexed,
+        dangling: p.dangling,
+      },
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+interface DriftProbe {
+  fts?: SessionsFtsDrift;
+  error?: string;
+}
+
+/** The `sessions.db` FTS drift carried by a `checkDatabaseIntegrity` result, or null. */
+export function sessionsFtsOf(results: readonly IntegrityResult[]): SessionsFtsDrift | null {
+  return results.find((r) => r.database === 'sessions.db')?.fts ?? null;
+}
+
+/**
+ * The advice lines under a failed store-integrity check: `ethos sessions repair`
+ * for an fts/index class, a backup restore for anything else. Pure; pinned by
+ * doctor-status-stores.test.ts ("integrityAdvice ...").
+ */
+export function integrityAdvice(results: readonly IntegrityResult[]): string[] {
+  const broken = results.filter((r) => r.status === 'failed');
+  const repairable = broken.filter((r) => r.kind === 'fts' || r.kind === 'index');
+  const lines: string[] = [];
+  if (repairable.some((r) => r.kind === 'fts')) lines.push(FTS_DOWN_CONSEQUENCE);
+  if (repairable.length > 0) {
+    lines.push('Run `ethos sessions repair --apply` (a verbatim copy is taken first)');
+  }
+  if (broken.some((r) => !repairable.includes(r))) {
+    lines.push('Restore from a backup: `ethos import <archive>`');
+  }
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,6 +1513,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       awsSecrets: awsSecretsStatus,
       db: { ok: db.ok, absent: db.absent, ...(db.error ? { error: db.error } : {}) },
       storeIntegrity: integrity,
+      sessionsFts: sessionsFtsOf(integrity),
       inboundSpool: await inboundSpoolReportFor(resolvedConfig ?? config),
       secretsDir,
       stateDirFilesystem,
@@ -1745,9 +1841,28 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     for (const row of broken) {
       console.log(`  ${c.red}✗${c.reset}  ${row.database}: ${c.dim}${row.detail}${c.reset}`);
     }
+    for (const line of integrityAdvice(integrity)) {
+      console.log(`  ${c.dim}${line}${c.reset}`);
+    }
+  }
+  const probeError = integrity.find((r) => r.database === 'sessions.db')?.ftsProbeError;
+  if (probeError) {
     console.log(
-      `  ${c.dim}Restore from a backup: ${c.reset}${c.bold}ethos import <archive>${c.reset}`,
+      `  ${c.yellow}!${c.reset}  FTS drift check could not run: ${c.dim}${probeError}${c.reset}`,
     );
+  }
+  const ftsDrift = sessionsFtsOf(integrity);
+  if (ftsDrift) {
+    const drifted = ftsDrift.unindexed + ftsDrift.dangling;
+    if (drifted > 0) {
+      console.log(
+        `  ${c.yellow}!${c.reset}  sessions.db search index out of step: ${ftsDrift.unindexed} unindexed, ${ftsDrift.dangling} dangling ${c.dim}(run \`ethos sessions repair\`)${c.reset}`,
+      );
+    } else {
+      console.log(
+        `  ${c.green}✓${c.reset}  sessions.db search index in step ${c.dim}(${ftsDrift.messages} messages)${c.reset}`,
+      );
+    }
   }
   console.log('');
 

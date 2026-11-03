@@ -173,4 +173,18 @@ describe('SQLiteSessionStore post-prune vacuum', () => {
     expect(await store.pruneOldSessions(cutoff())).toBe(1);
     expect(vacuum).toHaveBeenCalledTimes(1);
   });
+
+  it('a BUSY_SNAPSHOT-coded vacuum failure is a skipped pass', async () => {
+    const store = makeStore({
+      vacuumAfterPrune: true,
+      minVacuumIntervalDays: 7,
+      now: () => Date.parse('2026-01-01T00:00:00.000Z'),
+    });
+    const stale = Object.assign(new Error('database is locked'), { errcode: 517 });
+    const vacuum = vi.spyOn(store, 'vacuum').mockRejectedValue(stale);
+
+    await seedStale(store, 'stale-1');
+    await expect(store.pruneOldSessions(cutoff())).resolves.toBe(1);
+    expect(vacuum).toHaveBeenCalledTimes(1);
+  });
 });

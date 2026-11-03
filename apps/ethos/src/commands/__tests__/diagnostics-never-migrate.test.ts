@@ -24,8 +24,15 @@ import { INBOUND_SPOOL_SCHEMA_VERSION, SQLiteInboundSpool } from '@ethosagent/in
 import Database from '@ethosagent/sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkInboundSpool, checkSessionsDb, runFunnelReport } from '../doctor';
+import {
+  checkDatabaseIntegrity,
+  checkInboundSpool,
+  checkSessionsDb,
+  runFunnelReport,
+  sessionsFtsOf,
+} from '../doctor';
 import { readGatewayStatus, runGatewaySpool } from '../gateway-status';
+import { divergeFts, seedSessionsDb } from './sessions-db-fixture';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
@@ -163,6 +170,31 @@ describe('ethos doctor — sessions.db', () => {
     setVersion(path, 99);
     expect(await checkSessionsDb(new FsStorage())).toEqual({ ok: true, absent: false });
     expect(shape(path).version).toBe(99);
+  });
+});
+
+describe('ethos doctor — sessions FTS drift probe', () => {
+  it('leaves user_version, table set and file mtime unchanged', async () => {
+    const path = await seedSessionsDb(dir);
+    divergeFts(path);
+    const before = { shape: shape(path), mtime: statSync(path).mtimeMs };
+    const drift = sessionsFtsOf(await checkDatabaseIntegrity(dir));
+    expect(drift).not.toBeNull();
+    expect(shape(path)).toEqual(before.shape);
+    expect(statSync(path).mtimeMs).toBe(before.mtime);
+  });
+
+  it('does not create or migrate a file that is not there', async () => {
+    expect(sessionsFtsOf(await checkDatabaseIntegrity(dir))).toBeNull();
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('the fts-health helpers export no class', () => {
+    const text = readFileSync(
+      join(REPO_ROOT, 'extensions', 'session-sqlite', 'src', 'fts-health.ts'),
+      'utf-8',
+    );
+    expect(text).not.toMatch(/^export\s+(default\s+)?class\b/m);
   });
 });
 

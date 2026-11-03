@@ -89,6 +89,10 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   // so it fails `createWebApi` rather than a request, but nothing enforces
   // that — a request-time caller would surface a wiring bug as 503.
   NOT_CONFIGURED: 503,
+  // Another process holds the SQLite write lock past the busy timeout: transient, retryable.
+  DB_BUSY: 503,
+  // The database file failed to open or its integrity check: server-side, not the caller's input.
+  DB_CORRUPT: 500,
 };
 
 export function toEnvelope(err: EthosError): ErrorEnvelope {

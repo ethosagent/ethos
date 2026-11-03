@@ -4,8 +4,12 @@
 // asked for two, deleted a question and its tool_use while leaving the tool
 // result and final answer live.
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
+import { holdWriteLock } from './hold-write-lock';
 
 const baseSession = {
   key: 'cli:undo',
@@ -98,4 +102,31 @@ describe('SQLiteSessionStore.undoTurns', () => {
   it('returns 0 and removes nothing when there is no user turn', async () => {
     expect(await store.undoTurns(sessionId, 1)).toBe(0);
   });
+});
+
+// Plan session-db-repair D5/D7: `undoTurns` reads (subtractMessageUsage) before
+// it writes, so a deferred transaction goes stale when a peer commits first and
+// fails at once with SQLITE_BUSY_SNAPSHOT (517) instead of honouring busy_timeout.
+describe('SQLiteSessionStore.undoTurns under a committing peer', () => {
+  it('undoTurns waits for a peer that commits during the wait instead of failing with errcode 517', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'undo-turns-517-'));
+    try {
+      const dbPath = join(dir, 'sessions.db');
+      const store = new SQLiteSessionStore(dbPath);
+      const session = await store.createSession(baseSession);
+      await store.appendMessage({ sessionId: session.id, role: 'user', content: 'q' });
+      await store.appendMessage({ sessionId: session.id, role: 'assistant', content: 'a' });
+      const holder = await holdWriteLock(
+        dbPath,
+        300,
+        `UPDATE sessions SET title = 'peer' WHERE id = '${session.id}'`,
+      );
+      await expect(store.undoTurns(session.id, 1)).resolves.toBe(1);
+      expect((await store.getMessages(session.id)).map((m) => m.content)).toEqual([]);
+      store.close();
+      await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

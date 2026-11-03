@@ -81,6 +81,8 @@ Synopsis: `ethos claw migrate [--dry-run] [--preset all|user-data] [--overwrite]
 
 Diagnostic — checks config, provider auth, session-store integrity, key permissions. It opens every database without migrating it, so a newer version's `ethos doctor` leaves the databases readable by the older one. `ethos gateway status` follows the same rule.
 
+When the `sessions.db` integrity check fails, doctor classifies the damage (`fts`, `index`, `heap` or `unknown`) and, for `fts` and `index`, points to [`ethos sessions repair --apply`](operations.md#ethos-sessions). It also reports search-index drift (unindexed or dangling messages) without changing the exit code.
+
 Synopsis: `ethos doctor [--json]`
 
 ## ethos upgrade {#ethos-upgrade}

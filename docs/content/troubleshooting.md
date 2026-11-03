@@ -178,6 +178,17 @@ Fix · Back up (`cp ~/.ethos/sessions.db ~/.ethos/sessions.db.bak`), then delete
 
 Prevent · Upgrade the CLI before reusing a database written by a build older than 0.2.0.
 
+### `sessions.db` is corrupt or locked {#sessions-db-damaged}
+
+Cause · `ethos doctor` reports `sessions.db: fts5: corruption ...` (a damaged search index), or a command fails with `DB_CORRUPT`; or a write fails with `DB_BUSY` because another Ethos process holds the file.
+
+Fix ·
+1. Run `ethos sessions repair` to see the class of damage. It is read-only.
+2. For `fts` or `index`, stop the gateway, `serve`, `chat`, the desktop app and any `ethos run-all`, then run `ethos sessions repair --apply`. A verbatim copy goes to `~/.ethos/.pre-repair/` first.
+3. For `heap` or `unknown`, restore with `ethos import <archive>`. For `DB_BUSY`, stop the processes the error names and retry.
+
+Prevent · Keep `ethos backup` on its schedule. Walkthrough: [Repair a damaged sessions database](using/how-to/repair-a-damaged-sessions-database.md).
+
 ## Getting help {#getting-help}
 
 When filing a bug, include `node --version`, `pnpm --version`, your OS, the full three-line error block, the relevant slice of `~/.ethos/logs/errors.jsonl`, and steps to reproduce. Open an issue at [github.com/ethosagent/ethos/issues](https://github.com/ethosagent/ethos/issues) or a discussion at [github.com/ethosagent/ethos/discussions](https://github.com/ethosagent/ethos/discussions).

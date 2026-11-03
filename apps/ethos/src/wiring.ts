@@ -34,6 +34,7 @@ import {
   createLearningInbox as packageCreateLearningInbox,
   createLearningReplayer as packageCreateLearningReplayer,
   createLLM as packageCreateLLM,
+  setSessionRowIssueSink,
   type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
@@ -162,6 +163,12 @@ export function getEthosObservability(): EthosObservability {
   if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
   return ethosObsSingleton;
 }
+
+// A degraded `sessions.db` row becomes a `storage.row_issue` event. Registered
+// at module load; `getEthosObservability()` runs only on the first degraded row,
+// so the observability DB never opens at boot. Pinned by
+// `packages/wiring/src/__tests__/session-row-issue.test.ts`.
+setSessionRowIssueSink((issue) => getEthosObservability().recordStorageRowIssue(issue));
 
 /**
  * Record one `install.scan` row (`installScanEvent`, packages/wiring) for an

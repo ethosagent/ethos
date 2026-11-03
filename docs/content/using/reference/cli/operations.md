@@ -97,6 +97,36 @@ Inspect local data stores (sessions, traces, blobs).
 
 Synopsis: `ethos data [stats | sessions | traces]`
 
+## ethos sessions {#ethos-sessions}
+
+List, search and manage stored [sessions](../../../getting-started/glossary.md#session), and repair a damaged `sessions.db`.
+
+Synopsis: `ethos sessions [list | show | rename | delete | search | repair]`
+
+`ethos sessions repair [--deep] [--apply] [--yes] [--json]` checks `~/.ethos/sessions.db` and, with `--apply`, repairs a damaged search index or table index. Walkthrough: [Repair a damaged sessions database](../../how-to/repair-a-damaged-sessions-database.md).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--deep` | boolean | off | Also run FTS5's `rank=1` consistency check on a temporary copy. The live file is untouched. |
+| `--apply` | boolean | off | Repair. Without it the command is read-only: no lock, no write. |
+| `--yes`, `-y` | boolean | off | Skip the `[y/N]` prompt. Required with `--json --apply`. |
+| `--json` | boolean | off | Emit one report as JSON instead of the human text. |
+
+| Class | Meaning | `--apply` action |
+|---|---|---|
+| `ok` | Integrity check passes. | None. |
+| `fts` | The search index is damaged; `messages` is intact. | Rebuild `messages_fts`. |
+| `index` | A table index is damaged. | `REINDEX`. |
+| `heap` | Table data pages are damaged. | Refuses with `DB_CORRUPT`; restore with `ethos import <archive>`. |
+| `unknown` | The verdict matches no repairable pattern. | Refuses with `DB_CORRUPT`. |
+
+`--apply` takes an exclusive lock on the file and refuses with `DB_BUSY`, naming the processes that have it open, if any process does. It then copies the file verbatim to `~/.ethos/.pre-repair/<timestamp>/sessions.db`, repairs, and re-verifies. Check mode exits `0` when healthy and `1` on any finding; `--apply` exits `0` only when verification passes (answering `N` at the prompt exits `1`, because the file is still damaged; a file with nothing to repair exits `0`). With `--json`, a refusal (bad flag, `--apply` without `--yes`, an unrepairable file, `DB_BUSY`) prints `{"ok":false,"error":{"code":"...","message":"..."}}` and exits `1`. Rows with malformed JSON or timestamps are counted as `malformed rows` but never rewritten. `ethos doctor` reports the same class and points to this command. Source: [`apps/ethos/src/commands/sessions-repair.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/sessions-repair.ts).
+
+```bash
+ethos sessions repair --deep
+ethos sessions repair --apply --yes --json
+```
+
 ## ethos support {#ethos-support}
 
 Generate a support bundle for issue triage.

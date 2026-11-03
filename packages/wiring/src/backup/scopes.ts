@@ -383,8 +383,12 @@ const ALWAYS_EXCLUDED: readonly string[] = [
   // Not in D1's list, added for the same reason the others are there: both are
   // this feature's own output. `.pre-restore/` holds what a restore displaced,
   // and `backups/` is where the scheduled job writes archives — archiving
-  // either one makes every backup carry the previous ones.
+  // either one makes every backup carry the previous ones. `.pre-repair/` is
+  // `ethos sessions repair`'s verbatim pre-change copy of sessions.db: excluded
+  // by name because its `*.db` file would otherwise be reported as an
+  // unclassified database. Pinned by sessions-repair/__tests__/repair.test.ts.
   '.pre-restore',
+  '.pre-repair',
   'backups',
 ];
 

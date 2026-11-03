@@ -27,6 +27,7 @@ const packageCreateLLM = vi.fn<PackageCreateLLM>();
 vi.mock('@ethosagent/wiring', () => ({
   EthosObservability: class {},
   FunnelTracker: class {},
+  setSessionRowIssueSink: vi.fn(),
   createAgentLoop: vi.fn(),
   createLLM: packageCreateLLM,
 }));

@@ -228,6 +228,7 @@ const sidebars: SidebarsConfig = {
               '/restore',
             ]),
             'using/how-to/recover-messages-after-a-crash',
+            'using/how-to/repair-a-damaged-sessions-database',
             'using/how-to/monitor-with-grafana',
             splitDoc(
               'using/how-to/export-traces-otlp',

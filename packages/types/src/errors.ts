@@ -94,6 +94,9 @@ export type EthosErrorCode =
   | 'WORKDIR_NOT_CONFIGURED'
   | 'DOCUMENT_EXISTS'
   | 'PAYLOAD_TOO_LARGE'
+  // Storage (SQLite stores)
+  | 'DB_BUSY'
+  | 'DB_CORRUPT'
   // Catch-all
   | 'INTERNAL';
 

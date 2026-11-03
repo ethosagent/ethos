@@ -99,6 +99,7 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 | <a id="ethos-import"></a>[ethos import](cli/operations.md#ethos-import) | [CLI: process, backup, import and data commands](cli/operations.md) |
 | <a id="ethos-retention"></a>[ethos retention](cli/operations.md#ethos-retention) | [CLI: process, backup, import and data commands](cli/operations.md) |
 | <a id="ethos-data"></a>[ethos data](cli/operations.md#ethos-data) | [CLI: process, backup, import and data commands](cli/operations.md) |
+| <a id="ethos-sessions"></a>[ethos sessions](cli/operations.md#ethos-sessions) | [CLI: process, backup, import and data commands](cli/operations.md) |
 | <a id="ethos-support"></a>[ethos support](cli/operations.md#ethos-support) | [CLI: process, backup, import and data commands](cli/operations.md) |
 | <a id="ethos-archive"></a>[ethos archive](cli/operations.md#ethos-archive) | [CLI: process, backup, import and data commands](cli/operations.md) |
 | <a id="ethos-trace"></a>[ethos trace](cli/diagnostics.md#ethos-trace) | [CLI: trace, audit, errors, perf and bench commands](cli/diagnostics.md) |

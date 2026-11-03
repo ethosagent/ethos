@@ -106,6 +106,10 @@ export const ETHOS_EVENT_CATEGORIES = [
   // never `decision.call`: model-written questions must not contaminate the
   // per-site calibration reads. See `recordDecisionToolCall` below.
   'decision.tool',
+  // A stored row had a column that failed to parse (bad JSON / timestamp) and
+  // was read with a fallback. METADATA ONLY: table, id, column, reason — never
+  // row content. See `recordStorageRowIssue` below.
+  'storage.row_issue',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -450,6 +454,30 @@ export class EthosObservability {
    */
   recordMemoryWrite(opts: EventBase & { store: string; action: string }): void {
     this.emit('memory.write', 'info', opts, { store: opts.store, action: opts.action });
+  }
+
+  /**
+   * A stored row had a column that could not be parsed and was read with a
+   * fallback. `details` carries `{ table, id, column, reason }` only — never
+   * the row's content.
+   */
+  recordStorageRowIssue(issue: {
+    table: 'sessions' | 'messages';
+    id: string;
+    column: string;
+    reason: 'invalid_json' | 'invalid_timestamp';
+  }): void {
+    this.emit(
+      'storage.row_issue',
+      'warn',
+      {},
+      {
+        table: issue.table,
+        id: issue.id,
+        column: issue.column,
+        reason: issue.reason,
+      },
+    );
   }
 
   /**
