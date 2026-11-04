@@ -16,6 +16,7 @@ export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
 // turn, and the chat-level audience questions asked outside one.
 export {
   defaultEthosStateDirs,
+  INCOGNITO_READMITTED_TOOLS,
   memoryFlushForbidden,
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
@@ -116,6 +117,11 @@ export { ChannelOverrideStore } from './channel-overrides';
 export type { ChannelPresence, ChannelPresenceResolver } from './channel-presence';
 export { mentionsPersonalityName } from './channel-presence';
 export {
+  INCOGNITO_MAX_AGE_MS,
+  INCOGNITO_METADATA_KEY,
+  INCOGNITO_REFUSAL,
+  incognitoSessionMetadata,
+  isIncognitoSession,
   isSharedSession,
   PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,
   type PrivateChatSet,

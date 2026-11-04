@@ -32,6 +32,7 @@ import {
 import { buildTeamPath, sessionOpenPath } from '../lib/workspaceRoutes';
 import { rpc } from '../rpc';
 import { SessionContextMenu } from './SessionContextMenu';
+import { EyeOffIcon } from './ui/EyeOffIcon';
 import { NavIcon, type NavIconKey } from './ui/NavIcon';
 import { PersonalityMark } from './ui/PersonalityMark';
 import { PersonalityName } from './ui/PersonalityName';
@@ -704,6 +705,11 @@ function SessionRow({
         onContextMenu?.(e, session);
       }}
     >
+      {session.incognito ? (
+        <span className="sidebar-session-incognito" role="img" aria-label="Incognito session">
+          <EyeOffIcon size={12} />
+        </span>
+      ) : null}
       <span className="sidebar-session-name">{label}</span>
       <span className="sidebar-session-time">{time}</span>
     </Link>

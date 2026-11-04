@@ -1,4 +1,5 @@
 import { chatAbort } from '../features/chat/rpc/abort';
+import { chatEndIncognito } from '../features/chat/rpc/end-incognito';
 import { chatSend } from '../features/chat/rpc/send';
 import { chatSteer } from '../features/chat/rpc/steer';
 import { debugChat } from '../features/debug/rpc/chat';
@@ -88,6 +89,7 @@ export const apiRouter = {
     send: chatSend,
     abort: chatAbort,
     steer: chatSteer,
+    endIncognito: chatEndIncognito,
   },
   debug: {
     chat: debugChat,

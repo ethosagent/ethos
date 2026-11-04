@@ -15,11 +15,14 @@
 //     post-turn process that could carry a conversation into private memory
 //     asks (memory capture, the improvement fork, nightly/evolve selection,
 //     learning cases) — one helper, so they cannot disagree (verification
-//     round B2).
+//     round B2). Also true for an incognito session (`isIncognitoSession`).
+//   - `isIncognitoSession` — does the session carry the sticky incognito
+//     stamp (plan incognito-sessions D4)? `incognitoSessionMetadata` is the
+//     one owner of the stamp's shape.
 //
 // Pinned by `packages/core/src/__tests__/chat-audience.test.ts`.
 
-import type { Session, TurnAudience } from '@ethosagent/types';
+import type { Session, SessionStore, TurnAudience } from '@ethosagent/types';
 import { ROOM_AUDIENCE_METADATA_KEY } from './agent-loop/audience';
 
 /**
@@ -31,6 +34,75 @@ import { ROOM_AUDIENCE_METADATA_KEY } from './agent-loop/audience';
  * the conversation is a stranger's, not the owner's.
  */
 export const PERSONALITY_MEMORY_WITHHELD_METADATA_KEY = 'personalityMemoryWithheld';
+
+/**
+ * The `Session.metadata` key marking an incognito session (plan
+ * incognito-sessions D4). Only ever `true`, written beside
+ * `roomAudience: 'shared'` by {@link incognitoSessionMetadata}. Sticky: no API
+ * clears it (D6); only a new session leaves incognito.
+ */
+export const INCOGNITO_METADATA_KEY = 'incognito';
+
+/**
+ * The hard age after which an incognito session's messages are scrubbed
+ * (plan incognito-sessions D8(b)): 24 h. A fixed constant, not a config key.
+ */
+export const INCOGNITO_MAX_AGE_MS = 24 * 3_600_000;
+
+/** The refusal every surface gives for an incognito transcript read from outside it (D11). */
+export const INCOGNITO_REFUSAL =
+  'That session is incognito; its messages are only readable from inside it.';
+
+/** True when the session carries the sticky incognito stamp (`metadata.incognito === true`). */
+export function isIncognitoSession(session: Pick<Session, 'metadata'>): boolean {
+  return session.metadata?.[INCOGNITO_METADATA_KEY] === true;
+}
+
+/**
+ * The metadata of an incognito session: `current` plus `roomAudience:
+ * 'shared'` and `incognito: true`. THE one owner of the stamp shape (plan
+ * incognito-sessions D5), used by `sessionAudienceStampFor` and by a surface
+ * that stamps at session creation. Pinned by `chat-audience.test.ts`.
+ */
+export function incognitoSessionMetadata(
+  current?: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...current, [ROOM_AUDIENCE_METADATA_KEY]: 'shared', [INCOGNITO_METADATA_KEY]: true };
+}
+
+/**
+ * Every proper colon-prefix of a session key, shortest first
+ * (`cli:p:1:sub:x` → `cli`, `cli:p`, `cli:p:1`, `cli:p:1:sub`): the candidate
+ * parents of a delegated (`:sub:`) or background (`:job:`) child key.
+ */
+export function incognitoAncestorKeys(key: string): string[] {
+  const out: string[] = [];
+  for (let i = key.indexOf(':'); i !== -1; i = key.indexOf(':', i + 1)) {
+    if (i > 0) out.push(key.slice(0, i));
+  }
+  return out;
+}
+
+/**
+ * True when any ancestor key's session row is incognito-stamped. Fails closed:
+ * a lookup that throws counts as incognito. Used by turn-setup so a
+ * delegated/background child inherits the stamp (pinned in
+ * `__tests__/incognito.test.ts`).
+ */
+export async function hasIncognitoAncestor(
+  store: Pick<SessionStore, 'getSessionByKey'>,
+  key: string,
+): Promise<boolean> {
+  for (const ancestor of incognitoAncestorKeys(key)) {
+    try {
+      const row = await store.getSessionByKey(ancestor);
+      if (row && isIncognitoSession(row)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** The operator's trusted rooms (`gateway.private_chats.<platform>`), by platform + chat id. */
 export interface PrivateChatSet {
@@ -117,7 +189,9 @@ export function isSharedSession(
  * True when a post-turn process must treat this session's conversation as NOT
  * the owner's: it is shared (`isSharedSession`), or a turn in it ran with
  * personality memory withheld (the D8 marker,
- * {@link PERSONALITY_MEMORY_WITHHELD_METADATA_KEY}). The one filter memory
+ * {@link PERSONALITY_MEMORY_WITHHELD_METADATA_KEY}), or it is incognito
+ * ({@link isIncognitoSession}, read first so it holds even without a
+ * `roomAudience` stamp). The one filter memory
  * capture, the improvement fork, nightly/evolve session selection, learning
  * cases and web/CLI evolve use. Pinned by
  * `packages/core/src/__tests__/chat-audience.test.ts`.
@@ -126,6 +200,7 @@ export function turnWasShared(
   session: Pick<Session, 'key' | 'metadata'>,
   privateChats?: PrivateChatSet,
 ): boolean {
+  if (isIncognitoSession(session)) return true;
   if (session.metadata?.[PERSONALITY_MEMORY_WITHHELD_METADATA_KEY] === true) return true;
   return isSharedSession(session, privateChats);
 }
@@ -142,7 +217,10 @@ export function turnWasShared(
  *     post-turn learners stop excluding it on its key (verification round B3)
  *     — only when `judged` is true, i.e. the caller set
  *     `RunOptions.judgeAudience` (the gateway alone, verification round E5);
- *   - a D8 turn (`personalityMemoryWithheld`) sets the withheld marker.
+ *   - a D8 turn (`personalityMemoryWithheld`) sets the withheld marker;
+ *   - an `incognito` turn (the caller already established the caller's own
+ *     audience was not shared, turn-setup's `incognito`) merges
+ *     {@link incognitoSessionMetadata}.
  *
  * Called by turn-setup (packages/core/src/agent-loop/stages/turn-setup.ts);
  * pinned by `packages/core/src/__tests__/shared-audience.test.ts` and
@@ -153,6 +231,7 @@ export function sessionAudienceStampFor(
   personalityMemoryWithheld: boolean,
   session: Pick<Session, 'key' | 'metadata'>,
   judged = false,
+  incognito = false,
 ): Record<string, unknown> | undefined {
   const current = session.metadata ?? {};
   const next: Record<string, unknown> = { ...current };
@@ -172,6 +251,10 @@ export function sessionAudienceStampFor(
   }
   if (personalityMemoryWithheld && current[PERSONALITY_MEMORY_WITHHELD_METADATA_KEY] !== true) {
     next[PERSONALITY_MEMORY_WITHHELD_METADATA_KEY] = true;
+    changed = true;
+  }
+  if (incognito && current[INCOGNITO_METADATA_KEY] !== true) {
+    Object.assign(next, incognitoSessionMetadata());
     changed = true;
   }
   return changed ? next : undefined;

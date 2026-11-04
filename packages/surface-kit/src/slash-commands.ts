@@ -63,6 +63,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     aliasOf: 'new',
   },
   {
+    name: 'incognito',
+    description: 'Keep nothing from this chat in memory or learning; history cleared on /new',
+    usage: '/incognito',
+    surfaces: ['cli', 'gateway', 'tui'],
+  },
+  {
     name: 'fork',
     description: 'Branch this session into a new one with the same history',
     usage: '/fork',

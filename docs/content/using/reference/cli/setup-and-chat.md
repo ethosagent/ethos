@@ -37,7 +37,7 @@ ethos setup messaging
 
 Interactive REPL with streaming output, persisted sessions, and [slash commands](../slash-commands.md). Sessions are keyed by `cli:<basename of cwd>`. See [session](../../../getting-started/glossary.md#session).
 
-Synopsis: `ethos chat [--verbose] [--skin <name>] [-q <prompt>] [--continue] [--resume <id>] [--team <name>] [--dry-run]`
+Synopsis: `ethos chat [--verbose] [--skin <name>] [-q <prompt>] [--continue] [--resume <id>] [--team <name>] [--dry-run] [--incognito]`
 
 | Flag | Default | Description |
 |---|---|---|
@@ -49,6 +49,7 @@ Synopsis: `ethos chat [--verbose] [--skin <name>] [-q <prompt>] [--continue] [--
 | `--no-resume-hint` | off | Suppress the session-resume hint printed on exit. |
 | `--team <name>` | off | Override [`activeContext`](../config-yaml.md#active-context) for this process, routing through a team coordinator. Does not write to disk. |
 | `--dry-run` | off | Dry-run mode — tools are planned but not executed. Toggle within a session with `/dry-run on\|off`. |
+| `--incognito` | off | Start on a fresh session that is not remembered or learned from. Also accepted with `-q`. See [Start an incognito session](../../how-to/incognito-sessions.md). |
 
 ```bash
 ethos chat --verbose

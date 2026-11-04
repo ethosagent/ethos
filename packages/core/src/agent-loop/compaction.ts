@@ -32,6 +32,8 @@ export interface CompactionDeps {
   /** Raw storage + dataDir for building a per-personality ContextEngineStore. */
   storage?: Storage;
   dataDir?: string;
+  /** D9 — an incognito turn (`TurnSetup.incognito`) builds no paged store. */
+  incognito?: boolean;
   /** Framework-owned, model-pinned token counter. */
   countTokens?: (messages: Message[]) => Promise<number>;
   /**
@@ -424,11 +426,13 @@ export async function maybeCompact(
   const history = flattened.slice(0, split);
   const historyTarget = Math.max(0, target - estimateMessagesTokens(currentTurn));
 
-  // Build a per-personality ContextEngineStore when raw storage is available.
+  // Build a per-personality ContextEngineStore when raw storage is available —
+  // never on an incognito turn (plan incognito-sessions D9: nothing is paged
+  // outside sessions.db).
   let store: ContextEngineStore | undefined;
   const stStorage = deps.storage;
   const stDataDir = deps.dataDir;
-  if (stStorage && stDataDir) {
+  if (stStorage && stDataDir && deps.incognito !== true) {
     const basePath = `${stDataDir}/compaction/${personality.id}`;
     store = {
       read: (key) => stStorage.read(`${basePath}/${key}`),

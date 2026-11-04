@@ -58,7 +58,7 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
   // U3 — spend and tokens aggregated from session message rows: a read of
   // sessions, so it takes the same scope as `sessions.get`.
   usage: { summary: 'sessions:read' },
-  chat: { send: 'chat:send', abort: 'chat:send', steer: 'chat:send' },
+  chat: { send: 'chat:send', abort: 'chat:send', steer: 'chat:send', endIncognito: COOKIE_ONLY },
   personalities: {
     list: 'personalities:read',
     get: 'personalities:read',

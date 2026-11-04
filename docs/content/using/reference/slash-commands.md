@@ -30,6 +30,18 @@ Synopsis: `/new` (alias: `/reset`)
 [new session started]
 ```
 
+## /incognito {#slash-incognito}
+
+Start a fresh [session](../../getting-started/glossary.md#session) that is not remembered or learned from. Like `/new` plus a sticky flag; `/new` later ends it and blanks its history. Available in the CLI, TUI and gateway DMs with the owner. See [Start an incognito session](../how-to/incognito-sessions.md).
+
+Synopsis: `/incognito`
+
+```
+> /incognito
+[new session cli:<dir>:<timestamp> started]
+Incognito: nothing from this session is remembered or learned from. Cleared on /new or after 24 h.
+```
+
 ## /personality {#slash-personality}
 
 Show or switch the active [personality](../../getting-started/glossary.md#personality). `/personality` prints the current id; `/personality list` prints built-ins; `/personality <id>` switches. In the TUI, switching also re-applies the personality's budget cap. The change is session-local — use `ethos personality set <id>` to persist.

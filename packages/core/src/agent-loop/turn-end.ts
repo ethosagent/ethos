@@ -105,6 +105,8 @@ export interface TurnEndCtx {
   rootSessionKey: string;
   /** `TurnSetup.roomAudience`. Shared → no memory flush (`memoryFlushForbidden`). */
   roomAudience?: TurnAudience;
+  /** `TurnSetup.incognito` (D9). True → `runTurnComplete` builds no paged store. */
+  incognito?: boolean;
   /** `RunOptions.initiator`, handed to flush-dispatched tools as the batch path does. */
   initiator?: TurnInitiator;
   /**
@@ -154,6 +156,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     contextStore: extras.contextStore,
     rootSessionKey: extras.rootSessionKey,
     roomAudience: setup.roomAudience,
+    ...(setup.incognito === true ? { incognito: true } : {}),
     charges: setup.charges,
     ...(extras.initiator !== undefined ? { initiator: extras.initiator } : {}),
     ...(extras.untrustedSeen === true ? { untrustedSeen: true } : {}),

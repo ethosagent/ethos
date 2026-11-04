@@ -198,6 +198,56 @@ describe('usage: no double counting (§5.5)', () => {
     }
   });
 
+  // plan incognito-sessions D16 — an incognito turn's utility-call ledger rows
+  // carry no session or trace link; the money is still booked. The scrub half
+  // (usageAggregate unchanged by `scrubIncognito`) belongs to incognito Lane B.
+  it('an incognito turn writes ledger rows with NULL session fields and keeps the money', async () => {
+    stubProvider();
+    const dataDir = mkdtempSync(join(home, 'data-'));
+    mkdirSync(dataDir, { recursive: true });
+    process.env.ETHOS_STATE_DIR = dataDir;
+    const result = await createAgentLoop(config, {
+      dataDir,
+      workingDir: home,
+      disableDocker: true,
+    });
+    const sessionKey = 'cli:incognito-usage';
+    try {
+      result.toolRegistry.register(probeTool);
+      await drain(result.loop.run('read it', { sessionKey, incognito: true }));
+      await drain(result.loop.run('anything to remember?', { sessionKey }));
+    } finally {
+      await result.dispose();
+    }
+
+    const db = new Database(join(dataDir, 'sessions.db'));
+    try {
+      const rows = db
+        .prepare(
+          'SELECT source_kind AS kind, session_id AS sid, session_key AS skey, trace_id AS tid, estimated_cost_usd AS cost FROM usage_ledger ORDER BY ts, rowid',
+        )
+        .all() as {
+        kind: string;
+        sid: string | null;
+        skey: string | null;
+        tid: string | null;
+        cost: number;
+      }[];
+      // The session stays incognito on turn 2, so no flush row either.
+      expect(rows.map((r) => r.kind).sort()).toEqual(['injection_classifier', 'tool_llm']);
+      for (const r of rows) {
+        expect(r.sid).toBeNull();
+        expect(r.skey).toBeNull();
+        expect(r.tid).toBeNull();
+      }
+      expect(rows.reduce((a, r) => a + r.cost, 0)).toBeCloseTo(TOOL_LLM + CLASSIFIER, 9);
+    } finally {
+      db.close();
+    }
+    // Main-turn spend stays in `messages` (D7).
+    expect(messagesCost(dataDir)).toBeGreaterThan(0);
+  });
+
   it('a replay arm records its main call to the ledger as learning_replay, never to messages', async () => {
     stubProvider();
     const dataDir = mkdtempSync(join(home, 'data-'));

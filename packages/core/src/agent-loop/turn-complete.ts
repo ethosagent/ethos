@@ -51,7 +51,15 @@ export function resolveTurnEngine(
 }
 
 /** Per-personality store handle, mirroring the one `maybeCompact` builds. */
-function buildStore(deps: LoopDeps, personalityId: string): ContextEngineStore | undefined {
+function buildStore(
+  deps: LoopDeps,
+  personalityId: string,
+  incognito: boolean,
+): ContextEngineStore | undefined {
+  // D9 — an incognito turn pages nothing outside sessions.db: no store, so
+  // `tiered_summary` trims or summarizes in place. Pinned by
+  // `__tests__/incognito.test.ts`.
+  if (incognito) return undefined;
   const storage = deps.storage;
   const dataDir = deps.dataDir;
   if (!storage || !dataDir) return undefined;
@@ -102,7 +110,7 @@ export async function runTurnComplete(
 
   let nomination: ContextEngineTurnCompleteOutput | null = null;
   if (engine?.onTurnComplete) {
-    const store = buildStore(deps, ctx.personality.id);
+    const store = buildStore(deps, ctx.personality.id, ctx.incognito === true);
     try {
       nomination = await engine.onTurnComplete({
         messages,

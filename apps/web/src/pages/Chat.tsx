@@ -60,6 +60,7 @@ import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
 import { retryTurnText } from '../lib/chat-retry';
+import { INCOGNITO_PARAM, INCOGNITO_PLACEHOLDER } from '../lib/incognito';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import { accentVars, personalityTheme } from '../lib/theme';
@@ -141,6 +142,15 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // currentSessionId matches sessionParam.
   const sessionParamQuery = useSessionGet(sessionParam ?? null);
 
+  // Incognito (plan incognito-sessions §8.2): the New Session picker sends
+  // `?new=1&incognito=1`. Until the first message creates the session there is
+  // no server row to read the stamp from, so the request is held here and goes
+  // out on that first `chat.send`; afterwards `Session.incognito` is the truth.
+  const [pendingIncognito, setPendingIncognito] = useState(
+    searchParams.get('new') !== null && searchParams.get(INCOGNITO_PARAM) === '1',
+  );
+  const createdIncognitoId = useRef<string | null>(null);
+
   const {
     state,
     currentSessionId,
@@ -162,7 +172,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
     sessionKey: sessionParamQuery.data?.session.key,
+    incognito: pendingIncognito,
     onSessionCreated: (id) => {
+      if (pendingIncognito) {
+        createdIncognitoId.current = id;
+        setPendingIncognito(false);
+      }
       setSearchParams({ session: id }, { replace: true });
       setLastSessionId(id);
       void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
@@ -189,6 +204,14 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     }
     wasStreaming.current = state.isStreaming;
   }, [state.isStreaming, currentSessionId, queryClient]);
+
+  // The server stamp is authoritative once the session row is loaded; before
+  // that, a chat we just created incognito, or one about to start, counts.
+  const isIncognito = currentSessionId
+    ? sessionQuery.data
+      ? sessionQuery.data.session.incognito === true
+      : currentSessionId === createdIncognitoId.current
+    : pendingIncognito;
 
   const renameMut = useSessionRenameFromChat(currentSessionId);
 
@@ -282,8 +305,10 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     freshRequested.current = true;
     resetSession();
     clearLastSessionId();
+    setPendingIncognito(searchParams.get(INCOGNITO_PARAM) === '1');
     const next = new URLSearchParams(searchParams);
     next.delete('new');
+    next.delete(INCOGNITO_PARAM);
     setSearchParams(next, { replace: true });
   }, [newSessionParam, searchParams, setSearchParams]);
 
@@ -892,6 +917,27 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     openNewSessionModal();
   };
 
+  // End = scrub the transcript server-side, then leave for a fresh NORMAL chat
+  // (D6: incognito is never un-stamped, only left behind).
+  const handleEndIncognito = async () => {
+    if (!currentSessionId) return;
+    try {
+      await rpc.chat.endIncognito({ sessionId: currentSessionId });
+    } catch (err) {
+      notification.error({
+        message: 'Could not end incognito session',
+        description: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: sessionKeys.all() });
+    navigate(
+      teamContext
+        ? buildNewSessionPath(teamContext.coordinatorId, buildTeamPath(teamContext.teamId, 'chat'))
+        : buildNewSessionPath(personalityId),
+    );
+  };
+
   // Call Stage is a MODE: while it is up it IS the chat surface, so the normal
   // chat chrome (personality bar, message list, composer) is not also on screen
   // behind it — including the PersonalityBar, whose rename/new-session are the
@@ -966,6 +1012,10 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         onNewSession={handleNewSession}
         sessionTitle={sessionTitle}
         onRenameSession={handleRenameSession}
+        incognito={isIncognito}
+        {...(isIncognito && currentSessionId
+          ? { onEndIncognito: () => void handleEndIncognito() }
+          : {})}
         {...(sessionCostUsd !== undefined ? { sessionCostUsd } : {})}
         {...(teamContext ? { teamContext: { ...teamContext, coordinatorName } } : {})}
         {...(coordinatorOf ? { coordinatorOf } : {})}
@@ -1128,9 +1178,11 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
               ? 'Agent paused — hand back to continue'
               : state.isStreaming
                 ? 'Steer the agent…'
-                : teamContext
-                  ? `Message ${teamContext.teamName}… (${coordinatorName} answers)`
-                  : 'Send a message…'
+                : isIncognito
+                  ? INCOGNITO_PLACEHOLDER
+                  : teamContext
+                    ? `Message ${teamContext.teamName}… (${coordinatorName} answers)`
+                    : 'Send a message…'
           }
           isStreaming={state.isStreaming}
           onAbort={() => void abortTurn()}

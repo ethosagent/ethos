@@ -61,7 +61,11 @@ function keyedLoop(hang = false) {
       yield { type: 'done', text: 'reply', turnCount: 1 };
     })();
   });
-  return { loop: { run, hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) } }, turns };
+  return {
+    loop: { run, hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) } },
+    turns,
+    run,
+  };
 }
 
 function msg(text: string): InboundMessage {
@@ -195,6 +199,33 @@ describe('gateway lane → session map survives a restart (D28)', () => {
     );
     await gw.handleMessage(msg('hi'), out.adapter);
     expect(s.turns[0]?.sessionKey).toBe(LANE);
+  });
+
+  it('/incognito survives a restart, and /new after it does not', async () => {
+    const storage = new InMemoryStorage();
+    const out = recordingAdapter();
+    const first = keyedLoop();
+    const gw1 = gateway(first.loop, out.adapter, storage);
+    await gw1.handleMessage(msg('/incognito'), out.adapter);
+    const file = JSON.parse(
+      (await storage.read(new LaneSessionFiles(storage, DATA_DIR).path('bot-a'))) ?? '{}',
+    );
+    expect(file.lanes[LANE]).toMatchObject({ incognito: true });
+    expect(file.lanes[LANE].sessionKey).toMatch(new RegExp(`^${LANE}:\\d+$`));
+
+    const second = keyedLoop();
+    const gw2 = gateway(second.loop, out.adapter, storage);
+    await gw2.restoreLaneSessions();
+    await gw2.handleMessage(msg('one'), out.adapter);
+    expect(second.run.mock.calls[0]?.[1]).toMatchObject({ incognito: true });
+
+    await gw2.handleMessage(msg('/new'), out.adapter);
+    await gw2.handleMessage(msg('two'), out.adapter);
+    expect(second.run.mock.calls[1]?.[1]).not.toHaveProperty('incognito');
+    const after = JSON.parse(
+      (await storage.read(new LaneSessionFiles(storage, DATA_DIR).path('bot-a'))) ?? '{}',
+    );
+    expect(after.lanes[LANE]).not.toHaveProperty('incognito');
   });
 
   // U11 — a lane's /mute is stored beside its session key, so it outlives a restart.

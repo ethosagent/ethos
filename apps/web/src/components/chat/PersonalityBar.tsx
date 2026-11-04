@@ -4,6 +4,7 @@ import { type ReactNode, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatUsd } from '../../lib/usage-format';
 import { buildWorkspaceChatPath } from '../../lib/workspaceRoutes';
+import { EyeOffIcon } from '../ui/EyeOffIcon';
 import { PersonalityMark } from '../ui/PersonalityMark';
 import { PersonalityName } from '../ui/PersonalityName';
 import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
@@ -73,6 +74,12 @@ export interface PersonalityBarProps {
   teamContext?: PersonalityBarTeamContext;
   /** The coordinator's own workspace inside its team — the reverse label. */
   coordinatorOf?: PersonalityBarCoordinatorOf;
+  /** Incognito session (or one about to start): draws the session-scoped
+   *  "Incognito" label. Mode, not identity — never the personality accent. */
+  incognito?: boolean;
+  /** Ends the incognito session (`chat.endIncognito`). Absent → no End button,
+   *  e.g. before the first message there is nothing to end. */
+  onEndIncognito?: () => void;
 }
 
 export function PersonalityBar({
@@ -88,6 +95,8 @@ export function PersonalityBar({
   actionsSlot,
   teamContext,
   coordinatorOf,
+  incognito,
+  onEndIncognito,
 }: PersonalityBarProps) {
   const accent = personalityAccent(personalityId);
   const displayName = teamContext?.coordinatorName ?? name ?? capitalize(personalityId);
@@ -195,6 +204,25 @@ export function PersonalityBar({
             >
               Open {displayName}'s workspace →
             </Link>
+          ) : null}
+          {incognito ? (
+            <>
+              <span className="personality-bar-incognito">
+                <EyeOffIcon />
+                Incognito
+              </span>
+              {onEndIncognito ? (
+                <button
+                  type="button"
+                  className="personality-bar-incognito-end"
+                  onClick={onEndIncognito}
+                  aria-label="End incognito session"
+                  title="End incognito session"
+                >
+                  End
+                </button>
+              ) : null}
+            </>
           ) : null}
           {actionsSlot}
           <button

@@ -271,7 +271,9 @@ describe('Orchestrator guardrails', () => {
     // `withUsageScope` import). Pass-through only: the scopes, charges and
     // metering live in agent-loop/usage-charges.ts, ../usage-scope.ts and
     // ../providers/metered-provider.ts.
-    expect(lineCount).toBeLessThanOrEqual(1128);
+    // Bumped 1128 -> 1130 (incognito-sessions D5): the `RunOptions.incognito`
+    // field and its one-line doc. The logic lives in stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1130);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -450,7 +452,10 @@ describe('Orchestrator guardrails', () => {
       // doc, copied in buildTurnEndCtx), the compaction's arguments hoisted
       // into two consts around the scoped call, two drains with their
       // comments. The logic lives in agent-loop/usage-charges.ts.
-      if (lineCount > 527) {
+      // Bumped 527 -> 530 (incognito-sessions D9): turn-end.ts copies
+      // `TurnSetup.incognito` onto TurnEndCtx (field + one-line doc + one spread
+      // line) so `runTurnComplete` builds no paged store; no logic here.
+      if (lineCount > 530) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

@@ -71,12 +71,21 @@ export interface TUIOptions {
    * as `ApprovalModal`. Absent → the TUI shows no approval prompt.
    */
   approvals?: BridgeApprovalSource;
+  /** `--incognito` — start on a fresh session key that nothing remembers or learns from. */
+  incognito?: boolean;
+  /**
+   * Blank an incognito session's history when `/new` or `/personality` leaves it
+   * (host-injected, fail-open). Resolves `false` (or rejects) when the scrub did not run.
+   */
+  endIncognito?: (sessionKey: string) => Promise<boolean>;
 }
 
 export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
   const bridge = new AgentBridge(loop);
   if (opts.approvals) bridge.setApprovalSource(opts.approvals);
-  const sessionKey = `cli:${basename(process.cwd())}`;
+  const sessionKey = opts.incognito
+    ? `cli:${basename(process.cwd())}:${Date.now()}`
+    : `cli:${basename(process.cwd())}`;
 
   const { waitUntilExit } = render(
     createElement(App, {
@@ -85,6 +94,8 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       initialPersonality: opts.personality,
       ...(opts.emojiFor ? { emojiFor: opts.emojiFor } : {}),
       initialSessionKey: sessionKey,
+      ...(opts.incognito ? { initialIncognito: true } : {}),
+      ...(opts.endIncognito ? { endIncognito: opts.endIncognito } : {}),
       initialVerbose: opts.verbose ?? false,
       initialSkin: opts.skin,
       startupNotices: opts.startupNotices,

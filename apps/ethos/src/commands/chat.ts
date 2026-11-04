@@ -28,12 +28,14 @@ import {
   type JobSteer,
   type JobStore,
   type NotificationAdapter,
+  type SessionStore,
   type SteerSink,
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
 import {
   createLazyProvider,
+  createSessionStore,
   firstRefusal,
   formatJobEventLine,
   isJobRef,
@@ -48,6 +50,14 @@ import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
+import {
+  INCOGNITO_ENTRY_LINE,
+  INCOGNITO_PROMPT_TAG,
+  incognitoSessionKey,
+  resumedSessionIsIncognito,
+  scrubIncognitoSession,
+  scrubWithNotice,
+} from '../lib/chat-incognito';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
 import { attachCliApprovalPrompt } from '../lib/cli-approval-prompt';
 import {
@@ -64,6 +74,7 @@ import {
 import { decisionLine } from '../lib/decision-line';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
+import { scrubExpiredIncognito } from '../lib/incognito-retention';
 import { createLineArbiter, type LineArbiter } from '../lib/line-arbiter';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
@@ -256,6 +267,9 @@ interface ChatState {
   dryRun: boolean;
   /** Pending toolset narrowing for the next command-triggered turn. */
   pendingToolsetNarrow?: string[];
+  /** Incognito session (plan incognito-sessions §8): passed on every turn while
+   *  set; ended by `/new`, which scrubs the old key. */
+  incognito: boolean;
 }
 
 interface RunChatOptions {
@@ -268,6 +282,8 @@ interface RunChatOptions {
   noResumeHint?: boolean;
   /** Dry-run mode — tools are planned but not executed. */
   dryRun?: boolean;
+  /** `--incognito` — start on a fresh key that nothing remembers or learns from. */
+  incognito?: boolean;
 }
 
 // C6 — the mid-turn input-loss notices, worded for the person who typed the
@@ -314,10 +330,31 @@ function trimTrailingZero(s: string): string {
 
 // The interactive input prompt. Prepends a muted context-size chip once the
 // first turn has reported usage; before that the prompt is unchanged.
-function promptString(state: ChatState): string {
+export function promptString(state: Pick<ChatState, 'contextInputTokens' | 'incognito'>): string {
+  const tag = state.incognito ? `${c.dim}${INCOGNITO_PROMPT_TAG}${c.reset} ` : '';
   const base = `${c.cyan}You${c.reset} > `;
-  if (state.contextInputTokens <= 0) return base;
-  return `${c.dim}[${formatContextTokens(state.contextInputTokens)}]${c.reset} ${base}`;
+  if (state.contextInputTokens <= 0) return `${tag}${base}`;
+  return `${tag}${c.dim}[${formatContextTokens(state.contextInputTokens)}]${c.reset} ${base}`;
+}
+
+/** Open sessions.db just long enough to run `fn`, then close it. */
+async function withSessionStore<T>(fn: (store: SessionStore) => Promise<T>): Promise<T> {
+  const store = createSessionStore({ dataDir: ethosDir() });
+  try {
+    return await fn(store);
+  } finally {
+    store.close();
+  }
+}
+
+/** Open sessions.db just long enough to blank one incognito key (fail-open). */
+async function scrubIncognitoKey(sessionKey: string): Promise<boolean> {
+  try {
+    return await withSessionStore((store) => scrubIncognitoSession(store, sessionKey));
+  } catch {
+    // Fail-open: the hourly sweep retries; /new and exit must not be blocked.
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +368,10 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   const registry = buildBaseRegistry();
 
   const runtime = await resolveActiveLoop(config, { slashRegistry: registry });
+
+  // Incognito 24 h sweep (plan incognito-sessions §9.2 item 3): once at start,
+  // fire-and-forget, fail-open — a CLI-only user has no hourly tick.
+  void withSessionStore(scrubExpiredIncognito).catch(() => undefined);
 
   // Tool approval (terminal-approval.ts). One coordinator per process: it
   // times out an unanswered prompt (`approvalTimeoutMs`, default 10 min) and
@@ -418,12 +459,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   if (opts.singleQuery) {
     // One-shot: nobody is at a prompt to answer, so a flagged call is refused.
     gateLoop(runtime, false, '`ethos chat -q` has no prompt to answer it');
+    const oneShotKey = opts.incognito ? incognitoSessionKey() : `cli:${basename(process.cwd())}`;
     try {
       await runSingleQuery(loop, config, {
         query: opts.singleQuery,
-        sessionKey: `cli:${basename(process.cwd())}`,
+        sessionKey: oneShotKey,
         personalityId,
+        ...(opts.incognito ? { incognito: true } : {}),
       });
+      // The turn has fully drained above; only now is the transcript final.
+      if (opts.incognito) {
+        // Nothing else reads this exit: tell stderr when the scrub did not run.
+        await scrubWithNotice(scrubIncognitoKey, oneShotKey, (line) =>
+          process.stderr.write(`${c.dim}${line}${c.reset}\n`),
+        );
+      }
     } finally {
       await releaseCommandRuntime(runtime, { label: 'chat agent loop' });
     }
@@ -461,6 +511,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       return next;
     });
     await runTUI(loop, {
+      ...(opts.incognito ? { incognito: true } : {}),
+      endIncognito: (key) => scrubIncognitoKey(key),
       model: config.model,
       personality: displayName,
       // `display.emoji` beside the name in the TUI header and identity panel.
@@ -610,7 +662,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     onMemoryCaptured?.(memoryCapturedHandler);
   }
 
-  const sessionKey = opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`;
+  // Resume keeps the stored stamp (sticky); a fresh --incognito run takes a fresh key.
+  let startIncognito = opts.incognito === true && !opts.resumeSessionKey;
+  if (opts.resumeSessionKey) {
+    const resumeKey = opts.resumeSessionKey;
+    try {
+      startIncognito = await withSessionStore((store) =>
+        resumedSessionIsIncognito(store, resumeKey),
+      );
+    } catch {
+      // Unreadable store: the turn itself still honours the stored stamp.
+    }
+  }
+  const sessionKey =
+    opts.resumeSessionKey ??
+    (startIncognito ? incognitoSessionKey() : `cli:${basename(process.cwd())}`);
 
   // v2.2 — Register a CLI NotificationAdapter so plugin monitors can deliver
   // messages to the interactive terminal session.
@@ -654,6 +720,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     awaitingApproval: false,
     awaitingSecret: false,
     pendingAttachments: [],
+    incognito: startIncognito,
     dryRun: opts.dryRun ?? false,
     collectCredential: async (req: EventTranslatorCredentialRequired) => {
       state.awaitingSecret = true;
@@ -876,6 +943,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // Welcome
   const label = chatPersonalityLabel(displayName, runtime.personalities);
   out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${label} · /help${c.reset}\n\n`);
+
+  if (startIncognito) out(`${c.dim}${INCOGNITO_ENTRY_LINE}${c.reset}\n\n`);
 
   // FW-6 — show recap panel when resuming
   if (opts.resumeSessionId) {
@@ -1280,6 +1349,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(tierOverride ? { tierOverride } : {}),
       ...(toolsetNarrow ? { toolsetNarrow } : {}),
       ...(state.dryRun ? { dryRun: true } : {}),
+      ...(state.incognito ? { incognito: true } : {}),
       ...(state.collectCredential ? { credentialPrompt: true } : {}),
     })) {
       if (event.type === 'credential_required' && credentialReq === null) {
@@ -1673,7 +1743,7 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
 async function runSingleQuery(
   loop: AgentLoop,
   config: EthosConfig,
-  input: { query: string; sessionKey: string; personalityId: string },
+  input: { query: string; sessionKey: string; personalityId: string; incognito?: boolean },
 ): Promise<void> {
   const verbosity: Verbosity = config.displayVerbosity ?? (config.verbose ? 'verbose' : 'default');
   const turnStart = Date.now();
@@ -1686,6 +1756,7 @@ async function runSingleQuery(
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,
+    ...(input.incognito ? { incognito: true } : {}),
     // One-shot: no masked input here, so a missing plugin credential is
     // reported as the CLI command that sets it.
     credentialPrompt: true,
@@ -1871,17 +1942,32 @@ async function handleSlashCommand(
 
     case 'new':
     case 'reset':
+    case 'incognito': {
+      // `/incognito` is `/new` plus the flag; `/new` on an incognito session
+      // scrubs it, then starts a normal one.
+      const previousKey = state.sessionKey;
+      const wasIncognito = state.incognito;
+      const goIncognito = name === 'incognito';
       loop.resetSessionCost(state.sessionKey);
       ctx.notificationRouter.deregister(state.sessionKey);
-      state.sessionKey = `cli:${basename(process.cwd())}:${Date.now()}`;
+      state.sessionKey = incognitoSessionKey();
+      state.incognito = goIncognito;
       ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
       state.contextTokens = 0;
       state.contextInputTokens = 0;
       state.messageCount = 0;
       state.startedAt = Date.now();
+      rl.setPrompt(promptString(state));
+      if (wasIncognito) {
+        await scrubWithNotice(scrubIncognitoKey, previousKey, (line) =>
+          out(`${c.dim}${line}${c.reset}\n`),
+        );
+      }
       // C4 — name the key so `ethos chat --resume <key>` has something to hold.
       out(`${c.dim}[new session ${state.sessionKey} started]${c.reset}\n`);
+      if (goIncognito) out(`${c.dim}${INCOGNITO_ENTRY_LINE}${c.reset}\n`);
       break;
+    }
 
     case 'fork':
     case 'branches':
@@ -1928,6 +2014,7 @@ async function handleSlashCommand(
       // `personality_locked`. Mirror the gateway's `/personality` handler:
       // set the new id AND rotate to a fresh session key, resetting the same
       // per-session state `/new` resets.
+      const previousKey = state.sessionKey;
       loop.resetSessionCost(state.sessionKey);
       ctx.notificationRouter.deregister(state.sessionKey);
       state.personalityId = arg;
@@ -1937,6 +2024,13 @@ async function handleSlashCommand(
       state.contextInputTokens = 0;
       state.messageCount = 0;
       state.startedAt = Date.now();
+      // The flag stays on across this rotation, so the session it leaves would
+      // never be scrubbed by a later `/new` (which scrubs only the current key).
+      if (state.incognito) {
+        await scrubWithNotice(scrubIncognitoKey, previousKey, (line) =>
+          out(`${c.dim}${line}${c.reset}\n`),
+        );
+      }
       out(
         `${c.dim}[personality: ${arg} — new session started; personality is fixed for a session]${c.reset}\n`,
       );

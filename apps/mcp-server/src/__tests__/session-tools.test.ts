@@ -114,7 +114,7 @@ describe('list_sessions', () => {
     const store = createMockStore();
     const result = await listSessions(store, 20);
     expect(result).toHaveLength(1);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.id).toBe('sess-1');
     expect(first.createdAt).toBe('2025-01-01T00:00:00.000Z');
     expect(first.updatedAt).toBe('2025-01-01T01:00:00.000Z');
@@ -139,7 +139,7 @@ describe('list_sessions', () => {
     const store = createMockStore({ sessions });
     const result = await listSessions(store, 20, '2025-03-01');
     expect(result).toHaveLength(1);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.id).toBe('sess-new');
   });
 
@@ -184,7 +184,7 @@ describe('get_messages', () => {
     const store = createMockStore({ messages });
     const result = await getMessages(store, 'sess-1', 50);
     expect(result).toHaveLength(2);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.content).toBe('Hello');
     expect(first.timestamp).toBe('2025-01-01T00:00:00.000Z');
   });
@@ -210,7 +210,7 @@ describe('search_sessions', () => {
     const store = createMockStore({ searchResults });
     const result = await searchSessions(store, 'keyword', 10);
     expect(result).toHaveLength(1);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.snippet).toContain('keyword');
     expect(first.timestamp).toBe('2025-01-01T00:30:00.000Z');
     expect(first.score).toBe(0.95);
@@ -271,7 +271,7 @@ describe('search_sessions', () => {
     const store = createMockStore({ searchResults });
     const result = await searchSessions(store, 'message', 10, '2025-03-01');
     expect(result).toHaveLength(1);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.snippet).toBe('new message');
   });
 
@@ -295,7 +295,7 @@ describe('search_sessions', () => {
     const store = createMockStore({ searchResults });
     const result = await searchSessions(store, 'message', 10, undefined, '2025-03-01');
     expect(result).toHaveLength(1);
-    const first = result[0] as Record<string, unknown>;
+    const first = (result as unknown[])[0] as Record<string, unknown>;
     expect(first.snippet).toBe('old message');
   });
 

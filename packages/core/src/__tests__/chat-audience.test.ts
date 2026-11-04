@@ -6,6 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import { ROOM_AUDIENCE_METADATA_KEY } from '../agent-loop/audience';
 import {
+  INCOGNITO_MAX_AGE_MS,
+  INCOGNITO_METADATA_KEY,
+  incognitoAncestorKeys,
+  incognitoSessionMetadata,
+  isIncognitoSession,
   isSharedSession,
   PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,
   type PrivateChatSet,
@@ -221,5 +226,71 @@ describe('privateChatSetFrom', () => {
     const set = privateChatSetFrom({ telegram: ['-1001'] });
     expect(targetAudience('telegram', '-1001', set)).toBe('private');
     expect(targetAudience('telegram', '-1002', set)).toBe('shared');
+  });
+});
+
+describe('incognito stamp (plan incognito-sessions D4)', () => {
+  it('isIncognitoSession reads metadata.incognito === true only', () => {
+    expect(isIncognitoSession({})).toBe(false);
+    expect(isIncognitoSession({ metadata: {} })).toBe(false);
+    expect(isIncognitoSession({ metadata: { [INCOGNITO_METADATA_KEY]: false } })).toBe(false);
+    expect(isIncognitoSession({ metadata: { [INCOGNITO_METADATA_KEY]: 'true' } })).toBe(false);
+    expect(isIncognitoSession({ metadata: { [INCOGNITO_METADATA_KEY]: true } })).toBe(true);
+  });
+
+  it('incognitoSessionMetadata merges both keys over the current metadata', () => {
+    expect(incognitoSessionMetadata()).toEqual({ roomAudience: 'shared', incognito: true });
+    expect(incognitoSessionMetadata({ a: 1, roomAudience: 'private' })).toEqual({
+      a: 1,
+      roomAudience: 'shared',
+      incognito: true,
+    });
+  });
+
+  it('INCOGNITO_MAX_AGE_MS is 24 hours', () => {
+    expect(INCOGNITO_MAX_AGE_MS).toBe(86_400_000);
+  });
+
+  it('turnWasShared is true for incognito with no roomAudience stamp, even on a private key', () => {
+    expect(turnWasShared({ key: 'cli:x', metadata: { incognito: true } })).toBe(true);
+    expect(
+      turnWasShared({ key: buildLaneKey('telegram', 'b', '42'), metadata: { incognito: true } }),
+    ).toBe(true);
+    expect(
+      turnWasShared({
+        key: buildLaneKey('discord', 'b', '555'),
+        metadata: { [ROOM_AUDIENCE_METADATA_KEY]: 'private', incognito: true },
+      }),
+    ).toBe(true);
+  });
+
+  it('sessionAudienceStampFor(…, incognito) writes both keys once, merges, and is a no-op after', () => {
+    expect(
+      sessionAudienceStampFor('shared', false, { key: 'cli:x', metadata: { a: 1 } }, false, true),
+    ).toEqual({ a: 1, roomAudience: 'shared', incognito: true });
+    const stamped = { roomAudience: 'shared', incognito: true };
+    expect(
+      sessionAudienceStampFor('shared', false, { key: 'cli:x', metadata: stamped }, false, true),
+    ).toBeUndefined();
+    // false (the default) never writes the key.
+    expect(sessionAudienceStampFor('shared', false, { key: 'cli:x' }, false, false)).toEqual({
+      roomAudience: 'shared',
+    });
+    expect(
+      sessionAudienceStampFor('private', false, { key: 'cli:x' }, false, false),
+    ).toBeUndefined();
+  });
+});
+
+describe('incognitoAncestorKeys', () => {
+  it('lists every proper colon-prefix, shortest first', () => {
+    expect(incognitoAncestorKeys('cli:p:1:sub:x')).toEqual([
+      'cli',
+      'cli:p',
+      'cli:p:1',
+      'cli:p:1:sub',
+    ]);
+    expect(incognitoAncestorKeys('cli')).toEqual([]);
+    expect(incognitoAncestorKeys(':a')).toEqual([]);
   });
 });

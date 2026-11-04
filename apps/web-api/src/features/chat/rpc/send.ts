@@ -42,6 +42,7 @@ export const chatSend = os.chat.send.handler(({ input, context }) => {
     text: input.text,
     ...(input.personalityId ? { personalityId: input.personalityId } : {}),
     ...(input.dryRun ? { dryRun: true } : {}),
+    ...(input.incognito ? { incognito: true } : {}),
     initiator: initiator(context),
     ...(input.origin ? { origin: input.origin } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),

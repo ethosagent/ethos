@@ -75,3 +75,48 @@ describe('runBranchCommand (CLI/TUI /fork, /branches, /branch)', () => {
     expect(out.message).toMatch(/send a message first/);
   });
 });
+
+describe('runBranchCommand while incognito', () => {
+  async function incognitoSeeded(childIncognito: boolean) {
+    const store = new InMemorySessionStore();
+    const root = await store.createSession({
+      key: 'cli:proj',
+      platform: 'cli',
+      model: 'm',
+      provider: 'p',
+      personalityId: 'researcher',
+      usage,
+      metadata: { incognito: true, roomAudience: 'shared' },
+    });
+    await store.appendMessage({ sessionId: root.id, role: 'user', content: 'hi' });
+    await store.createSession({
+      key: 'cli:proj:fork:1-aaaaaaaa',
+      platform: 'cli',
+      model: 'm',
+      provider: 'p',
+      personalityId: 'researcher',
+      usage,
+      parentSessionId: root.id,
+      ...(childIncognito ? { metadata: { incognito: true, roomAudience: 'shared' } } : {}),
+    });
+    return store;
+  }
+
+  it('refuses to switch onto a normal branch', async () => {
+    const out = await runBranchCommand(await incognitoSeeded(false), 'branch', '2', 'cli:proj');
+    expect(out.switchTo).toBeUndefined();
+    expect(out.message).toBe('That branch is not incognito. Send /new to leave incognito first.');
+  });
+
+  it('switches onto an incognito branch', async () => {
+    const out = await runBranchCommand(await incognitoSeeded(true), 'branch', '2', 'cli:proj');
+    expect(out.switchTo?.sessionKey).toBe('cli:proj:fork:1-aaaaaaaa');
+  });
+
+  it('a fork of an incognito session is allowed (and stays incognito)', async () => {
+    const store = await incognitoSeeded(true);
+    const out = await runBranchCommand(store, 'fork', '', 'cli:proj', '/work/proj');
+    const fork = await store.getSessionByKey(out.switchTo?.sessionKey ?? '');
+    expect(fork?.metadata?.incognito).toBe(true);
+  });
+});

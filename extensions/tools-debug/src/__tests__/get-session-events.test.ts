@@ -55,6 +55,28 @@ describe('get_session_events — shared sessions', () => {
     expect(res).toMatchObject({ ok: false, code: 'not_available' });
   });
 
+  it('refuses an incognito session from another session, with the incognito wording', async () => {
+    const { store, id } = await storeWith('cli:inc', { incognito: true });
+    const res = await buildGetSessionEvents({ sessionStore: store }).execute(
+      { sessionId: id },
+      callerCtx('dream-session'),
+    );
+    expect(res).toMatchObject({
+      ok: false,
+      code: 'not_available',
+      error: 'That session is incognito; its messages are only readable from inside it.',
+    });
+  });
+
+  it("reads the caller's own incognito session from inside it", async () => {
+    const { store, id } = await storeWith('cli:inc', { incognito: true });
+    const res = await buildGetSessionEvents({ sessionStore: store }).execute(
+      { sessionId: id },
+      callerCtx(id),
+    );
+    expect(res.ok).toBe(true);
+  });
+
   it('pre-upgrade fixture: refuses an UNSTAMPED telegram group lane', async () => {
     const { store, id } = await storeWith('telegram:bot1:-1001234567890');
     const res = await buildGetSessionEvents({ sessionStore: store }).execute(

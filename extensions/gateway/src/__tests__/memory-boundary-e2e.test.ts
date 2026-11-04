@@ -23,7 +23,7 @@
 //   cron job delivering to a group   → `cronRunAudience` runs the firing shared
 //   unverified email (real adapter)  → `EmailAdapter` hints it shared (D10)
 
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -32,6 +32,7 @@ import {
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
   InMemorySessionStore,
+  isIncognitoSession,
   privateChatSetFrom,
   ROOM_AUDIENCE_METADATA_KEY,
 } from '@ethosagent/core';
@@ -48,6 +49,8 @@ import type {
   Message,
   OutboundMessage,
   PlatformAdapter,
+  SessionStore,
+  Storage,
   Tool,
 } from '@ethosagent/types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -60,6 +63,7 @@ import { cronRunAudience } from '../../../../packages/wiring/src/cron-audience';
 // loads it lazily in production.
 import { EmailAdapter } from '../../../platform-email/src/index';
 import { loadEmailSdk } from '../../../platform-email/src/sdk';
+import { SQLiteSessionStore } from '../../../session-sqlite/src/index';
 import { createDelegationTools } from '../../../tools-delegation/src/index';
 import { WatcherManager, type WatcherWakeEvent } from '../../../watchers/src/index';
 import { Gateway } from '../index';
@@ -217,7 +221,16 @@ describe('memory boundary through the gateway (plan step 4)', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  function harness(opts: { delegate?: boolean } = {}) {
+  function harness(
+    opts: {
+      delegate?: boolean;
+      /** Register a `terminal` tool (the shell D3 re-admits for incognito). */
+      shell?: boolean;
+      /** Share a session store / lane-file storage across two gateways (a restart). */
+      sessions?: SessionStore;
+      laneStorage?: Storage;
+    } = {},
+  ) {
     const memory = spyMemory();
     const toolRuns: string[] = [];
     const memoryWrites: unknown[] = [];
@@ -255,19 +268,35 @@ describe('memory boundary through the gateway (plan step 4)', () => {
         return { ok: true, value: 'done' };
       },
     });
+    if (opts.shell) {
+      tools.register({
+        name: 'terminal',
+        description: 'run a shell command',
+        toolset: 'terminal',
+        capabilities: {},
+        schema: { type: 'object', properties: {} },
+        async execute() {
+          toolRuns.push('terminal');
+          return { ok: true, value: 'ok' };
+        },
+      });
+    }
     const personalities = new DefaultPersonalityRegistry();
-    personalities.define({
-      id: 'default',
-      name: 'Default',
-      toolset: [
-        'memory_write',
-        'memory_read',
-        'read_file',
-        ...(opts.delegate ? ['delegate_task'] : []),
-      ],
-    });
+    for (const id of ['default', 'alt']) {
+      personalities.define({
+        id,
+        name: id,
+        toolset: [
+          'memory_write',
+          'memory_read',
+          'read_file',
+          ...(opts.shell ? ['terminal'] : []),
+          ...(opts.delegate ? ['delegate_task'] : []),
+        ],
+      });
+    }
     const scripted = scriptedLLM(memoryPath);
-    const sessions = new InMemorySessionStore();
+    const sessions = opts.sessions ?? new InMemorySessionStore();
     const loop = new AgentLoop({
       llm: scripted.llm,
       tools,
@@ -291,7 +320,15 @@ describe('memory boundary through the gateway (plan step 4)', () => {
     }
     const out = recordingAdapter();
     const gw = new Gateway({
-      bots: [{ botKey: 'bot-a', loop, binding: { type: 'personality', name: 'default' } }],
+      bots: [
+        {
+          botKey: 'bot-a',
+          loop,
+          binding: { type: 'personality', name: 'default', allowSlashSwitch: true },
+        },
+      ],
+      ...(opts.laneStorage ? { storage: opts.laneStorage, dataDir: '/state' } : {}),
+      sessionStore: () => sessions,
       clarifySweepIntervalMs: 0,
       clarifyEscalationDelayMs: 0,
       streamingEditIntervalMs: 0,
@@ -575,6 +612,196 @@ describe('memory boundary through the gateway (plan step 4)', () => {
       await h.gw.handleMessage(inbound, h.out.adapter);
       expectShared(h);
       expect(h.out.sends.map((s) => s.text)).toEqual(['answered']);
+    });
+  });
+  // plan incognito-sessions Part D — `/incognito` in an owner DM.
+  describe('incognito DM', () => {
+    const ACK_PREFIX = 'Incognito on.';
+    const REFUSAL =
+      'Incognito is only available in a private chat with the owner. This chat already keeps nothing in memory.';
+
+    function incognitoHarness(extra: Parameters<typeof harness>[0] = {}) {
+      return harness({ shell: true, sessions: new SQLiteSessionStore(':memory:'), ...extra });
+    }
+
+    /** The session key `/status` reports for the lane (last `·`-separated field). */
+    async function laneSessionKey(h: H, over: Partial<InboundMessage> = {}): Promise<string> {
+      await h.gw.handleMessage(msg({ ...over, text: '/status' }), h.out.adapter);
+      const text = h.out.sends.at(-1)?.text ?? '';
+      return (
+        text
+          .split('\n')
+          .find((l) => l.includes(' · '))
+          ?.split(' · ')
+          .at(-1) ?? ''
+      );
+    }
+
+    function expectIncognitoTurn(h: H) {
+      expect(h.memory.calls.filter((c) => c.scopeId.startsWith('personality:'))).toEqual([]);
+      expect(h.memory.calls.filter((c) => c.scopeId.startsWith('user:'))).toEqual([]);
+      const tools = h.scripted.mainTools.at(-1) ?? [];
+      expect(tools).not.toContain('memory_write');
+      expect(tools).not.toContain('memory_read');
+      expect(tools).toContain('read_file');
+    }
+
+    it('/incognito then a message: nothing read or written, shell still present, session stamped', async () => {
+      const h = incognitoHarness();
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      expect(h.out.sends.at(-1)?.text.startsWith(ACK_PREFIX)).toBe(true);
+      await h.gw.handleMessage(msg({}), h.out.adapter);
+
+      expectIncognitoTurn(h);
+      expect(h.scripted.mainTools.at(-1)).toContain('terminal');
+      expect(h.memoryWrites).toEqual([]);
+      expect(h.scripted.flushCalls).toEqual([]);
+      expect(h.scripted.mainSystems.join('\n')).not.toContain(MEMORY_CANARY);
+      expect(h.scripted.mainSystems.join('\n')).not.toContain(USER_CANARY);
+      expect(await readFile(memoryPath, 'utf8')).toBe(MEMORY_CANARY);
+
+      const stored = await h.sessions.getSessionByKey(await laneSessionKey(h));
+      expect(isIncognitoSession(stored ?? { metadata: {} })).toBe(true);
+      expect(stored?.metadata?.[ROOM_AUDIENCE_METADATA_KEY]).toBe('shared');
+      // /status says so.
+      expect(h.out.sends.at(-1)?.text).toContain('Incognito: on');
+    });
+
+    it('a second /incognito says so and does not rotate the session', async () => {
+      const h = incognitoHarness();
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      const before = await laneSessionKey(h);
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      expect(h.out.sends.at(-1)?.text).toMatch(/^Already incognito/);
+      expect(await laneSessionKey(h)).toBe(before);
+    });
+
+    it('a gateway rebuilt from the same lane file between /incognito and the message still runs it incognito', async () => {
+      const laneStorage = new InMemoryStorage();
+      const sessions = new SQLiteSessionStore(':memory:');
+      const first = incognitoHarness({ laneStorage, sessions });
+      await first.gw.handleMessage(msg({ text: '/incognito' }), first.out.adapter);
+
+      const second = incognitoHarness({ laneStorage, sessions });
+      await second.gw.restoreLaneSessions();
+      await second.gw.handleMessage(msg({}), second.out.adapter);
+      expectIncognitoTurn(second);
+      expect(second.memoryWrites).toEqual([]);
+      const stored = await sessions.getSessionByKey(await laneSessionKey(second));
+      expect(isIncognitoSession(stored ?? { metadata: {} })).toBe(true);
+    });
+
+    it('without the lane file a rebuilt gateway does NOT know the lane (the file is what carries it)', async () => {
+      const sessions = new SQLiteSessionStore(':memory:');
+      const first = incognitoHarness({ sessions });
+      await first.gw.handleMessage(msg({ text: '/incognito' }), first.out.adapter);
+      const second = incognitoHarness({ sessions });
+      await second.gw.handleMessage(msg({}), second.out.adapter);
+      expectPrivate(second);
+    });
+
+    it('/personality keeps the lane incognito on the rotated session', async () => {
+      const h = incognitoHarness();
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      const before = await laneSessionKey(h);
+      await new Promise((r) => setTimeout(r, 5)); // keys are `<lane>:<Date.now()>`
+      await h.gw.handleMessage(msg({ text: '/personality alt' }), h.out.adapter);
+      const after = await laneSessionKey(h);
+      expect(after).not.toBe(before);
+      expect(h.out.sends.at(-1)?.text).toContain('Incognito: on');
+      await h.gw.handleMessage(msg({}), h.out.adapter);
+      expectIncognitoTurn(h);
+      const stored = await h.sessions.getSessionByKey(after);
+      expect(isIncognitoSession(stored ?? { metadata: {} })).toBe(true);
+    });
+
+    it('/new scrubs the old session (content blanked in the store) and the next message is normal', async () => {
+      const h = incognitoHarness();
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      await h.gw.handleMessage(msg({ text: 'my secret plan is zebra' }), h.out.adapter);
+      const old = await laneSessionKey(h);
+      const oldSession = await h.sessions.getSessionByKey(old);
+      expect(oldSession).not.toBeNull();
+      const before = await h.sessions.getMessages(oldSession?.id ?? '');
+      expect(JSON.stringify(before)).toContain('zebra');
+
+      await h.gw.handleMessage(msg({ text: '/new' }), h.out.adapter);
+      expect(h.out.sends.at(-1)?.text).toBe(
+        'Incognito off. That chat’s history was cleared. New session started.',
+      );
+      const after = await h.sessions.getMessages(oldSession?.id ?? '');
+      expect(after.length).toBe(before.length);
+      expect(JSON.stringify(after)).not.toContain('zebra');
+      for (const m of after) expect(m.content).toBe('');
+
+      h.memory.calls.length = 0;
+      await h.gw.handleMessage(msg({}), h.out.adapter);
+      expect(h.memory.calls).toContainEqual({ method: 'prefetch', scopeId: 'personality:default' });
+      expect(h.scripted.mainTools.at(-1)).toContain('memory_write');
+      const fresh = await h.sessions.getSessionByKey(await laneSessionKey(h));
+      expect(isIncognitoSession(fresh ?? { metadata: {} })).toBe(false);
+      expect(h.out.sends.at(-1)?.text).not.toContain('Incognito: on');
+    });
+
+    it('/new still starts the new session when the scrub fails, and records it', async () => {
+      const sessions = new SQLiteSessionStore(':memory:');
+      sessions.scrubIncognito = async () => {
+        throw new Error('disk full');
+      };
+      const h = incognitoHarness({ sessions });
+      const recordSafetyBlock = vi.fn();
+      (h.gw as unknown as { observability: unknown }).observability = { recordSafetyBlock };
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      await h.gw.handleMessage(msg({ text: '/new' }), h.out.adapter);
+      expect(recordSafetyBlock).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'gateway.incognito_scrub_failed' }),
+      );
+      expect(h.out.sends.at(-1)?.text).toMatch(/^Incognito off\. New session started\./);
+      await h.gw.handleMessage(msg({}), h.out.adapter);
+      expectPrivate(h);
+    });
+
+    const refusals: Array<[string, Partial<InboundMessage>]> = [
+      ['a group', { chatId: '-100group', isDm: false, isGroupMention: true }],
+      [
+        'a group listed in private_chats',
+        { chatId: '-100listed', isDm: false, isGroupMention: true },
+      ],
+      ['a DM the adapter hinted shared', { audienceHint: 'shared' }],
+      ['a non-owner DM', { chatId: '77', userId: 'stranger-1' }],
+    ];
+    for (const [name, over] of refusals) {
+      it(`/incognito in ${name} is refused and changes nothing`, async () => {
+        const laneStorage = new InMemoryStorage();
+        const h = incognitoHarness({ laneStorage });
+        const before = await laneSessionKey(h, over);
+        await h.gw.handleMessage(msg({ ...over, text: '/incognito' }), h.out.adapter);
+        expect(h.out.sends.at(-1)?.text).toBe(REFUSAL);
+        expect(await laneSessionKey(h, over)).toBe(before);
+        expect(h.out.sends.at(-1)?.text).not.toContain('Incognito: on');
+        // Nothing persisted, and a following turn gains no shell.
+        expect(await laneStorage.read('/state/gateway/lanes/bot-a.json')).toBeNull();
+        await h.gw.handleMessage(msg({ ...over, text: 'hello' }), h.out.adapter);
+        // A listed group is a private-memory room (its turns keep the shell);
+        // every other refused chat is shared, and gains none.
+        if (over.chatId !== '-100listed') {
+          expect(h.scripted.mainTools.at(-1)).not.toContain('terminal');
+        }
+        expect(h.out.sends.at(-1)?.text).not.toContain('Incognito');
+      });
+    }
+
+    it('the delegate child of an incognito turn is shared too', async () => {
+      const h = incognitoHarness({ delegate: true });
+      await h.gw.handleMessage(msg({ text: '/incognito' }), h.out.adapter);
+      await h.gw.handleMessage(msg({ text: 'please delegate' }), h.out.adapter);
+      expect(h.scripted.mainTools.length).toBeGreaterThanOrEqual(2);
+      expect(h.toolRuns).not.toContain('memory_write');
+      expect(h.toolRuns).not.toContain('memory_read');
+      expect(h.memoryWrites).toEqual([]);
+      expect(h.memory.calls.filter((c) => c.scopeId.startsWith('personality:'))).toEqual([]);
+      for (const tools of h.scripted.mainTools) expect(tools).not.toContain('memory_write');
+      expect(h.fileReads.every((r) => r.startsWith('refused:'))).toBe(true);
     });
   });
 });

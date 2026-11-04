@@ -1,4 +1,5 @@
 import type { SessionStore } from '@ethosagent/types';
+import { INCOGNITO_REFUSAL, isIncognitoSession } from '@ethosagent/wiring';
 
 export async function getSession(
   sessionStore: SessionStore,
@@ -9,6 +10,8 @@ export async function getSession(
   if (!session) {
     return { error: `Session not found: ${id}` };
   }
+
+  if (isIncognitoSession(session)) return { error: INCOGNITO_REFUSAL };
 
   const messages = await sessionStore.getMessages(id, { limit: messageLimit });
 

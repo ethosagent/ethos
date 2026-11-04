@@ -276,5 +276,20 @@ export interface SessionStore {
   recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void>;
   undoTurns(sessionId: string, n: number): Promise<number>;
   pruneOldSessions(olderThan: Date): Promise<number>;
+  /**
+   * Blank the content of incognito sessions (metadata `incognito: true`) and their
+   * descendants (keys starting `<key>:`): message content, content blocks, tool calls,
+   * title, compression summaries, context events, decisions. Rows and usage columns
+   * are kept so spend stays counted. `sessionKey` set → that session (it must itself
+   * be incognito-stamped) and its descendants; `olderThan` set → only messages
+   * timestamped before it; absent `sessionKey` → every incognito session. Returns the
+   * number of messages scrubbed and the ids of the sessions touched. Optional: a store
+   * that omits it scrubs nothing. Pinned for the SQLite store by
+   * extensions/session-sqlite/src/__tests__/incognito-scrub.test.ts.
+   */
+  scrubIncognito?(opts: {
+    sessionKey?: string;
+    olderThan?: Date;
+  }): Promise<{ messages: number; sessionIds: string[] }>;
   vacuum(): Promise<void>;
 }

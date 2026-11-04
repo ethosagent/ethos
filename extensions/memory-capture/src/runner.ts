@@ -233,8 +233,11 @@ export class MemoryCaptureRunner {
       sessionKey,
       // G1-8: a stamped-shared or pre-upgrade group session, or a non-owner DM
       // (the D8 marker), is never captured (`turnWasShared`).
-      // A session the store no longer has is judged by an empty key: nothing to read.
-      shared: session ? turnWasShared(session, this.opts.privateChats) : false,
+      // D12 (plan incognito-sessions): a session the store no longer has fails
+      // closed — it may have been an incognito session deleted under a queued
+      // capture. Pinned by 'a session missing from the store is not captured'
+      // in `__tests__/runner.test.ts`.
+      shared: session ? turnWasShared(session, this.opts.privateChats) : true,
       initialPrompt: job.initialPrompt,
       finalText: job.text,
       isDryRun: job.isDryRun,

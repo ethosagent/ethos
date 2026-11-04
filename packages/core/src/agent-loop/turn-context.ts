@@ -264,6 +264,13 @@ export interface TurnSetup {
    */
   roomAudience: TurnAudience;
   /**
+   * Plan incognito-sessions D5 — the turn is incognito (`RunOptions.incognito`
+   * or the session stamp, never for a shared caller). Read by compaction (no
+   * paged store, D9), turn-end (`TurnEndCtx.incognito`) and the usage scope
+   * (D16). Absent → a normal turn.
+   */
+  incognito?: boolean;
+  /**
    * D8 — set on a non-owner DM (`RunOptions.skipPersonalityMemory`), where
    * `roomAudience` is `'shared'` for this turn only: context assembly still
    * reads the sender's own `user:<id>` profile. See

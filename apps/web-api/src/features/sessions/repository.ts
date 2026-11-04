@@ -9,7 +9,7 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { forkSession, forkSessionKey } from '@ethosagent/wiring';
+import { forkSession, forkSessionKey, isIncognitoSession } from '@ethosagent/wiring';
 
 // Thin wrapper over the `SessionStore` contract for the sessions feature.
 // Hides the store's exact method names and Date/string conversions from
@@ -93,6 +93,8 @@ export class SessionsRepository {
       const sessions = (await Promise.all(matchedIds.map((id) => this.store.getSession(id))))
         .filter((s): s is Session => s !== null)
         .filter((s) => !s.key.startsWith('goal:'))
+        // D11: incognito transcripts are not searchable (they stay in the plain list).
+        .filter((s) => !isIncognitoSession(s))
         .filter((s) => opts.platform === undefined || s.platform === opts.platform)
         .filter(
           (s) => opts.parentSessionId === undefined || s.parentSessionId === opts.parentSessionId,

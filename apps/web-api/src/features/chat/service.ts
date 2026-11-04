@@ -10,6 +10,7 @@ import type { CardStore } from '@ethosagent/session-cards';
 import { EthosError } from '@ethosagent/types';
 import type { ActivityEvent, CardEnvelope, SseEvent } from '@ethosagent/web-contracts';
 import { ACTIVITY_EVENT_TYPES } from '@ethosagent/web-contracts';
+import { incognitoSessionMetadata, isIncognitoSession } from '@ethosagent/wiring';
 import type { SystemEventBus } from '../../services/system-event-bus';
 import { gateStructuredCard } from './card-gate';
 import type { ChatRepository } from './repository';
@@ -111,6 +112,12 @@ export interface ChatSendInput {
   userId?: string;
   dryRun?: boolean;
   /**
+   * Start a NEW session incognito. Ignored when `sessionId` is set: an existing
+   * session's stamp wins and is never downgraded (`isIncognitoSession(session)`
+   * below; pinned by __tests__/incognito.test.ts).
+   */
+  incognito?: boolean;
+  /**
    * Who started this turn → `RunOptions.initiator`, verbatim. The RPC layer
    * sets `'user'` for a cookie session and `'system'` for a bearer API key
    * (`chatSend`, ./rpc/send.ts): a key with `chat:send` is a program, not the
@@ -160,6 +167,9 @@ const ACTIVITY_KEY = '__activity__';
 
 /** How long `close()` waits for aborted turns to unwind before giving up. */
 const CLOSE_GRACE_MS = 5_000;
+
+/** How long `endIncognito` waits for the aborted turn to stop writing before it scrubs anyway. */
+const INCOGNITO_END_GRACE_MS = 5_000;
 
 function shuttingDownError(): EthosError {
   return new EthosError({
@@ -213,6 +223,7 @@ export class ChatService {
           provider: this.opts.defaults.provider,
           ...(input.personalityId ? { personalityId: input.personalityId } : {}),
           ...(this.opts.defaults.workingDir ? { workingDir: this.opts.defaults.workingDir } : {}),
+          ...(input.incognito ? { metadata: incognitoSessionMetadata() } : {}),
         });
 
     this.sessionPersonalityIds.set(session.id, session.personalityId ?? null);
@@ -316,6 +327,8 @@ export class ChatService {
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
+        // Explicit though turn-setup is sticky on the stamp anyway (D5/D6).
+        ...(isIncognitoSession(session) ? { incognito: true } : {}),
         ...(input.initiator ? { initiator: input.initiator } : {}),
         // openclaw-9.5 item 1 — this surface can answer a missing plugin
         // credential (the chat pane's masked prompt), so the loop refuses the
@@ -341,6 +354,49 @@ export class ChatService {
       });
 
     return { sessionId: session.id, turnId };
+  }
+
+  /**
+   * End an incognito session (plan incognito-sessions D7/D8a): blank the
+   * transcript and every descendant's, then drop the session's cards and its
+   * attachment cache. The row stays so spend stays counted. Refuses a session
+   * that is not incognito, so this can never blank a normal conversation.
+   */
+  async endIncognito(sessionId: string): Promise<{ scrubbed: number }> {
+    const session = await this.requireSession(sessionId);
+    if (!isIncognitoSession(session)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Session ${sessionId} is not incognito`,
+        action:
+          'Only an incognito session can be ended this way. Use sessions.delete to remove a normal one.',
+      });
+    }
+    // Stop a turn still writing into the transcript, and wait for it to unwind
+    // (`abortTurn` only raises a signal), or its partial reply lands after the
+    // scrub. Bounded: on timeout scrub anyway; the 24 h sweep is the backstop.
+    const bridge = this.bridges.get(sessionId);
+    if (bridge) {
+      const idle = bridge.whenIdle();
+      bridge.abortTurn();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settled = await Promise.race([
+        idle.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), INCOGNITO_END_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!settled) {
+        console.warn(
+          `[chat] incognito session ${sessionId}: aborted turn still running after ${INCOGNITO_END_GRACE_MS}ms; scrubbing anyway (the 24 h sweep is the backstop)`,
+        );
+      }
+    }
+    const { messages } = await this.opts.sessions.scrubIncognito(session.key);
+    this.opts.cardStore?.deleteSession(sessionId);
+    await this.opts.attachmentCache?.clear(session.key);
+    return { scrubbed: messages };
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -686,7 +742,7 @@ export class ChatService {
           `[chat] dropped invalid card envelope from ${toolName} (${toolCallId}): ${gated.issues.join('; ')}`,
         );
       }
-      if (gated.card) this.persistCard(sessionId, toolCallId, gated.card);
+      if (gated.card) void this.persistCard(sessionId, toolCallId, gated.card);
       this.append(sessionId, {
         type: 'tool_end',
         toolCallId,
@@ -765,9 +821,20 @@ export class ChatService {
    * failure costs one card on a later reload, and must never break the live
    * stream the user is watching.
    */
-  private persistCard(sessionId: string, toolCallId: string, envelope: CardEnvelope): void {
+  private async persistCard(
+    sessionId: string,
+    toolCallId: string,
+    envelope: CardEnvelope,
+  ): Promise<void> {
     try {
-      this.opts.cardStore?.append(sessionId, toolCallId, envelope);
+      if (!this.opts.cardStore) return;
+      // Incognito sessions never persist cards (plan incognito-sessions D7):
+      // the 24 h sweep runs in other processes that hold no card store, so the
+      // write is refused at the source. Fail closed — a failed lookup or a
+      // missing row skips the append. Pinned by __tests__/incognito.test.ts.
+      const session = await this.opts.sessions.get(sessionId);
+      if (!session || isIncognitoSession(session)) return;
+      this.opts.cardStore.append(sessionId, toolCallId, envelope);
     } catch (err) {
       console.warn(
         `[chat] card persist failed for session ${sessionId} (${toolCallId}): ${err instanceof Error ? err.message : String(err)}`,

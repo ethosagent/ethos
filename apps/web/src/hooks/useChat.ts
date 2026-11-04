@@ -52,6 +52,12 @@ export interface UseChatOptions {
    * merged, so the cron turn appears in chat.
    */
   sessionKey?: string;
+  /**
+   * Start the NEXT new session incognito (`chat.send { incognito }`). Sent only
+   * on the send that creates the session; an existing session keeps its own
+   * stamp on the server, so this can never downgrade one.
+   */
+  incognito?: boolean;
 }
 
 /** Where the next-older history page stands. `error` keeps the cursor. */
@@ -441,6 +447,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   //    fires chat.send, and lets SSE drive the assistant response.
   const onSessionCreated = opts.onSessionCreated;
   const personalityId = opts.personalityId;
+  const startIncognito = opts.incognito === true;
   // W1 — what a failed send would need to be retried verbatim: the trimmed
   // text and the ORIGINAL attachment previews (the reducer's bubble carries
   // render-only metadata, not the bytes). Keyed by the optimistic bubble's id;
@@ -492,6 +499,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           clientId: getClientId(),
           text: trimmed,
           ...(personalityId ? { personalityId } : {}),
+          ...(!currentSessionId && startIncognito ? { incognito: true } : {}),
           // Talk-mode marks its turns so the server can annotate them as
           // spoken. Typed sends omit it entirely.
           ...(opts?.origin === 'voice' ? { origin: 'voice' as const } : {}),
@@ -531,7 +539,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         });
       }
     },
-    [currentSessionId, personalityId, onSessionCreated, interruptedTurnId],
+    [currentSessionId, personalityId, startIncognito, onSessionCreated, interruptedTurnId],
   );
 
   // W1 — Retry re-submits the failed send's own text and attachments; the

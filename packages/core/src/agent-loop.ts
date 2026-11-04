@@ -52,7 +52,7 @@ import type { LoopDeps } from './agent-loop/turn-context';
 import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { emptyModelResolution } from './agent-loop/turn-model';
-import { meteredFor } from './agent-loop/usage-charges';
+import { meteredFor, withSessionKeyScope } from './agent-loop/usage-charges';
 import { createWatcherTap } from './agent-loop/watcher-tap';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
@@ -63,7 +63,6 @@ import { DefaultPersonalityRegistry } from './defaults/noop-personality';
 import { DefaultHookRegistry } from './hook-registry';
 import type { AgentLoopObservability } from './observability/agent-loop-observability';
 import { DefaultToolRegistry } from './tool-registry';
-import { withUsageScope } from './usage-scope';
 
 // AgentEvent lives in @ethosagent/types (Phase 1). Core re-exports for
 // backwards compatibility — all existing consumers import from here.
@@ -303,6 +302,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   reviewOfJobId?: string;
   /** plan personality-memory-boundary G1 — `'shared'` withholds private memory; absent = private. Narrowed by the session's sticky stamp (`resolveTurnAudience`, ./agent-loop/audience.ts) → `ToolContext.roomAudience`. */
   roomAudience?: import('@ethosagent/types').TurnAudience;
+  /** Plan incognito-sessions D5 — run incognito: stamped sticky (`isIncognitoSession`), `'shared'` for memory, shell kept, no paged compaction, no stored tool args; ignored for a shared caller. The STAMP reaches descendants (`<key>:sub:…`/`:job:…` children are stamped by turn-setup, so readers refuse them); the shell re-admission never does (a child is a shared caller). Pinned in `__tests__/incognito.test.ts`. */
+  incognito?: boolean;
   /** Verification round E5 — the caller JUDGED the live room (only the gateway, `Gateway.runTurn`); only then does a private turn on an unstamped channel-shaped session record the judged `'private'` stamp (`sessionAudienceStampFor`, ./chat-audience.ts), so a client-supplied key never turns a pre-upgrade group lane private. Pinned in `__tests__/shared-audience.test.ts`. */
   judgeAudience?: boolean;
   /** Who started this turn → `ToolContext.initiator`, verbatim. Children never inherit it. */
@@ -611,7 +612,7 @@ export class AgentLoop {
     };
     const run = () => compactSession(deps, sessionKey, opts);
     if (!this.usage) return run(); // §5.2 — else a metered summarizer bills this session, uncharged
-    return withUsageScope({ attribution: { sessionKey, platform: this.platform } }, run);
+    return withSessionKeyScope(this.session, sessionKey, this.platform, run);
   }
 
   /** Dependency bag passed to extracted stage functions. */

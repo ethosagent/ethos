@@ -19,6 +19,8 @@ interface StatusBarProps {
   /** `display.emoji` — shown before the name; unset changes nothing. */
   emoji?: string;
   accentColor?: string;
+  /** Session is incognito — a label in the tertiary text colour, no accent. */
+  incognito?: boolean;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -91,6 +93,7 @@ export function StatusBar({
   personality,
   emoji,
   accentColor,
+  incognito = false,
   inputTokens,
   outputTokens,
   costUsd,
@@ -110,6 +113,7 @@ export function StatusBar({
       </Text>
       <Text color={tokens.surface.textSecondary}> {model} ·</Text>
       <Text color={accentColor}>{emoji ? ` ${emoji} ${personality}` : ` ${personality}`}</Text>
+      {incognito && <Text color={tokens.surface.textTertiary}> [incognito]</Text>}
       {readonlyMode && <Text color={tokens.semantic.success}> [READ-ONLY]</Text>}
       <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
       <Text color={tokens.surface.textSecondary}>

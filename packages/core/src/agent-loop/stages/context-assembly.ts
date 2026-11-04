@@ -759,6 +759,7 @@ export async function* assembleContext(
         llmHandle: deps.llmHandle,
         storage: deps.storage,
         dataDir: deps.dataDir,
+        ...(setup.incognito === true ? { incognito: true } : {}),
         countTokens: deps.llm.countTokens.bind(deps.llm),
         ...(opts.maxCompletionTokens !== undefined
           ? { reservedOutputTokens: opts.maxCompletionTokens }

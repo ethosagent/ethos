@@ -8,6 +8,7 @@ import {
   forkSession,
   forkSessionKey,
   haltNotice,
+  isIncognitoSession,
   isSharedSession,
   LaneVoiceModeStore,
   laneKeyBotKey,
@@ -1676,6 +1677,14 @@ export interface GatewayConfig {
 // Built-in gateway slash commands (handled before the AgentLoop sees the text)
 // ---------------------------------------------------------------------------
 
+/** The reply when an incognito lane is asked to switch to a normal branch. */
+const NOT_INCOGNITO_BRANCH_TEXT =
+  'That branch is not incognito. Send /new to leave incognito first.';
+
+/** D13 — the reply when `/incognito` is refused. */
+const INCOGNITO_REFUSED_TEXT =
+  'Incognito is only available in a private chat with the owner. This chat already keeps nothing in memory.';
+
 /**
  * The gateway's executor table: slash token → the branch of
  * `Gateway.handleMessage` that runs it. Must name exactly the commands the
@@ -1688,6 +1697,7 @@ export const PLATFORM_COMMANDS: Readonly<
   Record<
     string,
     | 'new'
+    | 'incognito'
     | 'usage'
     | 'status'
     | 'budget'
@@ -1710,6 +1720,7 @@ export const PLATFORM_COMMANDS: Readonly<
 > = {
   '/new': 'new',
   '/reset': 'new',
+  '/incognito': 'incognito',
   '/fork': 'fork',
   '/branches': 'branches',
   '/branch': 'branch',
@@ -1877,6 +1888,11 @@ export class Gateway {
   /** Per-lane `/mute` expiry (epoch ms), persisted beside the lane's session
    *  key in its lane file (`LaneSessionEntry.mutedUntil`). */
   private readonly laneMutes = new Map<string, number>();
+  /** Lanes running incognito (plan incognito-sessions D5/D6/§7.2). Keyed by lane,
+   *  so `/personality` (which rotates the session key) keeps membership. Persisted
+   *  beside the lane's session key (`LaneSessionEntry.incognito`) and read by
+   *  `runTurn`, so a restart or a spool replay still runs the message incognito. */
+  private readonly incognitoLanes = new Set<string>();
   /**
    * `deliver: 'parent'` reviews waiting out a hold (U11), by job id. Not
    * persisted: a parked job's delivery claim is never taken, so after a restart
@@ -3581,10 +3597,11 @@ export class Gateway {
     if (cmdType === 'new') {
       lane.abort();
       const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
-      this.outboundDedup.clearSession(previousSession);
-      void this.attachmentCache?.clear(previousSession).catch(() => {});
-      const fresh = `${laneKey}:${Date.now()}`;
-      this.sessionKeys.set(laneKey, fresh);
+      // The abort only raises a signal: let the aborted turn finish writing
+      // before the scrub, or its partial reply lands after the blanking.
+      if (this.incognitoLanes.has(laneKey)) await this.settleAbortedLane(laneKey, lane);
+      const wasIncognito = this.incognitoLanes.delete(laneKey);
+      this.rotateLaneSession(laneKey, previousSession);
       this.usageStore.delete(laneKey);
       this.personalityIds.delete(laneKey); // reset to default personality
       // Voice mode deliberately SURVIVES /new: it is a durable per-lane
@@ -3593,8 +3610,40 @@ export class Gateway {
       // recognise. `lastInboundHadAudio` IS per-turn state and still clears.
       this.lastInboundHadAudio.delete(laneKey);
       await this.persistLaneSessions(laneKey);
+      const ack = wasIncognito
+        ? (await this.scrubEndedIncognito(laneKey, previousSession))
+          ? 'Incognito off. That chat’s history was cleared. New session started.'
+          : 'Incognito off. New session started. That chat’s history could not be cleared just now; it is cleared within 24 h.'
+        : '✓ New session started.';
+      await adapter.send(message.chatId, { text: ack, threadId }).catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'incognito') {
+      if (this.incognitoRefused(message)) {
+        await adapter
+          .send(message.chatId, { text: INCOGNITO_REFUSED_TEXT, threadId })
+          .catch(() => {});
+        return;
+      }
+      if (this.incognitoLanes.has(laneKey)) {
+        await adapter
+          .send(message.chatId, {
+            text: 'Already incognito. Send /new to end it and clear this chat’s history.',
+            threadId,
+          })
+          .catch(() => {});
+        return;
+      }
+      lane.abort();
+      this.rotateLaneSession(laneKey, this.sessionKeys.get(laneKey) ?? laneKey);
+      this.incognitoLanes.add(laneKey);
+      await this.persistLaneSessions(laneKey);
       await adapter
-        .send(message.chatId, { text: '✓ New session started.', threadId })
+        .send(message.chatId, {
+          text: 'Incognito on. Nothing from this chat is remembered or learned from. History is cleared when you send /new, or 24 h after each message.',
+          threadId,
+        })
         .catch(() => {});
       return;
     }
@@ -3615,6 +3664,7 @@ export class Gateway {
         : [`/personality — show current binding (${current}; switching disabled)`];
       let helpText =
         `/new — start a fresh session\n` +
+        `/incognito — keep nothing from this chat in memory or learning\n` +
         `/fork — branch this session (same history, new session)\n` +
         `/branches — list this session's branches\n` +
         `/branch <n> — switch to branch <n>\n` +
@@ -3763,12 +3813,21 @@ export class Gateway {
 
       // Switch personality — also start a fresh session so the new identity takes effect immediately
       const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
+      // An incognito lane keeps its flag across this rotation, so the session
+      // it leaves would never be scrubbed by a later `/new` (which scrubs only
+      // the current key): stop its turn, let it settle, and scrub it now.
+      const leavingIncognito = this.incognitoLanes.has(laneKey);
+      if (leavingIncognito) {
+        lane.abort();
+        await this.settleAbortedLane(laneKey, lane);
+      }
       this.outboundDedup.clearSession(previousSession);
       void this.attachmentCache?.clear(previousSession).catch(() => {});
       this.personalityIds.set(laneKey, arg);
       const fresh = `${laneKey}:${Date.now()}`;
       this.sessionKeys.set(laneKey, fresh);
       await this.persistLaneSessions(laneKey);
+      if (leavingIncognito) await this.scrubEndedIncognito(laneKey, previousSession);
       await adapter
         .send(message.chatId, {
           text: `✓ Switched to ${arg} personality. New session started.`,
@@ -3815,7 +3874,8 @@ export class Gateway {
           text:
             `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\n` +
             `Cost: $${u.costUsd.toFixed(5)}\n` +
-            `${personalityId} · ${model} · ${sessionKey}`,
+            `${personalityId} · ${model} · ${sessionKey}` +
+            (this.incognitoLanes.has(laneKey) ? '\nIncognito: on' : ''),
           threadId,
         })
         .catch(() => {});
@@ -6179,6 +6239,9 @@ export class Gateway {
           // not a judgement of the lane.
           ...(review ? {} : { judgeAudience: true }),
           ...(audience.skipPersonalityMemory ? { skipPersonalityMemory: true } : {}),
+          // `/incognito` lane (D5): turn-setup stamps the session; a shared
+          // audience above still wins, so this never re-admits the shell tools.
+          ...(this.incognitoLanes.has(laneKey) ? { incognito: true } : {}),
           ...(voiceOrigin ? { voiceOrigin } : {}),
           ...(toolsetNarrow ? { toolsetNarrow } : {}),
           // Unconditional, not config-driven: UI-card tools have no rendering on
@@ -8945,6 +9008,91 @@ export class Gateway {
       this.sessionKeys.set(laneKey, entry.sessionKey);
       if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
       if (entry.mutedUntil !== undefined) this.laneMutes.set(laneKey, entry.mutedUntil);
+      if (entry.incognito) this.incognitoLanes.add(laneKey);
+    }
+  }
+
+  /** The lines `/new` and `/incognito` share: forget the old session's dedup
+   *  keys and attachments, and move the lane onto a fresh session key. */
+  private rotateLaneSession(laneKey: string, previous: string): void {
+    this.outboundDedup.clearSession(previous);
+    void this.attachmentCache?.clear(previous).catch(() => {});
+    this.sessionKeys.set(laneKey, `${laneKey}:${Date.now()}`);
+  }
+
+  /**
+   * D13 — `/incognito` is refused wherever the audience is not one person who
+   * owns the memory: any non-DM (group, including a `private_chats`-listed
+   * one), a DM the adapter hinted shared, a room judged shared
+   * (`audienceFor`), and a non-owner DM (`withholdsPersonalityMemory`). Each
+   * term fails closed on its own. Pinned by `__tests__/memory-boundary-e2e.test.ts`
+   * ('incognito DM' refusals).
+   */
+  private incognitoRefused(message: InboundMessage): boolean {
+    return (
+      !message.isDm ||
+      message.audienceHint === 'shared' ||
+      this.audienceFor(message) === 'shared' ||
+      this.withholdsPersonalityMemory(message)
+    );
+  }
+
+  /**
+   * After `lane.abort()`: wait for the aborted turn to unwind (lane idle, no
+   * active turn), bounded by {@link ABORT_GRACE_MS}. `abort()` only raises a
+   * signal, so a scrub run straight after it races the turn's last writes
+   * (partial assistant message, title, context events). On timeout the caller
+   * scrubs anyway and this records `gateway.incognito_abort_unsettled`; the 24 h
+   * sweep is the backstop. Pinned by `__tests__/incognito-surfaces.test.ts`.
+   */
+  private async settleAbortedLane(laneKey: string, lane: SessionLane): Promise<void> {
+    const busy = (): boolean => lane.length > 0 || this.activeTurns.has(laneKey);
+    if (!busy()) return;
+    const settled = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.drainWaiters.delete(check);
+        resolve(false);
+      }, ABORT_GRACE_MS);
+      timer.unref?.();
+      const check = (): void => {
+        if (busy()) return;
+        this.drainWaiters.delete(check);
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.drainWaiters.add(check);
+    });
+    if (!settled) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.incognito_abort_unsettled',
+        cause: 'aborted incognito turn still running at scrub time — the 24 h scrub clears it',
+        details: { laneKey },
+      });
+    }
+  }
+
+  /**
+   * Scrub the incognito session a lane just left. Fail-open (D8): a failure is
+   * recorded as `gateway.incognito_scrub_failed` and `/new` still starts the new
+   * session; the 24 h `olderThan` scrub is the backstop. Returns whether it ran.
+   */
+  private async scrubEndedIncognito(laneKey: string, previousSession: string): Promise<boolean> {
+    try {
+      const store = this.sessionStoreFor?.();
+      if (!store?.scrubIncognito) throw new Error('session store has no scrubIncognito');
+      await store.scrubIncognito({ sessionKey: previousSession });
+      return true;
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.incognito_scrub_failed',
+        cause: 'incognito history not cleared on /new — the 24 h scrub clears it',
+        details: {
+          laneKey,
+          sessionKey: previousSession,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      return false;
     }
   }
 
@@ -8975,6 +9123,10 @@ export class Gateway {
     for (const [key, mutedUntil] of this.laneMutes) {
       if (laneKeyBotKey(key) !== botKey || mutedUntil <= now) continue;
       lanes[key] = { ...(lanes[key] ?? { sessionKey: key }), mutedUntil };
+    }
+    for (const key of this.incognitoLanes) {
+      if (laneKeyBotKey(key) !== botKey) continue;
+      lanes[key] = { ...(lanes[key] ?? { sessionKey: key }), incognito: true };
     }
     try {
       await files.save(botKey, lanes);
@@ -9221,6 +9373,12 @@ export class Gateway {
       }
       if (picked.session.id === current.id) {
         await reply(`Already on branch ${picked.n}.`);
+        return;
+      }
+      // Fail closed: the lane's incognito flag would follow the switch and the
+      // next turn would stamp a normal branch incognito (then `/new` wipes it).
+      if (this.incognitoLanes.has(laneKey) && !isIncognitoSession(picked.session)) {
+        await reply(NOT_INCOGNITO_BRANCH_TEXT);
         return;
       }
       await moveTo(picked.session.key, picked.session.personalityId);

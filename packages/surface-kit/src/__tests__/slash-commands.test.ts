@@ -35,6 +35,7 @@ describe('SLASH_COMMANDS registry', () => {
       'help',
       'new',
       'reset',
+      'incognito',
       'fork',
       'branches',
       'branch',
@@ -84,6 +85,7 @@ describe('TUI surface tag (C5)', () => {
     expect(tui).toEqual([
       'help',
       'new',
+      'incognito',
       'fork',
       'branches',
       'branch',

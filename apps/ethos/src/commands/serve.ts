@@ -104,6 +104,7 @@ import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
+import { scrubExpiredIncognito } from '../lib/incognito-retention';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
 import { createLateBoundGoals } from '../lib/late-goals';
 import { adoptBootedLoop } from '../lib/onboarding-boot';
@@ -560,6 +561,19 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     dataDir: dir,
     ...(config.retention ? { retention: config.retention } : {}),
   });
+  // Incognito 24 h sweep (plan incognito-sessions D7/D8): once now, then
+  // hourly — see `scrubExpiredIncognito`. Fail-open: a failed sweep logs and
+  // the next tick retries. No card clearing: incognito sessions never persist
+  // cards (`ChatService.persistCard`, pinned by web-api
+  // chat/__tests__/incognito.test.ts).
+  const sweepIncognito = () => {
+    void scrubExpiredIncognito(session).catch((err) => {
+      console.warn(`[incognito] 24h sweep failed: ${String(err)}`);
+    });
+  };
+  sweepIncognito();
+  const incognitoSweepTimer = setInterval(sweepIncognito, 3_600_000);
+  incognitoSweepTimer.unref?.();
 
   // Phase E of plan/phases/model-visible-logged.md — fork copies context events
   // onto the child (D9). Same `sessions.db` file `session` uses, separate
@@ -1561,6 +1575,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       pauseLifecycle.stop?.();
       cronTriggers.local?.stop();
       clearInterval(a2a.retentionTimer);
+      clearInterval(incognitoSweepTimer);
       // Chat before the listener: `closeChat` aborts the web turns and writes the
       // "not sent" notice to each tab's SSE stream, which the listener close
       // then drops (serve-shutdown-notice.test.ts).

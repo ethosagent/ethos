@@ -122,6 +122,7 @@ import {
   startInboundSpoolReplay,
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
+import { scrubExpiredIncognito } from '../lib/incognito-retention';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -1485,6 +1486,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     });
     void pruneExpiredSessions(session, config.retention).catch((err) => {
       logger.warn(`session retention prune failed: ${String(err)}`, { component: 'boot' });
+    });
+    // Incognito 24 h sweep (plan incognito-sessions D7/D8). Incognito sessions never persist cards
+    // (`ChatService.persistCard`, pinned by web-api chat/__tests__/incognito.test.ts).
+    void scrubExpiredIncognito(session).catch((err) => {
+      logger.warn(`incognito sweep failed: ${String(err)}`, { component: 'boot' });
     });
   };
   pruneSpool();

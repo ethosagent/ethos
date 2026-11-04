@@ -1,6 +1,7 @@
 import type { Session, SessionStore, StoredMessage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { isIncognitoSession } from '../chat-audience';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { forkSession } from '../session-fork';
 
@@ -303,5 +304,14 @@ describe('forkSession — room audience (verification round B15)', () => {
     const source = await seedKey(store, 'discord:bot:555', { roomAudience: 'private' });
     const { session } = await forkSession(store, source.id, { key: 'discord:bot:555:fork:1' });
     expect(session.metadata).toEqual({ roomAudience: 'private' });
+  });
+
+  // plan incognito-sessions D6 — `forkSession` copies metadata wholesale.
+  it('a fork of an incognito session is incognito', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedKey(store, 'cli:incog', { roomAudience: 'shared', incognito: true });
+    const { session } = await forkSession(store, source.id, { key: 'cli:incog:fork:1' });
+    expect(session.metadata).toEqual({ roomAudience: 'shared', incognito: true });
+    expect(isIncognitoSession(session)).toBe(true);
   });
 });

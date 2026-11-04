@@ -257,6 +257,8 @@ export interface RecentSessionRow {
   personalityId: string | null;
   updatedAt: string;
   pinned: boolean;
+  /** Incognito session: the row draws the eye-off glyph. */
+  incognito?: boolean;
 }
 
 export interface FilteredSessions {

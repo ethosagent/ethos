@@ -26,6 +26,8 @@ export const SessionSchema = z.object({
   workingDir: z.string().nullable(),
   title: z.string().nullable(),
   pinned: z.boolean(),
+  /** Incognito session (plan incognito-sessions D4). Absent for a normal session. */
+  incognito: z.boolean().optional(),
   usage: SessionUsageSchema,
   createdAt: z.string(), // ISO-8601
   updatedAt: z.string(), // ISO-8601

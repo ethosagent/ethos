@@ -1,4 +1,9 @@
-import { type PrivateChatSet, turnWasShared } from '@ethosagent/core';
+import {
+  INCOGNITO_REFUSAL,
+  isIncognitoSession,
+  type PrivateChatSet,
+  turnWasShared,
+} from '@ethosagent/core';
 import type {
   ObservabilityStore,
   SessionStore,
@@ -76,6 +81,15 @@ function buildGetSessionEvents(deps: DebugToolsDeps): Tool {
         // extensions/tools-debug/src/__tests__/get-session-events.test.ts.
         if (sessionId !== ctx.sessionId) {
           const target = await deps.sessionStore.getSession(sessionId);
+          // D11 (plan incognito-sessions): checked before `turnWasShared`, which
+          // is also true for incognito, so the specific wording wins.
+          if (target && isIncognitoSession(target)) {
+            return {
+              ok: false,
+              error: INCOGNITO_REFUSAL,
+              code: 'not_available',
+            };
+          }
           if (target && turnWasShared(target, deps.privateChats)) {
             return {
               ok: false,

@@ -93,7 +93,7 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 34, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 490, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 756, contains: "= resolveRunDowngrade(" }
+    - { path: packages/core/src/agent-loop.ts, line: 757, contains: "= resolveRunDowngrade(" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 800, contains: "handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
@@ -166,12 +166,12 @@ register_anchors:
   # and G-FS and a kernel path is cited by exactly one row, so the register
   # names them in prose without a line anchor.
   G-MEM:
-    - { path: packages/core/src/agent-loop/audience.ts, line: 106, contains: "export function resolveTurnAudience" }
-    - { path: packages/core/src/agent-loop/audience.ts, line: 202, contains: "export function sharedTurnDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 144, contains: "resolveTurnAudience(requestedAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 251, contains: "sharedTurnDenyFor(" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 495, contains: "withSharedAudienceExclusions(" }
-    - { path: packages/core/src/agent-loop/turn-end.ts, line: 351, contains: "memoryFlushForbidden(ctx.roomAudience" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 130, contains: "export function resolveTurnAudience" }
+    - { path: packages/core/src/agent-loop/audience.ts, line: 233, contains: "export function sharedTurnDenyFor" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 176, contains: "resolveTurnAudience(requestedAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 297, contains: "sharedTurnDenyFor(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 541, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/turn-end.ts, line: 354, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 150, contains: "export function isPrivateMemoryPath" }
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 334, contains: "this.hitsDenyWhen(next, kind)" }

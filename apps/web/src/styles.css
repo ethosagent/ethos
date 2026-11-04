@@ -2063,6 +2063,76 @@ body,
   flex-shrink: 0;
 }
 
+/* Incognito mode label: session-scoped, so Geist Mono in --text-secondary with
+   a currentColor icon. No accent, no new token, no coloured border (DESIGN.md
+   "Per-personality accent": accent is identity, never a mode). */
+.personality-bar-incognito {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.personality-bar-incognito-end {
+  height: 28px;
+  padding: 0 10px;
+  margin-right: 4px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.personality-bar-incognito-end:hover {
+  background: var(--ethos-hover);
+  color: var(--ethos-text);
+}
+
+.personality-bar-incognito-end:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+/* Incognito switch in the New Session picker: plain row, neutral text tokens. */
+.np-picker-incognito {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--ethos-border);
+}
+
+.np-picker-incognito-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.np-picker-incognito-label {
+  font-size: 13px;
+  color: var(--ethos-text);
+}
+
+.np-picker-incognito-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sidebar-session-incognito {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
 .personality-bar-new {
   display: inline-flex;
   align-items: center;

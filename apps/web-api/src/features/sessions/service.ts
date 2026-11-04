@@ -7,6 +7,7 @@ import type {
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
+import { isIncognitoSession } from '@ethosagent/wiring';
 import { exportFilename, formatAsMarkdown } from '../../services/sessions.export';
 import type { SessionsRepository } from './repository';
 
@@ -254,6 +255,8 @@ function toWireSession(s: import('@ethosagent/types').Session): WireSession {
     workingDir: s.workingDir ?? null,
     title: s.title ?? null,
     pinned: s.pinned ?? false,
+    // Omitted, never false: absent means a normal session. `metadata` stays off the wire.
+    ...(isIncognitoSession(s) ? { incognito: true as const } : {}),
     usage: s.usage,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),

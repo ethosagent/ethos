@@ -12,6 +12,8 @@ export interface ChatSessionCreate {
   provider: string;
   personalityId?: string;
   workingDir?: string;
+  /** Session stamp, e.g. `incognitoSessionMetadata()`. */
+  metadata?: Record<string, unknown>;
 }
 
 export class ChatRepository {
@@ -25,8 +27,14 @@ export class ChatRepository {
       provider: input.provider,
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
       ...(input.workingDir ? { workingDir: input.workingDir } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       usage: zeroUsage(),
     });
+  }
+
+  /** Blank an incognito session's transcript (and descendants'). No-op count when the store cannot. */
+  async scrubIncognito(sessionKey: string): Promise<{ messages: number; sessionIds: string[] }> {
+    return (await this.store.scrubIncognito?.({ sessionKey })) ?? { messages: 0, sessionIds: [] };
   }
 
   /** Remove a session this service created but never ran a turn on. */

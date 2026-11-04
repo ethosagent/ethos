@@ -1,4 +1,5 @@
 import type { SessionStore } from '@ethosagent/types';
+import { isIncognitoSession } from '@ethosagent/wiring';
 
 export async function searchSessions(
   sessionStore: SessionStore,
@@ -12,13 +13,24 @@ export async function searchSessions(
   const sinceDate = sinceBound && !Number.isNaN(sinceBound.getTime()) ? sinceBound : undefined;
   const untilDate = untilBound && !Number.isNaN(untilBound.getTime()) ? untilBound : undefined;
   const results = await sessionStore.search(query, { limit, since: sinceDate, until: untilDate });
-  return results.map((r) => ({
-    sessionId: r.sessionId,
-    messageId: r.messageId,
-    snippet: r.snippet,
-    score: r.score,
-    timestamp: r.timestamp.toISOString(),
-  }));
+  // D11 (plan incognito-sessions): drop hits from incognito sessions. A hit whose
+  // session row is gone or unreadable is dropped too (fail closed).
+  const visible = new Set<string>();
+  await Promise.all(
+    [...new Set(results.map((r) => r.sessionId))].map(async (id) => {
+      const session = await sessionStore.getSession(id).catch(() => null);
+      if (session && !isIncognitoSession(session)) visible.add(id);
+    }),
+  );
+  return results
+    .filter((r) => visible.has(r.sessionId))
+    .map((r) => ({
+      sessionId: r.sessionId,
+      messageId: r.messageId,
+      snippet: r.snippet,
+      score: r.score,
+      timestamp: r.timestamp.toISOString(),
+    }));
 }
 
 export const searchSessionsToolDef = {

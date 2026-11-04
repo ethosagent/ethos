@@ -1,10 +1,12 @@
 import type {
   AgentEvent,
   LLMProvider,
+  SessionStore,
   UsageAttribution,
   UsageRecorder,
   UsageSourceKind,
 } from '@ethosagent/types';
+import { isIncognitoSession } from '../chat-audience';
 import { MeteredProvider } from '../providers/metered-provider';
 import { withUsageScope } from '../usage-scope';
 
@@ -70,16 +72,32 @@ const PASSTHROUGH = new TurnUsageCharges();
 /** This turn's charges: {@link PASSTHROUGH} unless the loop meters usage. */
 export function turnUsageCharges(
   deps: { usage?: LoopUsageConfig; sessionCosts: Map<string, number>; platform: string },
-  turn: { sessionId: string; sessionKey: string; personalityId: string; traceId?: string },
+  turn: {
+    sessionId: string;
+    sessionKey: string;
+    personalityId: string;
+    traceId?: string;
+    incognito?: boolean;
+  },
 ): TurnUsageCharges {
   if (!deps.usage) return PASSTHROUGH;
-  return new TurnUsageCharges(deps.sessionCosts, turn.sessionKey, {
-    sessionId: turn.sessionId,
-    sessionKey: turn.sessionKey,
-    personalityId: turn.personalityId,
-    platform: deps.platform,
-    ...(turn.traceId ? { traceId: turn.traceId } : {}),
-  });
+  // Plan incognito-sessions D16 — an incognito turn's ledger rows carry no
+  // session or trace link. The charge target (`turn.sessionKey` into
+  // `sessionCosts`) is unchanged, so the in-turn budget still holds. Pinned by
+  // the incognito case in `packages/wiring/src/__tests__/usage-no-double-count.test.ts`.
+  return new TurnUsageCharges(
+    deps.sessionCosts,
+    turn.sessionKey,
+    turn.incognito === true
+      ? { personalityId: turn.personalityId, platform: deps.platform }
+      : {
+          sessionId: turn.sessionId,
+          sessionKey: turn.sessionKey,
+          personalityId: turn.personalityId,
+          platform: deps.platform,
+          ...(turn.traceId ? { traceId: turn.traceId } : {}),
+        },
+  );
 }
 
 /** `llm` metered as `kind` when the loop meters usage; `llm` itself otherwise. */
@@ -96,4 +114,35 @@ export function meteredFor(
     kind,
     ...(attribution ? { attribution } : {}),
   });
+}
+
+/**
+ * Attribution for work outside a turn that names a session by key (manual
+ * `/compact`). Plan incognito-sessions D16: an incognito session's ledger rows
+ * carry no `sessionKey`. Fails closed — a lookup that throws also omits it.
+ * Pinned by 'manual compact on an incognito session' in
+ * `../__tests__/incognito.test.ts`.
+ */
+async function sessionKeyAttribution(
+  session: Pick<SessionStore, 'getSessionByKey'>,
+  sessionKey: string,
+  platform: string | undefined,
+): Promise<UsageAttribution> {
+  const found = await session.getSessionByKey(sessionKey).then(
+    (s) => s,
+    () => undefined,
+  );
+  const incognito = found === undefined || (found !== null && isIncognitoSession(found));
+  return { ...(incognito ? {} : { sessionKey }), ...(platform ? { platform } : {}) };
+}
+
+/** Open a usage scope for `run` attributed by {@link sessionKeyAttribution}. */
+export async function withSessionKeyScope<T>(
+  session: Pick<SessionStore, 'getSessionByKey'>,
+  sessionKey: string,
+  platform: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  const attribution = await sessionKeyAttribution(session, sessionKey, platform);
+  return withUsageScope({ attribution }, run);
 }

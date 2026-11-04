@@ -82,6 +82,16 @@ describe('moveSelection', () => {
   });
 });
 
+describe('buildNewSessionPath incognito', () => {
+  it('appends the incognito flag only when asked', () => {
+    expect(buildNewSessionPath('coder', undefined, true)).toBe('/p/coder/chat?new=1&incognito=1');
+    expect(buildNewSessionPath('cmo', '/t/marketing/chat', true)).toBe(
+      '/t/marketing/chat?new=1&incognito=1',
+    );
+    expect(buildNewSessionPath('coder', undefined, false)).toBe('/p/coder/chat?new=1');
+  });
+});
+
 describe('buildNewSessionPath', () => {
   it('routes to the personality’s own workspace chat with new=1', () => {
     expect(buildNewSessionPath('coder')).toBe('/p/coder/chat?new=1');

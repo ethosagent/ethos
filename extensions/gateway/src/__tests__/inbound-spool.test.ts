@@ -12,6 +12,7 @@ import { type AgentLoop, privateChatSetFrom } from '@ethosagent/core';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { type SpoolRow, SQLiteInboundSpool } from '@ethosagent/inbound-spool';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   DeliveryResult,
   InboundMessage,
@@ -234,6 +235,31 @@ describe('inbound spool — replay keeps the room audience', () => {
       { privateChats: privateChatSetFrom({ telegram: ['-100g'] }) },
     );
     expect(opts).toMatchObject({ roomAudience: 'private' });
+  });
+});
+
+describe('inbound spool — replay on an incognito lane', () => {
+  it('a replayed spooled message on an incognito lane runs incognito', async () => {
+    const storage = new InMemoryStorage();
+    const lane = { storage, dataDir: '/state' };
+    const out = recordingAdapter();
+    // Process 1: the owner sends /incognito (persisted), then dies with a
+    // message spooled but unanswered.
+    const spool = new SQLiteInboundSpool(':memory:');
+    await gateway(scriptedLoop().loop, out.adapter, spool, lane).handleMessage(
+      msg('/incognito'),
+      out.adapter,
+    );
+    seed(spool, msg('lost in the crash'));
+
+    // Process 2: restore the lane file, then replay.
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, lane);
+    await gw.restoreLaneSessions();
+    await gw.replayInboundSpool();
+    await waitUntil(() => rows(spool).some((r) => r.status === 'done'));
+    const opts: unknown = vi.mocked(s.loop.run).mock.calls[0]?.[1];
+    expect(opts).toMatchObject({ incognito: true, roomAudience: 'private' });
   });
 });
 

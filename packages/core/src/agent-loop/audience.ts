@@ -12,7 +12,10 @@
 //   - both file boundaries refuse everything under the state dir but the
 //     turn's own `files/`, `ui/`, `SOUL.md` and the skills, and private memory
 //     everywhere (`sharedTurnDenyFor` → `denyWhen` on `ScopedStorage` via
-//     turn-setup's `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`).
+//     turn-setup's `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`);
+//   - an incognito turn (plan incognito-sessions) resolves to `'shared'` and
+//     differs in one place: `withSharedAudienceExclusions(…, readmit)` skips
+//     `INCOGNITO_READMITTED_TOOLS` (the process tools) for the owner.
 //
 // Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
 
@@ -98,6 +101,27 @@ export const SHARED_AUDIENCE_EXCLUDED_TOOLS: readonly string[] = [
 ];
 
 /**
+ * The process tools an incognito turn gets back (plan incognito-sessions D3):
+ * the one reader is the owner, so the room-member reason for excluding a shell
+ * does not apply. Every entry is also in {@link SHARED_AUDIENCE_EXCLUDED_TOOLS}
+ * (pinned by `packages/core/src/__tests__/shared-audience.test.ts`), so a
+ * shared caller never gets them: turn-setup re-admits only when the caller's
+ * own audience is private.
+ */
+export const INCOGNITO_READMITTED_TOOLS: readonly string[] = [
+  'terminal',
+  'run_code',
+  'run_tests',
+  'lint',
+  'process_start',
+  'process_list',
+  'process_logs',
+  'process_stop',
+  'process_wait',
+  'process_watch',
+];
+
+/**
  * The running turn's audience: `'shared'` when the caller asked for it OR the
  * session already carries the sticky stamp; otherwise `'private'`. Absent
  * `requested` means private (D3). The only place the "shared only narrows" rule
@@ -141,13 +165,20 @@ export function withPersonalityMemoryWithheld(
  * The turn's `excludeTools` with `SHARED_AUDIENCE_EXCLUDED_TOOLS` unioned in on
  * a shared turn. A private turn gets `excludeTools` back unchanged (same
  * reference, possibly `undefined`), so its tool definitions stay byte-identical.
+ * With `readmit` (an incognito turn), the union skips
+ * {@link INCOGNITO_READMITTED_TOOLS}; a caller-supplied `excludeTools` naming
+ * one of them keeps it.
  */
 export function withSharedAudienceExclusions(
   audience: TurnAudience,
   excludeTools: string[] | undefined,
+  readmit = false,
 ): string[] | undefined {
   if (audience !== 'shared') return excludeTools;
-  return [...new Set([...(excludeTools ?? []), ...SHARED_AUDIENCE_EXCLUDED_TOOLS])];
+  const shared = readmit
+    ? SHARED_AUDIENCE_EXCLUDED_TOOLS.filter((t) => !INCOGNITO_READMITTED_TOOLS.includes(t))
+    : SHARED_AUDIENCE_EXCLUDED_TOOLS;
+  return [...new Set([...(excludeTools ?? []), ...shared])];
 }
 
 /**

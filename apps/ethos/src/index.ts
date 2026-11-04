@@ -255,6 +255,8 @@ try {
       const noResumeHintFlag = chatArgs.includes('--no-resume-hint');
       // --dry-run enables dry-run mode (tools are planned but not executed)
       const dryRunFlag = chatArgs.includes('--dry-run');
+      // --incognito starts on a fresh session that is not remembered or learned from
+      const incognitoFlag = chatArgs.includes('--incognito');
 
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
@@ -280,6 +282,13 @@ try {
             console.error(
               continueFlag ? 'No sessions found to resume.' : `Session not found: ${resumeQuery}`,
             );
+            process.exit(1);
+          }
+          // `--incognito` never runs a normal session as a remembered chat.
+          const { incognitoResumeRefusal } = await import('./lib/chat-incognito');
+          const refusal = await incognitoResumeRefusal(store, session.key, incognitoFlag);
+          if (refusal) {
+            console.error(refusal);
             process.exit(1);
           }
           resumeSessionKey = session.key;
@@ -320,6 +329,7 @@ try {
             ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
             ...(noResumeHintFlag ? { noResumeHint: true } : {}),
             ...(dryRunFlag ? { dryRun: true } : {}),
+            ...(incognitoFlag ? { incognito: true } : {}),
           });
           if (query) process.exit(0);
         }
@@ -342,6 +352,7 @@ try {
           ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
           ...(noResumeHintFlag ? { noResumeHint: true } : {}),
           ...(dryRunFlag ? { dryRun: true } : {}),
+          ...(incognitoFlag ? { incognito: true } : {}),
         });
         if (query) process.exit(0);
       }

@@ -1196,6 +1196,112 @@ export class SQLiteSessionStore implements SessionStore {
     return result.changes;
   }
 
+  /**
+   * Blank the conversation text of incognito sessions (plan incognito-sessions
+   * D7/D8). One IMMEDIATE transaction; any failure (a damaged FTS index makes
+   * the `messages_au` trigger throw) rolls it back and propagates. There is
+   * deliberately no delete-on-error fallback. Pinned by
+   * `__tests__/incognito-scrub.test.ts`.
+   *
+   * Targets: stamped sessions (`metadata.incognito = 1`) plus every session whose
+   * key starts with `<stamped key>:`, stamped or not. With `sessionKey`, only that
+   * stamped session and its descendants. Descendants match by exact `substr`
+   * comparison, not `LIKE`, so `%`, `_` and ASCII case in a key cannot over-match.
+   * With `olderThan`, only messages timestamped before it are blanked, and
+   * session-level text (title, summaries, events, decisions) is cleared only for
+   * sessions holding such a message, so an hourly sweep does not wipe a live chat.
+   *
+   * Blanked: `messages.content` (''), `tool_calls`, `content_blocks`;
+   * `sessions.title`; `compressions.summary_text`; all `session_context_events`
+   * and `session_decisions` rows. Kept: role, timestamp, ids, tool_name,
+   * tool_call_id and every usage column. `messages_au` re-indexes FTS.
+   */
+  async scrubIncognito(opts: {
+    sessionKey?: string;
+    olderThan?: Date;
+  }): Promise<{ messages: number; sessionIds: string[] }> {
+    const iso = opts.olderThan?.toISOString();
+    // `json_valid` guards `json_extract`, which throws on malformed metadata.
+    // Same key as core's INCOGNITO_METADATA_KEY (extensions may not import it here).
+    const stamped = (a: string) =>
+      `CASE WHEN json_valid(${a}.metadata) THEN json_extract(${a}.metadata, '$.incognito') END = 1`;
+    const run = this.db.transaction(() => {
+      const params: unknown[] = [];
+      let targetSql: string;
+      if (opts.sessionKey !== undefined) {
+        const prefix = `${opts.sessionKey}:`;
+        targetSql = `SELECT s.id FROM sessions s
+          WHERE EXISTS (SELECT 1 FROM sessions r WHERE r.key = ? AND ${stamped('r')})
+            AND (s.key = ? OR substr(s.key, 1, length(?)) = ?)`;
+        // `length()` counts characters like `substr`, unlike JS `.length` (UTF-16 units).
+        params.push(opts.sessionKey, opts.sessionKey, prefix, prefix);
+      } else {
+        targetSql = `SELECT s.id FROM sessions s
+          WHERE (${stamped('s')}
+             OR EXISTS (SELECT 1 FROM sessions r WHERE ${stamped('r')}
+                          AND substr(s.key, 1, length(r.key) + 1) = r.key || ':'))`;
+      }
+      if (iso !== undefined) {
+        targetSql +=
+          ' AND EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id AND m.timestamp < ?)';
+        params.push(iso);
+      }
+      const ids = (this.db.prepare(targetSql).all(...params) as Array<{ id: string }>).map(
+        (r) => r.id,
+      );
+      const touched = new Set<string>();
+      let messages = 0;
+      const hasTable = (name: string): boolean =>
+        this.db
+          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .get(name) !== undefined;
+      const hasContext = hasTable('session_context_events');
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const ph = chunk.map(() => '?').join(',');
+        // Only rows still carrying text: keeps the count honest and a re-run quiet.
+        const msgRows = this.db
+          .prepare(
+            `UPDATE messages SET content = '', tool_calls = NULL, content_blocks = NULL
+             WHERE session_id IN (${ph})
+               AND (content != '' OR tool_calls IS NOT NULL OR content_blocks IS NOT NULL)
+               ${iso !== undefined ? 'AND timestamp < ?' : ''}
+             RETURNING session_id`,
+          )
+          .all(...chunk, ...(iso !== undefined ? [iso] : [])) as Array<{ session_id: string }>;
+        messages += msgRows.length;
+        for (const r of msgRows) touched.add(r.session_id);
+        const sessRows = this.db
+          .prepare(
+            `UPDATE sessions SET title = NULL WHERE id IN (${ph}) AND title IS NOT NULL RETURNING id`,
+          )
+          .all(...chunk) as Array<{ id: string }>;
+        for (const r of sessRows) touched.add(r.id);
+        const compRows = this.db
+          .prepare(
+            `UPDATE compressions SET summary_text = NULL
+             WHERE session_id IN (${ph}) AND summary_text IS NOT NULL RETURNING session_id`,
+          )
+          .all(...chunk) as Array<{ session_id: string }>;
+        for (const r of compRows) touched.add(r.session_id);
+        const decRows = this.db
+          .prepare(`DELETE FROM session_decisions WHERE session_id IN (${ph}) RETURNING session_id`)
+          .all(...chunk) as Array<{ session_id: string }>;
+        for (const r of decRows) touched.add(r.session_id);
+        if (hasContext) {
+          const ctxRows = this.db
+            .prepare(
+              `DELETE FROM session_context_events WHERE session_id IN (${ph}) RETURNING session_id`,
+            )
+            .all(...chunk) as Array<{ session_id: string }>;
+          for (const r of ctxRows) touched.add(r.session_id);
+        }
+      }
+      return { messages, sessionIds: [...touched] };
+    });
+    return this.run(() => run.immediate());
+  }
+
   async vacuum(): Promise<void> {
     this.db.exec('VACUUM');
   }

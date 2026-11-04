@@ -174,6 +174,7 @@ import {
   startInboundSpoolReplay,
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
+import { scrubExpiredIncognito } from '../lib/incognito-retention';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -1865,11 +1866,16 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       dataDir: ethosDir(),
       ...(config.retention ? { retention: config.retention } : {}),
     });
-    void pruneExpiredSessions(store, config.retention)
-      .catch((err) => {
-        new ConsoleLogger({}, logLevel).warn(`session retention prune failed: ${String(err)}`);
-      })
-      .finally(() => store.close());
+    // Incognito 24 h sweep (plan incognito-sessions D7/D8) shares the handle.
+    // No card clearing: incognito sessions never persist cards
+    // (`ChatService.persistCard`, pinned by web-api chat/__tests__/incognito.test.ts).
+    const pruned = pruneExpiredSessions(store, config.retention).catch((err) => {
+      new ConsoleLogger({}, logLevel).warn(`session retention prune failed: ${String(err)}`);
+    });
+    const scrubbed = scrubExpiredIncognito(store).catch((err) => {
+      new ConsoleLogger({}, logLevel).warn(`incognito sweep failed: ${String(err)}`);
+    });
+    void Promise.all([pruned, scrubbed]).finally(() => store.close());
   };
   pruneCallLog();
   pruneSpool();

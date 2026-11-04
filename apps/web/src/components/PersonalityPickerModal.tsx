@@ -1,5 +1,5 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
-import { Input, type InputRef, Modal } from 'antd';
+import { Input, type InputRef, Modal, Switch } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePersonalityList } from '../features/personalities/api/queries';
@@ -27,6 +27,7 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
   const { id: activeId } = useActivePersonality();
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [incognito, setIncognito] = useState(false);
   const searchRef = useRef<InputRef>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -47,7 +48,10 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
   // Reset query each open; recompute the highlighted tile from the active
   // personality whenever the modal opens or the filtered list changes.
   useEffect(() => {
-    if (open) setQuery('');
+    if (open) {
+      setQuery('');
+      setIncognito(false);
+    }
   }, [open]);
 
   useEffect(() => {
@@ -72,7 +76,7 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
   const confirm = (id: string | null) => {
     if (!id) return;
     onClose();
-    navigate(buildNewSessionPath(id));
+    navigate(buildNewSessionPath(id, undefined, incognito));
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -155,6 +159,22 @@ export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModal
               );
             })
           )}
+        </div>
+        <div className="np-picker-incognito">
+          <span className="np-picker-incognito-text">
+            <span id="np-incognito-label" className="np-picker-incognito-label">
+              Incognito
+            </span>
+            <span className="np-picker-incognito-hint">
+              Not remembered or learned from. Cleared when you end it.
+            </span>
+          </span>
+          <Switch
+            size="small"
+            checked={incognito}
+            onChange={setIncognito}
+            aria-labelledby="np-incognito-label"
+          />
         </div>
       </div>
     </Modal>

@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import {
+  INCOGNITO_READMITTED_TOOLS,
   memoryFlushForbidden,
   ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
@@ -167,6 +168,39 @@ describe('audience module (unit)', () => {
     const shared = withSharedAudienceExclusions('shared', surface) ?? [];
     expect(shared).toContain('emit_card');
     for (const name of SHARED_AUDIENCE_EXCLUDED_TOOLS) expect(shared).toContain(name);
+  });
+
+  // plan incognito-sessions D3 — the re-admitted set is the process tools, a
+  // subset of the shared list (so a shared caller can never gain one).
+  it('INCOGNITO_READMITTED_TOOLS is the ten process tools, all in SHARED_AUDIENCE_EXCLUDED_TOOLS', () => {
+    expect([...INCOGNITO_READMITTED_TOOLS].sort()).toEqual(
+      [
+        'terminal',
+        'run_code',
+        'run_tests',
+        'lint',
+        'process_start',
+        'process_list',
+        'process_logs',
+        'process_stop',
+        'process_wait',
+        'process_watch',
+      ].sort(),
+    );
+    for (const name of INCOGNITO_READMITTED_TOOLS) {
+      expect(SHARED_AUDIENCE_EXCLUDED_TOOLS).toContain(name);
+    }
+  });
+
+  it('withSharedAudienceExclusions(…, readmit) drops only the process tools, keeps a caller’s own terminal exclusion, and is a no-op on private', () => {
+    const out = withSharedAudienceExclusions('shared', undefined, true) ?? [];
+    for (const name of INCOGNITO_READMITTED_TOOLS) expect(out).not.toContain(name);
+    for (const name of SHARED_AUDIENCE_EXCLUDED_TOOLS) {
+      if (!INCOGNITO_READMITTED_TOOLS.includes(name)) expect(out).toContain(name);
+    }
+    expect(withSharedAudienceExclusions('shared', ['terminal'], true)).toContain('terminal');
+    const surface = ['emit_card'];
+    expect(withSharedAudienceExclusions('private', surface, true)).toBe(surface);
   });
 
   it('the exclusion list is the plan’s final list; session_search stays available', () => {

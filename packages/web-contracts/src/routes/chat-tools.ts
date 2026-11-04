@@ -28,6 +28,12 @@ const ChatSendInput = z.object({
    *  running the tools. */
   dryRun: z.boolean().optional(),
   /**
+   * Start this conversation incognito (plan incognito-sessions D5). Honoured only
+   * when `sessionId` is absent: an existing session keeps its own stamp, so this
+   * can never downgrade an incognito session. Enforced in `ChatService.send`.
+   */
+  incognito: z.boolean().optional(),
+  /**
    * How this turn's text reached the client. `voice` means `text` is a
    * transcript of the user speaking (talk-mode), which the server turns into a
    * MESSAGE-LEVEL voice-origin annotation on the turn — never a system-prompt
@@ -57,11 +63,24 @@ const ChatAbortOutput = z.object({ ok: z.literal(true) });
 const ChatSteerInput = z.object({ sessionId: z.string(), text: z.string().min(1) });
 const ChatSteerOutput = z.object({ ok: z.boolean() });
 
+const ChatEndIncognitoInput = z.object({ sessionId: z.string() });
+const ChatEndIncognitoOutput = z.object({
+  ok: z.literal(true),
+  /** Messages whose content was blanked, descendants included. */
+  scrubbed: z.number().int().nonnegative(),
+});
+
 /** @stable v1 */
 export const chat = {
   send: oc.input(ChatSendInput).output(ChatSendOutput),
   abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
   steer: oc.input(ChatSteerInput).output(ChatSteerOutput),
+  /**
+   * End an incognito session: blank its transcript (and its descendants') and
+   * drop its cards and attachments. Refused with `INVALID_INPUT` for a session
+   * that is not incognito. Cookie-only: not in the API-key scope map.
+   */
+  endIncognito: oc.input(ChatEndIncognitoInput).output(ChatEndIncognitoOutput),
 };
 
 // ---------------------------------------------------------------------------

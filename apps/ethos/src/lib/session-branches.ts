@@ -1,7 +1,11 @@
 import { basename } from 'node:path';
 import { formatBranchList, pickBranch } from '@ethosagent/surface-kit';
 import type { SessionStore } from '@ethosagent/types';
-import { forkSession, forkSessionKey, listBranches } from '@ethosagent/wiring';
+import { forkSession, forkSessionKey, isIncognitoSession, listBranches } from '@ethosagent/wiring';
+
+/** Shown when an incognito session is asked to switch onto a normal branch. */
+export const NOT_INCOGNITO_BRANCH_MESSAGE =
+  'That branch is not incognito. Send /new to leave incognito first.';
 
 export type BranchCommand = 'fork' | 'branches' | 'branch';
 
@@ -47,6 +51,11 @@ export async function runBranchCommand(
   const picked = pickBranch(arg, branches);
   if (!picked.ok) return { message: picked.message };
   if (picked.session.id === current.id) return { message: `Already on branch ${picked.n}.` };
+  // Fail closed: the caller's incognito flag follows a switch, so the next turn
+  // would stamp a normal branch incognito (and `/new` or the sweep would wipe it).
+  if (isIncognitoSession(current) && !isIncognitoSession(picked.session)) {
+    return { message: NOT_INCOGNITO_BRANCH_MESSAGE };
+  }
   return {
     message: `Switched to branch ${picked.n}.`,
     switchTo: {

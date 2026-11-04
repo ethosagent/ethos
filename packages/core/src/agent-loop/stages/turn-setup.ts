@@ -10,10 +10,18 @@ import type {
   ToolFilterOpts,
   TurnAudience,
 } from '@ethosagent/types';
-import { isSharedSession, sessionAudienceStampFor } from '../../chat-audience';
+import {
+  hasIncognitoAncestor,
+  incognitoSessionMetadata,
+  isIncognitoSession,
+  isSharedSession,
+  PERSONALITY_MEMORY_WITHHELD_METADATA_KEY,
+  sessionAudienceStampFor,
+} from '../../chat-audience';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { servesServerCompaction } from '../../providers/chained-provider';
 import {
+  ROOM_AUDIENCE_METADATA_KEY,
   resolveTurnAudience,
   sharedTurnDenyFor,
   withPersonalityMemoryWithheld,
@@ -95,6 +103,7 @@ export async function* setupTurn(
     roomAudience?: TurnAudience;
     skipPersonalityMemory?: boolean;
     judgeAudience?: boolean;
+    incognito?: boolean;
   },
   /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
   decisions?: TurnDecisions,
@@ -139,8 +148,31 @@ export async function* setupTurn(
   // marker. The write MERGES into
   // metadata (`updateSession` replaces it wholesale). Pinned by
   // `packages/core/src/__tests__/shared-audience.test.ts`.
+  //
+  // Incognito (plan incognito-sessions D5): the turn is incognito when the
+  // caller asks or the session carries the stamp, but never when the caller's
+  // own audience is shared — a group lane or non-owner DM runs plain shared
+  // and gets no re-admission (fail closed). Incognito requests `'shared'`.
+  // A session already stamped shared / withheld but not incognito is a group or
+  // non-owner transcript: it is caller-shared whatever `opts` say.
+  const meta = ethosSession.metadata;
+  const stampedIncognito = isIncognitoSession(ethosSession);
+  const callerShared =
+    opts.roomAudience === 'shared' ||
+    opts.skipPersonalityMemory === true ||
+    (!stampedIncognito &&
+      (meta?.[ROOM_AUDIENCE_METADATA_KEY] === 'shared' ||
+        meta?.[PERSONALITY_MEMORY_WITHHELD_METADATA_KEY] === true));
+  const incognito = !callerShared && (opts.incognito === true || stampedIncognito);
+  // A delegated/background child (`<parent>:sub:…`, `:job:…`) of an incognito
+  // session inherits the stamp (so readers refuse its transcript) but never
+  // the shell: it is caller-shared, so `incognito` above stays false.
+  const inheritsIncognito =
+    !stampedIncognito && (await hasIncognitoAncestor(deps.session, sessionKey));
   const requestedAudience =
-    opts.roomAudience ?? (isSharedSession(ethosSession) ? ('shared' as const) : undefined);
+    incognito || inheritsIncognito
+      ? ('shared' as const)
+      : (opts.roomAudience ?? (isSharedSession(ethosSession) ? ('shared' as const) : undefined));
   const sessionAudience = resolveTurnAudience(requestedAudience, ethosSession.metadata);
   // D8 — a non-owner DM runs shared for this turn only, keeping the sender's
   // own `user:<id>` read (`withPersonalityMemoryWithheld`, ../audience.ts).
@@ -156,8 +188,12 @@ export async function* setupTurn(
     userMemoryOnly,
     ethosSession,
     opts.judgeAudience === true,
+    incognito,
   );
-  if (stamped) await deps.session.updateSession(sessionId, { metadata: stamped });
+  const finalStamp = inheritsIncognito
+    ? incognitoSessionMetadata(stamped ?? ethosSession.metadata)
+    : stamped;
+  if (finalStamp) await deps.session.updateSession(sessionId, { metadata: finalStamp });
 
   // A session's personality is bound at creation and never changes. The
   // effective personality therefore comes from the SESSION, not from the
@@ -189,7 +225,17 @@ export async function* setupTurn(
 
   const personality = resolvePersonality(deps.personalities, effectivePersonalityId);
 
-  const obsConfig = personality?.safety?.observability;
+  // D10 — an incognito turn keeps observability metadata, not content: tool
+  // args and LLM payloads are not stored (`storeToolArgs: 'none'`,
+  // `storeLlmPayloads: 'metadata'`, the non-full values in
+  // `PersonalityObservabilityConfig`). Pinned by `__tests__/incognito.test.ts`.
+  const obsConfig = incognito
+    ? {
+        ...personality?.safety?.observability,
+        storeToolArgs: 'none' as const,
+        storeLlmPayloads: 'metadata' as const,
+      }
+    : personality?.safety?.observability;
 
   const traceId = deps.observability?.startTurnTrace({
     sessionId,
@@ -497,6 +543,7 @@ export async function* setupTurn(
     personalityExclude.length > 0
       ? [...new Set([...(opts.toolsetExclude ?? []), ...personalityExclude])]
       : opts.toolsetExclude,
+    incognito, // D3 — the owner gets the process tools back; callerShared is never incognito
   );
   const filterOpts: ToolFilterOpts = {
     allowedMcpServers: personality.mcp_servers ?? [],
@@ -563,7 +610,7 @@ export async function* setupTurn(
   }
 
   const memScopeId = `personality:${personality.id}`;
-  const turnRef = { sessionId, sessionKey, traceId, personalityId: personality.id }; // §5.2 charges
+  const turnRef = { sessionId, sessionKey, traceId, personalityId: personality.id, incognito }; // §5.2 charges
 
   return {
     kind: 'ready',
@@ -588,6 +635,7 @@ export async function* setupTurn(
       filterOpts,
       memScopeId,
       roomAudience,
+      ...(incognito ? { incognito } : {}),
       ...(userMemoryOnly ? { userMemoryOnly } : {}),
       ...(toolLoading ? { toolLoading } : {}),
       ...(smallWindowOverlay ? { smallWindowOverlay } : {}),

@@ -832,6 +832,10 @@ export interface CreateAgentLoopOptions {
 
 // The chat-audience helpers apps need beside it (Law 5: apps reach core through wiring).
 export {
+  INCOGNITO_MAX_AGE_MS,
+  INCOGNITO_REFUSAL,
+  incognitoSessionMetadata,
+  isIncognitoSession,
   type PrivateChatSet,
   privateChatSetFrom,
   targetAudience,

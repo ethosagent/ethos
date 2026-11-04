@@ -29,6 +29,12 @@ export interface LaneSessionEntry {
   personalityId?: string;
   /** U11 — the lane's `/mute` expiry (epoch ms), when one is set. */
   mutedUntil?: number;
+  /**
+   * The lane runs incognito (plan incognito-sessions D5/§7.4). Persisted so a
+   * restart between `/incognito` and the first message — or a spool replay —
+   * still runs that message incognito. Only ever `true`.
+   */
+  incognito?: true;
 }
 
 const FILE_VERSION = 1;
@@ -69,6 +75,7 @@ export class LaneSessionFiles {
         sessionKey: value.sessionKey,
         ...(typeof value.personalityId === 'string' ? { personalityId: value.personalityId } : {}),
         ...(typeof value.mutedUntil === 'number' ? { mutedUntil: value.mutedUntil } : {}),
+        ...(value.incognito === true ? { incognito: true as const } : {}),
       });
     }
     return lanes;

@@ -135,6 +135,10 @@ export interface AppProps {
    */
   emojiFor?: (personalityId: string) => string | undefined;
   initialSessionKey: string;
+  /** Start the first session incognito (plan incognito-sessions §8). */
+  initialIncognito?: boolean;
+  /** Blank an incognito session's history when `/new` ends it (fail-open, host-injected). */
+  endIncognito?: (sessionKey: string) => Promise<boolean>;
   initialVerbose?: boolean;
   /**
    * B2 — host startup warnings (config parse notices), rendered once on mount
@@ -233,6 +237,45 @@ function resolveMode(section: DetailsMode | null, global: DetailsMode): DetailsM
 }
 
 type Modal = 'sessions' | 'models' | null;
+// Mirrors INCOGNITO_SCRUB_FAILED_NOTICE in apps/ethos/src/lib/chat-incognito.ts (an app; not importable).
+const INCOGNITO_SCRUB_FAILED_NOTICE =
+  '[could not clear the incognito history now; it is cleared within 24 h]';
+
+/** How long a scrub waits for an aborted turn to stop writing. */
+const INCOGNITO_END_GRACE_MS = 5_000;
+
+/**
+ * Stop the running turn, wait (bounded) for it to unwind so its last writes
+ * land BEFORE the scrub, then scrub `key`. Resolves whether the scrub ran;
+ * never throws (fail-open: the hourly sweep retries).
+ */
+async function endIncognitoSession(
+  bridge: AgentBridge,
+  endIncognito: (key: string) => Promise<boolean>,
+  key: string,
+): Promise<boolean> {
+  const idle = bridge.whenIdle();
+  bridge.abortTurn();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    idle,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, INCOGNITO_END_GRACE_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  try {
+    return (await endIncognito(key)) !== false;
+  } catch {
+    return false;
+  }
+}
+
+// Same sentence as the readline branch (apps/ethos/src/lib/chat-incognito.ts);
+// the TUI cannot import an app, so it is spelled out here.
+const INCOGNITO_ENTRY_LINE =
+  'Incognito: nothing from this session is remembered or learned from. Cleared on /new or after 24 h.';
+
 type FocusPane = 'identity' | 'context' | 'safety' | 'files' | 'timeline' | 'input';
 
 export function App({
@@ -241,6 +284,8 @@ export function App({
   initialPersonality,
   emojiFor,
   initialSessionKey,
+  initialIncognito = false,
+  endIncognito,
   initialVerbose = false,
   startupNotices,
   initialSkin,
@@ -269,6 +314,7 @@ export function App({
   const [personality, setPersonality] = useState(initialPersonality);
   const [currentModel, setCurrentModel] = useState(model);
   const [sessionKey, setSessionKey] = useState(initialSessionKey);
+  const [incognito, setIncognito] = useState(initialIncognito);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const [statusMsg, setStatusMsg] = useState('');
   const [details, setDetails] = useState<DetailsState>(DEFAULT_DETAILS);
@@ -1002,6 +1048,7 @@ export function App({
       personalityId: personality,
       // A person typed it (plan personality-memory-boundary, the initiator table).
       initiator: 'user',
+      ...(incognito ? { incognito: true } : {}),
       ...(setPluginCredential ? { credentialPrompt: true } : {}),
     });
   };
@@ -1026,18 +1073,31 @@ export function App({
         ]);
         break;
       case 'new':
-      case 'reset': {
+      case 'reset':
+      case 'incognito': {
+        // `/incognito` is `/new` plus the flag; `/new` on an incognito session
+        // scrubs it first (fail-open — the hourly sweep retries).
         const oldKey = sessionKey;
         const newKey = `cli:${basename(process.cwd())}:${Date.now()}`;
+        const goIncognito = name === 'incognito';
+        const scrubbed =
+          incognito && endIncognito
+            ? await endIncognitoSession(bridge, endIncognito, oldKey)
+            : true;
         bridge.resetSessionCost(oldKey);
         setSessionKey(newKey);
+        setIncognito(goIncognito);
         setMessages([]);
         setCompletedTools([]);
         setDelegations([]);
         setTimelineEvents([]);
         setFileActivity([]);
         setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
-        setStatusMsg('[new session started]');
+        setStatusMsg(
+          `${goIncognito ? `[new session started] ${INCOGNITO_ENTRY_LINE}` : '[new session started]'}${
+            scrubbed ? '' : ` ${INCOGNITO_SCRUB_FAILED_NOTICE}`
+          }`,
+        );
         break;
       }
       case 'fork':
@@ -1119,6 +1179,13 @@ export function App({
           // switch cannot mutate the active session — the next turn would be
           // refused with `personality_locked`. Rotate to a fresh session key
           // and reset the same per-session state `/new` resets.
+          // The incognito flag stays on across this rotation, so the session it
+          // leaves would never be scrubbed by a later `/new`: scrub it now.
+          const leftKey = sessionKey;
+          const scrubbed =
+            incognito && endIncognito
+              ? await endIncognitoSession(bridge, endIncognito, leftKey)
+              : true;
           bridge.resetSessionCost(sessionKey);
           setSessionKey(`cli:${basename(process.cwd())}:${Date.now()}`);
           setPersonality(newPersonality);
@@ -1130,7 +1197,9 @@ export function App({
           setFileActivity([]);
           setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
           setStatusMsg(
-            `[personality: ${newPersonality} — new session started; personality is fixed for a session]`,
+            `[personality: ${newPersonality} — new session started; personality is fixed for a session]${
+              scrubbed ? '' : ` ${INCOGNITO_SCRUB_FAILED_NOTICE}`
+            }`,
           );
         }
         break;
@@ -1673,6 +1742,7 @@ export function App({
           personality={personality}
           emoji={emoji}
           accentColor={accentColor}
+          incognito={incognito}
           inputTokens={usage.inputTokens}
           outputTokens={usage.outputTokens}
           costUsd={usage.costUsd}

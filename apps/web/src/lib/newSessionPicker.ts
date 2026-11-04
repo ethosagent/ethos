@@ -2,6 +2,7 @@
 // modal component so it can be unit-tested without a DOM.
 
 import { SYSTEM_PERSONALITY_IDS } from '../features/personalities/constants';
+import { INCOGNITO_PARAM } from './incognito';
 
 export interface PickerPersonality {
   id: string;
@@ -80,7 +81,12 @@ export function moveSelection<T extends PickerPersonality>(
  * to the coordinator's own `/p/<id>/chat`, which the member redirect would
  * bounce into the coordinator's workspace and out of team chrome.
  */
-export function buildNewSessionPath(id: string, teamChatPath?: string): string {
-  if (teamChatPath) return `${teamChatPath}?new=1`;
-  return `/p/${encodeURIComponent(id)}/chat?new=1`;
+export function buildNewSessionPath(
+  id: string,
+  teamChatPath?: string,
+  incognito?: boolean,
+): string {
+  const flag = incognito ? `&${INCOGNITO_PARAM}=1` : '';
+  if (teamChatPath) return `${teamChatPath}?new=1${flag}`;
+  return `/p/${encodeURIComponent(id)}/chat?new=1${flag}`;
 }

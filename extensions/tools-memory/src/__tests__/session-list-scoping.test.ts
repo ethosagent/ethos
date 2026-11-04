@@ -73,4 +73,31 @@ describe('session_list_by_date personality scoping', () => {
     expect(result.ok ? '' : result.code).toBe('input_invalid');
     expect(JSON.stringify(result)).not.toContain('session 1');
   });
+
+  it("drops other sessions' incognito rows but keeps the caller's own", async () => {
+    const store = await seed();
+    const mk = (key: string, title: string) =>
+      store.createSession({
+        key,
+        platform: 'cli',
+        model: 'm',
+        provider: 'p',
+        personalityId: 'alpha',
+        title,
+        usage: USAGE,
+        metadata: { incognito: true },
+      });
+    const other = await mk('cli:alpha-incog-other', 'incognito other');
+    const own = await mk('cli:alpha-incog-own', 'incognito own');
+    const tool = createSessionListByDateTool(store);
+    const result = await tool.execute(
+      { limit: 50 },
+      makeCtx({ personalityId: 'alpha', sessionId: own.id }),
+    );
+    const text = result.ok ? result.value : '';
+    expect(text).toContain('alpha session 1');
+    expect(text).toContain('incognito own');
+    expect(text).not.toContain('incognito other');
+    expect(text).not.toContain(other.id);
+  });
 });

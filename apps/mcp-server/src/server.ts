@@ -283,6 +283,9 @@ export class EthosMcpServer {
           const sessionId = safeArgs.sessionId ?? '';
           const limit = Number(safeArgs.limit) || 50;
           const result = await getMessages(sessionStore, sessionId, limit);
+          if ('error' in result) {
+            return { content: [{ type: 'text' as const, text: result.error }], isError: true };
+          }
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };

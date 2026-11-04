@@ -1,4 +1,4 @@
-import { applyTemporalDecay, parseTemporalBound } from '@ethosagent/core';
+import { applyTemporalDecay, isIncognitoSession, parseTemporalBound } from '@ethosagent/core';
 import { sanitize } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
 import type {
@@ -337,7 +337,10 @@ export function createSessionListByDateTool(session: SessionStore): Tool {
       });
 
       // Client-side filter for until (SessionFilter doesn't have until)
-      const filtered = untilBound ? sessions.filter((s) => s.createdAt <= untilBound) : sessions;
+      // D11 (plan incognito-sessions): another session's incognito row is not listed.
+      // Pinned by __tests__/session-list-scoping.test.ts.
+      const visible = sessions.filter((s) => s.id === ctx.sessionId || !isIncognitoSession(s));
+      const filtered = untilBound ? visible.filter((s) => s.createdAt <= untilBound) : visible;
 
       if (filtered.length === 0) {
         return { ok: true, value: 'No sessions found in the specified date range.' };

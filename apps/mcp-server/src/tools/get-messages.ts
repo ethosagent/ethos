@@ -1,10 +1,14 @@
 import type { SessionStore } from '@ethosagent/types';
+import { INCOGNITO_REFUSAL, isIncognitoSession } from '@ethosagent/wiring';
 
 export async function getMessages(
   sessionStore: SessionStore,
   sessionId: string,
   limit: number,
-): Promise<unknown[]> {
+): Promise<{ error: string } | unknown[]> {
+  // D11 (plan incognito-sessions): an incognito transcript is not served.
+  const session = await sessionStore.getSession(sessionId);
+  if (session && isIncognitoSession(session)) return { error: INCOGNITO_REFUSAL };
   const messages = await sessionStore.getMessages(sessionId, { limit });
   return messages.map((m) => ({
     id: m.id,

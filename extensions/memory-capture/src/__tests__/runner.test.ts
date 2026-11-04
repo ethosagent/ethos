@@ -211,6 +211,13 @@ describe('MemoryCaptureRunner', () => {
     expect((await h.history.read('personality:muse')).entries).toHaveLength(0);
   });
 
+  it('a session missing from the store is not captured', async () => {
+    const h = makeHarness({ session: makeSession({}) });
+    await capture(h.runner);
+    expect(h.llmCalls).toHaveLength(0);
+    expect((await h.history.read('personality:muse')).entries).toHaveLength(0);
+  });
+
   it('pre-upgrade fixture: skips an UNSTAMPED telegram group lane session', async () => {
     const h = makeHarness({ session: makeSession({ s1: 'telegram:bot1:-1001234567890' }) });
     await capture(h.runner);

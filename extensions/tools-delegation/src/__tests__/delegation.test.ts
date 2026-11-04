@@ -225,6 +225,32 @@ describe('delegate_task', () => {
     }
   });
 
+  // plan incognito-sessions D1 — an incognito turn's ToolContext carries
+  // `roomAudience: 'shared'` (turn-setup resolves it); the child inherits that
+  // and never an incognito run option, so it gets no shell. The child's session
+  // is stamped incognito by core's turn-setup from its key's ancestors (pinned in
+  // packages/core/src/__tests__/incognito.test.ts); this stub loop cannot observe that.
+  it('a child of an incognito turn runs shared and is not passed the incognito run option', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: Record<string, unknown>,
+      ): AsyncGenerator<AgentEvent> {
+        seen.push(opts);
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+    const ctx = makeCtx({ roomAudience: 'shared', initiator: 'user' });
+
+    await createDelegateTaskTool(loop).execute({ prompt: 'task' }, ctx);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.roomAudience).toBe('shared');
+    expect(seen[0]?.incognito).toBeUndefined();
+  });
+
   it('a child of a private turn is private; a hand-built context passes nothing', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const loop = {
