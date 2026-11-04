@@ -600,6 +600,21 @@ export interface WiringCliSubcommandRegistry {
 }
 
 export interface CreateAgentLoopOptions {
+  /**
+   * The process's plugin host pool, owned by the app host (gateway, serve, boot)
+   * and lent to every loop it builds (plugin-process-isolation D4). A lent pool
+   * is used and never disposed here: this loop's `'plugins'` cleanup releases
+   * only its own leases. When absent, a loop that needs a host builds its own
+   * from `pluginHostChildEntry` and disposes it with the loop.
+   */
+  pluginHostPool?: import('./plugin-hosts').PluginHostPool;
+  /**
+   * Absolute path of the plugin host child entry (D14). Only the composition
+   * root knows it (`apps/ethos/src/plugin-host-child.ts` or its bundle). With
+   * neither this nor `pluginHostPool`, a plugin configured `host` is not
+   * loaded at all (D23; desktop is such a surface today).
+   */
+  pluginHostChildEntry?: string;
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
    *  user personalities all resolve under this path. */
   dataDir: string;
@@ -944,6 +959,11 @@ export {
   type ResolvePersonalityModelFitOptions,
   resolvePersonalityModelFit,
 } from './personality-fit';
+export {
+  type CreatePluginHostPoolOptions,
+  createPluginHostPool,
+  PluginHostPool,
+} from './plugin-hosts';
 // The project-context term of the static floor, for surfaces with no turn in
 // hand (`ethos bench context`, the character sheet).
 export {

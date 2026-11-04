@@ -1,5 +1,4 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import type { Logger, ToolContext, ToolExecuteRequest, ToolResult } from '@ethosagent/types';
 import {
   BACKOFF_CAP_MS,
   backoffDelay,
@@ -8,103 +7,46 @@ import {
   HEALTHY_UPTIME_MS,
   recentCrashes,
 } from './backoff';
-import {
-  ConnectionClosedError,
-  type HandlerTable,
-  HostConnection,
-  RequestTimeoutError,
-  RpcError,
-} from './connection';
+import { ConnectionClosedError, HostConnection } from './connection';
 import { HostStartError, HostUnavailableError } from './errors';
-import type { HostEventSink } from './events';
 import { CallHandleTable } from './handles';
+import { type CallSurface, HostCalls } from './host-calls';
+import { StderrForwarder } from './host-stderr';
+import {
+  describeExit,
+  type HostRuntimeConfig,
+  type HostSpec,
+  type HostState,
+  type HostStats,
+  type Running,
+} from './host-types';
 import {
   type ActivateParams,
   type ActivateResult,
   PROTOCOL_VERSION,
   type Registration,
-  type RpcId,
 } from './protocol';
+import { diffRegistrations } from './registration-diff';
 import { parseRegistration } from './registration-parse';
-import { failure, parseToolResult } from './tool-result';
+import { isRecord } from './util';
 
-/** What the pool tells an entry about one plugin. */
-export interface HostSpec {
-  id: string;
-  dir: string;
-  entry?: string;
-  tier?: string;
-  baseUrl?: string;
-  /** Secret key NAMES for the child's `hasSecret` (D19). */
-  secretKeys?: string[];
-}
-
-/** Resolved settings, owned by the pool and shared by every entry. */
-export interface HostRuntimeConfig {
-  dataDir: string;
-  hostHome: (id: string) => string;
-  launchArgs: (maxHeapMb: number) => string[];
-  buildEnv: (id: string) => Record<string, string>;
-  makeHandlers: (ctx: { pluginId: string; handles: CallHandleTable }) => HandlerTable;
-  onEvent: HostEventSink;
-  logger: Logger;
-  maxHeapMb: number;
-  hookTimeoutMs: number;
-  readyTimeoutMs: number;
-  pingIntervalMs: number;
-  pingTimeoutMs: number;
-  cancelGraceMs: number;
-  shutdownGraceMs: number;
-  exitWaitMs: number;
-  termGraceMs: number;
-  voidQueueMax: number;
-  now: () => number;
-  random: () => number;
-}
-
-type State = 'idle' | 'starting' | 'running' | 'backoff' | 'circuit' | 'stopped';
-
-interface Running {
-  proc: ChildProcess;
-  conn: HostConnection;
-  exited: Promise<void>;
-  startedAt: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function describeExit(code: number | null, signal: string | null): string {
-  return signal ?? `code ${code}`;
-}
-
-function comparable(reg: Registration): string {
-  if (reg.kind === 'tool') {
-    const { available: _available, ...rest } = reg;
-    return JSON.stringify(rest);
-  }
-  return JSON.stringify(reg);
-}
-
-function regKey(reg: Registration): string {
-  return `${reg.kind}:${reg.kind === 'tool' ? reg.name : `${reg.model}:${reg.name}`}`;
-}
+export type { HostRuntimeConfig, HostSpec } from './host-types';
 
 /**
  * One plugin's host: the child process, its connection and its failure
  * bookkeeping (plan §5.4). Owned by `PluginHostPool`; borrowers use leases.
  */
-export class HostEntry {
+export class HostEntry implements CallSurface {
   readonly handles = new CallHandleTable();
   registrations: Registration[] = [];
   holdsLongLived = false;
   /** Tools whose registration changed across a restart: not_available until process restart. */
   readonly drifted = new Set<string>();
   readonly toolAvailable = new Map<string, boolean>();
-  readonly stats = { droppedVoid: 0, timeouts: 0, restarts: 0 };
+  readonly stats: HostStats = { droppedVoid: 0, timeouts: 0, restarts: 0, droppedBus: 0 };
+  readonly calls: HostCalls = new HostCalls(this);
 
-  private state: State = 'idle';
+  private state: HostState = 'idle';
   private current: Running | null = null;
   private startPromise: Promise<void> | null = null;
   private activated = false;
@@ -115,18 +57,19 @@ export class HostEntry {
   private stopping = false;
   private pingTimer: ReturnType<typeof setTimeout> | undefined;
   private restartTimer: ReturnType<typeof setTimeout> | undefined;
-  private ignoredCancels = 0;
-  private stderrTail = '';
-  private stderrWindowStart = 0;
-  private stderrLines = 0;
-  private readonly voidQueue: Array<{ name: string; payload: unknown }> = [];
-  private draining = false;
+  private readonly stderr: StderrForwarder;
   private readonly addedListeners = new Set<(reg: Registration) => void>();
 
   constructor(
     readonly spec: HostSpec,
-    private readonly cfg: HostRuntimeConfig,
-  ) {}
+    readonly cfg: HostRuntimeConfig,
+  ) {
+    this.stderr = new StderrForwarder(spec.id, cfg.logger, cfg.now);
+  }
+
+  connection(): HostConnection | undefined {
+    return this.current?.conn;
+  }
 
   get pid(): number | undefined {
     return this.current?.proc.pid;
@@ -242,11 +185,7 @@ export class HostEntry {
       return;
     }
     if (!isRestart) return;
-    const before = new Map(this.registrations.map((r) => [regKey(r), comparable(r)]));
-    const after = new Map(result.registrations.map((r) => [regKey(r), comparable(r)]));
-    const changed: string[] = [];
-    for (const [key, sig] of before) if (after.get(key) !== sig) changed.push(key);
-    for (const key of after.keys()) if (!before.has(key)) changed.push(key);
+    const changed = diffRegistrations(this.registrations, result.registrations);
     for (const reg of result.registrations) {
       if (reg.kind === 'tool') this.toolAvailable.set(reg.name, reg.available);
     }
@@ -297,7 +236,12 @@ export class HostEntry {
         reject(new HostStartError(msg));
       };
 
-      const handlers = cfg.makeHandlers({ pluginId: id, handles: this.handles });
+      const handlers = cfg.makeHandlers({
+        pluginId: id,
+        handles: this.handles,
+        stats: this.stats,
+        notifyHost: (method, params) => this.calls.notify(method, params),
+      });
       const conn: HostConnection = new HostConnection({
         write: (line) => {
           proc.stdin?.write(line);
@@ -313,13 +257,15 @@ export class HostEntry {
             this.forwardLog(params);
           } else if (method === 'ethos/registration.added') {
             this.onRegistrationAdded0(params);
+          } else if (method === 'ethos/long-lived' && isRecord(params)) {
+            this.holdsLongLived = params.value === true;
           }
         },
       });
 
       proc.stdin?.on('error', () => undefined);
       proc.stdout?.on('data', (chunk: Buffer) => conn.feed(chunk));
-      proc.stderr?.on('data', (chunk: Buffer) => this.forwardStderr(chunk));
+      proc.stderr?.on('data', (chunk: Buffer) => this.stderr.push(chunk));
       proc.on('error', (err) => {
         fail(`Plugin '${id}' host failed to spawn: ${err.message}`);
         onExited();
@@ -328,7 +274,7 @@ export class HostEntry {
         const inFlight = conn.pendingCount;
         if (!settled) {
           fail(
-            `Plugin '${id}' host exited (${describeExit(code, signal)}) before it was ready${this.tail()}`,
+            `Plugin '${id}' host exited (${describeExit(code, signal)}) before it was ready${this.stderr.tail()}`,
           );
         }
         conn.close(
@@ -345,11 +291,6 @@ export class HostEntry {
         cfg.readyTimeoutMs,
       );
     });
-  }
-
-  private tail(): string {
-    const t = this.stderrTail.trim();
-    return t === '' ? '' : `: ${t.slice(0, 500)}`;
   }
 
   private onViolation(reason: string, proc: ChildProcess): void {
@@ -385,21 +326,6 @@ export class HostEntry {
     });
   }
 
-  /** stderr is the plugin's console. Forwarded at debug, at most 50 lines per second. */
-  private forwardStderr(chunk: Buffer): void {
-    this.stderrTail = (this.stderrTail + chunk.toString('utf8')).slice(-2_000);
-    const now = this.cfg.now();
-    if (now - this.stderrWindowStart >= 1000) {
-      this.stderrWindowStart = now;
-      this.stderrLines = 0;
-    }
-    for (const line of chunk.toString('utf8').split('\n')) {
-      if (line === '') continue;
-      if (++this.stderrLines > 50) return;
-      this.cfg.logger.debug(`[plugin-host:${this.spec.id}] ${line}`, { component: 'plugin-host' });
-    }
-  }
-
   // -------------------------------------------------------------------------
   // Exit, crash, restart
   // -------------------------------------------------------------------------
@@ -414,9 +340,7 @@ export class HostEntry {
     const running = this.current;
     this.current = null;
     if (this.pingTimer) clearTimeout(this.pingTimer);
-    const dropped = this.voidQueue.length;
-    this.voidQueue.length = 0;
-    this.stats.droppedVoid += dropped;
+    this.calls.dropQueued();
     if (this.stopping || this.state === 'stopped') {
       this.state = 'stopped';
       return;
@@ -543,144 +467,6 @@ export class HostEntry {
     if (this.drifted.has(name)) return false;
     if (this.state === 'circuit' || this.state === 'stopped') return false;
     return this.toolAvailable.get(name) ?? false;
-  }
-
-  async callTool(request: ToolExecuteRequest, ctx: ToolContext): Promise<ToolResult> {
-    const name = request.name;
-    const id = this.spec.id;
-    if (this.drifted.has(name)) {
-      return failure(
-        'not_available',
-        `Plugin '${id}' tool '${name}' changed after the host restarted and is unavailable until Ethos restarts.`,
-      );
-    }
-    try {
-      await this.ensureRunning();
-    } catch (err) {
-      return failure('not_available', err instanceof Error ? err.message : String(err));
-    }
-    const running = this.current;
-    if (!running) return failure('not_available', `Plugin '${id}' host is not running`);
-    const handle = this.handles.open(ctx);
-    let callId: RpcId | undefined;
-    let abortTimer: ReturnType<typeof setTimeout> | undefined;
-    let onAbort: (() => void) | undefined;
-    const signal = ctx.abortSignal;
-    try {
-      const abortedResult = new Promise<ToolResult>((resolve) => {
-        onAbort = () => {
-          if (callId === undefined) return;
-          running.conn.notify('ethos/cancel', { id: callId });
-          abortTimer = setTimeout(() => {
-            this.ignoredCancels++;
-            if (this.ignoredCancels >= 2) this.killGroup('SIGKILL');
-            resolve(
-              failure(
-                'execution_failed',
-                `Aborted — plugin '${id}' did not stop '${name}' within ${this.cfg.cancelGraceMs} ms and is marked suspect.`,
-              ),
-            );
-          }, this.cfg.cancelGraceMs);
-        };
-        if (signal.aborted) queueMicrotask(() => onAbort?.());
-        else signal.addEventListener('abort', onAbort, { once: true });
-      });
-      const call = running.conn
-        .request<unknown>(
-          'ethos/tool.execute',
-          { name, request, call: handle },
-          { onId: (rid) => (callId = rid) },
-        )
-        .then((raw) => {
-          if (abortTimer) this.ignoredCancels = 0;
-          return (
-            parseToolResult(raw) ??
-            failure('execution_failed', `Plugin '${id}' tool '${name}' returned a malformed result`)
-          );
-        });
-      return await Promise.race([call, abortedResult]);
-    } catch (err) {
-      return this.toolFailure(err, name);
-    } finally {
-      if (abortTimer) clearTimeout(abortTimer);
-      if (onAbort) signal.removeEventListener('abort', onAbort);
-      this.handles.revoke(handle);
-    }
-  }
-
-  private toolFailure(err: unknown, tool: string): ToolResult {
-    const id = this.spec.id;
-    if (err instanceof ConnectionClosedError) {
-      return failure(
-        'execution_failed',
-        `Plugin '${id}' ${err.message} while '${tool}' was running, so it may or may not have taken effect.`,
-      );
-    }
-    if (err instanceof RpcError) {
-      return failure('execution_failed', `Plugin '${id}' tool '${tool}' failed: ${err.message}`);
-    }
-    return failure(
-      'execution_failed',
-      `Plugin '${id}' tool '${tool}' could not be called: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  /** Runs the plugin's modifying handlers host-side. Timeout, crash or throw: null (fail-open). */
-  async fireModifying(name: string, payload: unknown): Promise<Record<string, unknown> | null> {
-    const running = this.current;
-    if (this.state !== 'running' || !running) {
-      void this.ensureRunning().catch(() => undefined);
-      return null;
-    }
-    try {
-      const raw = await running.conn.request<unknown>(
-        'ethos/hook.fire',
-        { model: 'modifying', name, payload },
-        { timeoutMs: this.cfg.hookTimeoutMs },
-      );
-      return isRecord(raw) ? raw : null;
-    } catch (err) {
-      if (err instanceof RequestTimeoutError) this.stats.timeouts++;
-      return null;
-    }
-  }
-
-  /** Fire-and-forget, FIFO per host, bounded queue that drops the oldest (D10). */
-  fireVoid(name: string, payload: unknown): void {
-    if (this.state !== 'running') {
-      this.stats.droppedVoid++;
-      return;
-    }
-    this.voidQueue.push({ name, payload });
-    while (this.voidQueue.length > this.cfg.voidQueueMax) {
-      this.voidQueue.shift();
-      this.stats.droppedVoid++;
-    }
-    void this.drainVoid();
-  }
-
-  private async drainVoid(): Promise<void> {
-    if (this.draining) return;
-    this.draining = true;
-    try {
-      while (this.voidQueue.length > 0) {
-        const running = this.current;
-        if (this.state !== 'running' || !running) break;
-        const item = this.voidQueue.shift();
-        if (!item) break;
-        try {
-          await running.conn.request(
-            'ethos/hook.fire',
-            { model: 'void', name: item.name, payload: item.payload },
-            { timeoutMs: this.cfg.hookTimeoutMs },
-          );
-        } catch (err) {
-          if (err instanceof RequestTimeoutError) this.stats.timeouts++;
-        }
-      }
-    } finally {
-      this.draining = false;
-    }
   }
 
   // -------------------------------------------------------------------------

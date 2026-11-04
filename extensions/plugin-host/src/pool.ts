@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { noopLogger } from '@ethosagent/logger';
+import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
 import type {
   Logger,
   Storage,
@@ -12,11 +13,14 @@ import type {
 import type { HandlerTable } from './connection';
 import { HostUnavailableError } from './errors';
 import type { HostEventSink } from './events';
-import type { CallHandleTable } from './handles';
-import { HostEntry, type HostRuntimeConfig, type HostSpec } from './host-entry';
-import type { Registration } from './protocol';
+import type { LiveCall } from './handles';
+import type { HostRequestOptions } from './host-calls';
+import { HostEntry } from './host-entry';
+import type { HandlerContext, HostRuntimeConfig, HostSpec } from './host-types';
+import { createParentHandlers, ParentApis, type ParentServices } from './parent-handlers';
+import type { CallHandle, ParentToHostMethod, Registration } from './protocol';
 
-export type { HostSpec } from './host-entry';
+export type { HandlerContext, HostSpec } from './host-types';
 
 export interface HostEnvContext {
   pluginId: string;
@@ -34,8 +38,10 @@ export interface PluginHostPoolOptions {
   launchArgs?: (childEntry: string) => string[];
   /** Lane C swaps in `minimalHostEnv`-based scrubbing here. */
   buildEnv?: (ctx: HostEnvContext) => Record<string, string>;
-  /** Host -> parent request handlers (secrets, capabilities...). Later lanes fill this. */
-  makeHandlers?: (ctx: { pluginId: string; handles: CallHandleTable }) => HandlerTable;
+  /** Replaces the default host -> parent handler table (`createParentHandlers`). Tests only. */
+  makeHandlers?: (ctx: HandlerContext) => HandlerTable;
+  /** Injection points for the default parent handlers (secret authorisation, monitor llm). */
+  parent?: ParentServices;
   onEvent?: HostEventSink;
   logger?: Logger;
   maxHeapMb?: number;
@@ -90,6 +96,15 @@ export interface HostLease {
   fireVoid(name: string, payload: unknown): void;
   fireModifying(name: string, payload: unknown): Promise<Record<string, unknown> | null>;
   emitEvent: HostEventSink;
+  /** Directory the host may keep plugin data in; `registerDataSource` paths must lie inside it. */
+  readonly stateDir: string;
+  /** Rejects with HostUnavailableError, RpcError or a timeout; callers pick the fallback. */
+  request(method: ParentToHostMethod, params: unknown, opts?: HostRequestOptions): Promise<unknown>;
+  notifyHost(method: ParentToHostMethod, params: unknown): void;
+  /** Opens a call handle for the duration of `fn`, revoked in a `finally`. */
+  withCall<T>(ctx: LiveCall, fn: (call: CallHandle) => Promise<T>): Promise<T>;
+  /** Registers the parent's own `PluginApiImpl`; host-to-parent traffic is answered through it. */
+  bindApi(api: EthosPluginApi): void;
   onRegistrationAdded(listener: (reg: Registration) => void): () => void;
   /** Idempotent. Releases this lease only; the host lives until the pool is disposed. */
   release(): void;
@@ -98,10 +113,14 @@ export interface HostLease {
 class Lease implements HostLease {
   private released = false;
 
+  private boundApi: EthosPluginApi | undefined;
+
   constructor(
     private readonly entry: HostEntry,
     private readonly onRelease: () => void,
     readonly emitEvent: HostEventSink,
+    readonly stateDir: string,
+    private readonly apis: ParentApis,
   ) {}
 
   get pluginId(): string {
@@ -114,16 +133,33 @@ class Lease implements HostLease {
     return this.entry.holdsLongLived;
   }
   callTool(request: ToolExecuteRequest, ctx: ToolContext): Promise<ToolResult> {
-    return this.entry.callTool(request, ctx);
+    return this.entry.calls.callTool(request, ctx);
+  }
+  request(
+    method: ParentToHostMethod,
+    params: unknown,
+    opts?: HostRequestOptions,
+  ): Promise<unknown> {
+    return this.entry.calls.request(method, params, opts);
+  }
+  notifyHost(method: ParentToHostMethod, params: unknown): void {
+    this.entry.calls.notify(method, params);
+  }
+  withCall<T>(ctx: LiveCall, fn: (call: CallHandle) => Promise<T>): Promise<T> {
+    return this.entry.calls.withCall(ctx, fn);
+  }
+  bindApi(api: EthosPluginApi): void {
+    this.boundApi = api;
+    this.apis.bind(this.entry.spec.id, api);
   }
   isToolAvailable(name: string): boolean {
     return this.entry.isToolAvailable(name);
   }
   fireVoid(name: string, payload: unknown): void {
-    this.entry.fireVoid(name, payload);
+    this.entry.calls.fireVoid(name, payload);
   }
   fireModifying(name: string, payload: unknown): Promise<Record<string, unknown> | null> {
-    return this.entry.fireModifying(name, payload);
+    return this.entry.calls.fireModifying(name, payload);
   }
   onRegistrationAdded(listener: (reg: Registration) => void): () => void {
     return this.entry.onRegistrationAdded(listener);
@@ -131,6 +167,7 @@ class Lease implements HostLease {
   release(): void {
     if (this.released) return;
     this.released = true;
+    if (this.boundApi) this.apis.unbind(this.entry.spec.id, this.boundApi);
     this.onRelease();
   }
 }
@@ -145,6 +182,7 @@ export class PluginHostPool {
   private readonly starting = new Map<string, Promise<HostEntry>>();
   private readonly leaseCounts = new Map<string, number>();
   private readonly cfg: HostRuntimeConfig;
+  private readonly apis = new ParentApis();
   private disposing: Promise<void> | null = null;
   private tsxTsconfig: string | undefined;
   private tsxResolved = false;
@@ -164,7 +202,15 @@ export class PluginHostPool {
         // Running a .ts child from source: tsx must find the repo's path aliases from a foreign cwd.
         return this.tsxTsconfig ? { ...env, TSX_TSCONFIG_PATH: this.tsxTsconfig } : env;
       },
-      makeHandlers: opts.makeHandlers ?? (() => ({})),
+      makeHandlers:
+        opts.makeHandlers ??
+        createParentHandlers({
+          ...(opts.parent ?? {}),
+          storage: opts.storage,
+          hostHome,
+          apis: this.apis,
+          onEvent: (category, payload) => this.cfg.onEvent(category, payload),
+        }),
       onEvent: opts.onEvent ?? (() => undefined),
       logger: opts.logger ?? noopLogger,
       maxHeapMb: opts.maxHeapMb ?? 512,
@@ -213,6 +259,8 @@ export class PluginHostPool {
         this.leaseCounts.set(spec.id, Math.max(0, (this.leaseCounts.get(spec.id) ?? 1) - 1));
       },
       this.cfg.onEvent,
+      join(this.opts.dataDir, 'plugin-hosts', hostDirName(spec.id)),
+      this.apis,
     );
   }
 

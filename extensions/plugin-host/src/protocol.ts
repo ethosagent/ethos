@@ -51,6 +51,8 @@ export const RPC_ERROR = {
   internal: -32603,
   handlerFailed: -32000,
   cancelled: -32001,
+  /** The request was refused by an authorisation check (revoked handle, denied secret ref). */
+  denied: -32002,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -81,7 +83,89 @@ export interface HookRegistration {
   name: string;
 }
 
-export type Registration = ToolRegistration | HookRegistration;
+/** A context injector; `shouldInject` runs host-side, so only id and priority cross. */
+export interface InjectorRegistration {
+  kind: 'injector';
+  index: number;
+  id: string;
+  priority: number;
+}
+
+export interface FilterRegistration {
+  kind: 'filter';
+  index: number;
+  toolName?: string | string[];
+  toolset?: string;
+  before: boolean;
+  after: boolean;
+}
+
+export interface EvaluatorRegistration {
+  kind: 'evaluator';
+  index: number;
+  name: string;
+}
+
+export interface RouteRegistration {
+  kind: 'route';
+  index: number;
+  method: string;
+  path: string;
+}
+
+export interface HealthCheckRegistration {
+  kind: 'health_check';
+  index: number;
+  name: string;
+  description: string;
+}
+
+export interface SlashRegistration {
+  kind: 'slash';
+  name: string;
+  description: string;
+  usage: string;
+}
+
+export interface CliRegistration {
+  kind: 'cli';
+  name: string;
+  description: string;
+}
+
+export interface ExtractorRegistration {
+  kind: 'extractor';
+  index: number;
+  name: string;
+  mimeTypes: string[];
+  maxInputBytes?: number;
+}
+
+export interface DataSourceRegistration {
+  kind: 'data_source';
+  id: string;
+  path: string;
+}
+
+/** Plain-data registrations replayed verbatim; the payload is validated again in the parent. */
+export interface DataRegistration {
+  kind: 'personality' | 'oauth_profile' | 'page' | 'renderer';
+  data: Record<string, unknown>;
+}
+
+export type Registration =
+  | ToolRegistration
+  | HookRegistration
+  | InjectorRegistration
+  | FilterRegistration
+  | EvaluatorRegistration
+  | RouteRegistration
+  | HealthCheckRegistration
+  | SlashRegistration
+  | CliRegistration
+  | ExtractorRegistration
+  | DataSourceRegistration
+  | DataRegistration;
 
 // ---------------------------------------------------------------------------
 // Parent -> host
@@ -109,10 +193,22 @@ export interface ActivateResult {
 /** Handle for the reverse capability calls of one in-flight call (§5.6). */
 export type CallHandle = string;
 
+/**
+ * What the parent's live `ToolContext` had at call time, so the child exposes
+ * exactly the handles a non-hosted tool would see (plan §5.6).
+ */
+export interface LiveSnapshot {
+  llm: boolean;
+  context: boolean;
+  /** `attachments.list()` is synchronous, so it crosses as a snapshot. */
+  attachments?: unknown[];
+}
+
 export interface ToolExecuteParams {
   name: string;
   request: ToolExecuteRequest;
   call: CallHandle;
+  live?: LiveSnapshot;
 }
 
 export interface HookFireParams {
@@ -131,15 +227,44 @@ export interface ParentToHostMethods {
   'ethos/activate': { params: ActivateParams; result: ActivateResult };
   'ethos/tool.execute': { params: ToolExecuteParams; result: ToolResult };
   'ethos/hook.fire': { params: HookFireParams; result: unknown };
-  'ethos/injector.inject': { params: unknown; result: unknown };
-  'ethos/filter.before': { params: unknown; result: unknown };
-  'ethos/filter.after': { params: unknown; result: unknown };
-  'ethos/evaluator.evaluate': { params: unknown; result: unknown };
-  'ethos/route.handle': { params: unknown; result: unknown };
-  'ethos/command.run': { params: unknown; result: unknown };
-  'ethos/health.run': { params: unknown; result: unknown };
-  'ethos/extract': { params: unknown; result: unknown };
-  'ethos/event': { params: unknown; result: never };
+  'ethos/injector.inject': {
+    params: { index: number; label: string; ctx: unknown };
+    result: unknown;
+  };
+  'ethos/filter.before': {
+    params: {
+      index: number;
+      call: CallHandle;
+      args: unknown;
+      meta: unknown;
+      request: unknown;
+      live?: LiveSnapshot;
+    };
+    result: unknown;
+  };
+  'ethos/filter.after': {
+    params: {
+      index: number;
+      call: CallHandle;
+      result: unknown;
+      meta: unknown;
+      request: unknown;
+      live?: LiveSnapshot;
+    };
+    result: unknown;
+  };
+  'ethos/evaluator.evaluate': {
+    params: { index: number; call: CallHandle; payload: unknown };
+    result: unknown;
+  };
+  'ethos/route.handle': { params: { index: number; req: unknown }; result: unknown };
+  'ethos/command.run': {
+    params: { kind: 'slash' | 'cli'; name: string; call: CallHandle; input: unknown };
+    result: unknown;
+  };
+  'ethos/health.run': { params: { index: number }; result: unknown };
+  'ethos/extract': { params: { index: number; bytes: unknown; mime: string }; result: unknown };
+  'ethos/event': { params: { type: 'bus'; event: string; payload: unknown }; result: never };
   'ethos/cancel': { params: { id: RpcId }; result: never };
   'ethos/ping': { params: Record<string, never>; result: PingResult };
   'ethos/shutdown': { params: Record<string, never>; result: null };
@@ -184,10 +309,26 @@ export interface HostToParentMethods {
     params: { call: CallHandle; event: unknown };
     result: never;
   };
-  'ethos/notify': { params: unknown; result: never };
-  'ethos/diagnostics': { params: unknown; result: never };
-  'ethos/bus.emit': { params: unknown; result: never };
-  'ethos/bus.subscribe': { params: unknown; result: never };
+  'ethos/notify': { params: { opts: unknown }; result: null };
+  'ethos/diagnostics': {
+    params:
+      | { kind: 'event'; level: string; message: string; data?: unknown }
+      | { kind: 'metric'; name: string; value: number; labels?: unknown };
+    result: never;
+  };
+  'ethos/bus.emit': { params: { event: string; payload: unknown }; result: never };
+  'ethos/bus.subscribe': { params: { event: string }; result: never };
+  /** A bus payload the host could not serialise and so dropped (counted in the parent). */
+  'ethos/bus.dropped': { params: { event: string }; result: never };
+  /** `MonitorRunContext.llm`: a monitor has no call, so it is served by the parent's llm factory. */
+  'ethos/monitor.llm': { params: { prompt: string; options?: unknown }; result: string };
+  /** `send`/`stdout`/`stderr`/`emit` of a slash, CLI or command call. */
+  'ethos/command.output': {
+    params: { call: CallHandle; stream: 'send' | 'stdout' | 'stderr' | 'emit'; text: string };
+    result: never;
+  };
+  /** The host now holds monitors, routes or bus subscriptions (eager restart, D15). */
+  'ethos/long-lived': { params: { value: boolean }; result: never };
   'ethos/registration.added': { params: { registration: Registration }; result: never };
   'ethos/log': {
     params: { level: 'debug' | 'info' | 'warn' | 'error'; message: string };
@@ -234,10 +375,14 @@ export const HOST_TO_PARENT_KIND: Record<HostToParentMethod, 'request' | 'notifi
   'ethos/capability.llm': 'request',
   'ethos/capability.context': 'request',
   'ethos/emit': 'notification',
-  'ethos/notify': 'notification',
+  'ethos/notify': 'request',
   'ethos/diagnostics': 'notification',
   'ethos/bus.emit': 'notification',
   'ethos/bus.subscribe': 'notification',
+  'ethos/bus.dropped': 'notification',
+  'ethos/monitor.llm': 'request',
+  'ethos/command.output': 'notification',
+  'ethos/long-lived': 'notification',
   'ethos/registration.added': 'notification',
   'ethos/log': 'notification',
 };

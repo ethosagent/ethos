@@ -199,6 +199,7 @@ import {
   createPlatformWebhookServer,
   type PlatformWebhookHandler,
 } from '../platform-webhook-server';
+import { closeProcessPluginHostPool, openProcessPluginHostPool } from '../plugin-host-pool';
 import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
@@ -699,6 +700,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const config = loaded.config;
   // `logs.level` — the lowest severity every ConsoleLogger built here prints.
   const logLevel = config.logs?.level;
+  // The process's one plugin host pool (plan plugin-process-isolation D4):
+  // `createAgentLoop` lends it to every loop built below, bots included.
+  // Disposed in `shutdown`, after the loops that borrow it.
+  await openProcessPluginHostPool(config, storage);
 
   // One gateway per state dir (plan reach-and-containment §2.7). Taken right
   // after config load and BEFORE any store is opened or adapter constructed;
@@ -2492,6 +2497,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
               await disposeSystemLoop();
             },
           ],
+          ['plugin hosts', closeProcessPluginHostPool],
         ],
         (message) => console.warn(message),
       );

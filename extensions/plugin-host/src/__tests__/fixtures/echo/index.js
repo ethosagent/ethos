@@ -55,6 +55,15 @@ export function activate(api) {
   });
   api.registerTool({
     ...base,
+    name: 'echo_subscribe',
+    description: 'Subscribes to a bus event, which makes the host long-lived',
+    execute: async () => {
+      api.on('echo.event', () => {});
+      return text('subscribed');
+    },
+  });
+  api.registerTool({
+    ...base,
     name: 'echo_unavailable',
     description: 'Never available',
     isAvailable: () => false,

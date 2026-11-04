@@ -13,3 +13,10 @@ export class HostStartError extends Error {
     this.name = 'HostStartError';
   }
 }
+
+/** Error codes a host sees in the message of a refused reverse call (plan §5.5, §5.6). */
+export const HOST_ERROR = {
+  handleRevoked: 'PLUGIN_HOST_HANDLE_REVOKED',
+  secretDenied: 'PLUGIN_HOST_SECRET_DENIED',
+  capabilityUnavailable: 'PLUGIN_HOST_CAPABILITY_UNAVAILABLE',
+} as const;

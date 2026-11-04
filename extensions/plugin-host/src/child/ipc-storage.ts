@@ -1,23 +1,5 @@
 import type { Storage, StorageDirEntry } from '@ethosagent/types';
-
-/** Bytes cross JSON as `{ $bytes: <base64> }`. */
-function encode(value: unknown): unknown {
-  if (value instanceof Uint8Array) return { $bytes: Buffer.from(value).toString('base64') };
-  if (Array.isArray(value)) return value.map(encode);
-  return value;
-}
-
-function decode(value: unknown): unknown {
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    '$bytes' in value &&
-    typeof value.$bytes === 'string'
-  ) {
-    return new Uint8Array(Buffer.from(value.$bytes, 'base64'));
-  }
-  return value;
-}
+import { decodeBytes as decode, encodeBytes as encode } from '../util';
 
 export type CapabilityCall = (op: string, args: unknown[]) => Promise<unknown>;
 

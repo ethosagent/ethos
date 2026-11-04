@@ -1,10 +1,12 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import type { Logger, SecretsResolver, Storage, ToolResult } from '@ethosagent/types';
 import { type HandlerTable, HostConnection, RpcError } from '../connection';
 import { isModifyingHook, isVoidHook } from '../hook-names';
 import { type ActivateResult, PROTOCOL_VERSION, type Registration, RPC_ERROR } from '../protocol';
-import { buildChildContext, isToolExecuteRequest } from './context';
+import { installApiTap } from './api-tap';
+import { buildChildContext, isToolExecuteRequest, parseLiveSnapshot } from './context';
+import { installRowHandlers } from './handlers';
 import { createChildRegistries, type RegistrationObserver } from './registries';
 import { toolToWire } from './wire';
 
@@ -100,6 +102,8 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
   let loader: PluginLoader | null = null;
   let children: ReturnType<typeof createChildRegistries> | null = null;
   let secretRefs: string[] = [];
+  let longLived = false;
+  const pending: Registration[] = [];
   const inflight = new Map<number, AbortController>();
 
   // Handlers need the connection, so the table is filled in after construction.
@@ -112,7 +116,18 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     onViolation: () => exit(1),
   });
 
+  const markLongLived = (): void => {
+    if (longLived) return;
+    longLived = true;
+    if (activated) conn.notify('ethos/long-lived', { value: true });
+  };
+
   const observer: RegistrationObserver = {
+    add(reg) {
+      // During activate() rows are collected into the activation result; afterwards each is announced.
+      if (!activated) pending.push(reg);
+      else conn.notify('ethos/registration.added', { registration: reg });
+    },
     tool(tool) {
       if (!activated) return;
       conn.notify('ethos/registration.added', { registration: toolToWire(tool) });
@@ -145,7 +160,18 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     secretRefs = Array.isArray(params.secretKeys)
       ? params.secretKeys.filter((k): k is string => typeof k === 'string')
       : [];
-    children = createChildRegistries(() => observer);
+    children = createChildRegistries({
+      observer: () => observer,
+      conn,
+      ...(typeof params.baseUrl === 'string' ? { baseUrl: params.baseUrl } : {}),
+      onLongLived: markLongLived,
+    });
+    installApiTap({
+      rows: children.rows,
+      stateDir: dirname(hostHome),
+      add: (reg) => observer.add(reg),
+      longLived: markLongLived,
+    });
     const logger = new CapturingLogger();
     loader = new PluginLoader(children.registries, {
       storage: opts.storage,
@@ -170,8 +196,9 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     for (const name of children.hooks.modifyingNames) {
       registrations.push({ kind: 'hook', model: 'modifying', name });
     }
+    registrations.push(...pending);
     activated = true;
-    const result: ActivateResult = { registrations, holdsLongLived: false };
+    const result: ActivateResult = { registrations, holdsLongLived: longLived };
     return result;
   };
 
@@ -192,7 +219,14 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     const controller = new AbortController();
     if (ctx.id !== undefined) inflight.set(ctx.id, controller);
     try {
-      const toolCtx = buildChildContext(request, call, controller.signal, conn);
+      const toolCtx = buildChildContext(
+        request,
+        call,
+        controller.signal,
+        conn,
+        tool.capabilities ?? {},
+        parseLiveSnapshot(params.live),
+      );
       return await tool.execute(request.args, toolCtx);
     } catch (err) {
       return {
@@ -220,6 +254,12 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     }
     return null;
   };
+
+  installRowHandlers(handlers, {
+    conn,
+    rows: () => (activated ? (children?.rows ?? null) : null),
+    bus: () => children?.bus ?? null,
+  });
 
   handlers['ethos/ping'] = async () => {
     const tools: Record<string, boolean> = {};

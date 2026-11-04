@@ -36,6 +36,7 @@ export function createPluginActivator(
       let unsubscribe: (() => void) | undefined;
       return {
         activate(api) {
+          lease.bindApi(api);
           for (const reg of lease.registrations) replayRegistration(api, reg, lease);
           unsubscribe = lease.onRegistrationAdded((reg) => replayRegistration(api, reg, lease));
         },

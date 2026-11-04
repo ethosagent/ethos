@@ -26,9 +26,15 @@ The child rebinds `process.stdout.write` to stderr before any plugin code is imp
 
 Crash, backoff (1 s doubling to 60 s, +/-20%), circuit (5 crashes in 10 min opens it for 30 min), ping (30 s, 5 s timeout), cancel grace and shutdown order are pinned by `src/__tests__/lifecycle.test.ts`.
 
+## Registrations and the reverse side
+
+Every `EthosPluginApi` member is classified in `src/__tests__/registration-inventory.test.ts` (`INVENTORY`, typed so a new member fails typecheck until it is classified) and every `ToolContext` key in `src/__tests__/tool-context-host-hop.test.ts` (`HOST_HOP`). Injectors, tool filters, evaluators, routes, health checks, slash/CLI commands, document extractors, data rows and the event bus are replayed in `src/proxies/`; the child records them through `src/child/api-tap.ts` (it wraps `PluginApiImpl`'s prototype inside the host process only, because the loader builds the api privately and several registrations never reach `PluginRegistries`). Unsupported members (context engine, LLM/memory/storage/execution/platform/STT/TTS providers, `registerCustomOAuthFlow`, `registerOAuth`) fail the plugin's load naming the method.
+
+The host-to-parent handler table is assembled in `src/parent-handlers.ts` (`createParentHandlers`): `ethos/capability.*` is served from the call's own live handle (`src/capability-server.ts`), a revoked or foreign handle answers `PLUGIN_HOST_HANDLE_REVOKED` and records `plugin_host.denied`; `ethos/secrets.*` and `capability.secret` go through the injectable `authorizeSecretRef` (default: deny everything outside `plugins/<id>/`) and then the parent's own `PluginApiImpl`. `PluginHostPoolOptions.parent` carries the injection points (`authorizeSecretRef`, `listSecretKeys`, `llmFactory` for monitors).
+
 ## Not yet in this package
 
-Parent-side proxies for injectors, filters, evaluators, routes, monitors, commands and the other registry rows, the secrets and capability servers, env scrubbing and the sandbox are later lanes. A plugin that registers an unsupported member (context engine, LLM or memory provider, storage, execution backend, platform adapter, STT/TTS, custom OAuth flow) fails to load in a host, naming the method.
+Secret authorisation policy, tool-capability clamping, env scrubbing and the OS sandbox (`secrets.ts`, `capabilities.ts`, `env.ts`, `sandbox.ts`) are a later lane. `getContext`/`setContext` are absent in a host (synchronous). `onCredentialUpdate` handlers fire host-side for the host's own `setSecret`; an operator-side update is not forwarded.
 
 ## Testing
 

@@ -143,14 +143,14 @@ describe('tool proxy', () => {
   );
 
   it(
-    'ctx.storage in a hosted tool reaches the parent as ethos/capability.storage (answered by lane C)',
+    'ctx.storage in a hosted tool reaches the parent as ethos/capability.storage, served from the call own handle',
     async () => {
       h = await makeHarness();
       const lease = await h.pool.acquire({ id: 'echo', dir: fixtureDir('echo') });
       const result = await callTool(lease, 'echo_storage', { path: '/etc/hostname' });
-      // No capability server is wired in this lane, so the parent answers method-not-found.
+      // The call is live but the test context carries no storage: a typed refusal, not method-not-found.
       expect(result).toMatchObject({ ok: false, code: 'execution_failed' });
-      expect(result.ok ? '' : result.error).toMatch(/Method not found: ethos\/capability\.storage/);
+      expect(result.ok ? '' : result.error).toMatch(/PLUGIN_HOST_CAPABILITY_UNAVAILABLE/);
     },
     SLOW,
   );
