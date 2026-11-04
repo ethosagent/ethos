@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readConfig, resolveLearningReplay } from '@ethosagent/config';
+import { PLUGIN_ISOLATION_DEFAULTS, readConfig, resolveLearningReplay } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
@@ -153,6 +153,25 @@ export async function readSharedMcpSettings(
 ): Promise<Pick<WiringConfig, 'mcp'>> {
   const mcp = (await readConfig(storage, secrets, { dir }))?.mcp;
   return mcp ? { mcp } : {};
+}
+
+/**
+ * `plugins.isolation*` from the shared `~/.ethos/config.yaml`, in the shape
+ * `WiringConfig.pluginIsolation` takes. The desktop builds its own
+ * `WiringConfig`, so without this a plugin the operator set to `host` would be
+ * silently loaded in-process here. The desktop supplies no plugin host pool or
+ * child entry (Electron's `process.execPath` is not Node), so a `host` plugin
+ * fails closed in `PluginLoader` (plugin-process-isolation D23, pinned by
+ * `extensions/plugin-loader/src/__tests__/isolation-seam.test.ts`). `{}` when
+ * unset or the file is absent.
+ */
+export async function readSharedPluginIsolation(
+  storage: Storage,
+  secrets: SecretsResolver,
+  dir: string = sharedEthosDir(),
+): Promise<Pick<WiringConfig, 'pluginIsolation'>> {
+  const pluginIsolation = (await readConfig(storage, secrets, { dir }))?.pluginIsolation;
+  return pluginIsolation ? { pluginIsolation } : {};
 }
 
 /**
@@ -333,6 +352,18 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     // keep the default
   }
 
+  // `plugins.isolation*` from the shared config. An unreadable file fails CLOSED:
+  // every plugin is treated as `host`, which this surface cannot start, so none
+  // loads in-process by accident (plugin-process-isolation D23).
+  let sharedPluginIsolation: Pick<WiringConfig, 'pluginIsolation'> = {};
+  try {
+    sharedPluginIsolation = await readSharedPluginIsolation(new FsStorage(), secretsResolver);
+  } catch {
+    sharedPluginIsolation = {
+      pluginIsolation: { ...PLUGIN_ISOLATION_DEFAULTS, default: 'host', overrides: {} },
+    };
+  }
+
   // Verification round F2 — the same state dir the gateway child is given
   // (`ETHOS_STATE_DIR: getDataDir()`, ./gateway-control.ts). Wiring floors
   // `dataDir` itself (`ethosStateDirs`, packages/storage-fs/src/sensitive-paths.ts);
@@ -363,6 +394,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     ...sharedVoiceConfig,
     ...sharedExecution,
     ...sharedMcp,
+    ...sharedPluginIsolation,
     secretsResolver,
   };
 

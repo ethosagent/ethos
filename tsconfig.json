@@ -112,6 +112,8 @@
       "@ethosagent/plugin-sdk/testing": ["./packages/plugin-sdk/src/testing"],
       "@ethosagent/plugin-contract": ["./packages/plugin-contract/src"],
       "@ethosagent/plugin-loader": ["./extensions/plugin-loader/src"],
+      "@ethosagent/plugin-host": ["./extensions/plugin-host/src"],
+      "@ethosagent/plugin-host/child": ["./extensions/plugin-host/src/child/index"],
       "@ethosagent/memory-sdk": ["./packages/memory-sdk/src"],
       "@ethosagent/sandbox-docker": ["./extensions/sandbox-docker/src"],
       "@ethosagent/execution-local": ["./extensions/execution-local/src"],

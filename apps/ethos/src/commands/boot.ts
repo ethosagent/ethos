@@ -141,6 +141,7 @@ import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
 import { createPlatformWebhookServer } from '../platform-webhook-server';
+import { closeProcessPluginHostPool, openProcessPluginHostPool } from '../plugin-host-pool';
 import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createWebhookServer, type PrefilterRunner } from '../webhook-server';
@@ -329,6 +330,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
   const cfg = loaded.config;
+  // The process's one plugin host pool (plan plugin-process-isolation D4),
+  // lent to every loop below by `createAgentLoop`; disposed in `shutdown` after
+  // the loops that borrow it.
+  await openProcessPluginHostPool(cfg, storage);
   const dir = ethosDir();
 
   // One gateway per state dir (plan reach-and-containment §2.7): this profile
@@ -2727,6 +2732,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
             ['web api', () => created.dispose()],
             ...[...liveBotLoops].map((dispose) => ['bot loop', dispose] as const),
             ['system loop', shared.dispose],
+            ['plugin hosts', closeProcessPluginHostPool],
             [
               'sessions.db',
               async () => {

@@ -41,6 +41,7 @@ import {
 import { cliToolsetsRefusal } from './cli-overrides';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
+import { getProcessPluginHostPool, resolvePluginHostChildEntry } from './plugin-host-pool';
 
 // CLI-side adapter over @ethosagent/wiring. Resolves the rotation pool, data
 // dir, working dir, and logger from the CLI's environment, then delegates.
@@ -570,6 +571,7 @@ async function wiringConfigFor(
     ...(config.pluginsAutoInstall !== undefined
       ? { pluginsAutoInstall: config.pluginsAutoInstall }
       : {}),
+    ...(config.pluginIsolation ? { pluginIsolation: config.pluginIsolation } : {}),
     secretsResolver: await getSecretsResolver(),
   };
   return wiringConfig;
@@ -740,8 +742,16 @@ export async function createAgentLoop(
   } = {},
 ): Promise<CreateAgentLoopResult> {
   const wiringConfig = await wiringConfigFor(config);
+  // One plugin host pool per process: a long-running host's pool is lent to this
+  // loop; otherwise the loop builds (and disposes) its own from the child entry.
+  const lentPluginHostPool = getProcessPluginHostPool();
+  const pluginHostChildEntry = lentPluginHostPool
+    ? undefined
+    : await resolvePluginHostChildEntry(getStorage());
   const result = await packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
+    ...(lentPluginHostPool ? { pluginHostPool: lentPluginHostPool } : {}),
+    ...(pluginHostChildEntry ? { pluginHostChildEntry } : {}),
     workingDir: opts.workingDir ?? process.cwd(),
     profile: opts.profile ?? 'cli',
     logger,

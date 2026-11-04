@@ -1861,6 +1861,27 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
 
+  extensions/plugin-host:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@ethosagent/plugin-loader':
+        specifier: workspace:*
+        version: link:../plugin-loader
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/plugin-loader:
     dependencies:
       '@ethosagent/core':
@@ -2927,6 +2948,9 @@ importers:
       '@ethosagent/plugin-contract':
         specifier: workspace:*
         version: link:../plugin-contract
+      '@ethosagent/plugin-host':
+        specifier: workspace:*
+        version: link:../../extensions/plugin-host
       '@ethosagent/plugin-loader':
         specifier: workspace:*
         version: link:../../extensions/plugin-loader
@@ -7667,9 +7691,6 @@ packages:
 
   brace-expansion@1.1.15:
     resolution: {integrity: sha512-EwOCDEex4quD37XhqM3omwtMoJjr//isUZz1JopUNWms+4Z2ViyM/k1YIRePpoVNnQhENnxtFjLaxNHrT7xIUg==}
-
-  brace-expansion@2.1.4:
-    resolution: {integrity: sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==}
 
   brace-expansion@2.1.7:
     resolution: {integrity: sha512-uZbew1NqdmPDTMJ8ah1y+b+9QEJrfkXFk3RcTQw3X0jW/xRUvFKsg1CfQdSYGdTbXZWExtU3J3ccxtnfw1Fi0g==}
@@ -19517,10 +19538,6 @@ snapshots:
       balanced-match: 1.0.2
       concat-map: 0.0.1
 
-  brace-expansion@2.1.4:
-    dependencies:
-      balanced-match: 1.0.2
-
   brace-expansion@2.1.7:
     dependencies:
       balanced-match: 1.0.2
@@ -23035,7 +23052,7 @@ snapshots:
 
   minimatch@9.0.9:
     dependencies:
-      brace-expansion: 2.1.4
+      brace-expansion: 2.1.7
 
   minimist@1.2.8: {}
 

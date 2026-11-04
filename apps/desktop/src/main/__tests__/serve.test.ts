@@ -24,6 +24,7 @@ import {
   readSharedExecutionFlags,
   readSharedLearningReplaySettings,
   readSharedMcpSettings,
+  readSharedPluginIsolation,
   readSharedVoiceAndCallCaptureConfig,
   sharedEthosDir,
 } from '../serve';
@@ -190,6 +191,33 @@ describe('readSharedMcpSettings', () => {
     expect(await withConfig(['mcp.discoveryConcurrency: 99'])).toEqual({});
     expect(
       await readSharedMcpSettings(new InMemoryStorage(), new InMemorySecretsResolver()),
+    ).toEqual({});
+  });
+});
+
+// `plugins.isolation*` — the desktop builds its own WiringConfig, so the shared
+// value is forwarded explicitly; with no host pool here, a `host` plugin then
+// fails closed in the loader (plugin-process-isolation D23).
+describe('readSharedPluginIsolation', () => {
+  async function withConfig(lines: string[]) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: k', 'personality: p', ...lines].join('\n'),
+    );
+    return readSharedPluginIsolation(storage, new InMemorySecretsResolver());
+  }
+
+  it('forwards plugins.isolation when set', async () => {
+    const got = await withConfig(['plugins.isolation: host']);
+    expect(got.pluginIsolation?.default).toBe('host');
+  });
+
+  it('forwards nothing when unset or config.yaml is absent', async () => {
+    expect(await withConfig([])).toEqual({});
+    expect(
+      await readSharedPluginIsolation(new InMemoryStorage(), new InMemorySecretsResolver()),
     ).toEqual({});
   });
 });

@@ -94,6 +94,7 @@ const DOC_KEY_ALIASES: Record<string, string> = {
   displaySlowTurnNoticeMs: 'display.slow_turn_notice_ms',
   evolverCronEnabled: 'evolver.cron_enabled',
   evolverSchedule: 'evolver.schedule',
+  pluginIsolation: 'plugins.isolation',
 };
 
 /**

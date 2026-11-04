@@ -114,6 +114,7 @@ import { callCaptureWake, runWatcherWakeTurn } from '../lib/watcher-wake';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
+import { closeProcessPluginHostPool, openProcessPluginHostPool } from '../plugin-host-pool';
 import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { buildVersionInfo } from '../version-info';
@@ -189,6 +190,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // both handlers log and keep running here — no `shutdown` is passed.
   // Idempotent, so reaching runServe twice (onboarding, then real) is safe.
   installProcessGuards({ command: 'serve', observability: getEthosObservability });
+  // The process's one plugin host pool (plan plugin-process-isolation D4),
+  // lent to every loop this command builds, onboarding's late boot included, by
+  // `createAgentLoop`. Disposed in each cleanup below, after the loops. Config is
+  // null before onboarding: the pool then takes the default limits.
+  await openProcessPluginHostPool(config ?? {}, getStorage());
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, config);
   const webHost = resolveWebHost(args, process.env, config);
@@ -439,6 +445,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
                 await disposeRealLoop?.();
               },
             ],
+            ['plugin hosts', closeProcessPluginHostPool],
             // This process's own sessions.db handles, lent to the web API only.
             [
               'sessions.db',
@@ -1593,6 +1600,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         [
           ['web api', webDispose],
           ['agent loop', disposeLoop],
+          ['plugin hosts', closeProcessPluginHostPool],
           // This process's own sessions.db handles — last, once nothing that
           // borrowed them (the web API, the ACP server's loop) runs any more.
           [

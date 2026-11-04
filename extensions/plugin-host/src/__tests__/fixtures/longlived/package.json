@@ -1,0 +1,11 @@
+{
+  "name": "fixture-longlived",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "ethos": {
+    "type": "plugin",
+    "pluginContractMajor": 4
+  }
+}

@@ -178,7 +178,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 150 packages: 11 at Tier 0, 27 at Tier 1, 112 at Tier 2.
+# apps/ carries a tier. 151 packages: 11 at Tier 0, 28 at Tier 1, 112 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -435,6 +435,13 @@ tiers:
     package: "@ethosagent/plugin-loader"
     tier: 1
     assigned: 2026-08-12
+
+  # New 2026-11-04 (plugin-process-isolation): holds the parent end of the host
+  # boundary (secret and capability requests, spawn, kill). Tier 1, like the loader.
+  extensions/plugin-host:
+    package: "@ethosagent/plugin-host"
+    tier: 1
+    assigned: 2026-11-04
 
   extensions/secrets-aws:
     package: "@ethosagent/secrets-aws"

@@ -36,6 +36,8 @@ export const srcAliases = {
   '@ethosagent/platform-meeting': resolve('./extensions/platform-meeting/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
   '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
+  '@ethosagent/plugin-host/child': resolve('./extensions/plugin-host/src/child/index.ts'),
+  '@ethosagent/plugin-host': resolve('./extensions/plugin-host/src'),
   // Test-only. `plugins/brand-identity` has no workspace link to this package —
   // its `src/` may not import an `@ethosagent/*` package at runtime — but its
   // emit-personality test reads the generated personality directory back with the

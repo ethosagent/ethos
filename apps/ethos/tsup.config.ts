@@ -21,7 +21,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // External strategy: externalize everything-not-@ethosagent, then noExternal
 // the workspace internals to override.
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/plugin-host-child.ts'],
   format: ['esm'],
   outDir: 'dist',
   clean: true,

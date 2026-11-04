@@ -552,6 +552,8 @@ export interface WiringConfig {
   onUserPrompt?: (prompt: import('@ethosagent/oauth-core').UserPrompt) => void;
   /** Whether to auto-install plugins from plugins.lock on personality load. */
   pluginsAutoInstall?: boolean;
+  /** Plugin process isolation settings (`EthosConfig.pluginIsolation`); carried only. */
+  pluginIsolation?: import('@ethosagent/config').PluginIsolationConfig;
 }
 
 /**
@@ -598,6 +600,21 @@ export interface WiringCliSubcommandRegistry {
 }
 
 export interface CreateAgentLoopOptions {
+  /**
+   * The process's plugin host pool, owned by the app host (gateway, serve, boot)
+   * and lent to every loop it builds (plugin-process-isolation D4). A lent pool
+   * is used and never disposed here: this loop's `'plugins'` cleanup releases
+   * only its own leases. When absent, a loop that needs a host builds its own
+   * from `pluginHostChildEntry` and disposes it with the loop.
+   */
+  pluginHostPool?: import('./plugin-hosts').PluginHostPool;
+  /**
+   * Absolute path of the plugin host child entry (D14). Only the composition
+   * root knows it (`apps/ethos/src/plugin-host-child.ts` or its bundle). With
+   * neither this nor `pluginHostPool`, a plugin configured `host` is not
+   * loaded at all (D23; desktop is such a surface today).
+   */
+  pluginHostChildEntry?: string;
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
    *  user personalities all resolve under this path. */
   dataDir: string;
@@ -867,6 +884,11 @@ export {
   createPersonalityRegistry,
   markPersonalityBorn,
 } from '@ethosagent/personalities';
+// F06 — the cleanup stack every composition root in this repo registers on.
+// The plugin-host child's entry point and the Storage it is built on, re-exported so
+// `apps/ethos/src/plugin-host-child.ts` imports only wiring (archcheck l5-apps-through-wiring).
+export { runPluginHostChild } from '@ethosagent/plugin-host/child';
+export { FsStorage } from '@ethosagent/storage-fs';
 export {
   type A2aIdentityView,
   A2aPeeringError,
@@ -900,7 +922,6 @@ export {
 } from './amendments';
 // plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
 export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';
-// F06 — the cleanup stack every composition root in this repo registers on.
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
 export { goalRoomAudience } from './goal-audience';
 export { resolveKanbanDbPath } from './kanban-path';
@@ -938,6 +959,11 @@ export {
   type ResolvePersonalityModelFitOptions,
   resolvePersonalityModelFit,
 } from './personality-fit';
+export {
+  type CreatePluginHostPoolOptions,
+  createPluginHostPool,
+  PluginHostPool,
+} from './plugin-hosts';
 // The project-context term of the static floor, for surfaces with no turn in
 // hand (`ethos bench context`, the character sheet).
 export {

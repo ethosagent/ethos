@@ -74,6 +74,13 @@ export interface PluginGrant {
   consent: 'interactive' | 'flag';
   /** Set when the operator withdrew the grant. Blocks future loads only. */
   revokedAt?: string;
+  /**
+   * Catalog review tier recorded by the catalog install path. Read by
+   * `resolvePluginIsolation` (a `community` entry always runs in the plugin host).
+   * Absent for npm / local-dir / workspace installs. Passed through verbatim by
+   * `validateGrant`, so it survives read and write.
+   */
+  catalogTier?: string;
 }
 
 export type PluginGrants = Record<string, PluginGrant>;

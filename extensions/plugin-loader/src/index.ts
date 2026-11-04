@@ -39,8 +39,10 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import { isValidSecretName } from '@ethosagent/types';
+import type { PluginActivationRequest, PluginActivator } from './activator-types';
 import { derivePluginId, isGrantRevoked, readGrants } from './grants';
 import { readPluginPermissions } from './install-record';
+import type { PluginIsolationDecision, PluginIsolationModeName } from './isolation-policy';
 import {
   isValidPluginId,
   type PluginLockEntry,
@@ -58,6 +60,7 @@ export {
   pluginCredentialPrefix,
   pluginCredentialRef,
 } from '@ethosagent/plugin-sdk';
+export type { PluginActivationRequest, PluginActivator } from './activator-types';
 export type {
   PluginGrant,
   PluginGrantCapabilities,
@@ -106,6 +109,13 @@ export {
   installedPackageDir,
   undoPluginInstall,
 } from './install-undo';
+export type {
+  IsolationPolicyConfig,
+  PluginIsolationDecision,
+  PluginIsolationModeName,
+  ResolvePluginIsolationInput,
+} from './isolation-policy';
+export { resolvePluginIsolation } from './isolation-policy';
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
 export {
   computeIntegrity,
@@ -209,6 +219,20 @@ export class CredentialPathError extends Error {
 // PluginLoader
 // ---------------------------------------------------------------------------
 
+/**
+ * What the loader knows about a plugin when it decides where it runs — enough
+ * for `resolvePluginIsolation` (plan plugin-process-isolation §6.2, D24).
+ */
+export interface PluginIsolationMeta {
+  pluginId: string;
+  /** package.json `name`, else the plugin id. */
+  packageName: string;
+  /** `node_modules` = the install's or workspace's own; `plugins-dir` = `~/.ethos/plugins/**`. */
+  installLocation: 'node_modules' | 'plugins-dir' | 'local-dir' | 'workspace';
+  /** `PluginGrant.catalogTier`, read from the grant record. */
+  catalogTier?: string;
+}
+
 export interface PluginLoaderOptions {
   /** Storage backend. Injected by the composition root; required. */
   storage: Storage;
@@ -244,6 +268,24 @@ export interface PluginLoaderOptions {
    *  WORKSPACE plugin sources `loadAll` gates on a trust grant. Defaults to
    *  `process.cwd()` at `loadAll` time. */
   cwd?: string;
+  /**
+   * Where a plugin runs (plugin-process-isolation D8). A bare mode, or a
+   * decision whose `notice` the loader logs. Absent means every plugin loads
+   * in-process, as before.
+   */
+  isolationFor?: (meta: PluginIsolationMeta) => PluginIsolationModeName | PluginIsolationDecision;
+  /**
+   * Starts a plugin out of process and returns its synthetic `EthosPlugin`.
+   * A plugin whose isolation resolves to `host` with no activator wired is not
+   * loaded at all (D23); pinned by `__tests__/isolation-seam.test.ts`.
+   */
+  activator?: PluginActivator;
+}
+
+interface ResolvedModule {
+  mod: unknown;
+  /** Set when `mod` is the synthetic plugin of a hosted one. */
+  hosted?: EthosPlugin;
 }
 
 export class PluginLoader {
@@ -267,10 +309,14 @@ export class PluginLoader {
   private readonly pluginScanFindings = new Map<string, PluginScanFindingRecord[]>();
   private readonly runNpm: NpmRunner;
   private readonly cwdOverride?: string;
+  private readonly isolationFor?: PluginLoaderOptions['isolationFor'];
+  private readonly activator?: PluginActivator;
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions) {
     this.runNpm = opts.runNpm ?? execNpm;
     this.cwdOverride = opts.cwd;
+    this.isolationFor = opts.isolationFor;
+    this.activator = opts.activator;
     this.registries = registries;
     this.storage = opts.storage;
     this.credentialStorage = opts.credentialStorage ?? opts.storage;
@@ -507,9 +553,17 @@ export class PluginLoader {
     // Dynamic import the plugin module — stays raw `import()`. Per
     // plan/storage_abstraction.md, dynamic import is a process operation,
     // not a fs read; Storage doesn't model it.
-    let mod: unknown;
+    let loaded: ResolvedModule | undefined;
     try {
-      mod = await import(entry);
+      loaded = await this.activateOrHost({
+        id,
+        dir,
+        entry,
+        manifest: pkgJson,
+        tier,
+        packageName: typeof pkgJson.name === 'string' ? pkgJson.name : id,
+        installLocation: opts.workspace ? 'workspace' : 'plugins-dir',
+      });
     } catch (err) {
       this.logger.warn(`[plugin-loader] Failed to load plugin "${id}": ${String(err)}`, {
         component: 'plugin-loader',
@@ -518,8 +572,9 @@ export class PluginLoader {
       });
       return;
     }
+    if (!loaded) return;
 
-    await this.activatePlugin(id, mod);
+    await this.activateResolved(id, loaded);
   }
 
   /**
@@ -671,19 +726,29 @@ export class PluginLoader {
         }
         this.logYellowNotes(nmPluginId, scanResult);
 
-        const mod = await import(entry);
         // Use ethos.id if declared, otherwise strip @scope/ so the plugin ID
         // matches what users write in personality config.yaml (e.g. `tools-nse-market-data`
         // not `@ethosagent/tools-nse-market-data`).
         const declaredId = ethosNm?.id as string | undefined;
         const pluginId = declaredId ?? name.replace(/^@[^/]+\//, '');
+        const loaded = await this.activateOrHost({
+          id: pluginId,
+          dir: join(nmDir, name),
+          entry,
+          manifest: raw as Record<string, unknown>,
+          tier,
+          packageName: typeof (raw as { name?: unknown }).name === 'string' ? raw.name : name,
+          // `~/.ethos/plugins/node_modules` is writable by anyone, so it is never first-party.
+          installLocation: opts.allowAll ? 'plugins-dir' : 'node_modules',
+        });
+        if (!loaded) continue;
         this.manifests.set(pluginId, raw as EthosPluginPackageJson);
         this.pluginPaths.set(pluginId, join(nmDir, name));
         this.pluginHasWidgets.set(
           pluginId,
           await this.storage.exists(join(nmDir, name, 'widgets.yaml')),
         );
-        await this.activatePlugin(pluginId, mod);
+        await this.activateResolved(pluginId, loaded);
       } catch {
         // skip
       }
@@ -722,6 +787,15 @@ export class PluginLoader {
   /** List ids of currently loaded plugins. */
   list(): string[] {
     return [...this.plugins.keys()];
+  }
+
+  /**
+   * The loaded plugin's api, for a host that must read what the plugin registered
+   * (slash and CLI handlers, health checks, ...) because those never reach
+   * `PluginRegistries`. Read-only use: the plugin's own api object, not a copy.
+   */
+  getApi(pluginId: string): PluginApiImpl | undefined {
+    return this.apis.get(pluginId);
   }
 
   /** Check if a plugin is loaded. */
@@ -1324,6 +1398,122 @@ export class PluginLoader {
         error: String(err),
       });
       return message;
+    }
+  }
+
+  /**
+   * The one place a plugin's code is either imported here or started in a plugin
+   * host (D8). Every refusal that must precede a spawn (revocation, contract
+   * major, red scan) has already run at both call sites. Returns `undefined`
+   * when the plugin was refused here (recorded as failed); throws when the
+   * in-process `import()` throws, so each site keeps its own error handling.
+   */
+  private async activateOrHost(req: {
+    id: string;
+    dir: string;
+    entry: string;
+    manifest: Record<string, unknown>;
+    tier: TrustTier;
+    packageName: string;
+    installLocation: PluginIsolationMeta['installLocation'];
+  }): Promise<ResolvedModule | undefined> {
+    const { id } = req;
+    let mode: PluginIsolationModeName = 'in-process';
+    if (this.isolationFor) {
+      const catalogTier = await this.catalogTierOf(id);
+      const meta: PluginIsolationMeta = {
+        pluginId: id,
+        packageName: req.packageName,
+        installLocation: req.installLocation,
+        ...(catalogTier !== undefined ? { catalogTier } : {}),
+      };
+      const decided = this.isolationFor(meta);
+      const decision = typeof decided === 'string' ? { mode: decided } : decided;
+      if ('notice' in decision && decision.notice) {
+        this.logger.warn(`[plugin-loader] ${decision.notice}`, {
+          component: 'plugin-loader',
+          pluginId: id,
+        });
+      }
+      mode = decision.mode;
+    }
+
+    if (mode === 'in-process') {
+      // Dynamic import the plugin module — stays raw `import()`. Per
+      // plan/storage_abstraction.md, dynamic import is a process operation,
+      // not a fs read; Storage doesn't model it.
+      return { mod: await import(req.entry) };
+    }
+
+    // `host`. Never fall back to an in-process import (D23).
+    this.manifests.set(id, req.manifest as unknown as EthosPluginPackageJson);
+    this.pluginPaths.set(id, req.dir);
+    if (!this.activator) {
+      const reason = `Plugin "${id}" is configured to run in a plugin host, but this surface cannot start one — not loaded (it is never run in-process instead). Set plugins.isolation.${id}: in-process to run it in-process.`;
+      this.logger.warn(`[plugin-loader] ${reason}`, { component: 'plugin-loader', pluginId: id });
+      this.trackManifestStatus(id, 'failed', reason);
+      return undefined;
+    }
+    try {
+      const network = await this.grantNetworkOf(id);
+      const synthetic = await this.activator.activate({
+        id,
+        dir: req.dir,
+        entry: req.entry,
+        manifest: req.manifest,
+        tier: req.tier,
+        ...(network !== undefined ? { network } : {}),
+      } satisfies PluginActivationRequest);
+      return { mod: synthetic, hosted: synthetic };
+    } catch (err) {
+      this.logger.warn(
+        `[plugin-loader] Plugin "${id}" failed to start in its host: ${String(err)}`,
+        {
+          component: 'plugin-loader',
+          pluginId: id,
+          error: String(err),
+        },
+      );
+      this.trackManifestStatus(id, 'failed', `Plugin host: ${String(err)}`);
+      return undefined;
+    }
+  }
+
+  /** `activatePlugin`, then release a host lease the plugin never used. */
+  private async activateResolved(id: string, loaded: ResolvedModule): Promise<void> {
+    await this.activatePlugin(id, loaded.mod);
+    if (loaded.hosted && this.plugins.get(id) !== loaded.hosted) {
+      // Refused after the host started (missing dependency, activate threw): the
+      // synthetic plugin's own deactivate releases the lease.
+      try {
+        await loaded.hosted.deactivate?.();
+      } catch (err) {
+        this.logger.warn(
+          `[plugin-loader] Releasing the host lease of "${id}" failed: ${String(err)}`,
+          {
+            component: 'plugin-loader',
+            pluginId: id,
+          },
+        );
+      }
+    }
+  }
+
+  private async grantNetworkOf(id: string): Promise<string[] | null | undefined> {
+    try {
+      const grants = await readGrants(this.storage, join(this.dataDir, 'plugins'));
+      return grants[id]?.capabilities.network;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async catalogTierOf(id: string): Promise<string | undefined> {
+    try {
+      const grants = await readGrants(this.storage, join(this.dataDir, 'plugins'));
+      return grants[id]?.catalogTier;
+    } catch {
+      return undefined;
     }
   }
 

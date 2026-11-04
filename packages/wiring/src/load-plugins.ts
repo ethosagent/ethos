@@ -1,7 +1,12 @@
 import { join } from 'node:path';
 import { DefaultNotificationRouter } from '@ethosagent/core';
 import { DefaultOAuthRegistry } from '@ethosagent/oauth';
-import { type InstalledPluginManifest, PluginLoader } from '@ethosagent/plugin-loader';
+import {
+  type InstalledPluginManifest,
+  PluginLoader,
+  readLockfile,
+  resolvePluginIsolation,
+} from '@ethosagent/plugin-loader';
 import {
   DiagnosticStore,
   OAuthCoordinatorImpl,
@@ -25,6 +30,11 @@ import type {
 import type { InfrastructureResult } from './build-infrastructure';
 import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig, WiringSlashRegistry } from './index';
+import {
+  createLazyPluginActivator,
+  createPluginHostPool,
+  type PluginHostPool,
+} from './plugin-hosts';
 import type { WiringContext } from './types';
 
 export interface LoadPluginsResult {
@@ -72,7 +82,7 @@ export interface LoadPluginsDeps {
 export async function loadPlugins(
   wiringCtx: WiringContext,
   config: WiringConfig,
-  _opts: CreateAgentLoopOptions,
+  opts: CreateAgentLoopOptions,
   deps: LoadPluginsDeps,
 ): Promise<LoadPluginsResult> {
   const { dataDir, log } = wiringCtx;
@@ -146,9 +156,58 @@ export async function loadPlugins(
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };
+  // Plugin hosts (plan plugin-process-isolation D4, D14, D23). A lent pool is
+  // used and never disposed here. Otherwise this loop builds its own the first
+  // time a plugin resolves to `host`, provided the composition root named a
+  // child entry; with neither, no activator is wired and the loader fails a
+  // `host` plugin closed instead of importing it.
+  const lentPool = opts.pluginHostPool;
+  let ownPool: PluginHostPool | undefined;
+  const getPool = (): PluginHostPool => {
+    if (lentPool) return lentPool;
+    if (!opts.pluginHostChildEntry) throw new Error('no plugin host child entry configured');
+    ownPool ??= createPluginHostPool({
+      dataDir,
+      storage: wiringCtx.storage,
+      childEntry: opts.pluginHostChildEntry,
+      ...(config.pluginIsolation ? { config: config.pluginIsolation } : {}),
+      logger: log,
+      observability: () => opts.observability,
+    });
+    return ownPool;
+  };
+  const canHost = Boolean(lentPool ?? opts.pluginHostChildEntry);
+  // Registered BEFORE 'plugins': the stack runs in reverse, so leases are
+  // released first and the hosts are killed second.
+  if (!lentPool) deps.disposers.push('plugin-hosts', () => ownPool?.dispose());
+
   const pluginLoader = new PluginLoader(pluginRegistries, {
     storage: new FsStorage(),
     logger: log,
+    isolationFor: (meta) =>
+      resolvePluginIsolation({
+        ...meta,
+        ...(config.pluginIsolation ? { config: config.pluginIsolation } : {}),
+      }),
+    ...(canHost
+      ? {
+          activator: createLazyPluginActivator(getPool, {
+            ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+            ...(config.secretsResolver ? { secrets: config.secretsResolver } : {}),
+            // Assigned after load (build-agent-loop.ts), so read lazily.
+            llmFactory: () => pluginRegistries.llmFactory?.(),
+            tools,
+            integrity: async (pluginId) => {
+              if (!activePerson.plugins?.length) return undefined;
+              const lock = await readLockfile(
+                wiringCtx.storage,
+                join(dataDir, 'personalities', activePerson.id),
+              );
+              return lock[pluginId]?.integrity;
+            },
+          }),
+        }
+      : {}),
     // G-SEC — plugin credentials go through the same vault as every other
     // secret. Injected rather than left to the loader's default so a host that
     // built a resolver chain (file + env + AWS) resolves plugin credentials
