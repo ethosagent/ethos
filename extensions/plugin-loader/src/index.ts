@@ -58,6 +58,7 @@ export {
   pluginCredentialPrefix,
   pluginCredentialRef,
 } from '@ethosagent/plugin-sdk';
+export type { PluginActivationRequest, PluginActivator } from './activator-types';
 export type {
   PluginGrant,
   PluginGrantCapabilities,

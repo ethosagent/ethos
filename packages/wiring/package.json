@@ -91,6 +91,7 @@
     "@ethosagent/platform-voice": "workspace:*",
     "@ethosagent/platform-whatsapp": "workspace:*",
     "@ethosagent/plugin-contract": "workspace:*",
+    "@ethosagent/plugin-host": "workspace:*",
     "@ethosagent/plugin-loader": "workspace:*",
     "@ethosagent/plugin-sdk": "workspace:*",
     "@ethosagent/pricing": "workspace:*",

@@ -552,6 +552,8 @@ export interface WiringConfig {
   onUserPrompt?: (prompt: import('@ethosagent/oauth-core').UserPrompt) => void;
   /** Whether to auto-install plugins from plugins.lock on personality load. */
   pluginsAutoInstall?: boolean;
+  /** Plugin process isolation settings (`EthosConfig.pluginIsolation`); carried only. */
+  pluginIsolation?: import('@ethosagent/config').PluginIsolationConfig;
 }
 
 /**
@@ -867,6 +869,11 @@ export {
   createPersonalityRegistry,
   markPersonalityBorn,
 } from '@ethosagent/personalities';
+// F06 — the cleanup stack every composition root in this repo registers on.
+// The plugin-host child's entry point and the Storage it is built on, re-exported so
+// `apps/ethos/src/plugin-host-child.ts` imports only wiring (archcheck l5-apps-through-wiring).
+export { runPluginHostChild } from '@ethosagent/plugin-host/child';
+export { FsStorage } from '@ethosagent/storage-fs';
 export {
   type A2aIdentityView,
   A2aPeeringError,
@@ -900,7 +907,6 @@ export {
 } from './amendments';
 // plan personality-memory-boundary G1-6 — the room audience a cron firing runs under.
 export { type CronRunAudienceOptions, cronRunAudience } from './cron-audience';
-// F06 — the cleanup stack every composition root in this repo registers on.
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
 export { goalRoomAudience } from './goal-audience';
 export { resolveKanbanDbPath } from './kanban-path';

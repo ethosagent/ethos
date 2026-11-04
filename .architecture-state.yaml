@@ -436,6 +436,13 @@ tiers:
     tier: 1
     assigned: 2026-08-12
 
+  # New 2026-11-04 (plugin-process-isolation): holds the parent end of the host
+  # boundary (secret and capability requests, spawn, kill). Tier 1, like the loader.
+  extensions/plugin-host:
+    package: "@ethosagent/plugin-host"
+    tier: 1
+    assigned: 2026-11-04
+
   extensions/secrets-aws:
     package: "@ethosagent/secrets-aws"
     tier: 1
