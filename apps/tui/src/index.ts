@@ -71,6 +71,8 @@ export interface TUIOptions {
    * as `ApprovalModal`. Absent → the TUI shows no approval prompt.
    */
   approvals?: BridgeApprovalSource;
+  /** A first task sent as the first user message on mount (keyless-first-run D16/D17). */
+  initialMessage?: string;
   /** `--incognito` — start on a fresh session key that nothing remembers or learns from. */
   incognito?: boolean;
   /**
@@ -110,6 +112,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       readMemory: opts.readMemory,
       ...(opts.branches ? { branches: opts.branches } : {}),
       setPluginCredential: opts.setPluginCredential,
+      ...(opts.initialMessage ? { initialMessage: opts.initialMessage } : {}),
     }),
   );
 

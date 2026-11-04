@@ -10,6 +10,8 @@ export interface RunSetupWizardOpts {
   startAtStep?: WizardStepId;
   /** Exit after confirming a single step — used for section-scoped re-entry. */
   singleStep?: boolean;
+  /** Offer the Ollama install row in the keyless step (default true). */
+  offerInstall?: boolean;
 }
 
 export interface RunSetupWizardResult {
@@ -26,6 +28,7 @@ export function runSetupWizard(opts: RunSetupWizardOpts): Promise<RunSetupWizard
         existing: opts.existing,
         startAtStep: opts.startAtStep,
         singleStep: opts.singleStep,
+        offerInstall: opts.offerInstall,
         onComplete: (result) => {
           unmount();
           resolve(result);

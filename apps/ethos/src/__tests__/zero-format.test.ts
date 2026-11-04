@@ -12,6 +12,7 @@ vi.mock('../wiring', () => ({
   getStorage: vi.fn(() => ({})),
   getSecretsResolver: vi.fn(async () => ({})),
   resolveActiveLoop: vi.fn(),
+  getFunnelTracker: vi.fn(() => ({ recordFirstReply: vi.fn(async () => {}) })),
 }));
 
 vi.mock('@ethosagent/config', () => ({

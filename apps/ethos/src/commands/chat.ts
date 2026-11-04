@@ -284,6 +284,14 @@ interface RunChatOptions {
   dryRun?: boolean;
   /** `--incognito` — start on a fresh key that nothing remembers or learns from. */
   incognito?: boolean;
+  /**
+   * Plan keyless-first-run D16/D17: a first task the person picked in setup.
+   * Sent as an ordinary first user message through the normal turn path (the
+   * REPL's own line handler / the TUI's own submit), then the session stays
+   * interactive. Never added to the prompt; the turn drains like any other
+   * (pinned by __tests__/chat-initial-message.test.ts). Ignored with `singleQuery`.
+   */
+  initialMessage?: string;
 }
 
 // C6 — the mid-turn input-loss notices, worded for the person who typed the
@@ -586,6 +594,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         activePluginLoader.setCredential(pluginId, key, value),
       // Tool approval prompts render as the TUI's modal.
       approvals: createTerminalApprovalSource(approvalCoordinator, 'tui'),
+      ...(opts.initialMessage ? { initialMessage: opts.initialMessage } : {}),
     });
     approvalCoordinator.forceSettleAll('chat closed');
     unsubscribeTuiBg?.();
@@ -1121,6 +1130,13 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         reprompt();
       });
   });
+
+  // The picked first task goes through the line handler above, exactly like a
+  // typed line: one turn (drained by `runTurn`), then the prompt returns.
+  if (opts.initialMessage) {
+    out(`${c.dim}> ${opts.initialMessage}${c.reset}\n`);
+    rl.emit('line', opts.initialMessage);
+  }
 }
 
 // ---------------------------------------------------------------------------

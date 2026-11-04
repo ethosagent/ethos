@@ -1,9 +1,34 @@
+import { totalmem } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { validateUrl } from '@ethosagent/core';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
-import type { SecretsResolver } from '@ethosagent/types';
+import type { SecretsResolver, Storage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import type { OnboardingStep, ProviderId } from '@ethosagent/web-contracts';
+import type {
+  OnboardingStep,
+  ProviderId,
+  KeylessCandidate as WireKeylessCandidate,
+} from '@ethosagent/web-contracts';
+import {
+  type FunnelTracker,
+  isSafePathSegment,
+  type KeylessPath,
+  markPersonalityBorn,
+} from '@ethosagent/wiring';
+import {
+  importExternalLogin,
+  type KeylessCandidate,
+  pickKeylessModel,
+  probeKeyless,
+} from '@ethosagent/wiring/keyless-probe';
 import { getDefaultModel } from '@ethosagent/wiring/model-catalog';
+import {
+  OllamaPullError,
+  type OllamaPullProgress,
+  ollamaInstallPlan,
+  pullOllamaModel,
+} from '@ethosagent/wiring/ollama';
+import { ORPCError } from '@orpc/server';
 import type { ConfigRepository } from '../repositories/config.repository';
 
 // Onboarding orchestration. Three RPCs:
@@ -46,7 +71,27 @@ export interface CompleteInput {
   apiKey?: string;
   baseUrl?: string;
   personalityId: string;
+  /** Which keyless route produced the model; forwarded to the funnel. */
+  keylessPath?: KeylessPath;
 }
+
+/** The machine facts `probe` reads. Injected in tests; defaults are the host's. */
+export interface ProbeHost {
+  platform: NodeJS.Platform;
+  totalMemBytes: number;
+  isRoot: boolean;
+  /** Home directory holding `.codex` / `.hermes`. */
+  home?: string;
+}
+
+export type PullStatus =
+  | { state: 'idle' | 'done'; completedBytes: number; totalBytes: number; error: null }
+  | { state: 'pulling'; completedBytes: number; totalBytes: number; error: null }
+  | { state: 'error'; completedBytes: number; totalBytes: number; error: string };
+
+const OLLAMA_ORIGIN = 'http://127.0.0.1:11434';
+const GIB = 1024 ** 3;
+const RUNTIME_PING_MS = 2_500;
 
 export interface OnboardingServiceOptions {
   config: ConfigRepository;
@@ -58,6 +103,18 @@ export interface OnboardingServiceOptions {
   /** Fired after `complete()` durably writes config.yaml. Fire-and-forget —
    *  exceptions are swallowed so a callback failure can't fail the RPC. */
   onSetupComplete?: () => void;
+  /** Funnel stamps (plan keyless-first-run §6.2): `state()` stamps first
+   *  launch, `complete()` records setup with the keyless path. Optional and
+   *  fail-open — a stamp failure never fails the RPC. */
+  funnel?: Pick<FunnelTracker, 'recordFirstLaunch' | 'recordSetupCompleted'>;
+  /** Machine facts for `probe`. Defaults to the host process. */
+  probeHost?: () => ProbeHost;
+  /** Storage + data dir: `probe`'s PATH lookup for `brew`, and
+   *  `namePersonality`'s birth marker. */
+  storage?: Storage;
+  dataDir?: string;
+  /** Inject for tests. Defaults to wiring's `pullOllamaModel`. */
+  pullFn?: typeof pullOllamaModel;
 }
 
 /** Mirrors `XAI_BASE_URL` in `@ethosagent/llm-xai`. Inlined rather than
@@ -97,6 +154,10 @@ export function probeOutputCap(
 
 export class OnboardingService {
   private readonly fetchFn: typeof fetch;
+  private firstLaunchStamped = false;
+  /** One pull at a time per process (plan §7). In-memory only. */
+  private pull: PullStatus = { state: 'idle', completedBytes: 0, totalBytes: 0, error: null };
+  private readonly pullDigests = new Map<string, { total: number; completed: number }>();
 
   constructor(private readonly opts: OnboardingServiceOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;
@@ -104,6 +165,12 @@ export class OnboardingService {
 
   async state(): Promise<OnboardingState> {
     const raw = await this.opts.config.read();
+    if (!raw && !this.firstLaunchStamped && this.opts.funnel) {
+      this.firstLaunchStamped = true;
+      // Earliest-wins is the tracker's job (funnel.test.ts "firstLaunchAt is
+      // earliest-wins across two trackers"); this only has to call it.
+      await this.opts.funnel.recordFirstLaunch().catch(() => {});
+    }
     const hasProvider = !!(raw?.provider && (raw.apiKey || raw.provider === 'codex'));
     const personalityId = raw?.personality ?? null;
 
@@ -176,11 +243,212 @@ export class OnboardingService {
       personality: input.personalityId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     });
+    if (this.opts.funnel) {
+      await this.opts.funnel
+        .recordSetupCompleted({
+          provider: input.provider,
+          channels: [],
+          wizardPath: 'web',
+          ...(input.keylessPath ? { keylessPath: input.keylessPath } : {}),
+        })
+        .catch(() => {});
+    }
     try {
       this.opts.onSetupComplete?.();
     } catch {
       // Fire-and-forget — a callback failure must not fail onboarding.
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Keyless first run (plan keyless-first-run §7)
+  //
+  // Every method below refuses once onboarding is done: `refuseIfConfigured`.
+  // web-api NEVER spawns an installer (D11): `probe` returns command TEXT only.
+  // Pinned by onboarding-keyless.test.ts ("the service module spawns nothing").
+  // ---------------------------------------------------------------------------
+
+  private async refuseIfConfigured(): Promise<void> {
+    if ((await this.state()).step === 'done') {
+      throw new ORPCError('ALREADY_CONFIGURED', {
+        status: 409,
+        message: 'Onboarding is already complete.',
+      });
+    }
+  }
+
+  async probe() {
+    await this.refuseIfConfigured();
+    const host = this.opts.probeHost?.() ?? defaultProbeHost();
+    const hasBrew = await this.hasBrewOnPath();
+    const installPlan = ollamaInstallPlan(host.platform, { hasBrew, isRoot: host.isRoot });
+    const result = await probeKeyless({
+      secrets: this.opts.secrets,
+      platform: host.platform,
+      totalMemBytes: host.totalMemBytes,
+      isRoot: host.isRoot,
+      fetchImpl: this.fetchFn,
+      hasBrew,
+      installPlan,
+      ...(host.home ? { home: host.home } : {}),
+    });
+    const pick = pickKeylessModel(host.totalMemBytes);
+    return {
+      candidates: result.candidates.map(toWireCandidate),
+      recommended: result.recommended,
+      machine: {
+        totalMemGiB: Math.round((host.totalMemBytes / GIB) * 10) / 10,
+        pick: { modelId: pick.modelId, approxDownloadGb: pick.approxDownloadGb },
+      },
+      install: {
+        os: installPlan.os,
+        command: installPlan.command,
+        notes: installPlan.notes,
+        downloadUrl: installPlan.downloadUrl,
+      },
+    };
+  }
+
+  /** `brew` on PATH, through Storage. A lookup only, no process is spawned. */
+  private async hasBrewOnPath(): Promise<boolean> {
+    const storage = this.opts.storage;
+    if (!storage) return false;
+    const dirs = (process.env.PATH ?? '').split(delimiter);
+    for (const dir of dirs) {
+      if (!dir) continue;
+      if (await storage.exists(join(dir, 'brew')).catch(() => false)) return true;
+    }
+    return false;
+  }
+
+  async importCodexLogin(input: { source: 'codex-cli' | 'hermes' }) {
+    await this.refuseIfConfigured();
+    const home = this.opts.probeHost?.().home;
+    const imported = await importExternalLogin({
+      secrets: this.opts.secrets,
+      source: input.source,
+      ...(home ? { home } : {}),
+    });
+    if (!imported.ok) return { ok: false as const, code: imported.reason };
+    // The tokens are in the vault now; `validateProvider`'s codex branch reads
+    // them there and asks the account for its models. Only model ids leave.
+    const checked = await this.validateProvider({ provider: 'codex', apiKey: '' });
+    if (!checked.ok || !checked.models)
+      return { ok: false as const, code: 'invalid_shape' as const };
+    return { ok: true as const, models: checked.models };
+  }
+
+  async pullModel(input: { model: string }) {
+    await this.refuseIfConfigured();
+    if (this.pull.state === 'pulling') {
+      throw new ORPCError('PULL_IN_PROGRESS', {
+        status: 409,
+        message: 'A model download is already running.',
+      });
+    }
+    if (!(await this.localRuntimeAnswers())) {
+      throw new ORPCError('LOCAL_RUNTIME_UNREACHABLE', {
+        status: 503,
+        message: 'Ollama is not answering on 127.0.0.1:11434.',
+      });
+    }
+    this.pullDigests.clear();
+    this.pull = { state: 'pulling', completedBytes: 0, totalBytes: 0, error: null };
+    const run = this.opts.pullFn ?? pullOllamaModel;
+    void run({
+      baseUrl: `${OLLAMA_ORIGIN}/v1`,
+      model: input.model,
+      fetchImpl: this.fetchFn,
+      onProgress: (p) => this.recordPullProgress(p),
+    }).then(
+      () => {
+        this.pull = { ...this.totals(), state: 'done', error: null };
+      },
+      (err: unknown) => {
+        // Only Ollama's own status text is surfaced; anything else is generic.
+        const message = err instanceof OllamaPullError ? err.message : 'The model download failed.';
+        this.pull = { ...this.totals(), state: 'error', error: message };
+      },
+    );
+    return { ok: true as const };
+  }
+
+  pullStatus(): PullStatus {
+    if (this.pull.state === 'pulling') {
+      return { state: 'pulling', ...this.totals(), error: null };
+    }
+    return this.pull;
+  }
+
+  private recordPullProgress(p: OllamaPullProgress): void {
+    if (p.digest !== undefined && p.total !== undefined) {
+      this.pullDigests.set(p.digest, { total: p.total, completed: p.completed ?? 0 });
+    }
+  }
+
+  private totals(): { completedBytes: number; totalBytes: number } {
+    let completedBytes = 0;
+    let totalBytes = 0;
+    for (const d of this.pullDigests.values()) {
+      completedBytes += Math.min(d.completed, d.total);
+      totalBytes += d.total;
+    }
+    return { completedBytes, totalBytes };
+  }
+
+  private async localRuntimeAnswers(): Promise<boolean> {
+    try {
+      const res = await this.fetchFn(`${OLLAMA_ORIGIN}/api/version`, {
+        signal: AbortSignal.timeout(RUNTIME_PING_MS),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async namePersonality(input: { sourceId: string; name: string }) {
+    await this.refuseIfConfigured();
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) {
+      throw new EthosError({
+        code: 'INTERNAL',
+        cause: 'Onboarding was built without storage; it cannot create a personality.',
+        action: 'Construct OnboardingService with storage and dataDir.',
+      });
+    }
+    const id = input.name.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!isSafePathSegment(id)) {
+      throw new ORPCError('BAD_REQUEST', {
+        status: 400,
+        message: 'That name cannot be used as an agent id.',
+      });
+    }
+    if (!this.opts.personalities.get(input.sourceId)) {
+      throw new ORPCError('PERSONALITY_NOT_FOUND', {
+        status: 404,
+        message: `Personality "${input.sourceId}" not found.`,
+      });
+    }
+    if (this.opts.personalities.get(id)) {
+      throw new ORPCError('PERSONALITY_EXISTS', {
+        status: 409,
+        message: `Personality "${id}" already exists.`,
+      });
+    }
+    try {
+      await this.opts.personalities.duplicate(input.sourceId, id);
+    } catch (err) {
+      if (err instanceof EthosError && err.code === 'INVALID_INPUT') {
+        throw new ORPCError('BAD_REQUEST', { status: 400, message: err.cause });
+      }
+      throw err;
+    }
+    // The web `duplicate` does not mark the copy born (plan §4.1); the ritual
+    // and connectors both need it. The marker edits toolset.yaml, so reload.
+    await markPersonalityBorn(storage, dataDir, id);
+    await this.opts.personalities.loadFromDirectory(join(dataDir, 'personalities'));
+    return { personalityId: id };
   }
 
   // ---------------------------------------------------------------------------
@@ -476,5 +744,40 @@ export class OnboardingService {
     return new Error(
       `API key validated, but a test message failed: ${provider} returned ${res.status}. You may still proceed, but the agent may not respond.`,
     );
+  }
+}
+
+function defaultProbeHost(): ProbeHost {
+  return {
+    platform: process.platform,
+    totalMemBytes: totalmem(),
+    isRoot: process.getuid?.() === 0,
+  };
+}
+
+/** Wire shape: `external-login.path` is dropped (the server's home path never
+ *  reaches the browser) and `install-offer` carries only its kind (the command
+ *  text rides in the response's top-level `install`). Pinned by
+ *  onboarding-keyless.test.ts ("path is omitted on the wire"). */
+function toWireCandidate(c: KeylessCandidate): WireKeylessCandidate {
+  switch (c.kind) {
+    case 'external-login':
+      return { kind: 'external-login', source: c.source, provider: c.provider };
+    case 'install-offer':
+      return { kind: 'install-offer' };
+    case 'local':
+      return {
+        kind: 'local',
+        runtime: c.runtime,
+        provider: c.provider,
+        baseUrl: c.baseUrl,
+        models: c.models,
+        ...(c.contextWindow !== undefined ? { contextWindow: c.contextWindow } : {}),
+        ...(c.belowContextFloor !== undefined ? { belowContextFloor: c.belowContextFloor } : {}),
+      };
+    case 'ethos-login':
+      return { kind: 'ethos-login', provider: c.provider };
+    case 'paste-key':
+      return { kind: 'paste-key' };
   }
 }

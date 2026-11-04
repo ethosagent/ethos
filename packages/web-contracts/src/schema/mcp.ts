@@ -210,6 +210,24 @@ export const McpAddServerOutputSchema = z.discriminatedUnion('ok', [
   }),
 ]);
 
+export const McpConnectPresetInputSchema = z.object({
+  presetName: z.string().min(1).max(64),
+  personalityId: z.string().min(1),
+});
+
+export const McpConnectPresetOutputSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    serverName: z.string(),
+    toolCount: z.number().int().nonnegative(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum(['oauth_required', 'not_found', 'read_only', 'connect_failed']),
+    detail: z.string(),
+  }),
+]);
+
 export type McpAddServerInput = z.infer<typeof McpAddServerInputSchema>;
 
 export const McpReconnectInputSchema = z.object({

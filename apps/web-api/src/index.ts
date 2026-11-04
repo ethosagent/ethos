@@ -36,6 +36,7 @@ import {
   type CreateAgentLoopResult,
   createLearningInbox,
   DisposerStack,
+  type FunnelTracker,
   hardlineReason,
   type IdentityMap,
   type MemoryBundle,
@@ -523,6 +524,13 @@ export interface CreateWebApiOptions {
    * Fire-and-forget — errors never fail the onboarding RPC.
    */
   onSetupComplete?: () => void;
+  /**
+   * The install's `FunnelTracker`. When present, onboarding stamps
+   * `firstLaunchAt` when `state()` answers `welcome` and records setup with the
+   * keyless path on `complete` (plan keyless-first-run §6.2). Absent → no stamps.
+   * `ethos serve` should pass `getFunnelTracker()`.
+   */
+  funnelTracker?: Pick<FunnelTracker, 'recordFirstLaunch' | 'recordSetupCompleted'>;
   /**
    * Whether a Docker execution backend can be built in this process (F1). Pass
    * `false` from the desktop in-process backend (`disableDocker: true`) so the
@@ -1057,6 +1065,9 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     config: configRepo,
     personalities: opts.personalities,
     secrets,
+    storage,
+    dataDir: opts.dataDir,
+    ...(opts.funnelTracker ? { funnel: opts.funnelTracker } : {}),
     ...(opts.onSetupComplete ? { onSetupComplete: opts.onSetupComplete } : {}),
   });
   const approvalsService = new ApprovalsService({
@@ -1582,6 +1593,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     },
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
+    isBuiltinPersonality: (id) => opts.personalities.describe(id)?.builtin ?? false,
     redirectUri: opts.webBaseUrl
       ? `${opts.webBaseUrl}/oauth/callback`
       : 'http://localhost:3000/oauth/callback',

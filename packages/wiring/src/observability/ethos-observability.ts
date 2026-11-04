@@ -638,9 +638,20 @@ export class EthosObservability {
     });
   }
 
-  recordFunnelFirstReply(opts: EventBase & { msSinceSetup?: number; legacy?: boolean }): void {
+  recordFunnelFirstReply(
+    opts: EventBase & {
+      msSinceSetup?: number;
+      msSinceFirstLaunch?: number;
+      keylessPath?: 'ethos-login' | 'external-login' | 'local' | 'installed' | 'key';
+      legacy?: boolean;
+    },
+  ): void {
     this.emit('funnel.first_reply', 'info', opts, {
       ...(opts.msSinceSetup !== undefined ? { msSinceSetup: opts.msSinceSetup } : {}),
+      ...(opts.msSinceFirstLaunch !== undefined
+        ? { msSinceFirstLaunch: opts.msSinceFirstLaunch }
+        : {}),
+      ...(opts.keylessPath !== undefined ? { keylessPath: opts.keylessPath } : {}),
       ...(opts.legacy ? { legacy: true } : {}),
     });
   }

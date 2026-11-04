@@ -10536,3 +10536,81 @@ a.stage-header-scope:hover {
   color: var(--text-tertiary);
   padding: 0 2px 4px;
 }
+
+/* Keyless step + Connectors step (plan keyless-first-run §3.5, §5.2). Dense
+   bordered rows built from raw primitives, not the Card primitive. */
+
+.onboarding-found-list,
+.onboarding-connector-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.onboarding-found {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--ethos-border);
+}
+
+.onboarding-found-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.onboarding-code {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--ethos-surface-tint);
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+
+.onboarding-pull-progress {
+  font-family: var(--ethos-font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+}
+
+.onboarding-connector {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--ethos-border);
+}
+
+.onboarding-connector-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.onboarding-connector-done {
+  font-size: 12px;
+  color: var(--ethos-success, var(--ethos-text-dim));
+  white-space: nowrap;
+}
+
+.onboarding-first-task {
+  display: block;
+  width: 100%;
+  background: transparent;
+  color: var(--ethos-text);
+  text-align: left;
+  font: inherit;
+}

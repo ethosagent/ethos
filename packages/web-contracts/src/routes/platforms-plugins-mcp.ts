@@ -12,6 +12,8 @@ import {
   McpCatalogOutputSchema,
   McpCompleteInputSchema,
   McpCompleteOutputSchema,
+  McpConnectPresetInputSchema,
+  McpConnectPresetOutputSchema,
   McpDeleteInputSchema,
   McpListOutputSchema,
   McpPersonalityServersInputSchema,
@@ -317,6 +319,9 @@ export const mcp = {
     .input(McpPersonalityServersInputSchema)
     .output(McpPersonalityServersOutputSchema),
   addServer: oc.input(McpAddServerInputSchema).output(McpAddServerOutputSchema),
+  /** Onboarding connector step: add a no-sign-in remote preset to the running
+   *  manager and attach it to ONE personality (plan keyless-first-run §5.2). */
+  connectPreset: oc.input(McpConnectPresetInputSchema).output(McpConnectPresetOutputSchema),
   refreshToken: oc.input(McpRefreshTokenInputSchema).output(McpRefreshTokenOutputSchema),
   rename: oc.input(McpRenameInputSchema).output(McpRenameOutputSchema),
   updateToken: oc.input(McpUpdateTokenInputSchema).output(McpUpdateTokenOutputSchema),

@@ -4,6 +4,7 @@ import { createContext, type Dispatch, useContext } from 'react';
 export type WizardMode = 'quick' | 'full';
 
 export type WizardStepId =
+  | 'keyless'
   | 'entry'
   | 'provider'
   | 'provider-chain'
@@ -55,6 +56,16 @@ export interface WizardAnswers {
    *  in the LaunchStep gateway success block. Present only when a Telegram
    *  token validated during setup. */
   telegramUsername?: string;
+  /** Steps the wizard walks past (`nextStep` / `prevStep`). Set by the keyless
+   *  step when a candidate already answered provider/auth/model, and seeded
+   *  with `['keyless']` for a re-run (D13). Pinned by
+   *  `__tests__/keyless-step.test.ts` "skipSteps". */
+  skipSteps?: WizardStepId[];
+  /** The keyless step ended the wizard to run the Ollama install offer from
+   *  setup.ts after Ink unmounts (inherited-stdio spawn is impractical inside Ink). */
+  keylessInstall?: boolean;
+  /** Which keyless candidate produced the answers (funnel `keylessPath`). */
+  keylessPath?: 'ethos-login' | 'external-login' | 'local' | 'installed' | 'key';
 }
 
 export interface WizardAction {
@@ -79,6 +90,7 @@ export function useWizardContext(): WizardContextValue {
 }
 
 const QUICK_STEPS: WizardStepId[] = [
+  'keyless',
   'entry',
   'provider',
   'auth',
@@ -90,6 +102,7 @@ const QUICK_STEPS: WizardStepId[] = [
 ];
 
 const FULL_STEPS: WizardStepId[] = [
+  'keyless',
   'entry',
   'provider',
   'provider-chain',
@@ -108,16 +121,30 @@ export function getStepOrder(mode: WizardMode): WizardStepId[] {
   return mode === 'full' ? FULL_STEPS : QUICK_STEPS;
 }
 
-export function nextStep(current: WizardStepId, mode: WizardMode): WizardStepId | null {
+export function nextStep(
+  current: WizardStepId,
+  mode: WizardMode,
+  skip: readonly WizardStepId[] = [],
+): WizardStepId | null {
   const order = getStepOrder(mode);
-  const idx = order.indexOf(current);
-  return order[idx + 1] ?? null;
+  for (let i = order.indexOf(current) + 1; i < order.length; i++) {
+    const step = order[i];
+    if (step !== undefined && !skip.includes(step)) return step;
+  }
+  return null;
 }
 
-export function prevStep(current: WizardStepId, mode: WizardMode): WizardStepId | null {
+export function prevStep(
+  current: WizardStepId,
+  mode: WizardMode,
+  skip: readonly WizardStepId[] = [],
+): WizardStepId | null {
   const order = getStepOrder(mode);
-  const idx = order.indexOf(current);
-  return idx > 0 ? (order[idx - 1] ?? null) : null;
+  for (let i = order.indexOf(current) - 1; i >= 0; i--) {
+    const step = order[i];
+    if (step !== undefined && !skip.includes(step)) return step;
+  }
+  return null;
 }
 
 export function isFullOnlyStep(step: WizardStepId): boolean {

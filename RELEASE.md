@@ -115,6 +115,8 @@ git push origin main
 
 Wait for the regular CI on `main` to pass (tests, typecheck, etc.). If anything fails, fix it on `main` before continuing — don't release red.
 
+Before tagging, run `scripts/smoke-keyless-first-run.sh` (needs a running Ollama with the `< 12 GiB` tier model pulled); it prints first launch → first answer, budget ≤ 120 s excluding download. A miss is a release note, not a blocker (plan keyless-first-run §6.3).
+
 ### Step 2 — Trigger the release
 
 #### Primary path: CI workflow (button click)

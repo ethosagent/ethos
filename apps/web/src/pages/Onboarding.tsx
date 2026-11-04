@@ -8,21 +8,27 @@ import { personalityTheme } from '../lib/theme';
 import { buildWorkspaceChatPath } from '../lib/workspaceRoutes';
 import { type CatalogProviderId, getCatalogEntry } from '../onboarding/catalog/providers';
 import { clearDraft, type DraftState, loadDraft, saveDraft } from '../onboarding/draft';
+import { firstTaskChatPath } from '../onboarding/first-task';
 import {
   FULL_ONLY,
   initialState,
   STEP_COUNT,
+  serverStartStep,
   stepIndex,
   type WizardStepId,
   wizardReducer,
 } from '../onboarding/reducer';
 import { AuthStep } from '../onboarding/steps/AuthStep';
+import { ConnectorsStep } from '../onboarding/steps/ConnectorsStep';
 import { DaemonHintStep } from '../onboarding/steps/DaemonHintStep';
+import { FirstTaskStep } from '../onboarding/steps/FirstTaskStep';
+import { KeylessStep } from '../onboarding/steps/KeylessStep';
 import { KeyRotationStep } from '../onboarding/steps/KeyRotationStep';
 import { MemoryStep } from '../onboarding/steps/MemoryStep';
 import { MessagingStep } from '../onboarding/steps/MessagingStep';
 import { ModelStep } from '../onboarding/steps/ModelStep';
 import { MultiProviderStep } from '../onboarding/steps/MultiProviderStep';
+import { NameAgentStep } from '../onboarding/steps/NameAgentStep';
 import { PersonalityStep } from '../onboarding/steps/PersonalityStep';
 import { ProviderStep } from '../onboarding/steps/ProviderStep';
 import { SetupEntryStep } from '../onboarding/steps/SetupEntryStep';
@@ -39,6 +45,7 @@ const FULL_ONLY_ORDERED: WizardStepId[] = [
 
 // Step names for the resume affordance
 const STEP_LABELS: Partial<Record<WizardStepId, string>> = {
+  keyless: 'Model',
   'setup-entry': 'Start',
   provider: 'Provider',
   'multi-provider': 'Provider chain',
@@ -47,6 +54,8 @@ const STEP_LABELS: Partial<Record<WizardStepId, string>> = {
   model: 'Model',
   memory: 'Memory',
   personality: 'Personality',
+  'name-agent': 'Name your agent',
+  connectors: 'Connectors',
   messaging: 'Messaging',
   'daemon-hint': 'Daemon',
   summary: 'Summary',
@@ -73,10 +82,25 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       return;
     }
     const draft = loadDraft();
-    if (draft && draft.step !== 'setup-entry') {
+    if (draft && draft.step !== 'setup-entry' && draft.step !== 'keyless') {
       setPendingDraft(draft);
       // Don't hydrate yet — let the user choose Resume or Start over
+      return;
     }
+    // No saved draft: a server that already has a provider skips keyless (D13).
+    let cancelled = false;
+    rpc.onboarding
+      .state()
+      .then((server) => {
+        const step = serverStartStep(server);
+        if (!cancelled && step) {
+          dispatch({ type: 'hydrate', draft: { mode: 'quick' }, step, history: [] });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startAtStep]);
 
@@ -100,7 +124,11 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
 
   // Auto-save draft when wizard state changes (debounced 250ms in saveDraft)
   useEffect(() => {
-    if (state.step === 'setup-entry' && state.history.length === 0) return;
+    if ((state.step === 'setup-entry' || state.step === 'keyless') && state.history.length === 0) {
+      return;
+    }
+    // After `complete` the draft is cleared; don't re-save it for the first-task step.
+    if (state.step === 'launch') return;
     saveDraft({ answers: state.answers, step: state.step, history: state.history });
   }, [state.answers, state.step, state.history]);
 
@@ -123,13 +151,14 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
   // away from /onboarding naturally.
   useEffect(() => {
     const onPopState = () => {
-      if (state.history.length > 0) {
+      // 'launch' follows a completed setup; going back would re-run `complete`.
+      if (state.step !== 'launch' && state.history.length > 0) {
         dispatch({ type: 'back' });
       }
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [state.history.length]);
+  }, [state.history.length, state.step]);
 
   // Global Esc key handler:
   //   • On a Full-only step: skip to the next mandatory step (advance, not back).
@@ -141,6 +170,7 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       // field handle it (e.g. closing an Antd dropdown).
       const target = e.target as HTMLElement | null;
       if (target?.closest('input, textarea, [role="listbox"]')) return;
+      if (state.step === 'launch') return;
       e.preventDefault();
       if (FULL_ONLY.has(state.step)) {
         // Skip the rest of the Full-only sub-flow → advance to next mandatory step
@@ -157,7 +187,7 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
   const mode = state.answers.mode;
   const totalSteps = STEP_COUNT[mode];
   const currentIndex = stepIndex(state.step, mode);
-  const showBack = state.history.length > 0 && state.step !== 'setup-entry';
+  const showBack = state.history.length > 0 && state.step !== 'launch';
 
   // Full-only step hint: "1 of 4 advanced steps · Skip rest with Esc"
   const fullOnlyIdx = FULL_ONLY_ORDERED.indexOf(state.step);
@@ -167,7 +197,10 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
     const { answers } = state;
     const providerId = answers.provider as CatalogProviderId | undefined;
     const catalog = providerId ? getCatalogEntry(providerId) : null;
-    const requiresApiKey = catalog?.authType === 'api-key';
+    // A probed local runtime written as `openai-compat` carries the 'local'
+    // placeholder key (D14); a draft resume drops apiKey, so don't demand it.
+    const isLocalKeyless = answers.keylessPath === 'local' || answers.keylessPath === 'installed';
+    const requiresApiKey = catalog?.authType === 'api-key' && !isLocalKeyless;
     if (
       !answers.provider ||
       !answers.model ||
@@ -186,9 +219,10 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       await rpc.onboarding.complete({
         provider: catalog?.wiresAs as ProviderId,
         model: answers.model,
-        apiKey: answers.apiKey,
+        apiKey: answers.apiKey ?? (isLocalKeyless ? 'local' : undefined),
         ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),
         personalityId,
+        ...(answers.keylessPath ? { keylessPath: answers.keylessPath } : {}),
       });
       // Restart desktop backend so it picks up the new API key.
       if (isDesktop && bridge) {
@@ -211,11 +245,9 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       clearDraft();
       void queryClient.invalidateQueries({ queryKey: ['config'] });
       void queryClient.invalidateQueries({ queryKey: ['onboarding'] });
-      // replace: true so browser back doesn't return to /onboarding
-      navigate(buildWorkspaceChatPath(personalityId), {
-        replace: true,
-        state: { setupBanner: true },
-      });
+      // First-task suggestions come before the chat opens (D16/D17); picking
+      // one prefills the composer through `?draft=`, it never sends.
+      dispatch({ type: 'next', patch: {} });
     } catch (err) {
       notification.error({
         message: 'Setup failed',
@@ -225,8 +257,12 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
     }
   };
 
+  const openId = state.answers.personalityId ?? 'researcher';
+
   const renderStep = () => {
     switch (state.step) {
+      case 'keyless':
+        return <KeylessStep onNext={handleNext} />;
       case 'setup-entry':
         return <SetupEntryStep onNext={handleNext} />;
       case 'provider':
@@ -245,6 +281,10 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
         return <MemoryStep answers={state.answers} onNext={handleNext} onBack={handleBack} />;
       case 'personality':
         return <PersonalityStep answers={state.answers} onNext={handleNext} />;
+      case 'name-agent':
+        return <NameAgentStep answers={state.answers} onNext={handleNext} />;
+      case 'connectors':
+        return <ConnectorsStep answers={state.answers} onNext={handleNext} />;
       case 'messaging':
         return <MessagingStep answers={state.answers} onNext={handleNext} />;
       case 'daemon-hint':
@@ -252,7 +292,16 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       case 'summary':
         return <SummaryStep answers={state.answers} onNext={() => void handleComplete()} />;
       case 'launch':
-        return null;
+        return (
+          <FirstTaskStep
+            connected={state.answers.connectedPresets ?? []}
+            onPick={(text) =>
+              // replace: true so browser back doesn't return to /onboarding
+              navigate(firstTaskChatPath(openId, text), { replace: true })
+            }
+            onSkip={() => navigate(buildWorkspaceChatPath(openId), { replace: true })}
+          />
+        );
       default:
         return null;
     }
@@ -261,7 +310,9 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
   const personalityId = state.answers.personalityId;
   const usePersonalityTheme =
     personalityId &&
-    (state.step === 'messaging' ||
+    (state.step === 'name-agent' ||
+      state.step === 'connectors' ||
+      state.step === 'messaging' ||
       state.step === 'daemon-hint' ||
       state.step === 'summary' ||
       state.step === 'launch');

@@ -59,3 +59,19 @@ export function buildRemoteSubmission(
     },
   };
 }
+
+/**
+ * Split catalog entries by how they authenticate, for the onboarding
+ * Connectors step (plan keyless-first-run §5.2). Derived from `authType` at
+ * render time so there is no second hand-kept list: `none` rows connect with
+ * one click, `oauth` rows need a sign-in. `bearer` rows need a pasted key, so
+ * they appear in neither group. Input order is preserved.
+ */
+export function groupByAuth<T extends { authType: McpRemotePresetInfo['authType'] }>(
+  items: readonly T[],
+): { none: T[]; oauth: T[] } {
+  return {
+    none: items.filter((i) => i.authType === 'none'),
+    oauth: items.filter((i) => i.authType === 'oauth'),
+  };
+}

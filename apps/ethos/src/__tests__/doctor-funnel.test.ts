@@ -100,6 +100,29 @@ describe('runFunnelReport', () => {
     expect(out).toContain('+1h');
   });
 
+  it('prints first launch → first answer and the path', async () => {
+    const launch = 1_000_000;
+    readState.mockResolvedValue({
+      firstLaunchAt: launch,
+      setupCompletedAt: launch + 20_000,
+      keylessPath: 'local',
+      firstReplyAt: launch + 95_000,
+    });
+    await runFunnelReport(false);
+    const out = logSpy.mock.calls.flat().join('\n');
+    expect(out).toContain('First launch → first answer');
+    expect(out).toContain('1m 35s');
+    expect(out).toContain('Keyless path:         local');
+  });
+
+  it('omits the first-launch line on installs without firstLaunchAt', async () => {
+    readState.mockResolvedValue({ setupCompletedAt: 1_000_000, firstReplyAt: 1_060_000 });
+    await runFunnelReport(false);
+    const out = logSpy.mock.calls.flat().join('\n');
+    expect(out).not.toContain('First launch');
+    expect(out).not.toContain('Keyless path');
+  });
+
   it('honors NO_COLOR (no ANSI escapes in output)', async () => {
     process.env.NO_COLOR = '1';
     readState.mockResolvedValue({ setupCompletedAt: 1_000_000, firstReplyAt: 1_060_000 });

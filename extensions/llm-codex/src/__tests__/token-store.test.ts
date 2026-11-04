@@ -55,7 +55,104 @@ describe('CodexTokenStore', () => {
   });
 
   it('returns null when no credentials exist', async () => {
-    const store = new CodexTokenStore(new InMemorySecretsResolver());
+    // `home` is injected so a developer's own ~/.codex cannot change the result.
+    const store = new CodexTokenStore(new InMemorySecretsResolver(), { home: tmpHome });
+    expect(await store.load()).toBeNull();
+  });
+
+  async function writeExternal(dir: '.codex' | '.hermes', creds = nestedFile()): Promise<void> {
+    await mkdir(join(tmpHome, dir), { recursive: true });
+    await writeFile(join(tmpHome, dir, 'auth.json'), JSON.stringify(creds), 'utf-8');
+  }
+
+  function nestedFile(withRefresh = true) {
+    const exp = Math.floor(Date.now() / 1_000) + 3_600;
+    return {
+      tokens: {
+        access_token: jwtWithExp(exp),
+        ...(withRefresh ? { refresh_token: 'ext-refresh' } : {}),
+        id_token: jwtWithExp(exp),
+        account_id: 'acct-ext',
+      },
+    };
+  }
+
+  it('load() does not import ~/.codex/auth.json or ~/.hermes/auth.json', async () => {
+    await writeExternal('.codex');
+    await writeExternal('.hermes');
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    expect(await store.load()).toBeNull();
+    expect(await secrets.get('providers/codex/tokens')).toBeNull();
+  });
+
+  it('load() still folds the legacy ~/.ethos tokens.json (injected home)', async () => {
+    const legacyDir = join(tmpHome, '.ethos', 'secrets', 'codex');
+    await mkdir(legacyDir, { recursive: true });
+    const creds = makeCreds(3_600);
+    await writeFile(join(legacyDir, 'tokens.json'), JSON.stringify(creds), 'utf-8');
+    const store = new CodexTokenStore(new InMemorySecretsResolver(), { home: tmpHome });
+    expect(await store.load()).toEqual(creds);
+    await expect(access(join(legacyDir, 'tokens.json'))).rejects.toThrow();
+  });
+
+  it("importExternal('codex-cli') saves to providers/codex/tokens only when called", async () => {
+    await writeExternal('.codex');
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    expect(await secrets.get('providers/codex/tokens')).toBeNull();
+    expect(await store.importExternal('codex-cli')).toEqual({ ok: true });
+    expect((await store.load())?.refreshToken).toBe('ext-refresh');
+  });
+
+  it("importExternal('hermes') reads ~/.hermes/auth.json", async () => {
+    await writeExternal('.hermes');
+    const store = new CodexTokenStore(new InMemorySecretsResolver(), { home: tmpHome });
+    expect(await store.importExternal('hermes')).toEqual({ ok: true });
+    expect((await store.load())?.accountId).toBe('acct-ext');
+  });
+
+  it('importExternal returns absent for a missing file and writes nothing', async () => {
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    expect(await store.importExternal('codex-cli')).toEqual({ ok: false, reason: 'absent' });
+    expect(await secrets.get('providers/codex/tokens')).toBeNull();
+  });
+
+  it('importExternal returns invalid_shape for a file missing a token and writes nothing', async () => {
+    await writeExternal('.codex', nestedFile(false));
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    expect(await store.importExternal('codex-cli')).toEqual({
+      ok: false,
+      reason: 'invalid_shape',
+    });
+    expect(await secrets.get('providers/codex/tokens')).toBeNull();
+  });
+
+  it('peek() reads the vault without migrating or importing', async () => {
+    await writeExternal('.codex');
+    const legacyDir = join(tmpHome, '.ethos', 'secrets', 'codex');
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(join(legacyDir, 'tokens.json'), JSON.stringify(makeCreds(3_600)), 'utf-8');
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    expect(await store.peek()).toBeNull();
+    // legacy file untouched, nothing saved
+    await expect(access(join(legacyDir, 'tokens.json'))).resolves.toBeUndefined();
+    expect(await secrets.get('providers/codex/tokens')).toBeNull();
+    const creds = makeCreds(3_600);
+    await store.save(creds);
+    expect(await store.peek()).toEqual(creds);
+  });
+
+  it('peek() returns null for a corrupt vault entry', async () => {
+    const secrets = new InMemorySecretsResolver();
+    const store = new CodexTokenStore(secrets, { home: tmpHome });
+    await secrets.set('providers/codex/tokens', '{not json');
+    expect(await store.peek()).toBeNull();
+    await secrets.set('providers/codex/tokens', JSON.stringify({ accessToken: 1 }));
+    expect(await store.peek()).toBeNull();
     expect(await store.load()).toBeNull();
   });
 

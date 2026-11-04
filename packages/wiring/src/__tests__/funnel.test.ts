@@ -241,3 +241,63 @@ describe('mergeFunnelState', () => {
     expect(mergeFunnelState({ firstReplyAt: 1 }, { legacy: true }).legacy).toBe(true);
   });
 });
+
+describe('FunnelTracker keyless metric (plan keyless-first-run §6.4)', () => {
+  it('firstLaunchAt is earliest-wins across two trackers', async () => {
+    const storage = new InMemoryStorage();
+    const late = makeTracker({ storage, now: () => 5_000 });
+    const early = makeTracker({ storage, now: () => 2_000 });
+
+    await late.tracker.recordFirstLaunch();
+    await early.tracker.recordFirstLaunch(); // already stamped on disk: no-op
+    expect((await readStamp(storage)).firstLaunchAt).toBe(5_000);
+
+    expect(mergeFunnelState({ firstLaunchAt: 5_000 }, { firstLaunchAt: 2_000 }).firstLaunchAt).toBe(
+      2_000,
+    );
+    expect(late.calls).toHaveLength(0); // the stamp emits no event
+  });
+
+  it('first_reply carries msSinceFirstLaunch and keylessPath', async () => {
+    let t = 1_000;
+    const { tracker, calls, storage } = makeTracker({ now: () => t });
+    await tracker.recordFirstLaunch();
+    t = 2_000;
+    await tracker.recordSetupCompleted({
+      provider: 'ollama',
+      channels: [],
+      wizardPath: 'tui',
+      keylessPath: 'local',
+    });
+    t = 9_000;
+    await tracker.recordFirstReply();
+
+    const reply = calls.find((c) => c.method === 'first_reply');
+    expect(reply?.opts).toEqual({
+      msSinceSetup: 7_000,
+      msSinceFirstLaunch: 8_000,
+      keylessPath: 'local',
+    });
+    // keylessPath travels with the winning setup stamp and is not in the setup event.
+    expect(calls.find((c) => c.method === 'setup_completed')?.opts).not.toHaveProperty(
+      'keylessPath',
+    );
+    expect(await readStamp(storage)).toMatchObject({ firstLaunchAt: 1_000, keylessPath: 'local' });
+  });
+
+  it('keylessPath follows whichever setup stamp is earlier', () => {
+    const merged = mergeFunnelState(
+      { setupCompletedAt: 5, keylessPath: 'key' },
+      { setupCompletedAt: 3, keylessPath: 'local' },
+    );
+    expect(merged).toMatchObject({ setupCompletedAt: 3, keylessPath: 'local' });
+  });
+
+  it('a legacy install with no firstLaunchAt omits msSinceFirstLaunch', async () => {
+    const { tracker, calls } = makeTracker({ now: () => 4_000 });
+    await tracker.recordFirstReply();
+    const reply = calls.find((c) => c.method === 'first_reply');
+    expect(reply?.opts).toEqual({ legacy: true });
+    expect(reply?.opts).not.toHaveProperty('msSinceFirstLaunch');
+  });
+});

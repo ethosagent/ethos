@@ -12,6 +12,7 @@ vi.mock('../wiring', () => ({
   getStorage: vi.fn(() => ({})),
   getSecretsResolver: vi.fn(async () => ({})),
   resolveActiveLoop: vi.fn(),
+  getFunnelTracker: vi.fn(() => ({ recordFirstReply: vi.fn(async () => {}) })),
 }));
 
 vi.mock('@ethosagent/config', () => ({
@@ -29,7 +30,7 @@ import { fstatSync } from 'node:fs';
 import { PassThrough, Readable } from 'node:stream';
 import { readConfig } from '@ethosagent/config';
 import { runZero } from '../commands/zero';
-import { resolveActiveLoop } from '../wiring';
+import { getFunnelTracker, resolveActiveLoop } from '../wiring';
 
 const FAKE_CONFIG = {
   provider: 'anthropic',
@@ -71,6 +72,43 @@ describe('runZero exit-code propagation (G5)', () => {
 
     await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
+  });
+
+  // Pins stampFirstReply in commands/zero.ts: -z stamps funnel.first_reply on a
+  // completed turn (keyless-first-run §6.3) and not on a failed one.
+  it('stamps firstReplyAt after a completed turn, awaited', async () => {
+    const recordFirstReply = vi.fn(async () => {});
+    vi.mocked(getFunnelTracker).mockReturnValue({ recordFirstReply } as never);
+    vi.mocked(readConfig).mockResolvedValue(FAKE_CONFIG as never);
+    vi.mocked(resolveActiveLoop).mockResolvedValue({
+      loop: {
+        run: async function* () {
+          yield { type: 'text_delta', text: 'ready' };
+          yield { type: 'done', text: 'ready', turnCount: 1 };
+        },
+      },
+      personalityId: 'default',
+    } as never);
+
+    await runZero(['-z', 'hello']);
+    expect(recordFirstReply).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stamp firstReplyAt when the turn errors without done', async () => {
+    const recordFirstReply = vi.fn(async () => {});
+    vi.mocked(getFunnelTracker).mockReturnValue({ recordFirstReply } as never);
+    vi.mocked(readConfig).mockResolvedValue(FAKE_CONFIG as never);
+    vi.mocked(resolveActiveLoop).mockResolvedValue({
+      loop: {
+        run: async function* () {
+          yield { type: 'error', error: 'model not found', code: 'PROVIDER_ERROR' };
+        },
+      },
+      personalityId: 'default',
+    } as never);
+
+    await runZero(['-z', 'hello']);
+    expect(recordFirstReply).not.toHaveBeenCalled();
   });
 
   it('sets exitCode 1 when the loop throws', async () => {

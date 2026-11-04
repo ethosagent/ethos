@@ -12,7 +12,12 @@ import { toResponsesInput, toResponsesTools } from './responses-adapter';
 import { type ResponsesApiBody, ResponsesApiError, streamResponsesApi } from './transport';
 
 export type { CodexCredentials } from './auth';
-export { exchangeForTokens, pollForAuthorization, requestDeviceCode } from './auth';
+export {
+  detectExternalLogin,
+  exchangeForTokens,
+  pollForAuthorization,
+  requestDeviceCode,
+} from './auth';
 export {
   CODEX_FALLBACK_MODELS,
   CODEX_MODELS_URL,
@@ -22,7 +27,11 @@ export {
   unsupportedModelMessage,
 } from './models';
 export { toResponsesInput, toResponsesTools } from './responses-adapter';
-export { CodexTokenStore } from './token-store';
+export {
+  CodexTokenStore,
+  type ExternalLoginSource,
+  type ImportExternalResult,
+} from './token-store';
 export { type ResponsesApiBody, ResponsesApiError, streamResponsesApi } from './transport';
 
 // ---------------------------------------------------------------------------

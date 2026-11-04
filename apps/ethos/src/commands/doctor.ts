@@ -2313,6 +2313,16 @@ export async function runFunnelReport(jsonMode: boolean): Promise<void> {
     console.log(`First reply:          ${fc.dim}not yet recorded${fc.reset}`);
   }
 
+  // Plan keyless-first-run D22: the headline metric is first launch → first answer.
+  if (state.firstLaunchAt !== undefined && state.firstReplyAt !== undefined) {
+    console.log(
+      `First launch → first answer: ${fc.green}✓${fc.reset} ${formatFunnelDuration(state.firstReplyAt - state.firstLaunchAt)}`,
+    );
+  }
+  if (state.keylessPath !== undefined) {
+    console.log(`Keyless path:         ${state.keylessPath}`);
+  }
+
   const channels = Object.entries(state.channelFirstReplyAt ?? {});
   if (channels.length > 0) {
     for (const [platform, ts] of channels) {

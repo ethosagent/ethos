@@ -4,6 +4,7 @@ import {
   ConfidentialClientUnsupported,
   DcrUnsupported,
   deleteTokens,
+  getRemotePreset,
   MCP_PRESETS,
   MCP_REMOTE_PRESETS,
   McpInstallFlow,
@@ -24,6 +25,9 @@ export interface McpServiceOptions {
   secrets: SecretsResolver;
   mcpJsonStore: McpJsonStore;
   redirectUri: string;
+  /** True when the id is a read-only built-in personality. `connectPreset`
+   *  refuses those BEFORE it touches mcp.json or the manager. */
+  isBuiltinPersonality?: (id: string) => boolean;
 }
 
 export class McpService {
@@ -32,8 +36,10 @@ export class McpService {
   private readonly mcpManager: McpManager;
   private readonly personalityUpdater: PersonalityUpdater;
   private readonly secrets: SecretsResolver;
+  private readonly isBuiltinPersonality: (id: string) => boolean;
 
   constructor(opts: McpServiceOptions) {
+    this.isBuiltinPersonality = opts.isBuiltinPersonality ?? (() => false);
     this.mcpJsonStore = opts.mcpJsonStore;
     this.mcpManager = opts.mcpManager;
     this.personalityUpdater = opts.personalityUpdater;
@@ -283,6 +289,88 @@ export class McpService {
     }
 
     return { ok: true as const, serverName: input.name };
+  }
+
+  /**
+   * Onboarding connector step (plan keyless-first-run §5.2): add a no-sign-in
+   * remote preset to mcp.json AND the running manager, then grant it to ONE
+   * personality. Each step is idempotent, so a retry after a partial failure
+   * converges (pinned by mcp-connect-preset.test.ts "a second call is a no-op").
+   * OAuth presets are refused: they keep the one install flow (D24).
+   */
+  async connectPreset(input: { presetName: string; personalityId: string }) {
+    const refuse = (
+      code: 'oauth_required' | 'not_found' | 'read_only' | 'connect_failed',
+      detail: string,
+    ) => ({ ok: false as const, code, detail });
+
+    const preset = getRemotePreset(input.presetName);
+    if (!preset) return refuse('not_found', `Unknown connector '${input.presetName}'.`);
+    if (preset.authType !== 'none') {
+      return refuse(
+        'oauth_required',
+        `${preset.label} needs a sign-in. Use the sign-in button instead.`,
+      );
+    }
+    if (!this.personalityUpdater.get(input.personalityId)) {
+      return refuse('not_found', `Personality '${input.personalityId}' not found.`);
+    }
+    if (this.isBuiltinPersonality(input.personalityId)) {
+      return refuse(
+        'read_only',
+        `'${input.personalityId}' is a built-in and cannot take connectors. Make your own copy first.`,
+      );
+    }
+
+    // Step 2: mcp.json (idempotent: skipped when present).
+    const name = preset.name;
+    let wroteConfig = false;
+    if (!(await this.mcpJsonStore.get(name))) {
+      await this.mcpJsonStore.upsert(name, {
+        name,
+        transport: preset.transport,
+        url: preset.url,
+        created_via: 'ui' as const,
+      });
+      wroteConfig = true;
+    }
+
+    // Step 3: the running manager (idempotent: skipped when it already holds it).
+    // This is the SAME manager the loop's ToolRegistry listens to: see the
+    // evidence in the onboarding lane report (serve.ts hands web-api
+    // `createAgentLoop().mcpManager`, whose `onToolsChanged` registers into the
+    // loop's registry at packages/wiring/src/compose-tools.ts).
+    const held = this.mcpManager.listServers().some((s) => s.name === name);
+    if (!held) {
+      try {
+        await this.mcpManager.addServer({
+          name,
+          transport: preset.transport,
+          url: preset.url,
+          created_via: 'ui',
+        });
+      } catch (err) {
+        // A concurrent call may have won the race: converge instead of failing.
+        const nowHeld = this.mcpManager.listServers().some((s) => s.name === name);
+        if (!nowHeld) {
+          // Leave no dead entry for the next boot to trip over.
+          if (wroteConfig) await this.mcpJsonStore.remove(name).catch(() => {});
+          return refuse('connect_failed', err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+
+    // Step 4: the grant, through the install flow's attach (idempotent).
+    const attached = await this.flow.attachToPersonalities({
+      serverName: name,
+      personalityIds: [input.personalityId],
+    });
+    const failure = attached.failed[0];
+    if (failure) return refuse('connect_failed', failure.error);
+
+    const prefix = DefaultToolRegistry.mcpToolPrefix(name);
+    const toolCount = this.mcpManager.getTools().filter((t) => t.name.startsWith(prefix)).length;
+    return { ok: true as const, serverName: name, toolCount };
   }
 
   async delete(input: { name: string }) {

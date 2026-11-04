@@ -6,7 +6,7 @@ import { answerSuffix, EthosError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
-import { getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
+import { getFunnelTracker, getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
 import {
   buildResultLine,
   createJsonlWriter,
@@ -161,6 +161,16 @@ export async function runZero(argv: string[]): Promise<void> {
   return runZeroStructured(argv, args);
 }
 
+/**
+ * W4.1 / keyless-first-run §6.3 — the first completed `-z` turn stamps
+ * `funnel.first_reply` like the interactive path (`chat.ts`). Awaited, because
+ * `index.ts` exits right after `runZero`; the tracker never rejects. Pinned by
+ * `zero-funnel.test.ts`.
+ */
+async function stampFirstReply(): Promise<void> {
+  await getFunnelTracker().recordFirstReply();
+}
+
 async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
   const { prompt, noStream, sessionKey } = args;
   const stdinContent = await readStdinInput();
@@ -189,6 +199,7 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
 
   try {
     let streamed = '';
+    let answered = false;
     // audience: private-by-design (ethos -z — the owner terminal)
     for await (const event of loop.run(fullPrompt, {
       sessionKey,
@@ -209,6 +220,7 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
       // preamble that streamed: `answerSuffix` is what the stream still owes.
       // Streaming prints just that; `--no-stream` prints the whole reply.
       if (event.type === 'done') {
+        answered = true;
         const owed = answerSuffix(streamed, event.text);
         const out = noStream ? streamed + owed : owed;
         if (out) process.stdout.write(out);
@@ -218,6 +230,7 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
         process.exitCode = 1;
       }
     }
+    if (answered) await stampFirstReply();
   } catch (err) {
     process.stderr.write(`ethos -z: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
@@ -291,6 +304,7 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
 
   const { loop, personalityId } = runtime;
   let thrown: ZeroResultError | undefined;
+  let answered = false;
   try {
     if (format === 'stream-json') {
       const { buildVersionInfo } = await import('../version-info');
@@ -317,6 +331,7 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
       if (event.type === 'run_start' && event.traceId !== undefined) traceId ??= event.traceId;
       if (event.type === 'done' && event.traceId !== undefined) traceId = event.traceId;
       if (event.type === 'error') process.exitCode = 1;
+      if (event.type === 'done') answered = true;
       if (format !== 'stream-json') continue;
       const line = encodeZeroEvent(event);
       if (line) await writer.write(line);
@@ -328,6 +343,7 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
     thrown = { code: e.code, message: e.message };
   }
 
+  if (answered) await stampFirstReply();
   try {
     await finish(thrown);
   } finally {

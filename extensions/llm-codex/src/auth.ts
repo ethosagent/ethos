@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { z } from 'zod';
 export interface CodexCredentials {
   accessToken: string;
   refreshToken: string;
@@ -217,42 +218,80 @@ export function isTokenExpiringSoon(credentials: CodexCredentials, bufferSeconds
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Import credentials from a Codex CLI or Hermes auth.json file. */
-export async function importFromFile(filePath: string): Promise<CodexCredentials | null> {
+const optStr = z.string().min(1).optional().catch(undefined);
+
+/** One token bag: snake_case (Codex CLI, Hermes) or camelCase keys. */
+const TokenBagSchema = z.object({
+  access_token: optStr,
+  accessToken: optStr,
+  refresh_token: optStr,
+  refreshToken: optStr,
+  id_token: optStr,
+  idToken: optStr,
+  account_id: optStr,
+  accountId: optStr,
+  expires_at: optStr,
+  expiresAt: optStr,
+  updated_at: optStr,
+  updatedAt: optStr,
+  last_refresh: optStr,
+});
+
+/**
+ * Accepted file shapes:
+ *  - flat: the token keys at the top level (Hermes, older Ethos exports);
+ *  - nested: `{ "tokens": { access_token, refresh_token, id_token, account_id },
+ *    "last_refresh": "<iso>" }`, the Codex CLI's `~/.codex/auth.json`.
+ *
+ * UNVERIFIED against the real CLI: no Codex source or real auth.json is
+ * available in this repo and this code never reads a user's credential file
+ * in tests. The nested shape is taken from the Codex CLI's documented
+ * layout as remembered; pinned by fixtures in
+ * `__tests__/import-shape.test.ts` only.
+ */
+const AuthFileSchema = z
+  .object({ tokens: TokenBagSchema.optional().catch(undefined) })
+  .and(TokenBagSchema);
+
+async function parseAuthFile(filePath: string): Promise<CodexCredentials | null> {
   try {
     const raw = await readFile(filePath, 'utf-8');
-    const json = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = AuthFileSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return null;
+    const top = parsed.data;
+    const bag = top.tokens ?? top;
 
-    // Both codex and hermes store tokens with snake_case keys
-    const accessToken =
-      (json.access_token as string | undefined) ?? (json.accessToken as string | undefined);
-    const refreshTokenVal =
-      (json.refresh_token as string | undefined) ?? (json.refreshToken as string | undefined);
-    const idToken = (json.id_token as string | undefined) ?? (json.idToken as string | undefined);
-
-    if (!accessToken || !refreshTokenVal || !idToken) {
-      return null;
-    }
+    const accessToken = bag.access_token ?? bag.accessToken;
+    const refreshTokenVal = bag.refresh_token ?? bag.refreshToken;
+    const idToken = bag.id_token ?? bag.idToken;
+    if (!accessToken || !refreshTokenVal || !idToken) return null;
 
     const now = new Date().toISOString();
     return {
       accessToken,
       refreshToken: refreshTokenVal,
       idToken,
-      accountId:
-        (json.account_id as string | undefined) ??
-        (json.accountId as string | undefined) ??
-        extractAccountId(idToken),
-      expiresAt:
-        (json.expires_at as string | undefined) ??
-        (json.expiresAt as string | undefined) ??
-        extractExpiresAt(accessToken),
-      updatedAt:
-        (json.updated_at as string | undefined) ?? (json.updatedAt as string | undefined) ?? now,
+      accountId: bag.account_id ?? bag.accountId ?? extractAccountId(idToken),
+      expiresAt: bag.expires_at ?? bag.expiresAt ?? extractExpiresAt(accessToken),
+      updatedAt: bag.updated_at ?? bag.updatedAt ?? top.last_refresh ?? bag.last_refresh ?? now,
     };
   } catch {
     return null;
   }
+}
+
+/** Import credentials from a Codex CLI or Hermes auth.json file (flat or nested). */
+export async function importFromFile(filePath: string): Promise<CodexCredentials | null> {
+  return parseAuthFile(filePath);
+}
+
+/**
+ * Whether `filePath` holds an importable login. Returns presence only, never
+ * token material (the probe result type has no token field; pinned by
+ * `__tests__/import-shape.test.ts` "detectExternalLogin reports presence only").
+ */
+export async function detectExternalLogin(filePath: string): Promise<{ present: true } | null> {
+  return (await parseAuthFile(filePath)) ? { present: true } : null;
 }
 
 /** Extract the account ID (sub claim) from an id_token JWT. */

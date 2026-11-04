@@ -18,7 +18,12 @@ vi.mock('../../wiring', () => ({
 
 // The wizard returns the answers it was seeded with: the operator changed nothing.
 // The readline fallback probes the key before writing; never over the network.
-vi.mock('@ethosagent/wiring', () => ({ probeProvider: async () => ({ ok: true }) }));
+// Everything else (personality registry, isSafePathSegment) stays real: the
+// first-run extras that follow a wizard run use them.
+vi.mock('@ethosagent/wiring', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@ethosagent/wiring')>()),
+  probeProvider: async () => ({ ok: true }),
+}));
 
 const prompts = vi.hoisted(() => ({ answers: [] as string[] }));
 

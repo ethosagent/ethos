@@ -22,7 +22,21 @@ export const onboardingRouter = {
       apiKey: input.apiKey,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
       personalityId: input.personalityId,
+      ...(input.keylessPath ? { keylessPath: input.keylessPath } : {}),
     });
     return { ok: true as const };
   }),
+
+  // Keyless first run (plan keyless-first-run §7).
+  probe: os.onboarding.probe.handler(({ context }) => context.onboarding.probe()),
+  importCodexLogin: os.onboarding.importCodexLogin.handler(({ input, context }) =>
+    context.onboarding.importCodexLogin(input),
+  ),
+  pullModel: os.onboarding.pullModel.handler(({ input, context }) =>
+    context.onboarding.pullModel(input),
+  ),
+  pullStatus: os.onboarding.pullStatus.handler(({ context }) => context.onboarding.pullStatus()),
+  namePersonality: os.onboarding.namePersonality.handler(({ input, context }) =>
+    context.onboarding.namePersonality(input),
+  ),
 };

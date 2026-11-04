@@ -48,7 +48,9 @@ export function PersonalityStep({
     queryFn: () => rpc.personalities.list({}),
   });
 
-  const [selectedId, setSelectedId] = useState<string | null>(answers.personalityId ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    answers.builtInPersonalityId ?? answers.personalityId ?? null,
+  );
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const closePreview = () => setPreviewId(null);

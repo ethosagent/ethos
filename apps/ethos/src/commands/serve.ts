@@ -333,6 +333,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 
     const created = createWebApi({
       dataDir: dir,
+      funnelTracker: getFunnelTracker(),
       attachmentCache,
       sessionStore: session,
       contextLog,
@@ -2370,6 +2371,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
   } = opts;
   return createWebApi({
     dataDir: dir,
+    funnelTracker: getFunnelTracker(),
     attachmentCache,
     sessionStore: session,
     contextLog,

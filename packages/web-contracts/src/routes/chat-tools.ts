@@ -3,6 +3,14 @@ import { z } from 'zod';
 import {
   ApprovalLeaseSchema,
   ApprovalScopeSchema,
+  KeylessPathSchema,
+  OnboardingImportCodexLoginInputSchema,
+  OnboardingImportCodexLoginOutputSchema,
+  OnboardingNamePersonalityInputSchema,
+  OnboardingNamePersonalityOutputSchema,
+  OnboardingProbeOutputSchema,
+  OnboardingPullModelInputSchema,
+  OnboardingPullStatusOutputSchema,
   OnboardingStepSchema,
   ProviderIdSchema,
 } from '../schemas';
@@ -330,6 +338,8 @@ const OnboardingCompleteInput = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   personalityId: z.string().min(1),
+  /** Which keyless route produced the model (funnel metric). Additive. */
+  keylessPath: KeylessPathSchema.optional(),
 });
 const OnboardingCompleteOutput = z.object({ ok: z.literal(true) });
 
@@ -340,4 +350,18 @@ export const onboarding = {
     .input(OnboardingValidateProviderInput)
     .output(OnboardingValidateProviderOutput),
   complete: oc.input(OnboardingCompleteInput).output(OnboardingCompleteOutput),
+  // Keyless first run (plan keyless-first-run §7). Every mutation below
+  // refuses with 409 ALREADY_CONFIGURED once `state().step === 'done'`;
+  // pullModel also 409 PULL_IN_PROGRESS / 503 LOCAL_RUNTIME_UNREACHABLE;
+  // namePersonality also 404 PERSONALITY_NOT_FOUND / 409 PERSONALITY_EXISTS /
+  // 400 BAD_REQUEST. Those are thrown ORPCErrors, not output variants.
+  probe: oc.output(OnboardingProbeOutputSchema),
+  importCodexLogin: oc
+    .input(OnboardingImportCodexLoginInputSchema)
+    .output(OnboardingImportCodexLoginOutputSchema),
+  pullModel: oc.input(OnboardingPullModelInputSchema).output(z.object({ ok: z.literal(true) })),
+  pullStatus: oc.output(OnboardingPullStatusOutputSchema),
+  namePersonality: oc
+    .input(OnboardingNamePersonalityInputSchema)
+    .output(OnboardingNamePersonalityOutputSchema),
 };

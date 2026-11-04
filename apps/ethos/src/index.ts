@@ -135,7 +135,9 @@ async function launchAfterSetup(
 ): Promise<void> {
   if (!setupResult) return;
   if (setupResult.launch === 'chat') {
-    await runChat(setupResult.config);
+    await runChat(setupResult.config, {
+      ...(setupResult.initialMessage ? { initialMessage: setupResult.initialMessage } : {}),
+    });
     return;
   }
   if (setupResult.launch === 'gateway') {
@@ -213,6 +215,20 @@ try {
       if (args.includes('--from-env')) {
         const { runSetupFromEnv } = await import('./commands/setup-from-env');
         await runSetupFromEnv(args.slice(1));
+        break;
+      }
+      if (args.includes('--keyless')) {
+        // D23 / plan §6.3: non-interactive; only a `local` or `ethos-login`
+        // candidate qualifies; never imports, installs or pulls.
+        const { runSetupKeyless } = await import('./commands/setup');
+        const outcome = await runSetupKeyless();
+        if (!outcome.ok) {
+          console.error(outcome.summary);
+          process.exit(1);
+        }
+        console.log(
+          `Config saved (${outcome.config.provider}, ${outcome.config.model}; path: ${outcome.keylessPath}).`,
+        );
         break;
       }
       const setupSub = args[1];
@@ -307,6 +323,18 @@ try {
           );
           process.exit(2);
         }
+        // Plan keyless-first-run §6.2 / D22: first launch → first answer starts
+        // here. The dir may not exist yet, so mkdir through Storage first.
+        // Fail-open: funnel telemetry must never block setup
+        // (FunnelTracker.recordFirstLaunch is pinned by funnel.test.ts; this call
+        // site is untested — index.ts runs at import — and covered by the release smoke).
+        try {
+          const { getFunnelTracker, getStorage } = await import('./wiring');
+          await getStorage().mkdir(ethosDir());
+          await getFunnelTracker().recordFirstLaunch();
+        } catch {
+          // best-effort stamp
+        }
         console.log('No config found. Running setup first...\n');
         const setupResult = await runSetup();
         if (setupResult) {
@@ -326,6 +354,9 @@ try {
           withFlags = await applyCliOverrides(withFlags, cliOverrideFlags, getStorage());
           await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
+            ...(!query && setupResult.initialMessage
+              ? { initialMessage: setupResult.initialMessage }
+              : {}),
             ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
             ...(noResumeHintFlag ? { noResumeHint: true } : {}),
             ...(dryRunFlag ? { dryRun: true } : {}),

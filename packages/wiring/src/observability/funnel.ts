@@ -10,6 +10,11 @@
 //   • emits-exactly-once — a stamped event never re-emits.
 //   • earliest-event-wins — on a cross-process double-write, the merge keeps
 //     the earlier timestamp for every stamp.
+//   • keyless metric (plan keyless-first-run §6, D22) — `firstLaunchAt` is the
+//     first surface that found no config; `msSinceFirstLaunch` on
+//     `funnel.first_reply` is first launch → first answer. `keylessPath` rides
+//     WITH the winning `setupCompletedAt` stamp (it describes how that setup
+//     ended), never merged independently. Pinned by funnel.test.ts.
 //   • legacy-install guard — a first reply on an install with NO
 //     setup_completed stamp (pre-funnel 0.5.x installs) marks the install
 //     `legacy`; the event carries `legacy: true` and no `msSinceSetup`, so
@@ -37,12 +42,19 @@ export const FUNNEL_STATE_FILE = 'funnel-state.json';
 
 export type FunnelWizardPath = 'tui' | 'web' | 'readline' | 'env';
 
+/** How a keyless first run reached a working provider (plan keyless-first-run §6.2). */
+export type KeylessPath = 'ethos-login' | 'external-login' | 'local' | 'installed' | 'key';
+
 export interface FunnelState {
+  /** Epoch ms of the first surface that found no config (earliest wins). */
+  firstLaunchAt?: number;
   /** Epoch ms when setup completed (wizard finished writing config). */
   setupCompletedAt?: number;
   setupProvider?: string;
   setupChannels?: string[];
   setupWizardPath?: FunnelWizardPath;
+  /** How setup reached a provider; follows the winning `setupCompletedAt` stamp. */
+  keylessPath?: KeylessPath;
   /** Epoch ms of the first-ever completed turn on any surface. */
   firstReplyAt?: number;
   /** Epoch ms of the first completed turn per channel platform. */
@@ -58,7 +70,12 @@ export interface FunnelObservability {
     channels: string[];
     wizardPath: FunnelWizardPath;
   }): void;
-  recordFunnelFirstReply(opts: { msSinceSetup?: number; legacy?: boolean }): void;
+  recordFunnelFirstReply(opts: {
+    msSinceSetup?: number;
+    msSinceFirstLaunch?: number;
+    keylessPath?: KeylessPath;
+    legacy?: boolean;
+  }): void;
   recordFunnelChannelFirstReply(opts: {
     platform: string;
     msSinceSetup?: number;
@@ -105,6 +122,10 @@ export function mergeFunnelState(a: FunnelState, b: FunnelState): FunnelState {
     ...(setupMeta.setupChannels !== undefined ? { setupChannels: setupMeta.setupChannels } : {}),
     ...(setupMeta.setupWizardPath !== undefined
       ? { setupWizardPath: setupMeta.setupWizardPath }
+      : {}),
+    ...(setupMeta.keylessPath !== undefined ? { keylessPath: setupMeta.keylessPath } : {}),
+    ...(earlier(a.firstLaunchAt, b.firstLaunchAt) !== undefined
+      ? { firstLaunchAt: earlier(a.firstLaunchAt, b.firstLaunchAt) }
       : {}),
     ...(earlier(a.firstReplyAt, b.firstReplyAt) !== undefined
       ? { firstReplyAt: earlier(a.firstReplyAt, b.firstReplyAt) }
@@ -158,10 +179,20 @@ export class FunnelTracker {
     return parseFunnelState(await this.storage.read(this.path));
   }
 
+  /** Stamp the first launch (no config yet). Earliest wins; emits no event. */
+  async recordFirstLaunch(): Promise<void> {
+    return this.enqueue(async () => {
+      const state = await this.load();
+      if (state.firstLaunchAt !== undefined) return;
+      await this.commit({ firstLaunchAt: this.now() });
+    });
+  }
+
   async recordSetupCompleted(opts: {
     provider: string;
     channels: string[];
     wizardPath: FunnelWizardPath;
+    keylessPath?: KeylessPath;
   }): Promise<void> {
     return this.enqueue(async () => {
       const state = await this.load();
@@ -171,11 +202,16 @@ export class FunnelTracker {
         setupProvider: opts.provider,
         setupChannels: opts.channels,
         setupWizardPath: opts.wizardPath,
+        ...(opts.keylessPath !== undefined ? { keylessPath: opts.keylessPath } : {}),
       });
       // Only the process that transitioned setup absent→present emits — a
       // sibling that stamped it first (seen on the pre-write re-read) does not.
       if (before.setupCompletedAt === undefined) {
-        this.observability.recordFunnelSetupCompleted(opts);
+        this.observability.recordFunnelSetupCompleted({
+          provider: opts.provider,
+          channels: opts.channels,
+          wizardPath: opts.wizardPath,
+        });
       }
     });
   }
@@ -189,11 +225,14 @@ export class FunnelTracker {
       // legacy is recomputed from the MERGED disk state, so a setup stamp that
       // landed concurrently keeps this reply out of the legacy bucket.
       const setupAt = merged.setupCompletedAt;
-      this.observability.recordFunnelFirstReply(
-        setupAt === undefined
-          ? { legacy: true }
-          : { msSinceSetup: (merged.firstReplyAt as number) - setupAt },
-      );
+      const repliedAt = merged.firstReplyAt as number;
+      this.observability.recordFunnelFirstReply({
+        ...(setupAt === undefined ? { legacy: true } : { msSinceSetup: repliedAt - setupAt }),
+        ...(merged.firstLaunchAt !== undefined
+          ? { msSinceFirstLaunch: Math.max(0, repliedAt - merged.firstLaunchAt) }
+          : {}),
+        ...(merged.keylessPath !== undefined ? { keylessPath: merged.keylessPath } : {}),
+      });
     });
   }
 
@@ -290,6 +329,7 @@ export class FunnelTracker {
   private survives(after: FunnelState, merged: FunnelState): boolean {
     if (merged.setupCompletedAt !== undefined && after.setupCompletedAt === undefined) return false;
     if (merged.firstReplyAt !== undefined && after.firstReplyAt === undefined) return false;
+    if (merged.firstLaunchAt !== undefined && after.firstLaunchAt === undefined) return false;
     for (const platform of Object.keys(merged.channelFirstReplyAt ?? {})) {
       if (after.channelFirstReplyAt?.[platform] === undefined) return false;
     }

@@ -107,7 +107,9 @@ export interface OpenAICompatProviderConfig {
 // Phase 1d — documented floor for agentic tool use on local backends. Below
 // this, tool schemas + a single turn already overflow, and Ollama/vLLM truncate
 // silently. Surfaced as a loud constructor error instead.
-const LOCAL_CONTEXT_FLOOR_TOKENS = 16_000;
+// Exported so the keyless probe (packages/wiring/src/keyless-probe.ts) reads this
+// one value instead of copying it.
+export const LOCAL_CONTEXT_FLOOR_TOKENS = 16_000;
 
 /** UBP-032 — bound on remembered Gemini thought signatures per provider. */
 export const MAX_THOUGHT_SIGNATURES = 2000;

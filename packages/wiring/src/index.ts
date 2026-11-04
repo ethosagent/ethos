@@ -2213,7 +2213,11 @@ export {
   type UsageAggregateRow,
   type UsageTotals,
 } from '@ethosagent/session-sqlite';
-export { EnvSecretsResolver, FileSecretsResolver } from '@ethosagent/storage-fs';
+export {
+  EnvSecretsResolver,
+  FileSecretsResolver,
+  isSafePathSegment,
+} from '@ethosagent/storage-fs';
 export { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 // Backend-aware memory (memory-lifecycle vault gaps, F04). By convention, code
 // outside a loop opens memory through these, so it acts on the configured
@@ -2405,6 +2409,7 @@ export {
   FunnelTracker,
   type FunnelTrackerOptions,
   type FunnelWizardPath,
+  type KeylessPath,
   mergeFunnelState,
   readFunnelState,
 } from './observability/funnel';

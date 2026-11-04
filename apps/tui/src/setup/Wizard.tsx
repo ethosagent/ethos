@@ -14,6 +14,7 @@ import {
 } from './context';
 import { AuthStep } from './steps/AuthStep';
 import { DaemonInstallStep } from './steps/DaemonInstallStep';
+import { KeylessStep } from './steps/KeylessStep';
 import { KeyRotationStep } from './steps/KeyRotationStep';
 import { LaunchStep } from './steps/LaunchStep';
 import { MemoryStep } from './steps/MemoryStep';
@@ -46,16 +47,22 @@ function reducer(state: WizardState, action: WizardAction): WizardState {
     if (state.singleStep) {
       return { ...state, mode, answers: merged, singleStepDone: merged };
     }
-    const next = nextStep(state.step, mode);
+    const next = nextStep(state.step, mode, merged.skipSteps ?? []);
     return { ...state, mode, answers: merged, step: next ?? state.step };
   }
 
   if (action.type === 'back') {
-    const prev = prevStep(state.step, mode);
+    const prev = prevStep(state.step, mode, state.answers.skipSteps ?? []);
     return { ...state, step: prev ?? state.step };
   }
 
   return state;
+}
+
+/** D13: the keyless step opens a fresh setup only; pinned by
+ *  `__tests__/keyless-step.test.ts` "re-run with existing config skips the step". */
+export function initialStep(existing: WizardAnswers | null): WizardStepId {
+  return existing ? 'entry' : 'keyless';
 }
 
 interface WizardProps {
@@ -63,21 +70,30 @@ interface WizardProps {
   startAtStep?: WizardStepId;
   /** When true, exit immediately after the first step confirms — section re-entry. */
   singleStep?: boolean;
+  /** Offer the Ollama install row in the keyless step (default true). */
+  offerInstall?: boolean;
   onComplete: (
     result: { answers: WizardAnswers; launch: 'gateway' | 'chat' | 'done' } | null,
   ) => void;
 }
 
-export function Wizard({ existing, startAtStep, singleStep, onComplete }: WizardProps) {
+export function Wizard({
+  existing,
+  startAtStep,
+  singleStep,
+  offerInstall,
+  onComplete,
+}: WizardProps) {
   const initialMode: WizardMode = startAtStep && isFullOnlyStep(startAtStep) ? 'full' : 'quick';
 
   // React 19 dropped the single-generic `useReducer<Reducer<S, A>>` overload.
   // The supported form is `useReducer<S, A>` directly; TS infers it from
   // `reducer`'s signature here, so no explicit args needed.
   const [state, dispatch] = useReducer(reducer, {
-    step: startAtStep ?? 'entry',
+    step: startAtStep ?? initialStep(existing),
     mode: initialMode,
-    answers: existing ?? {},
+    // D13: an existing config (re-run) never sees the keyless step.
+    answers: existing ? { ...existing, skipSteps: ['keyless'] } : {},
     aborted: false,
     singleStep: singleStep ?? false,
     singleStepDone: null,
@@ -118,7 +134,12 @@ export function Wizard({ existing, startAtStep, singleStep, onComplete }: Wizard
   return (
     <WizardContext.Provider value={{ answers: state.answers, accent, dispatch }}>
       <Box flexDirection="column" paddingTop={1} paddingLeft={2}>
-        <StepRouter step={state.step} onComplete={onComplete} dispatch={dispatch} />
+        <StepRouter
+          step={state.step}
+          onComplete={onComplete}
+          dispatch={dispatch}
+          offerInstall={offerInstall ?? true}
+        />
         {fullOnlyHint}
         {!state.singleStep && (
           <Box marginTop={1}>
@@ -134,9 +155,10 @@ interface StepRouterProps {
   step: WizardStepId;
   onComplete: WizardProps['onComplete'];
   dispatch: React.Dispatch<WizardAction>;
+  offerInstall: boolean;
 }
 
-function StepRouter({ step, onComplete, dispatch }: StepRouterProps) {
+function StepRouter({ step, onComplete, dispatch, offerInstall }: StepRouterProps) {
   // Ctrl+C abort at any step
   useInput(
     (input, key) => {
@@ -146,6 +168,8 @@ function StepRouter({ step, onComplete, dispatch }: StepRouterProps) {
   );
 
   switch (step) {
+    case 'keyless':
+      return <KeylessStep onComplete={onComplete} offerInstall={offerInstall} />;
     case 'entry':
       return <SetupEntryStep />;
     case 'provider':

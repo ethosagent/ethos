@@ -55,5 +55,8 @@ export const mcpRouter = {
   validateConfig: os.mcp.validateConfig.handler(({ input, context }) =>
     context.mcp.validateConfig(input),
   ),
+  connectPreset: os.mcp.connectPreset.handler(({ input, context }) =>
+    context.mcp.connectPreset(input),
+  ),
   catalog: os.mcp.catalog.handler(({ context }) => context.mcp.catalog()),
 };

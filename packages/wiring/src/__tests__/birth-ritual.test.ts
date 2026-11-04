@@ -62,6 +62,7 @@ import {
 } from '../amendments';
 import { BIRTH_RITUAL_SKILL, createBirthRitualInjector } from '../birth-ritual';
 import { shippedScopedStorageFactory } from '../build-agent-loop';
+import { markPersonalityBorn } from '../index';
 import { createTestSafety } from './helpers/wiring-test-safety';
 
 let root: string;
@@ -292,6 +293,23 @@ describe('createBirthRitualInjector', () => {
     expect(content).toMatch(/keep your current avatar by default/i);
     // Byte-identical on every turn it appears.
     expect((await injector().inject(promptCtx({ turnNumber: 7 })))?.content).toBe(content);
+  });
+
+  it('a personality made by the setup path gets the ritual section on its first cli: turn', async () => {
+    // keyless-first-run D15: `duplicateBornPersonality`
+    // (apps/ethos/src/commands/personality-create.ts) is `duplicate` then
+    // `markPersonalityBorn`. wiring cannot import apps/, so the same two calls
+    // run here against a real built-in; setup-born-agent.test.ts pins the app wrapper.
+    await registry.loadFromDirectory(join(dataDir, 'personalities'));
+    await registry.duplicate('researcher', 'my-researcher');
+    await markPersonalityBorn(storage, dataDir, 'my-researcher');
+    await registry.loadFromDirectory(join(dataDir, 'personalities'));
+
+    const result = await injector().inject(promptCtx({ personalityId: 'my-researcher' }));
+    expect(result?.position).toBe('append');
+    expect(result?.content).toContain(PROPOSE_SELF_AMENDMENT_TOOL);
+    // The built-in it was copied from stays silent (isUserOwned).
+    expect(await injector().inject(promptCtx({ personalityId: 'researcher' }))).toBeNull();
   });
 
   it('is silent on a Telegram turn, a shared turn, a system turn and a background job', async () => {

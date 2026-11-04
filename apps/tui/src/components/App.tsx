@@ -140,6 +140,8 @@ export interface AppProps {
   /** Blank an incognito session's history when `/new` ends it (fail-open, host-injected). */
   endIncognito?: (sessionKey: string) => Promise<boolean>;
   initialVerbose?: boolean;
+  /** Sent through `handleSubmit` once on mount (keyless-first-run D16/D17). */
+  initialMessage?: string;
   /**
    * B2 — host startup warnings (config parse notices), rendered once on mount
    * as dim system lines in the transcript plus a 'warning' timeline entry —
@@ -287,6 +289,7 @@ export function App({
   initialIncognito = false,
   endIncognito,
   initialVerbose = false,
+  initialMessage,
   startupNotices,
   initialSkin,
   rebuildLoop,
@@ -1027,6 +1030,15 @@ export function App({
     }
     sendUserMessage(outgoing);
   };
+
+  // The picked first task is an ordinary submit: transcript line, one turn.
+  const initialSentRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design; the ref guards a repeat
+  useEffect(() => {
+    if (!initialMessage || initialSentRef.current) return;
+    initialSentRef.current = true;
+    void handleSubmit(initialMessage);
+  }, []);
 
   const beginTurn = () => {
     setCompletedTools([]);

@@ -21,6 +21,14 @@
       "import": "./src/local-models.ts",
       "types": "./src/local-models.ts"
     },
+    "./ollama": {
+      "import": "./src/ollama.ts",
+      "types": "./src/ollama.ts"
+    },
+    "./keyless-probe": {
+      "import": "./src/keyless-probe.ts",
+      "types": "./src/keyless-probe.ts"
+    },
     "./types": {
       "import": "./src/types.ts",
       "types": "./src/types.ts"
