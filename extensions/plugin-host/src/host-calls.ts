@@ -23,6 +23,10 @@ export interface CallSurface {
   readonly stats: HostStats;
   readonly drifted: Set<string>;
   readonly isRunning: boolean;
+  /** True when a call may start the host on demand (never ran, or stopped for idleness). */
+  readonly lazyStartable: boolean;
+  /** Records activity so a host only idles after `idle_stop_minutes` without any. */
+  touch(): void;
   connection(): HostConnection | undefined;
   ensureRunning(): Promise<void>;
   killGroup(signal: NodeJS.Signals): void;
@@ -68,6 +72,7 @@ export class HostCalls {
     params: unknown,
     opts: HostRequestOptions = {},
   ): Promise<unknown> {
+    this.host.touch();
     await this.host.ensureRunning();
     const conn = this.host.connection();
     if (!conn) throw new HostUnavailableError(`Plugin '${this.host.spec.id}' host is not running`);
@@ -83,6 +88,7 @@ export class HostCalls {
       if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
       throw err;
     } finally {
+      this.host.touch();
       trace.end(outcome);
     }
   }
@@ -113,6 +119,7 @@ export class HostCalls {
         `Plugin '${id}' tool '${name}' changed after the host restarted and is unavailable until Ethos restarts.`,
       );
     }
+    this.host.touch();
     try {
       await this.host.ensureRunning();
     } catch (err) {
@@ -172,6 +179,7 @@ export class HostCalls {
       outcome = failureOutcome(err);
       return this.toolFailure(err, name);
     } finally {
+      this.host.touch();
       trace.end(outcome);
       if (abortTimer) clearTimeout(abortTimer);
       if (onAbort) signal.removeEventListener('abort', onAbort);
@@ -238,6 +246,15 @@ export class HostCalls {
 
   /** Runs the plugin's modifying handlers host-side. Timeout, crash or throw: null (fail-open). */
   async fireModifying(name: string, payload: unknown): Promise<Record<string, unknown> | null> {
+    this.host.touch();
+    if (!this.host.isRunning && this.host.lazyStartable) {
+      // Never ran (registration cache hit) or stopped for idleness: start it so this hook sees it.
+      try {
+        await this.host.ensureRunning();
+      } catch {
+        return null;
+      }
+    }
     const conn = this.host.connection();
     if (!this.host.isRunning || !conn) {
       void this.host.ensureRunning().catch(() => undefined);
@@ -257,20 +274,31 @@ export class HostCalls {
       if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
       return null;
     } finally {
+      this.host.touch();
       trace.end(outcome);
     }
   }
 
   /** Fire-and-forget, FIFO per host, bounded queue that drops the oldest (D10). */
   fireVoid(name: string, payload: unknown): void {
-    if (!this.host.isRunning) {
+    const cold = !this.host.isRunning;
+    if (cold && !this.host.lazyStartable) {
       this.host.stats.droppedVoid++;
       return;
     }
+    this.host.touch();
     this.voidQueue.push({ name, payload });
     while (this.voidQueue.length > this.host.cfg.voidQueueMax) {
       this.voidQueue.shift();
       this.host.stats.droppedVoid++;
+    }
+    if (cold) {
+      // Start the host on demand (cache hit or idle stop), then drain what queued meanwhile.
+      this.host
+        .ensureRunning()
+        .then(() => this.drainVoid())
+        .catch(() => void this.dropQueued());
+      return;
     }
     void this.drainVoid();
   }
@@ -296,6 +324,7 @@ export class HostCalls {
           outcome = failureOutcome(err);
           if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
         } finally {
+          this.host.touch();
           trace.end(outcome);
         }
       }

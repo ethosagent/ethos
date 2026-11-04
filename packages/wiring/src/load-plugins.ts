@@ -4,6 +4,7 @@ import { DefaultOAuthRegistry } from '@ethosagent/oauth';
 import {
   type InstalledPluginManifest,
   PluginLoader,
+  readLockfile,
   resolvePluginIsolation,
 } from '@ethosagent/plugin-loader';
 import {
@@ -196,6 +197,14 @@ export async function loadPlugins(
             // Assigned after load (build-agent-loop.ts), so read lazily.
             llmFactory: () => pluginRegistries.llmFactory?.(),
             tools,
+            integrity: async (pluginId) => {
+              if (!activePerson.plugins?.length) return undefined;
+              const lock = await readLockfile(
+                wiringCtx.storage,
+                join(dataDir, 'personalities', activePerson.id),
+              );
+              return lock[pluginId]?.integrity;
+            },
           }),
         }
       : {}),

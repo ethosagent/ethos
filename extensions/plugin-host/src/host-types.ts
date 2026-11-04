@@ -11,6 +11,10 @@ export interface HostSpec {
   dir: string;
   entry?: string;
   tier?: string;
+  /** The plugin's `package.json` version; part of the registration-cache key. */
+  version?: string;
+  /** `plugins.lock` integrity when the plugin is lock-pinned; else the cache key uses the entry mtime. */
+  integrity?: string;
   baseUrl?: string;
   /** Secret key NAMES for the child's `hasSecret` (D19). */
   secretKeys?: string[];
@@ -66,11 +70,25 @@ export interface HostRuntimeConfig {
   exitWaitMs: number;
   termGraceMs: number;
   voidQueueMax: number;
+  /** `plugins.host.idle_stop_minutes` in ms; 0 = never stop an idle host. */
+  idleStopMs: number;
+  /** How often a running host is checked for idleness. */
+  idleCheckIntervalMs: number;
   now: () => number;
   random: () => number;
 }
 
-export type HostState = 'idle' | 'starting' | 'running' | 'backoff' | 'circuit' | 'stopped';
+export type HostState =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'idle-stopping'
+  | 'backoff'
+  | 'circuit'
+  | 'stopped';
+
+/** `lazy`: first spawn of a cache-primed host, or a respawn after an idle stop (not a crash restart). */
+export type StartMode = 'first' | 'restart' | 'lazy';
 
 export interface Running {
   proc: ChildProcess;

@@ -19,6 +19,7 @@ import {
   type HostState,
   type HostStats,
   type Running,
+  type StartMode,
 } from './host-types';
 import {
   type ActivateParams,
@@ -31,6 +32,11 @@ import { parseRegistration } from './registration-parse';
 import { isRecord } from './util';
 
 export type { HostRuntimeConfig, HostSpec } from './host-types';
+
+/** Told by the entry when the replayable registration list changed and the cache should be rewritten. */
+export interface HostEntryHooks {
+  persist(registrations: readonly Registration[], holdsLongLived: boolean): void;
+}
 
 /**
  * One plugin's host: the child process, its connection and its failure
@@ -50,6 +56,14 @@ export class HostEntry implements CallSurface {
   private current: Running | null = null;
   private startPromise: Promise<void> | null = null;
   private activated = false;
+  private startMode: StartMode = 'first';
+  /** Primed from the registration cache and not yet compared against a live activation. */
+  private cacheUnverified = false;
+  private readonly reportedDrift = new Set<string>();
+  private lastActivity = 0;
+  private idleTimer: ReturnType<typeof setInterval> | undefined;
+  private idleStop: Promise<void> | null = null;
+  private idleStopping = false;
   private crashes: number[] = [];
   private consecutive = 0;
   private nextSpawnAt = 0;
@@ -67,8 +81,38 @@ export class HostEntry implements CallSurface {
   constructor(
     readonly spec: HostSpec,
     readonly cfg: HostRuntimeConfig,
+    private readonly hooks?: HostEntryHooks,
   ) {
     this.stderr = new StderrForwarder(spec.id, cfg.logger, cfg.now);
+    this.lastActivity = cfg.now();
+  }
+
+  /**
+   * Registers a cached registration list with no spawn (plan §5.4.3). The first
+   * call (`ensureRunning`) spawns, activates and compares; a mismatch follows
+   * the drift rule and rewrites the cache.
+   */
+  primeFromCache(registrations: readonly Registration[]): void {
+    this.activated = true;
+    this.cacheUnverified = true;
+    this.registrations = [...registrations];
+    for (const reg of registrations) {
+      if (reg.kind === 'tool') this.toolAvailable.set(reg.name, reg.available);
+    }
+  }
+
+  /** Records activity, so a host is idle only after `idle_stop_minutes` without any. */
+  touch(): void {
+    this.lastActivity = this.cfg.now();
+  }
+
+  /** True when a call may start the host on demand (never ran, or stopped for idleness). */
+  get lazyStartable(): boolean {
+    return (
+      this.state === 'idle' ||
+      this.state === 'idle-stopping' ||
+      (this.state === 'starting' && this.startMode === 'lazy')
+    );
   }
 
   connection(): HostConnection | undefined {
@@ -100,20 +144,22 @@ export class HostEntry implements CallSurface {
 
   /** First activation. Rejects (and leaves nothing running) when the host cannot start. */
   async activate(): Promise<void> {
-    await this.begin(false);
+    await this.begin('first');
   }
 
-  private begin(isRestart: boolean): Promise<void> {
+  private begin(mode: StartMode): Promise<void> {
     if (this.startPromise) return this.startPromise;
     this.state = 'starting';
-    const p = this.startOnce(isRestart).finally(() => {
+    this.startMode = mode;
+    const p = this.startOnce(mode).finally(() => {
       this.startPromise = null;
     });
     this.startPromise = p;
     return p;
   }
 
-  private async startOnce(isRestart: boolean): Promise<void> {
+  private async startOnce(mode: StartMode): Promise<void> {
+    const isRestart = mode === 'restart';
     const t0 = this.cfg.now();
     let running: Running | null = null;
     try {
@@ -123,8 +169,9 @@ export class HostEntry implements CallSurface {
         timeoutMs: this.cfg.readyTimeoutMs * 3,
       });
       const parsed = this.parseActivate(result);
-      this.applyActivation(parsed, isRestart);
+      this.applyActivation(parsed, mode);
       this.state = 'running';
+      this.touch();
       this.rssMb = parsed.rssMb;
       this.cfg.onEvent('plugin_host.spawned', {
         plugin_id: this.spec.id,
@@ -142,6 +189,7 @@ export class HostEntry implements CallSurface {
       }
       this.schedulePing();
       this.scheduleStats();
+      this.scheduleIdleCheck();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (running) {
@@ -149,7 +197,7 @@ export class HostEntry implements CallSurface {
         await running.exited.catch(() => undefined);
       }
       if (this.current === running) this.current = null;
-      if (isRestart) this.recordCrash(running?.startedAt ?? t0);
+      if (mode !== 'first') this.recordCrash(running?.startedAt ?? t0);
       else this.state = 'idle';
       throw err instanceof HostStartError ? err : new HostStartError(message);
     }
@@ -185,7 +233,7 @@ export class HostEntry implements CallSurface {
     };
   }
 
-  private applyActivation(result: ActivateResult, isRestart: boolean): void {
+  private applyActivation(result: ActivateResult, mode: StartMode): void {
     if (!this.activated) {
       this.activated = true;
       this.registrations = result.registrations;
@@ -193,21 +241,31 @@ export class HostEntry implements CallSurface {
       for (const reg of result.registrations) {
         if (reg.kind === 'tool') this.toolAvailable.set(reg.name, reg.available);
       }
+      this.hooks?.persist(result.registrations, result.holdsLongLived);
       return;
     }
-    if (!isRestart) return;
+    if (mode === 'first') return;
     const changed = diffRegistrations(this.registrations, result.registrations);
     for (const reg of result.registrations) {
       if (reg.kind === 'tool') this.toolAvailable.set(reg.name, reg.available);
     }
-    if (changed.length > 0) {
-      for (const key of changed) {
-        if (key.startsWith('tool:')) this.drifted.add(key.slice('tool:'.length));
-      }
+    // Report a key once: an idle-stop respawn of a drifted plugin must not repeat the event.
+    const fresh = changed.filter((key) => !this.reportedDrift.has(key));
+    for (const key of fresh) {
+      this.reportedDrift.add(key);
+      if (key.startsWith('tool:')) this.drifted.add(key.slice('tool:'.length));
+    }
+    if (fresh.length > 0) {
       this.cfg.onEvent('plugin_host.registration_drift', {
         plugin_id: this.spec.id,
-        changed,
+        changed: fresh,
       });
+    }
+    const longLivedFlipped = result.holdsLongLived && !this.holdsLongLived;
+    if (longLivedFlipped) this.holdsLongLived = true;
+    if (this.cacheUnverified || fresh.length > 0 || longLivedFlipped) {
+      this.cacheUnverified = false;
+      this.hooks?.persist(result.registrations, this.holdsLongLived);
     }
   }
 
@@ -271,6 +329,7 @@ export class HostEntry implements CallSurface {
             this.onRegistrationAdded0(params);
           } else if (method === 'ethos/long-lived' && isRecord(params)) {
             this.holdsLongLived = params.value === true;
+            this.hooks?.persist(this.registrations, this.holdsLongLived);
           }
         },
       });
@@ -333,6 +392,7 @@ export class HostEntry implements CallSurface {
     this.registrations.push(reg);
     if (reg.kind === 'tool') this.toolAvailable.set(reg.name, reg.available);
     for (const listener of this.addedListeners) listener(reg);
+    this.hooks?.persist(this.registrations, this.holdsLongLived);
   }
 
   private forwardLog(params: unknown): void {
@@ -357,7 +417,9 @@ export class HostEntry implements CallSurface {
     this.current = null;
     if (this.pingTimer) clearTimeout(this.pingTimer);
     this.clearStats();
+    this.clearIdleCheck();
     this.calls.dropQueued();
+    if (this.idleStopping) return; // a deliberate idle stop: not a crash, no backoff
     if (this.stopping || this.state === 'stopped') {
       this.state = 'stopped';
       return;
@@ -402,6 +464,7 @@ export class HostEntry implements CallSurface {
 
   /** Resolves when a call may be sent, restarting the host lazily; throws HostUnavailableError. */
   async ensureRunning(): Promise<void> {
+    if (this.idleStop) await this.idleStop;
     const now = this.cfg.now();
     switch (this.state) {
       case 'running':
@@ -430,7 +493,8 @@ export class HostEntry implements CallSurface {
         break;
     }
     try {
-      await this.begin(true);
+      // `idle` = never ran (cache hit) or stopped for idleness: a plain start, not a crash restart.
+      await this.begin(this.state === 'idle' ? 'lazy' : 'restart');
     } catch (err) {
       throw new HostUnavailableError(err instanceof Error ? err.message : String(err));
     }
@@ -507,6 +571,49 @@ export class HostEntry implements CallSurface {
   }
 
   // -------------------------------------------------------------------------
+  // Idle stop (plan §5.4.3)
+  // -------------------------------------------------------------------------
+
+  private scheduleIdleCheck(): void {
+    this.clearIdleCheck();
+    if (this.cfg.idleStopMs <= 0) return;
+    this.idleTimer = setInterval(() => this.checkIdle(), this.cfg.idleCheckIntervalMs);
+    this.idleTimer.unref?.();
+  }
+
+  private clearIdleCheck(): void {
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  /** Stops the host when nothing long-lived is held, nothing is in flight and `idle_stop_minutes` passed. */
+  private checkIdle(): void {
+    const running = this.current;
+    if (this.state !== 'running' || !running || this.holdsLongLived) return;
+    if (running.conn.pendingCount > 0 || this.handles.size > 0) return;
+    if (this.cfg.now() - this.lastActivity < this.cfg.idleStopMs) return;
+    this.idleStop = this.stopForIdle(running).finally(() => {
+      this.idleStop = null;
+    });
+  }
+
+  private async stopForIdle(live: Running): Promise<void> {
+    this.idleStopping = true;
+    this.state = 'idle-stopping';
+    if (this.pingTimer) clearTimeout(this.pingTimer);
+    this.clearStats();
+    this.clearIdleCheck();
+    try {
+      await this.terminate(live);
+    } finally {
+      this.idleStopping = false;
+      if (this.current?.proc === live.proc) this.current = null;
+      if (!this.stopping) this.state = 'idle';
+    }
+    this.cfg.onEvent('plugin_host.stopped', { plugin_id: this.spec.id, reason: 'idle' });
+  }
+
+  // -------------------------------------------------------------------------
   // Calls
   // -------------------------------------------------------------------------
 
@@ -543,12 +650,19 @@ export class HostEntry implements CallSurface {
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.pingTimer) clearTimeout(this.pingTimer);
     this.clearStats();
+    this.clearIdleCheck();
     this.stopping = true;
     const running = this.current;
     if (this.startPromise) await this.startPromise.catch(() => undefined);
     const live = this.current ?? running;
     this.state = 'stopped';
     if (!live) return;
+    await this.terminate(live);
+    this.cfg.onEvent('plugin_host.stopped', { plugin_id: this.spec.id, reason });
+  }
+
+  /** Shutdown request, then SIGTERM and SIGKILL to the process group; resolves once the child is gone. */
+  private async terminate(live: Running): Promise<void> {
     const pid = live.proc.pid;
     const waitExit = (ms: number): Promise<boolean> =>
       new Promise<boolean>((resolve) => {
@@ -578,6 +692,5 @@ export class HostEntry implements CallSurface {
         await waitExit(250);
       }
     }
-    this.cfg.onEvent('plugin_host.stopped', { plugin_id: this.spec.id, reason });
   }
 }

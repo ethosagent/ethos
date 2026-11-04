@@ -199,6 +199,8 @@ describe('createAgentLoop with plugins.isolation: host', () => {
 
   it('loop dispose releases, pool dispose kills, in that order; a borrower never disposes the pool', async () => {
     const poolDispose = vi.spyOn(PluginHostPool.prototype, 'dispose');
+    // No registration cache from an earlier test: a cache hit defers the spawn to the first call.
+    rmSync(join(dataDir, 'plugin-hosts'), { recursive: true, force: true });
     const pool = newPool();
     const runtime = await build({ pluginHostPool: pool });
     const pid = pool.pidOf('echo') as number;

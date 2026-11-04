@@ -19,6 +19,11 @@ export interface PluginActivatorOptions {
    * plugin load, because `DefaultToolRegistry.register` silently overwrites.
    */
   tools?: Pick<ToolRegistry, 'get' | 'getPluginId'>;
+  /**
+   * The plugin's `plugins.lock` integrity, when it is lock-pinned. It keys the
+   * registration cache (§5.4.3); without it the cache keys on the entry mtime.
+   */
+  integrity?: (pluginId: string) => string | undefined | Promise<string | undefined>;
 }
 
 /**
@@ -34,11 +39,15 @@ export function createPluginActivator(
   return {
     async activate(req: PluginActivationRequest): Promise<EthosPlugin> {
       const secretKeys = (await opts.secretKeys?.(req.id)) ?? [];
+      const integrity = await safeIntegrity(opts.integrity, req.id);
+      const version = typeof req.manifest.version === 'string' ? req.manifest.version : undefined;
       const lease = await pool.acquire({
         id: req.id,
         dir: req.dir,
         entry: req.entry,
         tier: req.tier,
+        ...(version ? { version } : {}),
+        ...(integrity ? { integrity } : {}),
         ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
         secretKeys,
         ...(req.network !== undefined ? { network: req.network } : {}),
@@ -62,4 +71,15 @@ export function createPluginActivator(
       };
     },
   };
+}
+
+async function safeIntegrity(
+  get: PluginActivatorOptions['integrity'],
+  pluginId: string,
+): Promise<string | undefined> {
+  try {
+    return (await get?.(pluginId)) || undefined;
+  } catch {
+    return undefined; // an unreadable lockfile only costs the cache its stronger key
+  }
 }

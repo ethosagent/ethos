@@ -17,7 +17,7 @@ This page is the list. It has three parts: the **tiers** (which code is held to 
 
 ### The three tiers {#tiers}
 
-Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 150 packages: 11 at Tier 0, 27 at Tier 1, 112 at Tier 2.
+Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 151 packages: 11 at Tier 0, 28 at Tier 1, 112 at Tier 2.
 
 The assignment is committed **before** any report arrives. A tier decided in the same week a report lands against that module is evidence of nothing, and a reporter reading `git log` can say so with a timestamp.
 
@@ -39,6 +39,7 @@ The per-file lists for core and wiring are in the sidecar under `kernel_paths`. 
 | Execution | `tools-terminal`, `tools-code`, `execution-docker`, `execution-local`, `execution-ssh`, `execution-pi`, `execution-coding-agents` |
 | Third-party code | `tools-mcp`, `skills`, `skill-evolver`, `plugin-loader` |
 | Network surface | `apps/web-api` |
+| Plugin host | `plugin-host`: the parent end of the host boundary. It authorises each secret ref per call (`authorizeSecretRef`, `extensions/plugin-host/src/secrets.ts`; pinned by `isolation-boundary.test.ts`). Host mode is **not a sandbox**: without `plugins.host.sandbox: auto` the host can still read vault files on disk, and a test pins that limitation |
 | Data at rest and credentials | `session-sqlite`, `storage-crypto`, `secrets-aws`, `plugin-sdk`, `worker-router` |
 | Audit and delivery | `observability-sqlite`, `delivery-ledger` |
 

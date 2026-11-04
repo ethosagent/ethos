@@ -17,10 +17,19 @@ import { HOST_ERROR, HostStartError, HostUnavailableError } from './errors';
 import type { HostEventSink, HostSpanSink } from './events';
 import type { LiveCall } from './handles';
 import type { HostRequestOptions } from './host-calls';
-import { HostEntry } from './host-entry';
+import { HostEntry, type HostEntryHooks } from './host-entry';
 import type { HandlerContext, HostRuntimeConfig, HostSpec } from './host-types';
 import { createParentHandlers, ParentApis, type ParentServices } from './parent-handlers';
 import type { CallHandle, ParentToHostMethod, Registration } from './protocol';
+import {
+  computeCacheKey,
+  mustSpawnEagerly,
+  type RegistrationCacheKey,
+  readRegistrationCache,
+  registrationCachePath,
+  sortedSecretKeys,
+  writeRegistrationCache,
+} from './registration-cache';
 import {
   bwrapMaskCandidates,
   detectSandbox,
@@ -79,6 +88,14 @@ export interface PluginHostPoolOptions {
   exitWaitMs?: number;
   termGraceMs?: number;
   voidQueueMax?: number;
+  /**
+   * `plugins.host.idle_stop_minutes`: a host with no monitors, routes or
+   * subscriptions and no in-flight call stops after this long (default 10,
+   * 0 = never) and respawns on its next call.
+   */
+  idleStopMinutes?: number;
+  /** How often a running host is checked for idleness (default 30 000). Tests shorten it. */
+  idleCheckIntervalMs?: number;
   now?: () => number;
   random?: () => number;
 }
@@ -205,6 +222,7 @@ class Lease implements HostLease {
 export class PluginHostPool {
   private readonly entries = new Map<string, HostEntry>();
   private readonly starting = new Map<string, Promise<HostEntry>>();
+  private readonly cacheWrites = new Set<Promise<unknown>>();
   private readonly leaseCounts = new Map<string, number>();
   private readonly cfg: HostRuntimeConfig;
   private readonly apis = new ParentApis();
@@ -252,6 +270,8 @@ export class PluginHostPool {
       exitWaitMs: opts.exitWaitMs ?? 250,
       termGraceMs: opts.termGraceMs ?? 1_000,
       voidQueueMax: opts.voidQueueMax ?? 1_000,
+      idleStopMs: Math.max(0, opts.idleStopMinutes ?? 10) * 60_000,
+      idleCheckIntervalMs: opts.idleCheckIntervalMs ?? 30_000,
       now: opts.now ?? Date.now,
       random: opts.random ?? Math.random,
     };
@@ -376,7 +396,33 @@ export class PluginHostPool {
     const home = this.cfg.hostHome(spec.id);
     await this.opts.storage.mkdir(home);
     await this.opts.storage.mkdir(join(home, '..', 'tmp'));
-    const entry = new HostEntry(spec, this.cfg);
+    const key = await computeCacheKey(this.opts.storage, spec);
+    const path = registrationCachePath(this.opts.dataDir, hostDirName(spec.id));
+    let writes: Promise<unknown> = Promise.resolve();
+    const hooks: HostEntryHooks = {
+      persist: (registrations, holdsLongLived) => {
+        if (!key) return;
+        const snapshot = {
+          key,
+          registrations: [...registrations],
+          holdsLongLived,
+          secretKeys: sortedSecretKeys(spec.secretKeys),
+        };
+        // Serialised per host, so a slow earlier write cannot land after a newer one.
+        const write = writes.then(() => writeRegistrationCache(this.opts.storage, path, snapshot));
+        writes = write;
+        this.cacheWrites.add(write);
+        void write.finally(() => this.cacheWrites.delete(write));
+      },
+    };
+    const entry = new HostEntry(spec, this.cfg, hooks);
+    const cached = key ? await this.cachedRegistrations(path, key, spec) : undefined;
+    if (cached) {
+      // Plan §5.4.3: proxies register with no spawn; the first call spawns, activates and compares.
+      entry.primeFromCache(cached);
+      this.entries.set(spec.id, entry);
+      return entry;
+    }
     await entry.activate();
     if (this.disposing) {
       await entry.stop('dispose');
@@ -386,12 +432,29 @@ export class PluginHostPool {
     return entry;
   }
 
+  /** The cached registrations when they may stand in for a live activation; else `undefined`. */
+  private async cachedRegistrations(
+    path: string,
+    key: RegistrationCacheKey,
+    spec: HostSpec,
+  ): Promise<readonly Registration[] | undefined> {
+    const hit = await readRegistrationCache(
+      this.opts.storage,
+      path,
+      key,
+      sortedSecretKeys(spec.secretKeys),
+    );
+    if (!hit || mustSpawnEagerly(hit)) return undefined;
+    return hit.registrations;
+  }
+
   /** Memoised. Stops every host in parallel: shutdown, SIGTERM the group, SIGKILL 1 s later. */
   dispose(): Promise<void> {
     if (!this.disposing) {
       const pending = [...this.starting.values()].map((p) => p.catch(() => undefined));
       this.disposing = Promise.all(pending).then(async () => {
         await Promise.all([...this.entries.values()].map((e) => e.stop('dispose')));
+        await Promise.all([...this.cacheWrites]);
       });
     }
     return this.disposing;

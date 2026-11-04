@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve } from 'node:path';
 import { DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
 import {
   DiagnosticStore,
@@ -14,6 +15,7 @@ import type {
   DocumentExtractorRegistry,
   ModifyingHooks,
   NotificationRouter,
+  PersonalityConfig,
   PersonalityRegistry,
   PluginHealthCheck,
   PostTurnEvaluator,
@@ -24,12 +26,9 @@ import type {
   VoidHooks,
 } from '@ethosagent/types';
 import type { HostConnection } from '../connection';
-import type { Registration } from '../protocol';
 
 /** Registrations the plugin makes, observed as they happen. */
 export interface RegistrationObserver {
-  /** A non-tool, non-hook row, reported by the api tap. */
-  add(reg: Registration): void;
   tool(tool: Tool): void;
   hook(model: 'void' | 'modifying', name: string): void;
 }
@@ -187,8 +186,39 @@ export interface ChildRows {
   cli: Map<string, (ctx: CliSubcommandContext) => Promise<number>>;
 }
 
+type OAuthProviderProfile = Parameters<
+  NonNullable<PluginRegistries['oauthRegistry']>['registerProfile']
+>[0];
+
+/** Plain-data registrations the host's registries merely had to accept; `api-sync` reads them. */
+export interface ChildData {
+  personalities: PersonalityConfig[];
+  oauthProfiles: OAuthProviderProfile[];
+}
+
+/**
+ * The plugin's `registerDataSource` map, confined to `<dataDir>/plugin-hosts/<id>` (D21).
+ * Seeded under the plugin id so the api's own `dataSources.get(id).set(...)` lands here
+ * and throws inside the plugin's `activate()`.
+ */
+export class StateDirMap extends Map<string, string> {
+  constructor(private readonly stateDir: string) {
+    super();
+  }
+  override set(id: string, path: string): this {
+    const rel = relative(resolve(this.stateDir), resolve(path));
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(
+        `registerDataSource('${id}') path '${path}' must be inside the plugin host state dir '${this.stateDir}'`,
+      );
+    }
+    return super.set(id, resolve(path));
+  }
+}
+
 export interface ChildRegistries {
   registries: PluginRegistries;
+  data: ChildData;
   tools: RecordingToolRegistry;
   hooks: RecordingHookRegistry;
   rows: ChildRows;
@@ -199,7 +229,10 @@ export interface ChildRegistryOptions {
   observer: () => RegistrationObserver;
   conn: HostConnection;
   baseUrl?: string;
-  /** A monitor started: the host now holds a long-lived thing (eager restart). */
+  pluginId: string;
+  /** `<dataDir>/plugin-hosts/<id>`: the only place `registerDataSource` may point (D21). */
+  stateDir: string;
+  /** A monitor or route now exists: the host holds a long-lived thing (eager restart, D15). */
   onLongLived: () => void;
 }
 
@@ -226,8 +259,11 @@ export function createChildRegistries(opts: ChildRegistryOptions): ChildRegistri
     register: () => undefined,
     deregister: () => undefined,
   };
+  const data: ChildData = { personalities: [], oauthProfiles: [] };
   const extractorRegistry: DocumentExtractorRegistry = {
-    register: () => undefined,
+    register: (extractor) => {
+      rows.extractors.push(extractor);
+    },
     for: () => undefined,
     list: () => [],
   };
@@ -250,14 +286,25 @@ export function createChildRegistries(opts: ChildRegistryOptions): ChildRegistri
     notificationRouter,
     diagnostics: new ForwardingDiagnostics(conn),
     documentExtractors: extractorRegistry,
-    llmFactory: () => llm,
+    // `PluginApiImpl.startMonitor` calls this factory for every monitor it starts: the only
+    // signal a monitor is running (pinned by eager-restart.test.ts).
+    llmFactory: () => {
+      opts.onLongLived();
+      return llm;
+    },
+    onRouteRegistered: () => opts.onLongLived(),
+    dataSources: new Map([[opts.pluginId, new StateDirMap(opts.stateDir)]]),
     ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
-    // Data: recorded by the api tap, which the registry merely has to accept.
+    // Data: recorded here and announced by `api-sync`.
     personalities: acceptOnly<PersonalityRegistry>('registerPersonality', {
-      define: () => undefined,
+      define: (config: PersonalityConfig) => {
+        data.personalities.push(config);
+      },
     }),
     oauthRegistry: acceptOnly('registerOAuthProfile', {
-      registerProfile: () => undefined,
+      registerProfile: (profile: OAuthProviderProfile) => {
+        data.oauthProfiles.push(profile);
+      },
       registerCustomFlow: () => {
         throw new Error(UNSUPPORTED('registerCustomOAuthFlow'));
       },
@@ -271,5 +318,5 @@ export function createChildRegistries(opts: ChildRegistryOptions): ChildRegistri
     sttProviders: unsupported('registerSttProvider'),
     ttsProviders: unsupported('registerTtsProvider'),
   };
-  return { registries, tools, hooks, rows, bus };
+  return { registries, data, tools, hooks, rows, bus };
 }

@@ -5,7 +5,7 @@ import type { Logger, SecretsResolver, Storage, ToolResult } from '@ethosagent/t
 import { type HandlerTable, HostConnection, RpcError } from '../connection';
 import { isModifyingHook, isVoidHook } from '../hook-names';
 import { type ActivateResult, PROTOCOL_VERSION, type Registration, RPC_ERROR } from '../protocol';
-import { installApiTap } from './api-tap';
+import { createRowSync, refuseOAuthConfig } from './api-sync';
 import { buildChildContext, isToolExecuteRequest, parseLiveSnapshot } from './context';
 import { installRowHandlers } from './handlers';
 import { createChildRegistries, type RegistrationObserver } from './registries';
@@ -116,7 +116,7 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
   let children: ReturnType<typeof createChildRegistries> | null = null;
   let secretKeys: string[] = [];
   let longLived = false;
-  const pending: Registration[] = [];
+  let rowSync: ReturnType<typeof createRowSync> | null = null;
   const inflight = new Map<number, AbortController>();
 
   // Handlers need the connection, so the table is filled in after construction.
@@ -135,12 +135,15 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     if (activated) conn.notify('ethos/long-lived', { value: true });
   };
 
+  /** Rows registered since the last look, announced to the parent. Runs after the load and after each request. */
+  const announceNewRows = (): void => {
+    if (!activated || !rowSync) return;
+    for (const registration of rowSync.collect()) {
+      conn.notify('ethos/registration.added', { registration });
+    }
+  };
+
   const observer: RegistrationObserver = {
-    add(reg) {
-      // During activate() rows are collected into the activation result; afterwards each is announced.
-      if (!activated) pending.push(reg);
-      else conn.notify('ethos/registration.added', { registration: reg });
-    },
     tool(tool) {
       if (!activated) return;
       conn.notify('ethos/registration.added', { registration: toolToWire(tool) });
@@ -177,13 +180,21 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
       observer: () => observer,
       conn,
       ...(typeof params.baseUrl === 'string' ? { baseUrl: params.baseUrl } : {}),
+      pluginId,
+      stateDir: dirname(hostHome),
       onLongLived: markLongLived,
     });
-    installApiTap({
+    const registries = children.registries;
+    rowSync = createRowSync({
       rows: children.rows,
-      stateDir: dirname(hostHome),
-      add: (reg) => observer.add(reg),
-      longLived: markLongLived,
+      data: children.data,
+      api: () => loader?.getApi(pluginId),
+      pages: () => {
+        const page = registries.pluginPages?.get(pluginId);
+        return page ? [page] : [];
+      },
+      renderers: () => registries.renderers?.values() ?? [],
+      dataSources: () => registries.dataSources?.get(pluginId) ?? new Map<string, string>(),
     });
     const logger = new CapturingLogger();
     loader = new PluginLoader(children.registries, {
@@ -205,6 +216,13 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
         logger.problems.at(-1) ?? `Plugin '${pluginId}' failed to load in the plugin host`,
       );
     }
+    try {
+      refuseOAuthConfig(loader.getApi(pluginId));
+    } catch (err) {
+      await withTimeout(loader.unloadAll(), DEACTIVATE_TIMEOUT_MS);
+      loader = null;
+      throw new RpcError(RPC_ERROR.handlerFailed, err instanceof Error ? err.message : String(err));
+    }
     const registrations: Registration[] = [];
     for (const tool of children.tools.recorded.values()) registrations.push(toolToWire(tool));
     for (const name of children.hooks.voidNames) {
@@ -213,7 +231,7 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     for (const name of children.hooks.modifyingNames) {
       registrations.push({ kind: 'hook', model: 'modifying', name });
     }
-    registrations.push(...pending);
+    registrations.push(...rowSync.collect());
     activated = true;
     const result: ActivateResult = {
       registrations,
@@ -299,6 +317,19 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     setTimeout(() => exit(0), 20);
     return null;
   };
+
+  // A registration made while serving a request (a slash handler, a tool, a hook) is announced
+  // once that request finishes. Activation and shutdown announce nothing themselves.
+  for (const [method, handle] of Object.entries(handlers)) {
+    if (method === 'ethos/activate' || method === 'ethos/shutdown') continue;
+    handlers[method] = async (params, ctx) => {
+      try {
+        return await handle(params, ctx);
+      } finally {
+        announceNewRows();
+      }
+    };
+  }
 
   input.on('data', (chunk: Buffer | string) => conn.feed(chunk));
   input.on('end', () => exit(0));

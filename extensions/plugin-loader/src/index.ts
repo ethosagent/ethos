@@ -789,6 +789,15 @@ export class PluginLoader {
     return [...this.plugins.keys()];
   }
 
+  /**
+   * The loaded plugin's api, for a host that must read what the plugin registered
+   * (slash and CLI handlers, health checks, ...) because those never reach
+   * `PluginRegistries`. Read-only use: the plugin's own api object, not a copy.
+   */
+  getApi(pluginId: string): PluginApiImpl | undefined {
+    return this.apis.get(pluginId);
+  }
+
   /** Check if a plugin is loaded. */
   isLoaded(pluginId: string): boolean {
     return this.plugins.has(pluginId);

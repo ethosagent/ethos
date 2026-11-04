@@ -76,7 +76,9 @@ plugins.host.hook_timeout_ms: 5000
 
 Type: integer, at least `0` · Default: `10`
 
-Minutes a host may sit unused before it is stopped and respawned on the next call. The key is parsed and stored, but nothing in this release reads it yet: hosts stay up until Ethos stops, so setting it changes no behaviour.
+Minutes a host may sit unused before it is stopped. The next call to the plugin starts it again with no backoff, and the stop is not counted as a crash. `0` keeps hosts up until Ethos stops. A host that holds a monitor, a route or an event-bus subscription never idles, and neither does one with a call in flight. Each stop records `plugin_host.stopped` with reason `idle`. Pinned by `extensions/plugin-host/src/__tests__/idle-stop.test.ts`.
+
+After a plugin's first start, Ethos caches its registration list in `plugin-hosts/<id>/registrations.json`. On later boots a matching cache registers the plugin's tools without starting its host, and the host starts on the first call. A changed version, `plugins.lock` integrity, entry mtime, secret key set or protocol version ignores the cache. Pinned by `extensions/plugin-host/src/__tests__/registration-cache.test.ts`.
 
 ```yaml
 plugins.host.idle_stop_minutes: 30

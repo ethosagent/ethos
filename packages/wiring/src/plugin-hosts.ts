@@ -30,7 +30,7 @@ export interface CreatePluginHostPoolOptions {
   storage: Storage;
   /** Absolute path of the host child entry (`apps/ethos/src/plugin-host-child.ts` or its bundle). */
   childEntry: string;
-  /** `WiringConfig.pluginIsolation`; supplies the heap and hook-timeout limits. */
+  /** `WiringConfig.pluginIsolation`; supplies the heap, hook-timeout and idle-stop limits. */
   config?: PluginIsolationConfig;
   logger?: Logger;
   /**
@@ -64,6 +64,7 @@ export function createPluginHostPool(opts: CreatePluginHostPoolOptions): PluginH
       ? {
           maxHeapMb: opts.config.maxHeapMb,
           hookTimeoutMs: opts.config.hookTimeoutMs,
+          idleStopMinutes: opts.config.idleStopMinutes,
           sandbox: opts.config.sandbox,
         }
       : {}),
@@ -123,6 +124,8 @@ export function createLazyPluginActivator(
     llmFactory?: () => SimpleCompletion | undefined;
     /** The loop's tool registry, so a hosted tool cannot shadow a built-in. */
     tools?: Pick<ToolRegistry, 'get' | 'getPluginId'>;
+    /** The plugin's `plugins.lock` integrity, when pinned; keys the registration cache. */
+    integrity?: (pluginId: string) => string | undefined | Promise<string | undefined>;
   } = {},
 ): PluginActivator {
   let inner: PluginActivator | undefined;
@@ -132,6 +135,7 @@ export function createLazyPluginActivator(
         ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
         ...(opts.llmFactory ? { llmFactory: opts.llmFactory } : {}),
         ...(opts.tools ? { tools: opts.tools } : {}),
+        ...(opts.integrity ? { integrity: opts.integrity } : {}),
         // D19: only key NAMES under plugins/<id>/ cross at spawn, never values.
         secretKeys: async (pluginId) => {
           if (!opts.secrets) return [];
