@@ -2,6 +2,7 @@ import { DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
 import { PluginApiImpl, type PluginRegistries } from '@ethosagent/plugin-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginActivator } from '../activator';
+import { clampToolCapabilities } from '../capabilities';
 import type { HostLease } from '../pool';
 import { createToolProxy } from '../proxies/tool';
 import {
@@ -108,7 +109,29 @@ describe('tool proxy', () => {
     expect(events).toEqual([
       [
         'plugin_host.capability_clamped',
-        { plugin_id: 'acme', tool: 't', dropped: ['providers/anthropic/*'] },
+        {
+          plugin_id: 'acme',
+          tool: 't',
+          capability: 'secrets',
+          dropped: ['providers/anthropic/*'],
+        },
+      ],
+    ]);
+  });
+
+  it('removes capabilities.process from the proxy and reports it (D20)', () => {
+    const events: Array<[string, Record<string, unknown>]> = [];
+    const out = clampToolCapabilities(
+      { process: { allowedBinaries: ['git'] }, network: { allowedHosts: ['example.com'] } },
+      'acme',
+      't',
+      (c, p) => void events.push([c, p]),
+    );
+    expect(out).toEqual({ network: { allowedHosts: ['example.com'] } });
+    expect(events).toEqual([
+      [
+        'plugin_host.capability_clamped',
+        { plugin_id: 'acme', tool: 't', capability: 'process', dropped: ['process'] },
       ],
     ]);
   });

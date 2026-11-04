@@ -5,20 +5,31 @@ import { noopLogger } from '@ethosagent/logger';
 import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
 import type {
   Logger,
+  SimpleCompletion,
   Storage,
   ToolContext,
   ToolExecuteRequest,
   ToolResult,
 } from '@ethosagent/types';
 import type { HandlerTable } from './connection';
-import { HostUnavailableError } from './errors';
-import type { HostEventSink } from './events';
+import { buildHostEnv } from './env';
+import { HOST_ERROR, HostStartError, HostUnavailableError } from './errors';
+import type { HostEventSink, HostSpanSink } from './events';
 import type { LiveCall } from './handles';
 import type { HostRequestOptions } from './host-calls';
 import { HostEntry } from './host-entry';
 import type { HandlerContext, HostRuntimeConfig, HostSpec } from './host-types';
 import { createParentHandlers, ParentApis, type ParentServices } from './parent-handlers';
 import type { CallHandle, ParentToHostMethod, Registration } from './protocol';
+import {
+  bwrapMaskCandidates,
+  detectSandbox,
+  type SandboxDetection,
+  type SandboxKind,
+  type SandboxProbe,
+  type SandboxSpec,
+  wrapLaunch,
+} from './sandbox';
 
 export type { HandlerContext, HostSpec } from './host-types';
 
@@ -36,14 +47,28 @@ export interface PluginHostPoolOptions {
   childEntry: string;
   /** Replaces the default `[--import tsx] <entry>` argv (node flags are added by the pool). */
   launchArgs?: (childEntry: string) => string[];
-  /** Lane C swaps in `minimalHostEnv`-based scrubbing here. */
+  /** Defaults to `buildHostEnv` (`env.ts`: `minimalHostEnv` scrubbing, private HOME). */
   buildEnv?: (ctx: HostEnvContext) => Record<string, string>;
   /** Replaces the default host -> parent handler table (`createParentHandlers`). Tests only. */
   makeHandlers?: (ctx: HandlerContext) => HandlerTable;
   /** Injection points for the default parent handlers (secret authorisation, monitor llm). */
   parent?: ParentServices;
   onEvent?: HostEventSink;
+  /** Per-IPC-call span recorder (`plugin_call`); the composition root injects it. */
+  onSpan?: HostSpanSink;
+  /** Cadence of `plugin_host.stats` per running host (default 60 000). */
+  statsIntervalMs?: number;
   logger?: Logger;
+  /**
+   * `plugins.host.sandbox`. `auto` wraps every host in `sandbox-exec` / `bwrap`
+   * and refuses to start it (`PLUGIN_HOST_SANDBOX_UNAVAILABLE`) when no wrapper
+   * works. Default `none`. See `sandbox.ts` for what the profile is and is not.
+   */
+  sandbox?: 'none' | 'auto';
+  /** Tests only: pretend to run on another platform (e.g. `win32` to see `auto` refuse). */
+  sandboxPlatform?: NodeJS.Platform;
+  /** Tests only: replaces the wrapper probe. */
+  sandboxProbe?: SandboxProbe;
   maxHeapMb?: number;
   hookTimeoutMs?: number;
   readyTimeoutMs?: number;
@@ -104,7 +129,7 @@ export interface HostLease {
   /** Opens a call handle for the duration of `fn`, revoked in a `finally`. */
   withCall<T>(ctx: LiveCall, fn: (call: CallHandle) => Promise<T>): Promise<T>;
   /** Registers the parent's own `PluginApiImpl`; host-to-parent traffic is answered through it. */
-  bindApi(api: EthosPluginApi): void;
+  bindApi(api: EthosPluginApi, llmFactory?: () => SimpleCompletion | undefined): void;
   onRegistrationAdded(listener: (reg: Registration) => void): () => void;
   /** Idempotent. Releases this lease only; the host lives until the pool is disposed. */
   release(): void;
@@ -148,9 +173,9 @@ class Lease implements HostLease {
   withCall<T>(ctx: LiveCall, fn: (call: CallHandle) => Promise<T>): Promise<T> {
     return this.entry.calls.withCall(ctx, fn);
   }
-  bindApi(api: EthosPluginApi): void {
+  bindApi(api: EthosPluginApi, llmFactory?: () => SimpleCompletion | undefined): void {
     this.boundApi = api;
-    this.apis.bind(this.entry.spec.id, api);
+    this.apis.bind(this.entry.spec.id, api, llmFactory);
   }
   isToolAvailable(name: string): boolean {
     return this.entry.isToolAvailable(name);
@@ -188,7 +213,7 @@ export class PluginHostPool {
   private tsxResolved = false;
 
   constructor(private readonly opts: PluginHostPoolOptions) {
-    const buildEnv = opts.buildEnv ?? defaultEnv;
+    const buildEnv = opts.buildEnv ?? buildHostEnv;
     const launch = opts.launchArgs ?? defaultLaunchArgs;
     const hostHome = (id: string): string =>
       join(opts.dataDir, 'plugin-hosts', hostDirName(id), 'home');
@@ -202,6 +227,8 @@ export class PluginHostPool {
         // Running a .ts child from source: tsx must find the repo's path aliases from a foreign cwd.
         return this.tsxTsconfig ? { ...env, TSX_TSCONFIG_PATH: this.tsxTsconfig } : env;
       },
+      wrapLaunch: (spec, command, args) => this.wrapForSandbox(spec, command, args),
+      sandboxed: opts.sandbox === 'auto',
       makeHandlers:
         opts.makeHandlers ??
         createParentHandlers({
@@ -212,6 +239,8 @@ export class PluginHostPool {
           onEvent: (category, payload) => this.cfg.onEvent(category, payload),
         }),
       onEvent: opts.onEvent ?? (() => undefined),
+      ...(opts.onSpan ? { onSpan: opts.onSpan } : {}),
+      statsIntervalMs: opts.statsIntervalMs ?? 60_000,
       logger: opts.logger ?? noopLogger,
       maxHeapMb: opts.maxHeapMb ?? 512,
       hookTimeoutMs: opts.hookTimeoutMs ?? 2_000,
@@ -286,7 +315,63 @@ export class PluginHostPool {
     }
   }
 
+  private sandboxDetection: Promise<SandboxDetection> | undefined;
+  private sandboxWrapper: Extract<SandboxDetection, { kind: SandboxKind }> | undefined;
+  private existingMaskPaths = new Set<string>();
+
+  /** Detects the wrapper once; throws (host does not start) when `auto` has none (D22). */
+  private async requireSandbox(spec: HostSpec): Promise<void> {
+    if (this.opts.sandbox !== 'auto') return;
+    this.sandboxDetection ??= detectSandbox(
+      this.opts.sandboxPlatform ?? process.platform,
+      this.opts.sandboxProbe,
+    );
+    const found = await this.sandboxDetection;
+    if (found.kind === 'unavailable') {
+      this.cfg.onEvent('plugin_host.denied', {
+        plugin_id: spec.id,
+        kind: 'sandbox',
+        ref: found.reason,
+      });
+      throw new HostStartError(
+        `${HOST_ERROR.sandboxUnavailable}: plugins.host.sandbox is 'auto' but ${found.reason}. The host was not started and the plugin was not loaded. Set plugins.host.sandbox: none to run it unsandboxed.`,
+      );
+    }
+    this.sandboxWrapper = found;
+    if (found.kind === 'bwrap') {
+      const { dirs, files } = bwrapMaskCandidates(this.sandboxSpec(spec));
+      for (const path of [...dirs, ...files]) {
+        if (await this.opts.storage.exists(path)) this.existingMaskPaths.add(path);
+      }
+    }
+  }
+
+  private sandboxSpec(spec: HostSpec): SandboxSpec {
+    return {
+      dataDir: this.opts.dataDir,
+      hostDir: join(this.opts.dataDir, 'plugin-hosts', hostDirName(spec.id)),
+      pluginDir: spec.dir,
+      network: spec.network,
+    };
+  }
+
+  private wrapForSandbox(
+    spec: HostSpec,
+    command: string,
+    args: string[],
+  ): { command: string; args: string[] } {
+    if (this.opts.sandbox !== 'auto' || !this.sandboxWrapper) return { command, args };
+    return wrapLaunch(
+      this.sandboxWrapper,
+      this.sandboxSpec(spec),
+      this.existingMaskPaths,
+      command,
+      args,
+    );
+  }
+
   private async createEntry(spec: HostSpec): Promise<HostEntry> {
+    await this.requireSandbox(spec);
     await this.resolveTsxTsconfig();
     const home = this.cfg.hostHome(spec.id);
     await this.opts.storage.mkdir(home);
@@ -311,13 +396,4 @@ export class PluginHostPool {
     }
     return this.disposing;
   }
-}
-
-function defaultEnv(ctx: HostEnvContext): Record<string, string> {
-  return {
-    PATH: process.env.PATH ?? '',
-    HOME: ctx.hostHome,
-    TMPDIR: ctx.tmpDir,
-    ETHOS_PLUGIN_HOST: '1',
-  };
 }

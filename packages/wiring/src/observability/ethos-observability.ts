@@ -110,8 +110,32 @@ export const ETHOS_EVENT_CATEGORIES = [
   // was read with a fallback. METADATA ONLY: table, id, column, reason — never
   // row content. See `recordStorageRowIssue` below.
   'storage.row_issue',
+  // plan plugin-process-isolation §8 — one row per host lifecycle / denial event
+  // and a 60 s stats row per host. METADATA ONLY: plugin id, pid, counters, a
+  // denied ref's KIND and name — never a secret value. See `recordPluginHost*`.
+  'plugin_host.spawned',
+  'plugin_host.crashed',
+  'plugin_host.restarted',
+  'plugin_host.circuit_open',
+  'plugin_host.denied',
+  'plugin_host.capability_clamped',
+  'plugin_host.registration_drift',
+  'plugin_host.stopped',
+  'plugin_host.stats',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
+
+const NOISY_PLUGIN_HOST_EVENTS = new Set([
+  'plugin_host.crashed',
+  'plugin_host.circuit_open',
+  'plugin_host.denied',
+  'plugin_host.capability_clamped',
+  'plugin_host.registration_drift',
+]);
+
+const PLUGIN_HOST_EVENTS: readonly string[] = ETHOS_EVENT_CATEGORIES.filter((c) =>
+  c.startsWith('plugin_host.'),
+);
 
 export const ETHOS_TRACE_KINDS = [
   'turn',
@@ -703,6 +727,60 @@ export class EthosObservability {
   recordDecisionToolCall(record: DecisionToolCallRecord): void {
     const { outcome, ...details } = record;
     this.emit('decision.tool', outcome === 'ok' ? 'info' : 'warn', { code: outcome }, details);
+  }
+
+  // ── Plugin host (plan plugin-process-isolation §8) ──────────────────────
+
+  /**
+   * One host lifecycle / denial / stats event. `category` is the pool's
+   * `HostEventCategory`; anything else is ignored. Fail-open: a store error
+   * never reaches the pool. The payload is stored as `details`; the pool's
+   * emitters (`extensions/plugin-host/src/host-entry.ts`, `parent-handlers.ts`)
+   * carry names and counters only, never a secret value.
+   */
+  recordPluginHostEvent(category: string, payload: Record<string, unknown>): void {
+    if (!PLUGIN_HOST_EVENTS.includes(category)) return;
+    try {
+      const severity: EventSeverity = NOISY_PLUGIN_HOST_EVENTS.has(category) ? 'warn' : 'info';
+      this.writer.recordEvent({
+        category: category as EthosEventCategory,
+        severity,
+        ...(typeof payload.kind === 'string' && category === 'plugin_host.denied'
+          ? { code: payload.kind }
+          : {}),
+        details: payload,
+      });
+    } catch {
+      // fail-open: observability never breaks the plugin host
+    }
+  }
+
+  /**
+   * One parent-to-host IPC call as a `plugin_call` span. Returns the closer.
+   * `traceId` is '' (ToolContext carries none; limitation in plan §8), so the
+   * span is joined to its turn through the `tool_call_id` attribute.
+   */
+  startPluginCallSpan(opts: {
+    name: string;
+    attrs: Record<string, unknown>;
+  }): (status: 'ok' | 'error', attrs: Record<string, unknown>) => void {
+    try {
+      const spanId = this.writer.startSpan({
+        traceId: '',
+        kind: 'plugin_call',
+        name: opts.name,
+        attrs: opts.attrs,
+      });
+      return (status, attrs) => {
+        try {
+          this.writer.endSpan(spanId, status, attrs);
+        } catch {
+          // fail-open
+        }
+      };
+    } catch {
+      return () => undefined;
+    }
   }
 
   // ── Escape hatch ────────────────────────────────────────────────────────

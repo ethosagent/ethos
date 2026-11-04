@@ -1875,13 +1875,12 @@ importers:
       '@ethosagent/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-    devDependencies:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
 
   extensions/plugin-loader:
     dependencies:

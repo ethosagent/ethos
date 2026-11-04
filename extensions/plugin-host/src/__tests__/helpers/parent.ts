@@ -69,7 +69,7 @@ export interface ParentFixture {
 export interface ParentOptions {
   secrets?: Record<string, string>;
   baseUrl?: string;
-  /** Replaces the activator's secret refs sent at spawn (full refs under `plugins/<id>/`). */
+  /** Replaces the activator's secret refs sent at spawn (key NAMES, D19). */
   secretKeys?: string[];
 }
 
@@ -134,7 +134,11 @@ export async function activateInParent(
   });
   const activator = createPluginActivator(h.pool, {
     ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
-    secretKeys: () => opts.secretKeys ?? [...secrets.values.keys()],
+    secretKeys: () =>
+      opts.secretKeys ??
+      [...secrets.values.keys()]
+        .filter((r) => r.startsWith(`plugins/${id}/`))
+        .map((r) => r.slice(`plugins/${id}/`.length)),
   });
   const plugin = await activator.activate({
     id,

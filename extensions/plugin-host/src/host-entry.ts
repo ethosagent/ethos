@@ -8,7 +8,7 @@ import {
   recentCrashes,
 } from './backoff';
 import { ConnectionClosedError, HostConnection } from './connection';
-import { HostStartError, HostUnavailableError } from './errors';
+import { HOST_ERROR, HostStartError, HostUnavailableError } from './errors';
 import { CallHandleTable } from './handles';
 import { type CallSurface, HostCalls } from './host-calls';
 import { StderrForwarder } from './host-stderr';
@@ -56,6 +56,10 @@ export class HostEntry implements CallSurface {
   private circuitUntil = 0;
   private stopping = false;
   private pingTimer: ReturnType<typeof setTimeout> | undefined;
+  private statsTimer: ReturnType<typeof setInterval> | undefined;
+  private rssMb: number | undefined;
+  private reportedTimeouts = 0;
+  private reportedDroppedVoid = 0;
   private restartTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly stderr: StderrForwarder;
   private readonly addedListeners = new Set<(reg: Registration) => void>();
@@ -121,10 +125,12 @@ export class HostEntry implements CallSurface {
       const parsed = this.parseActivate(result);
       this.applyActivation(parsed, isRestart);
       this.state = 'running';
+      this.rssMb = parsed.rssMb;
       this.cfg.onEvent('plugin_host.spawned', {
         plugin_id: this.spec.id,
         pid: running.proc.pid,
         spawn_ms: this.cfg.now() - t0,
+        ...(parsed.rssMb !== undefined ? { rss_mb: parsed.rssMb } : {}),
       });
       if (isRestart) {
         this.stats.restarts++;
@@ -135,6 +141,7 @@ export class HostEntry implements CallSurface {
         });
       }
       this.schedulePing();
+      this.scheduleStats();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (running) {
@@ -171,7 +178,11 @@ export class HostEntry implements CallSurface {
       const reg = parseRegistration(item);
       if (reg) registrations.push(reg);
     }
-    return { registrations, holdsLongLived: raw.holdsLongLived === true };
+    return {
+      registrations,
+      holdsLongLived: raw.holdsLongLived === true,
+      ...(typeof raw.rssMb === 'number' ? { rssMb: raw.rssMb } : {}),
+    };
   }
 
   private applyActivation(result: ActivateResult, isRestart: boolean): void {
@@ -209,7 +220,8 @@ export class HostEntry implements CallSurface {
       let settled = false;
       let proc: ChildProcess;
       try {
-        proc = spawn(process.execPath, cfg.launchArgs(cfg.maxHeapMb), {
+        const launch = cfg.wrapLaunch(this.spec, process.execPath, cfg.launchArgs(cfg.maxHeapMb));
+        proc = spawn(launch.command, launch.args, {
           stdio: ['pipe', 'pipe', 'pipe'],
           detached: true,
           env: cfg.buildEnv(id),
@@ -267,14 +279,18 @@ export class HostEntry implements CallSurface {
       proc.stdout?.on('data', (chunk: Buffer) => conn.feed(chunk));
       proc.stderr?.on('data', (chunk: Buffer) => this.stderr.push(chunk));
       proc.on('error', (err) => {
-        fail(`Plugin '${id}' host failed to spawn: ${err.message}`);
+        fail(
+          `${cfg.sandboxed ? `${HOST_ERROR.sandboxUnavailable}: ` : ''}Plugin '${id}' host failed to spawn: ${err.message}`,
+        );
         onExited();
       });
       proc.on('exit', (code, signal) => {
         const inFlight = conn.pendingCount;
         if (!settled) {
+          // Under `sandbox: auto` an exit before ready is the wrapper refusing to start (D22).
+          const prefix = cfg.sandboxed ? `${HOST_ERROR.sandboxUnavailable}: ` : '';
           fail(
-            `Plugin '${id}' host exited (${describeExit(code, signal)}) before it was ready${this.stderr.tail()}`,
+            `${prefix}Plugin '${id}' host exited (${describeExit(code, signal)}) before it was ready${this.stderr.tail()}`,
           );
         }
         conn.close(
@@ -340,6 +356,7 @@ export class HostEntry implements CallSurface {
     const running = this.current;
     this.current = null;
     if (this.pingTimer) clearTimeout(this.pingTimer);
+    this.clearStats();
     this.calls.dropQueued();
     if (this.stopping || this.state === 'stopped') {
       this.state = 'stopped';
@@ -433,6 +450,35 @@ export class HostEntry implements CallSurface {
     this.pingTimer.unref?.();
   }
 
+  /** `plugin_host.stats` every `statsIntervalMs` while a host runs; unref'd, cleared on exit and stop. */
+  private scheduleStats(): void {
+    this.clearStats();
+    if (this.cfg.statsIntervalMs <= 0) return;
+    this.statsTimer = setInterval(() => this.emitStats(), this.cfg.statsIntervalMs);
+    this.statsTimer.unref?.();
+  }
+
+  private clearStats(): void {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = undefined;
+  }
+
+  private emitStats(): void {
+    if (this.state !== 'running') return;
+    const window = this.calls.metrics.drain();
+    const timeouts = this.stats.timeouts - this.reportedTimeouts;
+    const dropped = this.stats.droppedVoid - this.reportedDroppedVoid;
+    this.reportedTimeouts = this.stats.timeouts;
+    this.reportedDroppedVoid = this.stats.droppedVoid;
+    this.cfg.onEvent('plugin_host.stats', {
+      plugin_id: this.spec.id,
+      ...window,
+      timeouts,
+      dropped_void: dropped,
+      ...(this.rssMb !== undefined ? { rss_mb: this.rssMb } : {}),
+    });
+  }
+
   private async ping(running: Running): Promise<void> {
     if (this.current !== running) return;
     try {
@@ -441,6 +487,7 @@ export class HostEntry implements CallSurface {
         {},
         { timeoutMs: this.cfg.pingTimeoutMs },
       );
+      if (isRecord(raw) && typeof raw.rssMb === 'number') this.rssMb = raw.rssMb;
       if (isRecord(raw) && isRecord(raw.tools)) {
         for (const [name, avail] of Object.entries(raw.tools)) {
           if (typeof avail === 'boolean') this.toolAvailable.set(name, avail);
@@ -495,6 +542,7 @@ export class HostEntry implements CallSurface {
   async stop(reason: 'dispose' | 'idle'): Promise<void> {
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.pingTimer) clearTimeout(this.pingTimer);
+    this.clearStats();
     this.stopping = true;
     const running = this.current;
     if (this.startPromise) await this.startPromise.catch(() => undefined);

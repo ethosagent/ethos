@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path';
 import { PluginLoader } from '@ethosagent/plugin-loader';
+import { pluginCredentialPrefix } from '@ethosagent/plugin-sdk';
 import type { Logger, SecretsResolver, Storage, ToolResult } from '@ethosagent/types';
 import { type HandlerTable, HostConnection, RpcError } from '../connection';
 import { isModifyingHook, isVoidHook } from '../hook-names';
@@ -18,6 +19,10 @@ export interface PluginHostChildOptions {
 }
 
 const DEACTIVATE_TIMEOUT_MS = 1_500;
+
+function rssMb(): number {
+  return Math.round(process.memoryUsage().rss / 1_048_576);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,7 +52,11 @@ class CapturingLogger implements Logger {
 }
 
 /** The plugin's `api.secrets` inside the host: no vault, only requests the parent authorises (D19). */
-function ipcSecrets(conn: HostConnection, knownRefs: () => string[]): SecretsResolver {
+function ipcSecrets(
+  conn: HostConnection,
+  pluginId: () => string,
+  knownKeys: () => string[],
+): SecretsResolver {
   return {
     async get(ref) {
       const out = await conn.request<unknown>('ethos/secrets.get', { ref });
@@ -60,8 +69,12 @@ function ipcSecrets(conn: HostConnection, knownRefs: () => string[]): SecretsRes
       throw new Error('Deleting a secret is not supported when a plugin runs in a plugin host.');
     },
     async list(prefix) {
-      // Key names were sent at spawn; answering locally keeps hasSecret free of a round trip.
-      return knownRefs().filter((r) => prefix === undefined || r.startsWith(prefix));
+      // Key NAMES were sent at spawn (D19); this rebuilds `plugins/<id>/<name>` so the SDK's
+      // `hasSecret` priming (prefix list) works without a round trip.
+      const own = pluginCredentialPrefix(pluginId());
+      return knownKeys()
+        .map((k) => `${own}${k}`)
+        .filter((r) => prefix === undefined || r.startsWith(prefix));
     },
   };
 }
@@ -101,7 +114,7 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
   let activated = false;
   let loader: PluginLoader | null = null;
   let children: ReturnType<typeof createChildRegistries> | null = null;
-  let secretRefs: string[] = [];
+  let secretKeys: string[] = [];
   let longLived = false;
   const pending: Registration[] = [];
   const inflight = new Map<number, AbortController>();
@@ -157,7 +170,7 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     if (loader) throw new RpcError(RPC_ERROR.invalidRequest, 'host is already activated');
     pluginId = params.pluginId;
     const hostHome = typeof params.hostHome === 'string' ? params.hostHome : process.cwd();
-    secretRefs = Array.isArray(params.secretKeys)
+    secretKeys = Array.isArray(params.secretKeys)
       ? params.secretKeys.filter((k): k is string => typeof k === 'string')
       : [];
     children = createChildRegistries({
@@ -175,7 +188,11 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     const logger = new CapturingLogger();
     loader = new PluginLoader(children.registries, {
       storage: opts.storage,
-      secrets: ipcSecrets(conn, () => secretRefs),
+      secrets: ipcSecrets(
+        conn,
+        () => pluginId,
+        () => secretKeys,
+      ),
       logger,
       dataDir: join(hostHome, '.ethos'),
     });
@@ -198,7 +215,11 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     }
     registrations.push(...pending);
     activated = true;
-    const result: ActivateResult = { registrations, holdsLongLived: longLived };
+    const result: ActivateResult = {
+      registrations,
+      holdsLongLived: longLived,
+      rssMb: rssMb(),
+    };
     return result;
   };
 
@@ -265,7 +286,7 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     const tools: Record<string, boolean> = {};
     for (const tool of children?.tools.recorded.values() ?? [])
       tools[tool.name] = toolToWire(tool).available;
-    return { tools };
+    return { tools, rssMb: rssMb() };
   };
 
   handlers['ethos/cancel'] = (params) => {

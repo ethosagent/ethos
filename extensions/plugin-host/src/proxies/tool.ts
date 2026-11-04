@@ -1,39 +1,8 @@
-import { pluginCredentialPrefix } from '@ethosagent/plugin-sdk';
-import type { Tool, ToolCapabilities } from '@ethosagent/types';
+import type { Tool } from '@ethosagent/types';
+import { clampToolCapabilities } from '../capabilities';
 import type { HostLease } from '../pool';
 import type { ToolRegistration } from '../protocol';
 import { requestFromContext } from './request';
-
-function ownPrefix(pluginId: string): string | null {
-  try {
-    return pluginCredentialPrefix(pluginId);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Keeps only secret refs inside `plugins/<id>/`; everything else is dropped and
- * reported (D20). The full clamp policy is lane C's `capabilities.ts`.
- */
-function clampSecrets(
-  caps: ToolCapabilities,
-  lease: HostLease,
-  toolName: string,
-): ToolCapabilities {
-  if (!caps.secrets) return caps;
-  const prefix = ownPrefix(lease.pluginId);
-  const kept = caps.secrets.filter((ref) => prefix !== null && ref.startsWith(prefix));
-  const dropped = caps.secrets.filter((ref) => !kept.includes(ref));
-  if (dropped.length > 0) {
-    lease.emitEvent('plugin_host.capability_clamped', {
-      plugin_id: lease.pluginId,
-      tool: toolName,
-      dropped,
-    });
-  }
-  return { ...caps, secrets: kept };
-}
 
 /**
  * Parent-side `Tool` for a hosted registration (plan §4.2). Same name, schema,
@@ -48,7 +17,12 @@ export function createToolProxy(reg: ToolRegistration, lease: HostLease): Tool {
     schema: reg.schema,
     ...(reg.toolset !== undefined ? { toolset: reg.toolset } : {}),
     ...(reg.maxResultChars !== undefined ? { maxResultChars: reg.maxResultChars } : {}),
-    capabilities: clampSecrets(reg.capabilities, lease, reg.name),
+    capabilities: clampToolCapabilities(
+      reg.capabilities,
+      lease.pluginId,
+      reg.name,
+      lease.emitEvent,
+    ),
     ...(reg.requiresApproval !== undefined ? { requiresApproval: reg.requiresApproval } : {}),
     ...(reg.returnDirect !== undefined ? { returnDirect: reg.returnDirect } : {}),
     ...(reg.outputSchema !== undefined ? { outputSchema: reg.outputSchema } : {}),

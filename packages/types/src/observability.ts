@@ -10,8 +10,18 @@ export type TraceKind = string;
  * sentence, first audio, whole turn). It is a distinct kind because a voice
  * stage is neither a tool nor an LLM call, and "which stage ate the latency"
  * is the only question voice telemetry is asked.
+ *
+ * `plugin_call` is one parent-to-host IPC call of a plugin running in host mode
+ * (`extensions/plugin-host`); it is recorded with an empty `traceId` and joined
+ * to its turn through the `tool_call_id` attribute.
  */
-export type SpanKind = 'tool_call' | 'llm_call' | 'hook' | 'mcp_call' | 'voice_stage';
+export type SpanKind =
+  | 'tool_call'
+  | 'llm_call'
+  | 'hook'
+  | 'mcp_call'
+  | 'voice_stage'
+  | 'plugin_call';
 
 /**
  * Opaque event category. Convention: `<domain>.<verb>` (e.g. `audit.transition`,

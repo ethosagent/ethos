@@ -1,4 +1,5 @@
 import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
+import type { ToolRegistry } from '@ethosagent/types';
 import { isModifyingHook, isVoidHook } from '../hook-names';
 import type { HostLease } from '../pool';
 import type { Registration } from '../protocol';
@@ -22,6 +23,29 @@ import {
 import { createToolProxy } from './tool';
 import { createVoidHookProxy } from './void-hook';
 
+export interface ReplayGuard {
+  tools?: Pick<ToolRegistry, 'get' | 'getPluginId'>;
+}
+
+/**
+ * Refuses a hosted tool whose name already exists in the parent registry under
+ * another owner (a built-in has none). Enforcer of the "tool named like a
+ * built-in is refused at replay" rule; pinned by `isolation-boundary.test.ts`.
+ */
+export function assertToolNameFree(reg: Registration, lease: HostLease, guard: ReplayGuard): void {
+  if (reg.kind !== 'tool' || !guard.tools) return;
+  const existing = guard.tools.get(reg.name);
+  if (!existing || guard.tools.getPluginId?.(reg.name) === lease.pluginId) return;
+  lease.emitEvent('plugin_host.denied', {
+    plugin_id: lease.pluginId,
+    kind: 'registration',
+    ref: reg.name,
+  });
+  throw new Error(
+    `Hosted plugin '${lease.pluginId}' registered a tool named '${reg.name}', which already exists in the parent tool registry (a hosted plugin cannot shadow a built-in or another plugin's tool)`,
+  );
+}
+
 function refuse(lease: HostLease, what: string): never {
   throw new Error(`Hosted plugin '${lease.pluginId}' sent an invalid ${what} registration`);
 }
@@ -33,9 +57,15 @@ function refuse(lease: HostLease, what: string): never {
  * `registerDocumentExtractor` needs `extractors` because the SDK method is on
  * the api: it is called here like the others.
  */
-export function replayRegistration(api: EthosPluginApi, reg: Registration, lease: HostLease): void {
+export function replayRegistration(
+  api: EthosPluginApi,
+  reg: Registration,
+  lease: HostLease,
+  guard: ReplayGuard = {},
+): void {
   switch (reg.kind) {
     case 'tool':
+      assertToolNameFree(reg, lease, guard);
       api.registerTool(createToolProxy(reg, lease));
       return;
     case 'hook':

@@ -9,7 +9,7 @@ import type { CallHandle } from './protocol';
 import { MAX_FRAME_BYTES, RPC_ERROR } from './protocol';
 import { decodeBytes, encodeBytes, isRecord } from './util';
 
-/** Refuses a secret ref the plugin may not touch. Lane C replaces the default (`secrets.ts`). */
+/** Refuses a secret ref the plugin may not touch. The default is `authorizeSecretRef` in `secrets.ts`. */
 export type SecretRefAuthorizer = (
   pluginId: string,
   ref: string,

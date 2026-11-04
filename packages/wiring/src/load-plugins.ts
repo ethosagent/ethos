@@ -171,6 +171,7 @@ export async function loadPlugins(
       childEntry: opts.pluginHostChildEntry,
       ...(config.pluginIsolation ? { config: config.pluginIsolation } : {}),
       logger: log,
+      observability: () => opts.observability,
     });
     return ownPool;
   };
@@ -192,6 +193,9 @@ export async function loadPlugins(
           activator: createLazyPluginActivator(getPool, {
             ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
             ...(config.secretsResolver ? { secrets: config.secretsResolver } : {}),
+            // Assigned after load (build-agent-loop.ts), so read lazily.
+            llmFactory: () => pluginRegistries.llmFactory?.(),
+            tools,
           }),
         }
       : {}),

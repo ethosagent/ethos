@@ -38,6 +38,8 @@ export interface RpcResponse {
   id: RpcId;
   result?: unknown;
   error?: RpcErrorBody;
+  /** Additive: milliseconds the responder spent in the handler (observability only). */
+  hostMs?: number;
 }
 
 export type RpcMessage = RpcRequest | RpcNotification | RpcResponse;
@@ -188,6 +190,8 @@ export interface ActivateResult {
   registrations: Registration[];
   /** True when the plugin holds monitors, routes or bus subscriptions (eager restart, D15). */
   holdsLongLived: boolean;
+  /** Additive: the child's resident set size in MB right after activation. */
+  rssMb?: number;
 }
 
 /** Handle for the reverse capability calls of one in-flight call (§5.6). */
@@ -220,6 +224,8 @@ export interface HookFireParams {
 export interface PingResult {
   /** Tool name -> `isAvailable()` right now. */
   tools: Record<string, boolean>;
+  /** Additive: the child's resident set size in MB (`process.memoryUsage().rss`). */
+  rssMb?: number;
 }
 
 /** Method name -> params/result. `result: never` marks a notification. */
@@ -405,6 +411,12 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Validates the JSON-RPC envelope. Throws ProtocolViolation on anything else. */
+function hostMsOf(raw: Record<string, unknown>): { hostMs?: number } {
+  return typeof raw.hostMs === 'number' && Number.isFinite(raw.hostMs)
+    ? { hostMs: raw.hostMs }
+    : {};
+}
+
 export function parseMessage(line: string): RpcMessage {
   let raw: unknown;
   try {
@@ -435,10 +447,11 @@ export function parseMessage(line: string): RpcMessage {
       jsonrpc: '2.0',
       id: id as RpcId,
       error: { code: err.code, message: err.message, data: err.data },
+      ...hostMsOf(raw),
     };
   }
   if (!('result' in raw)) throw new ProtocolViolation('response has neither result nor error');
-  return { jsonrpc: '2.0', id: id as RpcId, result: raw.result };
+  return { jsonrpc: '2.0', id: id as RpcId, result: raw.result, ...hostMsOf(raw) };
 }
 
 /**

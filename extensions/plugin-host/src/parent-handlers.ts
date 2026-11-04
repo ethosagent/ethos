@@ -1,8 +1,4 @@
-import {
-  type EthosPluginApi,
-  pluginCredentialPrefix,
-  pluginCredentialRef,
-} from '@ethosagent/plugin-sdk';
+import { type EthosPluginApi, pluginCredentialPrefix } from '@ethosagent/plugin-sdk';
 import type { NotifyOptions, SimpleCompletion, Storage } from '@ethosagent/types';
 import {
   type CapabilityDeps,
@@ -14,38 +10,39 @@ import { HOST_ERROR } from './errors';
 import type { HostEventSink } from './events';
 import type { HandlerContext } from './host-types';
 import { RPC_ERROR } from './protocol';
+import { authorizeSecretRef } from './secrets';
 import { isRecord } from './util';
 
 export type { SecretRefAuthorizer } from './capability-server';
 
-/**
- * Lane C's injection point (`secrets.ts`): decides whether a hosted plugin may
- * touch a secret ref. This default denies everything outside
- * `plugins/<id>/<key>`, so nothing is open until Lane C widens or narrows it.
- */
-export const defaultAuthorizeSecretRef: SecretRefAuthorizer = (pluginId, ref, op) => {
-  try {
-    const prefix = pluginCredentialPrefix(pluginId);
-    if (!ref.startsWith(prefix)) return false;
-    // A list names a prefix, not a key.
-    if (op === 'list') return true;
-    return pluginCredentialRef(pluginId, ref.slice(prefix.length)) === ref;
-  } catch {
-    return false;
-  }
-};
+/** The pool default: `authorizeSecretRef` of `secrets.ts` (kept under its Lane A2 name). */
+export const defaultAuthorizeSecretRef: SecretRefAuthorizer = authorizeSecretRef;
 
 /** The parent's own `PluginApiImpl` per plugin, bound by the activator (one per loop). */
 export class ParentApis {
   private readonly bound = new Map<string, EthosPluginApi[]>();
 
-  bind(pluginId: string, api: EthosPluginApi): void {
+  private readonly llm = new Map<EthosPluginApi, () => SimpleCompletion | undefined>();
+
+  bind(
+    pluginId: string,
+    api: EthosPluginApi,
+    llmFactory?: () => SimpleCompletion | undefined,
+  ): void {
     const list = this.bound.get(pluginId) ?? [];
     if (!list.includes(api)) list.push(api);
     this.bound.set(pluginId, list);
+    if (llmFactory) this.llm.set(api, llmFactory);
+  }
+
+  /** The first bound loop's `llmFactory` (a monitor has no call handle, so it has no loop of its own). */
+  llmFactoryOf(pluginId: string): (() => SimpleCompletion | undefined) | undefined {
+    const api = this.bound.get(pluginId)?.[0];
+    return api ? this.llm.get(api) : undefined;
   }
 
   unbind(pluginId: string, api: EthosPluginApi): void {
+    this.llm.delete(api);
     const list = (this.bound.get(pluginId) ?? []).filter((a) => a !== api);
     if (list.length === 0) this.bound.delete(pluginId);
     else this.bound.set(pluginId, list);
@@ -231,7 +228,7 @@ export function createParentHandlers(
         if (!isRecord(params) || typeof params.prompt !== 'string') {
           throw new RpcError(RPC_ERROR.invalidParams, 'monitor.llm needs prompt');
         }
-        const llm = deps.llmFactory?.();
+        const llm = (deps.apis.llmFactoryOf(pluginId) ?? deps.llmFactory)?.();
         if (!llm) throw new RpcError(RPC_ERROR.handlerFailed, 'no llm is configured for monitors');
         const o = params.options;
         return llm.complete(

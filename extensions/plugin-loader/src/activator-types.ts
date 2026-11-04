@@ -16,6 +16,11 @@ export interface PluginActivationRequest {
   /** The plugin's parsed package.json (opaque to the loader). */
   manifest: Record<string, unknown>;
   tier: TrustTier;
+  /**
+   * The grant's declared `ethos.permissions.network` (`null` = none declared).
+   * Absent when no grant record exists. Read by the plugin-host sandbox only.
+   */
+  network?: string[] | null;
 }
 
 export interface PluginActivator {

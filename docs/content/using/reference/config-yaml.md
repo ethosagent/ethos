@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model registry, 
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -110,6 +110,12 @@ This is what `ethos setup` writes for a default Anthropic install. The key value
 | <a id="background-acp-agents"></a>[background.acp.agents.\<name\>.\*](config-yaml/background-and-browser.md#background-acp-agents) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
 | <a id="browser"></a>[browser.\<field\>](config-yaml/background-and-browser.md#browser) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
 | <a id="web-searxng"></a>[web.searxng.url](config-yaml/background-and-browser.md#web-searxng) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
+| <a id="plugins-isolation"></a>[plugins.isolation](config-yaml/plugin-isolation.md#plugins-isolation) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="plugins-isolation-id"></a>[plugins.isolation.\<id\>](config-yaml/plugin-isolation.md#plugins-isolation-id) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="plugins-host-sandbox"></a>[plugins.host.sandbox](config-yaml/plugin-isolation.md#plugins-host-sandbox) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="plugins-host-hook-timeout-ms"></a>[plugins.host.hook\_timeout\_ms](config-yaml/plugin-isolation.md#plugins-host-hook-timeout-ms) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="plugins-host-idle-stop-minutes"></a>[plugins.host.idle\_stop\_minutes](config-yaml/plugin-isolation.md#plugins-host-idle-stop-minutes) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="plugins-host-max-heap-mb"></a>[plugins.host.max\_heap\_mb](config-yaml/plugin-isolation.md#plugins-host-max-heap-mb) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
 | <a id="active-context"></a>[activeContext](config-yaml/background-and-browser.md#active-context) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
 | <a id="file-location"></a>[File location and permissions](config-yaml/background-and-browser.md#file-location) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
 

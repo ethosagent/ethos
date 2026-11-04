@@ -22,9 +22,7 @@
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/plugin-loader": "workspace:*",
     "@ethosagent/plugin-sdk": "workspace:*",
+    "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*"
-  },
-  "devDependencies": {
-    "@ethosagent/storage-fs": "workspace:*"
   }
 }

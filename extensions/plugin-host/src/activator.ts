@@ -1,7 +1,8 @@
 import type { PluginActivationRequest, PluginActivator } from '@ethosagent/plugin-loader';
 import type { EthosPlugin } from '@ethosagent/plugin-sdk';
+import type { SimpleCompletion, ToolRegistry } from '@ethosagent/types';
 import type { PluginHostPool } from './pool';
-import { replayRegistration } from './proxies/replay';
+import { assertToolNameFree, replayRegistration } from './proxies/replay';
 
 export type { PluginActivationRequest, PluginActivator };
 
@@ -10,6 +11,14 @@ export interface PluginActivatorOptions {
   baseUrl?: string;
   /** Key NAMES under `plugins/<id>/`, for the child's synchronous `hasSecret` (D19). */
   secretKeys?: (pluginId: string) => string[] | Promise<string[]>;
+  /** The loop's `registries.llmFactory`, read lazily, for monitor `ctx.llm` (it is assigned after load). */
+  llmFactory?: () => SimpleCompletion | undefined;
+  /**
+   * The loop's tool registry. A hosted tool named like one already there (a
+   * built-in such as `read_file`, or another plugin's tool) refuses the whole
+   * plugin load, because `DefaultToolRegistry.register` silently overwrites.
+   */
+  tools?: Pick<ToolRegistry, 'get' | 'getPluginId'>;
 }
 
 /**
@@ -32,13 +41,19 @@ export function createPluginActivator(
         tier: req.tier,
         ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
         secretKeys,
+        ...(req.network !== undefined ? { network: req.network } : {}),
       });
       let unsubscribe: (() => void) | undefined;
       return {
         activate(api) {
-          lease.bindApi(api);
-          for (const reg of lease.registrations) replayRegistration(api, reg, lease);
-          unsubscribe = lease.onRegistrationAdded((reg) => replayRegistration(api, reg, lease));
+          lease.bindApi(api, opts.llmFactory);
+          const guard = { ...(opts.tools ? { tools: opts.tools } : {}) };
+          // Check every tool before the first replay, so a refusal leaves nothing registered.
+          for (const reg of lease.registrations) assertToolNameFree(reg, lease, guard);
+          for (const reg of lease.registrations) replayRegistration(api, reg, lease, guard);
+          unsubscribe = lease.onRegistrationAdded((reg) =>
+            replayRegistration(api, reg, lease, guard),
+          );
         },
         deactivate() {
           unsubscribe?.();

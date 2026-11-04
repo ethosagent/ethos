@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { Logger } from '@ethosagent/types';
 import type { HandlerTable, HostConnection } from './connection';
-import type { HostEventSink } from './events';
+import type { HostEventSink, HostSpanSink } from './events';
 import type { CallHandleTable } from './handles';
 import type { ParentToHostMethod } from './protocol';
 
@@ -14,6 +14,8 @@ export interface HostSpec {
   baseUrl?: string;
   /** Secret key NAMES for the child's `hasSecret` (D19). */
   secretKeys?: string[];
+  /** The grant's declared `ethos.permissions.network`: `null` = nothing declared (sandbox denies network). */
+  network?: string[] | null;
 }
 
 /** Counters a host accumulates; the pool and tests read them. */
@@ -40,8 +42,19 @@ export interface HostRuntimeConfig {
   hostHome: (id: string) => string;
   launchArgs: (maxHeapMb: number) => string[];
   buildEnv: (id: string) => Record<string, string>;
+  /** `sandbox: auto`: wraps the node argv in the OS sandbox wrapper. Identity when unsandboxed. */
+  wrapLaunch: (
+    spec: HostSpec,
+    command: string,
+    args: string[],
+  ) => { command: string; args: string[] };
+  /** True under `sandbox: auto`; an exit before `ethos/ready` is then reported as a wrapper failure (D22). */
+  sandboxed: boolean;
   makeHandlers: (ctx: HandlerContext) => HandlerTable;
   onEvent: HostEventSink;
+  onSpan?: HostSpanSink;
+  /** Cadence of `plugin_host.stats` per running host. */
+  statsIntervalMs: number;
   logger: Logger;
   maxHeapMb: number;
   hookTimeoutMs: number;

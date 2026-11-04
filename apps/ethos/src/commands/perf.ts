@@ -3,7 +3,7 @@
 // Usage: ethos perf [--slowest N] [--kind <span-kind>]
 //
 // Defaults: top 20 slowest completed spans.
-// Filters:  --kind tool_call|llm_call|hook|mcp_call
+// Filters:  --kind tool_call|llm_call|hook|mcp_call|voice_stage|plugin_call
 //           --slowest N   (default: 20)
 
 import { existsSync } from 'node:fs';

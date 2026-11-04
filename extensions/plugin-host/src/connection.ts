@@ -52,6 +52,15 @@ export interface RequestOptions {
   timeoutMs?: number;
   /** Called synchronously with the issued id (so a caller can `ethos/cancel` it). */
   onId?: (id: RpcId) => void;
+  /** Observability: called once when the response arrives, never for a timeout or a closed pipe. */
+  onMeta?: (meta: RequestMeta) => void;
+}
+
+export interface RequestMeta {
+  reqBytes: number;
+  resBytes: number;
+  /** Time the peer reported spending in its handler. */
+  hostMs?: number;
 }
 
 export interface ConnectionOptions {
@@ -73,6 +82,8 @@ export interface ConnectionStats {
 interface Pending {
   method: string;
   resolve: (value: unknown) => void;
+  onMeta?: (meta: RequestMeta) => void;
+  reqBytes: number;
   reject: (err: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -129,6 +140,8 @@ export class HostConnection {
         method,
         resolve: (v) => resolve(v as T),
         reject,
+        reqBytes: 0,
+        ...(opts.onMeta ? { onMeta: opts.onMeta } : {}),
       };
       if (opts.timeoutMs !== undefined) {
         const ms = opts.timeoutMs;
@@ -139,7 +152,7 @@ export class HostConnection {
       this.pending.set(id, entry);
       opts.onId?.(id);
       try {
-        this.send({ jsonrpc: '2.0', id, method, params });
+        entry.reqBytes = this.send({ jsonrpc: '2.0', id, method, params });
       } catch (err) {
         this.settle(id)?.reject(err instanceof Error ? err : new Error(String(err)));
       }
@@ -162,8 +175,11 @@ export class HostConnection {
     for (const id of [...this.pending.keys()]) this.settle(id)?.reject(err);
   }
 
-  private send(msg: RpcMessage): void {
-    this.opts.write(LineCodec.encode(msg, this.maxFrameBytes));
+  /** Returns the framed size in bytes. */
+  private send(msg: RpcMessage): number {
+    const line = LineCodec.encode(msg, this.maxFrameBytes);
+    this.opts.write(line);
+    return Buffer.byteLength(line);
   }
 
   private settle(id: RpcId): Pending | undefined {
@@ -201,6 +217,17 @@ export class HostConnection {
     if (msg.error) {
       entry.reject(new RpcError(msg.error.code, msg.error.message, msg.error.data));
     } else {
+      if (entry.onMeta) {
+        try {
+          entry.onMeta({
+            reqBytes: entry.reqBytes,
+            resBytes: Buffer.byteLength(JSON.stringify(msg.result ?? null)),
+            ...(msg.hostMs !== undefined ? { hostMs: msg.hostMs } : {}),
+          });
+        } catch {
+          // observability only
+        }
+      }
       entry.resolve(msg.result);
     }
   }
@@ -231,14 +258,25 @@ export class HostConnection {
       });
       return;
     }
+    const t0 = performance.now();
     try {
       const result = await handler(params, { id });
-      this.reply({ jsonrpc: '2.0', id, result: result === undefined ? null : result });
+      this.reply({
+        jsonrpc: '2.0',
+        id,
+        result: result === undefined ? null : result,
+        hostMs: performance.now() - t0,
+      });
     } catch (err) {
       const code = err instanceof RpcError ? err.code : RPC_ERROR.handlerFailed;
       const message = err instanceof Error ? err.message : String(err);
       const data = err instanceof RpcError ? err.data : undefined;
-      this.reply({ jsonrpc: '2.0', id, error: { code, message, data } });
+      this.reply({
+        jsonrpc: '2.0',
+        id,
+        error: { code, message, data },
+        hostMs: performance.now() - t0,
+      });
     }
   }
 

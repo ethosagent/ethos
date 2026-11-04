@@ -1,11 +1,14 @@
 import type { ToolContext, ToolExecuteRequest, ToolResult } from '@ethosagent/types';
+import { CallMetrics } from './call-metrics';
 import {
   ConnectionClosedError,
   type HostConnection,
+  type RequestMeta,
   RequestTimeoutError,
   RpcError,
 } from './connection';
 import { HostUnavailableError } from './errors';
+import type { HostSpanOutcome } from './events';
 import type { CallHandleTable, LiveCall } from './handles';
 import type { HostRuntimeConfig, HostSpec, HostStats } from './host-types';
 import type { CallHandle, LiveSnapshot, ParentToHostMethod, RpcId } from './protocol';
@@ -47,6 +50,7 @@ export class HostCalls {
   private ignoredCancels = 0;
   private readonly voidQueue: Array<{ name: string; payload: unknown }> = [];
   private draining = false;
+  readonly metrics = new CallMetrics();
 
   constructor(private readonly host: CallSurface) {}
 
@@ -67,13 +71,19 @@ export class HostCalls {
     await this.host.ensureRunning();
     const conn = this.host.connection();
     if (!conn) throw new HostUnavailableError(`Plugin '${this.host.spec.id}' host is not running`);
+    const trace = this.trace(method.replace(/^ethos\//, ''), {});
+    let outcome: HostSpanOutcome = 'ok';
     try {
       return await conn.request<unknown>(method, params, {
         timeoutMs: opts.timeoutMs ?? this.host.cfg.hookTimeoutMs,
+        onMeta: trace.onMeta,
       });
     } catch (err) {
+      outcome = failureOutcome(err);
       if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
       throw err;
+    } finally {
+      trace.end(outcome);
     }
   }
 
@@ -111,6 +121,11 @@ export class HostCalls {
     const conn = this.host.connection();
     if (!conn) return failure('not_available', `Plugin '${id}' host is not running`);
     const handle = handles.open(ctx);
+    const trace = this.trace(`tool.execute:${name}`, {
+      toolCallId: request.toolCallId,
+      sessionId: request.sessionId,
+    });
+    let outcome: HostSpanOutcome = 'error';
     let callId: RpcId | undefined;
     let abortTimer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
@@ -121,6 +136,7 @@ export class HostCalls {
           if (callId === undefined) return;
           conn.notify('ethos/cancel', { id: callId });
           abortTimer = setTimeout(() => {
+            outcome = 'aborted';
             this.ignoredCancels++;
             if (this.ignoredCancels >= 2) this.host.killGroup('SIGKILL');
             resolve(
@@ -138,23 +154,69 @@ export class HostCalls {
         .request<unknown>(
           'ethos/tool.execute',
           { name, request, call: handle, live: liveSnapshot(ctx) },
-          { onId: (rid) => (callId = rid) },
+          { onId: (rid) => (callId = rid), onMeta: trace.onMeta },
         )
         .then((raw) => {
           if (abortTimer) this.ignoredCancels = 0;
+          const parsed = parseToolResult(raw);
+          if (outcome !== 'aborted') {
+            outcome = parsed ? (parsed.ok ? 'ok' : 'error') : 'error';
+          }
           return (
-            parseToolResult(raw) ??
+            parsed ??
             failure('execution_failed', `Plugin '${id}' tool '${name}' returned a malformed result`)
           );
         });
       return await Promise.race([call, abortedResult]);
     } catch (err) {
+      outcome = failureOutcome(err);
       return this.toolFailure(err, name);
     } finally {
+      trace.end(outcome);
       if (abortTimer) clearTimeout(abortTimer);
       if (onAbort) signal.removeEventListener('abort', onAbort);
       handles.revoke(handle);
     }
+  }
+
+  /** Starts the span for one IPC call; `end` closes it and feeds the host's stats window. */
+  private trace(
+    name: string,
+    ids: { toolCallId?: string; sessionId?: string },
+  ): { onMeta: (meta: RequestMeta) => void; end: (outcome: HostSpanOutcome) => void } {
+    const t0 = performance.now();
+    let meta: RequestMeta | undefined;
+    let finish: ReturnType<NonNullable<HostRuntimeConfig['onSpan']>> | undefined;
+    try {
+      finish = this.host.cfg.onSpan?.({
+        name,
+        pluginId: this.host.spec.id,
+        ...(ids.toolCallId ? { toolCallId: ids.toolCallId } : {}),
+        ...(ids.sessionId ? { sessionId: ids.sessionId } : {}),
+      });
+    } catch {
+      // observability must not break a call
+    }
+    return {
+      onMeta: (m) => {
+        meta = m;
+      },
+      end: (outcome) => {
+        const ipcMs = performance.now() - t0;
+        this.metrics.record(ipcMs, meta?.reqBytes ?? 0, meta?.resBytes ?? 0);
+        try {
+          finish?.({
+            outcome,
+            reqBytes: meta?.reqBytes ?? 0,
+            resBytes: meta?.resBytes ?? 0,
+            ipcMs,
+            ...(meta?.hostMs !== undefined ? { hostMs: meta.hostMs } : {}),
+          });
+        } catch {
+          // observability must not break a call
+        }
+      },
+    };
   }
 
   private toolFailure(err: unknown, tool: string): ToolResult {
@@ -181,16 +243,21 @@ export class HostCalls {
       void this.host.ensureRunning().catch(() => undefined);
       return null;
     }
+    const trace = this.trace(`hook.fire:${name}`, {});
+    let outcome: HostSpanOutcome = 'ok';
     try {
       const raw = await conn.request<unknown>(
         'ethos/hook.fire',
         { model: 'modifying', name, payload },
-        { timeoutMs: this.host.cfg.hookTimeoutMs },
+        { timeoutMs: this.host.cfg.hookTimeoutMs, onMeta: trace.onMeta },
       );
       return isRecord(raw) ? raw : null;
     } catch (err) {
+      outcome = failureOutcome(err);
       if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
       return null;
+    } finally {
+      trace.end(outcome);
     }
   }
 
@@ -217,18 +284,29 @@ export class HostCalls {
         if (!this.host.isRunning || !conn) break;
         const item = this.voidQueue.shift();
         if (!item) break;
+        const trace = this.trace(`hook.fire:${item.name}`, {});
+        let outcome: HostSpanOutcome = 'ok';
         try {
           await conn.request(
             'ethos/hook.fire',
             { model: 'void', name: item.name, payload: item.payload },
-            { timeoutMs: this.host.cfg.hookTimeoutMs },
+            { timeoutMs: this.host.cfg.hookTimeoutMs, onMeta: trace.onMeta },
           );
         } catch (err) {
+          outcome = failureOutcome(err);
           if (err instanceof RequestTimeoutError) this.host.stats.timeouts++;
+        } finally {
+          trace.end(outcome);
         }
       }
     } finally {
       this.draining = false;
     }
   }
+}
+
+function failureOutcome(err: unknown): HostSpanOutcome {
+  if (err instanceof RequestTimeoutError) return 'timeout';
+  if (err instanceof HostUnavailableError) return 'unavailable';
+  return 'error';
 }

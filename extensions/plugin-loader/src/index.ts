@@ -1446,12 +1446,14 @@ export class PluginLoader {
       return undefined;
     }
     try {
+      const network = await this.grantNetworkOf(id);
       const synthetic = await this.activator.activate({
         id,
         dir: req.dir,
         entry: req.entry,
         manifest: req.manifest,
         tier: req.tier,
+        ...(network !== undefined ? { network } : {}),
       } satisfies PluginActivationRequest);
       return { mod: synthetic, hosted: synthetic };
     } catch (err) {
@@ -1485,6 +1487,15 @@ export class PluginLoader {
           },
         );
       }
+    }
+  }
+
+  private async grantNetworkOf(id: string): Promise<string[] | null | undefined> {
+    try {
+      const grants = await readGrants(this.storage, join(this.dataDir, 'plugins'));
+      return grants[id]?.capabilities.network;
+    } catch {
+      return undefined;
     }
   }
 

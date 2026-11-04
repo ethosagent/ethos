@@ -13,6 +13,7 @@ import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { Storage } from '@ethosagent/types';
 import { createPluginHostPool, type PluginHostPool } from '@ethosagent/wiring';
 import { logger } from './logger';
+import { getEthosObservability } from './wiring';
 
 let processPool: PluginHostPool | undefined;
 let cachedChildEntry: Promise<string | undefined> | undefined;
@@ -49,6 +50,8 @@ export async function openProcessPluginHostPool(
     childEntry,
     ...(config.pluginIsolation ? { config: config.pluginIsolation } : {}),
     logger,
+    // Lazy: the first host event opens observability.db, not pool construction.
+    observability: () => getEthosObservability(),
   });
   return processPool;
 }
