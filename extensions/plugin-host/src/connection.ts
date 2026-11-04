@@ -119,16 +119,16 @@ export class HostConnection {
   /** Feed a raw chunk from the peer's output stream. */
   feed(chunk: Buffer | string): void {
     if (this.violated || this.closed) return;
-    let messages: RpcMessage[];
+    let messages: Array<{ message: RpcMessage; bytes: number }>;
     try {
-      messages = this.codec.push(chunk);
+      messages = this.codec.pushFramed(chunk);
     } catch (err) {
       this.violate(err instanceof Error ? err.message : String(err));
       return;
     }
-    for (const msg of messages) {
+    for (const { message, bytes } of messages) {
       if (this.violated) return;
-      this.dispatch(msg);
+      this.dispatch(message, bytes);
     }
   }
 
@@ -177,9 +177,9 @@ export class HostConnection {
 
   /** Returns the framed size in bytes. */
   private send(msg: RpcMessage): number {
-    const line = LineCodec.encode(msg, this.maxFrameBytes);
+    const { line, bytes } = LineCodec.encodeFramed(msg, this.maxFrameBytes);
     this.opts.write(line);
-    return Buffer.byteLength(line);
+    return bytes;
   }
 
   private settle(id: RpcId): Pending | undefined {
@@ -197,15 +197,15 @@ export class HostConnection {
     this.opts.onViolation(reason);
   }
 
-  private dispatch(msg: RpcMessage): void {
+  private dispatch(msg: RpcMessage, frameBytes: number): void {
     if ('method' in msg) {
       void this.handleIncoming(msg.method, msg.params, 'id' in msg ? msg.id : undefined);
       return;
     }
-    this.handleResponse(msg);
+    this.handleResponse(msg, frameBytes);
   }
 
-  private handleResponse(msg: RpcResponse): void {
+  private handleResponse(msg: RpcResponse, frameBytes: number): void {
     const entry = this.settle(msg.id);
     if (!entry) {
       // Ids are monotonic: an id we issued and no longer track was already
@@ -221,7 +221,7 @@ export class HostConnection {
         try {
           entry.onMeta({
             reqBytes: entry.reqBytes,
-            resBytes: Buffer.byteLength(JSON.stringify(msg.result ?? null)),
+            resBytes: frameBytes,
             ...(msg.hostMs !== undefined ? { hostMs: msg.hostMs } : {}),
           });
         } catch {

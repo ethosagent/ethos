@@ -1,4 +1,5 @@
 import type { ToolCapabilities, ToolExecuteRequest, ToolResult } from '@ethosagent/types';
+import { isRecord } from './util';
 
 /**
  * Plugin-host wire protocol: JSON-RPC 2.0, one JSON object per line (NDJSON) on
@@ -406,10 +407,6 @@ export class ProtocolViolation extends Error {
 
 const NEWLINE = 0x0a;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** Validates the JSON-RPC envelope. Throws ProtocolViolation on anything else. */
 function hostMsOf(raw: Record<string, unknown>): { hostMs?: number } {
   return typeof raw.hostMs === 'number' && Number.isFinite(raw.hostMs)
@@ -424,7 +421,7 @@ export function parseMessage(line: string): RpcMessage {
   } catch {
     throw new ProtocolViolation('malformed JSON line');
   }
-  if (!isObject(raw) || raw.jsonrpc !== '2.0') {
+  if (!isRecord(raw) || raw.jsonrpc !== '2.0') {
     throw new ProtocolViolation('not a JSON-RPC 2.0 message');
   }
   const { id, method } = raw;
@@ -440,7 +437,7 @@ export function parseMessage(line: string): RpcMessage {
   if (!hasId) throw new ProtocolViolation('message has neither method nor id');
   if ('error' in raw) {
     const err = raw.error;
-    if (!isObject(err) || typeof err.code !== 'number' || typeof err.message !== 'string') {
+    if (!isRecord(err) || typeof err.code !== 'number' || typeof err.message !== 'string') {
       throw new ProtocolViolation('malformed error response');
     }
     return {
@@ -466,16 +463,30 @@ export class LineCodec {
   constructor(private readonly maxFrameBytes: number = MAX_FRAME_BYTES) {}
 
   static encode(message: RpcMessage, maxFrameBytes: number = MAX_FRAME_BYTES): string {
+    return LineCodec.encodeFramed(message, maxFrameBytes).line;
+  }
+
+  /** `encode` plus the frame's size in bytes (newline included), so callers need not re-measure. */
+  static encodeFramed(
+    message: RpcMessage,
+    maxFrameBytes: number = MAX_FRAME_BYTES,
+  ): { line: string; bytes: number } {
     const line = JSON.stringify(message);
-    if (Buffer.byteLength(line) > maxFrameBytes) {
+    const bytes = Buffer.byteLength(line);
+    if (bytes > maxFrameBytes) {
       throw new ProtocolViolation(`frame exceeds ${maxFrameBytes} bytes`);
     }
-    return `${line}\n`;
+    return { line: `${line}\n`, bytes: bytes + 1 };
   }
 
   push(chunk: Buffer | string): RpcMessage[] {
+    return this.pushFramed(chunk).map((f) => f.message);
+  }
+
+  /** `push` plus each message's line length in bytes (newline excluded). */
+  pushFramed(chunk: Buffer | string): Array<{ message: RpcMessage; bytes: number }> {
     let buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    const out: RpcMessage[] = [];
+    const out: Array<{ message: RpcMessage; bytes: number }> = [];
     for (;;) {
       const nl = buf.indexOf(NEWLINE);
       if (nl === -1) {
@@ -497,7 +508,7 @@ export class LineCodec {
         throw new ProtocolViolation(`frame exceeds ${this.maxFrameBytes} bytes`);
       }
       const text = line.toString('utf8').trim();
-      if (text !== '') out.push(parseMessage(text));
+      if (text !== '') out.push({ message: parseMessage(text), bytes: line.length });
     }
   }
 }

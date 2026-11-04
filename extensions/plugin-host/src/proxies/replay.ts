@@ -9,6 +9,7 @@ import {
   isPersonalityConfig,
   isRendererSpec,
 } from '../registration-parse';
+import { isInsideStateDir } from '../util';
 import { createCliHandler, createSlashHandler } from './commands';
 import { createModifyingHookProxy } from './modifying-hook';
 import {
@@ -18,7 +19,6 @@ import {
   createHealthCheck,
   createInjectorProxy,
   createRouteHandler,
-  isInsideStateDir,
 } from './registry-rows';
 import { createToolProxy } from './tool';
 import { createVoidHookProxy } from './void-hook';

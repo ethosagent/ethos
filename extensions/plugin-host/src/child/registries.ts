@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
 import {
   DiagnosticStore,
@@ -26,6 +26,7 @@ import type {
   VoidHooks,
 } from '@ethosagent/types';
 import type { HostConnection } from '../connection';
+import { isInsideStateDir } from '../util';
 
 /** Registrations the plugin makes, observed as they happen. */
 export interface RegistrationObserver {
@@ -206,8 +207,7 @@ export class StateDirMap extends Map<string, string> {
     super();
   }
   override set(id: string, path: string): this {
-    const rel = relative(resolve(this.stateDir), resolve(path));
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    if (!isInsideStateDir(this.stateDir, path)) {
       throw new Error(
         `registerDataSource('${id}') path '${path}' must be inside the plugin host state dir '${this.stateDir}'`,
       );

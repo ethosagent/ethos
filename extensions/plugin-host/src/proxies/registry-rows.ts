@@ -1,4 +1,3 @@
-import { isAbsolute, relative, resolve } from 'node:path';
 import type { PluginHttpRequest, PluginHttpResponse } from '@ethosagent/plugin-sdk';
 import type {
   ContextInjector,
@@ -238,10 +237,4 @@ export function createExtractor(reg: ExtractorRegistration, lease: HostLease) {
       };
     },
   };
-}
-
-/** True when `path` resolves inside `stateDir` (D21). Lexical: a symlink inside it is not followed. */
-export function isInsideStateDir(stateDir: string, path: string): boolean {
-  const rel = relative(resolve(stateDir), resolve(path));
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }

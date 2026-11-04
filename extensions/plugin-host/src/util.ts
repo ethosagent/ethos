@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve } from 'node:path';
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -18,4 +20,10 @@ export function decodeBytes(value: unknown): unknown {
     return new Uint8Array(Buffer.from(value.$bytes, 'base64'));
   }
   return value;
+}
+
+/** True when `path` resolves inside `stateDir` (D21). Lexical: a symlink inside it is not followed. */
+export function isInsideStateDir(stateDir: string, path: string): boolean {
+  const rel = relative(resolve(stateDir), resolve(path));
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }

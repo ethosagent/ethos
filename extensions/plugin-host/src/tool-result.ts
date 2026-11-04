@@ -1,8 +1,6 @@
 import type { ToolResult } from '@ethosagent/types';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from './util';
 
 /**
  * A host's answer is untrusted input: rebuild a `ToolResult` from the fields we

@@ -5,6 +5,7 @@ import type { Logger, SecretsResolver, Storage, ToolResult } from '@ethosagent/t
 import { type HandlerTable, HostConnection, RpcError } from '../connection';
 import { isModifyingHook, isVoidHook } from '../hook-names';
 import { type ActivateResult, PROTOCOL_VERSION, type Registration, RPC_ERROR } from '../protocol';
+import { isRecord } from '../util';
 import { createRowSync, refuseOAuthConfig } from './api-sync';
 import { buildChildContext, isToolExecuteRequest, parseLiveSnapshot } from './context';
 import { installRowHandlers } from './handlers';
@@ -20,12 +21,17 @@ export interface PluginHostChildOptions {
 
 const DEACTIVATE_TIMEOUT_MS = 1_500;
 
+/** Handlers after which the row sync is not worth its walk of every registry. */
+const SKIP_ROW_SYNC: ReadonlySet<string> = new Set([
+  'ethos/activate',
+  'ethos/shutdown',
+  'ethos/tool.execute',
+  'ethos/ping',
+  'ethos/cancel',
+]);
+
 function rssMb(): number {
   return Math.round(process.memoryUsage().rss / 1_048_576);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 type TrustTierValue = NonNullable<Parameters<PluginLoader['loadFromPluginDir']>[2]>;
@@ -318,10 +324,12 @@ export function runPluginHostChild(opts: PluginHostChildOptions): void {
     return null;
   };
 
-  // A registration made while serving a request (a slash handler, a tool, a hook) is announced
-  // once that request finishes. Activation and shutdown announce nothing themselves.
+  // A registration made while serving a request (a slash handler, a route, a hook) is announced
+  // once that request finishes. Activation and shutdown announce nothing themselves, and the
+  // per-call tool.execute, ping and cancel stay off this path: a tool's own `execute` has no
+  // registration surface, so a row it somehow added is announced after the next row handler.
   for (const [method, handle] of Object.entries(handlers)) {
-    if (method === 'ethos/activate' || method === 'ethos/shutdown') continue;
+    if (SKIP_ROW_SYNC.has(method)) continue;
     handlers[method] = async (params, ctx) => {
       try {
         return await handle(params, ctx);
