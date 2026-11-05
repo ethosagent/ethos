@@ -89,6 +89,7 @@ import { createWebApprovalHook, type DangerPredicate } from './services/approval
 import { type ApprovalObservability, ApprovalsService } from './services/approvals.service';
 import { BackupService } from './services/backup.service';
 import { CallsService } from './services/calls.service';
+import { CatalogService, catalogSkillInstalled } from './services/catalog.service';
 import { ConfigService, readLegacyBrowserBargeInTuning } from './services/config.service';
 import { CredentialsService } from './services/credentials.service';
 import { CronService } from './services/cron.service';
@@ -1600,6 +1601,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       : 'http://localhost:3000/oauth/callback',
   });
   disposers.push('mcp device sign-ins', () => mcpService.dispose());
+  // Catalog — read-only browse over the in-repo index. The three "already
+  // here" reads are injected so the service imports no extension.
+  const catalogService = new CatalogService({
+    listMcpNames: async () => (await sharedMcpJsonStore.read()).map((c) => c.name),
+    listInstalledPlugins: async () => (await pluginsService.list()).plugins,
+    skillInstalled: catalogSkillInstalled(storage, opts.dataDir),
+  });
   // Recipes — the install pipeline's orchestration half. Every write it makes
   // goes through the services above, so a recipe cannot reach past a refusal
   // any of them already enforces (`CronService`'s delivery rules above all).
@@ -2079,6 +2087,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       chat: chatService,
       personalities: personalitiesService,
       recipes: recipesService,
+      catalog: catalogService,
       config: configService,
       onboarding: onboardingService,
       approvals: approvalsService,

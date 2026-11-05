@@ -21,6 +21,7 @@
     "@ethosagent/digest": "workspace:*",
     "@ethosagent/batch-runner": "workspace:*",
     "@ethosagent/call-log": "workspace:*",
+    "@ethosagent/catalog": "workspace:*",
     "@ethosagent/cas-fs": "workspace:*",
     "@ethosagent/channel-transcript-sqlite": "workspace:*",
     "@ethosagent/cron": "workspace:*",

@@ -1,9 +1,9 @@
 ---
 title: "CLI: process, backup, import and data commands"
-description: "ethos process, logs, mcp, backup, import and data commands."
+description: "ethos process, logs, mcp, catalog, backup, import and data commands."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 ## Synopsis {#synopsis}
@@ -43,6 +43,20 @@ Expose Ethos to MCP-compatible clients (Claude Desktop, Cursor, OpenCode, Contin
 Synopsis: `ethos mcp [serve | install --client <name> | init | doctor | inspect]`
 
 Supported `--client` values: `claude-desktop`, `cursor`, `opencode`, `continue`, `zed`.
+
+## ethos catalog {#ethos-catalog}
+
+Browse the reviewed catalog of MCP servers, plugins and skills that ships with Ethos. Read-only: it prints the index and the commands that add an entry by hand, and changes nothing under `~/.ethos/`.
+
+Synopsis: `ethos catalog [list | search <query> | show <id>] [--kind mcp|plugin|skill] [--json]`
+
+| Subcommand | Description |
+|---|---|
+| `list` | One line per entry: `id  kind  tier  description`. |
+| `search <query>` | Case-insensitive match over id, name, description and publisher. |
+| `show <id>` | The full entry (pin, capabilities, licence), the `ethos mcp add` command for it, and the `ethos personality mcp <id> --attach` command that grants it. |
+
+`--json` prints the entries (or the one entry) as a single JSON document. An unknown id prints `Unknown catalog entry: <id>` and up to three nearby ids to stderr, and exits `1`.
 
 ## ethos backup {#ethos-backup}
 

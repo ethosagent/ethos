@@ -111,6 +111,11 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
     group: 'Agents',
     description: 'Manage MCP servers (~/.ethos/mcp.json), serve an MCP export',
   },
+  {
+    name: 'catalog',
+    group: 'Agents',
+    description: 'Browse the reviewed MCP, plugin and skill catalog',
+  },
   { name: 'process', group: 'Agents', description: 'List and manage background agent processes' },
   // Channels
   {

@@ -39,7 +39,11 @@ export const COOKIE_ONLY = 'cookie-only';
 // "experimental" branch in `dualAuth`). `outbox` (Part 2) and `learning`
 // (Part 4, L-T8) are left out on purpose: approving a publication, or a
 // learned change that rewrites a skill or an Expression, is a human decision
-// made in the web UI, never something an API key can do.
+// made in the web UI, never something an API key can do. `catalog` is left out
+// for the same reason (unified-catalog D11): choosing third-party code or a
+// remote service to install is a human decision, so `catalog.list` — and
+// the `catalog.install` that Phase 3 adds — are cookie-only. Pinned by
+// `__tests__/middleware/dual-auth-catalog.test.ts`.
 export const SCOPE_MAP: Record<string, Record<string, string>> = {
   sessions: {
     list: 'sessions:read',

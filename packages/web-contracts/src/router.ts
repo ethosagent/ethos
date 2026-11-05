@@ -1,4 +1,5 @@
 import { backup, execution } from './routes/backup-execution';
+import { catalog } from './routes/catalog';
 import { approvals, chat, clarify, onboarding, tools } from './routes/chat-tools';
 import { config } from './routes/config';
 import { cron, debug, evolver, skills } from './routes/cron-skills';
@@ -171,6 +172,7 @@ export const contract = {
   toolSettings,
   documents,
   recipes,
+  catalog,
   backup,
   execution,
 };

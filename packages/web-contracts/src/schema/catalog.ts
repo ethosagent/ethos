@@ -69,3 +69,35 @@ export const CatalogEntrySchema = z.object({
   skill: z.object({ skillName: z.string() }).optional(),
 });
 export type CatalogEntryInfo = z.infer<typeof CatalogEntrySchema>;
+
+// ---------------------------------------------------------------------------
+// `catalog.list` (plan/phases/unified-catalog.md §5.2). `installed` and
+// `action` are computed server-side (D10) by `CatalogService`
+// (apps/web-api/src/services/catalog.service.ts), pinned by
+// apps/web-api/src/__tests__/services/catalog.service.test.ts.
+// ---------------------------------------------------------------------------
+
+export const CatalogActionSchema = z.discriminatedUnion('type', [
+  /** Remote, auth none: the client calls `mcp.addServer` with `name` + `url`. */
+  z.object({ type: z.literal('add'), name: z.string(), url: z.string() }),
+  /** Remote OAuth: the client starts the existing `mcp.start` with `name` (= id). */
+  z.object({ type: z.literal('oauth'), url: z.string(), name: z.string() }),
+  /** Plugin / skill: installed through `catalog.install` (Phase 3). */
+  z.object({ type: z.literal('install') }),
+  /** Local MCP (stdio is CLI-only from the web): the command to copy. */
+  z.object({ type: z.literal('cli'), command: z.string() }),
+]);
+export type CatalogAction = z.infer<typeof CatalogActionSchema>;
+
+export const CatalogListEntrySchema = CatalogEntrySchema.extend({
+  installed: z.boolean(),
+  action: CatalogActionSchema,
+});
+export type CatalogListEntry = z.infer<typeof CatalogListEntrySchema>;
+
+export const CatalogListInputSchema = z.object({ kind: CatalogKindSchema.optional() });
+export const CatalogListOutputSchema = z.object({
+  version: z.literal(1),
+  entries: z.array(CatalogListEntrySchema),
+});
+export type CatalogListOutput = z.infer<typeof CatalogListOutputSchema>;

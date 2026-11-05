@@ -321,6 +321,7 @@ describe('contract router', () => {
       'approvals',
       'backup',
       'batch',
+      'catalog',
       'channels',
       'chat',
       'clarify',

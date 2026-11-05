@@ -24,6 +24,7 @@ import { runBackup, runImport } from './commands/backup';
 import { runBatch } from './commands/batch';
 import { runBench } from './commands/bench';
 import { runCas } from './commands/cas';
+import { runCatalog } from './commands/catalog';
 import { runChat } from './commands/chat';
 import { runClaw } from './commands/claw';
 import { runCommands } from './commands/commands';
@@ -79,7 +80,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -902,6 +903,11 @@ try {
 
     case 'mcp': {
       await runMcp(args.slice(1));
+      break;
+    }
+
+    case 'catalog': {
+      await runCatalog(args.slice(1));
       break;
     }
 

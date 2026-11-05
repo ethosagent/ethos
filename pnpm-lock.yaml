@@ -648,6 +648,9 @@ importers:
       '@ethosagent/cas-fs':
         specifier: workspace:*
         version: link:../../extensions/cas-fs
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@ethosagent/channel-transcript-sqlite':
         specifier: workspace:*
         version: link:../../extensions/channel-transcript-sqlite

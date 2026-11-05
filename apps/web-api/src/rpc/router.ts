@@ -23,6 +23,7 @@ import { apiKeysRouter } from './api-keys';
 import { approvalsRouter } from './approvals';
 import { backupRouter } from './backup';
 import { batchRouter } from './batch';
+import { catalogRouter } from './catalog';
 import { channelsRouter } from './channels';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
@@ -140,6 +141,7 @@ export const apiRouter = {
   toolSettings: toolSettingsRouter,
   documents: documentsRouter,
   recipes: recipesRouter,
+  catalog: catalogRouter,
   backup: backupRouter,
   execution: executionRouter,
 };

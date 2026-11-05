@@ -107,6 +107,7 @@ export interface ServiceContainer {
   chat: ChatService;
   personalities: import('../services/personalities.service').PersonalitiesService;
   recipes: import('../services/recipes.service').RecipesService;
+  catalog: import('../services/catalog.service').CatalogService;
   config: import('../services/config.service').ConfigService;
   onboarding: import('../services/onboarding.service').OnboardingService;
   approvals: import('../services/approvals.service').ApprovalsService;

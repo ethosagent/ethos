@@ -10,6 +10,7 @@ import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
 import type { BackupService } from '../services/backup.service';
 import type { CallsService } from '../services/calls.service';
+import type { CatalogService } from '../services/catalog.service';
 import type { ConfigService } from '../services/config.service';
 import type { CredentialsService } from '../services/credentials.service';
 import type { CronService } from '../services/cron.service';
@@ -75,6 +76,8 @@ export interface RpcContext {
   /** One-click use-case bundles. Not optional: the catalog is in-repo, so the
    *  gallery renders in every deployment. */
   recipes: RecipesService;
+  /** The unified catalog index (read-only; installs arrive in Phase 3). */
+  catalog: CatalogService;
   platforms: PlatformsService;
   lab: LabService;
   kanban: KanbanService;

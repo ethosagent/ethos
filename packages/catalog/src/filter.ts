@@ -5,6 +5,7 @@
 import type { CatalogEntry, CatalogKind, CatalogTier } from '@ethosagent/types';
 
 // Re-exported so apps can build a pinned argv without loading the entry data.
+export { installFlags } from './install-args';
 export { launcherArgs, type PackagePin, pinSpec } from './pin';
 
 export interface CatalogFilter {
