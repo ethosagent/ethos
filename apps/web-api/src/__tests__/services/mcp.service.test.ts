@@ -1,11 +1,13 @@
 import { DefaultToolRegistry } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
+import type { LoginSlots, McpDeviceLogin } from '@ethosagent/tools-mcp';
 import {
   type McpInstallFlow,
   McpJsonStore,
   type McpManager,
   OAuthIssuerMismatch,
 } from '@ethosagent/tools-mcp';
+import type { Logger } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { McpService } from '../../services/mcp.service';
 
@@ -429,5 +431,108 @@ describe('McpService.complete — RFC 9207 iss', () => {
       detail:
         'Authorization response came from https://evil.example, expected https://auth.example.com',
     });
+  });
+});
+
+describe('McpService device sign-in', () => {
+  function makeService() {
+    const service = new McpService({
+      mcpManager: {} as unknown as McpManager,
+      personalityUpdater: { get: () => undefined, update: async () => undefined },
+      secrets: new InMemorySecretsResolver(),
+      mcpJsonStore: new McpJsonStore(new InMemoryStorage()),
+      redirectUri: 'http://default.fallback/oauth/callback',
+    });
+    const inner = {
+      start: vi.fn(),
+      status: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn(),
+    };
+    (service as unknown as { deviceLogin: Partial<McpDeviceLogin> }).deviceLogin = inner;
+    return { service, inner };
+  }
+
+  it('deviceStart returns the code once and status never echoes it', async () => {
+    const { service, inner } = makeService();
+    inner.start.mockResolvedValue({
+      ok: true,
+      flowId: 'flow-0123456789abcdef',
+      userCode: 'ABCD-EFGH',
+      verificationUri: 'https://auth.example/device',
+      expiresAt: Date.UTC(2026, 9, 18, 7, 5),
+      serverName: 'granola',
+      serverHost: 'mcp.example',
+      authHost: 'auth.example',
+      personalityId: 'researcher',
+    });
+    inner.status.mockReturnValue({ status: 'pending', serverName: 'granola' });
+
+    const started = await service.deviceStart({
+      serverName: 'granola',
+      personalityId: 'researcher',
+    });
+    expect(inner.start).toHaveBeenCalledWith({
+      serverName: 'granola',
+      personalityId: 'researcher',
+      surface: 'web',
+    });
+    expect(started).toMatchObject({
+      ok: true,
+      userCode: 'ABCD-EFGH',
+      expiresAt: '2026-10-18T07:05:00.000Z',
+    });
+    expect(JSON.stringify(service.deviceStatus('flow-0123456789abcdef'))).not.toContain('ABCD');
+  });
+
+  it('device_refused passes the RFC code through', async () => {
+    const { service, inner } = makeService();
+    inner.start.mockResolvedValue({
+      ok: false,
+      code: 'device_refused',
+      detail: 'unauthorized_client',
+    });
+    expect(await service.deviceStart({ serverName: 'vercel' })).toEqual({
+      ok: false,
+      code: 'device_refused',
+      detail: 'unauthorized_client',
+    });
+  });
+
+  it('deviceCancel is idempotent', () => {
+    const { service, inner } = makeService();
+    expect(service.deviceCancel('flow-0123456789abcdef')).toEqual({ ok: true });
+    expect(service.deviceCancel('flow-0123456789abcdef')).toEqual({ ok: true });
+    expect(inner.cancel).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('McpService audit logger', () => {
+  it('hands the host logger to the device login so mcp.oauth.login reaches it', () => {
+    const info = vi.fn();
+    const logger: Logger = {
+      debug: vi.fn(),
+      info,
+      warn: vi.fn(),
+      error: vi.fn(),
+      child: () => logger,
+    };
+    const service = new McpService({
+      mcpManager: {} as unknown as McpManager,
+      personalityUpdater: { get: () => undefined, update: async () => undefined },
+      secrets: new InMemorySecretsResolver(),
+      mcpJsonStore: new McpJsonStore(new InMemoryStorage()),
+      redirectUri: 'http://default.fallback/oauth/callback',
+      logger,
+    });
+    const { slots } = (service as unknown as { deviceLogin: { slots: LoginSlots } }).deviceLogin;
+    const reserved = slots.reserve({ serverName: 'demo', surface: 'web', kind: 'device' });
+    if (!reserved.ok) throw new Error('reserve failed');
+    slots.started(reserved.slot);
+    slots.cancel(reserved.slot.flowId);
+    expect(info).toHaveBeenCalledWith(
+      'mcp.oauth.login',
+      expect.objectContaining({ event: 'mcp.oauth.login', outcome: 'started', surface: 'web' }),
+    );
   });
 });

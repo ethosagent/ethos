@@ -312,6 +312,28 @@ describe('McpInstallFlow.start', () => {
     expect(flow.getStatus(result.state)).toBe('pending');
   });
 
+  it('buildAuthBlock persists device_authorization_endpoint', async () => {
+    const { flow, jsonStore, script } = await makeHarness();
+    const deviceEndpoint = 'https://auth.linear.app/device_authorization';
+    scriptHappyDiscoveryAndDcr(script);
+    script.responders.set(
+      'https://mcp.linear.app/.well-known/oauth-authorization-server',
+      async () => jsonResponse({ ...DISCOVERY_OK, device_authorization_endpoint: deviceEndpoint }),
+    );
+    let dcrGrants: string[] = [];
+    script.responders.set(DISCOVERY_OK.registration_endpoint, async ({ init }) => {
+      dcrGrants = JSON.parse(String(init?.body)).grant_types;
+      return jsonResponse(DCR_OK, 201);
+    });
+
+    await flow.start({ mcpUrl: MCP_URL });
+
+    expect((await jsonStore.get('linear'))?.auth).toMatchObject({
+      device_authorization_endpoint: deviceEndpoint,
+    });
+    expect(dcrGrants).toContain('urn:ietf:params:oauth:grant-type:device_code');
+  });
+
   it('uses an explicit name argument when supplied', async () => {
     const { flow, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);

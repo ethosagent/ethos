@@ -124,6 +124,55 @@ export const McpStartOutputSchema = z.discriminatedUnion('ok', [
   }),
 ]);
 
+// Device-code sign-in (RFC 8628) for an EXISTING entry only (plan
+// mcp-device-code-login §7.2, D16). The userCode is returned once, by
+// deviceStart; deviceStatus never carries it.
+export const McpDeviceStartInputSchema = z.object({
+  serverName: z.string().min(1).max(64),
+  personalityId: z.string().min(1).optional(),
+});
+
+export const McpDeviceStartOutputSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    flowId: z.string(),
+    userCode: z.string(),
+    verificationUri: z.string().url(),
+    verificationUriComplete: z.string().url().optional(),
+    /** ISO-8601. */
+    expiresAt: z.string(),
+    serverName: z.string(),
+    serverHost: z.string(),
+    authHost: z.string(),
+    personalityId: z.string().optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum([
+      'not_found',
+      'not_oauth',
+      'device_unavailable',
+      'device_refused',
+      'already_pending',
+      'too_many_pending',
+      'discovery_failed',
+    ]),
+    detail: z.string().optional(),
+  }),
+]);
+
+export const McpDeviceStatusInputSchema = z.object({
+  flowId: z.string().min(16).max(128),
+});
+
+export const McpDeviceStatusOutputSchema = z.object({
+  status: z.enum(['pending', 'connected', 'denied', 'expired', 'cancelled', 'error']),
+  serverName: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+export const McpDeviceCancelInputSchema = McpDeviceStatusInputSchema;
+
 export const McpCompleteInputSchema = z.object({
   code: z.string().optional(),
   state: z.string(),

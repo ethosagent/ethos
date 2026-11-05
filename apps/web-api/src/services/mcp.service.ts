@@ -7,6 +7,7 @@ import {
   getRemotePreset,
   MCP_PRESETS,
   MCP_REMOTE_PRESETS,
+  McpDeviceLogin,
   McpInstallFlow,
   type McpJsonStore,
   type McpManager,
@@ -17,7 +18,7 @@ import {
   type PersonalityUpdater,
   revokeToken,
 } from '@ethosagent/tools-mcp';
-import type { SecretsResolver } from '@ethosagent/types';
+import type { Logger, SecretsResolver } from '@ethosagent/types';
 
 export interface McpServiceOptions {
   mcpManager: McpManager;
@@ -28,10 +29,13 @@ export interface McpServiceOptions {
   /** True when the id is a read-only built-in personality. `connectPreset`
    *  refuses those BEFORE it touches mcp.json or the manager. */
   isBuiltinPersonality?: (id: string) => boolean;
+  /** Receives the `mcp.oauth.login` audit events of web sign-ins (plan §9.3). */
+  logger?: Logger;
 }
 
 export class McpService {
   private readonly flow: McpInstallFlow;
+  private readonly deviceLogin: McpDeviceLogin;
   private readonly mcpJsonStore: McpJsonStore;
   private readonly mcpManager: McpManager;
   private readonly personalityUpdater: PersonalityUpdater;
@@ -51,6 +55,58 @@ export class McpService {
       mcpJsonStore: opts.mcpJsonStore,
       redirectUri: opts.redirectUri,
     });
+    this.deviceLogin = new McpDeviceLogin({
+      mcpJsonStore: opts.mcpJsonStore,
+      secrets: opts.secrets,
+      mcpManager: opts.mcpManager,
+      logger: opts.logger,
+    });
+  }
+
+  /** RFC 8628 sign-in for an existing entry (plan §7.2, D16). */
+  async deviceStart(input: { serverName: string; personalityId?: string }) {
+    const r = await this.deviceLogin.start({
+      serverName: input.serverName,
+      ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
+      surface: 'web',
+    });
+    if (!r.ok) {
+      return {
+        ok: false as const,
+        code: r.code,
+        ...(r.detail !== undefined ? { detail: r.detail } : {}),
+      };
+    }
+    return {
+      ok: true as const,
+      flowId: r.flowId,
+      userCode: r.userCode,
+      verificationUri: r.verificationUri,
+      ...(r.verificationUriComplete !== undefined
+        ? { verificationUriComplete: r.verificationUriComplete }
+        : {}),
+      expiresAt: new Date(r.expiresAt).toISOString(),
+      serverName: r.serverName,
+      serverHost: r.serverHost,
+      authHost: r.authHost,
+      ...(r.personalityId !== undefined ? { personalityId: r.personalityId } : {}),
+    };
+  }
+
+  /** Never echoes the user code; an unknown or swept flow reads as 'expired'. */
+  deviceStatus(flowId: string) {
+    return this.deviceLogin.status(flowId);
+  }
+
+  /** Idempotent. */
+  deviceCancel(flowId: string) {
+    this.deviceLogin.cancel(flowId);
+    return { ok: true as const };
+  }
+
+  /** Aborts pending device flows. Wired into createWebApi's disposers. */
+  dispose(): void {
+    this.deviceLogin.dispose();
   }
 
   async start(input: { url: string; name?: string; personalityId?: string }, redirectUri?: string) {

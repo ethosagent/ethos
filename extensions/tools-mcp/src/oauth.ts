@@ -9,6 +9,7 @@ import {
   buildRevocationParams,
   buildTokenExchangeParams,
   buildAuthorizationUrl as coreAuthUrl,
+  DEVICE_CODE_GRANT_TYPE,
   generateCodeChallenge,
   generateCodeVerifier,
   parseOAuthServerMetadata,
@@ -84,7 +85,7 @@ export class MissingToken extends Error {
   constructor(public readonly serverName: string) {
     super(
       `No OAuth token available for MCP server '${serverName}'.` +
-        ' Re-authorize from the UI or CLI.',
+        ' Re-authorize from the UI or CLI, or send /mcp login <name> to the bot in a direct message.',
     );
     this.name = 'MissingToken';
   }
@@ -161,6 +162,8 @@ export interface DiscoveredOAuthMetadata {
   introspection_endpoint?: string;
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
+  /** RFC 8628 endpoint, when the AS advertises one. Persisted by `buildAuthBlock`; read by `McpDeviceLogin`. */
+  device_authorization_endpoint?: string;
   /** Issuer the metadata was fetched for (metadata `issuer`, else the discovery issuer URL). Always set by discovery; absent only for a re-auth of an entry saved before issuer binding. */
   issuer?: string;
   iss_parameter_supported?: boolean;
@@ -183,7 +186,7 @@ export interface DcrRequest {
   redirect_uris: string[];
   client_name: string;
   token_endpoint_auth_method: 'none';
-  grant_types: ['authorization_code', 'refresh_token'];
+  grant_types: string[];
   response_types: ['code'];
   scope?: string;
 }
@@ -194,6 +197,15 @@ export interface DcrResponse {
   client_id_issued_at?: number;
   registration_access_token?: string;
   registration_client_uri?: string;
+  /** Grants the AS actually registered. Not persisted (plan D5): the device request itself is the test. */
+  grant_types?: string[];
+}
+
+/** DCR grant types: the device grant is requested only where discovery advertised the endpoint (plan D4). */
+export function dcrGrantTypes(meta: { device_authorization_endpoint?: string }): string[] {
+  return meta.device_authorization_endpoint
+    ? ['authorization_code', 'refresh_token', DEVICE_CODE_GRANT_TYPE]
+    : ['authorization_code', 'refresh_token'];
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +256,7 @@ function tokenBindingRef(serverName: string): string {
   return `mcp/${serverName}/token_binding`;
 }
 
-async function readBinding(
+export async function readBinding(
   serverName: string,
   secrets: SecretsResolver,
 ): Promise<TokenBinding | null> {
@@ -259,7 +271,7 @@ async function readBinding(
   return { v: 1, token_endpoint: '' };
 }
 
-function safeUrl(url: string): URL | null {
+export function safeUrl(url: string): URL | null {
   try {
     return new URL(url);
   } catch {
@@ -267,7 +279,7 @@ function safeUrl(url: string): URL | null {
   }
 }
 
-function hrefOf(url: string): string {
+export function hrefOf(url: string): string {
   return safeUrl(url)?.href ?? url;
 }
 
@@ -380,7 +392,7 @@ export interface CallbackResult {
   close: () => void;
 }
 
-export async function startCallbackServer(): Promise<CallbackResult> {
+export async function startCallbackServer(timeoutMs = 120_000): Promise<CallbackResult> {
   return new Promise((resolveServer, rejectServer) => {
     let settled = false;
     let resolveResult: (result: CallbackParams) => void;
@@ -456,10 +468,10 @@ export async function startCallbackServer(): Promise<CallbackResult> {
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true;
-        rejectResult(new Error('OAuth callback timed out after 120s'));
+        rejectResult(new Error(`OAuth callback timed out after ${Math.round(timeoutMs / 1000)}s`));
         closeServer();
       }
-    }, 120_000);
+    }, timeoutMs);
 
     function closeServer(): void {
       clearTimeout(timeout);
@@ -856,6 +868,9 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
       introspection_endpoint: validated.introspection_endpoint,
       scopes_supported: validated.scopes_supported,
       code_challenge_methods_supported: validated.code_challenge_methods_supported,
+      ...(validated.device_authorization_endpoint
+        ? { device_authorization_endpoint: validated.device_authorization_endpoint }
+        : {}),
       ...issuerFields({
         issuer: validated.issuer ?? issuer,
         iss_parameter_supported: validated.authorization_response_iss_parameter_supported,
@@ -915,6 +930,8 @@ export interface DcrAuthorizationResult {
   dcrResult: DcrResponse;
   meta: DiscoveredOAuthMetadata;
   oauthConfig: OAuthConfig;
+  /** The loopback redirect URI that was registered; callers persist it as `dcr.redirect_uri` (plan §5.2 item 4). */
+  redirectUri: string;
 }
 
 export async function runDcrAuthorization(
@@ -938,10 +955,7 @@ export async function runDcrAuthorization(
       redirect_uris: [redirectUri],
       client_name: clientName,
       token_endpoint_auth_method: 'none' as const,
-      grant_types: ['authorization_code', 'refresh_token'] as [
-        'authorization_code',
-        'refresh_token',
-      ],
+      grant_types: dcrGrantTypes(meta),
       response_types: ['code'] as ['code'],
     };
 
@@ -976,7 +990,7 @@ export async function runDcrAuthorization(
     }
     const tokens = await exchangeCode(oauthConfig, result.code, redirectUri, verifier, result.iss);
 
-    return { tokens, dcrResult, meta, oauthConfig };
+    return { tokens, dcrResult, meta, oauthConfig, redirectUri };
   } finally {
     callback.close();
   }
@@ -986,16 +1000,91 @@ export async function runDcrAuthorization(
 // Full PKCE login flow
 // ---------------------------------------------------------------------------
 
+/** A pasted redirect that cannot be used. `code` is a short machine code; the message never carries the pasted text. */
+export class PastedRedirectError extends Error {
+  constructor(
+    public readonly code: 'invalid_paste' | 'provider_error' | 'access_denied',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PastedRedirectError';
+  }
+}
+
+const MAX_PASTE_CHARS = 4096;
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/** True for an `http:` URL on a loopback host: the only redirect URIs paste accepts (plan D10). */
+export function isLoopbackRedirectUri(uri: string): boolean {
+  const u = safeUrl(uri);
+  return u !== null && u.protocol === 'http:' && LOOPBACK_HOSTS.has(u.hostname);
+}
+
+/**
+ * Parse the address a browser ended on after authorizing. Accepts only the
+ * registered loopback redirect (origin + path equal `expectedRedirectUri`).
+ * Pinned by __tests__/oauth.test.ts "parsePastedRedirect …".
+ */
+export function parsePastedRedirect(
+  pasted: string,
+  opts: { expectedRedirectUri: string },
+): { code: string; state: string; iss?: string } {
+  const text = pasted.trim();
+  if (text.length === 0 || text.length > MAX_PASTE_CHARS) {
+    throw new PastedRedirectError('invalid_paste', 'The pasted address is empty or too long.');
+  }
+  const url = safeUrl(text);
+  const expected = safeUrl(opts.expectedRedirectUri);
+  if (
+    !url ||
+    !expected ||
+    !LOOPBACK_HOSTS.has(url.hostname) ||
+    url.origin !== expected.origin ||
+    url.pathname !== expected.pathname
+  ) {
+    throw new PastedRedirectError(
+      'invalid_paste',
+      `Paste the address your browser ended on; it starts with ${expected?.origin ?? 'the loopback address'}${expected?.pathname ?? ''}.`,
+    );
+  }
+  const error = url.searchParams.get('error');
+  if (error) {
+    throw new PastedRedirectError(
+      error === 'access_denied' ? 'access_denied' : 'provider_error',
+      error === 'access_denied'
+        ? 'Authorization was declined.'
+        : 'The authorization server returned an error.',
+    );
+  }
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    throw new PastedRedirectError('invalid_paste', 'The pasted address has no code or state.');
+  }
+  const iss = url.searchParams.get('iss');
+  return { code, state, ...(iss ? { iss } : {}) };
+}
+
+export interface PkceLoginOptions {
+  /** Receives the authorize URL. Without it the URL goes to stderr (older pattern, plan §2). */
+  onAuthUrl(url: string): void;
+  /** Resolves with the address the browser ended on. The loopback listener still completes on its own if it is reachable. */
+  pasted?: Promise<string>;
+}
+
+const PASTE_LISTENER_TIMEOUT_MS = 300_000; // = STATE_TTL_MS: a paste may arrive any time the state is valid
+
 export async function runPkceLogin(
   serverName: string,
   config: OAuthConfig,
   secrets: SecretsResolver,
+  opts?: PkceLoginOptions,
 ): Promise<TokenSet> {
   const verifier = generateCodeVerifier();
   const challenge = generateCodeChallenge(verifier);
   const state = randomBytes(16).toString('base64url');
 
-  const callback = await startCallbackServer();
+  const callback = await startCallbackServer(opts?.pasted ? PASTE_LISTENER_TIMEOUT_MS : undefined);
   const redirectUri = callback.redirectUri;
 
   // Register state for CSRF validation before redirecting
@@ -1003,11 +1092,31 @@ export async function runPkceLogin(
 
   const authUrl = buildAuthorizationUrl(config, redirectUri, state, challenge);
 
-  // Log the URL so the user can open it (CLI wiring prints this)
-  process.stderr.write(`\nOpen this URL to authorize:\n${authUrl}\n\n`);
+  if (opts) {
+    opts.onAuthUrl(authUrl);
+  } else {
+    // Log the URL so the user can open it (CLI wiring prints this)
+    process.stderr.write(`\nOpen this URL to authorize:\n${authUrl}\n\n`);
+  }
 
   try {
-    const result = await callback.resultPromise;
+    const arrivals: Promise<CallbackParams>[] = [callback.resultPromise];
+    if (opts?.pasted) {
+      arrivals.push(
+        opts.pasted.then((text) => {
+          const parsed = parsePastedRedirect(text, { expectedRedirectUri: redirectUri });
+          // The listener consumes state for a real callback; a paste must spend it too.
+          if (parsed.state !== state || !consumeOAuthState(parsed.state)) {
+            throw new PastedRedirectError(
+              'invalid_paste',
+              'The pasted address does not match this sign-in.',
+            );
+          }
+          return { code: parsed.code, state: parsed.state, iss: parsed.iss ?? null };
+        }),
+      );
+    }
+    const result = await Promise.race(arrivals);
     if (result.state !== state) {
       throw new Error('OAuth state mismatch — possible CSRF attack. Aborting.');
     }

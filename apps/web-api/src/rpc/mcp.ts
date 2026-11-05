@@ -35,6 +35,13 @@ export const mcpRouter = {
   ),
   status: os.mcp.status.handler(({ context }) => context.mcp.status(pendingState(context))),
   cancel: os.mcp.cancel.handler(({ input, context }) => context.mcp.cancel(input.state)),
+  deviceStart: os.mcp.deviceStart.handler(({ input, context }) => context.mcp.deviceStart(input)),
+  deviceStatus: os.mcp.deviceStatus.handler(({ input, context }) =>
+    context.mcp.deviceStatus(input.flowId),
+  ),
+  deviceCancel: os.mcp.deviceCancel.handler(({ input, context }) =>
+    context.mcp.deviceCancel(input.flowId),
+  ),
   attachPersonalities: os.mcp.attachPersonalities.handler(({ input, context }) =>
     context.mcp.attachPersonalities(input),
   ),

@@ -132,6 +132,7 @@ import {
   CONFIG_INVALID_EXIT_CODE,
   createApprovalDangerPredicate,
   createLazyProvider,
+  createMcpLoginPort,
   createOutboundPolicyGate,
   createSessionStore,
   fileMemoryUnsupportedReason,
@@ -2704,6 +2705,27 @@ export async function buildGatewayBots(
   }
 }
 
+/**
+ * Build one personality bot's `/mcp login` port (plan mcp-device-code-login
+ * §8.2): tokens are scoped to the lane personality and reconnected on THIS
+ * bot's McpManager. Its `dispose` joins the bot's disposers, so a retired bot
+ * or a stopping gateway aborts the pending flows. Team bots get none.
+ */
+async function attachMcpLogin(
+  result: Pick<Awaited<ReturnType<typeof createAgentLoop>>, 'mcpManager' | 'personalities'>,
+  disposers: Array<() => Promise<void>>,
+): Promise<NonNullable<GatewayBotConfig['mcpLogin']>> {
+  const port = createMcpLoginPort({
+    storage: getStorage(),
+    secrets: await getSecretsResolver(),
+    mcpManager: result.mcpManager,
+    personalities: result.personalities,
+    logger: new ConsoleLogger({ component: 'mcp' }),
+  });
+  disposers.push(async () => port.dispose());
+  return port;
+}
+
 async function assembleGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
@@ -2762,6 +2784,7 @@ async function assembleGatewayBots(
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     let jobControl: GatewayBotConfig['jobControl'];
+    let mcpLogin: GatewayBotConfig['mcpLogin'];
     if (bot.bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bot.bind.name, {
         ...(outbox ? { outbox } : {}),
@@ -2787,11 +2810,13 @@ async function assembleGatewayBots(
       registries.push(result.toolRegistry);
       refreshers.push(result.refreshPersonalities);
       disposers.push(result.dispose);
+      mcpLogin = await attachMcpLogin(result, disposers);
     }
     return {
       botKey,
       loop,
       binding: { ...bot.bind },
+      ...(mcpLogin ? { mcpLogin } : {}),
       piiRedaction: bot.piiRedaction,
       ...(jobStore ? { jobStore } : {}),
       ...(backgroundExecutor ? { backgroundExecutor } : {}),
@@ -2826,6 +2851,7 @@ async function assembleGatewayBots(
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     let jobControl: GatewayBotConfig['jobControl'];
+    let mcpLogin: GatewayBotConfig['mcpLogin'];
     if (bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bind.name, {
         ...(outbox ? { outbox } : {}),
@@ -2848,12 +2874,14 @@ async function assembleGatewayBots(
       registries.push(result.toolRegistry);
       refreshers.push(result.refreshPersonalities);
       disposers.push(result.dispose);
+      mcpLogin = await attachMcpLogin(result, disposers);
     }
     record(
       {
         botKey,
         loop,
         binding: { ...bind },
+        ...(mcpLogin ? { mcpLogin } : {}),
         piiRedaction: waCfg.piiRedaction,
         ...(jobStore ? { jobStore } : {}),
         ...(backgroundExecutor ? { backgroundExecutor } : {}),
@@ -2908,6 +2936,7 @@ async function assembleGatewayBots(
         botKey,
         loop: result.loop,
         binding: { type: 'personality', name: config.personality },
+        mcpLogin: await attachMcpLogin(result, disposers),
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
         ...(result.jobControl ? { jobControl: result.jobControl } : {}),
@@ -2931,6 +2960,7 @@ async function assembleGatewayBots(
         botKey,
         loop: result.loop,
         binding: { type: 'personality', name: config.personality },
+        mcpLogin: await attachMcpLogin(result, disposers),
         ...(result.jobStore ? { jobStore: result.jobStore } : {}),
         ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
         ...(result.jobControl ? { jobControl: result.jobControl } : {}),

@@ -26,6 +26,36 @@ import { rewriteDefinitionsToRefs } from './schema-rewrite';
 import { probeTokenScopes } from './scope-probe';
 
 export type {
+  DeviceAuthorization,
+  DeviceFlowDeps,
+  DeviceFlowOutcome,
+} from './device-flow';
+export {
+  createDeviceFlowDeps,
+  DeviceAuthorizationError,
+  DeviceFlowBlockedError,
+  pollDeviceToken,
+  requestDeviceAuthorization,
+} from './device-flow';
+export type {
+  CompletePasteResult,
+  DeviceStartFailureCode,
+  LoginAuditEvent,
+  LoginSettledStatus,
+  LoginSettlement,
+  LoginSlotsOptions,
+  LoginStatus,
+  LoginStatusResult,
+  LoginSurface,
+  McpDeviceLoginDeps,
+  McpLoginDeps,
+  PasteStartFailureCode,
+  StartDeviceResult,
+  StartLoginInput,
+  StartPasteResult,
+} from './device-login';
+export { LoginSlots, McpDeviceLogin, McpPasteLogin } from './device-login';
+export type {
   AttachToPersonalitiesOptions,
   AttachToPersonalitiesResult,
   CompleteOptions,
@@ -46,6 +76,7 @@ export type {
   DcrResponse,
   DiscoveredOAuthMetadata,
   OAuthConfig,
+  PkceLoginOptions,
   TokenBinding,
   TokenSet,
 } from './oauth';
@@ -54,12 +85,14 @@ export {
   ConfidentialClientUnsupported,
   checkAuthorizationResponseIssuer,
   DcrUnsupported,
+  dcrGrantTypes,
   deleteTokens,
   discoverOAuthMetadata,
   ensureValidToken,
   exchangeCode,
   generateCodeChallenge,
   generateCodeVerifier,
+  isLoopbackRedirectUri,
   issuerFields,
   isTokenExpired,
   loadAccessToken,
@@ -67,6 +100,8 @@ export {
   OAuthBindingMismatch,
   OAuthDiscoveryError,
   OAuthIssuerMismatch,
+  PastedRedirectError,
+  parsePastedRedirect,
   refreshToken,
   registerOAuthClient,
   revokeToken,
@@ -129,6 +164,8 @@ export interface McpServerConfig {
         scopes?: string[];
         revocation_endpoint?: string;
         introspection_endpoint?: string;
+        /** RFC 8628 endpoint from discovery; absent on entries written before device sign-in (re-discovered on use, never rewritten). */
+        device_authorization_endpoint?: string;
         /** Authorization server issuer; bound to the stored grant and checked against `iss` (RFC 9207). */
         issuer?: string;
         /** AS advertised `authorization_response_iss_parameter_supported`. */

@@ -46,6 +46,18 @@ describe('parseOAuthServerMetadata', () => {
     expect(result).toEqual(validMetadata);
   });
 
+  it('reads grant_types_supported', () => {
+    const result = parseOAuthServerMetadata({
+      ...validMetadata,
+      grant_types_supported: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code'],
+    });
+    expect(result.grant_types_supported).toEqual([
+      'authorization_code',
+      'urn:ietf:params:oauth:grant-type:device_code',
+    ]);
+    expect(parseOAuthServerMetadata(validMetadata).grant_types_supported).toBeUndefined();
+  });
+
   it('throws on missing authorization_endpoint', () => {
     expect(() =>
       parseOAuthServerMetadata({ token_endpoint: 'https://auth.example.com/token' }),

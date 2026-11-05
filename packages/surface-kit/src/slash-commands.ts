@@ -255,6 +255,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     usage: '/mute <30m|2h|1d|off>',
     surfaces: ['gateway'],
   },
+  {
+    name: 'mcp',
+    description: 'Sign in to an MCP server from this chat (owner, direct message)',
+    usage: '/mcp login <server> | /mcp code <address> | /mcp cancel',
+    surfaces: ['gateway'],
+  },
   // --- TUI-only built-ins (apps/tui help + completion panel) ---
   {
     name: 'sessions',

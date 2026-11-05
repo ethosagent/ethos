@@ -1594,10 +1594,12 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
     isBuiltinPersonality: (id) => opts.personalities.describe(id)?.builtin ?? false,
+    logger: new ConsoleLogger({ component: 'mcp' }),
     redirectUri: opts.webBaseUrl
       ? `${opts.webBaseUrl}/oauth/callback`
       : 'http://localhost:3000/oauth/callback',
   });
+  disposers.push('mcp device sign-ins', () => mcpService.dispose());
   // Recipes — the install pipeline's orchestration half. Every write it makes
   // goes through the services above, so a recipe cannot reach past a refusal
   // any of them already enforces (`CronService`'s delivery rules above all).

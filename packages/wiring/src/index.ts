@@ -2503,4 +2503,12 @@ export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from '.
 // The gateway singleton lock (plan reach-and-containment §2.7) — taken by
 // `ethos gateway start`, read by `ethos gateway status`.
 export * from './gateway-lock';
+// `/mcp login` seam for the gateway (plan mcp-device-code-login §8.2).
+export {
+  type CreateMcpLoginPortOptions,
+  createMcpLoginPort,
+  type McpLoginPortHandle,
+  type McpLoginSettlement,
+  type McpLoginStart,
+} from './mcp-login';
 export * from './system-jobs';

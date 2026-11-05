@@ -4,7 +4,7 @@ description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth 
 kind: reference
 audience: user
 slug: mcp-config
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 
@@ -60,6 +60,20 @@ ethos mcp login linear --personality engineer
 
 This runs the PKCE flow (opening a browser for OAuth servers) and stores the resulting token at the per-personality path: `~/.ethos/personalities/engineer/mcp/linear/access_token`. Each personality that needs access must run `login` separately — tokens are never shared across personalities.
 
+Flags for `ethos mcp login <name>` and `ethos mcp add <name> --url <url>`:
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `--personality <id>` | `login` | Store the grant for that personality. |
+| `--device` | both | Print a code and a URL; approve on any device ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628) device grant). |
+| `--paste` | both | Print an authorize URL; paste back the `127.0.0.1` address the browser ends on. |
+| `--browser` | both | Open a browser on this machine. |
+| `--no-qr` | both | Do not print a QR code with `--device`. |
+
+At most one of `--device`, `--paste`, `--browser` is accepted; two or more exit with `INVALID_INPUT`. With none, the flow is `device` when `SSH_CONNECTION` or `SSH_TTY` is set, when the platform is Linux with neither `DISPLAY` nor `WAYLAND_DISPLAY`, or when a container is detected. Otherwise it is `browser`. `device` falls back to `paste` when the server has no device endpoint or refuses the client. `paste` needs an interactive terminal. Ctrl+C stores nothing and exits with code 130. With `add --url`, `device` and `paste` sign in once after saving the entry; `browser` signs in during `add` as before.
+
+Device and paste sign-ins store the same token files and issuer binding as the browser flow. Detection and flags: [`mcp.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/mcp.ts) (`chooseLoginFlow`).
+
 To revoke:
 
 ```bash
@@ -67,6 +81,15 @@ ethos mcp logout linear --personality engineer
 ```
 
 This calls the revocation endpoint (if configured) and removes the stored token files.
+
+## Signing in from the web and from chat {#remote-login}
+
+| Surface | Entry point | Requirements |
+|---|---|---|
+| Web dashboard | **Sign in with a code** button on an OAuth server's row in the MCP tab. Shows the code, the verification URL and a countdown. | The server offers the device grant. Otherwise the modal says the server does not support code sign-in; use **Sign in**. |
+| Chat (gateway) | `/mcp login <server>` in a direct message to the bot. See [`/mcp`](slash-commands.md#slash-mcp). | `channel_filter.<platform>.ownerUserId` set in `config.yaml`; server listed in the personality's `mcp_servers:`. |
+
+Sources: [`McpDeviceLoginModal.tsx`](https://github.com/ethosagent/ethos/blob/main/apps/web/src/components/mcp/McpDeviceLoginModal.tsx), [`handleMcpCommand`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts).
 
 ## Server entry {#server-entry}
 

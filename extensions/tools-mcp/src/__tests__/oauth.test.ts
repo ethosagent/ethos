@@ -10,8 +10,13 @@ import {
   generateCodeVerifier,
   isTokenExpired,
   loadAccessToken,
+  MissingToken,
+  OAuthIssuerMismatch,
+  PastedRedirectError,
+  parsePastedRedirect,
   refreshToken,
   registerOAuthState,
+  runPkceLogin,
   startCallbackServer,
   storeTokens,
 } from '../oauth';
@@ -685,5 +690,159 @@ describe('refreshToken — coalesced refresh', () => {
     });
     await expect(refreshToken('srv', config, joiner)).resolves.toBe('at-moved');
     expect(joiner.set).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Paste-the-redirect (plan mcp-device-code-login §5)
+// ---------------------------------------------------------------------------
+
+describe('parsePastedRedirect', () => {
+  const REDIRECT = 'http://127.0.0.1:43210/oauth/callback';
+  const parse = (s: string) => parsePastedRedirect(s, { expectedRedirectUri: REDIRECT });
+
+  it('accepts the registered loopback URL and extracts code, state, iss', () => {
+    expect(parse(`  ${REDIRECT}?code=c1&state=s1&iss=https%3A%2F%2Fas.example.com \n`)).toEqual({
+      code: 'c1',
+      state: 's1',
+      iss: 'https://as.example.com',
+    });
+    expect(parse(`${REDIRECT}?code=c1&state=s1`)).toEqual({ code: 'c1', state: 's1' });
+  });
+
+  it('refuses another host, another path, an https origin and an over-long string', () => {
+    for (const bad of [
+      'http://127.0.0.1:43211/oauth/callback?code=c&state=s',
+      'http://localhost:43210/oauth/callback?code=c&state=s',
+      'https://evil.example.com/oauth/callback?code=c&state=s',
+      'http://127.0.0.1:43210/other?code=c&state=s',
+      'https://127.0.0.1:43210/oauth/callback?code=c&state=s',
+      `${REDIRECT}?code=${'a'.repeat(5000)}&state=s`,
+      'not a url',
+      '',
+      `${REDIRECT}?state=s`,
+    ]) {
+      expect(() => parse(bad), bad.slice(0, 60)).toThrow(PastedRedirectError);
+    }
+  });
+
+  it('accepts a localhost registration when localhost is what was registered', () => {
+    expect(
+      parsePastedRedirect('http://localhost:9/oauth/callback?code=c&state=s', {
+        expectedRedirectUri: 'http://localhost:9/oauth/callback',
+      }),
+    ).toEqual({ code: 'c', state: 's' });
+  });
+
+  it('surfaces error=access_denied as a refusal', () => {
+    expect(() => parse(`${REDIRECT}?error=access_denied&state=s`)).toThrow(
+      expect.objectContaining({ code: 'access_denied' }),
+    );
+    expect(() => parse(`${REDIRECT}?error=server_error&error_description=SECRET`)).toThrow(
+      expect.objectContaining({ code: 'provider_error' }),
+    );
+  });
+
+  it('never echoes the pasted text in the error message', () => {
+    try {
+      parse('https://evil.example.com/cb?code=SECRET-CODE&state=SECRET-STATE');
+      expect.unreachable();
+    } catch (err) {
+      expect((err as Error).message).not.toContain('SECRET');
+    }
+  });
+});
+
+describe('runPkceLogin — paste', () => {
+  const realFetch = globalThis.fetch;
+  const config: OAuthConfig = {
+    authorization_endpoint: 'https://auth.example.com/authorize',
+    token_endpoint: 'https://auth.example.com/token',
+    client_id: 'my-client',
+  };
+  let tokenCalls: URLSearchParams[];
+
+  beforeEach(() => {
+    tokenCalls = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://auth.example.com/token') {
+        tokenCalls.push(new URLSearchParams(String(init?.body)));
+        return new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** onAuthUrl + a `pasted` promise the test settles after seeing the authorize URL. */
+  function pasteHarness(build: (redirectUri: string, state: string) => string) {
+    let resolvePaste!: (s: string) => void;
+    const pasted = new Promise<string>((r) => {
+      resolvePaste = r;
+    });
+    const seen: { redirectUri?: string } = {};
+    return {
+      seen,
+      opts: {
+        pasted,
+        onAuthUrl: (authUrl: string) => {
+          const u = new URL(authUrl);
+          seen.redirectUri = u.searchParams.get('redirect_uri') ?? '';
+          resolvePaste(build(seen.redirectUri, u.searchParams.get('state') ?? ''));
+        },
+      },
+    };
+  }
+
+  it('completes from a paste and closes the listener', async () => {
+    const secrets = createMockSecrets();
+    const h = pasteHarness((r, state) => `${r}?code=pasted-code&state=${state}`);
+    const tokens = await runPkceLogin('srv', config, secrets, h.opts);
+
+    expect(tokens.access_token).toBe('at');
+    expect(tokenCalls).toHaveLength(1);
+    expect(tokenCalls[0]?.get('code')).toBe('pasted-code');
+    expect(tokenCalls[0]?.get('redirect_uri')).toBe(h.seen.redirectUri);
+    expect(secrets._store.get('mcp/srv/access_token')).toBe('at');
+    expect(JSON.parse(secrets._store.get('mcp/srv/token_binding') ?? '{}')).toMatchObject({
+      token_endpoint: config.token_endpoint,
+    });
+    await expect(realFetch(h.seen.redirectUri ?? '')).rejects.toThrow(); // listener is closed
+  });
+
+  it('a pasted state mismatch makes no token request', async () => {
+    const secrets = createMockSecrets();
+    const h = pasteHarness((r) => `${r}?code=c&state=forged`);
+    await expect(runPkceLogin('srv', config, secrets, h.opts)).rejects.toBeInstanceOf(
+      PastedRedirectError,
+    );
+    expect(tokenCalls).toHaveLength(0);
+    expect(secrets._store.size).toBe(0);
+  });
+
+  it('a pasted iss mismatch is refused (B1 helper)', async () => {
+    const secrets = createMockSecrets();
+    const h = pasteHarness(
+      (r, state) =>
+        `${r}?code=c&state=${state}&iss=${encodeURIComponent('https://evil.example.com')}`,
+    );
+    await expect(
+      runPkceLogin('srv', { ...config, issuer: 'https://auth.example.com' }, secrets, h.opts),
+    ).rejects.toBeInstanceOf(OAuthIssuerMismatch);
+    expect(tokenCalls).toHaveLength(0);
+  });
+});
+
+describe('MissingToken', () => {
+  it('points at /mcp login for a chat-only owner', () => {
+    expect(new MissingToken('linear').message).toContain('/mcp login <name>');
   });
 });

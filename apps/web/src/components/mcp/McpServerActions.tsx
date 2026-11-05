@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Button, Input, Modal, Space, Tooltip } from 'antd';
 import { useState } from 'react';
 import { rpc } from '../../rpc';
+import { McpDeviceLoginModal } from './McpDeviceLoginModal';
 
 interface Props {
   serverName: string;
@@ -18,6 +19,7 @@ export function McpServerActions({ serverName, transport, authStatus }: Props) {
   const [newName, setNewName] = useState('');
   const [tokenOpen, setTokenOpen] = useState(false);
   const [newToken, setNewToken] = useState('');
+  const [deviceOpen, setDeviceOpen] = useState(false);
 
   const refreshMut = useMutation({
     mutationFn: () => rpc.mcp.refreshToken({ serverName }),
@@ -62,6 +64,15 @@ export function McpServerActions({ serverName, transport, authStatus }: Props) {
           </Tooltip>
         ) : null}
 
+        {/* Device-code sign-in (RFC 8628) for an existing OAuth entry */}
+        {authStatus === 'expired' || authStatus === 'authorized' || authStatus === 'missing' ? (
+          <Tooltip title="Sign in with a code (for remote browsers)">
+            <Button size="small" onClick={() => setDeviceOpen(true)}>
+              Sign in with a code
+            </Button>
+          </Tooltip>
+        ) : null}
+
         {/* Issue 5: Rename */}
         <Tooltip title="Rename server">
           <Button
@@ -90,6 +101,18 @@ export function McpServerActions({ serverName, transport, authStatus }: Props) {
           </Tooltip>
         ) : null}
       </Space>
+
+      {deviceOpen ? (
+        <McpDeviceLoginModal
+          open={deviceOpen}
+          serverName={serverName}
+          onClose={() => setDeviceOpen(false)}
+          onConnected={() => {
+            message.success('Connected');
+            qc.invalidateQueries({ queryKey: ['mcp', 'list'] });
+          }}
+        />
+      ) : null}
 
       {/* Rename modal */}
       <Modal

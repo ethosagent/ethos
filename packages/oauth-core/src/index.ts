@@ -1,6 +1,15 @@
 export { buildAuthorizationUrl } from './authorize';
 export type { DcrRequest, DcrResponse } from './dcr';
 export { buildDcrRequest, parseDcrResponse } from './dcr';
+export type { DeviceAuthorization, DeviceTokenResult } from './device';
+export {
+  buildDeviceAuthorizationParams,
+  buildDeviceTokenParams,
+  classifyDeviceTokenResponse,
+  DEVICE_CODE_GRANT_TYPE,
+  MAX_DEVICE_AUTH_MS,
+  parseDeviceAuthorizationResponse,
+} from './device';
 export type { OAuthServerMetadata, ProtectedResourceMetadata } from './discovery';
 export {
   buildOAuthMetadataUrl,

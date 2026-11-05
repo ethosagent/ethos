@@ -11,7 +11,9 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { ethosDir, readConfig, readRawConfig } from '@ethosagent/config';
+import { ConsoleLogger } from '@ethosagent/logger';
 import type { ClientAdapter, McpEntry } from '@ethosagent/mcp-server';
 import {
   claudeDesktop,
@@ -25,20 +27,35 @@ import {
 } from '@ethosagent/mcp-server';
 import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
-import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-mcp';
+import type {
+  DcrResponse,
+  DiscoveredOAuthMetadata,
+  McpServerConfig,
+  OAuthConfig,
+  StartDeviceResult,
+  TokenSet,
+} from '@ethosagent/tools-mcp';
 import {
+  dcrGrantTypes,
+  discoverOAuthMetadata,
   getPreset,
   issuerFields,
+  LoginSlots,
   MCP_PRESETS,
+  McpDeviceLogin,
   McpJsonStore,
+  McpPasteLogin,
   mcpEnvSecretRef,
+  PastedRedirectError,
+  registerOAuthClient,
   revokeToken,
   runDcrAuthorization,
   runPkceLogin,
+  startCallbackServer,
   storeEnvSecrets,
   validateMcpServerName,
 } from '@ethosagent/tools-mcp';
-import type { SecretsResolver } from '@ethosagent/types';
+import { EthosError, type SecretsResolver } from '@ethosagent/types';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createApprovalDangerPredicate,
@@ -46,6 +63,7 @@ import {
   createMcpClientAuthenticator,
   createMemoryProviderFromConfig,
   createSessionStore,
+  detectContainerized,
   resolveMcpExportScope,
 } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
@@ -90,10 +108,19 @@ Subcommands:
   add <name>       Add an MCP server to ~/.ethos/mcp.json
     --preset <name>  Use a built-in preset (see 'ethos mcp presets')
     --url <mcpUrl>   Remote MCP server URL (runs OAuth discovery + DCR)
+    --device | --paste | --browser  How --url signs in (see 'login'); default: detected
+    --no-qr          Do not print a QR code for device sign-in
     --env KEY=val    Set environment variable (repeatable)
     --arg NAME=val   Supply a preset's command-line value (repeatable)
   presets          List available MCP server presets
   login <name>     Authenticate with an OAuth-configured MCP server
+    --personality <id>  Store the grant for that personality
+    --device         Show a code to enter on any device (RFC 8628)
+    --paste          Open a URL anywhere, then paste back the address it ends on
+    --browser        Open a browser on this machine (default on a desktop)
+    --no-qr          Do not print a QR code for --device
+                     (headless hosts — ssh, containers, Linux without a display —
+                     default to --device, then --paste)
   logout <name>    Revoke and delete tokens for an MCP server
   registry list    Browse MCP server packages from npm
     --search <q>     Filter by keyword
@@ -614,6 +641,11 @@ const ADD_USAGE = `Usage: ethos mcp add <name> [options]
 Options:
   --preset <name>  Use a built-in preset (see 'ethos mcp presets')
   --url <mcpUrl>   Remote MCP server URL (runs OAuth discovery + DCR)
+  --device         With --url: sign in with a code entered on any device (RFC 8628)
+  --paste          With --url: open a URL anywhere, paste back the address it ends on
+  --browser        With --url: sign in through a browser on this machine
+                   (at most one of the three; default: detected from the host)
+  --no-qr          With --device: do not print a QR code
   --env KEY=val    Set environment variable (repeatable)
   --arg NAME=val   Supply a preset's command-line value (repeatable).
                    Appended to the preset's args in declaration order —
@@ -711,6 +743,8 @@ async function persistEnvSecrets(
 
 async function runAdd(argv: string[]): Promise<void> {
   const parsed = parseAddArgs(argv);
+  // Flag conflicts are refused before anything is read or written.
+  const loginFlags = parseLoginFlowFlags(argv);
 
   if (!parsed.name) {
     console.log(ADD_USAGE);
@@ -779,14 +813,37 @@ async function runAdd(argv: string[]): Promise<void> {
       ...(envPassthrough ? { mcpEnvPassthrough: envPassthrough } : {}),
     };
   } else if (parsed.url) {
-    const urlResult = await runAddUrl(parsed.name, parsed.url);
+    const flow = chooseLoginFlow({ flag: loginFlags.flag, ...hostSignals() });
+    const urlResult = await runAddUrl(parsed.name, parsed.url, flow);
     if (!urlResult) return;
     entry = urlResult.entry;
 
     await mcpStore.upsert(entry.name, entry);
 
     console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
-    console.log(`Run 'ethos mcp login ${parsed.name} --personality <id>' to authenticate.`);
+    if (flow === 'browser') {
+      console.log(`Run 'ethos mcp login ${parsed.name} --personality <id>' to authenticate.`);
+      return;
+    }
+    // device / paste: discovery + DCR only above, so the one sign-in happens
+    // here, for the resolved personality (plan D15) — no second approval later.
+    const resolved = await resolvePersonalitySecrets(undefined);
+    try {
+      await runHeadlessLogin(
+        {
+          serverName: parsed.name,
+          personalityId: resolved.personalityId,
+          flow,
+          noQr: loginFlags.noQr,
+        },
+        await buildHeadlessDeps(),
+      );
+    } catch (err) {
+      process.stderr.write(
+        `The server was added; retry sign-in with: ethos mcp login ${parsed.name}${resolved.personalityId ? ` --personality ${resolved.personalityId}` : ''}\n`,
+      );
+      throw err;
+    }
     return;
   } else {
     console.error('Either --preset, --url, or --command is required.\n');
@@ -806,11 +863,94 @@ async function runAdd(argv: string[]): Promise<void> {
 
 interface UrlAddResult {
   entry: McpServerConfig;
-  tokens: TokenSet;
+  /** Present only for the browser flow; device / paste sign in after the entry is saved. */
+  tokens?: TokenSet;
   registrationAccessToken?: string;
 }
 
-async function runAddUrl(name: string, mcpUrl: string): Promise<UrlAddResult | null> {
+/**
+ * Discovery + dynamic client registration, no authorization. The redirect URI
+ * registered is a real loopback URI (a listener is bound only to learn a free
+ * port, then closed): paste sign-in later reuses exactly this string from
+ * `dcr.redirect_uri` (plan D10; McpPasteLogin.start in tools-mcp).
+ */
+async function registerClientOnly(mcpUrl: string): Promise<{
+  meta: DiscoveredOAuthMetadata;
+  dcrResult: DcrResponse;
+  redirectUri: string;
+  tokens?: undefined;
+}> {
+  const meta = await discoverOAuthMetadata(mcpUrl);
+  if (!meta.registration_endpoint) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: 'MCP server does not support dynamic client registration',
+      action: 'Use a preset, or add the server with a pre-registered client in mcp.json.',
+    });
+  }
+  const callback = await startCallbackServer();
+  const redirectUri = callback.redirectUri;
+  callback.close();
+  // The device grant is requested only where discovery advertised the endpoint:
+  // dcrGrantTypes, pinned by tools-mcp __tests__/oauth-dcr.test.ts.
+  const dcrResult = await registerOAuthClient(meta.registration_endpoint, {
+    redirect_uris: [redirectUri],
+    client_name: 'Ethos',
+    token_endpoint_auth_method: 'none',
+    grant_types: dcrGrantTypes(meta),
+    response_types: ['code'],
+  });
+  return { meta, dcrResult, redirectUri };
+}
+
+function buildUrlEntry(
+  name: string,
+  mcpUrl: string,
+  meta: DiscoveredOAuthMetadata,
+  dcrResult: DcrResponse,
+  redirectUri: string,
+): McpServerConfig {
+  return {
+    name,
+    transport: 'streamable-http',
+    url: mcpUrl,
+    auth: {
+      type: 'oauth2',
+      authorization_endpoint: meta.authorization_endpoint,
+      token_endpoint: meta.token_endpoint,
+      client_id: dcrResult.client_id,
+      ...(meta.revocation_endpoint ? { revocation_endpoint: meta.revocation_endpoint } : {}),
+      ...(meta.introspection_endpoint
+        ? { introspection_endpoint: meta.introspection_endpoint }
+        : {}),
+      // Persisted so `ethos mcp login --device` can run without re-discovery.
+      ...(meta.device_authorization_endpoint
+        ? { device_authorization_endpoint: meta.device_authorization_endpoint }
+        : {}),
+      // Persisted so `ethos mcp login` / refresh bind the grant to this issuer
+      // and enforce RFC 9207 `iss` (plan hermes-0.22-hardening §4.2 step 2).
+      ...issuerFields(meta),
+      dcr: {
+        registration_endpoint: meta.registration_endpoint ?? '',
+        ...(dcrResult.client_id_issued_at != null
+          ? { client_id_issued_at: dcrResult.client_id_issued_at }
+          : {}),
+        ...(dcrResult.registration_client_uri
+          ? { registration_client_uri: dcrResult.registration_client_uri }
+          : {}),
+        // The URI that was registered; paste sign-in reuses it verbatim (plan D10).
+        redirect_uri: redirectUri,
+      },
+    },
+    created_via: 'cli',
+  };
+}
+
+async function runAddUrl(
+  name: string,
+  mcpUrl: string,
+  flow: LoginFlow,
+): Promise<UrlAddResult | null> {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(mcpUrl);
@@ -827,56 +967,25 @@ async function runAddUrl(name: string, mcpUrl: string): Promise<UrlAddResult | n
 
   process.stderr.write('Discovering OAuth metadata...\n');
 
-  let result: Awaited<ReturnType<typeof runDcrAuthorization>>;
   try {
-    result = await runDcrAuthorization(mcpUrl, 'Ethos', (url) => {
-      process.stderr.write(`\nOpen this URL to authorize:\n${url}\n\n`);
-    });
+    const { meta, dcrResult, redirectUri, tokens } =
+      flow === 'browser'
+        ? await runDcrAuthorization(mcpUrl, 'Ethos', (url) => {
+            process.stderr.write(`\nOpen this URL to authorize:\n${url}\n\n`);
+          })
+        : await registerClientOnly(mcpUrl);
+    return {
+      entry: buildUrlEntry(name, mcpUrl, meta, dcrResult, redirectUri),
+      ...(tokens ? { tokens } : {}),
+      ...(dcrResult.registration_access_token
+        ? { registrationAccessToken: dcrResult.registration_access_token }
+        : {}),
+    };
   } catch (err) {
     console.error(`OAuth setup failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
     return null;
   }
-
-  const { tokens, dcrResult, meta } = result;
-  const registrationEndpoint = meta.registration_endpoint ?? '';
-
-  const entry: McpServerConfig = {
-    name,
-    transport: 'streamable-http',
-    url: mcpUrl,
-    auth: {
-      type: 'oauth2',
-      authorization_endpoint: meta.authorization_endpoint,
-      token_endpoint: meta.token_endpoint,
-      client_id: dcrResult.client_id,
-      ...(meta.revocation_endpoint ? { revocation_endpoint: meta.revocation_endpoint } : {}),
-      ...(meta.introspection_endpoint
-        ? { introspection_endpoint: meta.introspection_endpoint }
-        : {}),
-      // Persisted so `ethos mcp login` / refresh bind the grant to this issuer
-      // and enforce RFC 9207 `iss` (plan hermes-0.22-hardening §4.2 step 2).
-      ...issuerFields(meta),
-      dcr: {
-        registration_endpoint: registrationEndpoint,
-        ...(dcrResult.client_id_issued_at != null
-          ? { client_id_issued_at: dcrResult.client_id_issued_at }
-          : {}),
-        ...(dcrResult.registration_client_uri
-          ? { registration_client_uri: dcrResult.registration_client_uri }
-          : {}),
-      },
-    },
-    created_via: 'cli',
-  };
-
-  return {
-    entry,
-    tokens,
-    ...(dcrResult.registration_access_token
-      ? { registrationAccessToken: dcrResult.registration_access_token }
-      : {}),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,6 +1248,450 @@ async function resolvePersonalitySecrets(
   return { secrets, personalityId: undefined };
 }
 
+// ---------------------------------------------------------------------------
+// Headless sign-in — device code (RFC 8628) and paste-the-redirect
+// (plan mcp-device-code-login §6). Prompts go to stderr; nothing auto-opens a
+// browser; the user code is printed to the user and nowhere else (the poller and
+// McpDeviceLogin in tools-mcp never log it — pinned by tools-mcp
+// __tests__/device-login.test.ts "no secret reaches the logger").
+// ---------------------------------------------------------------------------
+
+export type LoginFlow = 'device' | 'paste' | 'browser';
+
+/** `--device | --paste | --browser` and `--no-qr`. More than one flow flag is refused. */
+export function parseLoginFlowFlags(argv: string[]): { flag?: LoginFlow; noQr: boolean } {
+  const flags = (['device', 'paste', 'browser'] as const).filter((f) => argv.includes(`--${f}`));
+  if (flags.length > 1) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `Pass at most one of --device, --paste, --browser (got ${flags.map((f) => `--${f}`).join(', ')})`,
+      action: 'Usage: ethos mcp login <name> [--personality <id>] [--device | --paste | --browser]',
+    });
+  }
+  return { ...(flags[0] ? { flag: flags[0] } : {}), noQr: argv.includes('--no-qr') };
+}
+
+/**
+ * Which sign-in flow to run. An explicit flag wins. Otherwise a headless host
+ * (ssh session, Linux with no display, a container) gets `device`, and anything
+ * else keeps today's `browser`. Headless detection lives here, not in
+ * extensions/tools-mcp, which may not read process.env (plan D6;
+ * tools-read-env-through-ctx). Pinned by __tests__/mcp-login-flow.test.ts.
+ */
+export function chooseLoginFlow(input: {
+  flag?: LoginFlow;
+  env: Record<string, string | undefined>;
+  platform: string;
+  containerized: boolean;
+}): LoginFlow {
+  if (input.flag) return input.flag;
+  const { env } = input;
+  const ssh = Boolean(env.SSH_CONNECTION || env.SSH_TTY);
+  const noDisplay = input.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY;
+  return ssh || noDisplay || input.containerized ? 'device' : 'browser';
+}
+
+/** The live host's signals for `chooseLoginFlow`. Only auto-detected container signals count (not ETHOS_EXECUTION_BACKEND). */
+function hostSignals(): { env: NodeJS.ProcessEnv; platform: string; containerized: boolean } {
+  return {
+    env: process.env,
+    platform: process.platform,
+    containerized: detectContainerized({
+      env: { KUBERNETES_SERVICE_HOST: process.env.KUBERNETES_SERVICE_HOST },
+    }).containerized,
+  };
+}
+
+/** Terminal side effects of a headless sign-in, injected so tests run without a TTY. */
+export interface LoginIo {
+  err(text: string): void;
+  out(text: string): void;
+  isTTY: boolean;
+  now(): number;
+  /** Reads one line. Rejects with a cancellation (see `isLoginCancelled`) on Ctrl+C or EOF. */
+  readLine(prompt: string): Promise<string>;
+  /** Registers a Ctrl+C handler; returns its remover. */
+  onSigint(handler: () => void): () => void;
+  qr(url: string): Promise<void>;
+  /** Releases stdin if a read is still pending. */
+  endInput(): void;
+}
+
+export interface HeadlessLoginDeps {
+  device: Pick<McpDeviceLogin, 'start' | 'onSettled' | 'cancel'>;
+  paste: Pick<McpPasteLogin, 'start' | 'complete' | 'cancel'>;
+  /** Paste sign-in for an entry saved before `dcr.redirect_uri` was stored: a fresh loopback port, plus the paste. */
+  legacyPaste(input: {
+    serverName: string;
+    personalityId?: string;
+    onAuthUrl(url: string): void;
+    pasted: Promise<string>;
+  }): Promise<void>;
+  io: LoginIo;
+}
+
+export interface HeadlessLoginInput {
+  serverName: string;
+  personalityId?: string;
+  flow: 'device' | 'paste';
+  noQr: boolean;
+}
+
+const MAX_PASTE_ATTEMPTS = 3;
+
+function loginCancelled(): EthosError {
+  return new EthosError({
+    code: 'INVALID_INPUT',
+    cause: 'Sign-in cancelled',
+    action: 'Run the command again to retry.',
+    details: { cancelled: true },
+  });
+}
+
+export function isLoginCancelled(err: unknown): boolean {
+  return (
+    err instanceof EthosError &&
+    typeof err.details === 'object' &&
+    err.details !== null &&
+    (err.details as { cancelled?: unknown }).cancelled === true
+  );
+}
+
+function formatRemaining(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(total / 60)} min ${total % 60} s`;
+}
+
+function headerLines(info: {
+  serverName: string;
+  personalityId?: string;
+  serverHost: string;
+  authHost: string;
+}): string {
+  const who = info.personalityId ? ` for personality '${info.personalityId}'` : '';
+  return (
+    `Sign in to '${info.serverName}'${who}\n` +
+    `  server:              ${info.serverHost}\n` +
+    `  authorization host:  ${info.authHost}\n`
+  );
+}
+
+function declined(): EthosError {
+  return new EthosError({
+    code: 'UNAUTHORIZED',
+    cause: 'Sign-in was declined in the browser.',
+    action: 'Run the command again to retry.',
+  });
+}
+
+function failedWith(code: string): EthosError {
+  return new EthosError({
+    code: 'UNAUTHORIZED',
+    cause: `Sign-in failed (${code}).`,
+    action: 'Run the command again to retry.',
+  });
+}
+
+function startFailure(serverName: string, r: { code: string; detail?: string }): EthosError {
+  if (r.code === 'not_found') {
+    return new EthosError({
+      code: 'MCP_SERVER_NOT_FOUND',
+      cause: `MCP server '${serverName}' not found in ~/.ethos/mcp.json`,
+      action: 'Run `ethos mcp add` first.',
+    });
+  }
+  if (r.code === 'not_oauth') {
+    return new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `MCP server '${serverName}' does not have OAuth 2.1 auth configured`,
+      action: 'Only OAuth servers need sign-in.',
+    });
+  }
+  if (r.code === 'discovery_failed') {
+    return new EthosError({
+      code: 'NETWORK_ERROR',
+      cause: `Could not reach the authorization server for '${serverName}'.`,
+      action: 'Check the network and run the command again.',
+    });
+  }
+  return new EthosError({
+    code: 'INVALID_INPUT',
+    cause: r.detail ?? `Sign-in could not start (${r.code}).`,
+    action: 'Wait for the other sign-in to finish, or run the command again.',
+  });
+}
+
+/**
+ * Sign in without a local browser, once. `device` falls through to `paste` (with
+ * a reason line) when the server has no device grant or refuses it (plan D3);
+ * it never re-registers the client (D5). Ctrl+C stores nothing and sets exit
+ * code 130. Outcomes surface as EthosError, never raw Error.
+ */
+export async function runHeadlessLogin(
+  input: HeadlessLoginInput,
+  deps: HeadlessLoginDeps,
+): Promise<void> {
+  const { io } = deps;
+  let cancelFlow: (() => void) | undefined;
+  try {
+    if (input.flow === 'device') {
+      const started = await deps.device.start({
+        serverName: input.serverName,
+        personalityId: input.personalityId,
+        surface: 'cli',
+      });
+      if (started.ok) {
+        cancelFlow = () => deps.device.cancel(started.flowId);
+        await awaitDevice(input, started, deps);
+        return;
+      }
+      if (started.code !== 'device_unavailable' && started.code !== 'device_refused') {
+        throw startFailure(input.serverName, started);
+      }
+      io.err(
+        `Device sign-in is not available for '${input.serverName}' (${started.detail ?? started.code}); using paste instead.\n`,
+      );
+    }
+    if (!io.isTTY) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Cannot sign in to '${input.serverName}' here: device sign-in is unavailable and paste needs an interactive terminal`,
+        action: `Run it in a terminal (for example 'ssh -t'), or on a machine with a browser: ethos mcp login ${input.serverName} --browser`,
+      });
+    }
+    await pasteSignIn(input, deps, (cancel) => {
+      cancelFlow = cancel;
+    });
+  } catch (err) {
+    cancelFlow?.();
+    if (isLoginCancelled(err)) {
+      io.err('\nCancelled — nothing was stored.\n');
+      process.exitCode = 130;
+      return;
+    }
+    throw err;
+  } finally {
+    io.endInput();
+  }
+}
+
+async function awaitDevice(
+  input: HeadlessLoginInput,
+  started: Extract<StartDeviceResult, { ok: true }>,
+  deps: HeadlessLoginDeps,
+): Promise<void> {
+  const { io } = deps;
+  io.err(
+    `${headerLines(started)}` +
+      `  open:                ${started.verificationUri}\n` +
+      `  enter code:          ${started.userCode}\n` +
+      `  expires in:          ${formatRemaining(started.expiresAt - io.now())}\n`,
+  );
+  if (!input.noQr && started.verificationUriComplete) {
+    io.err('(QR of the complete URL below — pass --no-qr to hide)\n');
+    await io.qr(started.verificationUriComplete);
+  }
+  io.err('Waiting… press Ctrl+C to cancel.\n');
+  io.err('If you did not just run this command, ignore the code and do not enter it anywhere.\n');
+
+  const settled = new Promise<{ status: string; reason?: string }>((resolve) => {
+    deps.device.onSettled(started.flowId, resolve);
+  });
+  let off = (): void => {};
+  const interrupted = new Promise<never>((_, reject) => {
+    off = io.onSigint(() => reject(loginCancelled()));
+  });
+  let result: { status: string; reason?: string };
+  try {
+    result = await Promise.race([settled, interrupted]);
+  } finally {
+    off();
+  }
+  reportOutcome(input, result, io);
+}
+
+function reportOutcome(
+  input: HeadlessLoginInput,
+  result: { status: string; reason?: string },
+  io: LoginIo,
+): void {
+  switch (result.status) {
+    case 'connected': {
+      const scope = input.personalityId ? ` (personality: ${input.personalityId})` : '';
+      io.out(`Successfully authenticated with '${input.serverName}'${scope}\n`);
+      return;
+    }
+    case 'denied':
+      throw declined();
+    case 'expired':
+      throw new EthosError({
+        code: 'UNAUTHORIZED',
+        cause: 'The code expired before it was approved.',
+        action: 'Run the command again.',
+      });
+    case 'cancelled':
+      throw loginCancelled();
+    default:
+      throw failedWith(result.reason ?? 'error');
+  }
+}
+
+const PASTE_PROMPT =
+  "After you approve, your browser will fail to load a 127.0.0.1 page. Copy that page's address and paste it here:\n";
+
+async function pasteSignIn(
+  input: HeadlessLoginInput,
+  deps: HeadlessLoginDeps,
+  setCancel: (cancel: () => void) => void,
+): Promise<void> {
+  const { io } = deps;
+  const started = await deps.paste.start({
+    serverName: input.serverName,
+    personalityId: input.personalityId,
+    surface: 'cli',
+  });
+  if (!started.ok) {
+    if (started.code !== 'paste_unavailable') throw startFailure(input.serverName, started);
+    await legacyPasteSignIn(input, deps);
+    return;
+  }
+  const flowId = started.flowId;
+  setCancel(() => deps.paste.cancel(flowId));
+  io.err(
+    `${headerLines(started)}Open this URL in any browser:\n${started.authorizeUrl}\n\n${PASTE_PROMPT}`,
+  );
+  for (let attempt = 1; attempt <= MAX_PASTE_ATTEMPTS; attempt++) {
+    const line = await io.readLine('> ');
+    const done = await deps.paste.complete(flowId, line);
+    if (done.ok) {
+      reportOutcome(input, { status: 'connected' }, io);
+      return;
+    }
+    if (done.code === 'denied') throw declined();
+    if (done.code !== 'invalid_paste' && done.code !== 'state_mismatch') {
+      throw failedWith(done.code);
+    }
+    io.err(
+      done.code === 'state_mismatch'
+        ? 'That address belongs to a different sign-in attempt. Paste the one from this sign-in:\n'
+        : "That is not the address to paste. It starts with http://127.0.0.1 and contains 'code='. Try again:\n",
+    );
+  }
+  throw failedWith('invalid_paste');
+}
+
+async function legacyPasteSignIn(
+  input: HeadlessLoginInput,
+  deps: HeadlessLoginDeps,
+): Promise<void> {
+  const { io } = deps;
+  let resolvePasted: (text: string) => void = () => {};
+  let rejectPasted: (err: unknown) => void = () => {};
+  const pasted = new Promise<string>((resolve, reject) => {
+    resolvePasted = resolve;
+    rejectPasted = reject;
+  });
+  io.err(
+    `'${input.serverName}' has no stored redirect address (it was added before paste sign-in); using a fresh local one.\n`,
+  );
+  try {
+    await deps.legacyPaste({
+      serverName: input.serverName,
+      personalityId: input.personalityId,
+      onAuthUrl: (url) => {
+        io.err(`\nOpen this URL in any browser:\n${url}\n\n${PASTE_PROMPT}`);
+        io.readLine('> ').then(resolvePasted, rejectPasted);
+      },
+      pasted,
+    });
+  } catch (err) {
+    if (isLoginCancelled(err) || err instanceof EthosError) throw err;
+    if (err instanceof PastedRedirectError) {
+      if (err.code === 'access_denied') throw declined();
+      throw new EthosError({
+        code: 'UNAUTHORIZED',
+        cause: err.message,
+        action: 'Run the command again.',
+      });
+    }
+    throw new EthosError({
+      code: 'UNAUTHORIZED',
+      cause: `Sign-in failed: ${err instanceof Error ? err.message : String(err)}`,
+      action: 'Run the command again.',
+    });
+  }
+  reportOutcome(input, { status: 'connected' }, io);
+}
+
+function createStdioLoginIo(): LoginIo {
+  let rl: ReturnType<typeof createInterface> | undefined;
+  return {
+    err: (text) => void process.stderr.write(text),
+    out: (text) => void process.stdout.write(text),
+    isTTY: Boolean(process.stdin.isTTY),
+    now: () => Date.now(),
+    readLine: (prompt) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = createInterface({ input: process.stdin, output: process.stderr });
+        rl = reader;
+        let answered = false;
+        reader.once('close', () => {
+          if (!answered) reject(loginCancelled());
+        });
+        reader.once('SIGINT', () => reader.close());
+        reader.question(prompt, (line) => {
+          answered = true;
+          reader.close();
+          resolve(line);
+        });
+      }),
+    onSigint: (handler) => {
+      process.once('SIGINT', handler);
+      return () => void process.off('SIGINT', handler);
+    },
+    qr: async (url) => {
+      try {
+        const qrterm = await import('qrcode-terminal');
+        qrterm.generate(url, { small: true }, (code: string) => {
+          process.stderr.write(`${code}\n`);
+        });
+      } catch {
+        // The URL is printed regardless; a missing QR renderer is cosmetic.
+      }
+    },
+    endInput: () => rl?.close(),
+  };
+}
+
+/** Wire McpDeviceLogin / McpPasteLogin to the CLI: one shared pending map, the real secrets, no live McpManager to reconnect. */
+export async function buildHeadlessDeps(): Promise<HeadlessLoginDeps> {
+  const secrets = await getSecretsResolver();
+  // Audit lines (`mcp.oauth.login`) go through the app-entry ConsoleLogger; no secret reaches it
+  // (tools-mcp __tests__/device-login.test.ts "no secret reaches the logger").
+  const logger = new ConsoleLogger({ component: 'mcp' });
+  const slots = new LoginSlots({ logger });
+  const mcpManager = {
+    registerConfig: (): void => {},
+    reconnectPersonality: async (): Promise<void> => {},
+  };
+  const common = { mcpJsonStore: mcpStore, secrets, mcpManager, slots, logger };
+  return {
+    device: new McpDeviceLogin(common),
+    paste: new McpPasteLogin(common),
+    io: createStdioLoginIo(),
+    legacyPaste: async ({ serverName, personalityId, onAuthUrl, pasted }) => {
+      const config = await mcpStore.get(serverName);
+      if (config?.auth?.type !== 'oauth2') return;
+      await runPkceLogin(
+        serverName,
+        config.auth,
+        personalityId ? new PersonalityScopedSecrets(secrets, personalityId) : secrets,
+        { onAuthUrl, pasted },
+      );
+    },
+  };
+}
+
 async function runLogin(argv: string[]): Promise<void> {
   const { serverName, personalityId, error } = parsePersonalityFlag(argv);
   if (error) {
@@ -1147,10 +1700,13 @@ async function runLogin(argv: string[]): Promise<void> {
     return;
   }
   if (!serverName) {
-    console.error('Usage: ethos mcp login <serverName> [--personality <id>]');
+    console.error(
+      'Usage: ethos mcp login <serverName> [--personality <id>] [--device | --paste | --browser] [--no-qr]',
+    );
     process.exitCode = 1;
     return;
   }
+  const loginFlags = parseLoginFlowFlags(argv);
 
   const configs = await readMcpJson();
 
@@ -1169,6 +1725,20 @@ async function runLogin(argv: string[]): Promise<void> {
 
   const resolved = await resolvePersonalitySecrets(personalityId);
   const oauthConfig: OAuthConfig = config.auth;
+
+  const flow = chooseLoginFlow({ flag: loginFlags.flag, ...hostSignals() });
+  if (flow !== 'browser') {
+    await runHeadlessLogin(
+      {
+        serverName,
+        personalityId: resolved.personalityId,
+        flow,
+        noQr: loginFlags.noQr,
+      },
+      await buildHeadlessDeps(),
+    );
+    return;
+  }
 
   try {
     await runPkceLogin(serverName, oauthConfig, resolved.secrets);

@@ -46,6 +46,7 @@ import {
   type DcrResponse,
   DcrUnsupported,
   type DiscoveredOAuthMetadata,
+  dcrGrantTypes,
   deleteTokens,
   discoverOAuthMetadata,
   exchangeCode,
@@ -337,10 +338,7 @@ export class McpInstallFlow {
       client_name: 'Ethos',
       redirect_uris: [redirectUri],
       token_endpoint_auth_method: 'none' as const,
-      grant_types: ['authorization_code', 'refresh_token'] as [
-        'authorization_code',
-        'refresh_token',
-      ],
+      grant_types: dcrGrantTypes(metadata),
       response_types: ['code'] as ['code'],
       scope: scopes && scopes.length > 0 ? scopes.join(' ') : undefined,
     });
@@ -783,6 +781,9 @@ function buildAuthBlock(input: {
   }
   if (input.metadata.introspection_endpoint) {
     auth.introspection_endpoint = input.metadata.introspection_endpoint;
+  }
+  if (input.metadata.device_authorization_endpoint) {
+    auth.device_authorization_endpoint = input.metadata.device_authorization_endpoint;
   }
   if (input.scopes && input.scopes.length > 0) {
     auth.scopes = input.scopes;

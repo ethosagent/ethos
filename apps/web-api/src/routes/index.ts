@@ -442,6 +442,19 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // Rate-limit mcp.start to prevent DCR registration spam
   const mcpStartRateLimit = rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false });
   app.use(mcpRpcPath('start'), mcpStartRateLimit);
+  // Device sign-in: start spawns a background poller + outbound fetches, so it
+  // gets the same strict default as mcp.start. Status is polled every 3s by the
+  // modal, so it gets the poll-tolerant limiter the codex status route uses.
+  app.use('/rpc/mcp/deviceStart', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
+  app.use(
+    '/rpc/mcp/deviceStatus',
+    rateLimitMiddleware({
+      maxTokens: 30,
+      refillMs: 4_000,
+      lockoutMs: 60_000,
+      trustProxy: opts.trustProxy ?? false,
+    }),
+  );
 
   // Rate-limit platforms.validate — it fires an outbound live token probe to
   // Telegram/Slack/Discord. Cookie auth alone doesn't stop an authed caller

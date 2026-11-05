@@ -8,6 +8,7 @@ export interface OAuthServerMetadata {
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
   device_authorization_endpoint?: string;
+  grant_types_supported?: string[];
   /** RFC 9207: the AS adds `iss` to authorization responses. */
   authorization_response_iss_parameter_supported?: boolean;
 }
@@ -95,6 +96,9 @@ export function parseOAuthServerMetadata(data: unknown): OAuthServerMetadata {
       typeof obj.device_authorization_endpoint === 'string'
         ? obj.device_authorization_endpoint
         : undefined,
+    grant_types_supported: Array.isArray(obj.grant_types_supported)
+      ? (obj.grant_types_supported as unknown[]).filter((g): g is string => typeof g === 'string')
+      : undefined,
     authorization_response_iss_parameter_supported:
       typeof obj.authorization_response_iss_parameter_supported === 'boolean'
         ? obj.authorization_response_iss_parameter_supported

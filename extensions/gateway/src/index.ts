@@ -122,6 +122,7 @@ import {
   unreadSteerSuffix,
 } from './job-commands';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
+import type { McpLoginPort } from './mcp-login-port';
 import {
   attachmentsFromStructured,
   OUTBOUND_MEDIA_MAX_BYTES,
@@ -159,6 +160,7 @@ export {
 export { MessageDedupCache } from './dedup';
 export { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 export { DreamExecutor } from './dream-executor';
+export type { McpLoginPort, McpLoginSettlement, McpLoginStart } from './mcp-login-port';
 export {
   attachmentsFromStructured,
   decodeDataUrl,
@@ -815,6 +817,26 @@ function describeReplayAge(ms: number): string {
   return hours === 1 ? 'an hour' : `${hours} hours`;
 }
 
+/** The one settlement line sent to the lane that started an `/mcp login` flow. */
+function mcpSettlementText(
+  status: 'connected' | 'denied' | 'expired' | 'cancelled' | 'error',
+  serverName: string,
+  personalityId: string,
+): string {
+  switch (status) {
+    case 'connected':
+      return `✓ Signed in to ${serverName} for ${personalityId}.`;
+    case 'denied':
+      return '✗ Sign-in declined.';
+    case 'expired':
+      return `✗ The code expired. Send /mcp login ${serverName} again.`;
+    case 'cancelled':
+      return '✗ Sign-in cancelled.';
+    case 'error':
+      return `✗ Sign-in failed. Send /mcp login ${serverName} again.`;
+  }
+}
+
 /** `telegram:<botKey>` → `telegram`. An id with no colon IS the platform. */
 function platformOfAdapterId(id: string): string {
   const colon = id.indexOf(':');
@@ -995,6 +1017,13 @@ class TurnSemaphore {
 export interface GatewayBotConfig {
   botKey: string;
   loop: AgentLoop;
+  /**
+   * This bot's `/mcp login` port (built by `createMcpLoginPort` in
+   * packages/wiring). Read when `GatewayConfig.mcpLoginFor` is unset or returns
+   * nothing, so a bot hot-added or retired live carries its own port with it.
+   * Absent for a team bot and in tests.
+   */
+  mcpLogin?: McpLoginPort;
   binding: {
     type: 'personality' | 'team';
     name: string;
@@ -1140,6 +1169,12 @@ export interface HeldNoticeStore {
 }
 
 export interface GatewayConfig {
+  /**
+   * `/mcp login | code | cancel` seam (plan mcp-device-code-login §8.2). Absent in
+   * tests and standalone use, where `GatewayBotConfig.mcpLogin` is the fallback;
+   * with neither, `/mcp` answers "MCP sign-in is not available on this gateway."
+   */
+  mcpLoginFor?: (botKey: string) => McpLoginPort | undefined;
   /**
    * Multi-bot routing: one entry per bot. The Gateway keys its lane state
    * by `(platform, botKey, chatId[, threadId])` — encoded via `buildLaneKey`
@@ -1716,6 +1751,7 @@ export const PLATFORM_COMMANDS: Readonly<
     | 'fork'
     | 'branches'
     | 'branch'
+    | 'mcp'
   >
 > = {
   '/new': 'new',
@@ -1739,6 +1775,7 @@ export const PLATFORM_COMMANDS: Readonly<
   '/background': 'background',
   '/voice': 'voice',
   '/mute': 'mute',
+  '/mcp': 'mcp',
 };
 
 // ---------------------------------------------------------------------------
@@ -2021,6 +2058,9 @@ export class Gateway {
   private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
   /** Optional personality-directory seam for hot-reload (refresh + read). */
   private readonly personalityDirectory: GatewayConfig['personalityDirectory'];
+  private readonly mcpLoginFor: GatewayConfig['mcpLoginFor'];
+  /** The pending `/mcp login` flow per lane: id plus the port that owns it. Cleared on settlement. */
+  private readonly mcpFlows = new Map<string, { flowId: string; port: McpLoginPort }>();
   /** Optional attachment cache for cleanup on /new and lane eviction. */
   private readonly attachmentCache: AttachmentCache | undefined;
   /** Optional storage for reading cached attachment bytes (voice-note STT). */
@@ -2238,6 +2278,7 @@ export class Gateway {
     this.personalityCardReader = config.personalityCardReader;
     this.greetingProvider = config.greetingProvider;
     this.personalityDirectory = config.personalityDirectory;
+    this.mcpLoginFor = config.mcpLoginFor;
     this.attachmentCache = config.attachmentCache;
     this.storage = config.storage;
     this.dataDir = config.dataDir;
@@ -3884,6 +3925,11 @@ export class Gateway {
 
     if (cmdType === 'budget') {
       await this.handleBudgetCommand(text, laneKey, bot, message, adapter, threadId);
+      return;
+    }
+
+    if (cmdType === 'mcp') {
+      await this.handleMcpCommand(message, adapter, bot, laneKey, threadId, text);
       return;
     }
 
@@ -8554,6 +8600,118 @@ export class Gateway {
    */
   private reviewAudience(job: BackgroundJob): TurnAudience {
     return jobRoomAudience(job);
+  }
+
+  /**
+   * `/mcp login <server> | code <url> | cancel` (plan mcp-device-code-login §8.3).
+   * Runs BEFORE the agent like `/allow`: no turn, no session row, nothing for the
+   * LLM to read — pinned by `__tests__/mcp-login.test.ts` "/mcp messages never
+   * reach the AgentLoop". The seven checks run in the plan's order and the first
+   * failure answers and stops; nothing is started and no request is made before
+   * all of them pass (D12), pinned by the refusal cases in the same file. Every
+   * reply is an untracked, dedup-gated `adapter.send` (D17: no ledger
+   * obligation, no quiet-hours or `/mute` hold) to the lane the owner wrote from.
+   */
+  private async handleMcpCommand(
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    bot: GatewayBotConfig,
+    laneKey: string,
+    threadId: string | undefined,
+    text: string,
+  ): Promise<void> {
+    const reply = (body: string): Promise<void> =>
+      this.sendMcpReply(adapter, message.chatId, threadId, laneKey, body);
+    const port = this.mcpLoginFor?.(bot.botKey) ?? bot.mcpLogin;
+    if (!port) return reply('MCP sign-in is not available on this gateway.');
+    const personalityId = this.turnPersonalityFor(laneKey, bot);
+    if (personalityId === undefined) return reply('Sign in from the CLI for team bots.');
+    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
+    if (owner === undefined || owner === '') {
+      return reply(`Set channel_filter.${message.platform}.ownerUserId in config.yaml.`);
+    }
+    if (!senderIsOwner(message, owner)) return reply('Only the owner may sign in to MCP servers.');
+    if (!message.isDm || this.audienceFor(message) !== 'private') {
+      return reply('Send /mcp login to me in a direct message.');
+    }
+
+    const parts = text.split(/\s+/);
+    const sub = (parts[1] ?? '').toLowerCase();
+
+    if (sub === 'cancel') {
+      const flow = this.mcpFlows.get(laneKey);
+      if (!flow) return reply('No sign-in is waiting.');
+      flow.port.cancel(flow.flowId); // the settlement callback answers
+      return;
+    }
+
+    if (sub === 'code') {
+      const flow = this.mcpFlows.get(laneKey);
+      if (!flow) return reply('No sign-in is waiting. Send /mcp login <server> first.');
+      // Pasted text is passed through and never echoed back.
+      const pasted = parts.slice(2).join(' ');
+      const done = await flow.port.completePaste(flow.flowId, pasted);
+      // Success: the settlement callback answers.
+      if (!done.ok) {
+        await reply(
+          `✗ That address was not accepted (${done.code}). Paste it again, or send /mcp cancel.`,
+        );
+      }
+      return;
+    }
+
+    const serverName = parts[2];
+    if (sub !== 'login' || !serverName) {
+      return reply('Usage: /mcp login <server> · /mcp code <address> · /mcp cancel');
+    }
+    if (!port.isAttached(serverName, personalityId)) {
+      return reply(
+        `'${serverName}' is not attached to ${personalityId}. Attach it first: ethos personality mcp ${personalityId} --attach ${serverName}.`,
+      );
+    }
+
+    // One flow per lane: a second start would orphan the first (unreachable by /mcp cancel).
+    if (this.mcpFlows.has(laneKey)) {
+      return reply('A sign-in is already waiting. Send /mcp cancel first.');
+    }
+    const started = await port.start({ serverName, personalityId });
+    if (started.kind === 'refused') {
+      return reply(
+        `✗ Could not start sign-in for ${serverName}: ${started.code}.${started.detail ? ` ${started.detail}` : ''}`,
+      );
+    }
+    this.mcpFlows.set(laneKey, { flowId: started.flowId, port });
+    port.onSettled(started.flowId, (s) => {
+      if (this.mcpFlows.get(laneKey)?.flowId === started.flowId) this.mcpFlows.delete(laneKey);
+      void reply(mcpSettlementText(s.status, serverName, personalityId));
+    });
+    const minutes = Math.max(1, Math.round((started.expiresAt - Date.now()) / 60_000));
+    const tail = `Expires in ${minutes} min. If you did not just send /mcp login, ignore this message.`;
+    if (started.kind === 'device') {
+      await reply(
+        `Sign in to ${serverName} for personality "${personalityId}"\n` +
+          `Server: ${started.serverHost} · Authorization: ${started.authHost}\n` +
+          `Open ${started.verificationUri} and enter ${started.userCode}\n${tail}`,
+      );
+    } else {
+      await reply(
+        `Sign in to ${serverName} for personality "${personalityId}"\n` +
+          `Server: ${started.serverHost} · Authorization: ${started.authHost}\n` +
+          `Open ${started.authorizeUrl}\nThen send: /mcp code <the address your browser ended on>\n${tail}`,
+      );
+    }
+  }
+
+  /** An untracked, dedup-gated send for `/mcp` replies (D17). Not held by quiet hours or `/mute`. */
+  private async sendMcpReply(
+    adapter: PlatformAdapter,
+    chatId: string,
+    threadId: string | undefined,
+    laneKey: string,
+    body: string,
+  ): Promise<void> {
+    if (!this.outboundDedup.shouldSend(laneKey, body)) return;
+    await adapter.send(chatId, { text: body, threadId }).catch(() => {});
   }
 
   /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False

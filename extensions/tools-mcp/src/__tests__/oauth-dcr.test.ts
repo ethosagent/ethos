@@ -187,7 +187,10 @@ describe('runDcrAuthorization', () => {
    * callback server go to the real fetch. `onAuthorize` plays the browser.
    */
   function script(meta: Record<string, unknown>) {
-    const seen: { dcrBody?: { redirect_uris: string[] }; tokenBody?: URLSearchParams } = {};
+    const seen: {
+      dcrBody?: { redirect_uris: string[]; grant_types?: string[] };
+      tokenBody?: URLSearchParams;
+    } = {};
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -268,5 +271,18 @@ describe('runDcrAuthorization', () => {
     await expect(runDcrAuthorization(MCP_URL, 'Ethos', browser({}, {}))).resolves.toMatchObject({
       tokens: { access_token: 'at' },
     });
+  });
+
+  it('runDcrAuthorization asks for the device grant only when discovery advertises the endpoint', async () => {
+    const grant = 'urn:ietf:params:oauth:grant-type:device_code';
+    const without = script({});
+    await runDcrAuthorization(MCP_URL, 'Ethos', browser({}, {}));
+    expect(without.dcrBody?.grant_types).toEqual(['authorization_code', 'refresh_token']);
+
+    const withDevice = script({
+      device_authorization_endpoint: 'https://mcp.dcr.example.com/device_authorization',
+    });
+    await runDcrAuthorization(MCP_URL, 'Ethos', browser({}, {}));
+    expect(withDevice.dcrBody?.grant_types).toEqual(['authorization_code', 'refresh_token', grant]);
   });
 });
