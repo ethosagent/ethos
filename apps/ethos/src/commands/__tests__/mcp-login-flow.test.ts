@@ -329,8 +329,9 @@ describe('runHeadlessLogin — paste', () => {
 });
 
 describe('buildHeadlessDeps audit logger', () => {
-  it('routes the mcp.oauth.login started event to the host logger', async () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  it('routes the mcp.oauth.login started event to stderr, never stdout', async () => {
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const deps = await mcp.buildHeadlessDeps();
       const { slots } = deps.device as unknown as {
@@ -344,8 +345,10 @@ describe('buildHeadlessDeps audit logger', () => {
       expect(
         lines.some((l) => l.includes('mcp.oauth.login') && l.includes('outcome=started')),
       ).toBe(true);
+      expect(logSpy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
+      logSpy.mockRestore();
     }
   });
 });

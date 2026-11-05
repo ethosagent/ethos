@@ -13,7 +13,6 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir, readConfig, readRawConfig } from '@ethosagent/config';
-import { ConsoleLogger } from '@ethosagent/logger';
 import type { ClientAdapter, McpEntry } from '@ethosagent/mcp-server';
 import {
   claudeDesktop,
@@ -69,6 +68,7 @@ import {
 import { writeJson } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
+import { StderrLogger } from '../logger';
 import {
   createAgentLoop,
   createLLM,
@@ -1666,9 +1666,10 @@ function createStdioLoginIo(): LoginIo {
 /** Wire McpDeviceLogin / McpPasteLogin to the CLI: one shared pending map, the real secrets, no live McpManager to reconnect. */
 export async function buildHeadlessDeps(): Promise<HeadlessLoginDeps> {
   const secrets = await getSecretsResolver();
-  // Audit lines (`mcp.oauth.login`) go through the app-entry ConsoleLogger; no secret reaches it
+  // Audit lines (`mcp.oauth.login`) go to stderr (StderrLogger) so stdout stays pipeable
+  // user-facing output; no secret reaches the logger
   // (tools-mcp __tests__/device-login.test.ts "no secret reaches the logger").
-  const logger = new ConsoleLogger({ component: 'mcp' });
+  const logger = new StderrLogger({ component: 'mcp' });
   const slots = new LoginSlots({ logger });
   const mcpManager = {
     registerConfig: (): void => {},
