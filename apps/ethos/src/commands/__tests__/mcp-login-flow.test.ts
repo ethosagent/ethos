@@ -4,7 +4,7 @@
 // what the CLI decides and prints, not the OAuth wire (that is tools-mcp's).
 
 import { EthosError } from '@ethosagent/types';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../wiring', () => ({
   createAgentLoop: vi.fn(),
@@ -329,26 +329,23 @@ describe('runHeadlessLogin — paste', () => {
 });
 
 describe('buildHeadlessDeps audit logger', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('routes the mcp.oauth.login started event to stderr, never stdout', async () => {
-    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      const deps = await mcp.buildHeadlessDeps();
-      const { slots } = deps.device as unknown as {
-        slots: import('@ethosagent/tools-mcp').LoginSlots;
-      };
-      const reserved = slots.reserve({ serverName: 'demo', surface: 'cli', kind: 'device' });
-      if (!reserved.ok) throw new Error('reserve failed');
-      slots.started(reserved.slot);
-      slots.cancel(reserved.slot.flowId);
-      const lines = spy.mock.calls.map((c) => String(c[0]));
-      expect(
-        lines.some((l) => l.includes('mcp.oauth.login') && l.includes('outcome=started')),
-      ).toBe(true);
-      expect(logSpy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-      logSpy.mockRestore();
-    }
+    const deps = await mcp.buildHeadlessDeps();
+    const { slots } = deps.device as unknown as {
+      slots: import('@ethosagent/tools-mcp').LoginSlots;
+    };
+    const reserved = slots.reserve({ serverName: 'demo', surface: 'cli', kind: 'device' });
+    if (!reserved.ok) throw new Error('reserve failed');
+    slots.started(reserved.slot);
+    slots.cancel(reserved.slot.flowId);
+    const lines = errSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('mcp.oauth.login') && l.includes('outcome=started'))).toBe(
+      true,
+    );
+    expect(logSpy).not.toHaveBeenCalled();
   });
 });

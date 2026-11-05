@@ -160,3 +160,76 @@ describe('ConsoleLogger — logs.level gate', () => {
     expect(spies.warn).toHaveBeenCalledWith('[cron] loud jobId=sweep');
   });
 });
+
+describe('ConsoleLogger — stderr stream option', () => {
+  const spies = {
+    log: vi.spyOn(console, 'log'),
+    warn: vi.spyOn(console, 'warn'),
+    error: vi.spyOn(console, 'error'),
+    debug: vi.spyOn(console, 'debug'),
+  };
+
+  beforeEach(() => {
+    for (const spy of Object.values(spies)) {
+      spy.mockClear();
+      spy.mockImplementation(() => {});
+    }
+  });
+
+  afterEach(() => {
+    for (const spy of Object.values(spies)) {
+      spy.mockClear();
+    }
+  });
+
+  it('sends every level to console.error and nothing to stdout-bound console methods', () => {
+    const log = new ConsoleLogger({ component: 'mcp' }, 'debug', { stream: 'stderr' });
+    log.debug('d');
+    log.info('i');
+    log.warn('w');
+    log.error('e');
+
+    expect(spies.error).toHaveBeenCalledTimes(4);
+    expect(spies.error.mock.calls.map((c) => c[0])).toEqual([
+      '[mcp] d',
+      '[mcp] i',
+      '[mcp] w',
+      '[mcp] e',
+    ]);
+    expect(spies.log).not.toHaveBeenCalled();
+    expect(spies.debug).not.toHaveBeenCalled();
+    expect(spies.warn).not.toHaveBeenCalled();
+  });
+
+  it('formats text identically to the default mode', () => {
+    new ConsoleLogger({ component: 'mcp' }, 'debug', { stream: 'stderr' }).info('mcp.oauth.login', {
+      server: 'x',
+      n: 2,
+    });
+    new ConsoleLogger({ component: 'mcp' }).info('mcp.oauth.login', { server: 'x', n: 2 });
+
+    expect(spies.error).toHaveBeenCalledWith('[mcp] mcp.oauth.login server=x n=2');
+    expect(spies.log).toHaveBeenCalledWith('[mcp] mcp.oauth.login server=x n=2');
+  });
+
+  it('child() keeps the stream option', () => {
+    const child = new ConsoleLogger({ component: 'mcp' }, 'debug', { stream: 'stderr' }).child({
+      k: 'v',
+    });
+    child.info('hello');
+
+    expect(spies.error).toHaveBeenCalledWith('[mcp] hello k=v');
+    expect(spies.log).not.toHaveBeenCalled();
+  });
+
+  it('keeps the level gate in stderr mode', () => {
+    new ConsoleLogger({}, 'warn', { stream: 'stderr' }).info('i');
+    expect(spies.error).not.toHaveBeenCalled();
+  });
+
+  it('default mode is unchanged: info goes to console.log', () => {
+    new ConsoleLogger({ component: 'mcp' }).info('i');
+    expect(spies.log).toHaveBeenCalledWith('[mcp] i');
+    expect(spies.error).not.toHaveBeenCalled();
+  });
+});

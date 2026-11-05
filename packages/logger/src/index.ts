@@ -15,19 +15,32 @@ export class NoopLogger implements Logger {
 
 export const noopLogger: Logger = new NoopLogger();
 
+export interface ConsoleLoggerOptions {
+  stream?: 'default' | 'stderr';
+}
+
 // Routes log records to console.* for app entry points that want plain
 // text output. Apps that need structured output ship their own Logger
 // (pino, etc.) — this is the framework's default for ergonomic CLI use.
 export class ConsoleLogger implements Logger {
   private readonly baseMeta: LogMeta;
   private readonly minLevel: LogLevel;
+  private readonly options: ConsoleLoggerOptions;
 
   // `level` is the lowest severity that prints. Defaults to `'debug'` — the
   // whole range — so an app that installs a ConsoleLogger without configuring
   // `logs.level` behaves exactly as it did before the gate existed.
-  constructor(baseMeta: LogMeta = {}, level: LogLevel = 'debug') {
+  //
+  // `options.stream: 'stderr'` sends every level to console.error. Opt in from
+  // one-shot CLI commands whose stdout is user-facing output that may be piped.
+  constructor(
+    baseMeta: LogMeta = {},
+    level: LogLevel = 'debug',
+    options: ConsoleLoggerOptions = {},
+  ) {
     this.baseMeta = baseMeta;
     this.minLevel = level;
+    this.options = options;
   }
 
   debug(message: string, meta?: LogMeta): void {
@@ -44,7 +57,7 @@ export class ConsoleLogger implements Logger {
   }
 
   child(meta: LogMeta): Logger {
-    return new ConsoleLogger({ ...this.baseMeta, ...meta }, this.minLevel);
+    return new ConsoleLogger({ ...this.baseMeta, ...meta }, this.minLevel, this.options);
   }
 
   private emit(level: LogLevel, message: string, meta?: LogMeta): void {
@@ -55,7 +68,7 @@ export class ConsoleLogger implements Logger {
     const text = [prefix, message, suffix].filter(Boolean).join(' ');
     // ConsoleLogger is itself an app-entry-point shim; the constitution
     // explicitly permits console.* in app entry modules.
-    if (level === 'error') {
+    if (this.options.stream === 'stderr' || level === 'error') {
       console.error(text);
     } else if (level === 'warn') {
       console.warn(text);
