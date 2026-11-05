@@ -67,6 +67,8 @@ export class HostEntry implements CallSurface {
   private crashes: number[] = [];
   private consecutive = 0;
   private nextSpawnAt = 0;
+  /** The delay recordCrash chose for the pending restart; reported as `backoff_ms`. */
+  private lastBackoffMs = 0;
   private circuitUntil = 0;
   private stopping = false;
   private pingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -184,7 +186,7 @@ export class HostEntry implements CallSurface {
         this.cfg.onEvent('plugin_host.restarted', {
           plugin_id: this.spec.id,
           attempt: this.consecutive,
-          backoff_ms: Math.max(0, this.cfg.now() - t0),
+          backoff_ms: this.lastBackoffMs,
         });
       }
       this.schedulePing();
@@ -450,6 +452,7 @@ export class HostEntry implements CallSurface {
     }
     const delay = backoffDelay(this.consecutive, this.cfg.random);
     this.nextSpawnAt = now + delay;
+    this.lastBackoffMs = delay;
     this.state = 'backoff';
     if (this.holdsLongLived) {
       this.restartTimer = setTimeout(

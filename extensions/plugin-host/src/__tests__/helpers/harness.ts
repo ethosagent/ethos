@@ -6,6 +6,9 @@ import type { Logger, ToolContext, ToolExecuteRequest, ToolResult } from '@ethos
 import type { HostEventCategory } from '../../events';
 import { PluginHostPool, type PluginHostPoolOptions } from '../../pool';
 
+/** Generous per-test timeout for spawn-based tests. */
+export const SLOW = 60_000;
+
 const here = import.meta.dirname;
 export const CHILD_ENTRY = join(here, 'child-entry.ts');
 export const MOCK_HOST = join(here, 'mock-host.mjs');
@@ -57,6 +60,8 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
     logger: captureLogger(debugLines),
     now: () => clock.ms,
     random: () => 0.5,
+    // Load headroom for spawn-based tests; the production default stays 10 s.
+    readyTimeoutMs: 40_000,
     ...(mock
       ? {
           buildEnv: (ctx) => ({

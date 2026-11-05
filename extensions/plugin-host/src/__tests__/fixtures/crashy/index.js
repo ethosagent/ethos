@@ -35,4 +35,13 @@ export function activate(api) {
       return new Promise(() => {});
     },
   });
+  api.registerTool({
+    ...base,
+    name: 'heap_blow',
+    description: 'Allocates until V8 hits max_heap_mb',
+    execute: async () => {
+      const hold = [];
+      for (;;) hold.push(new Array(1_000_000).fill(Math.random()));
+    },
+  });
 }

@@ -136,7 +136,10 @@ describe('crash handling', () => {
       h.clock.ms += 1_000;
       expect(await callTool(lease, 'ok')).toEqual({ ok: true, value: 'ok' });
       expect(h.pool.pidOf('crashy')).not.toBe(before);
-      expect(eventsOf(h, 'plugin_host.restarted')).toHaveLength(1);
+      // backoff_ms is the delay recordCrash chose (1 s, jitter 0 with random() = 0.5), not the respawn time.
+      expect(eventsOf(h, 'plugin_host.restarted').map((e) => e.payload)).toEqual([
+        { plugin_id: 'crashy', attempt: 1, backoff_ms: 1_000 },
+      ]);
     },
     SLOW,
   );
