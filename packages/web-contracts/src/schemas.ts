@@ -9,6 +9,7 @@ export * from './schema/_shared';
 export * from './schema/a2a-keys';
 export * from './schema/api-keys';
 export * from './schema/approvals';
+export * from './schema/catalog';
 export * from './schema/communications';
 export * from './schema/cron';
 export * from './schema/goals-jobs';

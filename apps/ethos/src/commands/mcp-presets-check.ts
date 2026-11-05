@@ -10,6 +10,7 @@
 // switch in mcp.ts) and remove-then-add would drop the entry's env secret refs
 // and auth block. Pinned by apps/ethos/src/__tests__/mcp-presets-check.test.ts.
 
+import { pinSpec } from '@ethosagent/catalog';
 import type { McpServerConfig } from '@ethosagent/tools-mcp';
 import type { McpPreset } from '@ethosagent/tools-mcp/presets';
 
@@ -42,8 +43,7 @@ export function findUnpinnedEntries(
       const at = args.indexOf(preset.pin.package);
       if (at < 0) continue;
       // Keep the user's own values (path, repo) that follow the preset's fixed args.
-      const fixedAfterSpec =
-        preset.args.length - preset.args.indexOf(`${preset.pin.package}@${preset.pin.version}`) - 1;
+      const fixedAfterSpec = preset.args.length - preset.args.indexOf(pinSpec(preset.pin)) - 1;
       found.push({
         name: server.name,
         preset: preset.name,

@@ -7,6 +7,7 @@ export * from './amendment';
 export * from './audience';
 export * from './background-job';
 export * from './call-capture';
+export * from './catalog';
 export * from './channel-conformance';
 export * from './channel-transcript';
 export * from './clarify';

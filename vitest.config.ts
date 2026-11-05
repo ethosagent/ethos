@@ -62,6 +62,8 @@ export const srcAliases = {
   '@ethosagent/llm-codex': resolve('./extensions/llm-codex/src'),
   '@ethosagent/llm-xai': resolve('./extensions/llm-xai/src'),
   '@ethosagent/logger': resolve('./packages/logger/src'),
+  '@ethosagent/catalog/filter': resolve('./packages/catalog/src/filter.ts'),
+  '@ethosagent/catalog': resolve('./packages/catalog/src'),
   '@ethosagent/pricing': resolve('./packages/pricing/src'),
   '@ethosagent/acp-server': resolve('./apps/acp-server/src'),
 };

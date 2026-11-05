@@ -308,6 +308,9 @@ importers:
       '@ethosagent/cas-fs':
         specifier: workspace:*
         version: link:../../extensions/cas-fs
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@ethosagent/channel-transcript-sqlite':
         specifier: workspace:*
         version: link:../../extensions/channel-transcript-sqlite
@@ -612,6 +615,9 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.16
@@ -2269,6 +2275,9 @@ importers:
 
   extensions/tools-mcp:
     dependencies:
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -2584,6 +2593,16 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
+
+  packages/catalog:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../web-contracts
 
   packages/config:
     dependencies:

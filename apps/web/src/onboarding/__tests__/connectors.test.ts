@@ -5,13 +5,13 @@
 //   2. The real preset slate lands five in "works now" and six in "sign in".
 //      apps/web must not import @ethosagent/tools-mcp (Node-only; pinned by
 //      extensions/tools-mcp/src/__tests__/browser-boundary.test.ts), so the
-//      slate is parsed out of remote-presets.ts as text. A preset that changes
-//      authType changes the parsed rows and fails this test.
+//      slate is read from the catalog index (@ethosagent/catalog, pure data,
+//      browser-safe), which is what MCP_REMOTE_PRESETS is derived from. A
+//      remote entry that changes auth changes the rows and fails this test.
 //   3. D20: for OAuth the attach runs only after the sign-in connected.
 //   4. The step renders both groups and names the agent on the buttons.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { CATALOG_ENTRIES } from '@ethosagent/catalog';
 import type { McpCatalogOutput, McpRemotePresetInfo } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
@@ -21,34 +21,21 @@ import { groupByAuth } from '../../features/mcp/catalog';
 import type { UseMcpOAuthPopupOptions } from '../../features/mcp/useMcpOAuthPopup';
 import { attachAfterConnect } from '../connectors';
 
-const PRESETS_SOURCE = readFileSync(
-  join(
-    import.meta.dirname,
-    '..',
-    '..',
-    '..',
-    '..',
-    '..',
-    'extensions/tools-mcp/src/remote-presets.ts',
-  ),
-  'utf8',
-);
-
-/** One row per `name: '…'` … `authType: '…'` pair in the preset table. */
-function presetRowsFromSource(): McpRemotePresetInfo[] {
+/** One row per remote catalog entry, in catalog order. */
+function presetRowsFromCatalog(): McpRemotePresetInfo[] {
   const rows: McpRemotePresetInfo[] = [];
-  const re = /^ {4}name: '([a-z0-9-]+)',[\s\S]*?^ {4}authType: '(none|oauth|bearer)',/gm;
-  for (const m of PRESETS_SOURCE.matchAll(re)) {
-    const name = m[1];
-    const authType = m[2];
-    if (!name || (authType !== 'none' && authType !== 'oauth' && authType !== 'bearer')) continue;
+  for (const e of CATALOG_ENTRIES) {
+    const auth = e.capabilities.auth;
+    if (e.pin.type !== 'remote' || (auth !== 'none' && auth !== 'oauth' && auth !== 'bearer')) {
+      continue;
+    }
     rows.push({
-      name,
-      label: name,
-      url: `https://example.com/${name}`,
+      name: e.id,
+      label: e.id,
+      url: `https://example.com/${e.id}`,
       transport: 'streamable-http',
-      authType,
-      description: name,
+      authType: auth,
+      description: e.id,
       category: 'x',
     });
   }
@@ -69,7 +56,7 @@ describe('groupByAuth', () => {
   });
 
   it('the five none presets land in works-now and the six oauth presets in sign-in', () => {
-    const g = groupByAuth(presetRowsFromSource());
+    const g = groupByAuth(presetRowsFromCatalog());
     expect(g.none.map((r) => r.name)).toEqual([
       'deepwiki',
       'context7',
@@ -131,7 +118,7 @@ vi.mock('../../features/mcp/useMcpOAuthPopup', () => ({
 
 const { ConnectorsStep } = await import('../steps/ConnectorsStep');
 
-const CATALOG: McpCatalogOutput = { remote: presetRowsFromSource(), local: [] };
+const CATALOG: McpCatalogOutput = { remote: presetRowsFromCatalog(), local: [] };
 
 let container: HTMLDivElement;
 let root: Root;

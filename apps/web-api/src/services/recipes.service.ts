@@ -1366,7 +1366,7 @@ function resolveProjected(id: string, installMode: RecipeInstallMode | undefined
   return projectBundle(bundle, resolveInstallMode(bundle, installMode));
 }
 
-function catalogPresetIds(catalog: {
+export function catalogPresetIds(catalog: {
   remote: Array<{ name: string }>;
   local: Array<{ name: string }>;
 }): string[] {

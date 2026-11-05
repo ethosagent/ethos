@@ -19,6 +19,7 @@
     "build": "tsup src/index.ts src/presets.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/catalog": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/oauth-core": "workspace:*",

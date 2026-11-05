@@ -11,6 +11,8 @@
       "@ethosagent/storage-fs": ["./packages/storage-fs/src"],
       "@ethosagent/sqlite": ["./packages/sqlite/src"],
       "@ethosagent/logger": ["./packages/logger/src"],
+      "@ethosagent/catalog/filter": ["./packages/catalog/src/filter.ts"],
+      "@ethosagent/catalog": ["./packages/catalog/src"],
       "@ethosagent/pricing": ["./packages/pricing/src"],
       "@ethosagent/core": ["./packages/core/src"],
       "@ethosagent/config": ["./packages/config/src"],

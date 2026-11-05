@@ -1,0 +1,28 @@
+{
+  "name": "@ethosagent/catalog",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The unified catalog index: one typed entry per reviewed MCP server, plugin and skill. Pure data plus a data-free filter. Depends only on @ethosagent/types.",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    },
+    "./filter": {
+      "import": "./src/filter.ts",
+      "types": "./src/filter.ts",
+      "production": "./dist/filter.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/filter.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/web-contracts": "workspace:*"
+  }
+}
