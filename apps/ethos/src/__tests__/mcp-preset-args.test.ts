@@ -22,30 +22,48 @@ const FILESYSTEM: McpPreset = {
   name: 'filesystem',
   description: 'Read/write local files under a required allowed path',
   command: 'npx',
-  args: ['-y', '@modelcontextprotocol/server-filesystem'],
+  args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0'],
   envVars: [],
   argVars: ['ALLOWED_PATH'],
   category: 'Developer tools',
+  pin: {
+    registry: 'npm',
+    package: '@modelcontextprotocol/server-filesystem',
+    version: '2.2.0',
+    integrity: 'sha512-fixture',
+  },
 };
 
 const GIT: McpPreset = {
   name: 'git',
   description: 'Git repository operations (requires uvx)',
   command: 'uvx',
-  args: ['mcp-server-git', '--repository'],
+  args: ['mcp-server-git@2026.11.4', '--repository'],
   envVars: [],
   argVars: ['GIT_REPO_PATH'],
   category: 'Developer tools',
+  pin: {
+    registry: 'pypi',
+    package: 'mcp-server-git',
+    version: '2026.11.4',
+    integrity: 'sha256-fixture',
+  },
 };
 
 const MEMORY: McpPreset = {
   name: 'memory',
   description: 'Key-value memory store',
   command: 'npx',
-  args: ['-y', '@modelcontextprotocol/server-memory'],
+  args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-memory@2.1.0'],
   envVars: ['MEMORY_FILE_PATH'],
   argVars: [],
   category: 'Utilities',
+  pin: {
+    registry: 'npm',
+    package: '@modelcontextprotocol/server-memory',
+    version: '2.1.0',
+    integrity: 'sha512-fixture',
+  },
 };
 
 const TWO_ARGS: McpPreset = { ...FILESYSTEM, name: 'multi', argVars: ['FIRST', 'SECOND'] };
@@ -55,33 +73,39 @@ describe('buildPresetArgs', () => {
     const result = buildPresetArgs(FILESYSTEM, { ALLOWED_PATH: '/data' }, 'fs');
     expect(result).toEqual({
       ok: true,
-      args: ['-y', '@modelcontextprotocol/server-filesystem', '/data'],
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0', '/data'],
     });
   });
 
   it('appends after a flag that lives in the fixed args', () => {
     const result = buildPresetArgs(GIT, { GIT_REPO_PATH: '/repos/myapp' }, 'my-git');
-    expect(result).toEqual({ ok: true, args: ['mcp-server-git', '--repository', '/repos/myapp'] });
+    expect(result).toEqual({
+      ok: true,
+      args: ['mcp-server-git@2026.11.4', '--repository', '/repos/myapp'],
+    });
   });
 
   it('orders values by argVars declaration, not by the order they were typed', () => {
     const result = buildPresetArgs(TWO_ARGS, { SECOND: 'b', FIRST: 'a' }, 'multi');
     expect(result).toEqual({
       ok: true,
-      args: ['-y', '@modelcontextprotocol/server-filesystem', 'a', 'b'],
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0', 'a', 'b'],
     });
   });
 
   it('passes a preset that declares no argVars straight through', () => {
     const result = buildPresetArgs(MEMORY, {}, 'mem');
-    expect(result).toEqual({ ok: true, args: ['-y', '@modelcontextprotocol/server-memory'] });
+    expect(result).toEqual({
+      ok: true,
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-memory@2.1.0'],
+    });
   });
 
   it('trims surrounding whitespace off a supplied value', () => {
     const result = buildPresetArgs(FILESYSTEM, { ALLOWED_PATH: '  /data  ' }, 'fs');
     expect(result).toEqual({
       ok: true,
-      args: ['-y', '@modelcontextprotocol/server-filesystem', '/data'],
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0', '/data'],
     });
   });
 

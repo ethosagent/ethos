@@ -1,0 +1,109 @@
+{
+  "deepwiki": {
+    "name": "deepwiki",
+    "label": "DeepWiki",
+    "url": "https://mcp.deepwiki.com/mcp",
+    "transport": "streamable-http",
+    "authType": "none",
+    "description": "Ask questions about any public GitHub repo and get answers grounded in its source",
+    "category": "Docs & knowledge",
+    "docsUrl": "https://docs.devin.ai/work-with-devin/deepwiki-mcp"
+  },
+  "context7": {
+    "name": "context7",
+    "label": "Context7",
+    "url": "https://mcp.context7.com/mcp",
+    "transport": "streamable-http",
+    "authType": "none",
+    "description": "Look up current documentation for a library or framework by name and version",
+    "category": "Docs & knowledge",
+    "docsUrl": "https://github.com/upstash/context7"
+  },
+  "aws-knowledge": {
+    "name": "aws-knowledge",
+    "label": "AWS Knowledge",
+    "url": "https://knowledge-mcp.global.api.aws",
+    "transport": "streamable-http",
+    "authType": "none",
+    "description": "Search and retrieve official AWS documentation and API references",
+    "category": "Docs & knowledge",
+    "docsUrl": "https://github.com/awslabs/mcp/tree/main/src/aws-knowledge-mcp-server"
+  },
+  "microsoft-learn": {
+    "name": "microsoft-learn",
+    "label": "Microsoft Learn",
+    "url": "https://learn.microsoft.com/api/mcp",
+    "transport": "streamable-http",
+    "authType": "none",
+    "description": "Search official Microsoft and Azure documentation and code samples",
+    "category": "Docs & knowledge",
+    "docsUrl": "https://github.com/MicrosoftDocs/mcp"
+  },
+  "wolfram": {
+    "name": "wolfram",
+    "label": "Wolfram",
+    "url": "https://agenttools.wolfram.com/mcp",
+    "transport": "streamable-http",
+    "authType": "none",
+    "description": "Compute answers and query curated data with Wolfram Alpha",
+    "category": "Docs & knowledge"
+  },
+  "sentry": {
+    "name": "sentry",
+    "label": "Sentry",
+    "url": "https://mcp.sentry.dev/mcp",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Search Sentry issues and inspect events, traces, and releases",
+    "category": "Developer tools"
+  },
+  "vercel": {
+    "name": "vercel",
+    "label": "Vercel",
+    "url": "https://mcp.vercel.com",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Inspect Vercel projects, deployments, and build logs",
+    "category": "Developer tools",
+    "docsUrl": "https://vercel.com/docs/mcp/vercel-mcp"
+  },
+  "linear": {
+    "name": "linear",
+    "label": "Linear",
+    "url": "https://mcp.linear.app/mcp",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Read and update Linear issues, projects, and cycles",
+    "category": "Productivity",
+    "docsUrl": "https://linear.app/docs/mcp"
+  },
+  "notion": {
+    "name": "notion",
+    "label": "Notion",
+    "url": "https://mcp.notion.com/mcp",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Search and edit Notion pages and databases",
+    "category": "Productivity",
+    "docsUrl": "https://developers.notion.com/docs/mcp"
+  },
+  "granola": {
+    "name": "granola",
+    "label": "Granola",
+    "url": "https://mcp.granola.ai/mcp",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Search your Granola meeting notes and pull transcripts, summaries, and decisions",
+    "category": "Productivity"
+  },
+  "asana": {
+    "name": "asana",
+    "label": "Asana",
+    "url": "https://mcp.asana.com/mcp",
+    "transport": "streamable-http",
+    "authType": "oauth",
+    "description": "Read and update Asana tasks, projects, and workspaces",
+    "category": "Productivity",
+    "docsUrl": "https://developers.asana.com/docs/using-asanas-mcp-server"
+  }
+}

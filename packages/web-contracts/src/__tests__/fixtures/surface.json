@@ -480,7 +480,7 @@
       "updateToken": "946a731d070ed38f26eef6c64dd074e6ef74fe66360ae4d830ebe152d24dbdd4",
       "scopeStatus": "0b00886b07c179fdac47c4ae557ebfe0264bbb39a19eeb822139e4d982826f07",
       "validateConfig": "5e55146e1d9d5f26ef5f0bf2b4705cd5fda59ee3dfebe31c8e834463752df05c",
-      "catalog": "9ee95f5af6de6cc7709740a16e8783d1cf19e66429ae49f7ee49a7b4a3101b8a"
+      "catalog": "45ec7d8ce3646cc40487425be32413b4aa637a71c7ab1de666423a4d45ec24cf"
     },
     "platforms": {
       "list": "28c04175bf71ec3b26b0b32ebd06229f208391650a0ca7feee413cd82143321f",
@@ -858,7 +858,7 @@
     "McpAttachInputSchema": "66891c2be031e244315941ef0b1709f3b0d269675e90fee17ddbf599ef60a10c",
     "McpAttachOutputSchema": "bd8b3595b994378525a3e89108852fdfc49561a7e701926711401c1d4a72931b",
     "McpCancelInputSchema": "da7f98c717734047b4d73aedd6fd5f4ba586e436137e6a11ed59a21009bf6e01",
-    "McpCatalogOutputSchema": "1c7d2247ae4e1cef737ab2823bb107c7085d68746706088c01d8147563570b25",
+    "McpCatalogOutputSchema": "101ba7e4c8c5c5fed5d068ef4e1120b14afe9050eb560581842acc11e27731d6",
     "McpCompleteInputSchema": "02c2eb1547e8f5a392e00e1846adca07562d2ce51cb77b58adaebff1074c5b2f",
     "McpCompleteOutputSchema": "bb9e7bd684ed810192b08ed01374c487cf5d4f2b15d8120927b84923f1358f28",
     "McpConnectPresetInputSchema": "9eb4988bf7482f6252433e8e97a511760c7533f3bba95342f9c91fe5fb042594",
@@ -878,7 +878,7 @@
     "McpExportScopeViewSchema": "b67965265fe39f5eecf097637a809ba3a0b265dab06e6f041dc5bc9a5005b2f1",
     "McpExportViewSchema": "080e6d3e045f15f038424ceba754303022ab78f6a37ba71f0477f3a6c965272e",
     "McpListOutputSchema": "19f59002be1072e9744a776b002eea0d08b44d20e3f6cb07c129fc2008a66918",
-    "McpLocalPresetSchema": "5e2fa85bf5b7c8e9d7d22be1d5712b555e591a7e165c86027dc5a100177a40b0",
+    "McpLocalPresetSchema": "d175d89bbe02b5e3e495e161872c2f587e9f9360fee59c02a1a472b64c75579c",
     "McpPersonalityServersInputSchema": "4270e9e5fb3d5b481ab20305aed2da307167c0d2db05da0a64af38009b42f83e",
     "McpPersonalityServersOutputSchema": "2e06984399b33dcd4725c0d663b874e6b186a30fc00e60c50346e49ace54f96b",
     "McpPolicySchema": "a219aa0a2e14667a722ccf5758806ad6dabe947da8d26178babb377f841a9aae",

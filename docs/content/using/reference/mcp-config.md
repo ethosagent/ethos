@@ -18,7 +18,7 @@ Ethos's MCP client reads servers from `~/.ethos/mcp.json`. The file is a **JSON 
     "name": "filesystem",
     "transport": "stdio",
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/work"]
+    "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-filesystem@2.2.0", "/Users/me/work"]
   },
   {
     "name": "github",
@@ -113,6 +113,10 @@ Set on entries where `transport: "stdio"`.
 | `args` | string[] | `[]` | no | Argument list passed to the subprocess. |
 | `env` | Record\<string,string\> | `{}` | no | Extra env vars set on the subprocess. Always **merged** on top of the sandboxed env; pinned keys (`HOME`, `TMPDIR`, `XDG_*`) cannot be overridden — those are routed to a per-server scratch directory. |
 | `mcpEnvPassthrough` | string[] | `[]` | no | Process env vars to forward through the sandbox. Required for credential-pattern names (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`) which are otherwise stripped. See [Sandboxed environment](mcp-config/auth-and-secrets.md#sandbox). |
+
+### Pinned presets {#pinned-presets}
+
+The built-in presets (`ethos mcp presets`) launch an exact version: `args` carries `name@x.y.z`, never a bare package, so a launch does not pull whatever was published last. npx presets also pass `--ignore-scripts`. A pin fixes the top-level package only; its dependencies still resolve on first launch. Entries you added before pinning stay as they are: run `ethos mcp presets --check` to list the ones that still name a bare package (it changes nothing), then edit their `args` to the pinned line it prints. Maintainers bump a pin by the steps in the header of [`presets.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-mcp/src/presets.ts).
 
 ### streamable-http fields {#http-fields}
 

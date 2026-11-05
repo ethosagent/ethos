@@ -23,6 +23,7 @@ const JSON_EXEMPT: Record<string, string> = {
   'cache-attribution': 'internal library, no CLI output',
   'mcp-export': 'internal library, no CLI output',
   'mcp-preset-args': 'internal library, no CLI output',
+  'mcp-presets-check': 'internal library of `mcp presets --check`; --json is handled in mcp.ts',
   'registry-table': 'internal table renderer, no CLI output',
   'supervisor-lifecycle': 'internal library of the supervisor, no CLI output',
   'team-runtime': 'internal library, no CLI output',

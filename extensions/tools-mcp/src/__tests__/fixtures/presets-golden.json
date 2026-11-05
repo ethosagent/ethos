@@ -1,0 +1,77 @@
+{
+  "filesystem": {
+    "name": "filesystem",
+    "description": "Read/write local files under a required allowed path",
+    "command": "npx",
+    "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-filesystem@2.2.0"],
+    "envVars": [],
+    "argVars": ["ALLOWED_PATH"],
+    "category": "Developer tools",
+    "pin": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-filesystem",
+      "version": "2.2.0",
+      "integrity": "sha512-mNLj/qhV+P4kj1qP8VzgQ2fjSmWcKDQ3Q+KpZEA+WahCDWHw5zJBRQUNSPZ6Ai2/ZGGUjzNzsFpz958a1+4T9A=="
+    }
+  },
+  "git": {
+    "name": "git",
+    "description": "Git repository operations (requires uvx)",
+    "command": "uvx",
+    "args": ["mcp-server-git@2026.11.4", "--repository"],
+    "envVars": [],
+    "argVars": ["GIT_REPO_PATH"],
+    "category": "Developer tools",
+    "pin": {
+      "registry": "pypi",
+      "package": "mcp-server-git",
+      "version": "2026.11.4",
+      "integrity": "sha256-0cdaa8f446554d020f8ffa0e44ef45b89df4ed4deaeb961b4305d8a2852b4e0e"
+    }
+  },
+  "fetch": {
+    "name": "fetch",
+    "description": "HTTP fetch operations (requires uvx)",
+    "command": "uvx",
+    "args": ["mcp-server-fetch@2026.11.4"],
+    "envVars": [],
+    "argVars": [],
+    "category": "Web",
+    "pin": {
+      "registry": "pypi",
+      "package": "mcp-server-fetch",
+      "version": "2026.11.4",
+      "integrity": "sha256-7c5891e3d3e3ea7d2d8c21acb9c64ccd30ff1f42beeea59f95715637b970307d"
+    }
+  },
+  "google-calendar": {
+    "name": "google-calendar",
+    "description": "Read and manage Google Calendar events (set GOOGLE_OAUTH_CREDENTIALS to your Google Cloud OAuth client JSON)",
+    "command": "npx",
+    "args": ["-y", "--ignore-scripts", "@cocal/google-calendar-mcp@2.8.1"],
+    "envVars": ["GOOGLE_OAUTH_CREDENTIALS"],
+    "argVars": [],
+    "category": "Utilities",
+    "pin": {
+      "registry": "npm",
+      "package": "@cocal/google-calendar-mcp",
+      "version": "2.8.1",
+      "integrity": "sha512-NQdZ/OdJJ8CQJtpg/GhMI2k8Mq0TaaAcagE9WOzI9xtR9SBB5DGeNc8D4kwNB5KqXMdjI5q+U6dx+bkFwaWzJg=="
+    }
+  },
+  "memory": {
+    "name": "memory",
+    "description": "Key-value memory store",
+    "command": "npx",
+    "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-memory@2.1.0"],
+    "envVars": ["MEMORY_FILE_PATH"],
+    "argVars": [],
+    "category": "Utilities",
+    "pin": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-memory",
+      "version": "2.1.0",
+      "integrity": "sha512-4rhufvmutolbl5O/RflMRenzhYnSh/wij3uMK8H2vuZ2xSGgrA6O2VXwsg/+tSb2UsU1hVDw1XwZ2lcCz8XR2g=="
+    }
+  }
+}

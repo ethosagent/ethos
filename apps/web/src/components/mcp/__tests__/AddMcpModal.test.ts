@@ -92,21 +92,33 @@ const CATALOG: McpCatalogOutput = {
       name: 'filesystem',
       description: 'Read/write local files under a required allowed path',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem'],
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0'],
       envVars: [],
       // The server takes its allowed directory positionally, not from the
       // environment — hence argVars, not envVars.
       argVars: ['ALLOWED_PATH'],
       category: 'Developer tools',
+      pin: {
+        registry: 'npm',
+        package: '@modelcontextprotocol/server-filesystem',
+        version: '2.2.0',
+        integrity: 'sha512-fixture',
+      },
     },
     {
       name: 'memory',
       description: 'Key-value memory store',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-memory'],
+      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-memory@2.1.0'],
       envVars: ['MEMORY_FILE_PATH'],
       argVars: [],
       category: 'Utilities',
+      pin: {
+        registry: 'npm',
+        package: '@modelcontextprotocol/server-memory',
+        version: '2.1.0',
+        integrity: 'sha512-fixture',
+      },
     },
   ],
 };
@@ -304,7 +316,7 @@ describe('AddMcpModal — local preset tab', () => {
 
     expect(inputByPlaceholder('Command (e.g. npx, python)').value).toBe('npx');
     expect(inputByPlaceholder('Args (comma-separated, optional)').value).toBe(
-      '-y, @modelcontextprotocol/server-filesystem',
+      '-y, --ignore-scripts, @modelcontextprotocol/server-filesystem@2.2.0',
     );
     expect(inputByPlaceholder('Server name (required)').value).toBe('filesystem');
     expect(document.body.textContent).toContain('ALLOWED_PATH');

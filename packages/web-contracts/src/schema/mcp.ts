@@ -419,6 +419,13 @@ export const McpLocalPresetSchema = z.object({
   /** Values the user supplies that are appended to `args`, in order. */
   argVars: z.array(z.string()),
   category: z.string(),
+  /** The exact release `args` launches; `integrity` is recorded, not enforced at launch. */
+  pin: z.object({
+    registry: z.enum(['npm', 'pypi']),
+    package: z.string(),
+    version: z.string(),
+    integrity: z.string(),
+  }),
 });
 export type McpLocalPresetInfo = z.infer<typeof McpLocalPresetSchema>;
 

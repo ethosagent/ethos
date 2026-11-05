@@ -3,7 +3,7 @@ title: "MCP config: scoping, tool naming, examples and errors"
 description: "MCP scoping, tool naming, examples and common errors."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 ## Synopsis {#synopsis}
@@ -75,7 +75,7 @@ The agent loop emits the same prefixed name in `tool_start` / `tool_end` events.
   "name": "filesystem",
   "transport": "stdio",
   "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/work"]
+  "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-filesystem@2.2.0", "/Users/me/work"]
 }
 ```
 

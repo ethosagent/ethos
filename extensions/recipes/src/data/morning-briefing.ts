@@ -13,7 +13,18 @@
 //    Telegram") is retired by §1's `deliverTo` union: the job is created by the
 //    installer with an explicit, server-validated channel target.
 
+import { getPreset } from '@ethosagent/tools-mcp/presets';
 import type { RecipeCreateBundle } from '../schema';
+
+// The Google Calendar server is the `google-calendar` MCP preset, pinned there
+// (extensions/tools-mcp/src/presets.ts). The recipe reads its command and args
+// from the preset instead of keeping a second copy that could go stale;
+// `recipes-preset-pin.test.ts` pins the result equal to the preset.
+const calendarPreset = getPreset('google-calendar');
+if (!calendarPreset) throw new Error("tools-mcp no longer ships the 'google-calendar' preset");
+// `ethos mcp add ... --command <cmd> --args <argv…>`: argv after --args is the
+// server's, so the pinned spec is passed through verbatim.
+const calendarAddCommand = `ethos mcp add google-calendar --env GOOGLE_OAUTH_CREDENTIALS=<path-to-oauth-client.json> --command ${calendarPreset.command} --args ${calendarPreset.args.join(' ')}`;
 
 const SOUL = `I am Briefer. I prepare one tight morning digest — never a wall of text.
 My sections, in this order: Weather (2 lines), Calendar (today's events, times first),
@@ -74,8 +85,8 @@ export const morningBriefing: RecipeCreateBundle = {
       {
         name: 'google-calendar',
         transport: 'stdio',
-        command: 'npx',
-        args: ['-y', '@cocal/google-calendar-mcp'],
+        command: calendarPreset.command,
+        args: calendarPreset.args,
         envKeys: ['GOOGLE_OAUTH_CREDENTIALS'],
         auth: 'oauth',
         optional: true,
@@ -186,7 +197,7 @@ export const morningBriefing: RecipeCreateBundle = {
     "Delivery goes to the one chat you pick at install time. Changing it later means editing the job's delivery target, not the prompt.",
     "Timezone: schedules are evaluated by `croner` in the gateway server's local timezone (no per-job tz option in `extensions/cron/src/schedule.ts`). `20 6 * * *` means 06:20 server time.",
     'The gateway must be running at the scheduled hour (laptop asleep = missed run; the default `missedRunPolicy: skip` skips runs missed by more than one tick). Run the gateway on an always-on box for a true before-you-wake briefing.',
-    'Google Calendar is OPTIONAL. Install without it and the briefing is weather, news and todos — nothing else changes and no setup is needed. Add it later with `ethos mcp add google-calendar --env GOOGLE_OAUTH_CREDENTIALS=<path-to-oauth-client.json> --command npx --args -y @cocal/google-calendar-mcp`; it cannot be added from the web UI, because stdio MCP servers run an arbitrary local command and are deliberately CLI-only.',
+    `Google Calendar is OPTIONAL. Install without it and the briefing is weather, news and todos — nothing else changes and no setup is needed. Add it later with \`${calendarAddCommand}\`; it cannot be added from the web UI, because stdio MCP servers run an arbitrary local command and are deliberately CLI-only.`,
     'Google Calendar MCP OAuth is a one-time interactive browser flow needing a Google Cloud OAuth client; the community server is well-maintained but not Google-official.',
     "Network reach: this agent is installed with `safety.network.allow: '*'` — the open public internet, which is what a briefing that reads weather and news needs. Cloud-metadata endpoints and private/RFC1918 addresses stay blocked regardless, and only http/https are allowed. Narrow it later in the agent's config.yaml if you want it reading fewer hosts.",
     'News quality depends on your `web_search` provider config; paywalled sources reduce `web_extract` fidelity. Cost: one Sonnet-class multi-tool turn per day is cheap; Haiku-class models tend to produce flabbier digests.',
@@ -197,8 +208,7 @@ export const morningBriefing: RecipeCreateBundle = {
     {
       kind: 'manual',
       label: 'Optional — add Google Calendar for the calendar section',
-      detail:
-        'Skip this and the briefing still runs: weather, news and todos, with no calendar section. To add it, run `ethos mcp add google-calendar --env GOOGLE_OAUTH_CREDENTIALS=<path-to-oauth-client.json> --command npx --args -y @cocal/google-calendar-mcp` in a terminal (stdio servers cannot be added from the web UI), then authorise it once in the browser and tick the list/search events tools.',
+      detail: `Skip this and the briefing still runs: weather, news and todos, with no calendar section. To add it, run \`${calendarAddCommand}\` in a terminal (stdio servers cannot be added from the web UI), then authorise it once in the browser and tick the list/search events tools.`,
     },
     {
       kind: 'restart',

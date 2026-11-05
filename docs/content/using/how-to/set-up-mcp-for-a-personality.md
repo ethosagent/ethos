@@ -46,9 +46,10 @@ This writes an entry to `~/.ethos/mcp.json`. No vulnerability scan runs, so chec
 For stdio servers that don't use OAuth:
 
 ```bash
-ethos mcp add --name filesystem --transport stdio \
-  --command npx --args '-y @modelcontextprotocol/server-filesystem /Users/me/work'
+ethos mcp add filesystem --preset filesystem --arg ALLOWED_PATH=/Users/me/work
 ```
+
+Presets launch an exact, pinned version (`ethos mcp presets` shows it). Servers you added before pinning keep their old arguments: `ethos mcp presets --check` lists them and prints the pinned line to paste into `~/.ethos/mcp.json`. See [Pinned presets](../reference/mcp-config.md#pinned-presets).
 
 Stdio servers with no `auth` block don't need a `login` step — skip to step 3.
 

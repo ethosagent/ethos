@@ -1911,6 +1911,9 @@ importers:
 
   extensions/recipes:
     dependencies:
+      '@ethosagent/tools-mcp':
+        specifier: workspace:*
+        version: link:../tools-mcp
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

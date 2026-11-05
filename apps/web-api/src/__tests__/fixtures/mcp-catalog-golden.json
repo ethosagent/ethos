@@ -1,0 +1,188 @@
+{
+  "remote": [
+    {
+      "name": "asana",
+      "label": "Asana",
+      "url": "https://mcp.asana.com/mcp",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Read and update Asana tasks, projects, and workspaces",
+      "category": "Productivity",
+      "docsUrl": "https://developers.asana.com/docs/using-asanas-mcp-server"
+    },
+    {
+      "name": "aws-knowledge",
+      "label": "AWS Knowledge",
+      "url": "https://knowledge-mcp.global.api.aws",
+      "transport": "streamable-http",
+      "authType": "none",
+      "description": "Search and retrieve official AWS documentation and API references",
+      "category": "Docs & knowledge",
+      "docsUrl": "https://github.com/awslabs/mcp/tree/main/src/aws-knowledge-mcp-server"
+    },
+    {
+      "name": "context7",
+      "label": "Context7",
+      "url": "https://mcp.context7.com/mcp",
+      "transport": "streamable-http",
+      "authType": "none",
+      "description": "Look up current documentation for a library or framework by name and version",
+      "category": "Docs & knowledge",
+      "docsUrl": "https://github.com/upstash/context7"
+    },
+    {
+      "name": "deepwiki",
+      "label": "DeepWiki",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "transport": "streamable-http",
+      "authType": "none",
+      "description": "Ask questions about any public GitHub repo and get answers grounded in its source",
+      "category": "Docs & knowledge",
+      "docsUrl": "https://docs.devin.ai/work-with-devin/deepwiki-mcp"
+    },
+    {
+      "name": "granola",
+      "label": "Granola",
+      "url": "https://mcp.granola.ai/mcp",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Search your Granola meeting notes and pull transcripts, summaries, and decisions",
+      "category": "Productivity"
+    },
+    {
+      "name": "linear",
+      "label": "Linear",
+      "url": "https://mcp.linear.app/mcp",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Read and update Linear issues, projects, and cycles",
+      "category": "Productivity",
+      "docsUrl": "https://linear.app/docs/mcp"
+    },
+    {
+      "name": "microsoft-learn",
+      "label": "Microsoft Learn",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "transport": "streamable-http",
+      "authType": "none",
+      "description": "Search official Microsoft and Azure documentation and code samples",
+      "category": "Docs & knowledge",
+      "docsUrl": "https://github.com/MicrosoftDocs/mcp"
+    },
+    {
+      "name": "notion",
+      "label": "Notion",
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Search and edit Notion pages and databases",
+      "category": "Productivity",
+      "docsUrl": "https://developers.notion.com/docs/mcp"
+    },
+    {
+      "name": "sentry",
+      "label": "Sentry",
+      "url": "https://mcp.sentry.dev/mcp",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Search Sentry issues and inspect events, traces, and releases",
+      "category": "Developer tools"
+    },
+    {
+      "name": "vercel",
+      "label": "Vercel",
+      "url": "https://mcp.vercel.com",
+      "transport": "streamable-http",
+      "authType": "oauth",
+      "description": "Inspect Vercel projects, deployments, and build logs",
+      "category": "Developer tools",
+      "docsUrl": "https://vercel.com/docs/mcp/vercel-mcp"
+    },
+    {
+      "name": "wolfram",
+      "label": "Wolfram",
+      "url": "https://agenttools.wolfram.com/mcp",
+      "transport": "streamable-http",
+      "authType": "none",
+      "description": "Compute answers and query curated data with Wolfram Alpha",
+      "category": "Docs & knowledge"
+    }
+  ],
+  "local": [
+    {
+      "name": "fetch",
+      "description": "HTTP fetch operations (requires uvx)",
+      "command": "uvx",
+      "args": ["mcp-server-fetch@2026.11.4"],
+      "envVars": [],
+      "argVars": [],
+      "category": "Web",
+      "pin": {
+        "registry": "pypi",
+        "package": "mcp-server-fetch",
+        "version": "2026.11.4",
+        "integrity": "sha256-7c5891e3d3e3ea7d2d8c21acb9c64ccd30ff1f42beeea59f95715637b970307d"
+      }
+    },
+    {
+      "name": "filesystem",
+      "description": "Read/write local files under a required allowed path",
+      "command": "npx",
+      "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-filesystem@2.2.0"],
+      "envVars": [],
+      "argVars": ["ALLOWED_PATH"],
+      "category": "Developer tools",
+      "pin": {
+        "registry": "npm",
+        "package": "@modelcontextprotocol/server-filesystem",
+        "version": "2.2.0",
+        "integrity": "sha512-mNLj/qhV+P4kj1qP8VzgQ2fjSmWcKDQ3Q+KpZEA+WahCDWHw5zJBRQUNSPZ6Ai2/ZGGUjzNzsFpz958a1+4T9A=="
+      }
+    },
+    {
+      "name": "git",
+      "description": "Git repository operations (requires uvx)",
+      "command": "uvx",
+      "args": ["mcp-server-git@2026.11.4", "--repository"],
+      "envVars": [],
+      "argVars": ["GIT_REPO_PATH"],
+      "category": "Developer tools",
+      "pin": {
+        "registry": "pypi",
+        "package": "mcp-server-git",
+        "version": "2026.11.4",
+        "integrity": "sha256-0cdaa8f446554d020f8ffa0e44ef45b89df4ed4deaeb961b4305d8a2852b4e0e"
+      }
+    },
+    {
+      "name": "google-calendar",
+      "description": "Read and manage Google Calendar events (set GOOGLE_OAUTH_CREDENTIALS to your Google Cloud OAuth client JSON)",
+      "command": "npx",
+      "args": ["-y", "--ignore-scripts", "@cocal/google-calendar-mcp@2.8.1"],
+      "envVars": ["GOOGLE_OAUTH_CREDENTIALS"],
+      "argVars": [],
+      "category": "Utilities",
+      "pin": {
+        "registry": "npm",
+        "package": "@cocal/google-calendar-mcp",
+        "version": "2.8.1",
+        "integrity": "sha512-NQdZ/OdJJ8CQJtpg/GhMI2k8Mq0TaaAcagE9WOzI9xtR9SBB5DGeNc8D4kwNB5KqXMdjI5q+U6dx+bkFwaWzJg=="
+      }
+    },
+    {
+      "name": "memory",
+      "description": "Key-value memory store",
+      "command": "npx",
+      "args": ["-y", "--ignore-scripts", "@modelcontextprotocol/server-memory@2.1.0"],
+      "envVars": ["MEMORY_FILE_PATH"],
+      "argVars": [],
+      "category": "Utilities",
+      "pin": {
+        "registry": "npm",
+        "package": "@modelcontextprotocol/server-memory",
+        "version": "2.1.0",
+        "integrity": "sha512-4rhufvmutolbl5O/RflMRenzhYnSh/wij3uMK8H2vuZ2xSGgrA6O2VXwsg/+tSb2UsU1hVDw1XwZ2lcCz8XR2g=="
+      }
+    }
+  ]
+}

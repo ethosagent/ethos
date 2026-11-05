@@ -88,6 +88,7 @@ import {
   resolveExportWorkingDir,
 } from './mcp-export';
 import { buildPresetArgs, collectArgFlags } from './mcp-preset-args';
+import { findUnpinnedEntries, formatUnpinnedReport } from './mcp-presets-check';
 
 const mcpStore = new McpJsonStore(getStorage());
 
@@ -113,6 +114,7 @@ Subcommands:
     --env KEY=val    Set environment variable (repeatable)
     --arg NAME=val   Supply a preset's command-line value (repeatable)
   presets          List available MCP server presets
+    --check          Report mcp.json entries that launch a preset without a pinned version (read-only)
   login <name>     Authenticate with an OAuth-configured MCP server
     --personality <id>  Store the grant for that personality
     --device         Show a code to enter on any device (RFC 8628)
@@ -992,7 +994,14 @@ async function runAddUrl(
 // mcp presets — list available presets
 // ---------------------------------------------------------------------------
 
-function runPresets(argv: string[]): void {
+async function runPresets(argv: string[]): Promise<void> {
+  if (argv.includes('--check')) {
+    const unpinned = findUnpinnedEntries(await readMcpJson(), Object.values(MCP_PRESETS));
+    if (argv.includes('--json')) writeJson(unpinned);
+    else console.log(formatUnpinnedReport(unpinned));
+    return;
+  }
+
   if (argv.includes('--json')) {
     const presets = Object.values(MCP_PRESETS).map((preset) => ({
       name: preset.name,
@@ -1011,6 +1020,7 @@ function runPresets(argv: string[]): void {
     if (preset.envVars.length > 0) hints.push(`env: ${preset.envVars.join(', ')}`);
     const hint = hints.length > 0 ? ` (${hints.join('; ')})` : '';
     console.log(`  ${preset.name.padEnd(14)} ${preset.description}${hint}`);
+    console.log(`  ${''.padEnd(14)} pinned: ${preset.pin.package}@${preset.pin.version}`);
   }
   console.log(
     '\nUsage: ethos mcp add <name> --preset <preset> [--arg NAME=val ...] [--env KEY=val ...]',

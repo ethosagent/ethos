@@ -2,6 +2,7 @@
 // condition produces exactly one row carrying an action, and a satisfied
 // prerequisite produces none.
 
+import { getPreset } from '@ethosagent/tools-mcp/presets';
 import { describe, expect, it } from 'vitest';
 import { morningBriefing, obsidianSecondBrain as obsidianBoth } from '../data';
 import { preflightRecipe, type RecipeWorldSnapshot, unknownToolNames } from '../preflight';
@@ -221,8 +222,10 @@ describe('preflightRecipe — MCP servers', () => {
     const report = run({ ...happyWorld(), mcpServers: [] });
     const message = report.warnings[0]?.message ?? '';
     expect(message).toContain('The web UI cannot add a stdio server.');
+    // The argv comes from the pinned preset, so a bump needs no edit here.
+    const preset = getPreset('google-calendar');
     expect(message).toContain(
-      'ethos mcp add google-calendar --env GOOGLE_OAUTH_CREDENTIALS=<value> --command npx --args -y @cocal/google-calendar-mcp',
+      `ethos mcp add google-calendar --env GOOGLE_OAUTH_CREDENTIALS=<value> --command ${preset?.command} --args ${preset?.args.join(' ')}`,
     );
   });
 

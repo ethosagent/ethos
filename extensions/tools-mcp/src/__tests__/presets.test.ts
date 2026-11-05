@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPreset, MCP_PRESETS } from '../presets';
+import { getPreset, MCP_PRESETS, PINS, presetSpec } from '../presets';
 
 describe('MCP_PRESETS', () => {
   it('every preset has all required fields', () => {
@@ -42,7 +42,7 @@ describe('MCP_PRESETS', () => {
     const preset = MCP_PRESETS.filesystem;
     expect(preset).toBeDefined();
     expect(preset?.command).toBe('npx');
-    expect(preset?.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem']);
+    expect(preset?.args).toEqual(['-y', '--ignore-scripts', presetSpec(PINS.filesystem)]);
     expect(preset?.argVars).toEqual(['ALLOWED_PATH']);
     // ALLOWED_PATHS in the environment was a no-op — the server never read it.
     expect(preset?.envVars).toEqual([]);
@@ -51,7 +51,7 @@ describe('MCP_PRESETS', () => {
   it('git runs the Python server via uvx with --repository', () => {
     const preset = MCP_PRESETS.git;
     expect(preset?.command).toBe('uvx');
-    expect(preset?.args).toEqual(['mcp-server-git', '--repository']);
+    expect(preset?.args).toEqual([presetSpec(PINS.git), '--repository']);
     expect(preset?.argVars).toEqual(['GIT_REPO_PATH']);
     expect(preset?.envVars).toEqual([]);
     expect(preset?.description).toContain('uvx');
@@ -60,7 +60,7 @@ describe('MCP_PRESETS', () => {
   it('fetch runs the Python server via uvx and needs no user input', () => {
     const preset = MCP_PRESETS.fetch;
     expect(preset?.command).toBe('uvx');
-    expect(preset?.args).toEqual(['mcp-server-fetch']);
+    expect(preset?.args).toEqual([presetSpec(PINS.fetch)]);
     expect(preset?.argVars).toEqual([]);
     expect(preset?.envVars).toEqual([]);
     expect(preset?.description).toContain('uvx');
@@ -69,7 +69,7 @@ describe('MCP_PRESETS', () => {
   it('memory declares the MEMORY_FILE_PATH env var it actually reads', () => {
     const preset = MCP_PRESETS.memory;
     expect(preset?.command).toBe('npx');
-    expect(preset?.args).toEqual(['-y', '@modelcontextprotocol/server-memory']);
+    expect(preset?.args).toEqual(['-y', '--ignore-scripts', presetSpec(PINS.memory)]);
     expect(preset?.envVars).toEqual(['MEMORY_FILE_PATH']);
     expect(preset?.argVars).toEqual([]);
   });
@@ -78,8 +78,9 @@ describe('MCP_PRESETS', () => {
     const preset = MCP_PRESETS['google-calendar'];
     expect(preset?.command).toBe('npx');
     // `@cocal/...`, not a `@google/` or `@modelcontextprotocol/` package —
-    // this is the community server, verified on npm at 2.6.3 on 2026-09-04.
-    expect(preset?.args).toEqual(['-y', '@cocal/google-calendar-mcp']);
+    // this is the community server (first verified on npm 2026-09-04).
+    expect(PINS['google-calendar'].package).toBe('@cocal/google-calendar-mcp');
+    expect(preset?.args).toEqual(['-y', '--ignore-scripts', presetSpec(PINS['google-calendar'])]);
     // The credential is a PATH to a Google Cloud OAuth client JSON in the
     // environment, not a positional arg and not a client id/secret pair.
     expect(preset?.envVars).toEqual(['GOOGLE_OAUTH_CREDENTIALS']);
@@ -93,9 +94,9 @@ describe('MCP_PRESETS', () => {
     // The three dead `@modelcontextprotocol/server-*` packages the old table
     // shipped. All 404 on npm.
     const allArgs = Object.values(MCP_PRESETS).flatMap((p) => p.args);
-    expect(allArgs).not.toContain('@modelcontextprotocol/server-git');
-    expect(allArgs).not.toContain('@modelcontextprotocol/server-sqlite');
-    expect(allArgs).not.toContain('@modelcontextprotocol/server-fetch');
+    for (const dead of ['server-git', 'server-sqlite', 'server-fetch']) {
+      expect(allArgs.some((a) => a.startsWith(`@modelcontextprotocol/${dead}`))).toBe(false);
+    }
   });
 });
 
@@ -105,7 +106,8 @@ describe('getPreset', () => {
     expect(preset).toBeDefined();
     expect(preset?.name).toBe('filesystem');
     expect(preset?.command).toBe('npx');
-    expect(preset?.args).toContain('@modelcontextprotocol/server-filesystem');
+    expect(preset?.args).toContain(presetSpec(PINS.filesystem));
+    expect(preset?.pin).toBe(PINS.filesystem);
   });
 
   it('returns undefined for an unknown name', () => {
