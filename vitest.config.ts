@@ -94,7 +94,10 @@ export default defineConfig({
     // (`vitest.integration.config.ts`, run via `pnpm test:integration`) so
     // they never drag down the default suite; excluded here so they don't
     // ALSO run as part of it.
-    exclude: [...configDefaults.exclude, '**/__tests__/integration/**'],
+    // Timing-bound suites (`*.perf.test.ts`) flake under full-suite load; they
+    // run serially-quiet in their own tier (`vitest.perf.config.ts`, `pnpm
+    // test:perf`).
+    exclude: [...configDefaults.exclude, '**/__tests__/integration/**', '**/*.perf.test.ts'],
     // CI runners stall workers under transform contention (observed: a ~10ms test
     // exceeding the 5s default); local stays retry: 0 so real regressions surface immediately.
     testTimeout: 15_000,
