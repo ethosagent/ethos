@@ -59,6 +59,7 @@
         "extensions/*/src/**",
         "extensions/observability-sqlite/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "core-adapters-wrap-core"
@@ -93,6 +94,7 @@
         "apps/web-api/src/index.ts",
         "apps/web-api/src/rpc/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "extensions-implement-contracts"
@@ -139,6 +141,7 @@
         "packages/core/src/**",
         "packages/plugin-sdk/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "kernel-reads-contracts"
@@ -189,6 +192,7 @@
         "packages/sqlite/src/**",
         "packages/storage-fs/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "l1-contracts-pure"
@@ -248,6 +252,7 @@
         "packages/plugin-sdk/src/**",
         "packages/sqlite/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "l2-core-no-concrete"
@@ -274,6 +279,7 @@
         "packages/core/src/**",
         "packages/safety/*/src/**",
         "packages/storage-fs/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "l5-apps-through-wiring"
@@ -345,6 +351,7 @@
         "packages/core/src/**",
         "packages/plugin-sdk/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "observability-sqlite-stays-extractable"
@@ -403,6 +410,7 @@
         "packages/core/src/**",
         "packages/plugin-sdk/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "support-packages"
@@ -482,6 +490,7 @@
         "packages/safety/*/src/**",
         "packages/storage-fs/src/**",
         "packages/wiring/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "vendored-shim"
@@ -524,6 +533,7 @@
         "packages/safety/*/src/**",
         "packages/sqlite/src/**",
         "packages/storage-fs/src/**",
+        "scripts/check-catalog.ts",
         "vitest.config.ts"
       ],
       "ruleId": "web-api-rpc-is-thin"

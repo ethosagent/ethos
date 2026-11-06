@@ -156,7 +156,8 @@ module.exports = {
         "**/__tests__/**",
         "**/*.test.ts",
         "**/*.test.tsx",
-        "vitest.config.ts"
+        "vitest.config.ts",
+        "scripts/check-catalog.ts"
       ],
       "mayImport": "*",
       "ruleId": "tests-reach-anything",

@@ -35,7 +35,7 @@ export default defineArchitecture({
       id: 'tests-reach-anything',
       statement: 'test files may import any layer to build fixtures',
       // vitest.config.ts is test tooling; without it here it is the one unlayered file in the repo.
-      params: { name: 'tests', match: [...TEST_GLOBS, 'vitest.config.ts'], mayImport: '*' },
+      params: { name: 'tests', match: [...TEST_GLOBS, 'vitest.config.ts', 'scripts/check-catalog.ts'], mayImport: '*' },
       remedy: { summary: 'keep production code out of __tests__ and *.test.ts files' },
     },
     {
