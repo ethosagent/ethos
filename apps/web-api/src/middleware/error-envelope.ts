@@ -74,6 +74,17 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   PLUGIN_INTEGRITY_MISMATCH: 502,
   // npm installed a package.json naming another package/version than resolved: upstream, not the caller.
   PLUGIN_PACKAGE_MISMATCH: 502,
+  // `catalog.install` / `catalog.setSkillGrant` (services/catalog.service.ts, plan §6.4).
+  // An id that is not in the index: the caller named something that does not resolve.
+  CATALOG_ENTRY_NOT_FOUND: 404,
+  // An MCP entry (installed through mcp.addServer / mcp.start / the CLI) or a pin type with no installer.
+  CATALOG_INSTALL_UNSUPPORTED: 400,
+  // The entry is already installed; nothing was changed.
+  CATALOG_ALREADY_INSTALLED: 409,
+  // The safety scan refused the entry (red for a plugin, red or yellow for a skill): the content is the problem.
+  CATALOG_SCAN_BLOCKED: 400,
+  // The git pin's contentDigest differs, or its commit cannot be fetched: upstream, not the caller.
+  CATALOG_PIN_MISMATCH: 502,
   // `npm pack` / `npm install` failed for a reason that is neither the registry
   // (network errno, E5xx → PLUGIN_REGISTRY_FAILED) nor a missing npm (NOT_CONFIGURED):
   // a dependency npm cannot resolve, disk, permissions. Not the caller's spec (the

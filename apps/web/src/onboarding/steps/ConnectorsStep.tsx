@@ -1,7 +1,7 @@
 import type { McpRemotePresetInfo } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
 import { useCallback, useRef, useState } from 'react';
-import { useMcpCatalog } from '../../features/mcp/api/queries';
+import { useMcpPresets } from '../../features/mcp/api/queries';
 import { groupByAuth } from '../../features/mcp/catalog';
 import { useMcpOAuthPopup } from '../../features/mcp/useMcpOAuthPopup';
 import { rpc } from '../../rpc';
@@ -25,7 +25,7 @@ export function ConnectorsStep({
 }) {
   const personalityId = answers.personalityId ?? '';
   const agentName = answers.agentName ?? personalityId;
-  const { data, isLoading, isError } = useMcpCatalog();
+  const { remote, isLoading, isError } = useMcpPresets();
   const [rows, setRows] = useState<Record<string, RowState>>({});
 
   const setRow = useCallback((name: string, state: RowState) => {
@@ -86,7 +86,7 @@ export function ConnectorsStep({
   const connected = Object.entries(rows)
     .filter(([, s]) => s.phase === 'connected')
     .map(([name]) => name);
-  const groups = data ? groupByAuth(data.remote) : { none: [], oauth: [] };
+  const groups = groupByAuth(remote);
   const busy = Object.values(rows).some((s) => s.phase === 'working');
 
   const row = (preset: McpRemotePresetInfo, kind: 'none' | 'oauth') => {

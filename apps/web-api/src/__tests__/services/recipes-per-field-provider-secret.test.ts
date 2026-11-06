@@ -134,7 +134,6 @@ function makeWorld(stored: string[] = []) {
   });
   const mcp: RecipesServiceOptions['mcp'] = {
     list: async () => ({ servers: [] }),
-    catalog: () => ({ remote: [], local: [] }),
     addServer: async () => ({ ok: true as const, serverName: 'unused' }),
     attachPersonalities: async () => ({ updated: [], failed: [] }),
     delete: async () => ({ ok: true as const }),

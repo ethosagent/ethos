@@ -429,3 +429,57 @@ describe('warnMissingAllowList', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe('catalog skills (unified-catalog D16)', () => {
+  const catalogSkill = () => makeSkill({ qualifiedName: 'catalog/pdf', source: 'catalog' });
+
+  it('is excluded in capability mode with no allow', () => {
+    const result = filterSkill(catalogSkill(), makePersonality(), new Set());
+    expect(result).toEqual({ include: false, reason: 'catalog skills need an explicit allow' });
+  });
+
+  it('is excluded in every mode with no allow', () => {
+    for (const mode of ['capability', 'tags', 'explicit', 'none'] as const) {
+      const p = makePersonality({ skills: { global_ingest: { mode } } });
+      expect(filterSkill(catalogSkill(), p, new Set()).include).toBe(false);
+    }
+  });
+
+  it('is included once its qualifiedName is in allow', () => {
+    const p = makePersonality({ skills: { global_ingest: { allow: ['catalog/pdf'] } } });
+    expect(filterSkill(catalogSkill(), p, new Set())).toEqual({
+      include: true,
+      reason: 'explicit allow',
+    });
+  });
+
+  it('is not unlocked by another skill being allowed', () => {
+    const p = makePersonality({ skills: { global_ingest: { allow: ['catalog/other'] } } });
+    expect(filterSkill(catalogSkill(), p, new Set()).include).toBe(false);
+  });
+
+  it('deny still wins over allow', () => {
+    const p = makePersonality({
+      skills: { global_ingest: { allow: ['catalog/pdf'], deny: ['catalog/pdf'] } },
+    });
+    expect(filterSkill(catalogSkill(), p, new Set())).toEqual({
+      include: false,
+      reason: 'explicit deny',
+    });
+  });
+
+  it('an allowed catalog skill still needs its required tools', () => {
+    const skill = makeSkill({
+      qualifiedName: 'catalog/pdf',
+      source: 'catalog',
+      required_tools: ['run_shell'],
+    });
+    const p = makePersonality({ skills: { global_ingest: { allow: ['catalog/pdf'] } } });
+    expect(filterSkill(skill, p, new Set(['read_file'])).include).toBe(false);
+  });
+
+  it('a non-catalog skill behaves as before', () => {
+    const result = filterSkill(makeSkill(), makePersonality(), new Set());
+    expect(result.include).toBe(true);
+  });
+});

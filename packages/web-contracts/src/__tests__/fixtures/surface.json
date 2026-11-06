@@ -39,11 +39,15 @@
     "CatalogActionSchema",
     "CatalogCapabilitiesSchema",
     "CatalogEntrySchema",
+    "CatalogInstallInputSchema",
+    "CatalogInstallOutputSchema",
     "CatalogKindSchema",
     "CatalogListEntrySchema",
     "CatalogListInputSchema",
     "CatalogListOutputSchema",
     "CatalogPinSchema",
+    "CatalogSetSkillGrantInputSchema",
+    "CatalogSetSkillGrantOutputSchema",
     "CatalogTierSchema",
     "ChannelPlatformFilterSchema",
     "ClarifyRequestEventSchema",
@@ -745,7 +749,9 @@
       "install": "96a80f0eca3a96ca6700b4c16fa91fdaf543818a700ef004cc3d6f1bd6d6f41d"
     },
     "catalog": {
-      "list": "f41c7ea2cd7b251e0ce2a84065f382cbb00e1f5bfb0f77aabd91f156d43d6ed3"
+      "list": "f41c7ea2cd7b251e0ce2a84065f382cbb00e1f5bfb0f77aabd91f156d43d6ed3",
+      "install": "f4bb6a7e576f3d812a6a4b690eceed54af9b514ade5ef601a6e6a1e2c80034e0",
+      "setSkillGrant": "56afaa36d8820bef978327550b089b2d72e55445786dfe99e43b092af1ba6d07"
     },
     "backup": {
       "status": "85e2bdb167979496544dddda426d1eec1213ec681404d86211726a2392cd3455",
@@ -791,11 +797,15 @@
     "CatalogActionSchema": "9a6e895c6c6cd2d4aa894ae23d91857249578ff22750be1c6470825d7ec2ff1b",
     "CatalogCapabilitiesSchema": "ce24904b43f439cec51cf1c4afe939dddad6b19f993cc679a85861b1f97d5411",
     "CatalogEntrySchema": "3e83c4210ef3d2a5a941f75dc484d172d0981e0fe6eaa4ed2369aa3c162c77c9",
+    "CatalogInstallInputSchema": "f0343b601f952193959a7fc14138f38baae071e2d9a9eb69e7321455b80d74a2",
+    "CatalogInstallOutputSchema": "48768fb665d3b4624571c6fd35102154bdc883b89e0b00d8e74983715661e7c3",
     "CatalogKindSchema": "5fd1a22419f16451db0aa20f210bc69a732c492f075f265b8330403e7645a42e",
     "CatalogListEntrySchema": "fb986656caf3c241bb7537c9024fd71e452e5e17650cf8877f8e1a001ba6c33b",
     "CatalogListInputSchema": "721949ad8042955255fe58c393f8c66142aad4151ae275b16e32a1a017799ae6",
     "CatalogListOutputSchema": "4cdbe8f2956c7c2a5de712bfe42e01e2a3f26d64b752ac9e5e848395fec9c2b1",
     "CatalogPinSchema": "56a2f53664f7a08449921af27417b9ef29a3aaf86748b15751d2fcbe332c729b",
+    "CatalogSetSkillGrantInputSchema": "01a87ee7c106b70da311812a04138507fc6cc35481d8dfdc757462cfe3f13e00",
+    "CatalogSetSkillGrantOutputSchema": "d220a9b020678db7ebae4f648c81034e813466a54547916b5e29e353c13886f9",
     "CatalogTierSchema": "e1cdf2a486bf186d141e2e87609f402e70f76ef7f5b8aab737640b406e532d1a",
     "ChannelPlatformFilterSchema": "e869a581e7d863e0db618a8a10e88b25791417311d0b624275185911a575d5c1",
     "ClarifyRequestEventSchema": "e6bcf2cd281f3977109bb61afce6f2092ec18ab3a2ec5d2266da3d9b721364a0",

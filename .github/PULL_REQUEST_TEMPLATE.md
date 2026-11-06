@@ -31,3 +31,13 @@ Per [DOCS.md §Page-acceptance checklist](../DOCS.md#page-acceptance-checklist).
 - [ ] No anti-patterns (no "Welcome to", "click here", "Coming soon", "WIP", emoji in headings).
 - [ ] `pnpm --filter docs build` passes with `onBrokenLinks: 'throw'`.
 - [ ] Page is reachable from at least one other page or `docs/sidebars.ts` (no orphans).
+
+## Catalog entries (only if `packages/catalog/src/entries/**` changed)
+
+The full checklist and its reasoning are in [`packages/catalog/README.md`](../packages/catalog/README.md#admission-checklist). CI runs `scripts/check-catalog.ts --changed`; it checks facts, it does not replace the review. A code owner approves every entry.
+
+- [ ] The entry parses and `pnpm vitest run packages/catalog` is green.
+- [ ] **Remote:** who operates the server is named; what data it receives is stated (tool arguments and OAuth-scoped account data); OAuth scopes and whether DCR issues a public client are noted; the privacy policy URL is linked.
+- [ ] **Local (npm/pypi/git):** the exact pin and digest are in the entry; a reviewer has read the code at that pin (the scan is not a review, and Python has no scanner); filesystem and network reach match `capabilities`; env and credential names are listed; lifecycle scripts are none for a plugin and noted for an MCP server.
+- [ ] A plugin entry is `verified` or `official`, never `community`.
+- [ ] `reviewedAt` is today's date and the header comment records what was launched or read, and when.

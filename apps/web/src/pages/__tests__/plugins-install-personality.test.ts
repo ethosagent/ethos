@@ -47,6 +47,7 @@ vi.mock('../../rpc', () => ({
       list: async () => ({ plugins: [], mcpServers: [] }),
       install: (...args: unknown[]) => installFn(...args),
     },
+    catalog: { list: async () => ({ version: 1, entries: [] }) },
     personalities: {
       list: async () => ({ items: [] }),
       get: async () => ({ personality: { id: 'researcher', plugins: [] } }),
@@ -95,6 +96,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  document.body.innerHTML = '';
 });
 
 describe('Workspace plugins page install', () => {
@@ -114,6 +116,12 @@ describe('Workspace plugins page install', () => {
     await flush();
 
     await act(async () => buttonByText('+ New Plugin').click());
+    // The button opens the catalog browser; its manual link reaches the typed-spec path.
+    const manual = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Install by npm spec…',
+    );
+    if (!manual) throw new Error('manual install link not rendered');
+    await act(async () => manual.click());
     const input = container.querySelector<HTMLInputElement>('input[placeholder^="Package spec"]');
     if (!input) throw new Error('install input not rendered');
     await typeInto(input, 'my-plugin@1.0.0');

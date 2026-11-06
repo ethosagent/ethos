@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { catalogEntriesOfKind } from '@ethosagent/catalog';
 import { nextRunForSchedule } from '@ethosagent/cron';
 import { renderCharacterSheet } from '@ethosagent/personalities';
 import {
@@ -83,7 +84,7 @@ export interface RecipesServiceOptions {
     'list' | 'exists' | 'get' | 'config' | 'create' | 'update' | 'delete'
   >;
   cron: Pick<CronService, 'list' | 'create' | 'delete' | 'deliveryTargets'>;
-  mcp: Pick<McpService, 'list' | 'catalog' | 'addServer' | 'attachPersonalities' | 'delete'>;
+  mcp: Pick<McpService, 'list' | 'addServer' | 'attachPersonalities' | 'delete'>;
   /** Loaded plugins + their safety findings. Absent → no plugin facts, so a
    *  plugin-requiring recipe blocks rather than silently passing. */
   plugins?: Pick<PluginsService, 'list'>;
@@ -561,7 +562,7 @@ export class RecipesService {
 
       // 4 — MCP. Register what is auto-registrable, then attach.
       const registered = new Set((await this.opts.mcp.list()).servers.map((s) => s.name));
-      const catalogIds = new Set(catalogPresetIds(this.opts.mcp.catalog()));
+      const catalogIds = new Set(mcpCatalogPresetIds());
       const attachedBefore = existing ? await this.attachedServers(personalityId) : null;
       for (const server of bundle.requires.mcpServers) {
         if (!registered.has(server.name)) {
@@ -891,7 +892,7 @@ export class RecipesService {
       personalities,
       availableTools: (this.opts.toolRegistry?.getAvailable() ?? []).map((t) => t.name),
       mcpServers,
-      mcpCatalogIds: catalogPresetIds(this.opts.mcp.catalog()),
+      mcpCatalogIds: mcpCatalogPresetIds(),
       plugins,
       hostBinaries: (bundle.requires.hostBinaries ?? [])
         .map((b) => b.name)
@@ -1366,11 +1367,24 @@ function resolveProjected(id: string, installMode: RecipeInstallMode | undefined
   return projectBundle(bundle, resolveInstallMode(bundle, installMode));
 }
 
-export function catalogPresetIds(catalog: {
-  remote: Array<{ name: string }>;
-  local: Array<{ name: string }>;
-}): string[] {
-  return [...catalog.remote.map((p) => p.name), ...catalog.local.map((p) => p.name)];
+/**
+ * The MCP preset ids from the unified catalog index: remote entries, then
+ * local ones, each sorted by id, as the deprecated `mcp.catalog` listed them.
+ * The local filter mirrors `MCP_PRESETS` (npm or pypi pin with `mcp` data).
+ * Pinned against mcp-catalog-golden.json by
+ * apps/web-api/src/__tests__/services/mcp-catalog-compat.test.ts.
+ */
+export function mcpCatalogPresetIds(): string[] {
+  const entries = catalogEntriesOfKind('mcp');
+  const ids = (keep: (e: (typeof entries)[number]) => boolean) =>
+    entries
+      .filter(keep)
+      .map((e) => e.id)
+      .sort((a, b) => a.localeCompare(b));
+  return [
+    ...ids((e) => e.pin.type === 'remote'),
+    ...ids((e) => (e.pin.type === 'npm' || e.pin.type === 'pypi') && e.mcp !== undefined),
+  ];
 }
 
 /**

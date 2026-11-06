@@ -33,7 +33,9 @@ describe('catalog namespace is cookie-only (D11)', () => {
         scopeForPath: resolveScope,
       }),
     );
-    app.post('/rpc/catalog/list', (c) => c.json({ ok: true }));
+    for (const proc of ['list', 'install', 'setSkillGrant']) {
+      app.post(`/rpc/catalog/${proc}`, (c) => c.json({ ok: true }));
+    }
   });
 
   afterEach(() => {
@@ -55,6 +57,22 @@ describe('catalog namespace is cookie-only (D11)', () => {
     expect(body.code).toBe('FORBIDDEN');
     expect(body.error).toMatch(/experimental/);
   });
+
+  it.each(['install', 'setSkillGrant'])(
+    'a bearer key on catalog.%s is 403 FORBIDDEN',
+    async (proc) => {
+      const { secret } = await store.create({
+        name: 'broad',
+        scopes: ['sessions:read', 'sessions:write', 'tools:approve'],
+      });
+      const res = await app.request(`/rpc/catalog/${proc}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(403);
+    },
+  );
 
   it('catalog is not in SCOPE_MAP', () => {
     expect(Object.keys(SCOPE_MAP)).not.toContain('catalog');

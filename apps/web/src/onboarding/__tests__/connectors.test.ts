@@ -12,7 +12,7 @@
 //   4. The step renders both groups and names the agent on the buttons.
 
 import { CATALOG_ENTRIES } from '@ethosagent/catalog';
-import type { McpCatalogOutput, McpRemotePresetInfo } from '@ethosagent/web-contracts';
+import type { McpRemotePresetInfo } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -94,7 +94,7 @@ describe('attachAfterConnect', () => {
 
 // --- the step -------------------------------------------------------------
 
-const catalogFn = vi.fn();
+const listFn = vi.fn();
 const connectPresetFn = vi.fn();
 const attachFn = vi.fn();
 let oauthOptions: UseMcpOAuthPopupOptions | null = null;
@@ -102,8 +102,8 @@ const oauthStart = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../rpc', () => ({
   rpc: {
+    catalog: { list: (...a: unknown[]) => listFn(...a) },
     mcp: {
-      catalog: (...a: unknown[]) => catalogFn(...a),
       connectPreset: (...a: unknown[]) => connectPresetFn(...a),
       attachPersonalities: (...a: unknown[]) => attachFn(...a),
     },
@@ -118,7 +118,23 @@ vi.mock('../../features/mcp/useMcpOAuthPopup', () => ({
 
 const { ConnectorsStep } = await import('../steps/ConnectorsStep');
 
-const CATALOG: McpCatalogOutput = { remote: presetRowsFromCatalog(), local: [] };
+// The real index, decorated with the action shapes `actionFor` serves
+// (apps/web-api/src/services/catalog.service.ts).
+const CATALOG = {
+  version: 1 as const,
+  entries: CATALOG_ENTRIES.filter((e) => e.kind === 'mcp').map((e) => {
+    const url = e.pin.type === 'remote' ? e.pin.url : '';
+    const action =
+      e.pin.type !== 'remote'
+        ? { type: 'cli' as const, command: `ethos catalog install ${e.id}` }
+        : e.capabilities.auth === 'oauth'
+          ? { type: 'oauth' as const, url, name: e.id }
+          : e.capabilities.auth === 'none'
+            ? { type: 'add' as const, name: e.id, url }
+            : { type: 'cli' as const, command: `ethos mcp add ${e.id} --url ${url}` };
+    return { ...e, installed: false, action };
+  }),
+};
 
 let container: HTMLDivElement;
 let root: Root;
@@ -141,7 +157,7 @@ function button(label: string): HTMLButtonElement {
 beforeEach(async () => {
   vi.clearAllMocks();
   oauthOptions = null;
-  catalogFn.mockResolvedValue(CATALOG);
+  listFn.mockResolvedValue(CATALOG);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -174,29 +190,32 @@ describe('ConnectorsStep', () => {
     expect(text.indexOf('WORKS NOW')).toBeLessThan(text.indexOf('SIGN IN ONCE'));
     expect(container.querySelectorAll('button').length).toBeGreaterThan(11);
     button('Add to Sage');
-    button('Sign in to linear');
+    button('Sign in to Linear');
     expect(button('Skip')).toBeTruthy();
   });
 
   it('no-auth rows call connectPreset with the agent id', async () => {
-    connectPresetFn.mockResolvedValue({ ok: true, serverName: 'deepwiki', toolCount: 3 });
+    connectPresetFn.mockResolvedValue({ ok: true, serverName: 'aws-knowledge', toolCount: 3 });
     await act(async () => {
       button('Add to Sage').click();
     });
     await flush();
-    expect(connectPresetFn).toHaveBeenCalledWith({ presetName: 'deepwiki', personalityId: 'sage' });
+    expect(connectPresetFn).toHaveBeenCalledWith({
+      presetName: 'aws-knowledge',
+      personalityId: 'sage',
+    });
     expect(container.textContent).toContain('✓ Added');
     expect(button('Continue')).toBeTruthy();
     await act(async () => {
       button('Continue').click();
     });
-    expect(onNext).toHaveBeenCalledWith({ connectedPresets: ['deepwiki'] });
+    expect(onNext).toHaveBeenCalledWith({ connectedPresets: ['aws-knowledge'] });
   });
 
   it('oauth attach is called only after connected', async () => {
     attachFn.mockResolvedValue({ updated: ['sage'], failed: [] });
     await act(async () => {
-      button('Sign in to linear').click();
+      button('Sign in to Linear').click();
     });
     await flush();
     // Sign-in started with the agent's id threaded to the hook; nothing attached yet.
@@ -214,7 +233,7 @@ describe('ConnectorsStep', () => {
 
     // Retry, then connect: only now is the agent attached.
     await act(async () => {
-      button('Sign in to linear').click();
+      button('Sign in to Linear').click();
     });
     await act(async () => {
       oauthOptions?.onSuccess('linear');

@@ -30,6 +30,7 @@ export const srcAliases = {
   '@ethosagent/safety-watcher': resolve('./packages/safety/watcher/src'),
   '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
   '@ethosagent/tools-mcp/presets': resolve('./extensions/tools-mcp/src/presets.ts'),
+  '@ethosagent/tools-mcp/osv-check': resolve('./extensions/tools-mcp/src/osv-check.ts'),
   '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
   '@ethosagent/tools-voice': resolve('./extensions/tools-voice/src'),
   '@ethosagent/tools-meeting': resolve('./extensions/tools-meeting/src'),

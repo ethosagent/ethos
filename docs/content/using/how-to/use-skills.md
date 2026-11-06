@@ -20,7 +20,7 @@ Install a [skill](../../getting-started/glossary.md#skill) into `~/.ethos/skills
 
 - `ethos` installed and a provider configured ([Configure an LLM provider](configure-providers.md)).
 - A network connection for ClawHub installs, or an existing skill library on disk for reuse.
-- `node` 24+ on `PATH` — `ethos skills install` falls back to `npx clawhub@latest` if no global `clawhub` is found.
+- `node` 24+ on `PATH` — `ethos skills install` falls back to `npx clawhub@<version>` (an exact version Ethos pins, not `latest`) if no global `clawhub` is found. That fallback has no integrity check; a global install (`npm i -g clawhub`) avoids it.
 
 ## Steps
 
@@ -51,7 +51,7 @@ ethos skills install steipete/slack
 The CLI:
 
 1. Acquires a lock at `~/.ethos/skills/.lock` so concurrent installs serialise.
-2. Runs `clawhub install` (or `npx clawhub@latest`) into a per-pid temp dir.
+2. Runs `clawhub install` (or `npx clawhub@<pinned version>`) into a per-pid temp dir.
 3. Runs the safety scanner against the candidate `SKILL.md` — red findings block; yellow on community-tier installs prompts.
 4. Atomically renames the temp directory into `~/.ethos/skills/<slug>/` so a killed process never leaves a half-written skill.
 

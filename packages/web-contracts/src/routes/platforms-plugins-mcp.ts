@@ -336,6 +336,9 @@ export const mcp = {
   updateToken: oc.input(McpUpdateTokenInputSchema).output(McpUpdateTokenOutputSchema),
   scopeStatus: oc.input(McpScopeStatusInputSchema).output(McpScopeStatusOutputSchema),
   validateConfig: oc.input(McpValidateConfigInputSchema).output(McpValidateConfigOutputSchema),
-  /** The curated preset catalog, so the browser never imports the Node-only tools-mcp package. */
+  /**
+   * The curated preset catalog.
+   * @deprecated Use catalog.list({ kind: 'mcp' }). Removal: one minor release after this one (plan unified-catalog §9).
+   */
   catalog: oc.output(McpCatalogOutputSchema),
 };

@@ -29,3 +29,56 @@ Pinning tests:
 - `src/__tests__/index.test.ts`: schema parse, unique ids, barrel matches `entries/`, exact pins, `mcp` block iff npm/pypi, no `official` unless publisher is Ethos, no `community` plugin, non-null licence for code.
 - `src/__tests__/filter.test.ts`: `filterCatalog`.
 - `src/__tests__/pin.test.ts`: `pinSpec` and `launcherArgs`.
+
+## Admission
+
+An entry is admitted by a reviewed PR. Two things guard it: `scripts/check-catalog.ts` re-checks the facts that can rot, and a human fills in the checklist below. The script does not replace the review (a scan is not a review). `.github/CODEOWNERS` routes `src/entries/` to a code owner; branch protection requiring that review is a repository setting, not something this repo enforces.
+
+### Running the script
+
+```
+pnpm tsx scripts/check-catalog.ts --changed   # entries touched vs origin/main (main when absent)
+pnpm tsx scripts/check-catalog.ts --all       # every entry; what the weekly run does
+pnpm vitest run scripts/__tests__/check-catalog.test.ts
+```
+
+It prints one block per entry and exits 1 on any failed check (2 on bad usage). CI runs `--changed` on pull requests that touch `packages/catalog/**` and `--all` every Monday, in `.github/workflows/catalog-admission.yml`; a drifted pin fails that run (no issue is opened). The job has no secrets and a read-only token.
+
+| Check | npm | pypi | remote | git |
+|---|---|---|---|---|
+| Pin resolves | `npm view` `dist.integrity` equals `integrity` | a PyPI file for the version has the pinned sha256 | unauthenticated `initialize` is 200 (auth `none`) or 401 with `WWW-Authenticate` (any other auth) | skipped |
+| Code scan | `scanPluginCode` over the packed tarball, red fails | none (D21) | n/a | skipped |
+| Advisories | OSV by exact version, HIGH/CRITICAL or an unreachable OSV fails | same, ecosystem `PyPI` | n/a | skipped |
+| Declared vs actual | plugin: `ethos.permissions` within `capabilities` (network subset, shell equal) | n/a | url host in `capabilities.network`; no-auth with `toolCount`: `tools/list` count equals it | skipped |
+| Licence | registry `license` equals `license` | `license_expression`, `license` or classifier names it | n/a | skipped |
+
+`reviewedAt` older than 365 days is a warning, never a failure. The `git` pin type reports a skip until `withGitPinnedTree` (Phase 3) is wired into the script.
+
+Licences: the registry field must equal the entry's SPDX id. The one exception is a per-id allowance in `LICENSE_FIELD_ALLOWANCES` (`scripts/check-catalog.ts`) for packages that publish `SEE LICENSE IN LICENSE` and ship no LICENSE file (`filesystem`, `memory`). It passes only while the registry still reports exactly that string, and the entry's header comment must record where the SPDX id was read.
+
+### Admission checklist
+
+**Remote** (a hosted service; no code is fetched, `license` is `null`):
+
+- [ ] Who operates the server (the `publisher`, with the domain or org checked).
+- [ ] What data it receives: the tool arguments, and the account data the OAuth scopes expose.
+- [ ] Its OAuth scopes, and whether DCR issues a public client (the procedure in the header of `extensions/tools-mcp/src/remote-presets.ts`).
+- [ ] Its privacy policy URL, linked from the entry's header comment.
+
+**Local** (npm, pypi, git):
+
+- [ ] The exact pin and its digest are in the entry (the script re-derives them).
+- [ ] A reviewer has read the code at that pin. The scan is not a review, and Python has no scanner.
+- [ ] Filesystem reach (`capabilities.filesystem`) and network reach (`capabilities.network`) match what the code does.
+- [ ] Env and credential names (`capabilities.env`) are listed, names only.
+- [ ] Lifecycle scripts: none for a plugin; noted in the header comment for an MCP server (the launcher passes `--ignore-scripts`).
+
+A `plugin` entry must be `verified` or `official` (D19): plugins run in-process, and no process isolation exists yet.
+
+### Limitations
+
+- Review is point-in-time. A catalogued entry is not an audited one.
+- Declared-vs-actual is checked statically only for plugin permissions and remote hosts. An MCP server's real network reach is not observable without running it in a sandbox, which CI does not do.
+- Python entries have no code scanner (D21); the reviewer's read is the only code check.
+- OSV matches by package name and version. A package OSV does not know reports zero advisories, which is indistinguishable from a clean one.
+- A remote server can change behind the same URL; the weekly run re-checks reachability and tool count, not behaviour.

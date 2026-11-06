@@ -62,6 +62,25 @@ export {
 } from '@ethosagent/plugin-sdk';
 export type { PluginActivationRequest, PluginActivator } from './activator-types';
 export type {
+  GitPinDeps,
+  GitPinInput,
+  GitPinnedFile,
+  GitPinVerifyInput,
+  GitRunner,
+} from './git-pin';
+export {
+  computeTreeDigest,
+  execGit,
+  fetchGitTreeDigest,
+  GitPinError,
+  GitPinFetchError,
+  GitPinInputError,
+  GitPinMismatchError,
+  GitPinRefusedError,
+  isGithubRepoUrl,
+  withGitPinnedTree,
+} from './git-pin';
+export type {
   PluginGrant,
   PluginGrantCapabilities,
   PluginGrantScan,
@@ -119,6 +138,7 @@ export { resolvePluginIsolation } from './isolation-policy';
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
 export {
   computeIntegrity,
+  DEFAULT_REGISTRY,
   isExactVersion,
   isValidNpmPackageName,
   isValidPluginId,
@@ -140,6 +160,8 @@ export {
   isTarballPin,
   legacyPinWarning,
   PluginIntegrityError,
+  SHA512_SRI_RE,
+  withPackedTarball,
 } from './tarball-pin';
 export { loadWidgetTemplates } from './widgets-loader';
 export type {

@@ -1,5 +1,12 @@
 import { oc } from '@orpc/contract';
-import { CatalogListInputSchema, CatalogListOutputSchema } from '../schemas';
+import {
+  CatalogInstallInputSchema,
+  CatalogInstallOutputSchema,
+  CatalogListInputSchema,
+  CatalogListOutputSchema,
+  CatalogSetSkillGrantInputSchema,
+  CatalogSetSkillGrantOutputSchema,
+} from '../schemas';
 
 // ---------------------------------------------------------------------------
 // Catalog — the unified index of reviewed MCP servers, plugins and skills
@@ -13,4 +20,11 @@ import { CatalogListInputSchema, CatalogListOutputSchema } from '../schemas';
 /** @experimental */
 export const catalog = {
   list: oc.input(CatalogListInputSchema).output(CatalogListOutputSchema),
+  /**
+   * Install a plugin or skill entry (plan §6.4). Never grants (D9). MCP entries
+   * are 400 CATALOG_INSTALL_UNSUPPORTED: they use mcp.addServer / mcp.start.
+   */
+  install: oc.input(CatalogInstallInputSchema).output(CatalogInstallOutputSchema),
+  /** Add or remove `catalog/<id>` in one personality's `skills.global_ingest.allow`. */
+  setSkillGrant: oc.input(CatalogSetSkillGrantInputSchema).output(CatalogSetSkillGrantOutputSchema),
 };

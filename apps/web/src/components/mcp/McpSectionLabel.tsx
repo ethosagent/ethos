@@ -1,7 +1,7 @@
 import type React from 'react';
 
 // Relocated out of `apps/web/src/pages/Mcp.tsx` (plan/phases/mcp-inline-catalog.md
-// §2.1) so `McpCatalogSection` can render the identical section-header style
+// §2.1) so `CatalogBrowser` can render the identical section-header style
 // `WorkspaceMcpPanel` already uses for "Attached"/"Installed, not attached",
 // rather than a visually-similar reimplementation.
 export function McpSectionLabel({ children }: { children: React.ReactNode }) {

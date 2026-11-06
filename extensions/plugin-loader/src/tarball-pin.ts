@@ -46,6 +46,9 @@ import {
   type PluginLockEntry,
 } from './lockfile';
 
+/** `sha512-<base64>`: the only digest form a tarball pin or an npm `dist.integrity` takes. */
+export const SHA512_SRI_RE = /^sha512-[A-Za-z0-9+/]+={0,2}$/;
+
 /** Runs npm with an argv array. Injected by tests; production uses `execNpm`. */
 export type NpmRunner = (args: string[]) => Promise<void>;
 
@@ -87,7 +90,7 @@ export function isTarballPin(entry: PluginLockEntry): boolean {
  * `npm pack <pkg>@<version>` into a fresh `os.tmpdir()` scratch directory, hand
  * the tarball path to `use`, and remove the directory whatever happens.
  */
-async function withPackedTarball<T>(
+export async function withPackedTarball<T>(
   pkg: string,
   version: string,
   registry: string,

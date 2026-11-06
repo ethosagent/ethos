@@ -7,7 +7,7 @@ import { CATALOG_ENTRIES } from './entries';
 
 export { installFlags } from './install-args';
 export { launcherArgs, type PackagePin, pinSpec } from './pin';
-export { CATALOG_SKILLS_DIR, catalogSkillPath } from './skills-path';
+export { CATALOG_SKILLS_DIR, catalogSkillPath, catalogSkillsRoot } from './skills-path';
 export { CATALOG_ENTRIES };
 
 export function getCatalogEntry(id: string): CatalogEntry | undefined {

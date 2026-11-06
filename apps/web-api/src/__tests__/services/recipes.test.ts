@@ -207,7 +207,6 @@ function makeWorld(o: WorldOptions = {}) {
         deprecated: false,
       })),
     }),
-    catalog: () => ({ remote: [], local: [] }),
     addServer: async () => ({ ok: true as const, serverName: 'unused' }),
     attachPersonalities: async ({ serverName }) => {
       attached.push(serverName);

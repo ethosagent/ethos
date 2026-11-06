@@ -171,7 +171,6 @@ function makeWorld(o: Options = {}) {
         },
       ],
     }),
-    catalog: () => ({ remote: [], local: [] }),
     addServer: async () => ({ ok: true as const, serverName: 'unused' }),
     attachPersonalities: async () => ({ updated: ['briefer'], failed: [] }),
     delete: async () => ({ ok: true as const }),

@@ -22,6 +22,7 @@ import {
   readGrants,
   readLockfile,
   recordGrant,
+  SHA512_SRI_RE,
   scanInstalledPlugins,
   scanPluginPackage,
   type UndoPluginInstallInput,
@@ -60,6 +61,16 @@ export class NpmExitError extends Error {
     this.stderr = stderr;
   }
 }
+
+/** What the catalog install's scan gate is shown. */
+export interface CatalogScanSummary {
+  hasRed: boolean;
+  hasYellow: boolean;
+  findings: Array<{ severity: 'red' | 'yellow'; rule: string; message: string }>;
+}
+
+/** Returns why the scan blocks the install, or null to let it proceed. */
+export type CatalogScanGate = (scan: CatalogScanSummary) => string | null;
 
 /** npm with an argv array — no shell. Resolves with npm's stdout (`npm view --json` is read from it). */
 function spawnNpm(args: string[]): Promise<string> {
@@ -175,6 +186,60 @@ export class PluginsService {
     }
     const npm = this.opts.runNpm ?? spawnNpm;
     const resolved = await resolveRegistrySpec(packageSpec, npm);
+    await this.installResolved(resolved, packageSpec, { personalityId, catalog: false });
+  }
+
+  /**
+   * `catalog.install` for a plugin entry (unified-catalog D14, via
+   * `installCatalogPlugin`, packages/wiring/src/catalog-install.ts). The same
+   * pipeline as `install`, with three differences:
+   *   * the tarball is held to the CATALOG's sha512 (`pin.integrity`), not to
+   *     what `npm view` reports, so a registry serving other bytes is refused
+   *     before `npm install` runs (`PLUGIN_INTEGRITY_MISMATCH`);
+   *   * the scan goes through `refuseScan` (wiring's `canInstall(scan,
+   *     'community')`); when it answers, the install is refused and undone
+   *     through `refuseInstalled` (`CATALOG_SCAN_BLOCKED`). The typed-spec
+   *     `install` still refuses nothing (§12.3);
+   *   * no personality is passed, so no `plugins.lock` pin is written (D9).
+   * The grant records the entry's review `tier` as `catalogTier`. Returns the
+   * plugin id the grant is recorded under.
+   */
+  async installCatalogPin(
+    pin: { package: string; version: string; integrity: string },
+    opts: { refuseScan: CatalogScanGate; tier: string },
+  ): Promise<{ id: string }> {
+    if (
+      !isValidNpmPackageName(pin.package) ||
+      !isExactVersion(pin.version) ||
+      !SHA512_SRI_RE.test(pin.integrity)
+    ) {
+      throw new EthosError({
+        code: 'CATALOG_INSTALL_UNSUPPORTED',
+        cause: `The catalog pin ${pin.package}@${pin.version} is not an exact registry version with a sha512 digest`,
+        action: 'Report this catalog entry; it cannot be installed.',
+      });
+    }
+    return this.installResolved(
+      { name: pin.package, version: pin.version, integrity: pin.integrity },
+      `${pin.package}@${pin.version}`,
+      { catalog: opts.refuseScan, catalogTier: opts.tier },
+    );
+  }
+
+  private async installResolved(
+    resolved: { name: string; version: string; integrity: string },
+    packageSpec: string,
+    {
+      personalityId,
+      catalog,
+      catalogTier,
+    }: {
+      personalityId?: string | undefined;
+      catalog: false | CatalogScanGate;
+      catalogTier?: string;
+    },
+  ): Promise<{ id: string }> {
+    const npm = this.opts.runNpm ?? spawnNpm;
     const { storage, dataDir } = this.opts;
     const dir = join(dataDir, 'plugins');
     await mkdir(dir, { recursive: true });
@@ -202,6 +267,7 @@ export class PluginsService {
     let npmInstallFailed = false;
     let integrity: string;
     let draft: PluginGrantDraft;
+    let scanSummary: CatalogScanSummary = { hasRed: false, hasYellow: false, findings: [] };
     try {
       ({ integrity } = await installPackedTarball({
         package: resolved.name,
@@ -210,7 +276,9 @@ export class PluginsService {
         storage,
         expected: {
           integrity: resolved.integrity,
-          from: 'the registry publishes as its dist.integrity',
+          from: catalog
+            ? "the catalog pins as this entry's integrity"
+            : 'the registry publishes as its dist.integrity',
         },
         runNpm: async (args) => {
           const step = args[0] === 'pack' ? 'pack' : 'install';
@@ -245,6 +313,7 @@ export class PluginsService {
         pkgJson = undefined;
       }
       const scan = await scanPluginPackage(storage, pkgDir, pkgJson);
+      scanSummary = scan;
       ({ draft } = draftPluginGrant({
         pkgJson,
         requestedSpec: packageSpec,
@@ -287,7 +356,7 @@ export class PluginsService {
       if (err instanceof PluginIntegrityError) {
         throw new EthosError({
           code: 'PLUGIN_INTEGRITY_MISMATCH',
-          cause: `The tarball npm downloaded for ${resolved.name}@${resolved.version} does not match the registry's published digest (expected ${err.expected}, got ${err.actual}). Nothing was installed, granted or pinned.`,
+          cause: `The tarball npm downloaded for ${resolved.name}@${resolved.version} does not match ${catalog ? "the catalog's pinned digest" : "the registry's published digest"} (expected ${err.expected}, got ${err.actual}). Nothing was installed, granted or pinned.`,
           action:
             'Retry the install. If it is refused again, do not install this package: the registry served bytes that do not match its own published digest.',
         });
@@ -304,6 +373,18 @@ export class PluginsService {
           'Do not install this package: the package.json inside its published tarball does not name the package and version the registry publishes it as. Report it to the package maintainer.',
       });
     }
+    // D14: on the catalog path the gate (wiring's `catalogScanGate`) refuses a
+    // red finding, as the CLI does. Pinned by
+    // __tests__/services/catalog-install.test.ts.
+    const blockedBy = catalog ? catalog(scanSummary) : null;
+    if (blockedBy !== null) {
+      throw await refuseInstalled(undo, {
+        code: 'CATALOG_SCAN_BLOCKED',
+        found: `${installed}, but its safety scan blocks it (${blockedBy}).`,
+        action:
+          'Do not install this plugin. Report the catalog entry: it passed review but fails the install-time scan.',
+      });
+    }
     try {
       // Read first: `recordGrant` replaces any grant already recorded under this id.
       const previousGrant = (await readGrants(storage, dir))[draft.id] ?? null;
@@ -311,6 +392,9 @@ export class PluginsService {
         ...draft,
         grantedAt: new Date().toISOString(),
         consent: 'interactive',
+        // The review tier, so `resolvePluginIsolation` can force a `community`
+        // catalog plugin into the plugin host (grants.ts `catalogTier`).
+        ...(catalogTier !== undefined ? { catalogTier } : {}),
       };
       await recordGrant(storage, dir, grant);
       undo.grant = { id: draft.id, recorded: grant, previous: previousGrant };
@@ -342,6 +426,7 @@ export class PluginsService {
         });
       }
     }
+    return { id: draft.id };
   }
 
   async uninstall(pluginId: string): Promise<void> {
@@ -577,8 +662,6 @@ export class PluginsService {
  *  dist-tag. No `:` and no `/`, so never a git URL, a tarball URL, a `file:` path or an
  *  `npm:` alias. */
 const REGISTRY_SELECTOR_RE = /^[A-Za-z0-9.+^~<>=|* -]*$/;
-
-const SHA512_SRI_RE = /^sha512-[A-Za-z0-9+/]+={0,2}$/;
 
 const REGISTRY_SPEC_ACTION =
   'Install a published npm package by name (e.g. ethos-plugin-foo or ethos-plugin-foo@1.2.3), not a git URL, tarball, or local path.';

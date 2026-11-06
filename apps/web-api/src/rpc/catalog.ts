@@ -10,4 +10,8 @@ export const catalogRouter = {
   list: os.catalog.list.handler(({ input, context }) =>
     context.catalog.list(input.kind !== undefined ? { kind: input.kind } : {}),
   ),
+  install: os.catalog.install.handler(({ input, context }) => context.catalog.install(input)),
+  setSkillGrant: os.catalog.setSkillGrant.handler(({ input, context }) =>
+    context.catalog.setSkillGrant(input),
+  ),
 };

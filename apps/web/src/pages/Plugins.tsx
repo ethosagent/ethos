@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { CatalogBrowser } from '../components/catalog/CatalogBrowser';
 import {
   type PluginCredentialSchema,
   PluginSettingsDrawer,
@@ -24,7 +25,7 @@ import { PluginStatusNote } from '../components/PluginStatusNote';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { personalityKeys } from '../features/personalities/api/keys';
 import { usePersonalityGet } from '../features/personalities/api/queries';
-import { useCreateFlag } from '../hooks/useCreateFlag';
+import { useCatalogModal } from '../hooks/useCatalogModal';
 import { splitByAttachment, usedByPersonalityIds } from '../lib/attachmentLists';
 import { credentialToFocus, parsePluginCredentialDeepLink } from '../lib/pluginCredentialDeepLink';
 import { client, rpc } from '../rpc';
@@ -119,12 +120,9 @@ function LibraryPluginsPage() {
   const [settingsPluginId, setSettingsPluginId] = useState<string | null>(null);
 
   // P5 — StageHeader's "+ New Plugin" action navigates here with
-  // `?create=1`; this force-opens the same inline install section the
-  // page's own button toggles (never re-closes it, unlike the toggle).
-  const shouldCreate = useCreateFlag();
-  useEffect(() => {
-    if (shouldCreate) setInstallOpen(true);
-  }, [shouldCreate]);
+  // `?create=1`; `useCatalogModal` opens the catalog browser, whose manual
+  // "Install by npm spec…" link reveals the typed-spec section.
+  const catalogModal = useCatalogModal(() => setInstallOpen(true));
 
   // openclaw-9.5 item 1 — `/plugins?pluginId=<id>&key=<KEY>` (the gateway's
   // credential link) opens that plugin's settings once the list has loaded.
@@ -223,10 +221,11 @@ function LibraryPluginsPage() {
           {plugins.length} {plugins.length === 1 ? 'plugin' : 'plugins'}
         </span>
         <div style={{ flex: 1 }} />
-        <button type="button" className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
+        <button type="button" className="page-action-btn" onClick={catalogModal.show}>
           + New Plugin
         </button>
       </header>
+      <CatalogBrowser kind="plugin" mode="modal" {...catalogModal.modalProps} />
       {installOpen && <InstallPluginSection />}
       <PluginsMatrix
         plugins={plugins}
@@ -264,6 +263,7 @@ function WorkspacePluginsPanel({ personalityId }: { personalityId: string }) {
   const { notification } = AntApp.useApp();
   const personalityQuery = usePersonalityGet(personalityId);
   const [installOpen, setInstallOpen] = useState(false);
+  const catalogModal = useCatalogModal(() => setInstallOpen(true), false);
   const { data: pluginsData, isLoading: pluginsLoading } = useQuery({
     queryKey: ['plugins', 'list'],
     queryFn: () => rpc.plugins.list(),
@@ -317,10 +317,16 @@ function WorkspacePluginsPanel({ personalityId }: { personalityId: string }) {
           {attached.length} {attached.length === 1 ? 'plugin' : 'plugins'}
         </span>
         <div style={{ flex: 1 }} />
-        <button type="button" className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
+        <button type="button" className="page-action-btn" onClick={catalogModal.show}>
           + New Plugin
         </button>
       </header>
+      <CatalogBrowser
+        kind="plugin"
+        mode="modal"
+        personalityContext={personalityId}
+        {...catalogModal.modalProps}
+      />
       {installOpen && <InstallPluginSection personalityId={personalityId} />}
       {isLoading ? (
         <Skeleton active paragraph={{ rows: 5 }} />

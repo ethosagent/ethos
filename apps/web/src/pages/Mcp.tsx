@@ -12,17 +12,17 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { CatalogBrowser } from '../components/catalog/CatalogBrowser';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
-import { McpCatalogSection } from '../components/mcp/McpCatalogSection';
 import { McpSectionLabel } from '../components/mcp/McpSectionLabel';
 import { McpServerActions } from '../components/mcp/McpServerActions';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { mcpKeys } from '../features/mcp/api/keys';
 import { useMcpPersonalityServers } from '../features/mcp/api/queries';
 import { personalityKeys } from '../features/personalities/api/keys';
-import { useCreateFlag } from '../hooks/useCreateFlag';
+import { useCatalogModal } from '../hooks/useCatalogModal';
 import { splitByAttachment, usedByPersonalityIds } from '../lib/attachmentLists';
 import { rpc } from '../rpc';
 
@@ -40,11 +40,9 @@ function LibraryMcpPage() {
   const [addMcpOpen, setAddMcpOpen] = useState(false);
 
   // P5 — StageHeader's "+ New MCP Server" action navigates here with
-  // `?create=1`; this opens the same AddMcpModal the page's own button does.
-  const shouldCreate = useCreateFlag();
-  useEffect(() => {
-    if (shouldCreate) setAddMcpOpen(true);
-  }, [shouldCreate]);
+  // `?create=1`; `useCatalogModal` opens the catalog browser, whose manual
+  // link opens AddMcpModal.
+  const catalogModal = useCatalogModal(() => setAddMcpOpen(true));
 
   const {
     data: pluginsData,
@@ -56,7 +54,6 @@ function LibraryMcpPage() {
   });
 
   const mcpServers = pluginsData?.mcpServers ?? [];
-  const registeredNames = useMemo(() => new Set(mcpServers.map((s) => s.name)), [mcpServers]);
 
   if (error) {
     return (
@@ -74,12 +71,13 @@ function LibraryMcpPage() {
           {mcpServers.length} {mcpServers.length === 1 ? 'server' : 'servers'}
         </span>
         <div style={{ flex: 1 }} />
-        <button type="button" className="page-action-btn" onClick={() => setAddMcpOpen(true)}>
+        <button type="button" className="page-action-btn" onClick={catalogModal.show}>
           + New MCP Server
         </button>
       </header>
-      <McpCatalogSection registeredNames={registeredNames} />
+      <CatalogBrowser kind="mcp" mode="inline" />
       <McpTable servers={mcpServers} loading={isLoading} />
+      <CatalogBrowser kind="mcp" mode="modal" {...catalogModal.modalProps} />
       <AddMcpModal open={addMcpOpen} onClose={() => setAddMcpOpen(false)} />
     </div>
   );
@@ -124,14 +122,6 @@ function WorkspaceMcpPanel({ personalityId }: { personalityId: string }) {
     () =>
       splitByAttachment(globalServersQuery.data?.mcpServers ?? [], attachedNames, (s) => s.name),
     [globalServersQuery.data, attachedNames],
-  );
-
-  // Every globally registered server — the catalog section (below) filters
-  // out any preset that already matches one of these, whether or not it's
-  // attached to this personality (plan §2.3).
-  const registeredNames = useMemo(
-    () => new Set((globalServersQuery.data?.mcpServers ?? []).map((s) => s.name)),
-    [globalServersQuery.data],
   );
 
   // Shared query keys, not a dedicated round trip (P3's "Done when" bar):
@@ -223,7 +213,7 @@ function WorkspaceMcpPanel({ personalityId }: { personalityId: string }) {
             />
           )}
 
-          <McpCatalogSection registeredNames={registeredNames} />
+          <CatalogBrowser kind="mcp" mode="inline" />
         </>
       )}
     </div>

@@ -46,17 +46,39 @@ Supported `--client` values: `claude-desktop`, `cursor`, `opencode`, `continue`,
 
 ## ethos catalog {#ethos-catalog}
 
-Browse the reviewed catalog of MCP servers, plugins and skills that ships with Ethos. Read-only: it prints the index and the commands that add an entry by hand, and changes nothing under `~/.ethos/`.
+Browse the reviewed catalog of MCP servers, plugins and skills that ships with Ethos, and install an entry from it. `list`, `search` and `show` are read-only. `install` and `grant` write, and `install` never grants anything: no personality's `mcp_servers`, `plugins` or `skills` changes until you run the grant command it prints.
 
 Synopsis: `ethos catalog [list | search <query> | show <id>] [--kind mcp|plugin|skill] [--json]`
+Synopsis: `ethos catalog install <id> [--arg K=V ...] [--env K=V ...] [-y] [--json]`
+Synopsis: `ethos catalog grant <id> --personality <pid> [--json]`
 
 | Subcommand | Description |
 |---|---|
 | `list` | One line per entry: `id  kind  tier  description`. |
 | `search <query>` | Case-insensitive match over id, name, description and publisher. |
-| `show <id>` | The full entry (pin, capabilities, licence), the `ethos mcp add` command for it, and the `ethos personality mcp <id> --attach` command that grants it. |
+| `show <id>` | The full entry (pin, capabilities, licence), the `ethos catalog install` command, the by-hand command it runs, and the grant command for the kind. |
+| `install <id>` | Install the entry by kind (table below). Prints the grant command and does not run it. |
+| `grant <id> --personality <pid>` | Skills only. Adds `catalog/<id>` to that personality's `skills.global_ingest.allow`. A built-in personality is refused. |
 
 `--json` prints the entries (or the one entry) as a single JSON document. An unknown id prints `Unknown catalog entry: <id>` and up to three nearby ids to stderr, and exits `1`.
+
+What `install` does for each kind:
+
+| Entry | What runs | Grant command it prints |
+|---|---|---|
+| MCP, remote, no auth | Registers the URL in `mcp.json`, as the web "Add" button does. | `ethos personality mcp <personality-id> --attach <id>` |
+| MCP, remote, OAuth | `ethos mcp add <id> --url <url>`, which signs you in. | `ethos personality mcp <personality-id> --attach <id>` |
+| MCP, local | `ethos mcp add <id> --preset <id>` with your `--arg` and `--env` values. The package is pinned to an exact version. | `ethos personality mcp <personality-id> --attach <id>` |
+| Plugin | The `ethos plugin install` flow for `package@version`. The downloaded tarball must match the catalog's pinned sha512 or the install is blocked before the consent prompt. `-y` records the capability grant without asking. | `ethos personality plugins <personality-id> --attach <plugin-id>` |
+| Skill | Fetches the pinned git commit, refuses it unless its content digest matches, and installs it under `<state dir>/catalog-skills/<id>/`. `SKILL.md` and every JS/TS source file must scan with no red and no yellow finding. Other files (reference `.md` files, data, scripts in other languages) are digest-pinned and human-reviewed at admission, not scanned. | `ethos catalog grant <id> --personality <personality-id>` |
+
+With `--json`, `install` reports failures as one JSON error document, never prompts, and a plugin install then needs `-y`.
+
+`--arg` and `--env` apply to local MCP entries only, and only for the names `ethos catalog show <id>` lists.
+
+A catalog skill is invisible to every personality until it is granted, whatever the personality's `skills.global_ingest.mode` says. Plugin code can still run when Ethos starts, for every personality, whether or not it is granted: the grant decides what a turn sees. A `community` catalog plugin runs in the plugin host process; a `verified` or `official` one runs where `plugins.isolation` says, which is in-process by default.
+
+Catalog entries that fail a check exit `1` and leave nothing installed. For the web API's error codes, see [Error reference](../../../troubleshooting/error-reference.md).
 
 ## ethos backup {#ethos-backup}
 

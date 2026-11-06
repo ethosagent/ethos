@@ -11,6 +11,37 @@ export interface OsvAdvisory {
 export interface OsvResult {
   safe: boolean;
   advisories: OsvAdvisory[];
+  /** Set only under `failClosed`, when `safe` is false because the lookup itself failed. */
+  error?: string;
+}
+
+export interface OsvCheckOptions {
+  /** Query one exact version instead of every advisory the package ever had. */
+  version?: string;
+  ecosystem?: 'npm' | 'PyPI';
+  /**
+   * Treat a lookup failure (network, non-2xx, unparseable body) and an advisory
+   * of UNKNOWN severity as unsafe, instead of "warn but don't block".
+   * Pinned by __tests__/osv-check.test.ts ("failClosed ...").
+   */
+  failClosed?: boolean;
+  /** Abort the request after this long. Absent: no timeout (the default for existing callers). */
+  timeoutMs?: number;
+}
+
+/**
+ * The advisories that make a result unsafe: HIGH or CRITICAL, plus UNKNOWN
+ * severity under `failClosed`. The one predicate behind `OsvResult.safe`, so a
+ * caller reporting why it failed does not re-list severities.
+ */
+export function blockingAdvisories(
+  advisories: readonly OsvAdvisory[],
+  options: { failClosed?: boolean } = {},
+): OsvAdvisory[] {
+  return advisories.filter(
+    (a) =>
+      HIGH_SEVERITIES.has(a.severity) || (options.failClosed === true && a.severity === 'UNKNOWN'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +76,10 @@ function extractSeverity(vuln: Record<string, unknown>): string {
     // CVSS_V3 or CVSS_V4 score >= 7.0 → HIGH, >= 9.0 → CRITICAL
     for (const s of severity) {
       const score = Number.parseFloat(s.score);
+      // Real OSV records carry a CVSS vector string ("CVSS:3.1/AV:N/..."), not a
+      // number; parseFloat gives NaN. Skip it and fall through to the database's
+      // own label instead of misreading it as LOW.
+      if (Number.isNaN(score)) continue;
       if (score >= 9.0) return 'CRITICAL';
       if (score >= 7.0) return 'HIGH';
       if (score >= 4.0) return 'MEDIUM';
@@ -63,25 +98,37 @@ function extractSeverity(vuln: Record<string, unknown>): string {
 // Query
 // ---------------------------------------------------------------------------
 
-export async function checkOsvVulnerabilities(packageName: string): Promise<OsvResult> {
+export async function checkOsvVulnerabilities(
+  packageName: string,
+  options: OsvCheckOptions = {},
+): Promise<OsvResult> {
+  const ecosystem = options.ecosystem ?? 'npm';
+  const failClosed = options.failClosed === true;
+  const cacheKey = `${ecosystem}:${packageName}@${options.version ?? ''}:${failClosed ? 'closed' : 'open'}`;
   // Check cache first
-  const cached = cache.get(packageName);
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.result;
   }
+  const failure = (reason: string): OsvResult =>
+    failClosed ? { safe: false, advisories: [], error: reason } : { safe: true, advisories: [] };
 
   try {
     const resp = await fetch('https://api.osv.dev/v1/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        package: { name: packageName, ecosystem: 'npm' },
+        package: { name: packageName, ecosystem },
+        ...(options.version !== undefined ? { version: options.version } : {}),
       }),
+      ...(options.timeoutMs !== undefined
+        ? { signal: AbortSignal.timeout(options.timeoutMs) }
+        : {}),
     });
 
     if (!resp.ok) {
-      // OSV unreachable or errored — warn but don't block
-      return { safe: true, advisories: [] };
+      // OSV unreachable or errored — warn but don't block (unless failClosed)
+      return failure(`OSV answered HTTP ${resp.status}`);
     }
 
     const data = (await resp.json()) as { vulns?: Array<Record<string, unknown>> };
@@ -93,18 +140,17 @@ export async function checkOsvVulnerabilities(packageName: string): Promise<OsvR
       severity: extractSeverity(v),
     }));
 
-    const hasHighOrCritical = advisories.some((a) => HIGH_SEVERITIES.has(a.severity));
     const result: OsvResult = {
-      safe: !hasHighOrCritical,
+      safe: blockingAdvisories(advisories, { failClosed }).length === 0,
       advisories,
     };
 
     // Update cache
-    cache.set(packageName, { result, fetchedAt: Date.now() });
+    cache.set(cacheKey, { result, fetchedAt: Date.now() });
 
     return result;
-  } catch {
-    // Network error — warn, don't block
-    return { safe: true, advisories: [] };
+  } catch (err) {
+    // Network error — warn, don't block (unless failClosed)
+    return failure(err instanceof Error ? err.message : String(err));
   }
 }

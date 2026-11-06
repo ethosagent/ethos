@@ -554,6 +554,9 @@ importers:
       '@ant-design/icons':
         specifier: ^5.6.1
         version: 5.6.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@ethosagent/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
@@ -615,9 +618,6 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@ethosagent/catalog':
-        specifier: workspace:*
-        version: link:../../packages/catalog
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.16
@@ -2009,6 +2009,9 @@ importers:
 
   extensions/skills:
     dependencies:
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../packages/safety/injection
@@ -2835,6 +2838,9 @@ importers:
       '@ethosagent/cas-fs':
         specifier: workspace:*
         version: link:../../extensions/cas-fs
+      '@ethosagent/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@ethosagent/config':
         specifier: workspace:*
         version: link:../config

@@ -69,6 +69,19 @@ describe('ethos catalog show', () => {
     expect(text).toContain('ethos personality mcp <personality-id> --attach filesystem');
   });
 
+  it('prints the catalog install command, with the local entry flags, ahead of the by-hand commands', () => {
+    const local = execCatalog(['show', 'filesystem']).stdout.join('\n');
+    expect(local).toContain(
+      'Install it:\n  ethos catalog install filesystem --arg ALLOWED_PATH=<allowed_path>',
+    );
+    expect(local.indexOf('ethos catalog install filesystem')).toBeLessThan(
+      local.indexOf('Or by hand:'),
+    );
+    expect(execCatalog(['show', 'linear']).stdout.join('\n')).toContain(
+      'Install it:\n  ethos catalog install linear\n',
+    );
+  });
+
   it('a remote entry prints the --url add command', () => {
     const text = execCatalog(['show', 'linear']).stdout.join('\n');
     expect(text).toContain('ethos mcp add linear --url https://mcp.linear.app/mcp');

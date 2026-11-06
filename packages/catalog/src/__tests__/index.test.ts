@@ -28,6 +28,17 @@ describe('catalog index', () => {
     }
   });
 
+  it("every entry's reviewedAt is an ISO date (YYYY-MM-DD) not in the future", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const e of CATALOG_ENTRIES) {
+      expect(e.reviewedAt, `${e.id}: reviewedAt`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(Number.isNaN(Date.parse(e.reviewedAt)), `${e.id}: reviewedAt parses`).toBe(false);
+      expect(e.reviewedAt <= today, `${e.id}: reviewedAt ${e.reviewedAt} is in the future`).toBe(
+        true,
+      );
+    }
+  });
+
   it('ids are unique across kinds', () => {
     const ids = CATALOG_ENTRIES.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);

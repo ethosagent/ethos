@@ -1,0 +1,49 @@
+name: catalog-admission
+
+# Admission checks for packages/catalog (plan/phases/unified-catalog.md section 7.2).
+# Lives beside ci.yml, not in it: a `schedule:` trigger on ci.yml would run every
+# job there weekly, and `paths:` is a workflow-level filter. The job is named
+# `catalog-admission`.
+#
+# The job fetches and scans third-party code, so it gets no secrets and a
+# read-only token. On drift the weekly run simply fails (no issue is opened).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/catalog/**'
+      - 'scripts/check-catalog.ts'
+      - 'extensions/tools-mcp/src/osv-check.ts'
+  schedule:
+    # Mondays 06:00 UTC: re-verify every pin, advisory, licence and remote.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: catalog-admission-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-admission:
+    name: catalog-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # --changed diffs against origin/main, which needs the full history.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Check changed entries
+        if: github.event_name == 'pull_request'
+        run: pnpm tsx scripts/check-catalog.ts --changed
+      - name: Check every entry (weekly drift run)
+        if: github.event_name == 'schedule'
+        run: pnpm tsx scripts/check-catalog.ts --all

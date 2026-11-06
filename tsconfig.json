@@ -133,6 +133,7 @@
         "./extensions/tools-code/src/reducers/read-file"
       ],
       "@ethosagent/tools-mcp/presets": ["./extensions/tools-mcp/src/presets"],
+      "@ethosagent/tools-mcp/osv-check": ["./extensions/tools-mcp/src/osv-check"],
       "@ethosagent/tools-mcp": ["./extensions/tools-mcp/src"],
       "@ethosagent/tui": ["./apps/tui/src"],
       "@ethosagent/batch-runner": ["./extensions/batch-runner/src"],

@@ -1,6 +1,9 @@
 import type { IngestMode, PersonalityConfig, Skill } from '@ethosagent/types';
 import { checkSkillEnv, type EnvResolverOptions } from './env-resolver';
 
+/** The `ScanSource` label of `<dataDir>/catalog-skills/` (compose.ts); qualifiedNames are `catalog/<id>`. */
+export const CATALOG_SOURCE_LABEL = 'catalog';
+
 export interface FilterResult {
   include: boolean;
   reason: string;
@@ -33,6 +36,15 @@ export function filterSkill(
 
   const allow = cfg?.allow ?? [];
   const deny = cfg?.deny ?? [];
+
+  // D16: a catalog skill is visible only through an explicit allow, whatever
+  // the mode — otherwise capability mode (fallback_unknown: 'allow') would put
+  // it in every personality. Deny still wins (checked next); the rest of the
+  // allow path (tool reach, env, permissions) is unchanged. Pinned by
+  // __tests__/ingest-filter.test.ts "catalog skills".
+  if (skill.source === CATALOG_SOURCE_LABEL && !allow.includes(skill.qualifiedName)) {
+    return { include: false, reason: 'catalog skills need an explicit allow' };
+  }
 
   // Explicit deny always wins
   if (deny.includes(skill.qualifiedName)) {

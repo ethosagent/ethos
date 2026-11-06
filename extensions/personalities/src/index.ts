@@ -914,6 +914,14 @@ const EDITABLE_VOICE_KEYS = [
 ] as const;
 
 export interface UpdatePersonalityPatch {
+  /**
+   * Only `skills.global_ingest.allow` is patchable here (the catalog skill
+   * grant, unified-catalog `catalog.setSkillGrant`). It REPLACES the allow
+   * list and leaves every other `skills` sub-key (mode, deny, tags, ...) as
+   * stored. Each entry must be a plain qualified name (`catalog/<id>`): the
+   * list is rendered comma-joined onto one config.yaml line.
+   */
+  skills?: { global_ingest?: { allow?: string[] } };
   name?: string;
   description?: string;
   model?: string | import('@ethosagent/types').ModelTierConfig;
@@ -1474,6 +1482,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.name !== undefined ||
       patch.description !== undefined ||
       patch.model !== undefined ||
+      patch.skills !== undefined ||
       patch.mcp_servers !== undefined ||
       patch.plugins !== undefined ||
       patch.capabilities !== undefined ||
@@ -1507,6 +1516,15 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
             code: 'INVALID_INPUT',
             cause: `provider "${patch.provider}" is not a recognized provider. Valid: ${validProviders.join(', ')}.`,
             action: 'Use one of the recognized provider values, or omit to use the engine default.',
+          });
+        }
+      }
+      for (const name of patch.skills?.global_ingest?.allow ?? []) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name)) {
+          throw new EthosError({
+            code: 'INVALID_INPUT',
+            cause: `skills.global_ingest.allow entry "${name.replace(/[\n\r]/g, '\\n')}" is not a plain skill name.`,
+            action: 'Use a qualified skill name such as catalog/<id>.',
           });
         }
       }
@@ -1640,6 +1658,18 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           patch.fs_reach === undefined
             ? config.fs_reach
             : { ...config.fs_reach, ...patch.fs_reach },
+        // Only `global_ingest.allow` is patchable; mode, deny and the tag
+        // lists are carried over from `config.skills` untouched.
+        skills:
+          patch.skills?.global_ingest?.allow === undefined
+            ? config.skills
+            : {
+                ...config.skills,
+                global_ingest: {
+                  ...config.skills?.global_ingest,
+                  allow: patch.skills.global_ingest.allow,
+                },
+              },
         dreaming: mergedDreaming,
         evolution_approval_mode: patch.evolution_approval_mode ?? config.evolution_approval_mode,
         skill_evolution: mergedSkillEvolution,

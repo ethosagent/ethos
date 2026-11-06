@@ -2417,6 +2417,20 @@ export {
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
 
+export {
+  type CatalogGrantDeps,
+  type CatalogInstallResult,
+  type CatalogPluginDeps,
+  type CatalogPluginInstaller,
+  type CatalogScanSummary,
+  type CatalogSkillDeps,
+  catalogScanGate,
+  catalogSkillGrant,
+  installCatalogPlugin,
+  installCatalogSkill,
+  planSkillCopy,
+  setCatalogSkillGrant,
+} from './catalog-install';
 // `## Decisions` on the character sheet and the per-personality lines of
 // `ethos doctor` (plan decision-provider-personality §4.5, §8).
 export { resolveCharacterSheetDecisions } from './decision-diagnostics';

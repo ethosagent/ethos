@@ -75,6 +75,12 @@ export type EthosErrorCode =
   | 'PLUGIN_REGISTRY_FAILED'
   | 'PLUGIN_INTEGRITY_MISMATCH'
   | 'PLUGIN_PACKAGE_MISMATCH'
+  // Unified catalog (plan/phases/unified-catalog.md §6.4)
+  | 'CATALOG_ENTRY_NOT_FOUND'
+  | 'CATALOG_INSTALL_UNSUPPORTED'
+  | 'CATALOG_ALREADY_INSTALLED'
+  | 'CATALOG_SCAN_BLOCKED'
+  | 'CATALOG_PIN_MISMATCH'
   // Team manifest (Teamwork Core)
   | 'TEAM_MANIFEST_INVALID'
   // Backup / import

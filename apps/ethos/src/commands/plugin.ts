@@ -30,6 +30,7 @@ import {
   readPluginPermissions,
   recordGrant,
   revokeGrant,
+  SHA512_SRI_RE,
   trustWorkspacePlugin,
   type UndoPluginInstallInput,
   undoPluginInstall,
@@ -226,7 +227,63 @@ function withStderrTail(stderr: string | null | undefined, maxChars = 400): stri
 // Install: download to temp, scan, prompt, then commit
 // ---------------------------------------------------------------------------
 
-async function installPlugin(pkg: string, personalityId?: string, yesFlag = false): Promise<void> {
+/**
+ * `ethos catalog install <plugin>` passes the entry's pinned sha512 and review
+ * tier. The scan prefix's tarball SRI must EQUAL `integrity` (else the install
+ * is blocked before any consent prompt or grant), and the grant records `tier`
+ * as `catalogTier` so a `community` entry is forced into the plugin host
+ * (`resolvePluginIsolation`). The final install is then held to that same SRI
+ * by `installScannedPlugin`. The comparison is `catalogIntegrityBlock`, pinned by
+ * __tests__/catalog-install-command.test.ts; the surrounding flow (npm, prompts)
+ * is not unit-tested and is covered only by the live smoke.
+ */
+export function catalogIntegrityBlock(scanned: string, catalogIntegrity: string): string | null {
+  return scanned === catalogIntegrity
+    ? null
+    : `the tarball's integrity ${scanned} does not match the catalog's pinned ${catalogIntegrity} (PLUGIN_INTEGRITY_MISMATCH); nothing was installed or granted`;
+}
+
+export interface CatalogPluginInstallOptions {
+  integrity: string;
+  tier: string;
+  /**
+   * `ethos catalog install --json`: progress text goes to stderr so stdout
+   * stays one JSON document, and consent is never prompted for (a missing
+   * `--yes` is refused by `resolvePluginConsent`).
+   */
+  json?: boolean;
+}
+
+/**
+ * With `catalog` set this THROWS typed `EthosError`s (integrity mismatch, red
+ * scan, consent refused or cancelled, install failure) instead of printing and
+ * calling `process.exit`, so `ethos catalog install` reports them through its
+ * own error contract (commands/catalog-install.ts `execCatalogInstall`).
+ * Without `catalog`, behaviour is the `ethos plugin install` one. Pinned by
+ * __tests__/catalog-plugin-install.test.ts.
+ */
+export async function installPlugin(
+  pkg: string,
+  personalityId?: string,
+  yesFlag = false,
+  catalog?: CatalogPluginInstallOptions,
+): Promise<void> {
+  if (!catalog?.json) return installPluginFlow(pkg, personalityId, yesFlag, catalog);
+  const realLog = console.log;
+  console.log = (...a: unknown[]) => console.error(...a);
+  try {
+    return await installPluginFlow(pkg, personalityId, yesFlag, catalog);
+  } finally {
+    console.log = realLog;
+  }
+}
+
+async function installPluginFlow(
+  pkg: string,
+  personalityId: string | undefined,
+  yesFlag: boolean,
+  catalog: CatalogPluginInstallOptions | undefined,
+): Promise<void> {
   const dir = pluginsDir();
   const tmpDir = join(dir, `.tmp-scan-${process.pid}`);
 
@@ -337,22 +394,39 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     } else {
       // Read while the scan prefix still exists: the final install must match it.
       scannedIntegrity = await readScannedIntegrity(tmpDir, pkgDir, pkg);
-      // The shared install-record helper keys the grant by the id the LOADER
-      // resolves and pins the exact resolved version, so the final install
-      // commits what was scanned.
-      ({ draft, exactSpec } = draftPluginGrant({
-        pkgJson: rawMeta,
-        requestedSpec: pkg,
-        // Verbatim, as shown above. A later reviewer needs what the operator
-        // saw, not a re-scan of code that may have changed since.
-        scan: { tier, findings, hasRed, hasYellow },
-      }));
+      const integrityBlock =
+        catalog === undefined ? null : catalogIntegrityBlock(scannedIntegrity, catalog.integrity);
+      if (integrityBlock !== null) {
+        blockedBy = integrityBlock;
+      } else {
+        // The shared install-record helper keys the grant by the id the LOADER
+        // resolves and pins the exact resolved version, so the final install
+        // commits what was scanned.
+        ({ draft, exactSpec } = draftPluginGrant({
+          pkgJson: rawMeta,
+          requestedSpec: pkg,
+          // Verbatim, as shown above. A later reviewer needs what the operator
+          // saw, not a re-scan of code that may have changed since.
+          scan: { tier, findings, hasRed, hasYellow },
+        }));
+        if (catalog !== undefined) draft = { ...draft, catalogTier: catalog.tier };
+      }
     }
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
 
   if (blockedBy !== undefined || draft === undefined || scannedIntegrity === undefined) {
+    if (catalog !== undefined) {
+      const mismatch = blockedBy?.includes('PLUGIN_INTEGRITY_MISMATCH') === true;
+      throw new EthosError({
+        code: mismatch ? 'PLUGIN_INTEGRITY_MISMATCH' : 'CATALOG_SCAN_BLOCKED',
+        cause: `Install blocked: ${blockedBy ?? 'the package could not be scanned'}`,
+        action: mismatch
+          ? 'Retry. If it is refused again, do not install this plugin.'
+          : 'Do not install this plugin. Report the catalog entry.',
+      });
+    }
     console.log(
       `\n${c.red}✗ Install blocked:${c.reset} ${blockedBy ?? 'the package could not be scanned'}`,
     );
@@ -366,7 +440,8 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
   const mode = resolvePluginConsent({
     pkg,
     yesFlag,
-    isTTY: !!process.stdin.isTTY,
+    // `--json` never prompts: no TTY here means a missing --yes is refused.
+    isTTY: !!process.stdin.isTTY && catalog?.json !== true,
     managed: process.env.ETHOS_MANAGED === '1',
   });
   let consent: PluginGrant['consent'] = 'flag';
@@ -375,6 +450,13 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
       `\n${c.bold}Install ${pkg} and record this grant? [y/N]${c.reset} `,
     );
     if (!confirmed) {
+      if (catalog !== undefined) {
+        throw new EthosError({
+          code: 'PLUGIN_INSTALL_FAILED',
+          cause: 'Install cancelled. Nothing was installed and no grant recorded.',
+          action: 'Re-run and answer y, or pass --yes.',
+        });
+      }
       console.log(
         `${c.dim}Install cancelled. Nothing was installed and no grant recorded.${c.reset}`,
       );
@@ -405,6 +487,19 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
       personalityId,
     });
   } catch (err) {
+    if (catalog !== undefined) {
+      throw err instanceof PluginInstallUndoneError
+        ? new EthosError({
+            code: 'PLUGIN_INSTALL_FAILED',
+            cause: err.message,
+            action: err.action,
+          })
+        : new EthosError({
+            code: 'PLUGIN_INSTALL_FAILED',
+            cause: `Install failed before anything was installed or granted: ${err instanceof Error ? err.message : String(err)}`,
+            action: 'Fix what the error reports, then retry.',
+          });
+    }
     if (err instanceof PluginInstallUndoneError) {
       console.error(`${c.red}✗ ${err.message}${c.reset}`);
       console.error(`${c.dim}→ ${err.action}${c.reset}`);
@@ -583,8 +678,6 @@ async function undoneInstall(
   });
   return new PluginInstallUndoneError(outcome, cause, action);
 }
-
-const SHA512_SRI_RE = /^sha512-[A-Za-z0-9+/]+={0,2}$/;
 
 /**
  * The SRI npm recorded for the package the safety scan read — the registry's

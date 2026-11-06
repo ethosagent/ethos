@@ -1,6 +1,12 @@
-import type { McpAddServerInput, McpRemotePresetInfo } from '@ethosagent/web-contracts';
+import { launcherArgs } from '@ethosagent/catalog/filter';
+import type {
+  CatalogEntryInfo,
+  McpAddServerInput,
+  McpLocalPresetInfo,
+  McpRemotePresetInfo,
+} from '@ethosagent/web-contracts';
 
-// Pure logic shared by `AddMcpModal`'s "Preset" mode and `McpCatalogSection`
+// Pure logic shared by `AddMcpModal`'s "Preset" mode and `CatalogBrowser`
 // (plan/phases/mcp-inline-catalog.md) — relocated out of `AddMcpModal.tsx`
 // (where it originally lived and was exported) so a second consumer doesn't
 // have to import a component file for its logic. No JSX, no DOM — matches
@@ -74,4 +80,61 @@ export function groupByAuth<T extends { authType: McpRemotePresetInfo['authType'
     none: items.filter((i) => i.authType === 'none'),
     oauth: items.filter((i) => i.authType === 'oauth'),
   };
+}
+
+/**
+ * The preset shapes the Add-MCP modal and the onboarding Connectors step
+ * consume, rebuilt from `catalog.list({ kind: 'mcp' })` entries. This replaces
+ * the deprecated `mcp.catalog` read (plan unified-catalog §9) and reproduces
+ * `McpService.catalog()` field by field: remote presets are the `remote`-pinned
+ * entries, local presets the npm/pypi-pinned entries that carry `mcp` data
+ * (command = npx | uvx, args = `launcherArgs` + `argsAfterSpec`, exactly as
+ * `MCP_PRESETS` derives them), both sorted by name. Entries that fit neither
+ * (a remote with `env` auth, or a non-MCP kind) are skipped. Pinned against the
+ * frozen mcp-catalog-golden.json by `__tests__/catalog.test.ts`.
+ *
+ * TEMPORARY: delete when the modal and step consume `CatalogEntry` directly,
+ * at `mcp.catalog` removal (plan unified-catalog §9).
+ */
+export function presetsFromCatalog(entries: readonly CatalogEntryInfo[]): {
+  remote: McpRemotePresetInfo[];
+  local: McpLocalPresetInfo[];
+} {
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  const remote: McpRemotePresetInfo[] = [];
+  const local: McpLocalPresetInfo[] = [];
+  for (const e of entries) {
+    if (e.kind !== 'mcp') continue;
+    const { pin, capabilities: caps } = e;
+    if (pin.type === 'remote') {
+      if (caps.auth === 'env') continue;
+      remote.push({
+        name: e.id,
+        label: e.name,
+        url: pin.url,
+        transport: pin.transport,
+        authType: caps.auth,
+        description: e.description,
+        category: e.category,
+        ...(e.homepage ? { docsUrl: e.homepage } : {}),
+      });
+    } else if ((pin.type === 'npm' || pin.type === 'pypi') && e.mcp) {
+      local.push({
+        name: e.id,
+        description: e.description,
+        command: pin.type === 'npm' ? 'npx' : 'uvx',
+        args: [...launcherArgs(pin), ...e.mcp.argsAfterSpec],
+        envVars: [...e.mcp.envVars],
+        argVars: [...e.mcp.argVars],
+        category: e.category,
+        pin: {
+          registry: pin.type,
+          package: pin.package,
+          version: pin.version,
+          integrity: pin.integrity,
+        },
+      });
+    }
+  }
+  return { remote: remote.sort(byName), local: local.sort(byName) };
 }

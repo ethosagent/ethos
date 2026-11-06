@@ -101,3 +101,33 @@ export const CatalogListOutputSchema = z.object({
   entries: z.array(CatalogListEntrySchema),
 });
 export type CatalogListOutput = z.infer<typeof CatalogListOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// `catalog.install` / `catalog.setSkillGrant` (plan §6.4). Failures are typed
+// `EthosError`s with an HTTP status (D18), not part of these outputs.
+// `catalog.install` has no `personalityId` on purpose: an install never grants
+// anything (D9).
+// ---------------------------------------------------------------------------
+
+export const CatalogInstallInputSchema = z.object({ id: z.string().min(1) });
+export const CatalogInstallOutputSchema = z.object({
+  ok: z.literal(true),
+  kind: z.enum(['plugin', 'skill']),
+  id: z.string(),
+  installedAs: z.string(),
+  /** Where the operator grants it; nothing is granted by the install. */
+  grantHint: z.string(),
+});
+export type CatalogInstallOutput = z.infer<typeof CatalogInstallOutputSchema>;
+
+export const CatalogSetSkillGrantInputSchema = z.object({
+  personalityId: z.string().min(1),
+  id: z.string().min(1),
+  granted: z.boolean(),
+});
+export const CatalogSetSkillGrantOutputSchema = z.object({
+  ok: z.literal(true),
+  /** The personality's whole `skills.global_ingest.allow` after the change. */
+  allow: z.array(z.string()),
+});
+export type CatalogSetSkillGrantOutput = z.infer<typeof CatalogSetSkillGrantOutputSchema>;

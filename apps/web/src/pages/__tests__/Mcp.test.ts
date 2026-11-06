@@ -5,9 +5,9 @@
 // plan/phases/mcp-inline-catalog.md §2.5. This drives the real component in
 // jsdom (same approach as `pages/__tests__/activity-page.test.ts`) to prove
 // all three sections render, in order, with the right counts, off the two
-// queries the panel already runs (no new fetch for the catalog section).
+// queries the panel already runs plus `catalog.list` (the browser's own query).
 
-import type { McpCatalogOutput, McpServerInfo } from '@ethosagent/web-contracts';
+import type { CatalogListEntry, CatalogListOutput, McpServerInfo } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -48,7 +48,9 @@ vi.mock('../../rpc', () => ({
   rpc: {
     mcp: {
       personalityServers: (...args: unknown[]) => personalityServersFn(...args),
-      catalog: (...args: unknown[]) => catalogFn(...args),
+    },
+    catalog: {
+      list: (...args: unknown[]) => catalogFn(...args),
     },
     plugins: {
       list: (...args: unknown[]) => pluginsListFn(...args),
@@ -85,28 +87,42 @@ const GLOBAL_SERVERS: McpServerInfo[] = [
   },
 ];
 
-const CATALOG: McpCatalogOutput = {
-  remote: [
+const BASE_ENTRY: Pick<
+  CatalogListEntry,
+  'kind' | 'publisher' | 'tier' | 'license' | 'reviewedAt' | 'installed' | 'capabilities'
+> = {
+  kind: 'mcp',
+  publisher: 'pub',
+  tier: 'verified',
+  license: null,
+  reviewedAt: '2026-09-04',
+  installed: false,
+  capabilities: { network: [], auth: 'none', env: [], filesystem: 'none', shell: false },
+};
+
+const CATALOG: CatalogListOutput = {
+  version: 1,
+  entries: [
     {
-      name: 'context7',
-      label: 'Context7',
-      url: 'https://mcp.context7.com/mcp',
-      transport: 'streamable-http',
-      authType: 'none',
+      ...BASE_ENTRY,
+      id: 'context7',
+      name: 'Context7',
       description: 'Up-to-date library documentation',
       category: 'Docs & knowledge',
+      pin: { type: 'remote', url: 'https://mcp.context7.com/mcp', transport: 'streamable-http' },
+      action: { type: 'add', name: 'context7', url: 'https://mcp.context7.com/mcp' },
     },
     {
-      name: 'linear',
-      label: 'Linear',
-      url: 'https://mcp.linear.app/mcp',
-      transport: 'streamable-http',
-      authType: 'oauth',
+      ...BASE_ENTRY,
+      id: 'linear',
+      name: 'Linear',
       description: 'Read and update Linear issues',
       category: 'Productivity',
+      pin: { type: 'remote', url: 'https://mcp.linear.app/mcp', transport: 'streamable-http' },
+      capabilities: { ...BASE_ENTRY.capabilities, auth: 'oauth' },
+      action: { type: 'oauth', url: 'https://mcp.linear.app/mcp', name: 'linear' },
     },
   ],
-  local: [],
 };
 
 let container: HTMLDivElement;
@@ -167,8 +183,7 @@ describe('WorkspaceMcpPanel — three sections', () => {
     // catalog section — its name still appears once overall.
     expect(container.textContent).toContain('attached-one');
     expect(container.textContent).toContain('installed-two');
-    // Neither catalog entry collides with an already-registered name, so
-    // both remain in the Catalog section.
+    // Neither catalog entry is `installed`, so both remain in the Catalog section.
     expect(container.textContent).toContain('Context7');
     expect(container.textContent).toContain('Linear');
   });

@@ -5,6 +5,7 @@ Material changes to `@ethosagent/cli` and its workspace packages. Release-versio
 ## Unreleased
 
 - ARCHITECTURE.md: Clarifying amendment — rationale and extension-pattern prose moved to docs/decisions/
+- web-contracts: `mcp.catalog` and `McpCatalogOutputSchema` are deprecated in favour of `catalog.list({ kind: 'mcp' })`; the in-repo callers (Add-MCP modal, onboarding Connectors step, recipes preflight) now read the unified catalog. Removal: one minor release after this one (plan unified-catalog §9). Frozen surface unchanged (JSDoc only).
 
 ## 0.9.0 — 2026-09-29
 

@@ -863,6 +863,51 @@ async function runAdd(argv: string[]): Promise<void> {
   }
 }
 
+/**
+ * Register a remote MCP server that needs no sign-in (`ethos catalog install`
+ * for an `auth: none` entry): the same entry `McpService.addServer` writes
+ * from the web, with `created_via: 'cli'`. `mcp add --url` cannot do this: its
+ * only path is OAuth discovery, which fails for a server with none. Grants
+ * nothing: no personality's `mcp_servers` changes. Pinned by
+ * __tests__/mcp-add-noauth.test.ts.
+ */
+export async function addNoAuthRemoteServer(name: string, url: string): Promise<void> {
+  const nameError = validateMcpServerName(name);
+  if (nameError)
+    throw new EthosError({ code: 'INVALID_INPUT', cause: nameError, action: 'Pick another name.' });
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `Invalid URL: ${url}`,
+      action: 'Use an https:// MCP endpoint.',
+    });
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: 'Remote MCP server URL must use https://',
+      action: 'Use an https:// MCP endpoint.',
+    });
+  }
+  if ((await readMcpJson()).some((s) => s.name === name)) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `MCP server '${name}' already exists in ~/.ethos/mcp.json`,
+      action: 'Remove it first or choose a different name.',
+    });
+  }
+  await mcpStore.upsert(name, {
+    name,
+    transport: 'streamable-http',
+    url,
+    created_via: 'cli',
+  });
+  console.log(`Added MCP server '${name}' to ~/.ethos/mcp.json`);
+}
+
 interface UrlAddResult {
   entry: McpServerConfig;
   /** Present only for the browser flow; device / paste sign in after the entry is saved. */

@@ -429,10 +429,12 @@ export const McpLocalPresetSchema = z.object({
 });
 export type McpLocalPresetInfo = z.infer<typeof McpLocalPresetSchema>;
 
+/** @deprecated Use catalog.list({ kind: 'mcp' }). Removal: one minor release after this one (plan unified-catalog §9). */
 export const McpCatalogOutputSchema = z.object({
   remote: z.array(McpRemotePresetSchema),
   local: z.array(McpLocalPresetSchema),
 });
+/** @deprecated Use catalog.list({ kind: 'mcp' }). Removal: one minor release after this one (plan unified-catalog §9). */
 export type McpCatalogOutput = z.infer<typeof McpCatalogOutputSchema>;
 
 export const McpValidateConfigInputSchema = z.object({

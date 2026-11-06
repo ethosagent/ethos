@@ -1,3 +1,4 @@
+import { catalogSkillsRoot } from '@ethosagent/catalog';
 import type {
   ContextInjector,
   HookRegistry,
@@ -16,6 +17,7 @@ import {
   type SkillsInjector,
   UniversalScanner,
 } from './index';
+import { CATALOG_SOURCE_LABEL } from './ingest-filter';
 
 export interface SkillsCompose {
   /** The bundled (first-party) skill source — reused by the scanner and MCP passthrough. */
@@ -51,15 +53,26 @@ export async function compose(
   const { personalities, hooks, platformPrompts, log, toolNamesForPersonality } = deps;
 
   const codingBundleSource = bundledSkillsSource();
+  // Catalog skills (unified-catalog D16) live under `<dataDir>/catalog-skills/`,
+  // so this source honours ETHOS_STATE_DIR (unlike the `ethos` default source).
+  // Community tier, because `extraSources` always is. They are invisible to
+  // every personality until allowed: `filterSkill`'s catalog rule
+  // (ingest-filter.ts, pinned by __tests__/ingest-filter.test.ts).
+  const catalogSource: ScanSource = {
+    label: CATALOG_SOURCE_LABEL,
+    dir: catalogSkillsRoot(ctx.dataDir),
+  };
   const skillPool = await new UniversalScanner({
     storage: ctx.storage,
     trustedFirstPartySources: [codingBundleSource],
+    extraSources: [catalogSource],
   }).scan();
 
   const { injectors, tools, skillsInjector, scanner } = createInjectors(personalities, {
     storage: ctx.storage,
     onSkillSkip: (skillId, reason) => log.info(`skill ${skillId} skipped: ${reason}`),
     trustedFirstPartySources: [codingBundleSource],
+    extraSources: [catalogSource],
     hooks,
     ...(toolNamesForPersonality ? { toolNamesForPersonality } : {}),
   });

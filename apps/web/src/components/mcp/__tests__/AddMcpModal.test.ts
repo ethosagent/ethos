@@ -9,12 +9,12 @@
 // same way `personality-voice-fields.test.ts` seeds its provider queries: the
 // component under test is the picker, not react-query's retry timing.
 
-import type { McpCatalogOutput } from '@ethosagent/web-contracts';
+import type { CatalogListEntry } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mcpKeys } from '../../../features/mcp/api/keys';
+import { catalogKeys } from '../../../features/catalog/api/queries';
 
 // Two browser APIs jsdom does not implement that Antd reaches for on mount:
 // the responsive observer behind `Modal`'s breakpoints, and the resize
@@ -42,12 +42,14 @@ globalThis.ResizeObserver = class {
 const startFn = vi.fn();
 const addServerFn = vi.fn();
 const validateConfigFn = vi.fn();
-const catalogFn = vi.fn();
+const listFn = vi.fn();
 
 vi.mock('../../../rpc', () => ({
   rpc: {
+    catalog: {
+      list: (...args: unknown[]) => listFn(...args),
+    },
     mcp: {
-      catalog: (...args: unknown[]) => catalogFn(...args),
       start: (...args: unknown[]) => startFn(...args),
       addServer: (...args: unknown[]) => addServerFn(...args),
       validateConfig: (...args: unknown[]) => validateConfigFn(...args),
@@ -57,69 +59,103 @@ vi.mock('../../../rpc', () => ({
 
 const { AddMcpModal, composeLocalPresetCommand, shellQuote } = await import('../AddMcpModal');
 
-const CATALOG: McpCatalogOutput = {
-  remote: [
-    {
-      name: 'context7',
-      label: 'Context7',
-      url: 'https://mcp.context7.com/mcp',
-      transport: 'streamable-http',
-      authType: 'none',
-      description: 'Up-to-date library documentation',
-      category: 'Docs & knowledge',
-    },
-    {
-      name: 'linear',
-      label: 'Linear',
-      url: 'https://mcp.linear.app/mcp',
-      transport: 'streamable-http',
-      authType: 'oauth',
-      description: 'Read and update Linear issues, projects, and cycles',
-      category: 'Productivity',
-    },
-    {
-      name: 'wolfram',
-      label: 'Wolfram',
-      url: 'https://mcp.wolframalpha.com/mcp',
-      transport: 'streamable-http',
-      authType: 'bearer',
-      description: 'Computational knowledge queries',
-      category: 'Docs & knowledge',
-    },
-  ],
-  local: [
-    {
-      name: 'filesystem',
-      description: 'Read/write local files under a required allowed path',
-      command: 'npx',
-      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-filesystem@2.2.0'],
-      envVars: [],
-      // The server takes its allowed directory positionally, not from the
-      // environment — hence argVars, not envVars.
-      argVars: ['ALLOWED_PATH'],
-      category: 'Developer tools',
-      pin: {
-        registry: 'npm',
-        package: '@modelcontextprotocol/server-filesystem',
-        version: '2.2.0',
-        integrity: 'sha512-fixture',
-      },
-    },
-    {
-      name: 'memory',
-      description: 'Key-value memory store',
-      command: 'npx',
-      args: ['-y', '--ignore-scripts', '@modelcontextprotocol/server-memory@2.1.0'],
-      envVars: ['MEMORY_FILE_PATH'],
-      argVars: [],
-      category: 'Utilities',
-      pin: {
-        registry: 'npm',
-        package: '@modelcontextprotocol/server-memory',
-        version: '2.1.0',
-        integrity: 'sha512-fixture',
-      },
-    },
+/** A remote MCP entry as `catalog.list` serves it (`id` is the preset name). */
+function remote(
+  id: string,
+  name: string,
+  url: string,
+  auth: 'none' | 'oauth' | 'bearer',
+  description: string,
+  category: string,
+): CatalogListEntry {
+  return {
+    id,
+    kind: 'mcp',
+    name,
+    description,
+    category,
+    publisher: name,
+    tier: 'verified',
+    pin: { type: 'remote', url, transport: 'streamable-http' },
+    capabilities: { network: [], auth, env: [], filesystem: 'none', shell: false },
+    license: null,
+    reviewedAt: '2026-11-05',
+    installed: false,
+    action: { type: 'add', name: id, url },
+  };
+}
+
+function local(
+  id: string,
+  description: string,
+  category: string,
+  pkg: string,
+  version: string,
+  mcp: { argVars: string[]; envVars: string[] },
+): CatalogListEntry {
+  return {
+    id,
+    kind: 'mcp',
+    name: id,
+    description,
+    category,
+    publisher: 'test',
+    tier: 'verified',
+    pin: { type: 'npm', package: pkg, version, integrity: 'sha512-fixture' },
+    capabilities: { network: [], auth: 'none', env: [], filesystem: 'none', shell: false },
+    license: 'MIT',
+    reviewedAt: '2026-11-05',
+    mcp: { argsAfterSpec: [], ...mcp },
+    installed: false,
+    action: { type: 'cli', command: `ethos catalog install ${id}` },
+  };
+}
+
+const CATALOG = {
+  version: 1 as const,
+  entries: [
+    remote(
+      'context7',
+      'Context7',
+      'https://mcp.context7.com/mcp',
+      'none',
+      'Up-to-date library documentation',
+      'Docs & knowledge',
+    ),
+    remote(
+      'linear',
+      'Linear',
+      'https://mcp.linear.app/mcp',
+      'oauth',
+      'Read and update Linear issues, projects, and cycles',
+      'Productivity',
+    ),
+    remote(
+      'wolfram',
+      'Wolfram',
+      'https://mcp.wolframalpha.com/mcp',
+      'bearer',
+      'Computational knowledge queries',
+      'Docs & knowledge',
+    ),
+    // The server takes its allowed directory positionally, not from the
+    // environment — hence argVars, not envVars.
+    local(
+      'filesystem',
+      'Read/write local files under a required allowed path',
+      'Developer tools',
+      '@modelcontextprotocol/server-filesystem',
+      '2.2.0',
+      { argVars: ['ALLOWED_PATH'], envVars: [] },
+    ),
+    local(
+      'memory',
+      'Key-value memory store',
+      'Utilities',
+      '@modelcontextprotocol/server-memory',
+      '2.1.0',
+      { argVars: [], envVars: ['MEMORY_FILE_PATH'] },
+    ),
   ],
 };
 
@@ -131,7 +167,7 @@ function mount(): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  queryClient.setQueryData(mcpKeys.catalog(), CATALOG);
+  queryClient.setQueryData(catalogKeys.list('mcp'), CATALOG);
   act(() => {
     root.render(
       createElement(

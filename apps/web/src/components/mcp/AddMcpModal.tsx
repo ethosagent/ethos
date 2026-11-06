@@ -19,17 +19,15 @@ import {
   Typography,
 } from 'antd';
 import { useState } from 'react';
-import { useMcpCatalog } from '../../features/mcp/api/queries';
+import { useMcpPresets } from '../../features/mcp/api/queries';
 import { authBadgeLabel, buildRemoteSubmission, groupByCategory } from '../../features/mcp/catalog';
 import { rpc } from '../../rpc';
 
 type Step = 'preset' | 'connecting' | 'done' | 'error';
 
-// The catalog is SERVED (`rpc.mcp.catalog`), never imported: the preset data
-// lives in `@ethosagent/tools-mcp`, a Node-only package whose stdio transport
-// spawns child processes. `apps/web` importing it would pull that into the
-// browser bundle — plan gap G5, guarded by
-// `extensions/tools-mcp/src/__tests__/browser-boundary.test.ts`.
+// The presets are SERVED (`catalog.list`), never imported from
+// `@ethosagent/tools-mcp` (Node-only; guarded by
+// `extensions/tools-mcp/src/__tests__/browser-boundary.test.ts`).
 
 /**
  * POSIX single-quote: wrap in single quotes, and end/re-open the quote around
@@ -121,9 +119,9 @@ export function AddMcpModal({ open, onClose }: Props) {
   const [localPresetArgs, setLocalPresetArgs] = useState<Record<string, string>>({});
   const [resultLimit, setResultLimit] = useState<number | null>(null);
 
-  const catalog = useMcpCatalog(open);
-  const remotePresets: McpRemotePresetInfo[] = catalog.data?.remote ?? [];
-  const localPresets: McpLocalPresetInfo[] = catalog.data?.local ?? [];
+  const catalog = useMcpPresets(open);
+  const remotePresets: McpRemotePresetInfo[] = catalog.remote;
+  const localPresets: McpLocalPresetInfo[] = catalog.local;
   const selectedRemote = remotePresets.find((p) => p.name === preset);
   const selectedLocal = localPresets.find((p) => p.name === localPreset);
 

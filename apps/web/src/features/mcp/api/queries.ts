@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { rpc } from '../../../rpc';
+import { useCatalog } from '../../catalog/api/queries';
+import { presetsFromCatalog } from '../catalog';
 import { mcpKeys } from './keys';
 
 export function useMcpList(enabled?: boolean) {
@@ -11,17 +14,14 @@ export function useMcpList(enabled?: boolean) {
 }
 
 /**
- * The curated preset catalog. Static server-side data — the presets are
- * compiled into `@ethosagent/tools-mcp` and only change when the binary does,
- * so it never needs refetching within a session.
+ * The MCP presets (remote and local) for the Add-MCP modal and the onboarding
+ * Connectors step: `catalog.list({ kind: 'mcp' })` through `presetsFromCatalog`.
+ * Temporary with it — see `presetsFromCatalog`.
  */
-export function useMcpCatalog(enabled?: boolean) {
-  return useQuery({
-    queryKey: mcpKeys.catalog(),
-    queryFn: () => rpc.mcp.catalog(),
-    staleTime: Number.POSITIVE_INFINITY,
-    enabled,
-  });
+export function useMcpPresets(enabled?: boolean) {
+  const catalog = useCatalog('mcp', enabled);
+  const presets = useMemo(() => presetsFromCatalog(catalog.data?.entries ?? []), [catalog.data]);
+  return { ...presets, isLoading: catalog.isLoading, isError: catalog.isError };
 }
 
 export function useMcpPersonalityServers(personalityId: string) {

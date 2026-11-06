@@ -20,6 +20,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { CatalogBrowser } from '../components/catalog/CatalogBrowser';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { learningKeys } from '../features/learning/api/keys';
 import { personalityKeys } from '../features/personalities/api/keys';
@@ -27,7 +28,7 @@ import {
   usePersonalityList,
   usePersonalitySkillsList,
 } from '../features/personalities/api/queries';
-import { useCreateFlag } from '../hooks/useCreateFlag';
+import { useCatalogModal } from '../hooks/useCatalogModal';
 import {
   type PersonalityAttachment,
   splitByAttachment,
@@ -357,13 +358,10 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
 
-  // P5 — StageHeader's "+ New Skill" action navigates here with
-  // `?create=1`; this opens the same create modal the page's own button
-  // does.
-  const shouldCreate = useCreateFlag();
-  useEffect(() => {
-    if (shouldCreate) setCreateOpen(true);
-  }, [shouldCreate]);
+  // P5 — StageHeader's "+ New Skill" action navigates here with `?create=1`;
+  // `useCatalogModal` opens the catalog browser, whose manual link opens the
+  // create modal.
+  const catalogModal = useCatalogModal(() => setCreateOpen(true));
 
   const skills = skillsQuery.data?.skills ?? [];
 
@@ -406,7 +404,7 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0 8px' }}>
-        <button type="button" className="page-action-btn" onClick={() => setCreateOpen(true)}>
+        <button type="button" className="page-action-btn" onClick={catalogModal.show}>
           + New Skill
         </button>
       </div>
@@ -490,6 +488,7 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
         </div>
       )}
 
+      <CatalogBrowser kind="skill" mode="modal" {...catalogModal.modalProps} />
       {createOpen ? (
         <CreateSkillModal open={createOpen} onClose={() => setCreateOpen(false)} />
       ) : null}

@@ -6,7 +6,7 @@ import { rpc } from '../../rpc';
 // "start an MCP OAuth flow and wait for it to finish" were the one working
 // copy of this in the codebase; the new inline catalog section needs the
 // same thing, so this is a pure refactor first (same behavior, new internal
-// shape), consumed by both `ConnectMcpModal` and `McpCatalogSection`.
+// shape), consumed by both `ConnectMcpModal` and `CatalogBrowser`.
 // `PersonalityDetail.tsx` carries its own separate copy for a different job
 // (re-authenticate an already-attached server) and is deliberately left
 // alone — plan §3 "out of scope".
@@ -22,7 +22,7 @@ export interface UseMcpOAuthPopupOptions {
    * Threaded through to `rpc.mcp.start()` as `personalityId`, when set.
    * `install-flow.ts` uses it only to scope token storage — it never
    * attaches a personality to the server — so omitting it (as
-   * `McpCatalogSection` does) keeps a one-click catalog registration
+   * `CatalogBrowser` does) keeps a one-click catalog registration
    * attach-free, per product decision 1 in the plan.
    */
   personalityId?: string;

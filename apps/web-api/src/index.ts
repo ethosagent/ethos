@@ -39,6 +39,8 @@ import {
   type FunnelTracker,
   hardlineReason,
   type IdentityMap,
+  installCatalogPlugin,
+  installCatalogSkill,
   type MemoryBundle,
   notPermittedRefusal,
   type ReplayAndResolveResult,
@@ -1607,6 +1609,25 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     listMcpNames: async () => (await sharedMcpJsonStore.read()).map((c) => c.name),
     listInstalledPlugins: async () => (await pluginsService.list()).plugins,
     skillInstalled: catalogSkillInstalled(storage, opts.dataDir),
+    // `catalog.install`: composed in wiring (packages/wiring/src/catalog-install.ts),
+    // so this app imports no extension. Neither installer grants anything (D9).
+    installPlugin: (entry) =>
+      installCatalogPlugin(entry, {
+        installPinned: (pin, o) =>
+          pluginsService.installCatalogPin(pin, { refuseScan: o.refuseScan, tier: o.tier }),
+      }),
+    installSkill: (entry) => installCatalogSkill(entry, { storage, dataDir: opts.dataDir }),
+    personalities: {
+      get: (id) => {
+        const d = opts.personalities.describe(id);
+        if (!d) return undefined;
+        return { builtin: d.builtin, allow: d.config.skills?.global_ingest?.allow ?? [] };
+      },
+      // The registry's own update path; the patch names only the allow list.
+      setAllow: async (id, allow) => {
+        await personalitiesService.update(id, { skills: { global_ingest: { allow } } });
+      },
+    },
   });
   // Recipes — the install pipeline's orchestration half. Every write it makes
   // goes through the services above, so a recipe cannot reach past a refusal

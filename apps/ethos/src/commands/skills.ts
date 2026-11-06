@@ -653,13 +653,35 @@ async function locateSlugSubpath(tmpDir: string): Promise<string | undefined> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The clawhub version the `npx` fallback runs. An exact version replaces the
+ * floating `clawhub@latest` tag (unified-catalog §6.5, the same class as the
+ * Phase 0 preset pins in extensions/tools-mcp/src/presets.ts `PINS`).
+ *
+ * Verified 2026-11-05: `npm view clawhub version` printed 0.25.1.
+ *
+ * To bump it: run `npm view clawhub version`, read the release, edit this
+ * constant and the date above. Limitation: there is NO integrity pin. `npx`
+ * fetches this version from the registry without checking a recorded sha512,
+ * unlike plugin installs (`installPackedTarball`), so a compromised registry
+ * could still serve other bytes for 0.25.1. Installing clawhub globally
+ * (`npm i -g clawhub`) skips `npx` entirely. Pinned by
+ * __tests__/skills-clawhub-pin.test.ts.
+ */
+export const CLAWHUB_VERSION = '0.25.1';
+
+/** argv for the `npx` fallback: an exact version, never a dist-tag. */
+export function clawhubNpxArgs(extraArgs: string[]): string[] {
+  return [`clawhub@${CLAWHUB_VERSION}`, ...extraArgs];
+}
+
 function runClawhub(extraArgs: string[]) {
-  // Prefer a globally-installed `clawhub`, otherwise fall back to `npx clawhub@latest`.
+  // Prefer a globally-installed `clawhub`, otherwise `npx clawhub@<CLAWHUB_VERSION>`.
   const direct = spawnSync('clawhub', ['--version'], { stdio: 'ignore' });
   if (direct.status === 0) {
     return spawnSync('clawhub', extraArgs, { stdio: 'inherit' });
   }
-  return spawnSync('npx', ['clawhub@latest', ...extraArgs], { stdio: 'inherit' });
+  return spawnSync('npx', clawhubNpxArgs(extraArgs), { stdio: 'inherit' });
 }
 
 async function listInstalledSlugs(): Promise<string[]> {

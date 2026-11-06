@@ -44,6 +44,7 @@
   "dependencies": {
     "@ethosagent/a2a": "workspace:*",
     "@ethosagent/call-log": "workspace:*",
+    "@ethosagent/catalog": "workspace:*",
     "@ethosagent/cas-fs": "workspace:*",
     "@ethosagent/config": "workspace:*",
     "@ethosagent/constitution": "workspace:*",
