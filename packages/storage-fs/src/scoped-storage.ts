@@ -133,13 +133,13 @@ const SHARED_AUDIENCE_DENY_REASON = 'shared-audience memory';
  * the other personality filesystem boundary. It is not shared code because
  * `@ethosagent/core` may not import `@ethosagent/storage-fs` at runtime
  * (storage-fs is the security kernel; core is not, and core depends on it
- * only as a devDependency). A THIRD copy —
- * `containedPath`/`followFirstSymlink` in
- * `packages/wiring/src/backup/restore.ts` — guards the backup restore's
- * destination paths under the Ethos data directory, duplicated for the same
- * reason: `packages/wiring` is a different layer. A FOURTH is `reachable` in
+ * only as a devDependency). `containedPath` in
+ * `packages/wiring/src/backup/restore.ts` is NOT a copy: wiring may
+ * import this package, so it calls this file's exported
+ * `followFirstSymlink`. A THIRD copy is `reachable` in
  * `apps/web-api/src/services/documents.service.ts`, guarding the
- * operator-supplied Documents root. **All four must change together.**
+ * operator-supplied Documents root.
+ * **All three must change together.**
  * Layers 1b (`writeDeny`) and 1c (`denyWhen`) exist in exactly two of them —
  * this file and `ScopedFsImpl.checkReach` (`writeDenyPaths`, `denyWhen`) — the
  * two boundaries a personality's turn reads and writes through; those two must
@@ -540,9 +540,16 @@ function matchPrefix(path: string, prefixes: readonly string[]): string | null {
  * above it are the operator's own layout (`/var` → `/private/var` on macOS),
  * not an escape.
  *
+ * `ENOENT` — and only `ENOENT` — ends the walk (`throwIfNoEntry: false`
+ * reports it as `undefined`). EVERY other errno propagates, `ENOTDIR`
+ * included: a boundary check that reads "I could not look" as "nothing to
+ * see" is fail-open. Exported so the backup restore's `containedPath`
+ * (`packages/wiring/src/backup/restore.ts`) walks with this one function and
+ * turns a thrown errno into a refusal.
+ *
  * Mirror of `followFirstSymlink` in `packages/core/src/scoped/scoped-fs.ts`.
  */
-function followFirstSymlink(prefixRoot: string, target: string): string | null {
+export function followFirstSymlink(prefixRoot: string, target: string): string | null {
   const rel = relative(prefixRoot, target);
   if (rel === '') return null;
 

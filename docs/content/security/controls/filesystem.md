@@ -51,10 +51,9 @@ The same walk exists as four hand-maintained copies, because the layer model sto
 |---|---|
 | `ScopedFsImpl.checkReach` (`packages/core/src/scoped/scoped-fs.ts`) | File tools |
 | `ScopedStorage.check` (`packages/storage-fs/src/scoped-storage.ts`) | Scoped `Storage` |
-| `containedPath` / `followFirstSymlink` (`packages/wiring/src/backup/restore.ts`) | Backup restore destinations |
 | `DocumentsService.reachable` (`apps/web-api/src/services/documents.service.ts`) | The web Documents root |
 
-A fix to one copy that is not applied to the others leaves the escape open on whichever path the caller takes. The comment above `followFirstSymlink` in `scoped-fs.ts` records the rule that all four change together.
+A fix to one copy that is not applied to the others leaves the escape open on whichever path the caller takes. The comment above `followFirstSymlink` in `scoped-fs.ts` records the rule that all three change together. Backup restore destinations (`containedPath` in `packages/wiring/src/backup/restore.ts`) are checked by the `ScopedStorage` walk, `followFirstSymlink`, exported from `@ethosagent/storage-fs`, so they are not a fourth copy.
 
 What this does **not** close is the check-then-open race: an attacker who can swap a path between the walk and the `open()` can still redirect the read. Closing it needs `openat`-style directory handles with no-follow semantics, which Node does not expose. No code addresses it; treat it as container-level remediation.
 

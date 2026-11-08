@@ -14,7 +14,7 @@ export { InMemoryAttachmentCache } from './in-memory-attachment-cache';
 export { InMemoryStorage } from './in-memory-storage';
 export { isSafePathSegment, resolveScopedPath } from './path-safety';
 export { PersonalityScopedSecrets } from './personality-scoped-secrets';
-export { ScopedStorage, type ScopedStorageScope } from './scoped-storage';
+export { followFirstSymlink, ScopedStorage, type ScopedStorageScope } from './scoped-storage';
 export {
   FileSecretsResolver,
   type FileSecretsResolverOptions,

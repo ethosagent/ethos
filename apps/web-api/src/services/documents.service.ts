@@ -440,8 +440,8 @@ export class DocumentsService {
     // `write`/`createFolder`. Every other errno (EACCES, ENOTDIR, ELOOP, …) is
     // "I could not look", and a boundary that reads that as "nothing to see"
     // fails open, so it refuses. Same rule as `followFirstSymlink` in
-    // packages/core/src/scoped/scoped-fs.ts, packages/storage-fs/src/scoped-storage.ts
-    // and packages/wiring/src/backup/restore.ts; pinned by
+    // packages/core/src/scoped/scoped-fs.ts and packages/storage-fs/src/scoped-storage.ts
+    // (the latter also used by packages/wiring/src/backup/restore.ts); pinned by
     // apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts.
     const rel = relative(workdir, target);
     if (rel !== '') {

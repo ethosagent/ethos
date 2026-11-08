@@ -21,6 +21,8 @@ Material changes to `@ethosagent/cli` and its workspace packages. Release-versio
 
 - **One `minimalHostEnv`.** The host-command environment allowlist (V-ES-8, UBP-048) lived in three identical copies: `packages/core/src/scoped/scoped-process.ts`, `extensions/tools-process/src/spawn.ts` and `extensions/execution-local/src/index.ts` (verified equal: `PASSTHROUGH_ENV_KEYS`, `PASSTHROUGH_ENV_PREFIXES`, `SECRET_ENV_NAME`, `SECRET_ENV_VALUE`, `isPassthroughEnvKey`, `minimalHostEnv`, comments stripped). The core copy, already exported from `@ethosagent/core`, is now the only one; the two extensions import it (`execution-local` and `tools-process` gain a `@ethosagent/core` dependency). The allowlist and the credential-name and by-value filters are unchanged; pinned by `packages/core/src/__tests__/scoped-process-lifetime.test.ts`, `extensions/tools-process/src/__tests__/spawn.test.ts` and `extensions/execution-local/src/__tests__/local.test.ts`.
 
+- **Backup restore uses the `ScopedStorage` symlink walk.** `packages/wiring/src/backup/restore.ts` carried a copy of `followFirstSymlink` (identical, comments stripped, to `packages/storage-fs/src/scoped-storage.ts`) on the stale ground that wiring cannot import storage-fs; wiring already depends on it. `@ethosagent/storage-fs` now exports `followFirstSymlink` (no behaviour change in the kernel) and `restore.ts` imports it. The `packages/core/src/scoped/scoped-fs.ts` copy stays (core cannot import storage-fs at runtime) and now carries one deliberate difference, `normalize()` on the rewritten path. Pinned by the symlinked-parent cases in `packages/wiring/src/backup/__tests__/` and `packages/storage-fs/src/__tests__/scoped-storage.test.ts`.
+
 ## 0.9.0 — 2026-09-29
 
 ### Fixed

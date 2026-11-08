@@ -11,9 +11,9 @@ import { makeStubPersonalityRegistry } from '../test-helpers';
 
 // `reachable`'s symlink walk must fail CLOSED: an `lstat` that errors with
 // anything but ENOENT is "I could not look", not "nothing to see". The same
-// rule its three siblings enforce (`followFirstSymlink` in
-// packages/core/src/scoped/scoped-fs.ts, packages/storage-fs/src/scoped-storage.ts
-// and packages/wiring/src/backup/restore.ts). An unreadable segment is simulated
+// rule its siblings enforce (`followFirstSymlink` in
+// packages/core/src/scoped/scoped-fs.ts and packages/storage-fs/src/scoped-storage.ts,
+// the latter also used by packages/wiring/src/backup/restore.ts). An unreadable segment is simulated
 // by making `lstat` throw EACCES for exactly one path; every other call goes to
 // the real implementation.
 

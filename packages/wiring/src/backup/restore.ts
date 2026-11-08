@@ -89,17 +89,17 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type Database from '@ethosagent/sqlite';
+import { followFirstSymlink } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { acquireDatabaseLockGate, DatabaseInUseError } from '../sessions-repair/gate';
 import { classifyHolder, currentBootId } from './holder-identity';
@@ -260,57 +260,12 @@ function uncheckableError(rel: string, err: unknown): EthosError {
 }
 
 /**
- * Walk `target` one segment at a time below `root`, `lstat`ing each. Returns
- * the path rewritten through the FIRST symbolic link found (that link's target
- * plus the remaining segments), or null when the walk crosses no link.
- *
- * Per-segment, not leaf-only: a symlinked PARENT escapes the data directory
- * behind a perfectly ordinary leaf, and that is the case a resolved-prefix test
- * on its own cannot see. A missing segment is not a link — `lstat` finding
- * nothing is the normal case for a file this restore has not written yet, and
- * nothing can live below a segment that is absent, so the walk stops. Only the
- * portion BELOW `root` is walked: segments above it are the operator's own
- * layout (`/var` → `/private/var` on macOS), not an escape.
- *
- * `ENOENT` — and only `ENOENT` — ends the walk: that is what
- * `throwIfNoEntry: false` reports as `undefined`. EVERY other errno propagates,
- * `ENOTDIR` included, and `containedPath` turns it into a refusal. A boundary
- * check that reads "I could not look" as "nothing to see" is fail-open: an
- * unreadable intermediate directory (`EACCES`) would otherwise be judged
- * contained. `ENOTDIR` could be argued to end the walk — nothing hides below a
- * non-directory — but the two siblings throw on it, and a third copy that
- * diverges on one errno is exactly what the must-change-together rule exists to
- * prevent.
- *
- * Deliberate mirror of `followFirstSymlink` in
- * `packages/core/src/scoped/scoped-fs.ts` and
- * `packages/storage-fs/src/scoped-storage.ts` — the same guarantee at a third
- * boundary. `packages/wiring` may not import either at runtime, and the two
- * that exist are already duplicated on purpose for that reason.
- */
-function followFirstSymlink(root: string, target: string): string | null {
-  const rel = relative(root, target);
-  if (rel === '') return null;
-
-  const segments = rel.split(sep);
-  let cursor = root;
-  for (let i = 0; i < segments.length; i++) {
-    cursor = join(cursor, segments[i] ?? '');
-    const stat = lstatSync(cursor, { throwIfNoEntry: false });
-    if (stat === undefined) return null;
-    if (!stat.isSymbolicLink()) continue;
-    const linkTarget = resolve(dirname(cursor), readlinkSync(cursor));
-    return resolve(join(linkTarget, ...segments.slice(i + 1)));
-  }
-  return null;
-}
-
-/**
  * The absolute path of `rel` under `root`, refused unless it really stays
  * inside it. Lexical containment first (a `..` that survived the archive
  * guard), then symbolic containment on the segments that exist.
  *
- * Like the boundaries it mirrors, this closes MISDIRECTION, not TOCTOU: a path
+ * The walk is `followFirstSymlink` from `@ethosagent/storage-fs` (below `root`
+ * only; every errno but ENOENT propagates). Like the boundaries it mirrors, this closes MISDIRECTION, not TOCTOU: a path
  * swapped between this walk and the write that follows still wins.
  *
  * A walk that cannot complete is a refusal, not a pass — and the callers are

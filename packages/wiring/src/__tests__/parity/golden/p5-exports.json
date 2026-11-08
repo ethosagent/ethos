@@ -3146,6 +3146,7 @@
       "defaultAlwaysDeny": "value",
       "ethosStateDirs": "value",
       "foldDenyKey": "value",
+      "followFirstSymlink": "value",
       "isSafePathSegment": "value",
       "loadDotEnv": "value",
       "personalityDefinitionFloor": "value",

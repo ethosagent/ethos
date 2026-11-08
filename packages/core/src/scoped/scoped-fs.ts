@@ -603,16 +603,14 @@ function reachesStateDirThroughLink(
 // rule enforced at the other personality filesystem boundary. It is not shared
 // code because `@ethosagent/core` may not import `@ethosagent/storage-fs` at
 // runtime (storage-fs is the security kernel; core is not, and core depends on it
-// only as a devDependency — ARCHITECTURE.md §II). A THIRD copy —
-// `containedPath`/`followFirstSymlink` in `packages/wiring/src/backup/restore.ts` —
-// guards the backup restore's destination paths under the Ethos data directory,
-// duplicated for the same reason: `packages/wiring` is a different layer. A
-// FOURTH lives in `reachable` in `apps/web-api/src/services/documents.service.ts`,
+// only as a devDependency — ARCHITECTURE.md §II). The backup restore's
+// `containedPath` (`packages/wiring/src/backup/restore.ts`) is not a copy: it
+// calls the storage-fs walk (`followFirstSymlink`, exported). A THIRD copy
+// lives in `reachable` in `apps/web-api/src/services/documents.service.ts`,
 // guarding the operator-supplied Documents root.
-// **All four must change together:** a fix applied to one boundary and not the
+// **All three must change together:** a fix applied to one boundary and not the
 // others leaves the escape open on whichever path the caller happens to take.
-// The reciprocal notes live in `scoped-storage.ts`'s class doc and in
-// `restore.ts`'s `followFirstSymlink` doc.
+// The reciprocal note lives in `scoped-storage.ts`'s class doc.
 //
 // The fourth copy walks with async `lstat` from `node:fs/promises`, so an
 // `lstatSync` grep does not find it. Its errno rule is the same as the other
