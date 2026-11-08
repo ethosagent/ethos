@@ -8,9 +8,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, it } from 'vitest';
-import { assertParity, type HermeticEnv, withHermeticEnv } from './harness';
+import { assertParity, type HermeticEnv, REPO_ROOT, withHermeticEnv } from './harness';
 
-const REPO_ROOT = join(import.meta.dirname, '../../../../..');
 const CLI_ENTRY = join(REPO_ROOT, 'apps/ethos/src/index.ts');
 
 let env: HermeticEnv;

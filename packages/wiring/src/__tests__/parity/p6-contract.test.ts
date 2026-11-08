@@ -2,7 +2,8 @@
 // `z.toJSONSchema`) of its input and output, plus its route and meta. Catches contract
 // drift when `router.ts` / `schemas.ts` are split.
 
-import { readdirSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 // Relative: wiring does not depend on web-contracts, so it has no workspace link.
@@ -57,15 +58,17 @@ describe('P6 oRPC contract parity', () => {
     );
     assertParity('p6-contract-index', index);
     for (const [ns, defs] of Object.entries(byNamespace)) assertParity(`p6-contract-${ns}`, defs);
-    if (!updating()) {
-      const onDisk = readdirSync(GOLDEN_DIR)
-        .filter((f) => f.startsWith('p6-contract-') && f !== 'p6-contract-index.json')
-        .sort();
-      expect(onDisk).toEqual(
-        Object.keys(byNamespace)
-          .map((ns) => `p6-contract-${ns}.json`)
-          .sort(),
-      );
+    const expected = Object.keys(byNamespace)
+      .map((ns) => `p6-contract-${ns}.json`)
+      .sort();
+    const onDisk = readdirSync(GOLDEN_DIR)
+      .filter((f) => f.startsWith('p6-contract-') && f !== 'p6-contract-index.json')
+      .sort();
+    if (updating()) {
+      // A removed namespace leaves an orphan fixture; regenerate means delete it.
+      for (const f of onDisk) if (!expected.includes(f)) rmSync(join(GOLDEN_DIR, f));
+    } else {
+      expect(onDisk).toEqual(expected);
     }
   });
 });

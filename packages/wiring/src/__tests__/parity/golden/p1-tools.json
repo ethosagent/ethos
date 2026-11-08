@@ -105,6 +105,7 @@
   },
   "tools": [
     {
+      "available": true,
       "description": "Ask the assistant. Runs one full agent turn — it has the memory, the files, the tools and the permissions that you do not — and returns its answer as text for you to speak. Use it for anything factual, anything about this person, and anything that changes or looks up something.",
       "maxResultChars": 4000,
       "name": "agent_consult",
@@ -123,6 +124,7 @@
       "toolset": "voice"
     },
     {
+      "available": true,
       "description": "Send a prompt to all live agents in the mesh and return their combined responses. Useful for getting multiple perspectives or running parallel reviews.",
       "maxResultChars": 60000,
       "name": "broadcast_to_agents",
@@ -141,6 +143,30 @@
       "toolset": "delegation"
     },
     {
+      "available": false,
+      "description": "Place an outbound phone call to an E.164 number and connect it to the live voice agent. This dials a real phone number and always requires explicit approval before the call is placed.",
+      "maxResultChars": 512,
+      "name": "call",
+      "schema": {
+        "properties": {
+          "room_name": {
+            "description": "Optional LiveKit room to bridge the call into. Defaults to a per-call room.",
+            "type": "string"
+          },
+          "to_number": {
+            "description": "Destination phone number in E.164 format (e.g. +15551234567).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to_number"
+        ],
+        "type": "object"
+      },
+      "toolset": "voice"
+    },
+    {
+      "available": true,
       "description": "Ask the user a structured question mid-turn, then wait for their answer before continuing.\n\nWHEN TO USE\n- You need information you can't reasonably infer from context\n- There is a small set of valid choices and you want to constrain the answer (use `options`)\n- The cost of guessing wrong is high (modifying many files, calling external APIs)\n\nWHEN NOT TO USE\n- Confirmations the user already gave (\"you said X, are you sure?\")\n- Trivia the user clearly knows but didn't include\n- As a substitute for reading their previous message carefully\n- Avoid in long autonomous loops — clarify forces a pause; use it sparingly",
       "maxResultChars": 2000,
       "name": "clarify",
@@ -182,6 +208,7 @@
       "toolset": "interactive"
     },
     {
+      "available": true,
       "description": "Spawn a sub-agent to handle a specific task and return its output. The sub-agent runs with its own session and optionally a different personality. Use when a task is clearly separable and benefits from a fresh context or specialist personality. Maximum spawn depth: 3.",
       "maxResultChars": 20000,
       "name": "delegate_task",
@@ -239,6 +266,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Dispatch multiple capability-scoped tasks across mesh peers in parallel. Each task picks the best available specialist and retries alternate peers on failure.",
       "maxResultChars": 60000,
       "name": "dispatch_team",
@@ -278,6 +306,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Render a typed UI card on the web surface. Cards are additive: always give the full answer in prose too — a card never replaces the explanation.\n\nPick the kind that matches the shape of the data:\n- text: { title?, text } — markdown body, max 8000 chars.\n- code: { title?, language?, code } — unfenced source, max 16000 chars.\n- alert: { severity: info|success|warning|error, title?, message } — message max 500 chars.\n- detail: { title, status?, fields[{label,value}] } — one record, 1-12 fields.\n- item_list: { title?, items[{id,name,status?,meta?}] } — a set of like things, 1-50 items; id is a stable identifier, never a URL.\n- data_table: { title?, caption?, columns[{key,label,numeric?}], rows[] keyed by column key, totals? } — max 8 columns x 50 rows.\n- metric_chart: { title?, suggestedViz?, xLabel?, yLabel?, series[{name,points[{x,y}]}] } — 1-4 series, max 200 points each.\n- recommend_actions: { question?, actions[{label,prompt}] } — 1-3 follow-ups; emit last in a turn and only when a genuine next step exists.\n\nPayloads are data, never presentation: no colors, no HTML, no chart specs, no URLs. The client decides how it looks.",
       "maxResultChars": 200,
       "name": "emit_card",
@@ -311,6 +340,7 @@
       "toolset": "ui"
     },
     {
+      "available": true,
       "description": "Ask a public AI answer engine (chatgpt, perplexity, grok, gemini, microsoft) a question and get its answer with the sources it cited. Use for 'what does the AI-answer layer say about X' questions, not for general web search. Each engine needs its own vendor credential. An argument an engine does not support is accepted and not sent. perplexity ignores `require_search` — its API has no per-request switch; the result still reports whether it searched. grok ignores `country` and `search_context_size` — xAI rejects a request carrying either, so they are never sent. gemini ignores `country`, `search_context_size` and `require_search`. Google's terms forbid storing, analysing or learning from Gemini's search-grounded answers: ask and read them, do not persist or score them. microsoft answers are Bing-grounded: Bing's terms require showing its citations as links near the answer and saying they are web search results, and forbid storing or indexing them.",
       "maxResultChars": 30000,
       "name": "engine_ask",
@@ -369,6 +399,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Load the full instructions for a named skill. Skills are listed in the ## Available Skills section of the system prompt. Always call this before executing a skill to get the complete instructions.",
       "maxResultChars": null,
       "name": "get_skill",
@@ -388,6 +419,7 @@
       "toolset": null
     },
     {
+      "available": true,
       "description": "Search Console Search Analytics for one property: the queries people typed, the pages they landed on, and clicks / impressions / CTR / average position for each. Defaults to the last 28 days ending 3 days ago (the API lags 2-3 days). Pass a siteUrl exactly as gsc_sites printed it.",
       "maxResultChars": 20000,
       "name": "gsc_queries",
@@ -441,6 +473,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "List the Google Search Console properties this service account can read, with each one's permission level. Run this first: gsc_queries needs the exact siteUrl string this returns. Requires a Google Search Console service-account credential.",
       "maxResultChars": 20000,
       "name": "gsc_sites",
@@ -451,6 +484,57 @@
       "toolset": "web"
     },
     {
+      "available": false,
+      "description": "Generate an image from a text prompt using DALL-E 3 or Replicate Flux. Returns the file path, dimensions, cost, and provider used. Requires OPENAI_API_KEY or REPLICATE_API_TOKEN.",
+      "maxResultChars": 1000,
+      "name": "image_generate",
+      "schema": {
+        "properties": {
+          "output_path": {
+            "description": "File path to save the image (default: ~/.ethos/generated/<timestamp>.png)",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Text description of the image to generate",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Provider to use (default: auto — prefers DALL-E when both keys are set)",
+            "enum": [
+              "openai-dalle",
+              "replicate-flux",
+              "auto"
+            ],
+            "type": "string"
+          },
+          "quality": {
+            "description": "Image quality (default: standard)",
+            "enum": [
+              "standard",
+              "hd"
+            ],
+            "type": "string"
+          },
+          "size": {
+            "description": "Image dimensions (default: 1024x1024)",
+            "enum": [
+              "512x512",
+              "1024x1024",
+              "1024x1792",
+              "1792x1024"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "toolset": "image"
+    },
+    {
+      "available": true,
       "description": "Soft-delete the task by setting status=archived. The audit trail is preserved; use this instead of deletion.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_archive",
@@ -468,6 +552,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Set the assignee (personality id or \"human:<name>\"). Pass null to unassign.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_assign",
@@ -491,6 +576,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "End the open run with outcome=blocked, set status=blocked. Reason is recorded as a comment for context. Optional `kind` categorizes why (dependency/needs_input/capability/transient) — repeated blocks with the same `kind` in a row (no successful completion in between) auto-route the task to needs_revision instead of looping forever.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_block",
@@ -522,6 +608,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Append a comment to a task. Append-only; edits happen by adding new comments.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_comment",
@@ -543,6 +630,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "End the open run with outcome=completed, set status=done.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_complete",
@@ -564,6 +652,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Create a new durable task. Returns { task_id, status }. idempotency_key turns the call into a lookup-by-key on retry: if a task already exists with that key, the existing task is returned and the rest of this call (title, body, parents, etc.) is IGNORED. Only reuse a key when you mean \"give me back the same task\" — never to update fields.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_create",
@@ -620,6 +709,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Create a top-level GOAL. A goal is a kanban task with no assignee — the goal itself is never executed; its children are. Use this when the human gives you a multi-part objective, then call `kanban_create` once per child sub-task with `parents=[goal_id]` and `assignee=<specialist>`. Returns { task_id, status }.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_create_goal",
@@ -647,6 +737,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Create a whole swarm DAG in one atomic call: a root/blackboard task (immediately done, body = goal) + one worker task per entry in `workers` (parents=[root]) + an optional verifier task (parents=every worker) + an optional synthesizer task (parents=[verifier], or every worker if no verifier was given). All-or-nothing — a failure partway through creates nothing. Omit verifier_personality/synthesizer_personality to skip that tier. Returns { root_id, worker_ids, verifier_id, synthesizer_id }.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_create_swarm",
@@ -695,6 +786,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Ask the auxiliary kanban_decomposer model to propose child sub-tasks for a parent task, then create each proposed child with parents=[task_id]. Requires an `auxiliary.kanban_decomposer` model configured in wiring — without one this returns a clear execution_failed error. NOT one atomic transaction: if the auxiliary LLM call fails (or returns an unparseable response), no children are created. If the LLM call succeeds but an individual child create fails partway through, this returns a partial-success result — children_created lists what was actually made, failed_child names the one that errored, and not_attempted lists the rest. Use kanban_archive to clean up unwanted children, or retry.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_decompose",
@@ -721,6 +813,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_heartbeat",
@@ -741,6 +834,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Add a parent → child edge. Rejected with a cycle error if it would close one. Use to express \"X must finish before Y\".\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_link",
@@ -762,6 +856,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "List tasks (default 100, hard max 1000). Filters (assignee, status, parent_id, q) AND together. q is an FTS5 query over title+body+comments.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_list",
@@ -800,6 +895,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Full view of one task: comments, last 10 runs, last 20 events. Use before deciding next action on a long-lived task.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_show",
@@ -817,6 +913,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Flip a blocked task to ready (if all prerequisite tasks are done) or todo (if any prerequisite is still pending).\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_unblock",
@@ -834,6 +931,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Set a task to a new status. Setting status=\"running\" auto-opens a task run; use kanban_complete / kanban_block to close it. It cannot set \"done\": finish a task with kanban_complete.\n\nWHEN TO USE\n- Work that must survive a process restart or be visible across sessions\n- Cross-personality coordination (Plan B layers governance on these primitives)\n- Anything you would want a durable audit trail of: runs, completions, blockers\n\nWHEN NOT TO USE\n- Short-lived this-turn step lists → reach for `todo_*` instead\n- Throwaway scratch notes\n\nSTATUSES\n- todo → ready → running → done\n- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)\n- needs_revision (a before_ticket_complete verifier rejected the completion, OR kanban_block was called with the same `kind` too many times in a row; re-claim to retry)\n- archived (soft-delete; preserves audit trail)",
       "maxResultChars": 20000,
       "name": "kanban_update_status",
@@ -868,6 +966,7 @@
       "toolset": "kanban"
     },
     {
+      "available": true,
       "description": "Search public LinkedIn posts and articles via the personality's web-search backend, constrained to linkedin.com. Low-fidelity discovery, not a live-conversation source: no engagement counts and no follower counts. A post's publication date is rendered as ISO YYYY-MM-DD when the backend supplied one, and omitted entirely when it did not; a missing date is never guessed. Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. Shares the web_search credential binding rather than a key of its own.",
       "maxResultChars": 15000,
       "name": "linkedin_search",
@@ -894,6 +993,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Run the project linter. Defaults to \"pnpm lint\" (Biome). Override with the command arg.",
       "maxResultChars": 10000,
       "name": "lint",
@@ -913,6 +1013,7 @@
       "toolset": "code"
     },
     {
+      "available": true,
       "description": "List available LLM models from the model catalog with provider, model ID, label, context window, and default flag.",
       "maxResultChars": null,
       "name": "list_available_models",
@@ -923,6 +1024,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "List available skills with name, summary (first 200 chars), required tools, and source. Use to understand what skills a personality might leverage.",
       "maxResultChars": null,
       "name": "list_available_skills",
@@ -933,6 +1035,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "List all registered tools with their name, description, toolset, and capabilities. Use to understand what tools are available for inclusion in a personality toolset.",
       "maxResultChars": null,
       "name": "list_available_tools",
@@ -943,6 +1046,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "List all registered personalities (built-in and custom) with their id, name, description, and toolset. Use to see available personalities for team composition.",
       "maxResultChars": null,
       "name": "list_personalities",
@@ -953,6 +1057,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "List live mesh peers with personality, capabilities, and load. Use before dispatch planning to decide which specialist should handle each task.",
       "maxResultChars": 20000,
       "name": "list_team",
@@ -968,6 +1073,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "List curated team shape patterns (e.g. engineer-reviewer-pair, engineering-team) with descriptions, dispatch modes, and usage guidance.",
       "maxResultChars": null,
       "name": "list_team_patterns",
@@ -978,6 +1084,26 @@
       "toolset": "personality_design"
     },
     {
+      "available": false,
+      "description": "Join a Google Meet as a transcribe-only bot participant, capture the live captions, and save a markdown transcript with a short summary to memory. This joins a real meeting and always requires explicit approval. Capture runs until the turn is stopped.",
+      "maxResultChars": 1024,
+      "name": "meet_join",
+      "schema": {
+        "properties": {
+          "meeting_url": {
+            "description": "Google Meet URL, e.g. https://meet.google.com/abc-defg-hij.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "meeting_url"
+        ],
+        "type": "object"
+      },
+      "toolset": "meeting"
+    },
+    {
+      "available": true,
       "description": "Read the current memory files (MEMORY.md and USER.md), or pass \"key\" to read one arbitrary personality-scope memory entry by its exact file name. Use to recall past context, user preferences, or project notes before starting a new task.",
       "maxResultChars": 20000,
       "name": "memory_read",
@@ -1002,6 +1128,7 @@
       "toolset": "memory"
     },
     {
+      "available": true,
       "description": "Update the memory files. Use \"add\" to append a new fact, \"replace\" to overwrite the entire file, \"remove\" to delete a specific line. The \"memory\" store holds project context; \"user\" holds information about the user.",
       "maxResultChars": null,
       "name": "memory_write",
@@ -1043,6 +1170,7 @@
       "toolset": "memory"
     },
     {
+      "available": true,
       "description": "Run multiple sub-agents in parallel, each with a different prompt or personality, then synthesise their outputs into a final answer. Use for tasks that benefit from diverse perspectives or parallel research. Maximum 3 total spawn depth. Maximum 5 agents per call.",
       "maxResultChars": 40000,
       "name": "mixture_of_agents",
@@ -1085,6 +1213,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Replace an exact block of text in a file with new content. old_text must match the file content exactly (including whitespace and indentation). Use read_file first to confirm the exact text.",
       "maxResultChars": null,
       "name": "patch_file",
@@ -1113,6 +1242,7 @@
       "toolset": "file"
     },
     {
+      "available": true,
       "description": "List all tracked processes with their current status.",
       "maxResultChars": null,
       "name": "process_list",
@@ -1123,6 +1253,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "Return the last N lines from a process log. Interleaves stdout and stderr.",
       "maxResultChars": 64000,
       "name": "process_logs",
@@ -1154,6 +1285,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "Start a long-running process in the background. Returns an id for tracking.",
       "maxResultChars": 1024,
       "name": "process_start",
@@ -1187,6 +1319,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "Send a signal to stop a running process.",
       "maxResultChars": 1024,
       "name": "process_stop",
@@ -1213,6 +1346,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "Wait for a process to exit, up to timeout_s seconds.",
       "maxResultChars": 1024,
       "name": "process_wait",
@@ -1235,6 +1369,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "Watch a background process log for pattern matches. Resolves on first match (default), timeout, or process exit.",
       "maxResultChars": 4096,
       "name": "process_watch",
@@ -1278,6 +1413,7 @@
       "toolset": "process"
     },
     {
+      "available": true,
       "description": "File a request to add tools to, or remove tools from, YOUR OWN toolset — or, with target \"identity\", to set your own name, one-line description, emoji or avatar choice. It only files a request: nothing changes until your owner reviews and applies it. Use the toolset target when a tool you need was refused as not permitted for this personality, or a tool you hold is one you should not have; cite the refused tool call ids as evidence when you have them. Use the identity target only with values your owner chose or agreed to. Only works in a private conversation your owner started from the CLI or the web app.",
       "maxResultChars": 2000,
       "name": "propose_self_amendment",
@@ -1347,6 +1483,7 @@
       "toolset": "self_amendment"
     },
     {
+      "available": true,
       "description": "Search Quora questions via the personality's web-search backend, constrained to quora.com. Search fidelity only — no answer counts and no vote counts. A question's publication date is rendered as ISO YYYY-MM-DD when the backend supplied one, and omitted entirely when it did not; a missing date is never guessed. Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. Shares the web_search credential binding rather than a key of its own.",
       "maxResultChars": 15000,
       "name": "quora_search",
@@ -1373,6 +1510,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Read a file from the filesystem. Supports line ranges for large files. Paths starting with ~/ are expanded to the home directory.",
       "maxResultChars": 40000,
       "name": "read_file",
@@ -1401,6 +1539,7 @@
       "toolset": "file"
     },
     {
+      "available": true,
       "description": "Search Reddit via its official OAuth API. Returns post titles, subreddits, engagement counts, permalinks, and snippets. Supports subreddit scoping and a native time filter ('week' = past 7 days). Requires a Reddit client_id/client_secret.",
       "maxResultChars": 15000,
       "name": "reddit_search",
@@ -1450,6 +1589,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Fetch a single Reddit post and its comment tree via the official OAuth API. Accepts a full reddit.com URL, a /r/.../comments/<id>/ path, or a bare post id. Returns the post body plus top comments, nested by depth. Requires a Reddit client_id/client_secret.",
       "maxResultChars": 20000,
       "name": "reddit_thread",
@@ -1476,6 +1616,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Search Reddit posts via the personality's web-search backend, constrained to reddit.com. Needs no Reddit credentials, unlike reddit_search. Search fidelity only — no scores and no comment counts. A post's publication date is rendered as ISO YYYY-MM-DD when the backend supplied one, and omitted entirely when it did not; a missing date is never guessed. Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. Shares the web_search credential binding rather than a key of its own.",
       "maxResultChars": 15000,
       "name": "reddit_web_search",
@@ -1502,6 +1643,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Render a local file inline in the chat UI. Accepts absolute paths (/tmp/file.pdf), file:// URIs, or files:// URIs (\"files://report.pdf\" resolves to the personality's asset folder). Images render as inline images; PDFs render in an embedded viewer; text/code/JSON/CSV/Markdown render as a formatted code block.",
       "maxResultChars": 500,
       "name": "render_file",
@@ -1524,6 +1666,7 @@
       "toolset": "ui"
     },
     {
+      "available": true,
       "description": "Render a self-contained HTML document inline in the chat UI inside a sandboxed iframe. The HTML must be a complete, self-contained document (inline CSS and JS, no external dependencies that require same-origin access). Use for charts, tables, interactive demos, formatted reports.",
       "maxResultChars": 500,
       "name": "render_html",
@@ -1550,6 +1693,7 @@
       "toolset": "ui"
     },
     {
+      "available": true,
       "description": "Display an image in the chat UI. Accepts a URL (https://...), a base64 data URI (data:image/...;base64,...), an absolute file path (/tmp/image.png), a file:// URI (file:///tmp/image.png), or a files:// URI (files://chart.png) that resolves to the personality's asset folder. The image renders inline in the conversation.",
       "maxResultChars": 500,
       "name": "render_image",
@@ -1576,6 +1720,7 @@
       "toolset": "ui"
     },
     {
+      "available": true,
       "description": "Render personality-authored HTML on a sandboxed Canvas — for shapes the typed `emit_card` kinds cannot express. Prefer `emit_card` whenever the data fits one of its kinds.\n\nSupply exactly one of:\n- `template`: the name of a `ui/<template>.html` file in your own personality directory (letters, digits, hyphens, underscores only). The file is inlined server-side.\n- `html`: a one-off document body, max 65536 chars.\n\n`data` is any JSON value (max 32768 chars serialized), injected into the frame as a frozen global for the template's script to read — keep the markup and the data separate. `libraries` is an optional subset of the locally bundled allowlist: echarts@1.\n\nThe frame has no network access, no cookies and no reach into the page around it, so everything it needs must be in the HTML, an allowlisted library, or `data`.",
       "maxResultChars": 200,
       "name": "render_ui",
@@ -1614,6 +1759,7 @@
       "toolset": "ui"
     },
     {
+      "available": true,
       "description": "Route a task to the best available mesh agent advertising a given capability. Agents register via `ethos serve`; routing is scoped to the caller's mesh. Returns the remote agent's full response. Does not fall back to local execution if no matching agent is found.",
       "maxResultChars": 20000,
       "name": "route_to_agent",
@@ -1649,6 +1795,40 @@
       "toolset": "delegation"
     },
     {
+      "available": false,
+      "description": "Run code in an isolated container. Supported runtimes: python, js, bash. No network access, memory-capped. In-script tool API (python/js): scripts can call the agent's own tools via ethos.call(name, args) (python: import ethos first; js: global ethos). Each call returns {ok, value} or {ok, error, code}. Prefer ONE run_code script over direct tool calls for workflows of 3+ tool calls with processing logic between them: loop/filter/aggregate in code and print only the final result — intermediate tool results never enter the conversation. Which tools are callable depends on the active personality's toolset; where the tool API is not wired, ethos is undefined and the call fails as a normal interpreter error. Executions that use the tool API may raise timeout_ms up to 300000.",
+      "maxResultChars": 10000,
+      "name": "run_code",
+      "schema": {
+        "properties": {
+          "code": {
+            "description": "Code to execute",
+            "type": "string"
+          },
+          "runtime": {
+            "description": "Execution runtime: python, js, bash",
+            "enum": [
+              "python",
+              "js",
+              "bash"
+            ],
+            "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Timeout in milliseconds (default 30000)",
+            "type": "number"
+          }
+        },
+        "required": [
+          "runtime",
+          "code"
+        ],
+        "type": "object"
+      },
+      "toolset": "code"
+    },
+    {
+      "available": true,
       "description": "Run the project test suite. Defaults to \"pnpm test\" (vitest). Override with the command arg.",
       "maxResultChars": 20000,
       "name": "run_tests",
@@ -1668,6 +1848,7 @@
       "toolset": "code"
     },
     {
+      "available": true,
       "description": "Validate and write personality files (SOUL.md, config.yaml, toolset.yaml) atomically to ~/.ethos/personalities/<id>/. Creates a fully-formed custom personality.",
       "maxResultChars": null,
       "name": "scaffold_personality",
@@ -1736,6 +1917,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "Validate and write a team manifest YAML file to ~/.ethos/teams/<name>.yaml. Creates a team definition that can be started with `ethos team start`.",
       "maxResultChars": null,
       "name": "scaffold_team",
@@ -1803,6 +1985,7 @@
       "toolset": "personality_design"
     },
     {
+      "available": true,
       "description": "Search for a text pattern across files in a directory. Returns file paths, line numbers, and matching lines.",
       "maxResultChars": 20000,
       "name": "search_files",
@@ -1833,6 +2016,7 @@
       "toolset": "file"
     },
     {
+      "available": true,
       "description": "Send a message to a configured channel — Slack, Telegram, Discord, WhatsApp, or email. Use this whenever the user asks you to post / send / forward / relay something to another channel; do not refuse for permission reasons unless the tool itself returns an error. If the target is outside the operator-configured allowlist the call fails with a clear message that you should surface verbatim.",
       "maxResultChars": 1024,
       "name": "send_message",
@@ -1868,6 +2052,7 @@
       "toolset": "messaging"
     },
     {
+      "available": true,
       "description": "List sessions filtered by date range. Returns session metadata sorted by most recent first.",
       "maxResultChars": 10000,
       "name": "session_list_by_date",
@@ -1891,6 +2076,7 @@
       "toolset": "memory"
     },
     {
+      "available": true,
       "description": "Search the current session's history using full-text search. Returns messages from this session only — it cannot reach other sessions.",
       "maxResultChars": 10000,
       "name": "session_search",
@@ -1921,6 +2107,7 @@
       "toolset": "memory"
     },
     {
+      "available": true,
       "description": "Propose a new skill or a rewrite of an existing skill. The proposal goes to the Learning inbox, where it is replayed against past tasks and goes live only on a passing replay or a human approval.",
       "maxResultChars": null,
       "name": "skill_propose",
@@ -1948,6 +2135,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "View the full content of a skill by name. Use skills_list first to discover available skills.",
       "maxResultChars": 30000,
       "name": "skill_view",
@@ -1966,6 +2154,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "List all available skills the current personality has access to. Returns name, description, and kind for each.",
       "maxResultChars": 10000,
       "name": "skills_list",
@@ -1977,6 +2166,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "Does not approve. Approving a proposed skill is a human decision made outside chat — on the Learning page in the web UI, or with `ethos learning approve <id> [--override \"<reason>\"]` in a terminal. Call this only to tell the user how to approve a skill they asked about.",
       "maxResultChars": 2000,
       "name": "skills_pending_approve",
@@ -1995,6 +2185,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "List proposed skills waiting for the user to approve or reject. Returns id, name, description, and when each was proposed. An empty queue is a normal result, not an error.",
       "maxResultChars": 10000,
       "name": "skills_pending_list",
@@ -2006,6 +2197,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "Reject one proposed skill by id, discarding it from the review queue. Call this only when the user has explicitly asked for that specific skill to be rejected. The user is usually asked first, with the id shown in the approval prompt; where nobody can be asked, such as `ethos chat -q`, the call is refused.",
       "maxResultChars": 2000,
       "name": "skills_pending_reject",
@@ -2024,6 +2216,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "Show the full body of one proposed skill so the user can judge it before approving or rejecting. Use skills_pending_list first to get the id.",
       "maxResultChars": 30000,
       "name": "skills_pending_view",
@@ -2042,6 +2235,7 @@
       "toolset": "skills"
     },
     {
+      "available": true,
       "description": "Request cancellation of a background job. The owning executor honors it within a bounded window; any process may request.",
       "maxResultChars": 4000,
       "name": "task_cancel",
@@ -2060,6 +2254,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Read a background job's recent audit events (works on running and terminal jobs).",
       "maxResultChars": 8000,
       "name": "task_logs",
@@ -2082,6 +2277,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Fetch a background job's result. Terminal jobs return the summary (done) or error; jobs still running return a progress line, not an error.",
       "maxResultChars": 4000,
       "name": "task_result",
@@ -2100,6 +2296,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Inspect background jobs spawned from this session. Pass an id for one job, or omit it to list all jobs for this session.",
       "maxResultChars": 4000,
       "name": "task_status",
@@ -2115,6 +2312,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Send a correction or extra instruction to a RUNNING background job. The job reads it at its next turn boundary, not instantly. Use task_cancel to stop it instead.",
       "maxResultChars": 4000,
       "name": "task_steer",
@@ -2138,6 +2336,7 @@
       "toolset": "delegation"
     },
     {
+      "available": true,
       "description": "Run a shell command and return its output. Commands run in the working directory by default. Use for build commands, tests, git operations, file operations, and anything that needs a shell. Avoid interactive commands that require user input.",
       "maxResultChars": 20000,
       "name": "terminal",
@@ -2164,6 +2363,7 @@
       "toolset": "terminal"
     },
     {
+      "available": true,
       "description": "Escalate the next LLM call to the deep model tier for complex reasoning. Use when a task requires multi-step analysis, large refactors, or deep research. The escalation is one-shot: only the immediately following LLM call uses the deep tier.",
       "maxResultChars": null,
       "name": "think_deeper",
@@ -2182,6 +2382,7 @@
       "toolset": "tier"
     },
     {
+      "available": true,
       "description": "Add one task to the existing list. Use to extend a plan (e.g. when a blocker is discovered) without rewriting the whole list. notes is optional context (max 500 chars; clipped if longer).\n\nWHEN TO USE\n- Multi-step tasks with 3+ distinct actions\n- Users provide a list of items to work through\n- Non-trivial operations that benefit from progress tracking\n\nWHEN NOT TO USE\n- Single straightforward tasks or trivial work (<3 steps)\n- Purely conversational requests\n- Multi-agent / multi-personality coordination (use kanban instead)\n\nCRITICAL RULES\n- Exactly ONE task may be in_progress at any time\n- Mark tasks complete IMMEDIATELY when done — do NOT batch\n- Only mark complete when fully accomplished (tests pass, no errors)\n- If blocked: set notes:\"BLOCKED: <reason>\" on current task AND add a NEW pending task to resolve the blocker",
       "maxResultChars": 2000,
       "name": "todo_add",
@@ -2212,6 +2413,7 @@
       "toolset": "todo"
     },
     {
+      "available": true,
       "description": "Remove every task from the current session and reset the id counter to t1. Use when starting a fresh plan in the same session.\n\nWHEN TO USE\n- Multi-step tasks with 3+ distinct actions\n- Users provide a list of items to work through\n- Non-trivial operations that benefit from progress tracking\n\nWHEN NOT TO USE\n- Single straightforward tasks or trivial work (<3 steps)\n- Purely conversational requests\n- Multi-agent / multi-personality coordination (use kanban instead)\n\nCRITICAL RULES\n- Exactly ONE task may be in_progress at any time\n- Mark tasks complete IMMEDIATELY when done — do NOT batch\n- Only mark complete when fully accomplished (tests pass, no errors)\n- If blocked: set notes:\"BLOCKED: <reason>\" on current task AND add a NEW pending task to resolve the blocker",
       "maxResultChars": 2000,
       "name": "todo_clear",
@@ -2222,6 +2424,7 @@
       "toolset": "todo"
     },
     {
+      "available": true,
       "description": "Read the current todo list. Default filter is \"open\" (= pending + in_progress) so completed items do not push the model into re-doing finished work. Pass filter:\"all\" for the full list including completed.\n\nWHEN TO USE\n- Multi-step tasks with 3+ distinct actions\n- Users provide a list of items to work through\n- Non-trivial operations that benefit from progress tracking\n\nWHEN NOT TO USE\n- Single straightforward tasks or trivial work (<3 steps)\n- Purely conversational requests\n- Multi-agent / multi-personality coordination (use kanban instead)\n\nCRITICAL RULES\n- Exactly ONE task may be in_progress at any time\n- Mark tasks complete IMMEDIATELY when done — do NOT batch\n- Only mark complete when fully accomplished (tests pass, no errors)\n- If blocked: set notes:\"BLOCKED: <reason>\" on current task AND add a NEW pending task to resolve the blocker",
       "maxResultChars": 2000,
       "name": "todo_list",
@@ -2244,6 +2447,7 @@
       "toolset": "todo"
     },
     {
+      "available": true,
       "description": "Replace the entire todo list with the supplied tasks. Resets the id counter. Use at the START of a multi-step task to lay out the plan.\n\nWHEN TO USE\n- Multi-step tasks with 3+ distinct actions\n- Users provide a list of items to work through\n- Non-trivial operations that benefit from progress tracking\n\nWHEN NOT TO USE\n- Single straightforward tasks or trivial work (<3 steps)\n- Purely conversational requests\n- Multi-agent / multi-personality coordination (use kanban instead)\n\nCRITICAL RULES\n- Exactly ONE task may be in_progress at any time\n- Mark tasks complete IMMEDIATELY when done — do NOT batch\n- Only mark complete when fully accomplished (tests pass, no errors)\n- If blocked: set notes:\"BLOCKED: <reason>\" on current task AND add a NEW pending task to resolve the blocker",
       "maxResultChars": 2000,
       "name": "todo_set",
@@ -2279,6 +2483,7 @@
       "toolset": "todo"
     },
     {
+      "available": true,
       "description": "Update one task. Omit fields to leave them unchanged. Flip status to \"in_progress\" when starting; flip to \"completed\" IMMEDIATELY after finishing.\n\nWHEN TO USE\n- Multi-step tasks with 3+ distinct actions\n- Users provide a list of items to work through\n- Non-trivial operations that benefit from progress tracking\n\nWHEN NOT TO USE\n- Single straightforward tasks or trivial work (<3 steps)\n- Purely conversational requests\n- Multi-agent / multi-personality coordination (use kanban instead)\n\nCRITICAL RULES\n- Exactly ONE task may be in_progress at any time\n- Mark tasks complete IMMEDIATELY when done — do NOT batch\n- Only mark complete when fully accomplished (tests pass, no errors)\n- If blocked: set notes:\"BLOCKED: <reason>\" on current task AND add a NEW pending task to resolve the blocker",
       "maxResultChars": 2000,
       "name": "todo_update",
@@ -2317,6 +2522,7 @@
       "toolset": "todo"
     },
     {
+      "available": true,
       "description": "Analyze a video via URL. Ask questions about video content, extract information, or get descriptions of what happens. Requires file_url (HTTPS link to the video).",
       "maxResultChars": 30000,
       "name": "video_analyze",
@@ -2340,6 +2546,7 @@
       "toolset": "vision"
     },
     {
+      "available": true,
       "description": "Analyze an image (PNG/JPEG/GIF/WEBP) or PDF with a vision-capable LLM. Provide exactly one of file_path (personality-allowlisted), file_url (HTTPS, SSRF-checked), or file_base64. Returns the model's text response plus token usage and cost. Pass format.json_schema to receive a parsed JSON object alongside the text. v1 limitation: format.schema must have type \"object\" (array / primitive top-level types are not supported).",
       "maxResultChars": 8000,
       "name": "vision_analyze",
@@ -2397,6 +2604,7 @@
       "toolset": "vision"
     },
     {
+      "available": true,
       "description": "Capability marker: this personality can be engaged in a real-time voice session (browser talk-mode or telephony). The live session is managed by the voice channel, not invoked by the model — calling this tool does nothing but confirm that.",
       "maxResultChars": 256,
       "name": "voice_session",
@@ -2407,6 +2615,7 @@
       "toolset": "voice"
     },
     {
+      "available": true,
       "description": "Fetch a URL and extract its text content. Use to read articles, documentation, or any web page.",
       "maxResultChars": 20000,
       "name": "web_extract",
@@ -2425,6 +2634,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Search the web for current information. Returns titles, URLs, text snippets, and the publication date as ISO YYYY-MM-DD when the backend supplied one (omitted when it did not — a missing date is never guessed). Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. On the Tavily backend the window matches a page's publish date OR its last-updated date, so a stale page edited yesterday can match a short window. Requires one of EXA_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY, or a configured SearXNG instance.",
       "maxResultChars": 15000,
       "name": "web_search",
@@ -2455,6 +2665,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Write content to a file. Creates parent directories if needed. Blocked for ~/.ethos/config.yaml and session storage.",
       "maxResultChars": null,
       "name": "write_file",
@@ -2478,6 +2689,7 @@
       "toolset": "file"
     },
     {
+      "available": true,
       "description": "Search X (Twitter) posts via xAI's Grok search. Returns a synthesized answer plus source citations. Requires an xAI API key.",
       "maxResultChars": 15000,
       "name": "x_search",
@@ -2530,6 +2742,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Fetch top-level comments (and optionally replies) for a YouTube video via the Data API v3. Accepts a video id or any YouTube URL form (watch, youtu.be, /shorts/, /live/, /embed/). Costs 1 quota unit per page of a shared 10,000/day budget. Requires a Google (YouTube Data API) key.",
       "maxResultChars": 15000,
       "name": "youtube_comments",
@@ -2564,6 +2777,7 @@
       "toolset": "web"
     },
     {
+      "available": true,
       "description": "Search YouTube videos via the Data API v3. Returns title, channel, publish date, view/like/comment counts, and URL. Costs 101 quota units per call (100 search + 1 statistics) of a shared 10,000/day budget. Requires a Google (YouTube Data API) key.",
       "maxResultChars": 15000,
       "name": "youtube_search",

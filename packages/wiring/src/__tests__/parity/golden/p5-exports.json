@@ -5781,5 +5781,51 @@
       "createClarifyEscalator": "value",
       "createSecretHandler": "value"
     }
+  },
+  "ethos-plugin-hello": {
+    "entry": "examples/plugins/hello/src/index.ts",
+    "exports": {
+      "activate": "value",
+      "deactivate": "value",
+      "default": "value",
+      "greetTool": "value"
+    }
+  },
+  "ethos-plugin-memory-logger": {
+    "entry": "examples/plugins/memory-logger/src/index.ts",
+    "exports": {
+      "activate": "value",
+      "deactivate": "value",
+      "default": "value",
+      "logSessionEntry": "value"
+    }
+  },
+  "ethos-plugin-safety-adapter": {
+    "entry": "examples/plugins/safety-adapter/src/index.ts",
+    "exports": {
+      "activate": "value",
+      "beforeToolCall": "value",
+      "deactivate": "value",
+      "default": "value",
+      "getBlockedCommands": "value",
+      "isDangerous": "value"
+    }
+  },
+  "ethos-plugin-strategist": {
+    "entry": "examples/plugins/personality/src/index.ts",
+    "exports": {
+      "activate": "value",
+      "deactivate": "value",
+      "default": "value"
+    }
+  },
+  "ethos-plugin-timestamp": {
+    "entry": "examples/plugins/timestamp/src/index.ts",
+    "exports": {
+      "activate": "value",
+      "deactivate": "value",
+      "default": "value",
+      "timestampTool": "value"
+    }
   }
 }

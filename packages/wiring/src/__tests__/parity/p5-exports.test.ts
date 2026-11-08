@@ -11,9 +11,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { assertParity } from './harness';
-
-const REPO_ROOT = join(import.meta.dirname, '../../../../..');
+import { assertParity, REPO_ROOT } from './harness';
 
 /** The published packages per plan §2.4 P5; asserted equal to "not private" below. */
 const PUBLISHED = [
@@ -44,29 +42,45 @@ interface WorkspacePackage {
   private: boolean;
 }
 
+/** Package directories named by `pnpm-workspace.yaml`: `x/*` globs and literal paths. */
+function workspaceDirs(): string[] {
+  const text = readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8');
+  const block = /^packages:\n((?:[ \t]+-.*\n?)+)/m.exec(text)?.[1];
+  if (!block) throw new Error('pnpm-workspace.yaml has no packages: list');
+  const dirs: string[] = [];
+  for (const line of block.split('\n')) {
+    const pattern = /^\s*-\s*["']?([^"'\s#]+)["']?/.exec(line)?.[1];
+    if (!pattern) continue;
+    if (pattern.endsWith('/*')) {
+      const root = pattern.slice(0, -2);
+      if (!existsSync(join(REPO_ROOT, root))) continue;
+      for (const d of readdirSync(join(REPO_ROOT, root)).sort()) dirs.push(`${root}/${d}`);
+    } else {
+      dirs.push(pattern);
+    }
+  }
+  return dirs;
+}
+
 function workspacePackages(): WorkspacePackage[] {
   const out: WorkspacePackage[] = [];
-  for (const root of ['apps', 'packages', 'packages/safety', 'extensions']) {
-    for (const dir of readdirSync(join(REPO_ROOT, root)).sort()) {
-      const pj = join(REPO_ROOT, root, dir, 'package.json');
-      if (!existsSync(pj)) continue;
-      const json = JSON.parse(readFileSync(pj, 'utf8')) as { name?: string; private?: boolean };
-      if (json.name)
-        out.push({ name: json.name, dir: `${root}/${dir}`, private: json.private === true });
-    }
+  for (const dir of workspaceDirs()) {
+    const pj = join(REPO_ROOT, dir, 'package.json');
+    if (!existsSync(pj)) continue;
+    const json = JSON.parse(readFileSync(pj, 'utf8')) as { name?: string; private?: boolean };
+    if (json.name) out.push({ name: json.name, dir, private: json.private === true });
   }
   return out;
 }
 
 function entriesOf(pkg: WorkspacePackage): Array<{ key: string; file: string }> {
   const found: Array<{ key: string; file: string }> = [];
-  for (const ext of ['ts', 'tsx']) {
-    const file = `${pkg.dir}/src/index.${ext}`;
-    if (existsSync(join(REPO_ROOT, file))) {
-      found.push({ key: pkg.name, file });
-      break;
-    }
-  }
+  const index = ['ts', 'tsx']
+    .map((ext) => `${pkg.dir}/src/index.${ext}`)
+    .find((file) => existsSync(join(REPO_ROOT, file)));
+  if (index) found.push({ key: pkg.name, file: index });
+  // A published package with no source entry would silently fall out of the surface.
+  else if (!pkg.private) throw new Error(`published package ${pkg.name} has no src/index.ts(x)`);
   for (const sub of SUBPATH_ENTRIES[pkg.name] ?? []) {
     found.push({ key: `${pkg.name}/${sub}`, file: `${pkg.dir}/src/${sub}.ts` });
   }
@@ -203,6 +217,7 @@ describe('P5 export surface parity', () => {
   it('matches the export-surface fixture', () => {
     assertParity('p5-exports', exportSurface(), {
       guardUpdate: (existing, next) => assertNoPublishedDrops(existing, next, PUBLISHED),
+      requireExistingFixture: true,
     });
   }, 600_000);
 });

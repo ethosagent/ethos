@@ -43,7 +43,8 @@ describe('P4 config parity', () => {
     const written = await storage.read('/parity/config.yaml');
     if (written === null) throw new Error('writeConfig wrote nothing');
     const reparsed = parseConfigYaml(written);
-    expect(configParseNotices(reparsed)).toEqual(configParseNotices(parseConfigYaml(written)));
+    // The writer normalises what the parse warned about, so the notices are NOT equal to
+    // the first parse's; they are pinned in the fixture as `reparsedNotices`.
     // parse -> write -> parse is a fixed point.
     const storage2 = new InMemoryStorage();
     await writeConfig(storage2, reparsed, new InMemorySecretsResolver());
@@ -55,6 +56,7 @@ describe('P4 config parity', () => {
       notices: configParseNotices(parsed),
       written,
       reparsed,
+      reparsedNotices: configParseNotices(reparsed),
       empty,
       emptyNotices: configParseNotices(empty),
       effectiveEmpty: resolveEffectiveConfig(empty, { ETHOS_STATE_DIR: '/parity' }),

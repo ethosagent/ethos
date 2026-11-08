@@ -4,11 +4,16 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentLoop } from '../../index';
-import { type HermeticEnv, type ScriptedLLM, scriptedLLM, withHermeticEnv } from './harness';
+import {
+  type HermeticEnv,
+  REPO_ROOT,
+  type ScriptedLLM,
+  scriptedLLM,
+  withHermeticEnv,
+} from './harness';
 
 export type ParityRuntime = Awaited<ReturnType<typeof createAgentLoop>>;
 
-const REPO_ROOT = join(import.meta.dirname, '../../../../..');
 const BUILTIN_DIR = join(REPO_ROOT, 'extensions/personalities/data');
 
 /** Ids of the shipped personalities (`data/<id>/`, minus `archived/`). */
@@ -40,7 +45,13 @@ export async function createParityRuntime(): Promise<ParityHarnessRuntime> {
     // The loop holds its provider in `llm`; swap in the recording one so no request
     // leaves the process. (Same read seam usage-meter-wiring.test.ts uses.)
     const llm = scriptedLLM();
+    if (!Reflect.has(runtime.loop, 'llm')) {
+      throw new Error('AgentLoop no longer has an `llm` field; update the parity LLM seam');
+    }
     Reflect.set(runtime.loop, 'llm', llm);
+    if (Reflect.get(runtime.loop, 'llm') !== llm) {
+      throw new Error('the parity LLM seam did not take; AgentLoop `llm` is not assignable');
+    }
     return {
       env,
       runtime,

@@ -23,6 +23,7 @@ import { expect, vi } from 'vitest';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const GOLDEN_DIR = join(HERE, 'golden');
 export const PARITY_DIR = HERE;
+export const REPO_ROOT = join(HERE, '../../../../..');
 
 export const updating = (): boolean => process.env.UPDATE_PARITY === '1';
 
@@ -30,6 +31,13 @@ export const updating = (): boolean => process.env.UPDATE_PARITY === '1';
 export function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((v) => (v === undefined ? null : canonicalize(v)));
   if (value !== null && typeof value === 'object') {
+    // A Map, Set, Date or class instance would serialise to `{}` and hide its content.
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error(
+        `canonicalize: non-plain object (${value.constructor?.name ?? 'unknown'}); convert it to plain data first`,
+      );
+    }
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
       const v = (value as Record<string, unknown>)[key];
@@ -53,13 +61,23 @@ export interface AssertParityOptions {
   /** Called under `UPDATE_PARITY=1` with the existing fixture (parsed) and the new
    *  value, before anything is written. Throw to refuse the update (P5). */
   guardUpdate?: (existing: unknown, next: unknown) => void;
+  /** Under `UPDATE_PARITY=1`, throw when the fixture does not exist, so a deleted
+   *  fixture cannot be re-baselined past `guardUpdate` (P5). */
+  requireExistingFixture?: boolean;
 }
 
 export function assertParity(name: string, value: unknown, opts: AssertParityOptions = {}): void {
   const path = goldenPath(name);
   const actual = canonicalJson(value);
   if (updating()) {
-    if (opts.guardUpdate && existsSync(path)) {
+    const exists = existsSync(path);
+    if (!exists && opts.requireExistingFixture) {
+      throw new Error(
+        `parity fixture missing: ${path}. This gate refuses to re-baseline from nothing; ` +
+          'restore the fixture from git and update it from there.',
+      );
+    }
+    if (opts.guardUpdate && exists) {
       opts.guardUpdate(JSON.parse(readFileSync(path, 'utf8')), JSON.parse(actual));
     }
     mkdirSync(GOLDEN_DIR, { recursive: true });
