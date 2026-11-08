@@ -213,8 +213,8 @@ export function deriveFsReachPaths(
  * with no Docker — `resolveExecutionPosture`,
  * packages/wiring/src/resolve-execution-posture.ts). The terminal and process
  * guards refuse a command that names the state dir literally
- * (`stateDirReference` in `extensions/tools-terminal/src/guard.ts` and
- * `extensions/tools-process/src/guard.ts`, S16), which catches the lazy
+ * (`stateDirReference` in `extensions/tools-terminal/src/guard.ts`, the one
+ * implementation; `extensions/tools-process/src/guard.ts` re-exports it, S16), which catches the lazy
  * `sed -i ~/.ethos/personalities/<self>/toolset.yaml` and nothing more: a
  * relative path (`cd ~; sed -i .ethos/…`) or a computed one passes.
  */

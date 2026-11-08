@@ -103,8 +103,8 @@ export const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.plat
 
 /**
  * A platform-conditional deny key (UBP-008), used by the terminal and process
- * argv floors (`extensions/tools-terminal/src/guard.ts`,
- * `extensions/tools-process/src/guard.ts`) and by the `write_file` pre-check's
+ * argv floors (`extensions/tools-terminal/src/guard.ts`;
+ * `extensions/tools-process/src/guard.ts` re-exports it) and by the `write_file` pre-check's
  * second probe of the definition floor (`isPersonalityDefinitionPath`,
  * `extensions/tools-file/src/index.ts`). `ScopedStorage` does not use it: its
  * deny lists and state-dir exclusion compare `foldForDeny` keys, which fold
@@ -207,7 +207,7 @@ function stripVolumeAliases(key: string): string {
  * `state-dir-deny.test.ts` and `packages/wiring/src/__tests__/scoped-storage-factory.test.ts`.
  *
  * Also consumed by the terminal and process argv floors
- * (`extensions/tools-terminal/src/guard.ts`, `extensions/tools-process/src/guard.ts`),
+ * (`extensions/tools-terminal/src/guard.ts`, re-exported by `extensions/tools-process/src/guard.ts`),
  * which refuse a command that names a state dir at all (S16). Those, and the
  * `write_file` pre-check, see only `~/.ethos` and `ETHOS_STATE_DIR`: a data
  * directory known only to wiring reaches them through the environment, which

@@ -3748,6 +3748,7 @@
   "@ethosagent/tools-terminal": {
     "entry": "extensions/tools-terminal/src/index.ts",
     "exports": {
+      "ARGV_FS_DENY_PATTERNS": "value",
       "GuardHookOptions": "type",
       "approvalRequiredReason": "value",
       "checkCommand": "value",

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/tools-terminal": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

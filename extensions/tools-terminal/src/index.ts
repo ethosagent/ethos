@@ -372,6 +372,7 @@ export function createTerminalTools(opts?: {
 }
 
 export {
+  ARGV_FS_DENY_PATTERNS,
   approvalRequiredReason,
   checkCommand,
   createTerminalGuardHook,

@@ -273,10 +273,10 @@ export const TERMINAL_CHECKED_TOOLS: ReadonlyArray<string> = ['terminal', 'run_t
  * The hardline reason for a call, or `null` when it is not hardline.
  *
  * Hardline = a {@link TERMINAL_CHECKED_TOOLS} or `process_start` `command`
- * that the blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal`
- * and `@ethosagent/tools-process` respectively — the same checks
- * `createTerminalGuardHook` / `createProcessGuardHook` hard-block with on
- * every non-web profile, `compose-tools.ts`).
+ * that the blocklist refuses (`checkCommand`: one function in
+ * `@ethosagent/tools-terminal`, re-exported by `@ethosagent/tools-process` —
+ * the same check `createTerminalGuardHook` / `createProcessGuardHook` hard-block
+ * with on every non-web profile, `compose-tools.ts`).
  *
  * Used twice: as the danger predicate's first branch, and by the web profile
  * (injected as `isHardline` into `createWebApprovalHook` by `createWebApi`,

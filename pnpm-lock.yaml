@@ -2352,6 +2352,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/tools-terminal':
+        specifier: workspace:*
+        version: link:../tools-terminal
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
