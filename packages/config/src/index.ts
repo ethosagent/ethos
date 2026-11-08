@@ -7483,8 +7483,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them
   // and continues with whatever entries did parse.
   parseErrorsByConfig.set(config, parseErrors);
-  // Cron's deprecations lead: D3(b)'s behaviour-changing case is the one an
-  // operator most needs to read, and it is already first within its own group.
+  // Cron's notices lead the list.
   parseWarningsByConfig.set(config, [
     ...cronDeprecations,
     ...executionResult.warnings,

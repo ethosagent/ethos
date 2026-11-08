@@ -18,7 +18,7 @@ import {
 // (`buildCronTriggers`) treats as local mode.
 //
 // The legacy `cron.trigger.*` / `cron.arming.*` keys are no longer parsed
-// (the D3 shim was removed in 0.9.0); the last describe block pins what a
+// (the D3 shim was removed); the last describe block pins what a
 // leftover line does now.
 
 async function load(lines: string[]): Promise<EthosConfig> {
@@ -100,7 +100,7 @@ describe('cron config surface', () => {
   });
 });
 
-describe('cron config — removed legacy keys (shim deleted in 0.9.0)', () => {
+describe('cron config — removed legacy keys (shim deleted)', () => {
   const LEGACY = ['cron.trigger.local: false', 'cron.trigger.external: true'];
 
   it('a legacy line yields the generic "has no effect" notice and no cron config', async () => {

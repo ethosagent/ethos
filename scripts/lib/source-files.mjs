@@ -7,7 +7,6 @@ import { join } from 'node:path';
 const EXEMPT = Object.freeze([
   'docs/content/changelog.md',
   'CHANGELOG.md',
-  'docs/superpowers/plans/',
   'plan/',
   '.agents/skills/',
   'CLAUDE.md',

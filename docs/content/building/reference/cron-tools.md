@@ -43,7 +43,7 @@ Add the tool to the personality's `toolset.yaml`:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Human-readable label (e.g. `"Morning Briefing"`). |
-| `schedule` | string | yes | Standard 5-field cron expression — minute hour day month weekday. All times are local. Validated via `isValidCronExpression`. |
+| `schedule` | string | yes | Standard 5-field cron expression — minute hour day month weekday. All times are local. Validated by `isValidSchedule` (`extensions/cron/src/schedule.ts`), the same check `createJob` applies. |
 | `prompt` | string | yes | The prompt the agent runs on each firing. |
 | `missed_run_policy` | `'run-once' \| 'skip'` | no | What to do if the scheduler was down when the job's scheduled time passed. `run-once` fires the missed slot on next start; `skip` (default) waits for the next normal occurrence and records the skip in the run history. A slot is missed only when it fell due before the scheduler's previous tick or before the process started (`CronScheduler.tick`). |
 | `active_hours` | string | no | Daily window `HH:MM-HH:MM` (e.g. `09:00-21:00`; `22:00-06:00` crosses midnight) on the host clock the schedule uses. An occurrence outside it is skipped before the turn, audited as `inactive-hours-skip`, and not counted as a run. `run` ignores it. Refused (`input_invalid`) when malformed or on a one-shot schedule. Default: always active. |
