@@ -65,3 +65,5 @@ helm/ethos/examples/values.*.dev.yaml
 
 # Session handoff note (local only)
 /HANDOFF.md
+
+*.tsbuildinfo
