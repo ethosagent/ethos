@@ -48,16 +48,13 @@ Pinning tests:
 - `src/__tests__/preflight.test.ts`: missing-binary reporting.
 - `src/__tests__/process-prefilter.test.ts`, `audio-process.test.ts`, `mic-capture.test.ts`, `tap-capture.test.ts`, `transcript-session.test.ts`, `indicator.test.ts`.
 
-## More
+## Build and limits
 
-The full design history (phases 1 to 4 and the post-Phase-4 fixes), moved verbatim from the old README:
+```
+pnpm --filter @ethosagent/platform-callcapture build:native    # swiftc: mic-detector, mic-capture, capture-indicator, capture-offer-card
+pnpm --filter @ethosagent/platform-callcapture build:audiotee  # fetches audiotee (system-audio tap)
+```
 
-1. [Detection, package contents, Phase 2 accept gate](docs/01-detection-and-accept-gate.md)
-2. [Phase 2 click bridge, Phase 3 audio capture](docs/02-accept-gate-and-audio-capture.md)
-3. [Phase 3 output contract, STT, live verification](docs/03-audio-capture-verification.md)
-4. [Phase 4 integration](docs/04-integration.md)
-5. [Phase 4 flow diagram and LaunchAgent](docs/05-integration-flow-and-launchagent.md)
-6. [Per-process detection fix](docs/06-per-process-detection.md)
-7. [Native notification helper fix](docs/07-notification-helper.md)
-8. [Native capture-offer card fix](docs/08-capture-offer-card.md)
-9. [Floating recording indicator](docs/09-recording-indicator.md)
+- macOS only; the compiled Swift binaries land in `native/bin/`. `checkCallCaptureDependencies` names any that are missing.
+- Capture starts only after the accept card is clicked (fail-closed gate in `src/daemon.ts`, pinned by `daemon.test.ts`).
+- The phase-by-phase design history that used to live under `docs/` is no longer tracked in git.
