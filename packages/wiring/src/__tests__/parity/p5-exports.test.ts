@@ -51,12 +51,21 @@ function workspaceDirs(): string[] {
   for (const line of block.split('\n')) {
     const pattern = /^\s*-\s*["']?([^"'\s#]+)["']?/.exec(line)?.[1];
     if (!pattern) continue;
-    if (pattern.endsWith('/*')) {
+    // Only literal dirs and `X/*` are understood; anything else would be dropped
+    // silently and shrink the export surface this test pins.
+    if (pattern.startsWith('!')) {
+      throw new Error(
+        `pnpm-workspace.yaml exclusion "${pattern}" is not supported by workspaceDirs`,
+      );
+    }
+    if (pattern.endsWith('/*') && !pattern.slice(0, -2).includes('*')) {
       const root = pattern.slice(0, -2);
       if (!existsSync(join(REPO_ROOT, root))) continue;
       for (const d of readdirSync(join(REPO_ROOT, root)).sort()) dirs.push(`${root}/${d}`);
-    } else {
+    } else if (!pattern.includes('*') && existsSync(join(REPO_ROOT, pattern))) {
       dirs.push(pattern);
+    } else {
+      throw new Error(`pnpm-workspace.yaml entry "${pattern}" is not a literal dir or "X/*"`);
     }
   }
   return dirs;

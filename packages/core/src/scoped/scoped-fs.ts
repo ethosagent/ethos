@@ -612,9 +612,9 @@ function reachesStateDirThroughLink(
 // others leaves the escape open on whichever path the caller happens to take.
 // The reciprocal note lives in `scoped-storage.ts`'s class doc.
 //
-// The fourth copy walks with async `lstat` from `node:fs/promises`, so an
+// The third copy walks with async `lstat` from `node:fs/promises`, so an
 // `lstatSync` grep does not find it. Its errno rule is the same as the other
-// three: ENOENT alone ends the walk (here `lstatSync(..., { throwIfNoEntry:
+// two: ENOENT alone ends the walk (here `lstatSync(..., { throwIfNoEntry:
 // false })` returning `undefined`), and every other error — EACCES, ENOTDIR,
 // the rest — refuses. Pinned for that copy by
 // `apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts`.

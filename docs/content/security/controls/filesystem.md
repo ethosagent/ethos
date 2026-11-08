@@ -45,7 +45,7 @@ The walk is per-segment rather than leaf-only because **a symlinked parent escap
 
 Normalisation alone does not close this. `resolve()` is a string operation and a symlink is a filesystem fact — the lexically-resolved link path is neither under a denied prefix nor outside the allowed one, so it passes the always-deny floor and the allow check both. The segment walk is what re-judges where the read actually lands.
 
-The same walk exists as four hand-maintained copies, because the layer model stops them sharing code. All four follow a link, refuse an escape, and fail closed when a segment cannot be `lstat`ed for any reason other than not existing:
+The same walk exists as three hand-maintained copies, because the layer model stops them sharing code. All three follow a link, refuse an escape, and fail closed when a segment cannot be `lstat`ed for any reason other than not existing:
 
 | Copy | Guards |
 |---|---|
