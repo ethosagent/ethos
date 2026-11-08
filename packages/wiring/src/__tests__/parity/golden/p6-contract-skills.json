@@ -1,0 +1,423 @@
+{
+  "skills.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "frontmatter": {
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "readonly": {
+              "type": "boolean"
+            },
+            "source": {
+              "enum": [
+                "system",
+                "user",
+                "evolver",
+                "personality"
+              ],
+              "type": "string"
+            },
+            "unavailableReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "frontmatter",
+            "body",
+            "modifiedAt",
+            "source",
+            "readonly"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.delete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "frontmatter": {
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "readonly": {
+              "type": "boolean"
+            },
+            "source": {
+              "enum": [
+                "system",
+                "user",
+                "evolver",
+                "personality"
+              ],
+              "type": "string"
+            },
+            "unavailableReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "frontmatter",
+            "body",
+            "modifiedAt",
+            "source",
+            "readonly"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "includeUnavailable": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "pendingCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skills": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "frontmatter": {
+                "additionalProperties": {},
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "modifiedAt": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "readonly": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "system",
+                  "user",
+                  "evolver",
+                  "personality"
+                ],
+                "type": "string"
+              },
+              "unavailableReason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "frontmatter",
+              "body",
+              "modifiedAt",
+              "source",
+              "readonly"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "skills",
+        "pendingCount"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.update": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "frontmatter": {
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "readonly": {
+              "type": "boolean"
+            },
+            "source": {
+              "enum": [
+                "system",
+                "user",
+                "evolver",
+                "personality"
+              ],
+              "type": "string"
+            },
+            "unavailableReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "frontmatter",
+            "body",
+            "modifiedAt",
+            "source",
+            "readonly"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

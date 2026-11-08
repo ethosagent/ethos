@@ -1,0 +1,821 @@
+{
+  "amendments.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "amendmentId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "amendmentId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "review": {
+          "additionalProperties": false,
+          "properties": {
+            "expectedAfterHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "file": {
+              "enum": [
+                "toolset.yaml",
+                "config.yaml"
+              ],
+              "type": "string"
+            },
+            "flags": {
+              "items": {
+                "enum": [
+                  "tool-unavailable",
+                  "no-recorded-refusal",
+                  "local-terminal",
+                  "high-risk",
+                  "team-workflow"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "interruptedApply": {
+              "type": "boolean"
+            },
+            "liveHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notCompared": {
+              "type": "string"
+            },
+            "opsProblem": {
+              "type": "string"
+            },
+            "permissionDiff": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "changes": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "type": "string"
+                          },
+                          "direction": {
+                            "enum": [
+                              "widens",
+                              "narrows",
+                              "changes"
+                            ],
+                            "type": "string"
+                          },
+                          "field": {
+                            "type": "string"
+                          },
+                          "flag": {
+                            "enum": [
+                              "high-risk",
+                              "team-workflow"
+                            ],
+                            "type": "string"
+                          },
+                          "section": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "section",
+                          "field",
+                          "direction",
+                          "detail"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "widens": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "changes",
+                    "widens"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personality": {
+              "enum": [
+                "ok",
+                "not_found",
+                "builtin"
+              ],
+              "type": "string"
+            },
+            "record": {
+              "additionalProperties": false,
+              "properties": {
+                "applied": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "appliedHash": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "appliedHash",
+                    "at"
+                  ],
+                  "type": "object"
+                },
+                "baseHash": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "excerpt": {
+                        "type": "string"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      },
+                      "toolCallId": {
+                        "type": "string"
+                      },
+                      "toolName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "toolCallId",
+                      "toolName",
+                      "messageId",
+                      "excerpt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "history": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "filed",
+                          "auto_reject",
+                          "approve",
+                          "decline",
+                          "stale",
+                          "rollback"
+                        ],
+                        "type": "string"
+                      },
+                      "actor": {
+                        "enum": [
+                          "intake",
+                          "cli",
+                          "web"
+                        ],
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "decidedBy": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "actor",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "ops": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "op": {
+                            "enum": [
+                              "add_tool",
+                              "remove_tool"
+                            ],
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "tool"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "op": {
+                            "enum": [
+                              "set_name",
+                              "set_description",
+                              "set_display_emoji"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "op": {
+                            "const": "set_display_avatar",
+                            "type": "string"
+                          },
+                          "value": {
+                            "enum": [
+                              "generated",
+                              "upload"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "value"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "type": "array"
+                },
+                "opsHash": {
+                  "type": "string"
+                },
+                "personalityId": {
+                  "type": "string"
+                },
+                "preCheck": {
+                  "anyOf": [
+                    {
+                      "const": "ok",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "reason"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "provenance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "executionPosture": {
+                      "enum": [
+                        "docker",
+                        "ssh",
+                        "local",
+                        "none"
+                      ],
+                      "type": "string"
+                    },
+                    "holdsShellTool": {
+                      "type": "boolean"
+                    },
+                    "initiator": {
+                      "enum": [
+                        "user",
+                        "system"
+                      ],
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "platform": {
+                      "type": "string"
+                    },
+                    "roomAudience": {
+                      "enum": [
+                        "private",
+                        "shared"
+                      ],
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "sessionKey": {
+                      "type": "string"
+                    },
+                    "traceId": {
+                      "type": "string"
+                    },
+                    "turn": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "sessionKey",
+                    "platform",
+                    "initiator",
+                    "roomAudience",
+                    "executionPosture",
+                    "holdsShellTool"
+                  ],
+                  "type": "object"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "schemaVersion": {
+                  "const": 1,
+                  "type": "number"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "applied",
+                    "declined",
+                    "auto_rejected",
+                    "stale",
+                    "rolled_back"
+                  ],
+                  "type": "string"
+                },
+                "target": {
+                  "enum": [
+                    "toolset",
+                    "identity"
+                  ],
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "id",
+                "personalityId",
+                "target",
+                "ops",
+                "opsHash",
+                "baseHash",
+                "rationale",
+                "evidence",
+                "provenance",
+                "preCheck",
+                "status",
+                "history",
+                "createdAt",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "textDiff": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "record",
+            "file",
+            "personality",
+            "liveHash",
+            "stale",
+            "interruptedApply",
+            "expectedAfterHash",
+            "textDiff",
+            "permissionDiff",
+            "notCompared",
+            "flags"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "review"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "amendments.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "statuses": {
+          "items": {
+            "enum": [
+              "pending",
+              "applied",
+              "declined",
+              "auto_rejected",
+              "stale",
+              "rolled_back"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "amendments": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "applied": {
+                "additionalProperties": false,
+                "properties": {
+                  "appliedHash": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appliedHash",
+                  "at"
+                ],
+                "type": "object"
+              },
+              "baseHash": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "evidence": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "excerpt": {
+                      "type": "string"
+                    },
+                    "messageId": {
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "toolCallId",
+                    "toolName",
+                    "messageId",
+                    "excerpt"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "history": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "filed",
+                        "auto_reject",
+                        "approve",
+                        "decline",
+                        "stale",
+                        "rollback"
+                      ],
+                      "type": "string"
+                    },
+                    "actor": {
+                      "enum": [
+                        "intake",
+                        "cli",
+                        "web"
+                      ],
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "decidedBy": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "actor",
+                    "at"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "id": {
+                "type": "string"
+              },
+              "ops": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "op": {
+                          "enum": [
+                            "add_tool",
+                            "remove_tool"
+                          ],
+                          "type": "string"
+                        },
+                        "tool": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "op",
+                        "tool"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "op": {
+                          "enum": [
+                            "set_name",
+                            "set_description",
+                            "set_display_emoji"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "op",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "op": {
+                          "const": "set_display_avatar",
+                          "type": "string"
+                        },
+                        "value": {
+                          "enum": [
+                            "generated",
+                            "upload"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "op",
+                        "value"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              "opsHash": {
+                "type": "string"
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "preCheck": {
+                "anyOf": [
+                  {
+                    "const": "ok",
+                    "type": "string"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "reason"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "provenance": {
+                "additionalProperties": false,
+                "properties": {
+                  "executionPosture": {
+                    "enum": [
+                      "docker",
+                      "ssh",
+                      "local",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  "holdsShellTool": {
+                    "type": "boolean"
+                  },
+                  "initiator": {
+                    "enum": [
+                      "user",
+                      "system"
+                    ],
+                    "type": "string"
+                  },
+                  "origin": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "roomAudience": {
+                    "enum": [
+                      "private",
+                      "shared"
+                    ],
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "sessionKey": {
+                    "type": "string"
+                  },
+                  "traceId": {
+                    "type": "string"
+                  },
+                  "turn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "sessionKey",
+                  "platform",
+                  "initiator",
+                  "roomAudience",
+                  "executionPosture",
+                  "holdsShellTool"
+                ],
+                "type": "object"
+              },
+              "rationale": {
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "applied",
+                  "declined",
+                  "auto_rejected",
+                  "stale",
+                  "rolled_back"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "enum": [
+                  "toolset",
+                  "identity"
+                ],
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "id",
+              "personalityId",
+              "target",
+              "ops",
+              "opsHash",
+              "baseHash",
+              "rationale",
+              "evidence",
+              "provenance",
+              "preCheck",
+              "status",
+              "history",
+              "createdAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "amendments"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "approvals.leases.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "leases": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "expiresAt": {
+                "type": "string"
+              },
+              "grantedAt": {
+                "type": "string"
+              },
+              "grantedBy": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "personalityId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revokedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "toolName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "toolName",
+              "sessionId",
+              "personalityId",
+              "grantedBy",
+              "grantedAt",
+              "expiresAt",
+              "revokedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "leases"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "approvals.leases.revoke": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

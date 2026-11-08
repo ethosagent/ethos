@@ -1,0 +1,490 @@
+{
+  "catalog.install": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "grantHint": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "installedAs": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "plugin",
+            "skill"
+          ],
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "kind",
+        "id",
+        "installedAs",
+        "grantHint"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "catalog.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "kind": {
+          "enum": [
+            "mcp",
+            "plugin",
+            "skill"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "add",
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "name",
+                      "url"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "oauth",
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "url",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "install",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "cli",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "command"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "capabilities": {
+                "additionalProperties": false,
+                "properties": {
+                  "auth": {
+                    "enum": [
+                      "none",
+                      "oauth",
+                      "bearer",
+                      "env"
+                    ],
+                    "type": "string"
+                  },
+                  "env": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "filesystem": {
+                    "enum": [
+                      "none",
+                      "user-path",
+                      "own-state"
+                    ],
+                    "type": "string"
+                  },
+                  "network": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "shell": {
+                    "type": "boolean"
+                  },
+                  "toolCount": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "network",
+                  "auth",
+                  "env",
+                  "filesystem",
+                  "shell"
+                ],
+                "type": "object"
+              },
+              "category": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "homepage": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "installed": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "mcp",
+                  "plugin",
+                  "skill"
+                ],
+                "type": "string"
+              },
+              "license": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "mcp": {
+                "additionalProperties": false,
+                "properties": {
+                  "argVars": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "argsAfterSpec": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "envVars": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "argsAfterSpec",
+                  "argVars",
+                  "envVars"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pin": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "transport": {
+                        "const": "streamable-http",
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "remote",
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "url",
+                      "transport"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "integrity": {
+                        "type": "string"
+                      },
+                      "package": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "npm",
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "package",
+                      "version",
+                      "integrity"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "integrity": {
+                        "type": "string"
+                      },
+                      "package": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "pypi",
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "package",
+                      "version",
+                      "integrity"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "commit": {
+                        "type": "string"
+                      },
+                      "contentDigest": {
+                        "type": "string"
+                      },
+                      "repo": {
+                        "type": "string"
+                      },
+                      "subdir": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "git",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "repo",
+                      "commit",
+                      "contentDigest"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "plugin": {
+                "additionalProperties": false,
+                "properties": {
+                  "pluginId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pluginId"
+                ],
+                "type": "object"
+              },
+              "publisher": {
+                "type": "string"
+              },
+              "reviewedAt": {
+                "type": "string"
+              },
+              "skill": {
+                "additionalProperties": false,
+                "properties": {
+                  "skillName": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "skillName"
+                ],
+                "type": "object"
+              },
+              "tier": {
+                "enum": [
+                  "official",
+                  "verified",
+                  "community"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "name",
+              "description",
+              "category",
+              "publisher",
+              "tier",
+              "pin",
+              "capabilities",
+              "license",
+              "reviewedAt",
+              "installed",
+              "action"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "const": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "version",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "catalog.setSkillGrant": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "granted": {
+          "type": "boolean"
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "id",
+        "granted"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "allow"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

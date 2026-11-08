@@ -1,0 +1,2330 @@
+{
+  "learning.approve": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "candidateId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "override": {
+          "properties": {
+            "reason": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidateId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "additionalProperties": false,
+          "properties": {
+            "baseHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sessionIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "taskIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessionIds",
+                "taskIds",
+                "digest",
+                "ref"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "skill",
+                "expression"
+              ],
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "create",
+                "rewrite",
+                "update"
+              ],
+              "type": "string"
+            },
+            "origin": {
+              "enum": [
+                "fork",
+                "nightly",
+                "chat",
+                "eval",
+                "web",
+                "cli",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending_replay",
+                "pending_review",
+                "promoted",
+                "rejected",
+                "rolled_back",
+                "invalid",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "submittedAt": {
+              "type": "string"
+            },
+            "targetCaseIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "op",
+            "personalityId",
+            "origin",
+            "destination",
+            "content",
+            "baseHash",
+            "evidence",
+            "targetCaseIds",
+            "status",
+            "verdict",
+            "submittedAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "learning.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "candidateId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "additionalProperties": false,
+          "properties": {
+            "baseHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sessionIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "taskIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessionIds",
+                "taskIds",
+                "digest",
+                "ref"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "skill",
+                "expression"
+              ],
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "create",
+                "rewrite",
+                "update"
+              ],
+              "type": "string"
+            },
+            "origin": {
+              "enum": [
+                "fork",
+                "nightly",
+                "chat",
+                "eval",
+                "web",
+                "cli",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending_replay",
+                "pending_review",
+                "promoted",
+                "rejected",
+                "rolled_back",
+                "invalid",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "submittedAt": {
+              "type": "string"
+            },
+            "targetCaseIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "op",
+            "personalityId",
+            "origin",
+            "destination",
+            "content",
+            "baseHash",
+            "evidence",
+            "targetCaseIds",
+            "status",
+            "verdict",
+            "submittedAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        },
+        "current": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "core": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "content",
+            "core"
+          ],
+          "type": "object"
+        },
+        "replay": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "candidateId": {
+                  "type": "string"
+                },
+                "cases": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "baseline": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "arm": {
+                                "enum": [
+                                  "baseline",
+                                  "candidate"
+                                ],
+                                "type": "string"
+                              },
+                              "assertions": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "criteria",
+                                        "contains",
+                                        "regex",
+                                        "exact",
+                                        "tool_called",
+                                        "tool_not_called",
+                                        "completed"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "passed": {
+                                      "type": "boolean"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value",
+                                    "passed"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "completed": {
+                                "type": "boolean"
+                              },
+                              "costUsd": {
+                                "type": "number"
+                              },
+                              "errors": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "code": {
+                                      "type": "string"
+                                    },
+                                    "error": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "error",
+                                    "code"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "halts": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "budget",
+                                        "watcher"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "message": {
+                                      "type": "string"
+                                    },
+                                    "rule": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "rule",
+                                    "message"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "plan": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "args": {},
+                                    "toolCallId": {
+                                      "type": "string"
+                                    },
+                                    "toolName": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "toolCallId",
+                                    "toolName",
+                                    "args"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "score": {
+                                "type": "number"
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "arm",
+                              "text",
+                              "plan",
+                              "errors",
+                              "halts",
+                              "costUsd",
+                              "completed",
+                              "assertions",
+                              "score"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "candidate": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "arm": {
+                                "enum": [
+                                  "baseline",
+                                  "candidate"
+                                ],
+                                "type": "string"
+                              },
+                              "assertions": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "criteria",
+                                        "contains",
+                                        "regex",
+                                        "exact",
+                                        "tool_called",
+                                        "tool_not_called",
+                                        "completed"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "passed": {
+                                      "type": "boolean"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value",
+                                    "passed"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "completed": {
+                                "type": "boolean"
+                              },
+                              "costUsd": {
+                                "type": "number"
+                              },
+                              "errors": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "code": {
+                                      "type": "string"
+                                    },
+                                    "error": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "error",
+                                    "code"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "halts": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "budget",
+                                        "watcher"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "message": {
+                                      "type": "string"
+                                    },
+                                    "rule": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "rule",
+                                    "message"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "plan": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "args": {},
+                                    "toolCallId": {
+                                      "type": "string"
+                                    },
+                                    "toolName": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "toolCallId",
+                                    "toolName",
+                                    "args"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "score": {
+                                "type": "number"
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "arm",
+                              "text",
+                              "plan",
+                              "errors",
+                              "halts",
+                              "costUsd",
+                              "completed",
+                              "assertions",
+                              "score"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "caseId": {
+                        "type": "string"
+                      },
+                      "delta": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "prompt": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "target",
+                          "regression"
+                        ],
+                        "type": "string"
+                      },
+                      "source": {
+                        "enum": [
+                          "kanban",
+                          "eval",
+                          "session"
+                        ],
+                        "type": "string"
+                      },
+                      "sourceRef": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "caseId",
+                      "role",
+                      "source",
+                      "sourceRef",
+                      "prompt",
+                      "baseline",
+                      "candidate",
+                      "delta"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "costUsd": {
+                  "type": "number"
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "finishedAt": {
+                  "type": "string"
+                },
+                "limitations": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "maxCostUsd": {
+                  "type": "number"
+                },
+                "regressionCount": {
+                  "type": "number"
+                },
+                "regressionMeanDelta": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "regressionsWorse": {
+                  "type": "number"
+                },
+                "rules": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "a": {
+                      "type": "boolean"
+                    },
+                    "b": {
+                      "type": "boolean"
+                    },
+                    "c": {
+                      "type": "boolean"
+                    },
+                    "d": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "b",
+                    "c",
+                    "d"
+                  ],
+                  "type": "object"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "skipped": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "caseId": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "caseId",
+                      "reason"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "stopReason": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "budget",
+                        "error",
+                        "insufficient_cases"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "targetMeanDelta": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "testedOn": {
+                  "type": "string"
+                },
+                "verdict": {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "runId",
+                "candidateId",
+                "testedOn",
+                "startedAt",
+                "finishedAt",
+                "verdict",
+                "rules",
+                "targetMeanDelta",
+                "regressionMeanDelta",
+                "regressionsWorse",
+                "regressionCount",
+                "costUsd",
+                "maxCostUsd",
+                "stopReason",
+                "error",
+                "cases",
+                "skipped",
+                "limitations"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replayRunIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rollback": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "type": "boolean"
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "allowed",
+            "code",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "timeline": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "actor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "at": {
+                "type": "string"
+              },
+              "from": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pending_replay",
+                      "pending_review",
+                      "promoted",
+                      "rejected",
+                      "rolled_back",
+                      "invalid",
+                      "stale"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pending_replay",
+                      "pending_review",
+                      "promoted",
+                      "rejected",
+                      "rolled_back",
+                      "invalid",
+                      "stale"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "verdict": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pass",
+                      "regress",
+                      "incomplete"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "action",
+              "from",
+              "to",
+              "verdict",
+              "actor",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidate",
+        "current",
+        "replay",
+        "replayRunIds",
+        "timeline",
+        "rollback"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "learning.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "kind": {
+          "enum": [
+            "skill",
+            "expression"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "statuses": {
+          "items": {
+            "enum": [
+              "pending_replay",
+              "pending_review",
+              "promoted",
+              "rejected",
+              "rolled_back",
+              "invalid",
+              "stale"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "baseHash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "content": {
+                "type": "string"
+              },
+              "destination": {
+                "type": "string"
+              },
+              "evidence": {
+                "additionalProperties": false,
+                "properties": {
+                  "digest": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "ref": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "sessionIds": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "taskIds": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "sessionIds",
+                  "taskIds",
+                  "digest",
+                  "ref"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "skill",
+                  "expression"
+                ],
+                "type": "string"
+              },
+              "op": {
+                "enum": [
+                  "create",
+                  "rewrite",
+                  "update"
+                ],
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "fork",
+                  "nightly",
+                  "chat",
+                  "eval",
+                  "web",
+                  "cli",
+                  "legacy"
+                ],
+                "type": "string"
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending_replay",
+                  "pending_review",
+                  "promoted",
+                  "rejected",
+                  "rolled_back",
+                  "invalid",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              "submittedAt": {
+                "type": "string"
+              },
+              "targetCaseIds": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "verdict": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pass",
+                      "regress",
+                      "incomplete"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "op",
+              "personalityId",
+              "origin",
+              "destination",
+              "content",
+              "baseHash",
+              "evidence",
+              "targetCaseIds",
+              "status",
+              "verdict",
+              "submittedAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "learning.reject": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "candidateId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "additionalProperties": false,
+          "properties": {
+            "baseHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sessionIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "taskIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessionIds",
+                "taskIds",
+                "digest",
+                "ref"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "skill",
+                "expression"
+              ],
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "create",
+                "rewrite",
+                "update"
+              ],
+              "type": "string"
+            },
+            "origin": {
+              "enum": [
+                "fork",
+                "nightly",
+                "chat",
+                "eval",
+                "web",
+                "cli",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending_replay",
+                "pending_review",
+                "promoted",
+                "rejected",
+                "rolled_back",
+                "invalid",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "submittedAt": {
+              "type": "string"
+            },
+            "targetCaseIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "op",
+            "personalityId",
+            "origin",
+            "destination",
+            "content",
+            "baseHash",
+            "evidence",
+            "targetCaseIds",
+            "status",
+            "verdict",
+            "submittedAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "learning.replay": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "candidateId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "additionalProperties": false,
+          "properties": {
+            "baseHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sessionIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "taskIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessionIds",
+                "taskIds",
+                "digest",
+                "ref"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "skill",
+                "expression"
+              ],
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "create",
+                "rewrite",
+                "update"
+              ],
+              "type": "string"
+            },
+            "origin": {
+              "enum": [
+                "fork",
+                "nightly",
+                "chat",
+                "eval",
+                "web",
+                "cli",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending_replay",
+                "pending_review",
+                "promoted",
+                "rejected",
+                "rolled_back",
+                "invalid",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "submittedAt": {
+              "type": "string"
+            },
+            "targetCaseIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "op",
+            "personalityId",
+            "origin",
+            "destination",
+            "content",
+            "baseHash",
+            "evidence",
+            "targetCaseIds",
+            "status",
+            "verdict",
+            "submittedAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        },
+        "decisionReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "promoted": {
+          "type": "boolean"
+        },
+        "replay": {
+          "additionalProperties": false,
+          "properties": {
+            "candidateId": {
+              "type": "string"
+            },
+            "cases": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "baseline": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arm": {
+                            "enum": [
+                              "baseline",
+                              "candidate"
+                            ],
+                            "type": "string"
+                          },
+                          "assertions": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "criteria",
+                                    "contains",
+                                    "regex",
+                                    "exact",
+                                    "tool_called",
+                                    "tool_not_called",
+                                    "completed"
+                                  ],
+                                  "type": "string"
+                                },
+                                "passed": {
+                                  "type": "boolean"
+                                },
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "value",
+                                "passed"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "completed": {
+                            "type": "boolean"
+                          },
+                          "costUsd": {
+                            "type": "number"
+                          },
+                          "errors": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "error": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "error",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "halts": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "budget",
+                                    "watcher"
+                                  ],
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "rule": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "rule",
+                                "message"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "plan": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "args": {},
+                                "toolCallId": {
+                                  "type": "string"
+                                },
+                                "toolName": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "toolCallId",
+                                "toolName",
+                                "args"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "score": {
+                            "type": "number"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "arm",
+                          "text",
+                          "plan",
+                          "errors",
+                          "halts",
+                          "costUsd",
+                          "completed",
+                          "assertions",
+                          "score"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "candidate": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arm": {
+                            "enum": [
+                              "baseline",
+                              "candidate"
+                            ],
+                            "type": "string"
+                          },
+                          "assertions": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "criteria",
+                                    "contains",
+                                    "regex",
+                                    "exact",
+                                    "tool_called",
+                                    "tool_not_called",
+                                    "completed"
+                                  ],
+                                  "type": "string"
+                                },
+                                "passed": {
+                                  "type": "boolean"
+                                },
+                                "value": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "value",
+                                "passed"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "completed": {
+                            "type": "boolean"
+                          },
+                          "costUsd": {
+                            "type": "number"
+                          },
+                          "errors": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "error": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "error",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "halts": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "budget",
+                                    "watcher"
+                                  ],
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "rule": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "rule",
+                                "message"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "plan": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "args": {},
+                                "toolCallId": {
+                                  "type": "string"
+                                },
+                                "toolName": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "toolCallId",
+                                "toolName",
+                                "args"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "score": {
+                            "type": "number"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "arm",
+                          "text",
+                          "plan",
+                          "errors",
+                          "halts",
+                          "costUsd",
+                          "completed",
+                          "assertions",
+                          "score"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "caseId": {
+                    "type": "string"
+                  },
+                  "delta": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "target",
+                      "regression"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "enum": [
+                      "kanban",
+                      "eval",
+                      "session"
+                    ],
+                    "type": "string"
+                  },
+                  "sourceRef": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "caseId",
+                  "role",
+                  "source",
+                  "sourceRef",
+                  "prompt",
+                  "baseline",
+                  "candidate",
+                  "delta"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "finishedAt": {
+              "type": "string"
+            },
+            "limitations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "maxCostUsd": {
+              "type": "number"
+            },
+            "regressionCount": {
+              "type": "number"
+            },
+            "regressionMeanDelta": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "regressionsWorse": {
+              "type": "number"
+            },
+            "rules": {
+              "additionalProperties": false,
+              "properties": {
+                "a": {
+                  "type": "boolean"
+                },
+                "b": {
+                  "type": "boolean"
+                },
+                "c": {
+                  "type": "boolean"
+                },
+                "d": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "a",
+                "b",
+                "c",
+                "d"
+              ],
+              "type": "object"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "skipped": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "caseId": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "caseId",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "stopReason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "budget",
+                    "error",
+                    "insufficient_cases"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "targetMeanDelta": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "testedOn": {
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "pass",
+                "regress",
+                "incomplete"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "runId",
+            "candidateId",
+            "testedOn",
+            "startedAt",
+            "finishedAt",
+            "verdict",
+            "rules",
+            "targetMeanDelta",
+            "regressionMeanDelta",
+            "regressionsWorse",
+            "regressionCount",
+            "costUsd",
+            "maxCostUsd",
+            "stopReason",
+            "error",
+            "cases",
+            "skipped",
+            "limitations"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate",
+        "replay",
+        "promoted",
+        "decisionReason"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "learning.rollback": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "candidateId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "additionalProperties": false,
+          "properties": {
+            "baseHash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ref": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sessionIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "taskIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessionIds",
+                "taskIds",
+                "digest",
+                "ref"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "skill",
+                "expression"
+              ],
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "create",
+                "rewrite",
+                "update"
+              ],
+              "type": "string"
+            },
+            "origin": {
+              "enum": [
+                "fork",
+                "nightly",
+                "chat",
+                "eval",
+                "web",
+                "cli",
+                "legacy"
+              ],
+              "type": "string"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending_replay",
+                "pending_review",
+                "promoted",
+                "rejected",
+                "rolled_back",
+                "invalid",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "submittedAt": {
+              "type": "string"
+            },
+            "targetCaseIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pass",
+                    "regress",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "op",
+            "personalityId",
+            "origin",
+            "destination",
+            "content",
+            "baseHash",
+            "evidence",
+            "targetCaseIds",
+            "status",
+            "verdict",
+            "submittedAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

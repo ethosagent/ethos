@@ -1,0 +1,1311 @@
+{
+  "goals.cancel": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "acceptanceCriteria": {
+          "properties": {
+            "checks": {
+              "items": {
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "description"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "rubric": {
+              "items": {
+                "properties": {
+                  "description": {
+                    "type": "string"
+                  },
+                  "weight": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "description",
+                  "weight"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "threshold": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "allowDangerousToolCalls": {
+          "type": "boolean"
+        },
+        "deadline": {
+          "type": "string"
+        },
+        "goalText": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxAttempts": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxCostUsd": {
+          "type": "number"
+        },
+        "maxIdenticalToolCalls": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRecoveryAttempts": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxToolCallsPerTurn": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "goalText"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {},
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allowDangerousToolCalls": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "costUsd": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "errorText": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goalText": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxAttempts": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "maxCostUsd": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxIdenticalToolCalls": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxRecoveryAttempts": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxToolCallsPerTurn": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "type": "string"
+            },
+            "outputMd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outputPartial": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "planMd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "resumeCount": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "sourceSession": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "startedAt": {
+              "type": "number"
+            },
+            "status": {
+              "enum": [
+                "planning",
+                "running",
+                "judging",
+                "retrying",
+                "needs_clarification",
+                "completed",
+                "exhausted",
+                "failed",
+                "cancelled",
+                "interrupted"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "tokenCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "toolCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "turnCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "userId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "userId",
+            "personalityId",
+            "origin",
+            "sourceSession",
+            "title",
+            "goalText",
+            "acceptanceCriteria",
+            "planMd",
+            "status",
+            "maxAttempts",
+            "maxCostUsd",
+            "deadline",
+            "outputMd",
+            "outputPartial",
+            "errorText",
+            "startedAt",
+            "completedAt",
+            "resumeCount",
+            "turnCount",
+            "toolCount",
+            "tokenCount",
+            "costUsd"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifacts": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goalId": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "n": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "outputMd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sessionKey": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "strategyUsed": {
+                "enum": [
+                  "first",
+                  "patch",
+                  "pivot"
+                ],
+                "type": "string"
+              },
+              "traceId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "verdict": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "perCriterion": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidence": {
+                              "type": "string"
+                            },
+                            "gap": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "pass": {
+                              "type": "boolean"
+                            },
+                            "score": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "evidence"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "score": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "score",
+                      "perCriterion"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "goalId",
+              "n",
+              "sessionKey",
+              "outputMd",
+              "artifacts",
+              "verdict",
+              "strategyUsed",
+              "costUsd",
+              "traceId",
+              "startedAt",
+              "completedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "type": "number"
+              },
+              "eventType": {
+                "enum": [
+                  "run_start",
+                  "plan_start",
+                  "plan_ready",
+                  "attempt_start",
+                  "turn_text",
+                  "tool_start",
+                  "tool_end",
+                  "steer",
+                  "usage",
+                  "complete_attempt",
+                  "complete_rejected",
+                  "error",
+                  "done"
+                ],
+                "type": "string"
+              },
+              "goalId": {
+                "type": "string"
+              },
+              "id": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "payload": {
+                "additionalProperties": {},
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "goalId",
+              "seq",
+              "eventType",
+              "payload",
+              "createdAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "goal": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {},
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allowDangerousToolCalls": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "costUsd": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "errorText": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goalText": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxAttempts": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "maxCostUsd": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxIdenticalToolCalls": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxRecoveryAttempts": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxToolCallsPerTurn": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "type": "string"
+            },
+            "outputMd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outputPartial": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "planMd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "resumeCount": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "sourceSession": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "startedAt": {
+              "type": "number"
+            },
+            "status": {
+              "enum": [
+                "planning",
+                "running",
+                "judging",
+                "retrying",
+                "needs_clarification",
+                "completed",
+                "exhausted",
+                "failed",
+                "cancelled",
+                "interrupted"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "tokenCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "toolCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "turnCount": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "userId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "userId",
+            "personalityId",
+            "origin",
+            "sourceSession",
+            "title",
+            "goalText",
+            "acceptanceCriteria",
+            "planMd",
+            "status",
+            "maxAttempts",
+            "maxCostUsd",
+            "deadline",
+            "outputMd",
+            "outputPartial",
+            "errorText",
+            "startedAt",
+            "completedAt",
+            "resumeCount",
+            "turnCount",
+            "toolCount",
+            "tokenCount",
+            "costUsd"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "goal",
+        "events",
+        "attempts"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "planning",
+            "running",
+            "judging",
+            "retrying",
+            "needs_clarification",
+            "completed",
+            "exhausted",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "goals": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acceptanceCriteria": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "allowDangerousToolCalls": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "deadline": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "errorText": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goalText": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "maxAttempts": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "maxCostUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxIdenticalToolCalls": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxRecoveryAttempts": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxToolCallsPerTurn": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "origin": {
+                "type": "string"
+              },
+              "outputMd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outputPartial": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "planMd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resumeCount": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "sourceSession": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "status": {
+                "enum": [
+                  "planning",
+                  "running",
+                  "judging",
+                  "retrying",
+                  "needs_clarification",
+                  "completed",
+                  "exhausted",
+                  "failed",
+                  "cancelled",
+                  "interrupted"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "tokenCount": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "toolCount": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "turnCount": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "userId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "userId",
+              "personalityId",
+              "origin",
+              "sourceSession",
+              "title",
+              "goalText",
+              "acceptanceCriteria",
+              "planMd",
+              "status",
+              "maxAttempts",
+              "maxCostUsd",
+              "deadline",
+              "outputMd",
+              "outputPartial",
+              "errorText",
+              "startedAt",
+              "completedAt",
+              "resumeCount",
+              "turnCount",
+              "toolCount",
+              "tokenCount",
+              "costUsd"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "goals"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.resume": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.settings": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allowCheckCommands": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allowCheckCommands"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.steer": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "message"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "goals.toolResult": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "goalId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "toolCallId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goalId",
+        "toolCallId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "input": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "found"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,822 @@
+{
+  "effectiveEmpty": {
+    "apiKey": {
+      "provider": "anthropic",
+      "ref": "providers/anthropic/apiKey",
+      "source": "vault"
+    },
+    "configPath": "/parity/config.yaml",
+    "model": {
+      "id": "claude-opus-5-5",
+      "rung": "model:"
+    },
+    "personality": {
+      "id": "researcher",
+      "source": "default"
+    },
+    "stateDir": "/parity",
+    "warnings": []
+  },
+  "empty": {
+    "apiKey": "",
+    "model": "claude-opus-5-5",
+    "personality": "researcher",
+    "provider": "anthropic"
+  },
+  "emptyNotices": {
+    "errors": [],
+    "warnings": []
+  },
+  "notices": {
+    "errors": [],
+    "warnings": [
+      "cron.trigger.external is deprecated and has no effect. POST /cron/fire is now always mounted for a bearer key with the 'cron' scope. To stop the in-process interval and let an external scheduler drive firing, set cron.fireUrl: <url>.",
+      "config.yaml: 'arming.backend' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
+      "config.yaml: 'auxiliary.compression.provider' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
+      "config.yaml: 'auxiliary.web.timeoutMs' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
+      "config.yaml: 'decisions.sites.injection' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key)."
+    ]
+  },
+  "parsed": {
+    "a2a": {
+      "enabled": true,
+      "peering": {
+        "allowPrivateUrls": true
+      }
+    },
+    "activeContext": {
+      "name": "engineer",
+      "type": "personality"
+    },
+    "admin": {
+      "enabled": true
+    },
+    "apiKey": "sk-parity-fake",
+    "apiVersion": "2024-10-21",
+    "approvalTimeoutMs": 120000,
+    "auxiliary": {
+      "asr": {
+        "provider": "command-stt"
+      },
+      "tts": {
+        "provider": "command-tts"
+      },
+      "vision": {
+        "model": "claude-sonnet-4-5"
+      }
+    },
+    "aws": {
+      "secrets": {
+        "enabled": true,
+        "region": "us-east-2"
+      }
+    },
+    "awsProfile": "parity",
+    "backup": {
+      "cron": "0 3 * * *",
+      "keep": 5,
+      "scope": [
+        "identity"
+      ]
+    },
+    "baseUrl": "https://llm.example.com/v1",
+    "browser": {
+      "commandTimeoutMs": 5000,
+      "headed": "auto",
+      "proxy": {
+        "server": "http://proxy.example.com:3128"
+      }
+    },
+    "callCapture": {
+      "personalityId": "assistant"
+    },
+    "channelDigest": {
+      "cron": "0 8 * * *",
+      "enabled": true,
+      "maxMessagesPerLane": 500
+    },
+    "channelFilter": {
+      "telegram": {
+        "dmPolicy": "decline",
+        "ownerUserId": "owner-1"
+      }
+    },
+    "channelToolsets": {
+      "telegram": [
+        "web_search"
+      ],
+      "whatsapp": [
+        "read_file"
+      ]
+    },
+    "compaction": {
+      "maxContextTokens": 400000,
+      "pressure": 0.85,
+      "target": 0.6
+    },
+    "contextWindow": 200000,
+    "cron": {
+      "fireUrl": "https://agent.example.com/cron/fire",
+      "trigger": {
+        "external": true
+      }
+    },
+    "decisions": {
+      "provider": "typesafe"
+    },
+    "discord": {
+      "defaultChannelMode": "observe",
+      "mentionByName": true
+    },
+    "discordToken": "parity-discord",
+    "emailImapHost": "imap.example.com",
+    "emailImapPort": 993,
+    "emailPassword": "parity-email",
+    "emailSmtpHost": "smtp.example.com",
+    "emailSmtpPort": 587,
+    "emailTrustedAuthservId": "mx.example.com",
+    "emailUser": "bot@example.com",
+    "evolverSchedule": "0 3 * * *",
+    "execution": {
+      "allowLocalFallback": true,
+      "containerized": true,
+      "ssh": {
+        "host": "build-01.internal"
+      }
+    },
+    "gateway": {
+      "maxInboundMediaBytes": 52428800,
+      "privateChats": {
+        "telegram": [
+          "-1001"
+        ]
+      }
+    },
+    "grounding": {
+      "enabled": true,
+      "kanban": {
+        "checks": true
+      }
+    },
+    "idleWatcher": {
+      "enabled": true,
+      "idleThresholdMs": 120000
+    },
+    "kanban": {
+      "maxInProgress": 5,
+      "maxInProgressPerProfile": 2
+    },
+    "kanbanPoll": {
+      "intervalMs": 7000
+    },
+    "learningReplay": {
+      "enabled": true,
+      "maxCases": 8
+    },
+    "logs": {
+      "level": "warn",
+      "rotation": {
+        "maxFiles": 3
+      }
+    },
+    "maxRetries": 3,
+    "mcp": {
+      "discoveryConcurrency": 8
+    },
+    "memory": "markdown",
+    "memoryApproval": {
+      "cap": 50,
+      "mode": "automated"
+    },
+    "memoryCapture": {
+      "enabled": true,
+      "evidenceSessions": 3
+    },
+    "memoryCharLimits": {
+      "memory": 524288,
+      "user": 262144
+    },
+    "memoryConsolidation": {
+      "enabled": true
+    },
+    "memoryVault": {
+      "agentDir": "Ethos",
+      "exclude": [
+        "Archive",
+        "Templates"
+      ],
+      "path": "/parity/Vault",
+      "prefetch": [
+        "MEMORY.md",
+        "USER.md"
+      ]
+    },
+    "model": "claude-sonnet-4-5",
+    "modelCatalog": {
+      "enabled": true,
+      "url": "https://catalog.example.com/catalog.json"
+    },
+    "modelRegistry": {
+      "entries": {
+        "sonnet": {
+          "alias": "sonnet",
+          "label": "everyday",
+          "modelId": "claude-sonnet-4-5",
+          "provider": "anthropic"
+        }
+      },
+      "roles": {}
+    },
+    "modelRouting": {
+      "engineer": "moonshotai/kimi-k2.6",
+      "researcher": "claude-opus-4-7"
+    },
+    "models": {
+      "ollama/llama3.2": {
+        "sampling": {
+          "temperature": 0.2
+        },
+        "toolCallFormat": "text-xml"
+      }
+    },
+    "nightlyPass": {
+      "cron": "0 2 * * *",
+      "enabled": true
+    },
+    "notifications": {
+      "bots": {
+        "bot-a": {
+          "quietHours": "off"
+        }
+      },
+      "quietHours": "22:00-07:00",
+      "timezone": "Europe/London"
+    },
+    "pauseClockCorrection": {
+      "enabled": true,
+      "thresholdMs": 90000
+    },
+    "pauseLifecycle": {
+      "http": {
+        "timeoutMs": 5000,
+        "url": "https://orchestrator.example.com/tenants/t1/idle"
+      }
+    },
+    "personalitiesConfig": {
+      "researcher": {
+        "retention": {
+          "messages": "30d"
+        }
+      }
+    },
+    "personality": "engineer",
+    "pluginIsolation": {
+      "default": "host",
+      "hookTimeoutMs": 2000,
+      "idleStopMinutes": 10,
+      "maxHeapMb": 512,
+      "overrides": {},
+      "sandbox": "none"
+    },
+    "pluginsAutoInstall": false,
+    "provider": "anthropic",
+    "providers": [
+      {
+        "apiKey": "",
+        "id": "anthropic-work",
+        "model": "claude-sonnet-4-5",
+        "provider": "anthropic",
+        "region": "us-east-1"
+      },
+      {
+        "apiKey": "",
+        "model": "gpt-4o",
+        "provider": "openai"
+      }
+    ],
+    "quick_commands": {
+      "status": {
+        "command": "git",
+        "gateway": true,
+        "type": "exec"
+      }
+    },
+    "region": "us-east-1",
+    "requestTimeoutMs": 60000,
+    "retention": {
+      "channelTranscript": "7d",
+      "messages": "90d",
+      "vacuumAfterPrune": true
+    },
+    "schemaVersion": 1,
+    "security": {
+      "trustedGitHubOrgs": [
+        "acme-corp"
+      ]
+    },
+    "skin": "default",
+    "slack": {
+      "apps": [
+        {
+          "bind": {
+            "name": "researcher",
+            "type": "personality"
+          },
+          "botToken": "xoxb-1",
+          "signingSecret": "parity-signing-1"
+        }
+      ]
+    },
+    "slackAppToken": "xapp-parity",
+    "slackBotToken": "xoxb-parity",
+    "slackSigningSecret": "parity-signing",
+    "storage": {
+      "backend": "s3",
+      "s3": {
+        "bucket": "my-bucket",
+        "region": "us-east-1"
+      }
+    },
+    "teamSupervisor": {
+      "restartLoopGuard": {
+        "maxRestarts": 3,
+        "windowSeconds": 120
+      }
+    },
+    "teams": {
+      "eng": {
+        "autoStop": true
+      }
+    },
+    "telegram": {
+      "bots": [
+        {
+          "bind": {
+            "name": "researcher",
+            "type": "personality"
+          },
+          "budget": {
+            "dailyUsd": 5
+          },
+          "token": "222222:parity-bot"
+        }
+      ]
+    },
+    "telegramToken": "123456:parity-telegram",
+    "telemetry": {
+      "export": {
+        "otlp": {
+          "enabled": true,
+          "endpoint": "http://localhost:4318"
+        }
+      }
+    },
+    "toolLoading": "auto",
+    "toolLoop": {
+      "maxIdenticalToolCalls": 400,
+      "maxToolCallsWarnAt": 40
+    },
+    "toolOrder": "stable",
+    "toolPayloadLimitChars": 50000,
+    "toolSettings": {
+      "scout": {
+        "web_search": {
+          "provider": "brave"
+        }
+      }
+    },
+    "voice": {
+      "bots": [],
+      "stt": {
+        "providers": {
+          "spanish": {
+            "provider": "local-stt"
+          }
+        }
+      },
+      "tts": {
+        "providers": {
+          "studio": {
+            "provider": "openai-tts"
+          }
+        }
+      }
+    },
+    "web": {
+      "host": "0.0.0.0",
+      "search_backend": "brave",
+      "searxng": {
+        "url": "https://searx.example.com"
+      }
+    },
+    "webBaseUrl": "https://ethos.example.com",
+    "webhooks": {
+      "h": {
+        "personalityId": "researcher",
+        "secret": "x"
+      }
+    },
+    "weeklyDigest": {
+      "cron": "0 9 * * 1",
+      "enabled": true,
+      "recipients": [
+        "alice@example.com"
+      ]
+    },
+    "whatsapp": [
+      {
+        "budget": {
+          "dailyUsd": 1
+        },
+        "default_mode": "observe",
+        "id": "wa1"
+      }
+    ]
+  },
+  "reparsed": {
+    "a2a": {
+      "enabled": true,
+      "peering": {
+        "allowPrivateUrls": true
+      }
+    },
+    "activeContext": {
+      "name": "engineer",
+      "type": "personality"
+    },
+    "admin": {
+      "enabled": true
+    },
+    "apiKey": "${secrets:providers/anthropic/apiKey}",
+    "apiVersion": "2024-10-21",
+    "approvalTimeoutMs": 120000,
+    "auxiliary": {
+      "asr": {
+        "provider": "command-stt"
+      },
+      "tts": {
+        "provider": "command-tts"
+      },
+      "vision": {
+        "model": "claude-sonnet-4-5"
+      }
+    },
+    "aws": {
+      "secrets": {
+        "enabled": true,
+        "region": "us-east-2"
+      }
+    },
+    "awsProfile": "parity",
+    "backup": {
+      "cron": "0 3 * * *",
+      "keep": 5,
+      "scope": [
+        "identity"
+      ]
+    },
+    "baseUrl": "https://llm.example.com/v1",
+    "browser": {
+      "commandTimeoutMs": 5000,
+      "headed": "auto",
+      "proxy": {
+        "server": "http://proxy.example.com:3128"
+      }
+    },
+    "callCapture": {
+      "personalityId": "assistant"
+    },
+    "channelDigest": {
+      "cron": "0 8 * * *",
+      "enabled": true,
+      "maxMessagesPerLane": 500
+    },
+    "channelFilter": {
+      "telegram": {
+        "dmPolicy": "decline",
+        "ownerUserId": "owner-1"
+      }
+    },
+    "channelToolsets": {
+      "telegram": [
+        "web_search"
+      ],
+      "whatsapp": [
+        "read_file"
+      ]
+    },
+    "compaction": {
+      "maxContextTokens": 400000,
+      "pressure": 0.85,
+      "target": 0.6
+    },
+    "contextWindow": 200000,
+    "cron": {
+      "fireUrl": "https://agent.example.com/cron/fire"
+    },
+    "decisions": {
+      "provider": "typesafe"
+    },
+    "discord": {
+      "defaultChannelMode": "observe",
+      "mentionByName": true
+    },
+    "discordToken": "${secrets:discord/token}",
+    "emailImapHost": "imap.example.com",
+    "emailImapPort": 993,
+    "emailPassword": "${secrets:email/password}",
+    "emailSmtpHost": "smtp.example.com",
+    "emailSmtpPort": 587,
+    "emailTrustedAuthservId": "mx.example.com",
+    "emailUser": "bot@example.com",
+    "evolverSchedule": "0 3 * * *",
+    "execution": {
+      "allowLocalFallback": true,
+      "containerized": true,
+      "ssh": {
+        "host": "build-01.internal"
+      }
+    },
+    "gateway": {
+      "maxInboundMediaBytes": 52428800,
+      "privateChats": {
+        "telegram": [
+          "-1001"
+        ]
+      }
+    },
+    "grounding": {
+      "enabled": true,
+      "kanban": {
+        "checks": true
+      }
+    },
+    "idleWatcher": {
+      "enabled": true,
+      "idleThresholdMs": 120000
+    },
+    "kanban": {
+      "maxInProgress": 5,
+      "maxInProgressPerProfile": 2
+    },
+    "kanbanPoll": {
+      "intervalMs": 7000
+    },
+    "learningReplay": {
+      "enabled": true,
+      "maxCases": 8
+    },
+    "logs": {
+      "level": "warn",
+      "rotation": {
+        "maxFiles": 3
+      }
+    },
+    "maxRetries": 3,
+    "mcp": {
+      "discoveryConcurrency": 8
+    },
+    "memory": "markdown",
+    "memoryApproval": {
+      "cap": 50,
+      "mode": "automated"
+    },
+    "memoryCapture": {
+      "enabled": true,
+      "evidenceSessions": 3
+    },
+    "memoryCharLimits": {
+      "memory": 524288,
+      "user": 262144
+    },
+    "memoryConsolidation": {
+      "enabled": true
+    },
+    "memoryVault": {
+      "agentDir": "Ethos",
+      "exclude": [
+        "Archive",
+        "Templates"
+      ],
+      "path": "/parity/Vault",
+      "prefetch": [
+        "MEMORY.md",
+        "USER.md"
+      ]
+    },
+    "model": "claude-sonnet-4-5",
+    "modelCatalog": {
+      "url": "https://catalog.example.com/catalog.json"
+    },
+    "modelRegistry": {
+      "entries": {
+        "sonnet": {
+          "alias": "sonnet",
+          "label": "everyday",
+          "modelId": "claude-sonnet-4-5",
+          "provider": "anthropic"
+        }
+      },
+      "roles": {}
+    },
+    "modelRouting": {
+      "engineer": "moonshotai/kimi-k2.6",
+      "researcher": "claude-opus-4-7"
+    },
+    "models": {
+      "ollama/llama3.2": {
+        "sampling": {
+          "temperature": 0.2
+        },
+        "toolCallFormat": "text-xml"
+      }
+    },
+    "nightlyPass": {
+      "cron": "0 2 * * *",
+      "enabled": true
+    },
+    "notifications": {
+      "bots": {
+        "bot-a": {
+          "quietHours": "off"
+        }
+      },
+      "quietHours": "22:00-07:00",
+      "timezone": "Europe/London"
+    },
+    "pauseClockCorrection": {
+      "enabled": true,
+      "thresholdMs": 90000
+    },
+    "pauseLifecycle": {
+      "http": {
+        "timeoutMs": 5000,
+        "url": "https://orchestrator.example.com/tenants/t1/idle"
+      }
+    },
+    "personalitiesConfig": {
+      "researcher": {
+        "retention": {
+          "messages": "30d"
+        }
+      }
+    },
+    "personality": "engineer",
+    "pluginIsolation": {
+      "default": "host",
+      "hookTimeoutMs": 2000,
+      "idleStopMinutes": 10,
+      "maxHeapMb": 512,
+      "overrides": {},
+      "sandbox": "none"
+    },
+    "pluginsAutoInstall": false,
+    "provider": "anthropic",
+    "providers": [
+      {
+        "apiKey": "",
+        "id": "anthropic-work",
+        "model": "claude-sonnet-4-5",
+        "provider": "anthropic",
+        "region": "us-east-1"
+      },
+      {
+        "apiKey": "",
+        "model": "gpt-4o",
+        "provider": "openai"
+      }
+    ],
+    "quick_commands": {
+      "status": {
+        "command": "git",
+        "gateway": true,
+        "type": "exec"
+      }
+    },
+    "region": "us-east-1",
+    "requestTimeoutMs": 60000,
+    "retention": {
+      "channelTranscript": "7d",
+      "messages": "90d",
+      "vacuumAfterPrune": true
+    },
+    "schemaVersion": 1,
+    "security": {
+      "trustedGitHubOrgs": [
+        "acme-corp"
+      ]
+    },
+    "skin": "default",
+    "slack": {
+      "apps": [
+        {
+          "bind": {
+            "name": "researcher",
+            "type": "personality"
+          },
+          "botToken": "${secrets:slack/apps/4cf3463fc5d89e904a3918be/botToken}",
+          "signingSecret": "${secrets:slack/apps/4cf3463fc5d89e904a3918be/signingSecret}"
+        }
+      ]
+    },
+    "slackAppToken": "${secrets:slack/appToken}",
+    "slackBotToken": "${secrets:slack/botToken}",
+    "slackSigningSecret": "${secrets:slack/signingSecret}",
+    "teamSupervisor": {
+      "restartLoopGuard": {
+        "maxRestarts": 3,
+        "windowSeconds": 120
+      }
+    },
+    "teams": {
+      "eng": {
+        "autoStop": true
+      }
+    },
+    "telegram": {
+      "bots": [
+        {
+          "bind": {
+            "name": "researcher",
+            "type": "personality"
+          },
+          "budget": {
+            "dailyUsd": 5
+          },
+          "token": "${secrets:telegram/bots/b15c6e68ce4ebd040174ff49/token}"
+        }
+      ]
+    },
+    "telegramToken": "${secrets:telegram/token}",
+    "telemetry": {
+      "export": {
+        "otlp": {
+          "enabled": true,
+          "endpoint": "http://localhost:4318"
+        }
+      }
+    },
+    "toolLoading": "auto",
+    "toolLoop": {
+      "maxIdenticalToolCalls": 400,
+      "maxToolCallsWarnAt": 40
+    },
+    "toolOrder": "stable",
+    "toolPayloadLimitChars": 50000,
+    "toolSettings": {
+      "scout": {
+        "web_search": {
+          "provider": "brave"
+        }
+      }
+    },
+    "voice": {
+      "bots": [],
+      "stt": {
+        "providers": {
+          "spanish": {
+            "provider": "local-stt"
+          }
+        }
+      },
+      "tts": {
+        "providers": {
+          "studio": {
+            "provider": "openai-tts"
+          }
+        }
+      }
+    },
+    "web": {
+      "host": "0.0.0.0",
+      "search_backend": "brave",
+      "searxng": {
+        "url": "https://searx.example.com"
+      }
+    },
+    "webBaseUrl": "https://ethos.example.com",
+    "webhooks": {
+      "h": {
+        "personalityId": "researcher",
+        "secret": "${secrets:webhooks/h/secret}"
+      }
+    },
+    "weeklyDigest": {
+      "cron": "0 9 * * 1",
+      "enabled": true,
+      "recipients": [
+        "alice@example.com"
+      ]
+    },
+    "whatsapp": [
+      {
+        "budget": {
+          "dailyUsd": 1
+        },
+        "default_mode": "observe",
+        "id": "wa1"
+      }
+    ]
+  },
+  "written": "schemaVersion: 1\nprovider: anthropic\nmodel: claude-sonnet-4-5\napiKey: ${secrets:providers/anthropic/apiKey}\npersonality: engineer\nmemory: markdown\nmemory.charLimits.memory: 524288\nmemory.charLimits.user: 262144\nexecution.allowLocalFallback: true\nexecution.containerized: true\nexecution.ssh.host: build-01.internal\nbaseUrl: https://llm.example.com/v1\napiVersion: 2024-10-21\nregion: us-east-1\nawsProfile: parity\ncontextWindow: 200000\ntoolOrder: stable\nrequestTimeoutMs: 60000\napprovalTimeoutMs: 120000\nmaxRetries: 3\ntoolPayloadLimitChars: 50000\ntool_loading: auto\nmodelRouting.engineer: moonshotai/kimi-k2.6\nmodelRouting.researcher: claude-opus-4-7\ntoolSettings.scout.web_search.provider: brave\nmodels.ollama/llama3.2.sampling.temperature: 0.2\nmodels.ollama/llama3.2.toolCallFormat: text-xml\ncompaction.pressure: 0.85\ncompaction.target: 0.6\ncompaction.maxContextTokens: 400000\ncallCapture.personalityId: assistant\nmemoryConsolidation.enabled: true\nactiveContext.type: personality\nactiveContext.name: engineer\ntelegramToken: ${secrets:telegram/token}\ndiscordToken: ${secrets:discord/token}\nslackBotToken: ${secrets:slack/botToken}\nslackAppToken: ${secrets:slack/appToken}\nslackSigningSecret: ${secrets:slack/signingSecret}\nemailImapHost: imap.example.com\nemailImapPort: 993\nemailUser: bot@example.com\nemailPassword: ${secrets:email/password}\nemailSmtpHost: smtp.example.com\nemailSmtpPort: 587\nemailTrustedAuthservId: mx.example.com\nskin: default\nretention.messages: 90d\nretention.channelTranscript: 7d\nretention.vacuumAfterPrune: true\npersonalities.researcher.retention.messages: 30d\nevolver.schedule: 0 3 * * *\ntelegram.bots.0.token: ${secrets:telegram/bots/b15c6e68ce4ebd040174ff49/token}\ntelegram.bots.0.bind.type: personality\ntelegram.bots.0.bind.name: researcher\ntelegram.bots.0.budget.dailyUsd: 5\nslack.apps.0.botToken: ${secrets:slack/apps/4cf3463fc5d89e904a3918be/botToken}\nslack.apps.0.signingSecret: ${secrets:slack/apps/4cf3463fc5d89e904a3918be/signingSecret}\nslack.apps.0.bind.type: personality\nslack.apps.0.bind.name: researcher\nwhatsapp.0.id: wa1\nwhatsapp.0.default_mode: observe\nwhatsapp.0.budget.dailyUsd: 1\nvoice.tts.providers.studio.provider: openai-tts\nvoice.stt.providers.spanish.provider: local-stt\nteams.eng.autoStop: true\nquick_commands.status.type: exec\nquick_commands.status.command: git\nquick_commands.status.gateway: true\nchannel_toolsets.telegram: web_search\nchannel_toolsets.whatsapp: read_file\nchannel_filter.telegram.ownerUserId: owner-1\nchannel_filter.telegram.dmPolicy: decline\nproviders.0.provider: anthropic\nproviders.0.id: anthropic-work\nproviders.0.model: claude-sonnet-4-5\nproviders.0.region: us-east-1\nproviders.1.provider: openai\nproviders.1.model: gpt-4o\nauxiliary.vision.model: claude-sonnet-4-5\nauxiliary.asr.provider: command-stt\nauxiliary.tts.provider: command-tts\nweb.search_backend: brave\nweb.host: 0.0.0.0\nweb.searxng.url: https://searx.example.com\nwebhooks.h.personalityId: researcher\nwebhooks.h.secret: ${secrets:webhooks/h/secret}\nmodelCatalog.url: https://catalog.example.com/catalog.json\nmodelRegistry.sonnet.provider: anthropic\nmodelRegistry.sonnet.modelId: claude-sonnet-4-5\nmodelRegistry.sonnet.label: everyday\nlogs.rotation.maxFiles: 3\nlogs.level: warn\naws.secrets.enabled: true\naws.secrets.region: us-east-2\nwebBaseUrl: https://ethos.example.com\nplugins.auto_install: false\nplugins.isolation: host\nplugins.host.sandbox: none\nplugins.host.hook_timeout_ms: 2000\nplugins.host.idle_stop_minutes: 10\nplugins.host.max_heap_mb: 512\nadmin.enabled: true\na2a.enabled: true\na2a.peering.allowPrivateUrls: true\nsecurity.trusted_github_orgs: acme-corp\nnightlyPass.enabled: true\nnightlyPass.cron: 0 2 * * *\nbackup.cron: 0 3 * * *\nbackup.scope: identity\nbackup.keep: 5\nmemoryCapture.enabled: true\nmemoryCapture.evidenceSessions: 3\nmemoryVault.path: /parity/Vault\nmemoryVault.agentDir: Ethos\nmemoryVault.prefetch: MEMORY.md, USER.md\nmemoryVault.exclude: Archive, Templates\nmemoryApproval.mode: automated\nmemoryApproval.cap: 50\nweeklyDigest.enabled: true\nweeklyDigest.cron: 0 9 * * 1\nweeklyDigest.recipients: alice@example.com\nchannelDigest.enabled: true\nchannelDigest.cron: 0 8 * * *\nchannelDigest.maxMessagesPerLane: 500\nlearningReplay.enabled: true\nlearningReplay.maxCases: 8\ntoolLoop.maxToolCallsWarnAt: 40\ntoolLoop.maxIdenticalToolCalls: 400\nmcp.discoveryConcurrency: 8\ncron.fireUrl: https://agent.example.com/cron/fire\nnotifications.quietHours: 22:00-07:00\nnotifications.timezone: Europe/London\nnotifications.bots.bot-a.quietHours: off\nkanban.maxInProgress: 5\nkanban.maxInProgressPerProfile: 2\ngrounding.enabled: true\ngrounding.kanban.checks: true\nbrowser.commandTimeoutMs: 5000\nbrowser.headed: auto\nbrowser.proxy.server: http://proxy.example.com:3128\ngateway.maxInboundMediaBytes: 52428800\ngateway.private_chats.telegram: -1001\ndecisions.provider: typesafe\nteamSupervisor.restartLoopGuard.maxRestarts: 3\nteamSupervisor.restartLoopGuard.windowSeconds: 120\ndiscord.defaultChannelMode: observe\ndiscord.mentionByName: true\nkanbanPoll.intervalMs: 7000\nidleWatcher.enabled: true\nidleWatcher.idleThresholdMs: 120000\npauseClockCorrection.enabled: true\npauseClockCorrection.thresholdMs: 90000\npauseLifecycle.http.url: https://orchestrator.example.com/tenants/t1/idle\npauseLifecycle.http.timeoutMs: 5000\ntelemetry.export.otlp.enabled: true\ntelemetry.export.otlp.endpoint: http://localhost:4318\n"
+}

@@ -1,0 +1,338 @@
+{
+  "batch.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "additionalProperties": false,
+          "properties": {
+            "completed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "errorMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": "string"
+            },
+            "skipped": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "total": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "total",
+            "completed",
+            "failed",
+            "skipped",
+            "startedAt",
+            "finishedAt",
+            "outputPath",
+            "errorMessage"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "batch.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "runs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "completed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "errorMessage": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "finishedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "outputPath": {
+                "type": "string"
+              },
+              "skipped": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "running",
+                  "completed",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "total",
+              "completed",
+              "failed",
+              "skipped",
+              "startedAt",
+              "finishedAt",
+              "outputPath",
+              "errorMessage"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "batch.output": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "batch.start": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "concurrency": {
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "defaultPersonalityId": {
+          "type": "string"
+        },
+        "tasksJsonl": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tasksJsonl"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "additionalProperties": false,
+          "properties": {
+            "completed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "errorMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": "string"
+            },
+            "skipped": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "total": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "total",
+            "completed",
+            "failed",
+            "skipped",
+            "startedAt",
+            "finishedAt",
+            "outputPath",
+            "errorMessage"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

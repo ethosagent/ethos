@@ -1,0 +1,98 @@
+{
+  "clarify.listPending": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "rootSessionKey": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootSessionKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "defaultDeadlineAt": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "jobId",
+          "question",
+          "defaultDeadlineAt"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "route": {}
+  },
+  "clarify.respond": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "user",
+            "cancel"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "answer",
+        "source"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

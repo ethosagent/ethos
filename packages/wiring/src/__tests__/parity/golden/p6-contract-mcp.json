@@ -1,0 +1,1460 @@
+{
+  "mcp.addServer": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "properties": {
+            "authType": {
+              "enum": [
+                "bearer",
+                "none"
+              ],
+              "type": "string"
+            },
+            "mcpResultLimitChars": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "name": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "token": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "transport": {
+              "const": "streamable-http",
+              "type": "string"
+            },
+            "url": {
+              "format": "uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "transport",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "authType": {
+              "enum": [
+                "bearer",
+                "none"
+              ],
+              "type": "string"
+            },
+            "mcpResultLimitChars": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "name": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "token": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "transport": {
+              "const": "sse",
+              "type": "string"
+            },
+            "url": {
+              "format": "uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "transport",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "mcpResultLimitChars": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "name": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "transport": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "transport",
+            "name",
+            "command"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "serverName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "serverName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "ssrf_blocked",
+                "name_taken",
+                "invalid_url"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.attachPersonalities": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "serverName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverName",
+        "personalityIds"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "failed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "error"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "updated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "updated",
+        "failed"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.cancel": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.catalog": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "local": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "argVars": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "args": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "category": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "envVars": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pin": {
+                "additionalProperties": false,
+                "properties": {
+                  "integrity": {
+                    "type": "string"
+                  },
+                  "package": {
+                    "type": "string"
+                  },
+                  "registry": {
+                    "enum": [
+                      "npm",
+                      "pypi"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "registry",
+                  "package",
+                  "version",
+                  "integrity"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "command",
+              "args",
+              "envVars",
+              "argVars",
+              "category",
+              "pin"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "remote": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "authType": {
+                "enum": [
+                  "oauth",
+                  "none",
+                  "bearer"
+                ],
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "docsUrl": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "const": "streamable-http",
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "label",
+              "url",
+              "transport",
+              "authType",
+              "description",
+              "category"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "remote",
+        "local"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.complete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "iss": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "serverName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "serverName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "missing_pending_cookie",
+                "expired_state",
+                "state_mismatch",
+                "code_exchange_failed",
+                "upstream_error",
+                "name_taken",
+                "addserver_failed",
+                "issuer_mismatch"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.connectPreset": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "presetName": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "presetName",
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "toolCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "ok",
+            "serverName",
+            "toolCount"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "oauth_required",
+                "not_found",
+                "read_only",
+                "connect_failed"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "detail"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.delete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.deviceCancel": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "flowId": {
+          "maxLength": 128,
+          "minLength": 16,
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.deviceStart": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "serverName": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authHost": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "type": "string"
+            },
+            "flowId": {
+              "type": "string"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "serverHost": {
+              "type": "string"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "userCode": {
+              "type": "string"
+            },
+            "verificationUri": {
+              "format": "uri",
+              "type": "string"
+            },
+            "verificationUriComplete": {
+              "format": "uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "flowId",
+            "userCode",
+            "verificationUri",
+            "expiresAt",
+            "serverName",
+            "serverHost",
+            "authHost"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "not_found",
+                "not_oauth",
+                "device_unavailable",
+                "device_refused",
+                "already_pending",
+                "too_many_pending",
+                "discovery_failed"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.deviceStatus": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "flowId": {
+          "maxLength": 128,
+          "minLength": 16,
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "serverName": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "connected",
+            "denied",
+            "expired",
+            "cancelled",
+            "error"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "auth_status": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "none",
+                      "authorized",
+                      "expired",
+                      "missing",
+                      "pending"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_via": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "cli",
+                      "ui"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "deprecated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "mcpResultLimitChars": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "streamable-http"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "command",
+              "url",
+              "auth_status",
+              "created_via",
+              "mcpResultLimitChars",
+              "deprecated"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.personalityServers": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "auth_status": {
+                "enum": [
+                  "authorized",
+                  "expired",
+                  "missing"
+                ],
+                "type": "string"
+              },
+              "auth_type": {
+                "enum": [
+                  "oauth2",
+                  "bearer",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "auth_status"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.reconnect": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authorizeUrl": {
+              "type": "string"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "state",
+            "authorizeUrl",
+            "serverName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "discovery_failed",
+                "dcr_unsupported",
+                "dcr_failed",
+                "name_taken",
+                "webBaseUrl_missing",
+                "ssrf_blocked",
+                "invalid_origin"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.refreshToken": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "serverName": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.rename": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "newName": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "oldName": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "oldName",
+        "newName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.scopeStatus": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "serverName": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "actualScopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "declaredScopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "match",
+            "mismatch",
+            "inactive",
+            "no-introspection",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "declaredScopes",
+        "actualScopes"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.serverTools": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "serverName": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "serverName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tools": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "available",
+        "tools"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.start": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authorizeUrl": {
+              "type": "string"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "state",
+            "authorizeUrl",
+            "serverName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "discovery_failed",
+                "dcr_unsupported",
+                "dcr_failed",
+                "name_taken",
+                "webBaseUrl_missing",
+                "ssrf_blocked",
+                "invalid_origin"
+              ],
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "mcp.status": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "serverName": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "connected",
+            "error",
+            "expired"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.updateToken": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "serverName": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "token": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverName",
+        "token"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mcp.validateConfig": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "enum": [
+            "streamable-http",
+            "sse",
+            "stdio"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transport"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid",
+        "errors"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

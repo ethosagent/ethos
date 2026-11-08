@@ -1,0 +1,504 @@
+{
+  "backup.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "scopes": {
+          "items": {
+            "enum": [
+              "identity",
+              "state",
+              "telemetry"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "archive": {
+          "additionalProperties": false,
+          "properties": {
+            "bytes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "scheduled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "bytes",
+            "createdAt",
+            "scheduled"
+          ],
+          "type": "object"
+        },
+        "fileCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scopes": {
+          "items": {
+            "enum": [
+              "identity",
+              "state",
+              "telemetry"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skipped": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "unclassifiedDatabases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "uncompressedBytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archive",
+        "scopes",
+        "fileCount",
+        "uncompressedBytes",
+        "skipped",
+        "unclassifiedDatabases"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "backup.restoreIdentity": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "dryRun": {
+          "type": "boolean"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "enum": [
+              "identity",
+              "state",
+              "telemetry"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "type": "string"
+        },
+        "displaced": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "displacedTo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "inUseCheck": {
+          "enum": [
+            "held",
+            "skipped_dry_run",
+            "skipped_force"
+          ],
+          "type": "string"
+        },
+        "lockedDatabases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restartRequired": {
+          "type": "boolean"
+        },
+        "restored": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopes": {
+          "items": {
+            "enum": [
+              "identity",
+              "state",
+              "telemetry"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "secretsManifest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "warnings": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "fs_reach_absolute",
+                  "skipped_path",
+                  "unclassified_database"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dryRun",
+        "scopes",
+        "createdAt",
+        "restored",
+        "displaced",
+        "displacedTo",
+        "inUseCheck",
+        "lockedDatabases",
+        "restartRequired",
+        "warnings",
+        "secretsManifest"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "backup.status": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "archives": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bytes": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "scheduled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "bytes",
+              "createdAt",
+              "scheduled"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "downloadAvailable": {
+          "type": "boolean"
+        },
+        "lastBackup": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "archive": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bytes": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "scheduled": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "bytes",
+                        "createdAt",
+                        "scheduled"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "at": {
+                  "type": "string"
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "at",
+                "archive",
+                "error"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "additionalProperties": false,
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "keep": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "lastError": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nextRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scopes": {
+              "items": {
+                "enum": [
+                  "identity",
+                  "state",
+                  "telemetry"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "cron",
+            "scopes",
+            "keep",
+            "nextRunAt",
+            "lastRunAt",
+            "lastError"
+          ],
+          "type": "object"
+        },
+        "serverStartedAt": {
+          "type": "string"
+        },
+        "stores": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "enum": [
+                  "changed",
+                  "unchanged",
+                  "absent",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "database": {
+                "type": "string"
+              },
+              "included": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "identity",
+                      "state",
+                      "telemetry"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "database",
+              "scope",
+              "included",
+              "reason",
+              "changed"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "directory",
+        "serverStartedAt",
+        "running",
+        "downloadAvailable",
+        "schedule",
+        "lastBackup",
+        "archives",
+        "stores"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

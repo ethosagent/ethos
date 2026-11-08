@@ -1,0 +1,43 @@
+{
+  "slashCommands.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pluginId": {
+                "type": "string"
+              },
+              "usage": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "usage"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "commands"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

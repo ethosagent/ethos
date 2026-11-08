@@ -1,0 +1,762 @@
+{
+  "teams.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "boardModifiedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "channels": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "botKey": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "botKey"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "coordinator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "dispatchMode": {
+          "enum": [
+            "coordinator",
+            "self-routing",
+            "broadcast"
+          ],
+          "type": "string"
+        },
+        "health": {
+          "enum": [
+            "running",
+            "stopped",
+            "stale"
+          ],
+          "type": "string"
+        },
+        "kanban": {
+          "additionalProperties": false,
+          "properties": {
+            "pollMs": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "staleMs": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "stalenessThresholdMs": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "staleMs",
+            "pollMs",
+            "stalenessThresholdMs"
+          ],
+          "type": "object"
+        },
+        "manifestPath": {
+          "type": "string"
+        },
+        "manifestYaml": {
+          "type": "string"
+        },
+        "memberCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "members": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "coordinator",
+                  "member"
+                ],
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "starting",
+                  "running",
+                  "degraded",
+                  "restarting",
+                  "failed",
+                  "stopped",
+                  "offline"
+                ],
+                "type": "string"
+              },
+              "tier": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "probationary",
+                      "standard",
+                      "trusted"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "personalityId",
+              "role",
+              "tier",
+              "status",
+              "capabilities"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "memoryTopics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runningCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "members": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "failureCount": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "personality": {
+                        "type": "string"
+                      },
+                      "pid": {
+                        "anyOf": [
+                          {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "port": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "personality",
+                      "port",
+                      "pid",
+                      "status",
+                      "failureCount"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "supervisorPid": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "supervisorPid",
+                "startedAt",
+                "members"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trustPolicy": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "flat",
+                    "tiered"
+                  ],
+                  "type": "string"
+                },
+                "thresholds": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "standard_min_completed": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "standard_min_ratio": {
+                      "maximum": 1,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "trusted_min_completed": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "trusted_min_ratio": {
+                      "maximum": 1,
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "dispatchMode",
+        "health",
+        "memberCount",
+        "runningCount",
+        "boardModifiedAt",
+        "coordinator",
+        "members",
+        "channels",
+        "startedAt",
+        "manifestYaml",
+        "manifestPath",
+        "trustPolicy",
+        "kanban",
+        "memoryTopics",
+        "runtime"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "teams.ledger": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "headline": {
+                "type": "string"
+              },
+              "id": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "personalityId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "ok",
+                  "warn",
+                  "err",
+                  "info",
+                  "dim"
+                ],
+                "type": "string"
+              },
+              "taskId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "taskTitle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "at",
+              "kind",
+              "taskId",
+              "taskTitle",
+              "personalityId",
+              "headline",
+              "detail",
+              "severity"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "teams.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "boardModifiedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "channels": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "botKey": {
+                      "type": "string"
+                    },
+                    "platform": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "platform",
+                    "botKey"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "coordinator": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "dispatchMode": {
+                "enum": [
+                  "coordinator",
+                  "self-routing",
+                  "broadcast"
+                ],
+                "type": "string"
+              },
+              "health": {
+                "enum": [
+                  "running",
+                  "stopped",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              "memberCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "members": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "capabilities": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "personalityId": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "enum": [
+                        "coordinator",
+                        "member"
+                      ],
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "starting",
+                        "running",
+                        "degraded",
+                        "restarting",
+                        "failed",
+                        "stopped",
+                        "offline"
+                      ],
+                      "type": "string"
+                    },
+                    "tier": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "probationary",
+                            "standard",
+                            "trusted"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "personalityId",
+                    "role",
+                    "tier",
+                    "status",
+                    "capabilities"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "runningCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "startedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "dispatchMode",
+              "health",
+              "memberCount",
+              "runningCount",
+              "boardModifiedAt",
+              "coordinator",
+              "members",
+              "channels",
+              "startedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "teams.memoryList": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "teams.memoryRead": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "key"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "content"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "teams.memoryWrite": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "action": {
+          "enum": [
+            "add",
+            "replace",
+            "delete"
+          ],
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "key": {
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "key",
+        "action"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

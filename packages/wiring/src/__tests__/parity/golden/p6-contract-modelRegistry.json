@@ -1,0 +1,3693 @@
+{
+  "modelRegistry.addProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "apiKey": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "apiVersion": {
+          "maxLength": 100,
+          "type": "string"
+        },
+        "awsProfile": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "baseUrl": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "failover": {
+          "type": "boolean"
+        },
+        "id": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "properties": {
+              "alias": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "contextWindow": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "costPer1kInput": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "costPer1kOutput": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "label": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "modelId": {
+                "maxLength": 500,
+                "type": "string"
+              }
+            },
+            "required": [
+              "modelId"
+            ],
+            "type": "object"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "provider": {
+          "maxLength": 100,
+          "type": "string"
+        },
+        "region": {
+          "maxLength": 100,
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "id",
+        "models"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "modelId": {
+                    "type": "string"
+                  },
+                  "providerKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "alias",
+                  "providerKey",
+                  "modelId"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index",
+            "models"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.importChain": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "providerKeys": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "adopted": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "modelId": {
+                    "type": "string"
+                  },
+                  "providerKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "alias",
+                  "providerKey",
+                  "modelId"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "defaultSet": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "idsWritten": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "adopted",
+            "defaultSet",
+            "idsWritten"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "chainModels": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "idIsExplicit": {
+                "type": "boolean"
+              },
+              "index": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "modelId": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providerKey": {
+                "type": "string"
+              },
+              "suggestedAlias": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerKey",
+              "index",
+              "provider",
+              "modelId",
+              "suggestedAlias",
+              "idIsExplicit"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "type": "string"
+              },
+              "contextWindow": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costPer1kInput": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costPer1kOutput": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "credential": {
+                "enum": [
+                  "set",
+                  "missing",
+                  "not_needed"
+                ],
+                "type": "string"
+              },
+              "fallbacks": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "modelId": {
+                "type": "string"
+              },
+              "providerKey": {
+                "type": "string"
+              },
+              "referents": {
+                "items": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "enum": [
+                            "model",
+                            "model.trivial",
+                            "model.default",
+                            "model.deep",
+                            "model.dreaming",
+                            "voice.model"
+                          ],
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "personality",
+                          "type": "string"
+                        },
+                        "personalityId": {
+                          "type": "string"
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "personalityId",
+                        "field",
+                        "readOnly"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "role",
+                          "type": "string"
+                        },
+                        "role": {
+                          "enum": [
+                            "trivial",
+                            "default",
+                            "deep",
+                            "dreaming"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "role"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "default",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "routing",
+                          "type": "string"
+                        },
+                        "personalityId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "personalityId"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "alias": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "fallback",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "alias"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "alias",
+              "providerKey",
+              "modelId",
+              "label",
+              "contextWindow",
+              "costPer1kInput",
+              "costPer1kOutput",
+              "fallbacks",
+              "credential",
+              "referents"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "problems": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "invalid_alias",
+                  "reserved_alias",
+                  "missing_provider",
+                  "missing_model_id",
+                  "unknown_provider_key",
+                  "derived_provider_key",
+                  "unknown_default",
+                  "unknown_role_binding",
+                  "unknown_fallback",
+                  "cross_provider_fallback",
+                  "alias_cycle"
+                ],
+                "type": "string"
+              },
+              "fix": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "alias",
+              "key",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "providerEntries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "apiVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "awsProfile": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "credential": {
+                "enum": [
+                  "set",
+                  "missing",
+                  "not_needed"
+                ],
+                "type": "string"
+              },
+              "explicitId": {
+                "type": "boolean"
+              },
+              "failover": {
+                "type": "boolean"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "index": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "key": {
+                "type": "string"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "referenceable": {
+                "type": "boolean"
+              },
+              "region": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "index",
+              "provider",
+              "id",
+              "explicitId",
+              "model",
+              "failover",
+              "apiVersion",
+              "region",
+              "awsProfile",
+              "credential",
+              "referenceable",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "additionalProperties": false,
+          "properties": {
+            "deep": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "default": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dreaming": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "trivial": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "trivial",
+            "default",
+            "deep",
+            "dreaming"
+          ],
+          "type": "object"
+        },
+        "routing": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "chainModels",
+        "entries",
+        "default",
+        "roles",
+        "providerEntries",
+        "routing",
+        "problems"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "modelRegistry.moveProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "direction": {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "direction"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.remove": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "alias": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "repointTo": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "needsAttention": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "repointedTo": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rewritten": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "alias",
+            "repointedTo",
+            "rewritten",
+            "needsAttention"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.removeProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.setDefault": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "alias": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.setFallbackModel": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "alias"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.setProviderFailover": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "failover": {
+          "type": "boolean"
+        },
+        "key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "failover"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.setRole": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "enum": [
+            "trivial",
+            "deep",
+            "dreaming"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "alias"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.setRouting": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "declaration": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "personalityId": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "declaration"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.test": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "properties": {
+            "alias": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "alias"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "modelId": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "providerKey": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "providerKey",
+            "modelId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "echoedModel": {
+              "type": "string"
+            },
+            "latencyMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "latencyMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "rejected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "error",
+            "fix"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unreachable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unconfigured",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "retryAfterSeconds": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "const": "rate_limited",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "retryAfterSeconds"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.testAll": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "results": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "aliases": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "outcome": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "echoedModel": {
+                        "type": "string"
+                      },
+                      "latencyMs": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "const": "ok",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "providerKey",
+                      "provider",
+                      "modelId",
+                      "latencyMs"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "error": {
+                        "type": "string"
+                      },
+                      "fix": {
+                        "type": "string"
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "const": "rejected",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "providerKey",
+                      "provider",
+                      "modelId",
+                      "error",
+                      "fix"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "error": {
+                        "type": "string"
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "const": "unreachable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "providerKey",
+                      "provider",
+                      "modelId",
+                      "error"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "fix": {
+                        "type": "string"
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "const": "unconfigured",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "reason"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "providerKey": {
+                        "type": "string"
+                      },
+                      "retryAfterSeconds": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "state": {
+                        "const": "rate_limited",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "retryAfterSeconds"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "providerKey": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerKey",
+              "aliases",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "results"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "modelRegistry.testProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "providerKey": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "echoedModel": {
+              "type": "string"
+            },
+            "latencyMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "latencyMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "rejected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "error",
+            "fix"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unreachable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "providerKey",
+            "provider",
+            "modelId",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unconfigured",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "providerKey": {
+              "type": "string"
+            },
+            "retryAfterSeconds": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "const": "rate_limited",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "retryAfterSeconds"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.updateProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "apiKey": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "apiVersion": {
+          "maxLength": 100,
+          "type": "string"
+        },
+        "awsProfile": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "baseUrl": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "region": {
+          "maxLength": 100,
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "providerKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerKey",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_provider",
+                "invalid_provider",
+                "invalid_id",
+                "duplicate_id",
+                "invalid_model",
+                "duplicate_alias",
+                "referenced",
+                "last_provider",
+                "cannot_move",
+                "not_in_chain",
+                "unknown_alias",
+                "cross_provider_alias"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "aliases"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "modelRegistry.upsert": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "alias": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "contextWindow": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "costPer1kInput": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "costPer1kOutput": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "label": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "create",
+            "update"
+          ],
+          "type": "string"
+        },
+        "modelId": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 200,
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "alias",
+        "provider",
+        "modelId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "config_missing",
+                "unknown_alias",
+                "duplicate_alias",
+                "invalid_entry",
+                "referenced",
+                "invalid_repoint",
+                "unknown_personality",
+                "invalid_declaration"
+              ],
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "problems": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "alias": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "enum": [
+                      "invalid_alias",
+                      "reserved_alias",
+                      "missing_provider",
+                      "missing_model_id",
+                      "unknown_provider_key",
+                      "derived_provider_key",
+                      "unknown_default",
+                      "unknown_role_binding",
+                      "unknown_fallback",
+                      "cross_provider_fallback",
+                      "alias_cycle"
+                    ],
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "alias",
+                  "key",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "referents": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "model",
+                          "model.trivial",
+                          "model.default",
+                          "model.deep",
+                          "model.dreaming",
+                          "voice.model"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "personality",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId",
+                      "field",
+                      "readOnly"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "role",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "trivial",
+                          "default",
+                          "deep",
+                          "dreaming"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "default",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "routing",
+                        "type": "string"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "personalityId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "fallback",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "code",
+            "message",
+            "problems",
+            "referents"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,483 @@
+{
+  "tools.approve": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "once",
+            "exact-args",
+            "any-args",
+            "lease-1h"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "approvalId",
+        "clientId",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "tools.catalog": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "tools": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "group",
+              "tools"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "tools.deny": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approvalId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "tools.detail": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "alwaysInclude": {
+          "type": "boolean"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "additionalProperties": false,
+          "properties": {
+            "attachments": {
+              "additionalProperties": false,
+              "properties": {
+                "kinds": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "enum": [
+                          "image",
+                          "file"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "const": "*",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kinds"
+              ],
+              "type": "object"
+            },
+            "fs_reach": {
+              "additionalProperties": false,
+              "properties": {
+                "read": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "const": "from-personality",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "write": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "const": "from-personality",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "network": {
+              "additionalProperties": false,
+              "properties": {
+                "allowedHosts": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowedHosts"
+              ],
+              "type": "object"
+            },
+            "process": {
+              "additionalProperties": false,
+              "properties": {
+                "allowedBinaries": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowedBinaries"
+              ],
+              "type": "object"
+            },
+            "secrets": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "storage": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "kv",
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "tool-private",
+                    "session",
+                    "personality"
+                  ],
+                  "type": "string"
+                },
+                "ttlSecondsDefault": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "scope",
+                "kind"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "hasSettingsSchema": {
+          "type": "boolean"
+        },
+        "inPersonalityToolset": {
+          "type": "boolean"
+        },
+        "maxResultChars": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outputIsUntrusted": {
+          "type": "boolean"
+        },
+        "pluginId": {
+          "type": "string"
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "requiresApproval": {
+          "type": "boolean"
+        },
+        "returnDirect": {
+          "type": "boolean"
+        },
+        "schema": {
+          "additionalProperties": {},
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "testEligibility": {
+          "additionalProperties": false,
+          "properties": {
+            "canRun": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "canRun"
+          ],
+          "type": "object"
+        },
+        "toolset": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "group",
+        "schema",
+        "capabilities",
+        "hasSettingsSchema",
+        "registered",
+        "available",
+        "testEligibility"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "tools.test": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "enum": [
+            "verify",
+            "run"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "personalityId",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "skip"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "ran": {
+          "type": "boolean"
+        },
+        "result": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        "testEligibility": {
+          "additionalProperties": false,
+          "properties": {
+            "canRun": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "canRun"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "checks",
+        "ran",
+        "testEligibility"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

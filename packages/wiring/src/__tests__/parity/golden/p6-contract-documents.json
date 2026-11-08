@@ -1,0 +1,231 @@
+{
+  "documents.createFolder": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "path"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "isDir": {
+          "type": "boolean"
+        },
+        "isSymlink": {
+          "type": "boolean"
+        },
+        "mtimeMs": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "isDir",
+        "isSymlink"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "documents.delete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "path"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "documents.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "isDir": {
+                "type": "boolean"
+              },
+              "isSymlink": {
+                "type": "boolean"
+              },
+              "mtimeMs": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "path",
+              "isDir",
+              "isSymlink"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "documents.root": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personalityId": {
+          "type": "string"
+        },
+        "roots": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "path"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "team": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "roots"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

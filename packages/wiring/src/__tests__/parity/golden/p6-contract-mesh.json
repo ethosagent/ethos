@@ -1,0 +1,101 @@
+{
+  "mesh.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "activeSessions": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "lastSeenAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "agentId",
+              "capabilities",
+              "activeSessions",
+              "lastSeenAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "mesh.routeTest": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "capability": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "routedTo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "routedTo",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,302 @@
+{
+  "deliveries.discardInbound": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "deliveries.listDeadInbound": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "rows": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "type": "number"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastError": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "platform": {
+                "type": "string"
+              },
+              "receivedAt": {
+                "type": "number"
+              },
+              "status": {
+                "enum": [
+                  "dead",
+                  "interrupted"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "threadId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "platform",
+              "chatId",
+              "threadId",
+              "attempts",
+              "lastError",
+              "text",
+              "receivedAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "deliveries.requeueInbound": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "deliveries.summary": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "recent": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "chatId": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "text",
+                  "voice"
+                ],
+                "type": "string"
+              },
+              "mediaFormat": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "platform": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "redelivering",
+                  "delivered",
+                  "abandoned"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "platform",
+              "chatId",
+              "threadId",
+              "status",
+              "kind",
+              "content",
+              "mediaFormat",
+              "createdAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "stats": {
+          "additionalProperties": false,
+          "properties": {
+            "abandoned": {
+              "type": "number"
+            },
+            "delivered": {
+              "type": "number"
+            },
+            "pending": {
+              "type": "number"
+            },
+            "redelivering": {
+              "type": "number"
+            },
+            "voice": {
+              "additionalProperties": false,
+              "properties": {
+                "abandoned": {
+                  "type": "number"
+                },
+                "delivered": {
+                  "type": "number"
+                },
+                "pending": {
+                  "type": "number"
+                },
+                "redelivering": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "pending",
+                "redelivering",
+                "delivered",
+                "abandoned"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "pending",
+            "redelivering",
+            "delivered",
+            "abandoned",
+            "voice"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "stats",
+        "recent"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,377 @@
+{
+  "a2a.identity": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "authUrl": {
+          "type": "string"
+        },
+        "did": {
+          "type": "string"
+        },
+        "exposedSkills": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "jsonRpcUrl": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "wellKnownUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "name",
+        "fingerprint",
+        "wellKnownUrl",
+        "jsonRpcUrl",
+        "authUrl",
+        "exposedSkills"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.peers.add": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "expectedFingerprint": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "url",
+        "expectedFingerprint"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "access": {
+          "const": "full",
+          "type": "string"
+        },
+        "cardName": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lastSeenAt": {
+          "type": "number"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "access",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.peers.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "const": "full",
+            "type": "string"
+          },
+          "cardName": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "access",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "route": {}
+  },
+  "a2a.peers.preview": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "name"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.peers.remove": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fingerprint": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "fingerprint"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.peers.setEnabled": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "fingerprint": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "fingerprint",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.settings.get": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.settings.set": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "a2a.skills.listExposable": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "exposed": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "exposed"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,1720 @@
+{
+  "kanban.addComment": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "additionalProperties": false,
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "taskId",
+            "author",
+            "body",
+            "createdAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "comment"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.assign": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskId",
+        "assignee"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "currentRunId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxRetries": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "priority": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "retryCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scheduledFor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "todo",
+                "ready",
+                "running",
+                "blocked",
+                "done",
+                "archived",
+                "scheduled",
+                "failed",
+                "needs_revision"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "workspaceMode": {
+              "enum": [
+                "scratch",
+                "worktree",
+                "dir"
+              ],
+              "type": "string"
+            },
+            "workspacePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "body",
+            "status",
+            "assignee",
+            "priority",
+            "workspaceMode",
+            "workspacePath",
+            "scheduledFor",
+            "currentRunId",
+            "retryCount",
+            "maxRetries",
+            "acceptanceCriteria",
+            "createdAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.bulkAssign": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "taskIds": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskIds",
+        "assignee"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "tasks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acceptanceCriteria": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "assignee": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "body": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "currentRunId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "maxRetries": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "priority": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "retryCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scheduledFor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "ready",
+                  "running",
+                  "blocked",
+                  "done",
+                  "archived",
+                  "scheduled",
+                  "failed",
+                  "needs_revision"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "workspaceMode": {
+                "enum": [
+                  "scratch",
+                  "worktree",
+                  "dir"
+                ],
+                "type": "string"
+              },
+              "workspacePath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "body",
+              "status",
+              "assignee",
+              "priority",
+              "workspaceMode",
+              "workspacePath",
+              "scheduledFor",
+              "currentRunId",
+              "retryCount",
+              "maxRetries",
+              "acceptanceCriteria",
+              "createdAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.bulkUpdateStatus": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "status": {
+          "enum": [
+            "todo",
+            "ready",
+            "running",
+            "blocked",
+            "done",
+            "archived",
+            "scheduled",
+            "failed",
+            "needs_revision"
+          ],
+          "type": "string"
+        },
+        "taskIds": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskIds",
+        "status"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "tasks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acceptanceCriteria": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "assignee": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "body": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "currentRunId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "maxRetries": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "priority": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "retryCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scheduledFor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "ready",
+                  "running",
+                  "blocked",
+                  "done",
+                  "archived",
+                  "scheduled",
+                  "failed",
+                  "needs_revision"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "workspaceMode": {
+                "enum": [
+                  "scratch",
+                  "worktree",
+                  "dir"
+                ],
+                "type": "string"
+              },
+              "workspacePath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "body",
+              "status",
+              "assignee",
+              "priority",
+              "workspaceMode",
+              "workspacePath",
+              "scheduledFor",
+              "currentRunId",
+              "retryCount",
+              "maxRetries",
+              "acceptanceCriteria",
+              "createdAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.createTask": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "acceptanceCriteria": {
+          "type": "string"
+        },
+        "assignee": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "maximum": 9,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "title"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "currentRunId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxRetries": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "priority": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "retryCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scheduledFor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "todo",
+                "ready",
+                "running",
+                "blocked",
+                "done",
+                "archived",
+                "scheduled",
+                "failed",
+                "needs_revision"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "workspaceMode": {
+              "enum": [
+                "scratch",
+                "worktree",
+                "dir"
+              ],
+              "type": "string"
+            },
+            "workspacePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "body",
+            "status",
+            "assignee",
+            "priority",
+            "workspaceMode",
+            "workspacePath",
+            "scheduledFor",
+            "currentRunId",
+            "retryCount",
+            "maxRetries",
+            "acceptanceCriteria",
+            "createdAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.getBoard": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "board": {
+          "additionalProperties": false,
+          "properties": {
+            "links": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "childId": {
+                    "type": "string"
+                  },
+                  "parentId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parentId",
+                  "childId"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "memberStats": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "lastUpdatedAt": {
+                    "type": "string"
+                  },
+                  "memberId": {
+                    "type": "string"
+                  },
+                  "teamId": {
+                    "type": "string"
+                  },
+                  "ticketsCompleted": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "ticketsFailed": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "ticketsOrphaned": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "teamId",
+                  "memberId",
+                  "ticketsCompleted",
+                  "ticketsFailed",
+                  "ticketsOrphaned",
+                  "lastUpdatedAt"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "recentEvents": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "actor": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "enum": [
+                      "created",
+                      "status_changed",
+                      "commented",
+                      "assigned",
+                      "linked",
+                      "unlinked",
+                      "run_started",
+                      "run_completed",
+                      "heartbeat",
+                      "archived"
+                    ],
+                    "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "taskId",
+                  "kind",
+                  "actor",
+                  "data",
+                  "createdAt"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "tasks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "acceptanceCriteria": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "assignee": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "currentRunId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "maxRetries": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "priority": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "retryCount": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "scheduledFor": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "todo",
+                      "ready",
+                      "running",
+                      "blocked",
+                      "done",
+                      "archived",
+                      "scheduled",
+                      "failed",
+                      "needs_revision"
+                    ],
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  },
+                  "workspaceMode": {
+                    "enum": [
+                      "scratch",
+                      "worktree",
+                      "dir"
+                    ],
+                    "type": "string"
+                  },
+                  "workspacePath": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "body",
+                  "status",
+                  "assignee",
+                  "priority",
+                  "workspaceMode",
+                  "workspacePath",
+                  "scheduledFor",
+                  "currentRunId",
+                  "retryCount",
+                  "maxRetries",
+                  "acceptanceCriteria",
+                  "createdAt",
+                  "updatedAt"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "team": {
+              "additionalProperties": false,
+              "properties": {
+                "boardModifiedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                },
+                "dispatchMode": {
+                  "enum": [
+                    "coordinator",
+                    "self-routing",
+                    "broadcast"
+                  ],
+                  "type": "string"
+                },
+                "health": {
+                  "enum": [
+                    "running",
+                    "stopped",
+                    "stale"
+                  ],
+                  "type": "string"
+                },
+                "memberCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "runningCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "dispatchMode",
+                "health",
+                "memberCount",
+                "runningCount",
+                "boardModifiedAt"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "team",
+            "tasks",
+            "links",
+            "recentEvents",
+            "memberStats"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "board"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.getTask": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "taskId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "comments": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "taskId",
+              "author",
+              "body",
+              "createdAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "runs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "completedBy": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "endedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastHeartbeatAt": {
+                "type": "string"
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "completed",
+                      "blocked",
+                      "stalled",
+                      "cancelled"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "summary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "taskId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "taskId",
+              "startedAt",
+              "endedAt",
+              "outcome",
+              "summary",
+              "lastHeartbeatAt",
+              "completedBy"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "task": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "currentRunId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxRetries": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "priority": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "retryCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scheduledFor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "todo",
+                "ready",
+                "running",
+                "blocked",
+                "done",
+                "archived",
+                "scheduled",
+                "failed",
+                "needs_revision"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "workspaceMode": {
+              "enum": [
+                "scratch",
+                "worktree",
+                "dir"
+              ],
+              "type": "string"
+            },
+            "workspacePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "body",
+            "status",
+            "assignee",
+            "priority",
+            "workspaceMode",
+            "workspacePath",
+            "scheduledFor",
+            "currentRunId",
+            "retryCount",
+            "maxRetries",
+            "acceptanceCriteria",
+            "createdAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "task",
+        "comments",
+        "runs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "teams": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "boardModifiedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "dispatchMode": {
+                "enum": [
+                  "coordinator",
+                  "self-routing",
+                  "broadcast"
+                ],
+                "type": "string"
+              },
+              "health": {
+                "enum": [
+                  "running",
+                  "stopped",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              "memberCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "runningCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "dispatchMode",
+              "health",
+              "memberCount",
+              "runningCount",
+              "boardModifiedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "teams"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.listAgents": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agentId": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "personalityId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personalityId",
+              "displayName",
+              "agentId",
+              "online"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "kanban.updateStatus": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "todo",
+            "ready",
+            "running",
+            "blocked",
+            "done",
+            "archived",
+            "scheduled",
+            "failed",
+            "needs_revision"
+          ],
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "team": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "taskId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptanceCriteria": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "currentRunId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxRetries": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "priority": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "retryCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scheduledFor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "todo",
+                "ready",
+                "running",
+                "blocked",
+                "done",
+                "archived",
+                "scheduled",
+                "failed",
+                "needs_revision"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "workspaceMode": {
+              "enum": [
+                "scratch",
+                "worktree",
+                "dir"
+              ],
+              "type": "string"
+            },
+            "workspacePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "body",
+            "status",
+            "assignee",
+            "priority",
+            "workspaceMode",
+            "workspacePath",
+            "scheduledFor",
+            "currentRunId",
+            "retryCount",
+            "maxRetries",
+            "acceptanceCriteria",
+            "createdAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

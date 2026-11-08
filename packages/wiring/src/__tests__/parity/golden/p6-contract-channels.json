@@ -1,0 +1,93 @@
+{
+  "channels.observed": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "since": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lanes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "botKey": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              },
+              "laneKey": {
+                "type": "string"
+              },
+              "lastSentAt": {
+                "type": "number"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "threadId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "laneKey",
+              "platform",
+              "botKey",
+              "chatId",
+              "threadId",
+              "count",
+              "lastSentAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "omittedCount": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "lanes",
+        "omittedCount",
+        "error"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

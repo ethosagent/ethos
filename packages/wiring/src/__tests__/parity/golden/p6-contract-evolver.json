@@ -1,0 +1,338 @@
+{
+  "evolver.configGet": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "additionalProperties": false,
+          "properties": {
+            "autoApprove": {
+              "type": "boolean"
+            },
+            "minPatternCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "minRunsBeforeEvolve": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "newSkillPatternThreshold": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "rewriteThreshold": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "rewriteThreshold",
+            "newSkillPatternThreshold",
+            "minRunsBeforeEvolve",
+            "minPatternCount",
+            "autoApprove"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "evolver.configUpdate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "autoApprove": {
+          "type": "boolean"
+        },
+        "minPatternCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minRunsBeforeEvolve": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "newSkillPatternThreshold": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "rewriteThreshold": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "rewriteThreshold",
+        "newSkillPatternThreshold",
+        "minRunsBeforeEvolve",
+        "minPatternCount",
+        "autoApprove"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "additionalProperties": false,
+          "properties": {
+            "autoApprove": {
+              "type": "boolean"
+            },
+            "minPatternCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "minRunsBeforeEvolve": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "newSkillPatternThreshold": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "rewriteThreshold": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "rewriteThreshold",
+            "newSkillPatternThreshold",
+            "minRunsBeforeEvolve",
+            "minPatternCount",
+            "autoApprove"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "evolver.history": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "runs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "evalOutputPath": {
+                "type": "string"
+              },
+              "newSkillsProposed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "ranAt": {
+                "type": "string"
+              },
+              "rewritesProposed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "skipped": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "rewrite",
+                        "new"
+                      ],
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "target",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ranAt",
+              "evalOutputPath",
+              "rewritesProposed",
+              "newSkillsProposed",
+              "skipped"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "evolver.pendingApprove": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "evolver.pendingList": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "pending": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "proposedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "body",
+              "proposedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "pending"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "evolver.pendingReject": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -1,0 +1,615 @@
+{
+  "onboarding.complete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "keylessPath": {
+          "enum": [
+            "ethos-login",
+            "external-login",
+            "local",
+            "installed",
+            "key"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "anthropic",
+            "openai",
+            "openrouter",
+            "openai-compat",
+            "ollama",
+            "azure",
+            "codex",
+            "xai"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.importCodexLogin": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "source": {
+          "enum": [
+            "codex-cli",
+            "hermes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "models": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "models"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "absent",
+                "invalid_shape"
+              ],
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "onboarding.namePersonality": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sourceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "name"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personalityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.probe": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "baseUrl": {
+                    "type": "string"
+                  },
+                  "belowContextFloor": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "floorTokens": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "servedTokens": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "servedTokens",
+                      "floorTokens"
+                    ],
+                    "type": "object"
+                  },
+                  "contextWindow": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "local",
+                    "type": "string"
+                  },
+                  "models": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "provider": {
+                    "enum": [
+                      "ollama",
+                      "vllm",
+                      "openai-compat"
+                    ],
+                    "type": "string"
+                  },
+                  "runtime": {
+                    "enum": [
+                      "ollama",
+                      "vllm",
+                      "llamacpp",
+                      "lmstudio"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "runtime",
+                  "provider",
+                  "baseUrl",
+                  "models"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "external-login",
+                    "type": "string"
+                  },
+                  "provider": {
+                    "const": "codex",
+                    "type": "string"
+                  },
+                  "source": {
+                    "enum": [
+                      "codex-cli",
+                      "hermes"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "source",
+                  "provider"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ethos-login",
+                    "type": "string"
+                  },
+                  "provider": {
+                    "const": "codex",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "provider"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "install-offer",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "paste-key",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "install": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "downloadUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string"
+            },
+            "os": {
+              "enum": [
+                "linux",
+                "darwin",
+                "win32",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "os",
+            "command",
+            "notes",
+            "downloadUrl"
+          ],
+          "type": "object"
+        },
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "pick": {
+              "additionalProperties": false,
+              "properties": {
+                "approxDownloadGb": {
+                  "type": "number"
+                },
+                "modelId": {
+                  "enum": [
+                    "llama3.2",
+                    "qwen3",
+                    "gpt-oss:20b",
+                    "qwen3.8:27b"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "modelId",
+                "approxDownloadGb"
+              ],
+              "type": "object"
+            },
+            "totalMemGiB": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "totalMemGiB",
+            "pick"
+          ],
+          "type": "object"
+        },
+        "recommended": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidates",
+        "recommended",
+        "machine",
+        "install"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.pullModel": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "model": {
+          "enum": [
+            "llama3.2",
+            "qwen3",
+            "gpt-oss:20b",
+            "qwen3.8:27b"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.pullStatus": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "completedBytes": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "pulling",
+            "done",
+            "error"
+          ],
+          "type": "string"
+        },
+        "totalBytes": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "state",
+        "completedBytes",
+        "totalBytes",
+        "error"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.state": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "hasProvider": {
+          "type": "boolean"
+        },
+        "selectedPersonalityId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step": {
+          "enum": [
+            "welcome",
+            "provider",
+            "personality",
+            "integrations",
+            "first-turn",
+            "done"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "step",
+        "hasProvider",
+        "selectedPersonalityId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "onboarding.validateProvider": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "apiKey": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "anthropic",
+            "openai",
+            "openrouter",
+            "openai-compat",
+            "ollama",
+            "azure",
+            "codex",
+            "xai"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "apiKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "completionTested": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "models",
+        "error",
+        "completionTested"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

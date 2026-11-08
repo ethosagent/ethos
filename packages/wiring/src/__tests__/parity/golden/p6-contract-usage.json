@@ -1,0 +1,198 @@
+{
+  "usage.summary": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "by": {
+          "enum": [
+            "model",
+            "personality",
+            "channel",
+            "session",
+            "source"
+          ],
+          "type": "string"
+        },
+        "windowMs": {
+          "maximum": 31622400000,
+          "minimum": 60000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "windowMs"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "additionalProperties": false,
+          "properties": {
+            "dimension": {
+              "enum": [
+                "model",
+                "personality",
+                "channel",
+                "session",
+                "source"
+              ],
+              "type": "string"
+            },
+            "rows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "cacheCreationTokens": {
+                    "type": "number"
+                  },
+                  "cacheReadTokens": {
+                    "type": "number"
+                  },
+                  "calls": {
+                    "default": 0,
+                    "type": "number"
+                  },
+                  "estimatedCostUsd": {
+                    "type": "number"
+                  },
+                  "inputTokens": {
+                    "type": "number"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "messages": {
+                    "type": "number"
+                  },
+                  "outputTokens": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "key",
+                  "inputTokens",
+                  "outputTokens",
+                  "cacheReadTokens",
+                  "cacheCreationTokens",
+                  "estimatedCostUsd",
+                  "messages",
+                  "calls"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "dimension",
+            "rows"
+          ],
+          "type": "object"
+        },
+        "daily": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cacheCreationTokens": {
+                "type": "number"
+              },
+              "cacheReadTokens": {
+                "type": "number"
+              },
+              "calls": {
+                "default": 0,
+                "type": "number"
+              },
+              "estimatedCostUsd": {
+                "type": "number"
+              },
+              "inputTokens": {
+                "type": "number"
+              },
+              "key": {
+                "type": "string"
+              },
+              "messages": {
+                "type": "number"
+              },
+              "outputTokens": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "key",
+              "inputTokens",
+              "outputTokens",
+              "cacheReadTokens",
+              "cacheCreationTokens",
+              "estimatedCostUsd",
+              "messages",
+              "calls"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "since": {
+          "type": "number"
+        },
+        "totals": {
+          "additionalProperties": false,
+          "properties": {
+            "cacheCreationTokens": {
+              "type": "number"
+            },
+            "cacheHitRate": {
+              "type": "number"
+            },
+            "cacheReadTokens": {
+              "type": "number"
+            },
+            "calls": {
+              "default": 0,
+              "type": "number"
+            },
+            "estimatedCostUsd": {
+              "type": "number"
+            },
+            "inputTokens": {
+              "type": "number"
+            },
+            "messages": {
+              "type": "number"
+            },
+            "outputTokens": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "inputTokens",
+            "outputTokens",
+            "cacheReadTokens",
+            "cacheCreationTokens",
+            "estimatedCostUsd",
+            "messages",
+            "calls",
+            "cacheHitRate"
+          ],
+          "type": "object"
+        },
+        "until": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "since",
+        "until",
+        "totals",
+        "daily"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

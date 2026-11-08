@@ -1,0 +1,379 @@
+{
+  "eval.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "additionalProperties": false,
+          "properties": {
+            "avgScore": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "errorMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": "string"
+            },
+            "passed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scorer": {
+              "enum": [
+                "exact",
+                "contains",
+                "regex",
+                "llm"
+              ],
+              "type": "string"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "total": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "scorer",
+            "total",
+            "passed",
+            "failed",
+            "avgScore",
+            "startedAt",
+            "finishedAt",
+            "outputPath",
+            "errorMessage"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "eval.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "runs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "avgScore": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "errorMessage": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "finishedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "outputPath": {
+                "type": "string"
+              },
+              "passed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scorer": {
+                "enum": [
+                  "exact",
+                  "contains",
+                  "regex",
+                  "llm"
+                ],
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "running",
+                  "completed",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scorer",
+              "total",
+              "passed",
+              "failed",
+              "avgScore",
+              "startedAt",
+              "finishedAt",
+              "outputPath",
+              "errorMessage"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "eval.output": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "eval.start": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "concurrency": {
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expectedJsonl": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scorer": {
+          "enum": [
+            "exact",
+            "contains",
+            "regex",
+            "llm"
+          ],
+          "type": "string"
+        },
+        "tasksJsonl": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tasksJsonl",
+        "expectedJsonl"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "additionalProperties": false,
+          "properties": {
+            "avgScore": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "errorMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": "string"
+            },
+            "passed": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scorer": {
+              "enum": [
+                "exact",
+                "contains",
+                "regex",
+                "llm"
+              ],
+              "type": "string"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "total": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "scorer",
+            "total",
+            "passed",
+            "failed",
+            "avgScore",
+            "startedAt",
+            "finishedAt",
+            "outputPath",
+            "errorMessage"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

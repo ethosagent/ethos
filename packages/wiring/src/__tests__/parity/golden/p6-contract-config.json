@@ -1,0 +1,5040 @@
+{
+  "config.get": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "a2aEnabled": {
+          "type": "boolean"
+        },
+        "adminEnabled": {
+          "type": "boolean"
+        },
+        "apiKeyPreview": {
+          "type": "string"
+        },
+        "apiVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalMode": {
+          "enum": [
+            "manual",
+            "smart",
+            "off"
+          ],
+          "type": "string"
+        },
+        "autoCompact": {
+          "type": "boolean"
+        },
+        "auxCompression": {
+          "additionalProperties": false,
+          "properties": {
+            "apiKeyPreview": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "provider",
+            "apiKeyPreview",
+            "baseUrl"
+          ],
+          "type": "object"
+        },
+        "auxVision": {
+          "additionalProperties": false,
+          "properties": {
+            "apiKeyPreview": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "provider",
+            "apiKeyPreview",
+            "baseUrl"
+          ],
+          "type": "object"
+        },
+        "auxWeb": {
+          "additionalProperties": false,
+          "properties": {
+            "apiKeyPreview": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "provider",
+            "apiKeyPreview",
+            "baseUrl"
+          ],
+          "type": "object"
+        },
+        "background": {
+          "additionalProperties": false,
+          "properties": {
+            "defaultMaxCostUsd": {
+              "type": "number"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "heartbeatMs": {
+              "type": "number"
+            },
+            "maxConcurrentJobs": {
+              "type": "number"
+            },
+            "maxJobsPerPersonality": {
+              "type": "number"
+            },
+            "maxJobsPerRoot": {
+              "type": "number"
+            },
+            "maxRootBackgroundUsd": {
+              "type": "number"
+            },
+            "queuedTtlMs": {
+              "type": "number"
+            },
+            "retentionDays": {
+              "type": "number"
+            },
+            "staleMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "enabled",
+            "maxConcurrentJobs",
+            "maxJobsPerRoot",
+            "maxJobsPerPersonality",
+            "defaultMaxCostUsd",
+            "maxRootBackgroundUsd",
+            "queuedTtlMs",
+            "staleMs",
+            "heartbeatMs",
+            "retentionDays"
+          ],
+          "type": "object"
+        },
+        "backup": {
+          "additionalProperties": false,
+          "properties": {
+            "cron": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "keep": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scope": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "cron",
+            "scope",
+            "keep",
+            "dir"
+          ],
+          "type": "object"
+        },
+        "baseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "browser": {
+          "additionalProperties": false,
+          "properties": {
+            "commandTimeoutMs": {
+              "type": "number"
+            },
+            "headed": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "const": "auto",
+                  "type": "string"
+                }
+              ]
+            },
+            "idleTimeoutMs": {
+              "type": "number"
+            },
+            "navigationTimeoutMs": {
+              "type": "number"
+            },
+            "profilesEnabled": {
+              "type": "boolean"
+            },
+            "proxyPasswordPreview": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxyServer": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxyUsername": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stealthEnabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "navigationTimeoutMs",
+            "commandTimeoutMs",
+            "headed",
+            "idleTimeoutMs",
+            "stealthEnabled",
+            "profilesEnabled",
+            "proxyServer",
+            "proxyUsername",
+            "proxyPasswordPreview"
+          ],
+          "type": "object"
+        },
+        "callAccent": {
+          "type": "string"
+        },
+        "callStyle": {
+          "enum": [
+            "liquid",
+            "orb",
+            "rings",
+            "personality"
+          ],
+          "type": "string"
+        },
+        "channelToolsets": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "compaction": {
+          "additionalProperties": false,
+          "properties": {
+            "abortOnSummaryFailure": {
+              "type": "boolean"
+            },
+            "gateDelta": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pressure": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "retryOnOverflow": {
+              "type": "boolean"
+            },
+            "smallWindow": {
+              "enum": [
+                "auto",
+                "on",
+                "off"
+              ],
+              "type": "string"
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "pressure",
+            "target",
+            "gateDelta",
+            "retryOnOverflow",
+            "abortOnSummaryFailure",
+            "smallWindow"
+          ],
+          "type": "object"
+        },
+        "contextLayering": {
+          "type": "boolean"
+        },
+        "cronMaxParallelJobs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "debugMode": {
+          "type": "boolean"
+        },
+        "debugPanelEnabled": {
+          "type": "boolean"
+        },
+        "debugPanelModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discordMissedMessageBackfill": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "number"
+            },
+            "windowSeconds": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "windowSeconds",
+            "limit"
+          ],
+          "type": "object"
+        },
+        "displayBellOnComplete": {
+          "type": "boolean"
+        },
+        "displayBusyInputMode": {
+          "enum": [
+            "interrupt",
+            "queue",
+            "steer"
+          ],
+          "type": "string"
+        },
+        "displayResumeHint": {
+          "type": "boolean"
+        },
+        "displayResumeRecapTurns": {
+          "type": "number"
+        },
+        "displayToolPreviewLength": {
+          "type": "number"
+        },
+        "displayVerbosity": {
+          "enum": [
+            "quiet",
+            "default",
+            "verbose",
+            "debug"
+          ],
+          "type": "string"
+        },
+        "executionDocker": {
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "number"
+            },
+            "diskMb": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cpu",
+            "diskMb"
+          ],
+          "type": "object"
+        },
+        "executionSsh": {
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "identityFile": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "knownHostsFile": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "port": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "remoteWorkdir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "strictHostKeys": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "accept-new",
+                    "yes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "user": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "user",
+            "port",
+            "identityFile",
+            "knownHostsFile",
+            "strictHostKeys",
+            "remoteWorkdir"
+          ],
+          "type": "object"
+        },
+        "gatewayMaxInboundMediaBytes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kanban": {
+          "additionalProperties": false,
+          "properties": {
+            "maxInProgress": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxInProgressPerProfile": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "maxInProgress",
+            "maxInProgressPerProfile"
+          ],
+          "type": "object"
+        },
+        "logsLevel": {
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "type": "string"
+        },
+        "logsRotation": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "maxBytes": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxFiles": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "maxBytes",
+            "maxFiles"
+          ],
+          "type": "object"
+        },
+        "memory": {
+          "enum": [
+            "markdown",
+            "vector",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "memoryApproval": {
+          "additionalProperties": false,
+          "properties": {
+            "cap": {
+              "type": "number"
+            },
+            "mode": {
+              "enum": [
+                "off",
+                "automated",
+                "all"
+              ],
+              "type": "string"
+            },
+            "ttlDays": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "mode",
+            "cap",
+            "ttlDays"
+          ],
+          "type": "object"
+        },
+        "memoryCapture": {
+          "additionalProperties": false,
+          "properties": {
+            "apiKeyPreview": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxPerDay": {
+              "type": "number"
+            },
+            "maxPerHour": {
+              "type": "number"
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "provider",
+            "apiKeyPreview",
+            "baseUrl",
+            "maxPerHour",
+            "maxPerDay"
+          ],
+          "type": "object"
+        },
+        "memoryCaptureEnabled": {
+          "type": "boolean"
+        },
+        "memoryCaptureModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memoryCharLimits": {
+          "additionalProperties": false,
+          "properties": {
+            "memory": {
+              "type": "number"
+            },
+            "user": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "memory",
+            "user"
+          ],
+          "type": "object"
+        },
+        "memoryConsolidation": {
+          "additionalProperties": false,
+          "properties": {
+            "exemptUser": {
+              "type": "boolean"
+            },
+            "flushThreshold": {
+              "type": "number"
+            },
+            "halfLifeDays": {
+              "type": "number"
+            },
+            "maxDeltaChars": {
+              "type": "number"
+            },
+            "maxTokens": {
+              "type": "number"
+            },
+            "minMessagesSinceFlush": {
+              "type": "number"
+            },
+            "threshold": {
+              "type": "number"
+            },
+            "timeboxMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "halfLifeDays",
+            "threshold",
+            "exemptUser",
+            "flushThreshold",
+            "timeboxMs",
+            "maxTokens",
+            "maxDeltaChars",
+            "minMessagesSinceFlush"
+          ],
+          "type": "object"
+        },
+        "memoryConsolidationEnabled": {
+          "type": "boolean"
+        },
+        "memoryNotices": {
+          "type": "boolean"
+        },
+        "memoryVault": {
+          "additionalProperties": false,
+          "properties": {
+            "agentDir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exclude": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "prefetch": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "path",
+            "agentDir",
+            "prefetch",
+            "exclude"
+          ],
+          "type": "object"
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelCatalog": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ttlHours": {
+              "type": "number"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "url",
+            "ttlHours"
+          ],
+          "type": "object"
+        },
+        "modelRouting": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "nightlyPass": {
+          "additionalProperties": false,
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "cron"
+          ],
+          "type": "object"
+        },
+        "personality": {
+          "type": "string"
+        },
+        "personalityRetention": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "pattern": "^(forever|\\d+[dwmy])$",
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "messages",
+                "traces",
+                "spans",
+                "blobs",
+                "archive",
+                "channelTranscript",
+                "events.error",
+                "events.audit",
+                "events.channel",
+                "events.install"
+              ],
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pluginsAutoInstall": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "apiKeyPreview": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failover": {
+                "type": "boolean"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model",
+              "apiKeyPreview",
+              "baseUrl",
+              "id",
+              "failover"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "providersNotices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "providersVersion": {
+          "type": "string"
+        },
+        "quickCommands": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "channels": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "gateway": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "exec",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "command",
+                  "gateway",
+                  "channels"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "channels": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "gateway": {
+                    "type": "boolean"
+                  },
+                  "reply": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "reply",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "reply",
+                  "gateway",
+                  "channels"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "resolved": {
+          "additionalProperties": false,
+          "properties": {
+            "apiKey": {
+              "additionalProperties": false,
+              "properties": {
+                "envVar": {
+                  "type": "string"
+                },
+                "overrides": {
+                  "const": "vault",
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "vault",
+                    "inline",
+                    "missing"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider",
+                "source"
+              ],
+              "type": "object"
+            },
+            "configPath": {
+              "type": "string"
+            },
+            "model": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "rung": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "rung"
+              ],
+              "type": "object"
+            },
+            "personality": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "shadowed": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "activeContext",
+                    "personality",
+                    "default"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "source"
+              ],
+              "type": "object"
+            },
+            "stateDir": {
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "stateDir",
+            "configPath",
+            "personality",
+            "model",
+            "apiKey",
+            "warnings"
+          ],
+          "type": "object"
+        },
+        "retention": {
+          "additionalProperties": {
+            "pattern": "^(forever|\\d+[dwmy])$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "messages",
+              "traces",
+              "spans",
+              "blobs",
+              "archive",
+              "channelTranscript",
+              "events.error",
+              "events.audit",
+              "events.channel",
+              "events.install"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "retentionMinVacuumIntervalDays": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retentionVacuumAfterPrune": {
+          "type": "boolean"
+        },
+        "skin": {
+          "type": "string"
+        },
+        "streamingEdits": {
+          "enum": [
+            "off",
+            "dms",
+            "all"
+          ],
+          "type": "string"
+        },
+        "teamSupervisorRestartLoopGuard": {
+          "additionalProperties": false,
+          "properties": {
+            "maxRestarts": {
+              "type": "number"
+            },
+            "windowSeconds": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "maxRestarts",
+            "windowSeconds"
+          ],
+          "type": "object"
+        },
+        "toolLoop": {
+          "additionalProperties": false,
+          "properties": {
+            "maxIdenticalToolCallsWarnAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxToolCallsWarnAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "maxToolCallsWarnAt",
+            "maxIdenticalToolCallsWarnAt"
+          ],
+          "type": "object"
+        },
+        "verbose": {
+          "type": "boolean"
+        },
+        "verbosity": {
+          "enum": [
+            "concise",
+            "balanced",
+            "verbose"
+          ],
+          "type": "string"
+        },
+        "voiceApiKeyPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceArtifactAbandonAfterDays": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceArtifactMaxTotalMb": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceBargeIn": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "energyThreshold": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "minSpeechMs": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "silenceMs": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "energyThreshold",
+              "minSpeechMs",
+              "silenceMs"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceBargeSustainMs": {
+          "type": "number"
+        },
+        "voiceBargeThreshold": {
+          "type": "number"
+        },
+        "voiceBaseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceBots": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bind": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowSlashSwitch": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "personality",
+                      "team"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name",
+                  "allowSlashSwitch"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "match": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "match",
+              "bind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "voiceChannelTtsOut": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceChime": {
+          "type": "boolean"
+        },
+        "voiceDefaultMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "off",
+                "mirror_inbound",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceEndpointSilenceMs": {
+          "type": "number"
+        },
+        "voiceFiller": {
+          "additionalProperties": false,
+          "properties": {
+            "afterMs": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "text": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tickIntervalMs": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "afterMs",
+            "text",
+            "tickIntervalMs"
+          ],
+          "type": "object"
+        },
+        "voiceInboundAllowlist": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundConcurrencyCap": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundDailyBudgetUsd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerBotKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerChatId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerPlatform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundPerCallerPerHour": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundPrewarm": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowlisted",
+                "none",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundReceptionist": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitApiKeyPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitApiSecretPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceProvider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceRealtimeDefault": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceRealtimeProviders": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "apiKeyPreview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "baseUrl": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costPerMinuteUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "voice": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "model",
+              "apiKeyPreview",
+              "baseUrl",
+              "voice",
+              "costPerMinuteUsd"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceRealtimeSessionBudgetUsd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceSpeechMinMs": {
+          "type": "number"
+        },
+        "voiceSpeechThreshold": {
+          "type": "number"
+        },
+        "voiceSttCommand": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceSttProviders": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "apiKeyPreview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "baseUrl": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "timeout": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "model",
+              "apiKeyPreview",
+              "baseUrl",
+              "command",
+              "timeout"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceSttTimeoutMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTier": {
+          "anyOf": [
+            {
+              "enum": [
+                "pipeline",
+                "realtime"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeBitrateKbps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeFfmpegPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeTimeoutSec": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkCodec": {
+          "anyOf": [
+            {
+              "enum": [
+                "opus",
+                "g711"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkFromNumber": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkPasswordPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkProvider": {
+          "anyOf": [
+            {
+              "enum": [
+                "twilio",
+                "telnyx",
+                "generic",
+                "livekit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkUsername": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkWebhookPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkWebhookSecretPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrustedPlugins": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsApiKeyPreview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsBaseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsCommand": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsMaxTextLength": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsOutputFormat": {
+          "anyOf": [
+            {
+              "enum": [
+                "opus",
+                "mp3",
+                "wav",
+                "pcm"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsProvider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsProviders": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "apiKeyPreview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "baseUrl": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxTextLength": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outputFormat": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "opus",
+                      "mp3",
+                      "wav",
+                      "pcm"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "timeout": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "voice": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "model",
+              "apiKeyPreview",
+              "voice",
+              "baseUrl",
+              "command",
+              "outputFormat",
+              "timeout",
+              "maxTextLength"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceTtsTimeoutMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsVoice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webBaseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webExtractBackend": {
+          "anyOf": [
+            {
+              "enum": [
+                "htmltext"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webSearchBackend": {
+          "anyOf": [
+            {
+              "enum": [
+                "exa",
+                "tavily",
+                "brave"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webSearxngUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webhooks": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "enum": [
+                  "sync",
+                  "ack"
+                ],
+                "type": "string"
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "prefilter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "prefilterTimeoutSeconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "secretPreview": {
+                "type": "string"
+              },
+              "sessionKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "personalityId",
+              "secretPreview",
+              "sessionKey",
+              "prefilter",
+              "prefilterTimeoutSeconds",
+              "mode"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "weeklyDigest": {
+          "additionalProperties": false,
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "cron",
+            "recipients"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "apiKeyPreview",
+        "baseUrl",
+        "personality",
+        "memory",
+        "modelRouting",
+        "skin",
+        "providers",
+        "providersVersion",
+        "providersNotices",
+        "resolved",
+        "approvalMode",
+        "verbosity",
+        "debugMode",
+        "contextLayering",
+        "debugPanelEnabled",
+        "debugPanelModel",
+        "adminEnabled",
+        "streamingEdits",
+        "callStyle",
+        "callAccent",
+        "autoCompact",
+        "memoryConsolidationEnabled",
+        "memoryCaptureEnabled",
+        "memoryCaptureModel",
+        "memoryNotices",
+        "voiceChime",
+        "voiceEndpointSilenceMs",
+        "voiceBargeThreshold",
+        "voiceBargeSustainMs",
+        "voiceSpeechThreshold",
+        "voiceSpeechMinMs",
+        "voiceProvider",
+        "voiceApiKeyPreview",
+        "voiceBaseUrl",
+        "voiceModel",
+        "voiceTtsProvider",
+        "voiceTtsApiKeyPreview",
+        "voiceTtsVoice",
+        "voiceTtsBaseUrl",
+        "voiceTtsModel",
+        "voiceSttCommand",
+        "voiceTtsCommand",
+        "voiceTtsOutputFormat",
+        "voiceTtsTimeoutMs",
+        "voiceTtsMaxTextLength",
+        "voiceSttTimeoutMs",
+        "voiceTrustedPlugins",
+        "voiceDefaultMode",
+        "voiceChannelTtsOut",
+        "voiceTranscodeFfmpegPath",
+        "voiceTranscodeBitrateKbps",
+        "voiceTranscodeTimeoutSec",
+        "voiceArtifactAbandonAfterDays",
+        "voiceArtifactMaxTotalMb",
+        "voiceTtsProviders",
+        "voiceSttProviders",
+        "voiceRealtimeProviders",
+        "voiceRealtimeDefault",
+        "voiceTier",
+        "voiceRealtimeSessionBudgetUsd",
+        "voiceTrunkProvider",
+        "voiceTrunkId",
+        "voiceTrunkFromNumber",
+        "voiceTrunkUsername",
+        "voiceTrunkPasswordPreview",
+        "voiceTrunkWebhookSecretPreview",
+        "voiceTrunkWebhookPath",
+        "voiceTrunkCodec",
+        "voiceLivekitUrl",
+        "voiceLivekitApiKeyPreview",
+        "voiceLivekitApiSecretPreview",
+        "voiceInboundAllowlist",
+        "voiceInboundReceptionist",
+        "voiceInboundConcurrencyCap",
+        "voiceInboundPerCallerPerHour",
+        "voiceInboundDailyBudgetUsd",
+        "voiceInboundPrewarm",
+        "voiceInboundOwnerPlatform",
+        "voiceInboundOwnerChatId",
+        "voiceInboundOwnerBotKey",
+        "voiceBargeIn",
+        "voiceFiller",
+        "voiceBots",
+        "apiVersion",
+        "verbose",
+        "displayVerbosity",
+        "displayBusyInputMode",
+        "displayToolPreviewLength",
+        "displayResumeHint",
+        "displayResumeRecapTurns",
+        "displayBellOnComplete",
+        "compaction",
+        "memoryVault",
+        "memoryApproval",
+        "memoryConsolidation",
+        "memoryCapture",
+        "background",
+        "retention",
+        "personalityRetention",
+        "webhooks",
+        "quickCommands",
+        "channelToolsets",
+        "backup",
+        "nightlyPass",
+        "weeklyDigest",
+        "modelCatalog",
+        "logsRotation",
+        "webSearchBackend",
+        "webExtractBackend",
+        "webSearxngUrl",
+        "auxCompression",
+        "auxVision",
+        "auxWeb",
+        "a2aEnabled",
+        "pluginsAutoInstall",
+        "webBaseUrl",
+        "retentionVacuumAfterPrune",
+        "retentionMinVacuumIntervalDays",
+        "logsLevel",
+        "memoryCharLimits",
+        "executionDocker",
+        "executionSsh",
+        "kanban",
+        "cronMaxParallelJobs",
+        "toolLoop",
+        "browser",
+        "gatewayMaxInboundMediaBytes",
+        "teamSupervisorRestartLoopGuard",
+        "discordMissedMessageBackfill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "config.update": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "a2aEnabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "adminEnabled": {
+          "type": "boolean"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "apiVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalMode": {
+          "enum": [
+            "manual",
+            "smart",
+            "off"
+          ],
+          "type": "string"
+        },
+        "autoCompact": {
+          "type": "boolean"
+        },
+        "auxCompression": {
+          "properties": {
+            "apiKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "auxVision": {
+          "properties": {
+            "apiKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "auxWeb": {
+          "properties": {
+            "apiKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "background": {
+          "properties": {
+            "defaultMaxCostUsd": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "heartbeatMs": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxConcurrentJobs": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxJobsPerPersonality": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxJobsPerRoot": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxRootBackgroundUsd": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queuedTtlMs": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "retentionDays": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "staleMs": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "backup": {
+          "properties": {
+            "cron": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "keep": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "browser": {
+          "properties": {
+            "commandTimeoutMs": {
+              "anyOf": [
+                {
+                  "maximum": 600000,
+                  "minimum": 1000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "headed": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "const": "auto",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "idleTimeoutMs": {
+              "anyOf": [
+                {
+                  "maximum": 86400000,
+                  "minimum": 60000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "navigationTimeoutMs": {
+              "anyOf": [
+                {
+                  "maximum": 600000,
+                  "minimum": 1000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "profilesEnabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxyPassword": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxyServer": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxyUsername": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stealthEnabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "callAccent": {
+          "type": "string"
+        },
+        "callStyle": {
+          "enum": [
+            "liquid",
+            "orb",
+            "rings",
+            "personality"
+          ],
+          "type": "string"
+        },
+        "channelToolsets": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "compaction": {
+          "properties": {
+            "abortOnSummaryFailure": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gateDelta": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pressure": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "retryOnOverflow": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "smallWindow": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "on",
+                    "off"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "contextLayering": {
+          "type": "boolean"
+        },
+        "cronMaxParallelJobs": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "debugMode": {
+          "type": "boolean"
+        },
+        "debugPanelEnabled": {
+          "type": "boolean"
+        },
+        "debugPanelModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discordMissedMessageBackfill": {
+          "properties": {
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limit": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "windowSeconds": {
+              "anyOf": [
+                {
+                  "maximum": 604800,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "displayBellOnComplete": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayBusyInputMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "interrupt",
+                "queue",
+                "steer"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayResumeHint": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayResumeRecapTurns": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayToolPreviewLength": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "displayVerbosity": {
+          "anyOf": [
+            {
+              "enum": [
+                "quiet",
+                "default",
+                "verbose",
+                "debug"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionDocker": {
+          "properties": {
+            "cpu": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diskMb": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "executionSsh": {
+          "properties": {
+            "host": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "identityFile": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "knownHostsFile": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "port": {
+              "anyOf": [
+                {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "remoteWorkdir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "strictHostKeys": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "accept-new",
+                    "yes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "user": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "gatewayMaxInboundMediaBytes": {
+          "anyOf": [
+            {
+              "maximum": 134217728,
+              "minimum": 1024,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kanban": {
+          "properties": {
+            "maxInProgress": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxInProgressPerProfile": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "logsLevel": {
+          "anyOf": [
+            {
+              "enum": [
+                "debug",
+                "info",
+                "warn",
+                "error"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logsRotation": {
+          "properties": {
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxBytes": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxFiles": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "memory": {
+          "enum": [
+            "markdown",
+            "vector",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "memoryApproval": {
+          "properties": {
+            "cap": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "off",
+                    "automated",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ttlDays": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "memoryCapture": {
+          "properties": {
+            "apiKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseUrl": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxPerDay": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxPerHour": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "memoryCaptureEnabled": {
+          "type": "boolean"
+        },
+        "memoryCaptureModel": {
+          "type": "string"
+        },
+        "memoryCharLimits": {
+          "properties": {
+            "memory": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "user": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "memoryConsolidation": {
+          "properties": {
+            "exemptUser": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "flushThreshold": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "halfLifeDays": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxDeltaChars": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxTokens": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "minMessagesSinceFlush": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "threshold": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "timeboxMs": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "memoryConsolidationEnabled": {
+          "type": "boolean"
+        },
+        "memoryNotices": {
+          "type": "boolean"
+        },
+        "memoryVault": {
+          "properties": {
+            "agentDir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exclude": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "prefetch": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelCatalog": {
+          "properties": {
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ttlHours": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "modelRouting": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "nightlyPass": {
+          "properties": {
+            "cron": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "personality": {
+          "type": "string"
+        },
+        "personalityRetention": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "pattern": "^(forever|\\d+[dwmy])$",
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "messages",
+                "traces",
+                "spans",
+                "blobs",
+                "archive",
+                "channelTranscript",
+                "events.error",
+                "events.audit",
+                "events.channel",
+                "events.install"
+              ],
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pluginsAutoInstall": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providers": {
+          "items": {
+            "properties": {
+              "apiKey": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "failover": {
+                "type": "boolean"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "sourceIndex": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "providersVersion": {
+          "type": "string"
+        },
+        "quickCommands": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "properties": {
+                  "channels": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "command": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "gateway": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "exec",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "command"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "channels": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "gateway": {
+                    "type": "boolean"
+                  },
+                  "reply": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "reply",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "reply"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "retention": {
+          "additionalProperties": {
+            "pattern": "^(forever|\\d+[dwmy])$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "messages",
+              "traces",
+              "spans",
+              "blobs",
+              "archive",
+              "channelTranscript",
+              "events.error",
+              "events.audit",
+              "events.channel",
+              "events.install"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "retentionMinVacuumIntervalDays": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retentionVacuumAfterPrune": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skin": {
+          "type": "string"
+        },
+        "streamingEdits": {
+          "enum": [
+            "off",
+            "dms",
+            "all"
+          ],
+          "type": "string"
+        },
+        "teamSupervisorRestartLoopGuard": {
+          "properties": {
+            "maxRestarts": {
+              "anyOf": [
+                {
+                  "maximum": 1000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "windowSeconds": {
+              "anyOf": [
+                {
+                  "maximum": 86400,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "toolLoop": {
+          "properties": {
+            "maxIdenticalToolCallsWarnAt": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxToolCallsWarnAt": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "verbose": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verbosity": {
+          "enum": [
+            "concise",
+            "balanced",
+            "verbose"
+          ],
+          "type": "string"
+        },
+        "voiceApiKey": {
+          "type": "string"
+        },
+        "voiceArtifactAbandonAfterDays": {
+          "anyOf": [
+            {
+              "maximum": 365,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceArtifactMaxTotalMb": {
+          "anyOf": [
+            {
+              "maximum": 102400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceBargeIn": {
+          "additionalProperties": {
+            "properties": {
+              "energyThreshold": {
+                "exclusiveMinimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "minSpeechMs": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "silenceMs": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceBargeSustainMs": {
+          "maximum": 800,
+          "minimum": 100,
+          "type": "number"
+        },
+        "voiceBargeThreshold": {
+          "maximum": 0.2,
+          "minimum": 0.02,
+          "type": "number"
+        },
+        "voiceBaseUrl": {
+          "type": "string"
+        },
+        "voiceBots": {
+          "items": {
+            "properties": {
+              "bind": {
+                "properties": {
+                  "allowSlashSwitch": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "personality",
+                      "team"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "match": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "match",
+              "bind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "voiceChannelTtsOut": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceChime": {
+          "type": "boolean"
+        },
+        "voiceDefaultMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "off",
+                "mirror_inbound",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceEndpointSilenceMs": {
+          "maximum": 1500,
+          "minimum": 300,
+          "type": "number"
+        },
+        "voiceFiller": {
+          "properties": {
+            "afterMs": {
+              "anyOf": [
+                {
+                  "maximum": 60000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tickIntervalMs": {
+              "anyOf": [
+                {
+                  "maximum": 60000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "voiceInboundAllowlist": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundConcurrencyCap": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundDailyBudgetUsd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerBotKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerChatId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundOwnerPlatform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundPerCallerPerHour": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundPrewarm": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowlisted",
+                "none",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceInboundReceptionist": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitApiKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitApiSecret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceLivekitUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceModel": {
+          "type": "string"
+        },
+        "voiceProvider": {
+          "type": "string"
+        },
+        "voiceRealtimeDefault": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceRealtimeProviders": {
+          "additionalProperties": {
+            "properties": {
+              "apiKey": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "costPerMinuteUsd": {
+                "exclusiveMinimum": 0,
+                "maximum": 100,
+                "type": "number"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "voice": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceRealtimeSessionBudgetUsd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceSpeechMinMs": {
+          "maximum": 500,
+          "minimum": 100,
+          "type": "number"
+        },
+        "voiceSpeechThreshold": {
+          "maximum": 0.1,
+          "minimum": 0.005,
+          "type": "number"
+        },
+        "voiceSttCommand": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceSttProviders": {
+          "additionalProperties": {
+            "properties": {
+              "apiKey": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "timeout": {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceSttTimeoutMs": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTier": {
+          "anyOf": [
+            {
+              "enum": [
+                "pipeline",
+                "realtime"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeBitrateKbps": {
+          "anyOf": [
+            {
+              "maximum": 320,
+              "minimum": 8,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeFfmpegPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTranscodeTimeoutSec": {
+          "anyOf": [
+            {
+              "maximum": 600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkCodec": {
+          "anyOf": [
+            {
+              "enum": [
+                "opus",
+                "g711"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkFromNumber": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkPassword": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkProvider": {
+          "anyOf": [
+            {
+              "enum": [
+                "twilio",
+                "telnyx",
+                "generic",
+                "livekit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkUsername": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkWebhookPath": {
+          "anyOf": [
+            {
+              "pattern": "^\\/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrunkWebhookSecret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTrustedPlugins": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsApiKey": {
+          "type": "string"
+        },
+        "voiceTtsBaseUrl": {
+          "type": "string"
+        },
+        "voiceTtsCommand": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsMaxTextLength": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsModel": {
+          "type": "string"
+        },
+        "voiceTtsOutputFormat": {
+          "anyOf": [
+            {
+              "enum": [
+                "opus",
+                "mp3",
+                "wav",
+                "pcm"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsProvider": {
+          "type": "string"
+        },
+        "voiceTtsProviders": {
+          "additionalProperties": {
+            "properties": {
+              "apiKey": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "maxTextLength": {
+                "maximum": 100000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              "model": {
+                "type": "string"
+              },
+              "outputFormat": {
+                "enum": [
+                  "opus",
+                  "mp3",
+                  "wav",
+                  "pcm"
+                ],
+                "type": "string"
+              },
+              "provider": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "timeout": {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "voice": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "voiceTtsTimeoutMs": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceTtsVoice": {
+          "type": "string"
+        },
+        "webBaseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webExtractBackend": {
+          "anyOf": [
+            {
+              "enum": [
+                "htmltext"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webSearchBackend": {
+          "anyOf": [
+            {
+              "enum": [
+                "exa",
+                "tavily",
+                "brave"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webSearxngUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webhooks": {
+          "additionalProperties": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "sync",
+                  "ack"
+                ],
+                "type": "string"
+              },
+              "personalityId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "prefilter": {
+                "type": "string"
+              },
+              "prefilterTimeoutSeconds": {
+                "maximum": 600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "secret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "sessionKey": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personalityId"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "weeklyDigest": {
+          "properties": {
+            "cron": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "recipients": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "adoptedModels": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "type": "string"
+              },
+              "modelId": {
+                "type": "string"
+              },
+              "providerKey": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "alias",
+              "providerKey",
+              "modelId"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

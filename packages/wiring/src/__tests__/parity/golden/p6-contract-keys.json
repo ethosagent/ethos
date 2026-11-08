@@ -1,0 +1,223 @@
+{
+  "keys.clear": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "keys.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "canClear": {
+                      "type": "boolean"
+                    },
+                    "canSet": {
+                      "type": "boolean"
+                    },
+                    "category": {
+                      "enum": [
+                        "tools",
+                        "voice",
+                        "gateway",
+                        "settings",
+                        "connections",
+                        "custom"
+                      ],
+                      "type": "string"
+                    },
+                    "details": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "fields": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "preview": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "set": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "ref",
+                          "preview",
+                          "set"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "getKeyUrl": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "probe": {
+                      "enum": [
+                        "exa",
+                        "tavily",
+                        "brave",
+                        "google"
+                      ],
+                      "type": "string"
+                    },
+                    "set": {
+                      "type": "boolean"
+                    },
+                    "shape": {
+                      "enum": [
+                        "single",
+                        "multi",
+                        "blob"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "category",
+                    "label",
+                    "shape",
+                    "fields",
+                    "set",
+                    "canSet",
+                    "canClear"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "id": {
+                "enum": [
+                  "tools",
+                  "voice",
+                  "gateway",
+                  "settings",
+                  "connections",
+                  "custom"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "entries"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "categories"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "keys.set": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "values": {
+          "additionalProperties": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "values"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

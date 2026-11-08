@@ -1,0 +1,983 @@
+{
+  "platforms.botsAddSlack": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "appToken": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "bind": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "personality",
+                "team"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ],
+          "type": "object"
+        },
+        "botToken": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "signingSecret": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "botToken",
+        "appToken",
+        "signingSecret",
+        "bind"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bot": {
+          "additionalProperties": false,
+          "properties": {
+            "appTokenConfigured": {
+              "type": "boolean"
+            },
+            "bind": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "personality",
+                    "team"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "name"
+              ],
+              "type": "object"
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "botTokenConfigured": {
+              "type": "boolean"
+            },
+            "signingSecretConfigured": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "botKey",
+            "botTokenConfigured",
+            "appTokenConfigured",
+            "signingSecretConfigured",
+            "bind"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "bot"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsAddTelegram": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "bind": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "personality",
+                "team"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ],
+          "type": "object"
+        },
+        "token": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "bind"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bot": {
+          "additionalProperties": false,
+          "properties": {
+            "bind": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "personality",
+                    "team"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "name"
+              ],
+              "type": "object"
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "tokenConfigured": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "botKey",
+            "tokenConfigured",
+            "bind"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "bot"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsAddWhatsApp": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "allowedNumbers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "bind": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "personality",
+                "team"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ],
+          "type": "object"
+        },
+        "defaultMode": {
+          "enum": [
+            "all",
+            "mention_only",
+            "observe"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "phoneNumber": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bind"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bot": {
+          "additionalProperties": false,
+          "properties": {
+            "allowedNumbers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "bind": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "personality",
+                    "team"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "name"
+              ],
+              "type": "object"
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "defaultMode": {
+              "enum": [
+                "all",
+                "mention_only",
+                "observe"
+              ],
+              "type": "string"
+            },
+            "paired": {
+              "type": "boolean"
+            },
+            "phoneNumber": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "botKey",
+            "defaultMode",
+            "allowedNumbers",
+            "paired"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "bot"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsListSlack": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bots": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appTokenConfigured": {
+                "type": "boolean"
+              },
+              "bind": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "personality",
+                      "team"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "botKey": {
+                "type": "string"
+              },
+              "botTokenConfigured": {
+                "type": "boolean"
+              },
+              "signingSecretConfigured": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "botKey",
+              "botTokenConfigured",
+              "appTokenConfigured",
+              "signingSecretConfigured",
+              "bind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bots"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsListTelegram": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bots": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bind": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "personality",
+                      "team"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "botKey": {
+                "type": "string"
+              },
+              "tokenConfigured": {
+                "type": "boolean"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "botKey",
+              "tokenConfigured",
+              "bind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bots"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsListWhatsApp": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "bots": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowedNumbers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "bind": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "personality",
+                      "team"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "botKey": {
+                "type": "string"
+              },
+              "defaultMode": {
+                "enum": [
+                  "all",
+                  "mention_only",
+                  "observe"
+                ],
+                "type": "string"
+              },
+              "paired": {
+                "type": "boolean"
+              },
+              "phoneNumber": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "botKey",
+              "defaultMode",
+              "allowedNumbers",
+              "paired"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bots"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsRemoveSlack": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "botKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "botKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsRemoveTelegram": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "botKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "botKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.botsRemoveWhatsApp": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "botKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "botKey"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.clear": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "enum": [
+            "telegram",
+            "discord",
+            "slack",
+            "email",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "platform": {
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "enum": [
+                "telegram",
+                "discord",
+                "slack",
+                "email",
+                "whatsapp"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "configured",
+            "fields"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.getChannelFilter": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "platform": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "additionalProperties": false,
+          "properties": {
+            "allowlist": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "ownerUserId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "ownerUserId",
+            "allowlist"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "filter"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "platforms": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "id": {
+                "enum": [
+                  "telegram",
+                  "discord",
+                  "slack",
+                  "email",
+                  "whatsapp"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "configured",
+              "fields"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "platforms"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.set": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "id": {
+          "enum": [
+            "telegram",
+            "discord",
+            "slack",
+            "email",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "platform": {
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "enum": [
+                "telegram",
+                "discord",
+                "slack",
+                "email",
+                "whatsapp"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "configured",
+            "fields"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.setChannelFilter": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "filter": {
+          "properties": {
+            "allowlist": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "ownerUserId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "ownerUserId",
+            "allowlist"
+          ],
+          "type": "object"
+        },
+        "platform": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "filter"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "additionalProperties": false,
+          "properties": {
+            "allowlist": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "ownerUserId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "ownerUserId",
+            "allowlist"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "filter"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.validate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "id": {
+          "enum": [
+            "telegram",
+            "discord",
+            "slack",
+            "email",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "rejected",
+            "unreachable",
+            "unsupported"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "label",
+        "error"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

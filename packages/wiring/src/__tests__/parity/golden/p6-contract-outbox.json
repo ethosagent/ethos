@@ -1,0 +1,1900 @@
+{
+  "outbox.approve": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "contentHash": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "itemId",
+        "revision",
+        "contentHash",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.edit": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "revision",
+        "text",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        },
+        "revisions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "revision",
+              "text",
+              "contentHash",
+              "author",
+              "createdAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "item",
+        "revisions"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "states": {
+          "items": {
+            "enum": [
+              "awaiting_review",
+              "awaiting_approval",
+              "approved",
+              "sending",
+              "sent",
+              "unconfirmed",
+              "failed",
+              "rejected",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "teamId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "approvedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "approvedBy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "approvedRevision": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "approverPersonality": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "botKey": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "claimedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "failureReason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "obligationId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "originSessionKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "rejectionReason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "review": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "reasons": {
+                        "type": "string"
+                      },
+                      "reviewedAt": {
+                        "type": "number"
+                      },
+                      "revision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "verdict": {
+                        "enum": [
+                          "pass",
+                          "fail",
+                          "unclear",
+                          "unavailable"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "verdict",
+                      "reasons",
+                      "revision",
+                      "reviewedAt"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "sentAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "enum": [
+                  "awaiting_review",
+                  "awaiting_approval",
+                  "approved",
+                  "sending",
+                  "sent",
+                  "unconfirmed",
+                  "failed",
+                  "rejected",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "threadId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "personalityId",
+              "botKey",
+              "platform",
+              "chatId",
+              "threadId",
+              "revision",
+              "contentHash",
+              "text",
+              "state",
+              "createdAt",
+              "updatedAt",
+              "approverPersonality",
+              "review",
+              "approvedBy",
+              "approvedAt",
+              "approvedRevision",
+              "claimedAt",
+              "sentAt",
+              "obligationId",
+              "failureReason",
+              "rejectionReason",
+              "originSessionKey"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.reject": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "reason",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.retry": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "outbox.revoke": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "itemId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "additionalProperties": false,
+          "properties": {
+            "approvedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedBy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvedRevision": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approverPersonality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "botKey": {
+              "type": "string"
+            },
+            "chatId": {
+              "type": "string"
+            },
+            "claimedAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "failureReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "obligationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "originSessionKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "rejectionReason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "type": "string"
+                    },
+                    "reviewedAt": {
+                      "type": "number"
+                    },
+                    "revision": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "unclear",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "reasons",
+                    "revision",
+                    "reviewedAt"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "sentAt": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "awaiting_review",
+                "awaiting_approval",
+                "approved",
+                "sending",
+                "sent",
+                "unconfirmed",
+                "failed",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "threadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "personalityId",
+            "botKey",
+            "platform",
+            "chatId",
+            "threadId",
+            "revision",
+            "contentHash",
+            "text",
+            "state",
+            "createdAt",
+            "updatedAt",
+            "approverPersonality",
+            "review",
+            "approvedBy",
+            "approvedAt",
+            "approvedRevision",
+            "claimedAt",
+            "sentAt",
+            "obligationId",
+            "failureReason",
+            "rejectionReason",
+            "originSessionKey"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

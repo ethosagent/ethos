@@ -1,0 +1,305 @@
+{
+  "apiKeys.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "allowedOrigins": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sessions:read",
+                  "sessions:write",
+                  "chat",
+                  "chat:send",
+                  "personalities:read",
+                  "memory:read",
+                  "memory:write",
+                  "tools:approve",
+                  "events:subscribe",
+                  "metrics:read",
+                  "cron"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^mcp:[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              }
+            ]
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "scopes",
+        "allowedOrigins"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "additionalProperties": false,
+          "properties": {
+            "allowedOrigins": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "lastUsed": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "revokedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scopes": {
+              "items": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "sessions:read",
+                      "sessions:write",
+                      "chat",
+                      "chat:send",
+                      "personalities:read",
+                      "memory:read",
+                      "memory:write",
+                      "tools:approve",
+                      "events:subscribe",
+                      "metrics:read",
+                      "cron"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "pattern": "^mcp:[a-z0-9][a-z0-9_-]*$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "prefix",
+            "name",
+            "scopes",
+            "allowedOrigins",
+            "createdAt",
+            "lastUsed",
+            "revokedAt"
+          ],
+          "type": "object"
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "secret",
+        "key"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "apiKeys.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowedOrigins": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastUsed": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "revokedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scopes": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "sessions:read",
+                        "sessions:write",
+                        "chat",
+                        "chat:send",
+                        "personalities:read",
+                        "memory:read",
+                        "memory:write",
+                        "tools:approve",
+                        "events:subscribe",
+                        "metrics:read",
+                        "cron"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^mcp:[a-z0-9][a-z0-9_-]*$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "name",
+              "scopes",
+              "allowedOrigins",
+              "createdAt",
+              "lastUsed",
+              "revokedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "apiKeys.revoke": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

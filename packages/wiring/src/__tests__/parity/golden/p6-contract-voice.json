@@ -1,0 +1,1477 @@
+{
+  "voice.calls.active": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "botKey": {
+                "type": "string"
+              },
+              "costUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direction": {
+                "enum": [
+                  "inbound",
+                  "outbound"
+                ],
+                "type": "string"
+              },
+              "endedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fromNumber": {
+                "type": "string"
+              },
+              "hasTranscript": {
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "laneKey": {
+                "type": "string"
+              },
+              "personalityId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "status": {
+                "enum": [
+                  "ringing",
+                  "live",
+                  "completed",
+                  "screened",
+                  "refused",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "summaryPreview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tier": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pipeline",
+                      "realtime"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "toNumber": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "botKey",
+              "laneKey",
+              "direction",
+              "fromNumber",
+              "toNumber",
+              "personalityId",
+              "tier",
+              "status",
+              "startedAt",
+              "endedAt",
+              "reason",
+              "summaryPreview",
+              "hasTranscript",
+              "costUsd"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.calls.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "call": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "botKey": {
+                  "type": "string"
+                },
+                "costUsd": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "direction": {
+                  "enum": [
+                    "inbound",
+                    "outbound"
+                  ],
+                  "type": "string"
+                },
+                "endedAt": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "fromNumber": {
+                  "type": "string"
+                },
+                "hasTranscript": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "laneKey": {
+                  "type": "string"
+                },
+                "personalityId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "startedAt": {
+                  "type": "number"
+                },
+                "status": {
+                  "enum": [
+                    "ringing",
+                    "live",
+                    "completed",
+                    "screened",
+                    "refused",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "summaryPreview": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tier": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "pipeline",
+                        "realtime"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "toNumber": {
+                  "type": "string"
+                },
+                "transcript": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "botKey",
+                "laneKey",
+                "direction",
+                "fromNumber",
+                "toNumber",
+                "personalityId",
+                "tier",
+                "status",
+                "startedAt",
+                "endedAt",
+                "reason",
+                "summaryPreview",
+                "hasTranscript",
+                "costUsd",
+                "summary",
+                "transcript"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "call"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.calls.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "direction": {
+          "enum": [
+            "inbound",
+            "outbound"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "ringing",
+            "live",
+            "completed",
+            "screened",
+            "refused",
+            "failed"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "botKey": {
+                "type": "string"
+              },
+              "costUsd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direction": {
+                "enum": [
+                  "inbound",
+                  "outbound"
+                ],
+                "type": "string"
+              },
+              "endedAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fromNumber": {
+                "type": "string"
+              },
+              "hasTranscript": {
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "laneKey": {
+                "type": "string"
+              },
+              "personalityId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "status": {
+                "enum": [
+                  "ringing",
+                  "live",
+                  "completed",
+                  "screened",
+                  "refused",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "summaryPreview": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tier": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pipeline",
+                      "realtime"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "toNumber": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "botKey",
+              "laneKey",
+              "direction",
+              "fromNumber",
+              "toNumber",
+              "personalityId",
+              "tier",
+              "status",
+              "startedAt",
+              "endedAt",
+              "reason",
+              "summaryPreview",
+              "hasTranscript",
+              "costUsd"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.laneMode.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "enum": [
+            "off",
+            "mirror_inbound",
+            "all"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "off",
+            "mirror_inbound",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "default"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.laneMode.set": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "mirror_inbound",
+            "all"
+          ],
+          "type": "string"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "mirror_inbound",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.realtimeEntries": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "defaultEntryName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "roster": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "providerId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "providerId"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "roster",
+        "defaultEntryName"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.realtimeToken": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expiresAt": {
+              "type": "number"
+            },
+            "inputSampleRate": {
+              "type": "number"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "outputSampleRate": {
+              "type": "number"
+            },
+            "providerId": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "providerId",
+            "model",
+            "token",
+            "expiresAt",
+            "url",
+            "inputSampleRate",
+            "outputSampleRate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "enum": [
+                "pipeline_preferred",
+                "not_configured",
+                "unknown_entry",
+                "untrusted_provider",
+                "no_browser_token",
+                "provider_unavailable"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason",
+            "message",
+            "providerId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "voice.runTurn": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "reply": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reply"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.satellites.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "capabilities": {
+                "additionalProperties": false,
+                "properties": {
+                  "captureSampleRate": {
+                    "type": "number"
+                  },
+                  "edgeStt": {
+                    "type": "boolean"
+                  },
+                  "phraseMatch": {
+                    "type": "boolean"
+                  },
+                  "playback": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "edgeStt",
+                  "playback",
+                  "captureSampleRate",
+                  "phraseMatch"
+                ],
+                "type": "object"
+              },
+              "connectedAt": {
+                "type": "number"
+              },
+              "conversation": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "until": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "personalityId",
+                      "until"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "displayName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "laneId": {
+                "type": "string"
+              },
+              "lastWake": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "personalityId": {
+                        "type": "string"
+                      },
+                      "phrase": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "phrase",
+                      "personalityId",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "nodeId": {
+                "type": "string"
+              },
+              "probes": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "ok",
+                    "detail"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "listening",
+                  "muted",
+                  "wake_off",
+                  "speaking",
+                  "degraded"
+                ],
+                "type": "string"
+              },
+              "stateDetail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "wakeEnabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "nodeId",
+              "laneId",
+              "displayName",
+              "capabilities",
+              "state",
+              "stateDetail",
+              "wakeEnabled",
+              "probes",
+              "lastWake",
+              "conversation",
+              "connectedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.satellites.setWakeEnabled": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nodeId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodeId",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.sttEntries": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "providerId"
+          ],
+          "type": "object"
+        },
+        "roster": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "providerId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "providerId"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "default",
+        "roster"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.synthesize": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "override": {
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "voice": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "voice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "opus",
+            "mp3",
+            "wav",
+            "pcm"
+          ],
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "audio",
+        "format",
+        "mimeType"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.transcribe": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "audio": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "mimeType": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "audio",
+        "mimeType"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "transcript": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transcript"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.ttsEntries": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "voices": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "providerId",
+            "voices"
+          ],
+          "type": "object"
+        },
+        "roster": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "providerId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "voices": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "providerId",
+              "voices"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "default",
+        "roster"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.wakeRoutes.get": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "implicit": {
+                "type": "boolean"
+              },
+              "personalityId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "phrase": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "privileged": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "phrase",
+              "personalityId",
+              "privileged",
+              "enabled",
+              "implicit"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmationFrames": {
+              "type": "number"
+            },
+            "edgeStt": {
+              "type": "boolean"
+            },
+            "engine": {
+              "enum": [
+                "fallback",
+                "sherpa",
+                "openwakeword"
+              ],
+              "type": "string"
+            },
+            "idleTimeoutMs": {
+              "type": "number"
+            },
+            "sensitivity": {
+              "type": "number"
+            },
+            "wakeEnabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "engine",
+            "sensitivity",
+            "confirmationFrames",
+            "edgeStt",
+            "idleTimeoutMs",
+            "wakeEnabled"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "routes",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "voice.wakeRoutes.set": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "routes": {
+          "items": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              "personalityId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "phrase": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "privileged": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "phrase",
+              "personalityId",
+              "privileged",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "routes"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "implicit": {
+                "type": "boolean"
+              },
+              "personalityId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "phrase": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "privileged": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "phrase",
+              "personalityId",
+              "privileged",
+              "enabled",
+              "implicit"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmationFrames": {
+              "type": "number"
+            },
+            "edgeStt": {
+              "type": "boolean"
+            },
+            "engine": {
+              "enum": [
+                "fallback",
+                "sherpa",
+                "openwakeword"
+              ],
+              "type": "string"
+            },
+            "idleTimeoutMs": {
+              "type": "number"
+            },
+            "sensitivity": {
+              "type": "number"
+            },
+            "wakeEnabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "engine",
+            "sensitivity",
+            "confirmationFrames",
+            "edgeStt",
+            "idleTimeoutMs",
+            "wakeEnabled"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "routes",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

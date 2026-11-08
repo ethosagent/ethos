@@ -1,0 +1,4971 @@
+{
+  "personalities.applyExpression": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "evidenceRef": {
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "newExpression": {
+          "type": "string"
+        },
+        "overrideReason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "newExpression",
+        "summary",
+        "evidenceRef"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "revisionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "revisionId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.characterSheet": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "markdown": {
+          "type": "string"
+        },
+        "posture": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "backend": {
+                  "enum": [
+                    "docker",
+                    "local",
+                    "ssh",
+                    "none"
+                  ],
+                  "type": "string"
+                },
+                "containerized": {
+                  "type": "boolean"
+                },
+                "dockerAbsent": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "blocked": {
+                      "const": true,
+                      "type": "boolean"
+                    },
+                    "canConsentLocal": {
+                      "type": "boolean"
+                    },
+                    "canInstall": {
+                      "const": true,
+                      "type": "boolean"
+                    },
+                    "consentForbiddenReason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "blocked",
+                    "canInstall",
+                    "canConsentLocal"
+                  ],
+                  "type": "object"
+                },
+                "dockerImage": {
+                  "type": "string"
+                },
+                "dockerImageMissing": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "hostFallback": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reason": {
+                      "enum": [
+                        "docker-disabled",
+                        "docker-unavailable",
+                        "ssh-unavailable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "memoryMb": {
+                  "type": "number"
+                },
+                "mounts": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "containerPath": {
+                        "type": "string"
+                      },
+                      "hostPath": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "ro",
+                          "rw"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "hostPath",
+                      "containerPath",
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "networkMode": {
+                  "enum": [
+                    "none",
+                    "bridge"
+                  ],
+                  "type": "string"
+                },
+                "requirement": {
+                  "enum": [
+                    "remote",
+                    "none"
+                  ],
+                  "type": "string"
+                },
+                "scratchPaths": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "sshRefused": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "unconfigured",
+                        "constitution-requires-sandbox"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reason",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "sshTarget": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "backend",
+                "networkMode",
+                "memoryMb",
+                "containerized",
+                "mounts",
+                "scratchPaths"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "promptSize": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "projectContext": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "tokens": {
+                          "type": "number"
+                        },
+                        "workdir": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "workdir",
+                        "tokens"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "staticPrefixTokens": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "staticPrefixTokens",
+                "projectContext"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "markdown",
+        "posture"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "evolution_approval_mode": {
+          "enum": [
+            "auto",
+            "user"
+          ],
+          "type": "string"
+        },
+        "fs_reach": {
+          "properties": {
+            "read": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "workdir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "write": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9_-]+$",
+          "type": "string"
+        },
+        "mcp_servers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "properties": {
+                "deep": {
+                  "type": "string"
+                },
+                "default": {
+                  "type": "string"
+                },
+                "trivial": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "nightly": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "expression": {
+              "type": "boolean"
+            },
+            "judge": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "minInteractions": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "plugins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "enum": [
+                "anthropic",
+                "openai",
+                "openrouter",
+                "openai-compat",
+                "ollama",
+                "azure",
+                "codex",
+                "xai"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "",
+              "type": "string"
+            }
+          ]
+        },
+        "safety": {
+          "properties": {
+            "network": {
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "allow_private_urls": {
+                  "type": "boolean"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "skill_evolution": {
+          "properties": {
+            "cooldown_minutes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "evolve_existing": {
+              "type": "boolean"
+            },
+            "min_tool_calls": {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "promotion": {
+              "enum": [
+                "review",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "scope": {
+              "enum": [
+                "personality",
+                "shared"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "soulMd": {
+          "type": "string"
+        },
+        "toolset": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "voice": {
+          "properties": {
+            "call_style": {
+              "enum": [
+                "liquid",
+                "orb",
+                "rings",
+                ""
+              ],
+              "type": "string"
+            },
+            "languages": {
+              "additionalProperties": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9-]+$",
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "model": {
+              "type": "string"
+            },
+            "realtime_provider": {
+              "type": "string"
+            },
+            "stt_provider": {
+              "type": "string"
+            },
+            "tier": {
+              "enum": [
+                "pipeline",
+                "realtime",
+                ""
+              ],
+              "type": "string"
+            },
+            "tts_provider": {
+              "type": "string"
+            },
+            "tts_voice": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "toolset",
+        "soulMd"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personality": {
+          "additionalProperties": false,
+          "properties": {
+            "builtin": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decisions": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "resolved": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeyPresent": {
+                      "type": "boolean"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "sites": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "effective": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "inertApprovalMode": {
+                            "type": "string"
+                          },
+                          "missingThresholds": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "reason": {
+                            "enum": [
+                              "undeclared",
+                              "no-provider",
+                              "not-configured",
+                              "threshold-missing"
+                            ],
+                            "type": "string"
+                          },
+                          "requested": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "site": {
+                            "enum": [
+                              "injection",
+                              "approver",
+                              "router"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "site",
+                          "requested",
+                          "effective",
+                          "missingThresholds"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "sites"
+                  ],
+                  "type": "object"
+                },
+                "sites": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "approver": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "injection": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "router": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display": {
+              "additionalProperties": false,
+              "properties": {
+                "avatar_url": {
+                  "type": "string"
+                },
+                "emoji": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "dreaming": {
+              "additionalProperties": false,
+              "properties": {
+                "enable": {
+                  "type": "boolean"
+                },
+                "idleMinutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxPerDay": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enable"
+              ],
+              "type": "object"
+            },
+            "evolution_approval_mode": {
+              "enum": [
+                "auto",
+                "user"
+              ],
+              "type": "string"
+            },
+            "fs_reach": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "read": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "workdir": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "write": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "read",
+                    "write",
+                    "workdir"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mcp_servers": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "deep": {
+                          "type": "string"
+                        },
+                        "default": {
+                          "type": "string"
+                        },
+                        "trivial": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "nightly": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "expression": {
+                  "type": "boolean"
+                },
+                "judge": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "minInteractions": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "plugins": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "safety": {
+              "additionalProperties": false,
+              "properties": {
+                "approvalMode": {
+                  "enum": [
+                    "manual",
+                    "smart",
+                    "off"
+                  ],
+                  "type": "string"
+                },
+                "network": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allow": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "allow_private_urls": {
+                      "type": "boolean"
+                    },
+                    "deny": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "skill_evolution": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown_minutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "evolve_existing": {
+                  "type": "boolean"
+                },
+                "min_tool_calls": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "promotion": {
+                  "enum": [
+                    "review",
+                    "auto"
+                  ],
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "personality",
+                    "shared"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "streamingTimeoutMs": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "system": {
+              "type": "boolean"
+            },
+            "toolset": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "voice": {
+              "additionalProperties": false,
+              "properties": {
+                "call_style": {
+                  "enum": [
+                    "liquid",
+                    "orb",
+                    "rings"
+                  ],
+                  "type": "string"
+                },
+                "languages": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "realtime_provider": {
+                  "type": "string"
+                },
+                "stt_provider": {
+                  "type": "string"
+                },
+                "tier": {
+                  "enum": [
+                    "pipeline",
+                    "realtime"
+                  ],
+                  "type": "string"
+                },
+                "tts_provider": {
+                  "type": "string"
+                },
+                "tts_voice": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "model",
+            "provider",
+            "toolset",
+            "capabilities",
+            "streamingTimeoutMs",
+            "mcp_servers",
+            "plugins",
+            "fs_reach",
+            "system",
+            "builtin",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "personality"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.delete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.duplicate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "newId": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9_-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "newId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personality": {
+          "additionalProperties": false,
+          "properties": {
+            "builtin": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decisions": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "resolved": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeyPresent": {
+                      "type": "boolean"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "sites": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "effective": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "inertApprovalMode": {
+                            "type": "string"
+                          },
+                          "missingThresholds": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "reason": {
+                            "enum": [
+                              "undeclared",
+                              "no-provider",
+                              "not-configured",
+                              "threshold-missing"
+                            ],
+                            "type": "string"
+                          },
+                          "requested": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "site": {
+                            "enum": [
+                              "injection",
+                              "approver",
+                              "router"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "site",
+                          "requested",
+                          "effective",
+                          "missingThresholds"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "sites"
+                  ],
+                  "type": "object"
+                },
+                "sites": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "approver": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "injection": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "router": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display": {
+              "additionalProperties": false,
+              "properties": {
+                "avatar_url": {
+                  "type": "string"
+                },
+                "emoji": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "dreaming": {
+              "additionalProperties": false,
+              "properties": {
+                "enable": {
+                  "type": "boolean"
+                },
+                "idleMinutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxPerDay": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enable"
+              ],
+              "type": "object"
+            },
+            "evolution_approval_mode": {
+              "enum": [
+                "auto",
+                "user"
+              ],
+              "type": "string"
+            },
+            "fs_reach": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "read": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "workdir": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "write": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "read",
+                    "write",
+                    "workdir"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mcp_servers": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "deep": {
+                          "type": "string"
+                        },
+                        "default": {
+                          "type": "string"
+                        },
+                        "trivial": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "nightly": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "expression": {
+                  "type": "boolean"
+                },
+                "judge": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "minInteractions": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "plugins": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "safety": {
+              "additionalProperties": false,
+              "properties": {
+                "approvalMode": {
+                  "enum": [
+                    "manual",
+                    "smart",
+                    "off"
+                  ],
+                  "type": "string"
+                },
+                "network": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allow": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "allow_private_urls": {
+                      "type": "boolean"
+                    },
+                    "deny": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "skill_evolution": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown_minutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "evolve_existing": {
+                  "type": "boolean"
+                },
+                "min_tool_calls": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "promotion": {
+                  "enum": [
+                    "review",
+                    "auto"
+                  ],
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "personality",
+                    "shared"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "streamingTimeoutMs": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "system": {
+              "type": "boolean"
+            },
+            "toolset": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "voice": {
+              "additionalProperties": false,
+              "properties": {
+                "call_style": {
+                  "enum": [
+                    "liquid",
+                    "orb",
+                    "rings"
+                  ],
+                  "type": "string"
+                },
+                "languages": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "realtime_provider": {
+                  "type": "string"
+                },
+                "stt_provider": {
+                  "type": "string"
+                },
+                "tier": {
+                  "enum": [
+                    "pipeline",
+                    "realtime"
+                  ],
+                  "type": "string"
+                },
+                "tts_provider": {
+                  "type": "string"
+                },
+                "tts_voice": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "model",
+            "provider",
+            "toolset",
+            "capabilities",
+            "streamingTimeoutMs",
+            "mcp_servers",
+            "plugins",
+            "fs_reach",
+            "system",
+            "builtin",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "personality"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "mcpPolicy": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "servers": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "reject_args": {
+                        "additionalProperties": {
+                          "additionalProperties": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "tools": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "personality": {
+          "additionalProperties": false,
+          "properties": {
+            "builtin": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decisions": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "resolved": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeyPresent": {
+                      "type": "boolean"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "sites": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "effective": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "inertApprovalMode": {
+                            "type": "string"
+                          },
+                          "missingThresholds": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "reason": {
+                            "enum": [
+                              "undeclared",
+                              "no-provider",
+                              "not-configured",
+                              "threshold-missing"
+                            ],
+                            "type": "string"
+                          },
+                          "requested": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "site": {
+                            "enum": [
+                              "injection",
+                              "approver",
+                              "router"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "site",
+                          "requested",
+                          "effective",
+                          "missingThresholds"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "sites"
+                  ],
+                  "type": "object"
+                },
+                "sites": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "approver": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "injection": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "router": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display": {
+              "additionalProperties": false,
+              "properties": {
+                "avatar_url": {
+                  "type": "string"
+                },
+                "emoji": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "dreaming": {
+              "additionalProperties": false,
+              "properties": {
+                "enable": {
+                  "type": "boolean"
+                },
+                "idleMinutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxPerDay": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enable"
+              ],
+              "type": "object"
+            },
+            "evolution_approval_mode": {
+              "enum": [
+                "auto",
+                "user"
+              ],
+              "type": "string"
+            },
+            "fs_reach": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "read": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "workdir": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "write": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "read",
+                    "write",
+                    "workdir"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mcp_servers": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "deep": {
+                          "type": "string"
+                        },
+                        "default": {
+                          "type": "string"
+                        },
+                        "trivial": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "nightly": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "expression": {
+                  "type": "boolean"
+                },
+                "judge": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "minInteractions": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "plugins": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "safety": {
+              "additionalProperties": false,
+              "properties": {
+                "approvalMode": {
+                  "enum": [
+                    "manual",
+                    "smart",
+                    "off"
+                  ],
+                  "type": "string"
+                },
+                "network": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allow": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "allow_private_urls": {
+                      "type": "boolean"
+                    },
+                    "deny": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "skill_evolution": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown_minutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "evolve_existing": {
+                  "type": "boolean"
+                },
+                "min_tool_calls": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "promotion": {
+                  "enum": [
+                    "review",
+                    "auto"
+                  ],
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "personality",
+                    "shared"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "streamingTimeoutMs": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "system": {
+              "type": "boolean"
+            },
+            "toolset": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "voice": {
+              "additionalProperties": false,
+              "properties": {
+                "call_style": {
+                  "enum": [
+                    "liquid",
+                    "orb",
+                    "rings"
+                  ],
+                  "type": "string"
+                },
+                "languages": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "realtime_provider": {
+                  "type": "string"
+                },
+                "stt_provider": {
+                  "type": "string"
+                },
+                "tier": {
+                  "enum": [
+                    "pipeline",
+                    "realtime"
+                  ],
+                  "type": "string"
+                },
+                "tts_provider": {
+                  "type": "string"
+                },
+                "tts_voice": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "model",
+            "provider",
+            "toolset",
+            "capabilities",
+            "streamingTimeoutMs",
+            "mcp_servers",
+            "plugins",
+            "fs_reach",
+            "system",
+            "builtin",
+            "version"
+          ],
+          "type": "object"
+        },
+        "soulMd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personality",
+        "soulMd",
+        "mcpPolicy"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "defaultId": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "builtin": {
+                "type": "boolean"
+              },
+              "capabilities": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decisions": {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "resolved": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "apiKeyPresent": {
+                        "type": "boolean"
+                      },
+                      "configured": {
+                        "type": "boolean"
+                      },
+                      "sites": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "effective": {
+                              "enum": [
+                                "off",
+                                "shadow",
+                                "on"
+                              ],
+                              "type": "string"
+                            },
+                            "inertApprovalMode": {
+                              "type": "string"
+                            },
+                            "missingThresholds": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "reason": {
+                              "enum": [
+                                "undeclared",
+                                "no-provider",
+                                "not-configured",
+                                "threshold-missing"
+                              ],
+                              "type": "string"
+                            },
+                            "requested": {
+                              "enum": [
+                                "off",
+                                "shadow",
+                                "on"
+                              ],
+                              "type": "string"
+                            },
+                            "site": {
+                              "enum": [
+                                "injection",
+                                "approver",
+                                "router"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "site",
+                            "requested",
+                            "effective",
+                            "missingThresholds"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "configured",
+                      "sites"
+                    ],
+                    "type": "object"
+                  },
+                  "sites": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "approver": {
+                        "enum": [
+                          "off",
+                          "shadow",
+                          "on"
+                        ],
+                        "type": "string"
+                      },
+                      "injection": {
+                        "enum": [
+                          "off",
+                          "shadow",
+                          "on"
+                        ],
+                        "type": "string"
+                      },
+                      "router": {
+                        "enum": [
+                          "off",
+                          "shadow",
+                          "on"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "display": {
+                "additionalProperties": false,
+                "properties": {
+                  "avatar_url": {
+                    "type": "string"
+                  },
+                  "emoji": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "dreaming": {
+                "additionalProperties": false,
+                "properties": {
+                  "enable": {
+                    "type": "boolean"
+                  },
+                  "idleMinutes": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxPerDay": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "enable"
+                ],
+                "type": "object"
+              },
+              "evolution_approval_mode": {
+                "enum": [
+                  "auto",
+                  "user"
+                ],
+                "type": "string"
+              },
+              "fs_reach": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "read": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workdir": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "write": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "read",
+                      "write",
+                      "workdir"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "mcp_servers": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "memory": {
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "deep": {
+                            "type": "string"
+                          },
+                          "default": {
+                            "type": "string"
+                          },
+                          "trivial": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "nightly": {
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "expression": {
+                    "type": "boolean"
+                  },
+                  "judge": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "minInteractions": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "plugins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "safety": {
+                "additionalProperties": false,
+                "properties": {
+                  "approvalMode": {
+                    "enum": [
+                      "manual",
+                      "smart",
+                      "off"
+                    ],
+                    "type": "string"
+                  },
+                  "network": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allow": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "allow_private_urls": {
+                        "type": "boolean"
+                      },
+                      "deny": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "skill_evolution": {
+                "additionalProperties": false,
+                "properties": {
+                  "cooldown_minutes": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "evolve_existing": {
+                    "type": "boolean"
+                  },
+                  "min_tool_calls": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "promotion": {
+                    "enum": [
+                      "review",
+                      "auto"
+                    ],
+                    "type": "string"
+                  },
+                  "scope": {
+                    "enum": [
+                      "personality",
+                      "shared"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "streamingTimeoutMs": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "system": {
+                "type": "boolean"
+              },
+              "toolset": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "voice": {
+                "additionalProperties": false,
+                "properties": {
+                  "call_style": {
+                    "enum": [
+                      "liquid",
+                      "orb",
+                      "rings"
+                    ],
+                    "type": "string"
+                  },
+                  "languages": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "realtime_provider": {
+                    "type": "string"
+                  },
+                  "stt_provider": {
+                    "type": "string"
+                  },
+                  "tier": {
+                    "enum": [
+                      "pipeline",
+                      "realtime"
+                    ],
+                    "type": "string"
+                  },
+                  "tts_provider": {
+                    "type": "string"
+                  },
+                  "tts_voice": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "model",
+              "provider",
+              "toolset",
+              "capabilities",
+              "streamingTimeoutMs",
+              "mcp_servers",
+              "plugins",
+              "fs_reach",
+              "system",
+              "builtin",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor",
+        "defaultId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.livingSoul": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "core": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "judge": {
+          "additionalProperties": false,
+          "properties": {
+            "alignmentScore": {
+              "type": "number"
+            },
+            "at": {
+              "type": "string"
+            },
+            "lowStreak": {
+              "type": "number"
+            },
+            "perDimension": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "dimension": {
+                    "type": "string"
+                  },
+                  "score": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "dimension",
+                  "score"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "signal": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "drift",
+                    "underspecified_soul"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "alignmentScore",
+            "signal",
+            "lowStreak"
+          ],
+          "type": "object"
+        },
+        "learningLog": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "evidenceRef": {
+                "type": "string"
+              },
+              "prevExpressionRef": {
+                "type": "string"
+              },
+              "revisionId": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "revisionId",
+              "at",
+              "summary",
+              "evidenceRef",
+              "prevExpressionRef"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nightly": {
+          "additionalProperties": false,
+          "properties": {
+            "completed": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "windowEnd": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "windowEnd",
+            "completed"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "core",
+        "expression",
+        "learningLog"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.mcpDeleteToken": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "server": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "server"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.mcpExport": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "clientId": {
+                "type": "string"
+              },
+              "clientName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessionId",
+              "updatedAt",
+              "clientId",
+              "clientName",
+              "title",
+              "costUsd"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "clients": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastUsed": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "createdAt",
+              "lastUsed"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "command": {
+          "type": "string"
+        },
+        "configPath": {
+          "type": "string"
+        },
+        "declaration": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "auth": {
+                  "enum": [
+                    "localhost",
+                    "bearer"
+                  ],
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "expose_memory": {
+                  "enum": [
+                    "none",
+                    "scoped",
+                    "full"
+                  ],
+                  "type": "string"
+                },
+                "expose_sessions": {
+                  "type": "boolean"
+                },
+                "expose_tools": {
+                  "anyOf": [
+                    {
+                      "const": "all",
+                      "type": "string"
+                    },
+                    {
+                      "const": "none",
+                      "type": "string"
+                    },
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "declarationKeys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "denials": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "clientId": {
+                "type": "string"
+              },
+              "clientName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "auth",
+                  "discovery",
+                  "call"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "kind",
+              "event",
+              "clientId",
+              "clientName",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "desktopEntry": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "json": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "secretPlaceholder": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "json",
+                "secretPlaceholder"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exported": {
+          "type": "boolean"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "allowed": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "auth": {
+                  "enum": [
+                    "localhost",
+                    "bearer"
+                  ],
+                  "type": "string"
+                },
+                "dropped": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "memory": {
+                  "enum": [
+                    "none",
+                    "scoped",
+                    "full"
+                  ],
+                  "type": "string"
+                },
+                "sessions": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "allowed",
+                "dropped",
+                "memory",
+                "sessions",
+                "auth"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "personalityId",
+        "exported",
+        "declaration",
+        "scope",
+        "declarationKeys",
+        "configPath",
+        "command",
+        "desktopEntry",
+        "clients",
+        "calls",
+        "denials"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.mcpSetToken": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "server": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "token": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "server",
+        "token"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.proposeExpression": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "currentExpression": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "newExpression": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "currentExpression",
+        "newExpression",
+        "rationale",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.proposeSoulSplit": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "soulMd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "soulMd"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "core": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "core",
+        "expression",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.renderers": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "renderers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "renderers"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.revertExpression": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "revertedTo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "revertedTo"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillCandidateApprove": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fileName": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+\\.md$",
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "fileName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "promotedTo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "promotedTo"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillCandidateReject": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fileName": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+\\.md$",
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "fileName"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillCandidatesList": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "fileName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "fileName",
+              "content"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsCreate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skillId": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "skillId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "body",
+            "modifiedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsDelete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skillId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "skillId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsGet": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skillId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "skillId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "body",
+            "modifiedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsImportGlobal": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skillIds": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "personalityId",
+        "skillIds"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "imported": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "modifiedAt": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "body",
+              "modifiedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "imported"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsList": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skills": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "modifiedAt": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "body",
+              "modifiedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "skills"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.skillsUpdate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skillId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "skillId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "body",
+            "modifiedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "personalities.update": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "typesafe"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "const": "",
+                  "type": "string"
+                }
+              ]
+            },
+            "sites": {
+              "additionalProperties": false,
+              "properties": {
+                "approver": {
+                  "enum": [
+                    "off",
+                    "shadow",
+                    "on"
+                  ],
+                  "type": "string"
+                },
+                "injection": {
+                  "enum": [
+                    "off",
+                    "shadow",
+                    "on"
+                  ],
+                  "type": "string"
+                },
+                "router": {
+                  "enum": [
+                    "off",
+                    "shadow",
+                    "on"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "display": {
+          "properties": {
+            "avatar_url": {
+              "type": "string"
+            },
+            "emoji": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "dreaming": {
+          "properties": {
+            "enable": {
+              "type": "boolean"
+            },
+            "idleMinutes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxPerDay": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enable"
+          ],
+          "type": "object"
+        },
+        "evolution_approval_mode": {
+          "enum": [
+            "auto",
+            "user"
+          ],
+          "type": "string"
+        },
+        "fs_reach": {
+          "properties": {
+            "read": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "workdir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "write": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "mcp_export": {
+          "properties": {
+            "auth": {
+              "enum": [
+                "localhost",
+                "bearer"
+              ],
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "expose_memory": {
+              "enum": [
+                "none",
+                "scoped",
+                "full"
+              ],
+              "type": "string"
+            },
+            "expose_sessions": {
+              "type": "boolean"
+            },
+            "expose_tools": {
+              "anyOf": [
+                {
+                  "const": "all",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:-]*$",
+                    "type": "string"
+                  },
+                  "maxItems": 512,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "mcp_servers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcp_tools": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "memory": {
+          "properties": {
+            "provider": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "properties": {
+                "deep": {
+                  "type": "string"
+                },
+                "default": {
+                  "type": "string"
+                },
+                "trivial": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "nightly": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "expression": {
+              "type": "boolean"
+            },
+            "judge": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "minInteractions": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "plugins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "enum": [
+                "anthropic",
+                "openai",
+                "openrouter",
+                "openai-compat",
+                "ollama",
+                "azure",
+                "codex",
+                "xai"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "",
+              "type": "string"
+            }
+          ]
+        },
+        "safety": {
+          "properties": {
+            "approvalMode": {
+              "enum": [
+                "manual",
+                "smart",
+                "off"
+              ],
+              "type": "string"
+            },
+            "network": {
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "allow_private_urls": {
+                  "type": "boolean"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "skill_evolution": {
+          "properties": {
+            "cooldown_minutes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "evolve_existing": {
+              "type": "boolean"
+            },
+            "min_tool_calls": {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "promotion": {
+              "enum": [
+                "review",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "scope": {
+              "enum": [
+                "personality",
+                "shared"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "soulMd": {
+          "type": "string"
+        },
+        "toolset": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "voice": {
+          "properties": {
+            "call_style": {
+              "enum": [
+                "liquid",
+                "orb",
+                "rings",
+                ""
+              ],
+              "type": "string"
+            },
+            "languages": {
+              "additionalProperties": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9-]+$",
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "model": {
+              "type": "string"
+            },
+            "realtime_provider": {
+              "type": "string"
+            },
+            "stt_provider": {
+              "type": "string"
+            },
+            "tier": {
+              "enum": [
+                "pipeline",
+                "realtime",
+                ""
+              ],
+              "type": "string"
+            },
+            "tts_provider": {
+              "type": "string"
+            },
+            "tts_voice": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personality": {
+          "additionalProperties": false,
+          "properties": {
+            "builtin": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "decisions": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "resolved": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiKeyPresent": {
+                      "type": "boolean"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "sites": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "effective": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "inertApprovalMode": {
+                            "type": "string"
+                          },
+                          "missingThresholds": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "reason": {
+                            "enum": [
+                              "undeclared",
+                              "no-provider",
+                              "not-configured",
+                              "threshold-missing"
+                            ],
+                            "type": "string"
+                          },
+                          "requested": {
+                            "enum": [
+                              "off",
+                              "shadow",
+                              "on"
+                            ],
+                            "type": "string"
+                          },
+                          "site": {
+                            "enum": [
+                              "injection",
+                              "approver",
+                              "router"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "site",
+                          "requested",
+                          "effective",
+                          "missingThresholds"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "sites"
+                  ],
+                  "type": "object"
+                },
+                "sites": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "approver": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "injection": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    },
+                    "router": {
+                      "enum": [
+                        "off",
+                        "shadow",
+                        "on"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display": {
+              "additionalProperties": false,
+              "properties": {
+                "avatar_url": {
+                  "type": "string"
+                },
+                "emoji": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "dreaming": {
+              "additionalProperties": false,
+              "properties": {
+                "enable": {
+                  "type": "boolean"
+                },
+                "idleMinutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxPerDay": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enable"
+              ],
+              "type": "object"
+            },
+            "evolution_approval_mode": {
+              "enum": [
+                "auto",
+                "user"
+              ],
+              "type": "string"
+            },
+            "fs_reach": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "read": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "workdir": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "write": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "read",
+                    "write",
+                    "workdir"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mcp_servers": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "deep": {
+                          "type": "string"
+                        },
+                        "default": {
+                          "type": "string"
+                        },
+                        "trivial": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "nightly": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "expression": {
+                  "type": "boolean"
+                },
+                "judge": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "minInteractions": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "plugins": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "safety": {
+              "additionalProperties": false,
+              "properties": {
+                "approvalMode": {
+                  "enum": [
+                    "manual",
+                    "smart",
+                    "off"
+                  ],
+                  "type": "string"
+                },
+                "network": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allow": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "allow_private_urls": {
+                      "type": "boolean"
+                    },
+                    "deny": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "skill_evolution": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown_minutes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "evolve_existing": {
+                  "type": "boolean"
+                },
+                "min_tool_calls": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "promotion": {
+                  "enum": [
+                    "review",
+                    "auto"
+                  ],
+                  "type": "string"
+                },
+                "scope": {
+                  "enum": [
+                    "personality",
+                    "shared"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "streamingTimeoutMs": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "system": {
+              "type": "boolean"
+            },
+            "toolset": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "voice": {
+              "additionalProperties": false,
+              "properties": {
+                "call_style": {
+                  "enum": [
+                    "liquid",
+                    "orb",
+                    "rings"
+                  ],
+                  "type": "string"
+                },
+                "languages": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "realtime_provider": {
+                  "type": "string"
+                },
+                "stt_provider": {
+                  "type": "string"
+                },
+                "tier": {
+                  "enum": [
+                    "pipeline",
+                    "realtime"
+                  ],
+                  "type": "string"
+                },
+                "tts_provider": {
+                  "type": "string"
+                },
+                "tts_voice": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "model",
+            "provider",
+            "toolset",
+            "capabilities",
+            "streamingTimeoutMs",
+            "mcp_servers",
+            "plugins",
+            "fs_reach",
+            "system",
+            "builtin",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "personality"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

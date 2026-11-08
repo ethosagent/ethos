@@ -1,0 +1,420 @@
+{
+  "a2a": [
+    "a2a.identity",
+    "a2a.peers.add",
+    "a2a.peers.list",
+    "a2a.peers.preview",
+    "a2a.peers.remove",
+    "a2a.peers.setEnabled",
+    "a2a.settings.get",
+    "a2a.settings.set",
+    "a2a.skills.listExposable"
+  ],
+  "activity": [
+    "activity.history"
+  ],
+  "admin": [
+    "admin.addMcpServer",
+    "admin.checkProvider",
+    "admin.getStatus",
+    "admin.removeMcpServer",
+    "admin.rotateKey",
+    "admin.testSend"
+  ],
+  "amendments": [
+    "amendments.get",
+    "amendments.list"
+  ],
+  "apiKeys": [
+    "apiKeys.create",
+    "apiKeys.list",
+    "apiKeys.revoke"
+  ],
+  "approvals": [
+    "approvals.leases.list",
+    "approvals.leases.revoke"
+  ],
+  "backup": [
+    "backup.create",
+    "backup.restoreIdentity",
+    "backup.status"
+  ],
+  "batch": [
+    "batch.get",
+    "batch.list",
+    "batch.output",
+    "batch.start"
+  ],
+  "catalog": [
+    "catalog.install",
+    "catalog.list",
+    "catalog.setSkillGrant"
+  ],
+  "channels": [
+    "channels.observed"
+  ],
+  "chat": [
+    "chat.abort",
+    "chat.endIncognito",
+    "chat.send",
+    "chat.steer"
+  ],
+  "clarify": [
+    "clarify.listPending",
+    "clarify.respond"
+  ],
+  "config": [
+    "config.get",
+    "config.update"
+  ],
+  "context": [
+    "context.resolve"
+  ],
+  "credentials": [
+    "credentials.delete",
+    "credentials.list",
+    "credentials.set"
+  ],
+  "cron": [
+    "cron.create",
+    "cron.delete",
+    "cron.deliveryTargets",
+    "cron.get",
+    "cron.history",
+    "cron.list",
+    "cron.pause",
+    "cron.resume",
+    "cron.runNow",
+    "cron.update"
+  ],
+  "dashboards": [
+    "dashboards.addPanel",
+    "dashboards.create",
+    "dashboards.delete",
+    "dashboards.deletePanel",
+    "dashboards.exportDashboard",
+    "dashboards.get",
+    "dashboards.importDashboard",
+    "dashboards.list",
+    "dashboards.listWidgetTemplates",
+    "dashboards.refreshAll",
+    "dashboards.refreshPanel",
+    "dashboards.runQuery",
+    "dashboards.summarizePrompt",
+    "dashboards.update",
+    "dashboards.updatePanel",
+    "dashboards.updatePanelLayout",
+    "dashboards.updateParams"
+  ],
+  "debug": [
+    "debug.chat"
+  ],
+  "decisions": [
+    "decisions.clearKey",
+    "decisions.list",
+    "decisions.remove",
+    "decisions.setKey",
+    "decisions.test"
+  ],
+  "deliveries": [
+    "deliveries.discardInbound",
+    "deliveries.listDeadInbound",
+    "deliveries.requeueInbound",
+    "deliveries.summary"
+  ],
+  "digest": [
+    "digest.generate",
+    "digest.latest"
+  ],
+  "documents": [
+    "documents.createFolder",
+    "documents.delete",
+    "documents.list",
+    "documents.root"
+  ],
+  "eval": [
+    "eval.get",
+    "eval.list",
+    "eval.output",
+    "eval.start"
+  ],
+  "evolver": [
+    "evolver.configGet",
+    "evolver.configUpdate",
+    "evolver.history",
+    "evolver.pendingApprove",
+    "evolver.pendingList",
+    "evolver.pendingReject"
+  ],
+  "execution": [
+    "execution.probeSsh"
+  ],
+  "files": [
+    "files.list"
+  ],
+  "goals": [
+    "goals.cancel",
+    "goals.create",
+    "goals.get",
+    "goals.list",
+    "goals.resume",
+    "goals.settings",
+    "goals.steer",
+    "goals.toolResult"
+  ],
+  "kanban": [
+    "kanban.addComment",
+    "kanban.assign",
+    "kanban.bulkAssign",
+    "kanban.bulkUpdateStatus",
+    "kanban.createTask",
+    "kanban.getBoard",
+    "kanban.getTask",
+    "kanban.list",
+    "kanban.listAgents",
+    "kanban.updateStatus"
+  ],
+  "keys": [
+    "keys.clear",
+    "keys.list",
+    "keys.set"
+  ],
+  "learning": [
+    "learning.approve",
+    "learning.get",
+    "learning.list",
+    "learning.reject",
+    "learning.replay",
+    "learning.rollback"
+  ],
+  "mcp": [
+    "mcp.addServer",
+    "mcp.attachPersonalities",
+    "mcp.cancel",
+    "mcp.catalog",
+    "mcp.complete",
+    "mcp.connectPreset",
+    "mcp.delete",
+    "mcp.deviceCancel",
+    "mcp.deviceStart",
+    "mcp.deviceStatus",
+    "mcp.list",
+    "mcp.personalityServers",
+    "mcp.reconnect",
+    "mcp.refreshToken",
+    "mcp.rename",
+    "mcp.scopeStatus",
+    "mcp.serverTools",
+    "mcp.start",
+    "mcp.status",
+    "mcp.updateToken",
+    "mcp.validateConfig"
+  ],
+  "memory": [
+    "memory.get",
+    "memory.history",
+    "memory.historyBlob",
+    "memory.list",
+    "memory.listUsers",
+    "memory.pendingApprove",
+    "memory.pendingList",
+    "memory.pendingReject",
+    "memory.restore",
+    "memory.write"
+  ],
+  "mesh": [
+    "mesh.list",
+    "mesh.routeTest"
+  ],
+  "meta": [
+    "meta.capabilities"
+  ],
+  "modelRegistry": [
+    "modelRegistry.addProvider",
+    "modelRegistry.importChain",
+    "modelRegistry.list",
+    "modelRegistry.moveProvider",
+    "modelRegistry.remove",
+    "modelRegistry.removeProvider",
+    "modelRegistry.setDefault",
+    "modelRegistry.setFallbackModel",
+    "modelRegistry.setProviderFailover",
+    "modelRegistry.setRole",
+    "modelRegistry.setRouting",
+    "modelRegistry.test",
+    "modelRegistry.testAll",
+    "modelRegistry.testProvider",
+    "modelRegistry.updateProvider",
+    "modelRegistry.upsert"
+  ],
+  "models": [
+    "models.catalog"
+  ],
+  "namedSecrets": [
+    "namedSecrets.create",
+    "namedSecrets.delete",
+    "namedSecrets.list",
+    "namedSecrets.providers",
+    "namedSecrets.testKey"
+  ],
+  "onboarding": [
+    "onboarding.complete",
+    "onboarding.importCodexLogin",
+    "onboarding.namePersonality",
+    "onboarding.probe",
+    "onboarding.pullModel",
+    "onboarding.pullStatus",
+    "onboarding.state",
+    "onboarding.validateProvider"
+  ],
+  "outbox": [
+    "outbox.approve",
+    "outbox.edit",
+    "outbox.get",
+    "outbox.list",
+    "outbox.reject",
+    "outbox.retry",
+    "outbox.revoke"
+  ],
+  "personalities": [
+    "personalities.applyExpression",
+    "personalities.characterSheet",
+    "personalities.create",
+    "personalities.delete",
+    "personalities.duplicate",
+    "personalities.get",
+    "personalities.list",
+    "personalities.livingSoul",
+    "personalities.mcpDeleteToken",
+    "personalities.mcpExport",
+    "personalities.mcpSetToken",
+    "personalities.proposeExpression",
+    "personalities.proposeSoulSplit",
+    "personalities.renderers",
+    "personalities.revertExpression",
+    "personalities.skillCandidateApprove",
+    "personalities.skillCandidateReject",
+    "personalities.skillCandidatesList",
+    "personalities.skillsCreate",
+    "personalities.skillsDelete",
+    "personalities.skillsGet",
+    "personalities.skillsImportGlobal",
+    "personalities.skillsList",
+    "personalities.skillsUpdate",
+    "personalities.update"
+  ],
+  "platforms": [
+    "platforms.botsAddSlack",
+    "platforms.botsAddTelegram",
+    "platforms.botsAddWhatsApp",
+    "platforms.botsListSlack",
+    "platforms.botsListTelegram",
+    "platforms.botsListWhatsApp",
+    "platforms.botsRemoveSlack",
+    "platforms.botsRemoveTelegram",
+    "platforms.botsRemoveWhatsApp",
+    "platforms.clear",
+    "platforms.getChannelFilter",
+    "platforms.list",
+    "platforms.set",
+    "platforms.setChannelFilter",
+    "platforms.validate"
+  ],
+  "plugins": [
+    "plugins.completeOAuth",
+    "plugins.credentialPreview",
+    "plugins.executeTool",
+    "plugins.getCredential",
+    "plugins.getCredentialMeta",
+    "plugins.getPageSpec",
+    "plugins.install",
+    "plugins.invokeToolForPage",
+    "plugins.list",
+    "plugins.listCredentialKeys",
+    "plugins.requestOAuth",
+    "plugins.setCredential",
+    "plugins.uninstall"
+  ],
+  "recipes": [
+    "recipes.discoverChats",
+    "recipes.get",
+    "recipes.install",
+    "recipes.list",
+    "recipes.preflight"
+  ],
+  "sessions": [
+    "sessions.compact",
+    "sessions.contextAnatomy",
+    "sessions.delete",
+    "sessions.export",
+    "sessions.fork",
+    "sessions.get",
+    "sessions.list",
+    "sessions.messages",
+    "sessions.pin",
+    "sessions.undoTurns",
+    "sessions.unpin",
+    "sessions.update"
+  ],
+  "skills": [
+    "skills.create",
+    "skills.delete",
+    "skills.get",
+    "skills.list",
+    "skills.update"
+  ],
+  "slashCommands": [
+    "slashCommands.list"
+  ],
+  "tasks": [
+    "tasks.cancel",
+    "tasks.events",
+    "tasks.get",
+    "tasks.list",
+    "tasks.steer"
+  ],
+  "teams": [
+    "teams.get",
+    "teams.ledger",
+    "teams.list",
+    "teams.memoryList",
+    "teams.memoryRead",
+    "teams.memoryWrite"
+  ],
+  "toolSettings": [
+    "toolSettings.getDefault",
+    "toolSettings.getForPersonality",
+    "toolSettings.probeCredentials",
+    "toolSettings.schemas",
+    "toolSettings.setDefault",
+    "toolSettings.setForPersonality"
+  ],
+  "tools": [
+    "tools.approve",
+    "tools.catalog",
+    "tools.deny",
+    "tools.detail",
+    "tools.test"
+  ],
+  "usage": [
+    "usage.summary"
+  ],
+  "voice": [
+    "voice.calls.active",
+    "voice.calls.get",
+    "voice.calls.list",
+    "voice.laneMode.get",
+    "voice.laneMode.set",
+    "voice.realtimeEntries",
+    "voice.realtimeToken",
+    "voice.runTurn",
+    "voice.satellites.list",
+    "voice.satellites.setWakeEnabled",
+    "voice.sttEntries",
+    "voice.synthesize",
+    "voice.transcribe",
+    "voice.ttsEntries",
+    "voice.wakeRoutes.get",
+    "voice.wakeRoutes.set"
+  ]
+}

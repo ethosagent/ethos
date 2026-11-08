@@ -1,0 +1,916 @@
+{
+  "cron.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "activeHours": {
+          "type": "string"
+        },
+        "deliverTo": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "none",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "inApp",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "botKey": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "chatId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "channel",
+                  "type": "string"
+                },
+                "platform": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "platform",
+                "botKey",
+                "chatId"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "missedRunPolicy": {
+          "enum": [
+            "run-once",
+            "skip"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "notifyInApp": {
+          "type": "boolean"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "prompt": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "schedule": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "schedule",
+        "prompt",
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "additionalProperties": false,
+          "properties": {
+            "activeHours": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "deliver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lastRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "missedRunPolicy": {
+              "enum": [
+                "run-once",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "nextRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "source": {
+              "default": "user",
+              "enum": [
+                "system",
+                "user"
+              ],
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "paused",
+                "done"
+              ],
+              "type": "string"
+            },
+            "systemTask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "schedule",
+            "prompt",
+            "personalityId",
+            "deliver",
+            "status",
+            "missedRunPolicy",
+            "source",
+            "lastRunAt",
+            "nextRunAt",
+            "createdAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "job"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.delete": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.deliveryTargets": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "botKey": {
+                "type": "string"
+              },
+              "botLabel": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "owner",
+                  "allowlist",
+                  "paired",
+                  "observed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "botKey",
+              "botLabel",
+              "chatId",
+              "label",
+              "source"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "additionalProperties": false,
+          "properties": {
+            "activeHours": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "deliver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lastRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "missedRunPolicy": {
+              "enum": [
+                "run-once",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "nextRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "source": {
+              "default": "user",
+              "enum": [
+                "system",
+                "user"
+              ],
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "paused",
+                "done"
+              ],
+              "type": "string"
+            },
+            "systemTask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "schedule",
+            "prompt",
+            "personalityId",
+            "deliver",
+            "status",
+            "missedRunPolicy",
+            "source",
+            "lastRunAt",
+            "nextRunAt",
+            "createdAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "job"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.history": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "runs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "output": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outputPath": {
+                "type": "string"
+              },
+              "ranAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ranAt",
+              "outputPath",
+              "output"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.list": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "jobs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "activeHours": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "deliver": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastRunAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "missedRunPolicy": {
+                "enum": [
+                  "run-once",
+                  "skip"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "nextRunAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "schedule": {
+                "type": "string"
+              },
+              "source": {
+                "default": "user",
+                "enum": [
+                  "system",
+                  "user"
+                ],
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "active",
+                  "paused",
+                  "done"
+                ],
+                "type": "string"
+              },
+              "systemTask": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "schedule",
+              "prompt",
+              "personalityId",
+              "deliver",
+              "status",
+              "missedRunPolicy",
+              "source",
+              "lastRunAt",
+              "nextRunAt",
+              "createdAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.pause": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.resume": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.runNow": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "output": {
+          "type": "string"
+        },
+        "ranAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "output",
+        "ranAt"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "cron.update": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "activeHours": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "prompt": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "schedule": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "additionalProperties": false,
+          "properties": {
+            "activeHours": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "deliver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lastRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "missedRunPolicy": {
+              "enum": [
+                "run-once",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "nextRunAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "source": {
+              "default": "user",
+              "enum": [
+                "system",
+                "user"
+              ],
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "paused",
+                "done"
+              ],
+              "type": "string"
+            },
+            "systemTask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "schedule",
+            "prompt",
+            "personalityId",
+            "deliver",
+            "status",
+            "missedRunPolicy",
+            "source",
+            "lastRunAt",
+            "nextRunAt",
+            "createdAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "job"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

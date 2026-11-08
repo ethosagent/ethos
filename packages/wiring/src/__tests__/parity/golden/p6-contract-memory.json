@@ -1,0 +1,781 @@
+{
+  "memory.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "store": {
+          "enum": [
+            "memory",
+            "user"
+          ],
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store",
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "store": {
+              "enum": [
+                "memory",
+                "user"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "store",
+            "content",
+            "path",
+            "modifiedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.history": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sinceMs": {
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "tool",
+            "consolidation",
+            "dream",
+            "capture",
+            "web-editor",
+            "global-entry",
+            "restore"
+          ],
+          "type": "string"
+        },
+        "untilMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "corruptLines": {
+          "type": "number"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "afterHash": {
+                "type": "string"
+              },
+              "beforeHash": {
+                "type": "string"
+              },
+              "blob": {
+                "type": "string"
+              },
+              "diff": {
+                "type": "string"
+              },
+              "hint": {
+                "type": "number"
+              },
+              "key": {
+                "type": "string"
+              },
+              "scopeId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionKey": {
+                "type": "string"
+              },
+              "sizeAfter": {
+                "type": "number"
+              },
+              "sizeBefore": {
+                "type": "number"
+              },
+              "source": {
+                "enum": [
+                  "tool",
+                  "consolidation",
+                  "dream",
+                  "capture",
+                  "web-editor",
+                  "global-entry",
+                  "restore"
+                ],
+                "type": "string"
+              },
+              "ts": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "ts",
+              "scopeId",
+              "key",
+              "actions",
+              "source",
+              "sessionId",
+              "sessionKey",
+              "beforeHash",
+              "afterHash",
+              "diff",
+              "sizeBefore",
+              "sizeAfter"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "entries",
+        "nextCursor",
+        "corruptLines"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.historyBlob": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "blob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "blob"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "modifiedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "store": {
+                "enum": [
+                  "memory",
+                  "user"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "store",
+              "content",
+              "path",
+              "modifiedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.listUsers": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "users": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "displayLabel": {
+                "type": "string"
+              },
+              "firstSeenAt": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "userId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "userId",
+              "displayLabel",
+              "platform",
+              "firstSeenAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "users"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.pendingApprove": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.pendingList": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "pending": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "evidenceSessions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "factHash": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastSeenAt": {
+                "type": "number"
+              },
+              "proposedAt": {
+                "type": "number"
+              },
+              "scopeId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionKey": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "tool",
+                  "consolidation",
+                  "dream",
+                  "capture",
+                  "web-editor",
+                  "global-entry",
+                  "restore"
+                ],
+                "type": "string"
+              },
+              "update": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "add",
+                        "type": "string"
+                      },
+                      "content": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "key",
+                      "content"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "replace",
+                        "type": "string"
+                      },
+                      "content": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "key",
+                      "content"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "remove",
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "substringMatch": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "key",
+                      "substringMatch"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "delete",
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "key"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "scopeId",
+              "update",
+              "source",
+              "proposedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "pending"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.pendingReject": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.restore": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "slug": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "restoredTo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "restoredTo"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "memory.write": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "store": {
+          "enum": [
+            "memory",
+            "user"
+          ],
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store",
+        "content",
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "modifiedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "store": {
+              "enum": [
+                "memory",
+                "user"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "store",
+            "content",
+            "path",
+            "modifiedAt"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}
