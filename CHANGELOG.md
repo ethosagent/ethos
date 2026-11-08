@@ -7,6 +7,10 @@ Material changes to `@ethosagent/cli` and its workspace packages. Release-versio
 - ARCHITECTURE.md: Clarifying amendment — rationale and extension-pattern prose moved to docs/decisions/
 - web-contracts: `mcp.catalog` and `McpCatalogOutputSchema` are deprecated in favour of `catalog.list({ kind: 'mcp' })`; the in-repo callers (Add-MCP modal, onboarding Connectors step, recipes preflight) now read the unified catalog. Removal: one minor release after this one (plan unified-catalog §9). Frozen surface unchanged (JSDoc only).
 
+### Removed
+
+- **BREAKING (config) — the `cron.trigger.*` / `cron.arming.*` deprecation shim.** `CronTopLevelConfig.trigger` and `.arming` (`packages/config/src/index.ts`), the `cron.(trigger|arming).<field>` parser branch, the `LEGACY_EXTERNAL_FIRE_URL` sentinel and its `writeConfig` guard, and the shim block in `buildCronConfig` are gone. A leftover `cron.trigger.local: false` or `cron.arming.fireUrl` line is no longer translated: `config.yaml: 'cron.trigger.local' has no effect — the config parser did not read it` is the only signal, and `writeConfig` keeps the line verbatim. **Behavior change:** a deployment still on `cron.trigger.local: false` + `cron.trigger.external: true` without `cron.fireUrl` returns to the in-process interval; set `cron.fireUrl: <url>` (or `ETHOS_CRON_FIRE_URL`) to stay in external mode. The interval and an external `POST /cron/fire` cannot double-run a job: both go through `claimDueJob`'s compare-and-swap, pinned by 'two overlapping fire() calls on the same due job execute it exactly once' in `extensions/cron/src/__tests__/cron.test.ts`. Pinned by the 'removed legacy keys' cases in `packages/config/src/__tests__/config-cron.test.ts`.
+
 ## 0.9.0 — 2026-09-29
 
 ### Fixed

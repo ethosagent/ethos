@@ -30,10 +30,10 @@
   "notices": {
     "errors": [],
     "warnings": [
-      "cron.trigger.external is deprecated and has no effect. POST /cron/fire is now always mounted for a bearer key with the 'cron' scope. To stop the in-process interval and let an external scheduler drive firing, set cron.fireUrl: <url>.",
       "config.yaml: 'arming.backend' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
       "config.yaml: 'auxiliary.compression.provider' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
       "config.yaml: 'auxiliary.web.timeoutMs' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
+      "config.yaml: 'cron.trigger.external' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key).",
       "config.yaml: 'decisions.sites.injection' has no effect — the config parser did not read it (a misspelled key, or one that applies only alongside another key)."
     ]
   },
@@ -116,10 +116,7 @@
     },
     "contextWindow": 200000,
     "cron": {
-      "fireUrl": "https://agent.example.com/cron/fire",
-      "trigger": {
-        "external": true
-      }
+      "fireUrl": "https://agent.example.com/cron/fire"
     },
     "decisions": {
       "provider": "typesafe"
