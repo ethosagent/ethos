@@ -24,6 +24,7 @@ export {
   type ChatErrorEntry,
   describeChatError,
 } from './chat-errors';
+export { chunkText, reflowChunks } from './chunking';
 export {
   createEventTranslator,
   credentialInstruction,
