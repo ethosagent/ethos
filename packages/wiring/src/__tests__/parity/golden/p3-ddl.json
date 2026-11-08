@@ -1,0 +1,1252 @@
+{
+  "a2a task store": {
+    "ddl": [
+      {
+        "name": "a2a_tasks_idempotency",
+        "sql": "CREATE UNIQUE INDEX a2a_tasks_idempotency\n    ON a2a_tasks(peer_fingerprint, idempotency_key)",
+        "type": "index"
+      },
+      {
+        "name": "a2a_tasks_status_created",
+        "sql": "CREATE INDEX a2a_tasks_status_created\n    ON a2a_tasks(status, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_a2a_tasks_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "a2a_tasks",
+        "sql": "CREATE TABLE a2a_tasks (\n    id               TEXT PRIMARY KEY,\n    status           TEXT NOT NULL,\n    result           TEXT,\n    error            TEXT,\n    created_at       INTEGER NOT NULL,\n    idempotency_key  TEXT NOT NULL,\n    trace_id         TEXT NOT NULL,\n    peer_fingerprint TEXT NOT NULL,\n    personality_id   TEXT\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 2
+    }
+  },
+  "call-log": {
+    "ddl": [
+      {
+        "name": "calls_bot_started",
+        "sql": "CREATE INDEX calls_bot_started ON calls(bot_key, started_at)",
+        "type": "index"
+      },
+      {
+        "name": "calls_status_started",
+        "sql": "CREATE INDEX calls_status_started ON calls(status, started_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_calls_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "calls",
+        "sql": "CREATE TABLE calls (\n    id             TEXT PRIMARY KEY,\n    bot_key        TEXT NOT NULL,\n    lane_key       TEXT NOT NULL,\n    direction      TEXT NOT NULL,\n    from_number    TEXT NOT NULL,\n    to_number      TEXT NOT NULL,\n    personality_id TEXT,\n    tier           TEXT,\n    status         TEXT NOT NULL,\n    started_at     INTEGER NOT NULL,\n    ended_at       INTEGER,\n    reason         TEXT,\n    summary        TEXT,\n    transcript     TEXT,\n    cost_usd       REAL\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "channel-transcript-sqlite": {
+    "ddl": [
+      {
+        "name": "transcript_lane_id",
+        "sql": "CREATE INDEX transcript_lane_id\n    ON transcript(lane_key, id)",
+        "type": "index"
+      },
+      {
+        "name": "transcript_lane_message",
+        "sql": "CREATE UNIQUE INDEX transcript_lane_message\n    ON transcript(lane_key, message_id) WHERE message_id IS NOT NULL",
+        "type": "index"
+      },
+      {
+        "name": "transcript_lane_sent",
+        "sql": "CREATE INDEX transcript_lane_sent\n    ON transcript(lane_key, sent_at)",
+        "type": "index"
+      },
+      {
+        "name": "transcript_recorded",
+        "sql": "CREATE INDEX transcript_recorded\n    ON transcript(recorded_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_sequence",
+        "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+        "type": "table"
+      },
+      {
+        "name": "transcript",
+        "sql": "CREATE TABLE transcript (\n    -- AUTOINCREMENT: retention can prune this table empty, and a reused id\n    -- would fall under the digest's stored cursor. See the note above.\n    id          INTEGER PRIMARY KEY AUTOINCREMENT,\n    lane_key    TEXT NOT NULL,\n    platform    TEXT NOT NULL,\n    bot_key     TEXT NOT NULL,\n    chat_id     TEXT NOT NULL,\n    thread_id   TEXT,\n    sender_id   TEXT NOT NULL,\n    sender_name TEXT,\n    text        TEXT NOT NULL,\n    message_id  TEXT,\n    sent_at     INTEGER NOT NULL,\n    recorded_at INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "user_version": 2
+    }
+  },
+  "dashboard": {
+    "ddl": [
+      {
+        "name": "idx_dashboard_panels_dashboard",
+        "sql": "CREATE INDEX idx_dashboard_panels_dashboard\n        ON dashboard_panels(dashboard_id, row, col)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_dashboard_panels_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_dashboards_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "dashboard_panels",
+        "sql": "CREATE TABLE dashboard_panels (\n        id                     TEXT PRIMARY KEY,\n        dashboard_id           TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,\n        query_type             TEXT NOT NULL CHECK(query_type IN ('static','prompt','sql','header')),\n        block_type             TEXT NOT NULL CHECK(block_type IN ('html','image','pdf','text','table')),\n        content                TEXT NOT NULL,\n        metadata               TEXT,\n        prompt                 TEXT,\n        sql_query              TEXT,\n        plugin_id              TEXT,\n        data_source_id         TEXT,\n        render_hint            TEXT,\n        cron_schedule          TEXT,\n        html_template          TEXT,\n        last_run_at            INTEGER,\n        last_error             TEXT,\n        source_conversation_id TEXT,\n        source_message_seq     INTEGER,\n        title                  TEXT,\n        col                    INTEGER NOT NULL DEFAULT 0,\n        row                    INTEGER NOT NULL DEFAULT 0,\n        w                      INTEGER NOT NULL DEFAULT 6,\n        h                      INTEGER NOT NULL DEFAULT 4,\n        created_at             INTEGER NOT NULL,\n        updated_at             INTEGER NOT NULL\n      , emit_config TEXT, depends_on TEXT, param_defaults TEXT) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "dashboards",
+        "sql": "CREATE TABLE dashboards (\n        id             TEXT PRIMARY KEY,\n        user_id        TEXT NOT NULL,\n        personality_id TEXT NOT NULL,\n        title          TEXT NOT NULL,\n        description    TEXT,\n        cron_schedule  TEXT,\n        created_at     INTEGER NOT NULL,\n        updated_at     INTEGER NOT NULL\n      , params_schema TEXT, params_current TEXT) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 0
+    }
+  },
+  "delivery-ledger": {
+    "ddl": [
+      {
+        "name": "delivery_inbound_ref",
+        "sql": "CREATE INDEX delivery_inbound_ref ON delivery_obligations(inbound_ref)",
+        "type": "index"
+      },
+      {
+        "name": "delivery_session",
+        "sql": "CREATE INDEX delivery_session ON delivery_obligations(session_id, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "delivery_status_bot",
+        "sql": "CREATE INDEX delivery_status_bot ON delivery_obligations(status, bot_key)",
+        "type": "index"
+      },
+      {
+        "name": "delivery_status_created",
+        "sql": "CREATE INDEX delivery_status_created ON delivery_obligations(status, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_delivery_obligations_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "delivery_obligations",
+        "sql": "CREATE TABLE delivery_obligations (\n    id           TEXT PRIMARY KEY,\n    bot_key      TEXT NOT NULL,\n    platform     TEXT NOT NULL,\n    chat_id      TEXT NOT NULL,\n    session_id   TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    content      TEXT NOT NULL,\n    created_at   INTEGER NOT NULL,\n    status       TEXT NOT NULL DEFAULT 'pending',\n    -- v2. Declared LAST so a freshly-created table and a v1 table upgraded by\n    -- ALTER TABLE ADD COLUMN end up with identical column order. Nullable:\n    -- most replies have no thread, and NULL is the honest encoding of that.\n    thread_id    TEXT,\n    -- v3, appended after thread_id for the same reason. All three nullable and\n    -- WITHOUT a DEFAULT: a row written before these columns existed genuinely\n    -- has no value for them, and NULL says so. kind is normalized to 'text' on\n    -- read instead, which is the truth about every pre-v3 row.\n    kind         TEXT,\n    artifact_ref TEXT,\n    media_format TEXT,\n    -- v4, appended last for the same column-order reason. NULL for every\n    -- reply no spooled inbound message owes, and for every pre-v4 row.\n    inbound_ref  TEXT,\n    -- v5, appended last for the same reason. When the row was claimed (moved\n    -- to 'redelivering'); set by claim(), cleared by release() and\n    -- reclaimStaleClaims(), which reads it on 'redelivering' rows only to tell\n    -- a stranded claim from a live one.\n    claimed_at   INTEGER,\n    -- v6, appended last for the same reason. Failed redeliveries so far, when\n    -- the next one is due (NULL = due now), and why an abandoned row was given\n    -- up on. The schedule itself is the gateway's (sweepDeliveriesOnce).\n    attempts        INTEGER NOT NULL DEFAULT 0,\n    next_attempt_at INTEGER,\n    abandon_reason  TEXT\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 6
+    }
+  },
+  "goal-store": {
+    "ddl": [
+      {
+        "name": "goal_attempts_goal",
+        "sql": "CREATE INDEX goal_attempts_goal ON goal_attempts(goal_id, n)",
+        "type": "index"
+      },
+      {
+        "name": "goal_events_goal",
+        "sql": "CREATE INDEX goal_events_goal ON goal_events(goal_id, seq)",
+        "type": "index"
+      },
+      {
+        "name": "goals_user_status",
+        "sql": "CREATE INDEX goals_user_status ON goals(user_id, status)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_goal_attempts_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_goal_attempts_2",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_goals_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "goal_attempts",
+        "sql": "CREATE TABLE goal_attempts (\n    id            TEXT PRIMARY KEY,\n    goal_id       TEXT NOT NULL REFERENCES goals(id),\n    n             INTEGER NOT NULL,\n    session_key   TEXT NOT NULL,\n    output_md     TEXT,\n    artifacts     TEXT,\n    verdict       TEXT,\n    strategy_used TEXT,\n    cost_usd      REAL,\n    trace_id      TEXT,\n    started_at    INTEGER NOT NULL,\n    completed_at  INTEGER,\n    UNIQUE (goal_id, n)\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "goal_events",
+        "sql": "CREATE TABLE goal_events (\n    id           INTEGER PRIMARY KEY,\n    goal_id      TEXT NOT NULL REFERENCES goals(id),\n    seq          INTEGER NOT NULL,\n    event_type   TEXT NOT NULL,\n    payload      TEXT NOT NULL,\n    created_at   INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "goals",
+        "sql": "CREATE TABLE goals (\n    id                  TEXT PRIMARY KEY,\n    user_id             TEXT NOT NULL,\n    personality_id      TEXT NOT NULL,\n    origin              TEXT NOT NULL,\n    source_session      TEXT,\n    title               TEXT NOT NULL,\n    goal_text           TEXT NOT NULL,\n    acceptance_criteria TEXT,\n    status              TEXT NOT NULL DEFAULT 'running',\n    max_attempts        INTEGER DEFAULT 3,\n    max_cost_usd        REAL,\n    deadline            TEXT,\n    output_md           TEXT,\n    output_partial      TEXT,\n    error_text          TEXT,\n    started_at          INTEGER NOT NULL,\n    completed_at        INTEGER,\n    resume_count        INTEGER NOT NULL DEFAULT 0,\n    turn_count          INTEGER,\n    tool_count          INTEGER,\n    token_count         INTEGER,\n    cost_usd            REAL,\n    max_tool_calls_per_turn INTEGER,\n    allow_dangerous_tool_calls INTEGER,\n    max_recovery_attempts INTEGER,\n    max_identical_tool_calls INTEGER,\n    plan_md             TEXT,\n    lease_owner         TEXT,\n    heartbeat_at        INTEGER\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 6
+    }
+  },
+  "inbound-dedup": {
+    "ddl": [
+      {
+        "name": "inbound_seen_at",
+        "sql": "CREATE INDEX inbound_seen_at ON inbound_seen(seen_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_inbound_seen_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "inbound_seen",
+        "sql": "CREATE TABLE inbound_seen (\n    platform   TEXT NOT NULL,\n    bot_key    TEXT NOT NULL,\n    chat_id    TEXT NOT NULL,\n    message_id TEXT NOT NULL,\n    seen_at    INTEGER NOT NULL,\n    PRIMARY KEY (platform, bot_key, chat_id, message_id)\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "inbound-spool": {
+    "ddl": [
+      {
+        "name": "inbound_spool_absorbed",
+        "sql": "CREATE INDEX inbound_spool_absorbed ON inbound_spool(absorbed_into)",
+        "type": "index"
+      },
+      {
+        "name": "inbound_spool_lane",
+        "sql": "CREATE INDEX inbound_spool_lane   ON inbound_spool(lane_key, received_at)",
+        "type": "index"
+      },
+      {
+        "name": "inbound_spool_status",
+        "sql": "CREATE INDEX inbound_spool_status ON inbound_spool(status, received_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_inbound_spool_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_inbound_spool_2",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "inbound_spool",
+        "sql": "CREATE TABLE inbound_spool (\n    id           TEXT    PRIMARY KEY,\n    platform     TEXT    NOT NULL,\n    bot_key      TEXT    NOT NULL,\n    chat_id      TEXT    NOT NULL,\n    -- NULL = root chat, never ''.\n    thread_id    TEXT,\n    message_id   TEXT    NOT NULL,\n    lane_key     TEXT    NOT NULL,\n    payload      TEXT    NOT NULL,\n    status       TEXT    NOT NULL,\n    attempts     INTEGER NOT NULL DEFAULT 0,\n    last_error   TEXT,\n    received_at  INTEGER NOT NULL,\n    updated_at   INTEGER NOT NULL,\n    claimed_by   TEXT,\n    -- v2 (plan openclaw-9.5-adoption items 2 and 6).\n    tool_started_at INTEGER,\n    kind         TEXT    NOT NULL DEFAULT 'inbound',\n    review_job_id TEXT,\n    -- v3: the row whose turn this steer message was folded into.\n    absorbed_into TEXT,\n    UNIQUE (platform, bot_key, chat_id, message_id)\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 3
+    }
+  },
+  "initPairingDb (apps/ethos)": {
+    "ddl": [
+      {
+        "name": "idx_consume_attempts_owner",
+        "sql": "CREATE INDEX idx_consume_attempts_owner\n      ON pairing_consume_attempts(owner_id, attempted_at)",
+        "type": "index"
+      },
+      {
+        "name": "idx_dm_declines_at",
+        "sql": "CREATE INDEX idx_dm_declines_at ON dm_declines(declined_at)",
+        "type": "index"
+      },
+      {
+        "name": "idx_pairing_sender",
+        "sql": "CREATE INDEX idx_pairing_sender\n      ON pairing_codes(sender_id, platform, issued_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_allowed_senders_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_dm_declines_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_pairing_codes_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_pairing_owner_pauses_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "allowed_senders",
+        "sql": "CREATE TABLE allowed_senders (\n      sender_id  TEXT NOT NULL,\n      platform   TEXT NOT NULL,\n      added_at   INTEGER NOT NULL,\n      added_by   TEXT,\n      PRIMARY KEY (sender_id, platform)\n    ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "dm_declines",
+        "sql": "CREATE TABLE dm_declines (\n      platform    TEXT NOT NULL,\n      bot_key     TEXT NOT NULL,\n      sender_id   TEXT NOT NULL,\n      declined_at INTEGER NOT NULL,\n      PRIMARY KEY (platform, bot_key, sender_id)\n    ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "pairing_codes",
+        "sql": "CREATE TABLE pairing_codes (\n      code       TEXT NOT NULL,\n      sender_id  TEXT NOT NULL,\n      platform   TEXT NOT NULL,\n      issued_at  INTEGER NOT NULL,\n      nonce      TEXT NOT NULL,\n      status     TEXT NOT NULL CHECK(status IN ('pending', 'consumed', 'expired')),\n      PRIMARY KEY (code)\n    ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "pairing_consume_attempts",
+        "sql": "CREATE TABLE pairing_consume_attempts (\n      owner_id     TEXT NOT NULL,\n      attempted_at INTEGER NOT NULL,\n      succeeded    INTEGER NOT NULL DEFAULT 0\n    ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "pairing_owner_pauses",
+        "sql": "CREATE TABLE pairing_owner_pauses (\n      owner_id     TEXT PRIMARY KEY,\n      paused_until INTEGER NOT NULL\n    ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": null
+  },
+  "job-store": {
+    "ddl": [
+      {
+        "name": "job_events_job",
+        "sql": "CREATE INDEX job_events_job ON job_events(job_id, seq)",
+        "type": "index"
+      },
+      {
+        "name": "job_notices_job",
+        "sql": "CREATE INDEX job_notices_job ON job_notices(job_id)",
+        "type": "index"
+      },
+      {
+        "name": "job_steers_job",
+        "sql": "CREATE INDEX job_steers_job ON job_steers(job_id, state, id)",
+        "type": "index"
+      },
+      {
+        "name": "jobs_owner_status",
+        "sql": "CREATE INDEX jobs_owner_status ON jobs(owner, status)",
+        "type": "index"
+      },
+      {
+        "name": "jobs_root_status",
+        "sql": "CREATE INDEX jobs_root_status ON jobs(root_session_key, status)",
+        "type": "index"
+      },
+      {
+        "name": "jobs_status_created",
+        "sql": "CREATE INDEX jobs_status_created ON jobs(status, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "jobs_undelivered",
+        "sql": "CREATE INDEX jobs_undelivered ON jobs(origin_bot_key, status, delivered_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_job_notices_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_jobs_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "job_events",
+        "sql": "CREATE TABLE job_events (\n    id         INTEGER PRIMARY KEY,\n    job_id     TEXT NOT NULL REFERENCES jobs(id),\n    seq        INTEGER NOT NULL,\n    event_type TEXT NOT NULL,\n    payload    TEXT NOT NULL,\n    created_at INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "job_notices",
+        "sql": "CREATE TABLE job_notices (\n    request_id TEXT PRIMARY KEY,\n    job_id     TEXT NOT NULL,\n    claimed_at INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "job_steers",
+        "sql": "CREATE TABLE job_steers (\n    id                INTEGER PRIMARY KEY,\n    job_id            TEXT NOT NULL,\n    text              TEXT NOT NULL,\n    state             TEXT NOT NULL DEFAULT 'pending',\n    source            TEXT NOT NULL,\n    requester_user_id TEXT,\n    created_at        INTEGER NOT NULL,\n    read_at           INTEGER\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "jobs",
+        "sql": "CREATE TABLE jobs (\n    id                 TEXT PRIMARY KEY,\n    owner              TEXT NOT NULL,\n    parent_session_key TEXT NOT NULL,\n    root_session_key   TEXT NOT NULL,\n    child_session_key  TEXT NOT NULL,\n    personality_id     TEXT,\n    depth              INTEGER NOT NULL,\n    status             TEXT NOT NULL DEFAULT 'queued',\n    label              TEXT,\n    prompt             TEXT NOT NULL,\n    summary            TEXT,\n    error              TEXT,\n    spend_usd          REAL NOT NULL DEFAULT 0,\n    max_cost_usd       REAL,\n    cancel_requested   INTEGER NOT NULL DEFAULT 0,\n    heartbeat_at       INTEGER,\n    created_at         INTEGER NOT NULL,\n    started_at         INTEGER,\n    finished_at        INTEGER,\n    delivered_at       INTEGER,\n    origin_platform    TEXT,\n    origin_bot_key     TEXT,\n    origin_chat_id     TEXT,\n    origin_thread_id   TEXT,\n    remote_peer        TEXT,\n    remote_job_id      TEXT,\n    runner             TEXT,\n    blocked_since      INTEGER,\n    blocked_request_id TEXT,\n    deliver            TEXT NOT NULL DEFAULT 'user',\n    origin_user_id     TEXT,\n    toolset_narrowing  TEXT,\n    tainted            INTEGER NOT NULL DEFAULT 0\n  , room_audience TEXT) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 10
+    }
+  },
+  "kanban-store": {
+    "ddl": [
+      {
+        "name": "sqlite_autoindex_task_comments_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_task_links_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_task_runs_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_tasks_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_team_member_stats_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "task_comments_task",
+        "sql": "CREATE INDEX task_comments_task ON task_comments(task_id, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "task_events_recent",
+        "sql": "CREATE INDEX task_events_recent ON task_events(created_at)",
+        "type": "index"
+      },
+      {
+        "name": "task_events_task",
+        "sql": "CREATE INDEX task_events_task ON task_events(task_id, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "task_links_child",
+        "sql": "CREATE INDEX task_links_child ON task_links(child_id)",
+        "type": "index"
+      },
+      {
+        "name": "task_runs_open_one",
+        "sql": "CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)\n    WHERE ended_at IS NULL",
+        "type": "index"
+      },
+      {
+        "name": "task_runs_task",
+        "sql": "CREATE INDEX task_runs_task ON task_runs(task_id, started_at)",
+        "type": "index"
+      },
+      {
+        "name": "tasks_idem",
+        "sql": "CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)\n    WHERE idempotency_key IS NOT NULL",
+        "type": "index"
+      },
+      {
+        "name": "tasks_scheduled",
+        "sql": "CREATE INDEX tasks_scheduled ON tasks(scheduled_for)\n    WHERE scheduled_for IS NOT NULL",
+        "type": "index"
+      },
+      {
+        "name": "tasks_status_assignee",
+        "sql": "CREATE INDEX tasks_status_assignee ON tasks(status, assignee)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_sequence",
+        "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+        "type": "table"
+      },
+      {
+        "name": "task_comments",
+        "sql": "CREATE TABLE task_comments (\n    id         TEXT PRIMARY KEY,\n    task_id    TEXT NOT NULL,\n    author     TEXT NOT NULL,\n    body       TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "task_events",
+        "sql": "CREATE TABLE task_events (\n    id         INTEGER PRIMARY KEY AUTOINCREMENT,\n    task_id    TEXT NOT NULL,\n    kind       TEXT NOT NULL\n               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),\n    actor      TEXT NOT NULL,\n    data_json  TEXT NOT NULL DEFAULT '{}',\n    created_at INTEGER NOT NULL,\n    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "task_fts",
+        "sql": "CREATE VIRTUAL TABLE task_fts USING fts5(\n    task_id UNINDEXED,\n    title,\n    body,\n    comments,\n    tokenize = 'porter'\n  )",
+        "type": "table"
+      },
+      {
+        "name": "task_fts_config",
+        "sql": "CREATE TABLE 'task_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "task_fts_content",
+        "sql": "CREATE TABLE 'task_fts_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3)",
+        "type": "table"
+      },
+      {
+        "name": "task_fts_data",
+        "sql": "CREATE TABLE 'task_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "task_fts_docsize",
+        "sql": "CREATE TABLE 'task_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "task_fts_idx",
+        "sql": "CREATE TABLE 'task_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "task_links",
+        "sql": "CREATE TABLE task_links (\n    parent_id TEXT NOT NULL,\n    child_id  TEXT NOT NULL,\n    PRIMARY KEY (parent_id, child_id),\n    FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,\n    FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "task_runs",
+        "sql": "CREATE TABLE task_runs (\n    id                TEXT PRIMARY KEY,\n    task_id           TEXT NOT NULL,\n    started_at        INTEGER NOT NULL,\n    ended_at          INTEGER,\n    outcome           TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),\n    summary           TEXT,\n    last_heartbeat_at INTEGER NOT NULL,\n    completed_by_id   TEXT,\n    completed_by_name TEXT,\n    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "tasks",
+        "sql": "CREATE TABLE tasks (\n    id              TEXT PRIMARY KEY,\n    title           TEXT NOT NULL,\n    body            TEXT NOT NULL DEFAULT '',\n    assignee        TEXT,\n    status          TEXT NOT NULL\n                    CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),\n    priority        INTEGER NOT NULL DEFAULT 0,\n    workspace_mode  TEXT NOT NULL DEFAULT 'scratch'\n                    CHECK (workspace_mode IN ('scratch','worktree','dir')),\n    workspace_path  TEXT,\n    scheduled_for   INTEGER,\n    idempotency_key TEXT,\n    current_run_id  TEXT,\n    max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),\n    retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),\n    acceptance_criteria TEXT,\n    created_at      INTEGER NOT NULL,\n    updated_at      INTEGER NOT NULL,\n    block_kind      TEXT CHECK (block_kind IS NULL OR block_kind IN ('dependency','needs_input','capability','transient')),\n    block_recurrence_count INTEGER NOT NULL DEFAULT 0 CHECK (block_recurrence_count >= 0)\n  , room_audience TEXT) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "team_member_stats",
+        "sql": "CREATE TABLE team_member_stats (\n    team_id           TEXT NOT NULL,\n    member_id         TEXT NOT NULL,\n    tickets_completed INTEGER NOT NULL DEFAULT 0 CHECK (tickets_completed >= 0),\n    tickets_failed    INTEGER NOT NULL DEFAULT 0 CHECK (tickets_failed >= 0),\n    tickets_orphaned  INTEGER NOT NULL DEFAULT 0 CHECK (tickets_orphaned >= 0),\n    last_updated_at   INTEGER NOT NULL,\n    PRIMARY KEY (team_id, member_id)\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "comments_fts_ai",
+        "sql": "CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN\n    UPDATE task_fts\n    SET comments = (\n      SELECT COALESCE(GROUP_CONCAT(body, ' '), '')\n      FROM task_comments WHERE task_id = new.task_id\n    )\n    WHERE task_id = new.task_id;\n  END",
+        "type": "trigger"
+      },
+      {
+        "name": "tasks_fts_ad",
+        "sql": "CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN\n    DELETE FROM task_fts WHERE task_id = old.id;\n  END",
+        "type": "trigger"
+      },
+      {
+        "name": "tasks_fts_ai",
+        "sql": "CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN\n    INSERT INTO task_fts(task_id, title, body, comments)\n    VALUES (new.id, new.title, new.body, '');\n  END",
+        "type": "trigger"
+      },
+      {
+        "name": "tasks_fts_au",
+        "sql": "CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN\n    UPDATE task_fts SET title = new.title, body = new.body\n    WHERE task_id = new.id;\n  END",
+        "type": "trigger"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 6
+    }
+  },
+  "memory-vector": {
+    "ddl": [
+      {
+        "name": "sqlite_autoindex_memory_entries_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "memory_entries",
+        "sql": "CREATE TABLE memory_entries (\n        scope_id    TEXT NOT NULL,\n        key         TEXT NOT NULL,\n        content     TEXT NOT NULL,\n        embedding   BLOB NOT NULL,\n        created_at  TEXT NOT NULL,\n        updated_at  TEXT NOT NULL,\n        PRIMARY KEY (scope_id, key)\n      ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "notify-queue": {
+    "ddl": [
+      {
+        "name": "pending_notifies_lookup",
+        "sql": "CREATE INDEX pending_notifies_lookup\n    ON pending_notifies(team, assignee_personality_id, consumed)",
+        "type": "index"
+      },
+      {
+        "name": "held_notices",
+        "sql": "CREATE TABLE held_notices (\n    id          INTEGER PRIMARY KEY AUTOINCREMENT,\n    bot_key     TEXT NOT NULL,\n    platform    TEXT NOT NULL,\n    chat_id     TEXT NOT NULL,\n    thread_id   TEXT,\n    lane_key    TEXT NOT NULL,\n    session_key TEXT NOT NULL,\n    text        TEXT NOT NULL,\n    held_at     INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "pending_notifies",
+        "sql": "CREATE TABLE pending_notifies (\n    id                      INTEGER PRIMARY KEY AUTOINCREMENT,\n    team                    TEXT NOT NULL,\n    assignee_personality_id TEXT NOT NULL,\n    kind                    TEXT NOT NULL,\n    ref                     TEXT,\n    created_at              INTEGER NOT NULL,\n    consumed                INTEGER NOT NULL DEFAULT 0\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "sqlite_sequence",
+        "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "observability-sqlite": {
+    "ddl": [
+      {
+        "name": "idx_events_category",
+        "sql": "CREATE INDEX idx_events_category ON events(category, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_events_severity",
+        "sql": "CREATE INDEX idx_events_severity ON events(severity, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_events_trace",
+        "sql": "CREATE INDEX idx_events_trace    ON events(trace_id, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_spans_name",
+        "sql": "CREATE INDEX idx_spans_name  ON spans(name, start_ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_spans_trace",
+        "sql": "CREATE INDEX idx_spans_trace ON spans(trace_id, start_ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_traces_kind",
+        "sql": "CREATE INDEX idx_traces_kind    ON traces(kind, start_ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_traces_session",
+        "sql": "CREATE INDEX idx_traces_session ON traces(session_id, start_ts)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_events_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_metric_counters_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_snapshots_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_spans_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_trace_exports_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_traces_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "events",
+        "sql": "CREATE TABLE events (\n        event_id        TEXT PRIMARY KEY,\n        trace_id        TEXT,\n        span_id         TEXT,\n        ts              INTEGER NOT NULL,\n        category        TEXT NOT NULL,\n        severity        TEXT NOT NULL,\n        code            TEXT,\n        cause           TEXT,\n        details         TEXT\n      ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "metric_counters",
+        "sql": "CREATE TABLE metric_counters (\n        metric      TEXT NOT NULL,\n        labels      TEXT NOT NULL,\n        value       REAL NOT NULL DEFAULT 0,\n        updated_at  TEXT NOT NULL,\n        PRIMARY KEY (metric, labels)\n      ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "snapshots",
+        "sql": "CREATE TABLE snapshots (\n        snapshot_id     TEXT PRIMARY KEY,\n        taken_at        INTEGER NOT NULL,\n        subject_id      TEXT NOT NULL,\n        body            TEXT NOT NULL\n      ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "spans",
+        "sql": "CREATE TABLE spans (\n        span_id         TEXT PRIMARY KEY,\n        trace_id        TEXT NOT NULL,\n        parent_span_id  TEXT,\n        kind            TEXT NOT NULL,\n        name            TEXT NOT NULL,\n        start_ts        INTEGER NOT NULL,\n        end_ts          INTEGER,\n        status          TEXT,\n        attrs           TEXT\n      ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "trace_exports",
+        "sql": "CREATE TABLE trace_exports (\n        sink        TEXT    NOT NULL,   -- 'otlp' in v1\n        trace_id    TEXT    NOT NULL,\n        claimed_at  INTEGER,\n        exported_at INTEGER,            -- terminal: set for every outcome below\n        outcome     TEXT,               -- 'exported'|'rejected'|'opted_out'|'dropped_backlog'|'pruned'\n        PRIMARY KEY (sink, trace_id)\n      ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "traces",
+        "sql": "CREATE TABLE traces (\n        trace_id        TEXT PRIMARY KEY,\n        session_id      TEXT,\n        kind            TEXT NOT NULL,\n        start_ts        INTEGER NOT NULL,\n        end_ts          INTEGER,\n        status          TEXT,\n        subject_id      TEXT,\n        snapshot_id     TEXT,\n        attrs           TEXT,\n        -- P2-langfuse (D7) — nullable, ms-epoch. exported_at is set once\n        -- the trace has shipped to Langfuse; claimed_at marks it\n        -- in-flight for a poller so two pollers (or two ticks) never export\n        -- the same trace twice. Both NULL for every trace outside that\n        -- pipeline (untouched by the export poller).\n        exported_at     INTEGER,\n        claimed_at      INTEGER\n      ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "user_version": 4
+    }
+  },
+  "outbox": {
+    "ddl": [
+      {
+        "name": "outbox_personality_hash",
+        "sql": "CREATE INDEX outbox_personality_hash\n    ON outbox_items(personality_id, content_hash)",
+        "type": "index"
+      },
+      {
+        "name": "outbox_state_bot",
+        "sql": "CREATE INDEX outbox_state_bot ON outbox_items(state, bot_key)",
+        "type": "index"
+      },
+      {
+        "name": "outbox_state_updated",
+        "sql": "CREATE INDEX outbox_state_updated ON outbox_items(state, updated_at)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_outbox_items_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_outbox_revisions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "outbox_items",
+        "sql": "CREATE TABLE outbox_items (\n    id                    TEXT PRIMARY KEY,\n    personality_id        TEXT NOT NULL,\n    bot_key               TEXT NOT NULL,\n    platform              TEXT NOT NULL,\n    chat_id               TEXT NOT NULL,\n    thread_id             TEXT,\n    revision              INTEGER NOT NULL,\n    content_hash          TEXT NOT NULL,\n    state                 TEXT NOT NULL,\n    created_at            INTEGER NOT NULL,\n    updated_at            INTEGER NOT NULL,\n    approver_personality  TEXT,\n    review_verdict        TEXT,\n    review_reasons        TEXT,\n    review_revision       INTEGER,\n    reviewed_at           INTEGER,\n    approved_by           TEXT,\n    approved_at           INTEGER,\n    approved_revision     INTEGER,\n    claimed_at            INTEGER,\n    sent_at               INTEGER,\n    obligation_id         TEXT,\n    failure_reason        TEXT,\n    rejection_reason      TEXT,\n    origin_session_key    TEXT\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "outbox_revisions",
+        "sql": "CREATE TABLE outbox_revisions (\n    item_id      TEXT NOT NULL,\n    revision     INTEGER NOT NULL,\n    text         TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    author       TEXT NOT NULL,\n    created_at   INTEGER NOT NULL,\n    PRIMARY KEY (item_id, revision)\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "session-cards": {
+    "ddl": [
+      {
+        "name": "session_cards_seq",
+        "sql": "CREATE INDEX session_cards_seq ON session_cards(session_id, seq)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_session_cards_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "session_cards",
+        "sql": "CREATE TABLE session_cards (\n    session_id   TEXT NOT NULL,\n    tool_call_id TEXT NOT NULL,\n    seq          INTEGER NOT NULL,\n    envelope     TEXT NOT NULL,\n    created_at   INTEGER NOT NULL,\n    PRIMARY KEY (session_id, tool_call_id)\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "user_version": 0
+    }
+  },
+  "session-sqlite api-key store": {
+    "ddl": [
+      {
+        "name": "idx_api_keys_hash",
+        "sql": "CREATE INDEX idx_api_keys_hash ON api_keys(hash)",
+        "type": "index"
+      },
+      {
+        "name": "idx_api_keys_prefix",
+        "sql": "CREATE INDEX idx_api_keys_prefix ON api_keys(prefix)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_api_keys_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "api_keys",
+        "sql": "CREATE TABLE api_keys (\n        id              TEXT PRIMARY KEY,\n        prefix          TEXT NOT NULL,\n        hash            TEXT NOT NULL,\n        name            TEXT NOT NULL,\n        scopes          TEXT NOT NULL,\n        allowed_origins TEXT NOT NULL DEFAULT '[]',\n        created_at      TEXT NOT NULL,\n        last_used       TEXT,\n        revoked_at      TEXT\n      ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 0
+    }
+  },
+  "session-sqlite context log (sessions.db)": {
+    "ddl": [
+      {
+        "name": "idx_compressions_session",
+        "sql": "CREATE INDEX idx_compressions_session ON compressions(session_id, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "idx_context_events_session_kind",
+        "sql": "CREATE INDEX idx_context_events_session_kind\n    ON session_context_events(session_id, kind, timestamp)",
+        "type": "index"
+      },
+      {
+        "name": "idx_messages_session",
+        "sql": "CREATE INDEX idx_messages_session ON messages(session_id, timestamp)",
+        "type": "index"
+      },
+      {
+        "name": "idx_session_decisions_trace",
+        "sql": "CREATE INDEX idx_session_decisions_trace ON session_decisions(session_id, trace_id)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_key",
+        "sql": "CREATE INDEX idx_sessions_key ON sessions(key)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_parent",
+        "sql": "CREATE INDEX idx_sessions_parent ON sessions(parent_session_id)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_platform",
+        "sql": "CREATE INDEX idx_sessions_platform ON sessions(platform)",
+        "type": "index"
+      },
+      {
+        "name": "idx_usage_ledger_bot",
+        "sql": "CREATE INDEX idx_usage_ledger_bot ON usage_ledger(bot_key, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_usage_ledger_ts",
+        "sql": "CREATE INDEX idx_usage_ledger_ts  ON usage_ledger(ts)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_compressions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_messages_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_session_context_events_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_session_decisions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_sessions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_sessions_2",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_store_meta_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_usage_ledger_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "compressions",
+        "sql": "CREATE TABLE compressions (\n        id                TEXT PRIMARY KEY,\n        session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n        created_at        TEXT NOT NULL,\n        engine_name       TEXT NOT NULL,\n        original_count    INTEGER NOT NULL,\n        kept_count        INTEGER NOT NULL,\n        summary_text      TEXT,\n        summary_tokens    INTEGER NOT NULL,\n        pre_total_tokens  INTEGER NOT NULL,\n        post_total_tokens INTEGER NOT NULL,\n        duration_ms       INTEGER NOT NULL\n      , kept_from_message_id TEXT) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages",
+        "sql": "CREATE TABLE messages (\n        id           TEXT PRIMARY KEY,\n        session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n        role         TEXT NOT NULL,\n        content      TEXT NOT NULL,\n        tool_call_id TEXT,\n        tool_name    TEXT,\n        tool_calls   TEXT,\n        input_tokens INTEGER,\n        output_tokens INTEGER,\n        cache_read_tokens INTEGER,\n        cache_creation_tokens INTEGER,\n        estimated_cost_usd REAL,\n        timestamp    TEXT NOT NULL\n      , trace_id TEXT, content_blocks TEXT, deleted_at TEXT, is_error INTEGER, request_system_tokens INTEGER, request_tools_tokens INTEGER, request_messages_tokens INTEGER) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts",
+        "sql": "CREATE VIRTUAL TABLE messages_fts USING fts5(\n        content,\n        content='messages',\n        content_rowid='rowid',\n        tokenize='porter ascii'\n      )",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_config",
+        "sql": "CREATE TABLE 'messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_data",
+        "sql": "CREATE TABLE 'messages_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_docsize",
+        "sql": "CREATE TABLE 'messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_idx",
+        "sql": "CREATE TABLE 'messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "session_context_events",
+        "sql": "CREATE TABLE session_context_events (\n    id         TEXT PRIMARY KEY,\n    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n    message_id TEXT NOT NULL,\n    kind       TEXT NOT NULL,\n    mode       TEXT NOT NULL,\n    hash       TEXT NOT NULL,\n    meta       TEXT NOT NULL,\n    timestamp  INTEGER NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "session_decisions",
+        "sql": "CREATE TABLE session_decisions (\n    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n    seq          INTEGER NOT NULL,\n    trace_id     TEXT,\n    tool_call_id TEXT,\n    event        TEXT NOT NULL,\n    created_at   TEXT NOT NULL,\n    PRIMARY KEY (session_id, seq)\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "sessions",
+        "sql": "CREATE TABLE sessions (\n        id                   TEXT PRIMARY KEY,\n        key                  TEXT UNIQUE NOT NULL,\n        platform             TEXT NOT NULL,\n        model                TEXT NOT NULL,\n        provider             TEXT NOT NULL,\n        personality_id       TEXT,\n        parent_session_id    TEXT,\n        working_dir          TEXT,\n        title                TEXT,\n        input_tokens         INTEGER NOT NULL DEFAULT 0,\n        output_tokens        INTEGER NOT NULL DEFAULT 0,\n        cache_read_tokens    INTEGER NOT NULL DEFAULT 0,\n        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,\n        estimated_cost_usd   REAL NOT NULL DEFAULT 0,\n        api_call_count       INTEGER NOT NULL DEFAULT 0,\n        compaction_count     INTEGER NOT NULL DEFAULT 0,\n        metadata             TEXT,\n        created_at           TEXT NOT NULL,\n        updated_at           TEXT NOT NULL\n      , turn_count INTEGER NOT NULL DEFAULT 0, last_compaction_turn INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "store_meta",
+        "sql": "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "usage_ledger",
+        "sql": "CREATE TABLE usage_ledger (\n    id                    TEXT PRIMARY KEY,\n    ts                    TEXT NOT NULL,\n    source_kind           TEXT NOT NULL,\n    source_class          TEXT NOT NULL,\n    source_ref            TEXT,\n    personality_id        TEXT,\n    bot_key               TEXT,\n    platform              TEXT,\n    session_id            TEXT,\n    session_key           TEXT,\n    trace_id              TEXT,\n    provider              TEXT NOT NULL,\n    model                 TEXT NOT NULL,\n    input_tokens          INTEGER NOT NULL,\n    output_tokens         INTEGER NOT NULL,\n    cache_read_tokens     INTEGER NOT NULL,\n    cache_creation_tokens INTEGER NOT NULL,\n    estimated_cost_usd    REAL    NOT NULL,\n    cost_basis            TEXT,\n    outcome               TEXT    NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages_ad",
+        "sql": "CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN\n        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);\n      END",
+        "type": "trigger"
+      },
+      {
+        "name": "messages_ai",
+        "sql": "CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN\n        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);\n      END",
+        "type": "trigger"
+      },
+      {
+        "name": "messages_au",
+        "sql": "CREATE TRIGGER messages_au AFTER UPDATE OF content ON messages BEGIN\n        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);\n        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);\n      END",
+        "type": "trigger"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "session-sqlite session store": {
+    "ddl": [
+      {
+        "name": "idx_compressions_session",
+        "sql": "CREATE INDEX idx_compressions_session ON compressions(session_id, created_at)",
+        "type": "index"
+      },
+      {
+        "name": "idx_messages_session",
+        "sql": "CREATE INDEX idx_messages_session ON messages(session_id, timestamp)",
+        "type": "index"
+      },
+      {
+        "name": "idx_session_decisions_trace",
+        "sql": "CREATE INDEX idx_session_decisions_trace ON session_decisions(session_id, trace_id)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_key",
+        "sql": "CREATE INDEX idx_sessions_key ON sessions(key)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_parent",
+        "sql": "CREATE INDEX idx_sessions_parent ON sessions(parent_session_id)",
+        "type": "index"
+      },
+      {
+        "name": "idx_sessions_platform",
+        "sql": "CREATE INDEX idx_sessions_platform ON sessions(platform)",
+        "type": "index"
+      },
+      {
+        "name": "idx_usage_ledger_bot",
+        "sql": "CREATE INDEX idx_usage_ledger_bot ON usage_ledger(bot_key, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_usage_ledger_ts",
+        "sql": "CREATE INDEX idx_usage_ledger_ts  ON usage_ledger(ts)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_compressions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_messages_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_session_decisions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_sessions_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_sessions_2",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_store_meta_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_usage_ledger_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "compressions",
+        "sql": "CREATE TABLE compressions (\n        id                TEXT PRIMARY KEY,\n        session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n        created_at        TEXT NOT NULL,\n        engine_name       TEXT NOT NULL,\n        original_count    INTEGER NOT NULL,\n        kept_count        INTEGER NOT NULL,\n        summary_text      TEXT,\n        summary_tokens    INTEGER NOT NULL,\n        pre_total_tokens  INTEGER NOT NULL,\n        post_total_tokens INTEGER NOT NULL,\n        duration_ms       INTEGER NOT NULL\n      , kept_from_message_id TEXT) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages",
+        "sql": "CREATE TABLE messages (\n        id           TEXT PRIMARY KEY,\n        session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n        role         TEXT NOT NULL,\n        content      TEXT NOT NULL,\n        tool_call_id TEXT,\n        tool_name    TEXT,\n        tool_calls   TEXT,\n        input_tokens INTEGER,\n        output_tokens INTEGER,\n        cache_read_tokens INTEGER,\n        cache_creation_tokens INTEGER,\n        estimated_cost_usd REAL,\n        timestamp    TEXT NOT NULL\n      , trace_id TEXT, content_blocks TEXT, deleted_at TEXT, is_error INTEGER, request_system_tokens INTEGER, request_tools_tokens INTEGER, request_messages_tokens INTEGER) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts",
+        "sql": "CREATE VIRTUAL TABLE messages_fts USING fts5(\n        content,\n        content='messages',\n        content_rowid='rowid',\n        tokenize='porter ascii'\n      )",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_config",
+        "sql": "CREATE TABLE 'messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_data",
+        "sql": "CREATE TABLE 'messages_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_docsize",
+        "sql": "CREATE TABLE 'messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+        "type": "table"
+      },
+      {
+        "name": "messages_fts_idx",
+        "sql": "CREATE TABLE 'messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+        "type": "table"
+      },
+      {
+        "name": "session_decisions",
+        "sql": "CREATE TABLE session_decisions (\n    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n    seq          INTEGER NOT NULL,\n    trace_id     TEXT,\n    tool_call_id TEXT,\n    event        TEXT NOT NULL,\n    created_at   TEXT NOT NULL,\n    PRIMARY KEY (session_id, seq)\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "sessions",
+        "sql": "CREATE TABLE sessions (\n        id                   TEXT PRIMARY KEY,\n        key                  TEXT UNIQUE NOT NULL,\n        platform             TEXT NOT NULL,\n        model                TEXT NOT NULL,\n        provider             TEXT NOT NULL,\n        personality_id       TEXT,\n        parent_session_id    TEXT,\n        working_dir          TEXT,\n        title                TEXT,\n        input_tokens         INTEGER NOT NULL DEFAULT 0,\n        output_tokens        INTEGER NOT NULL DEFAULT 0,\n        cache_read_tokens    INTEGER NOT NULL DEFAULT 0,\n        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,\n        estimated_cost_usd   REAL NOT NULL DEFAULT 0,\n        api_call_count       INTEGER NOT NULL DEFAULT 0,\n        compaction_count     INTEGER NOT NULL DEFAULT 0,\n        metadata             TEXT,\n        created_at           TEXT NOT NULL,\n        updated_at           TEXT NOT NULL\n      , turn_count INTEGER NOT NULL DEFAULT 0, last_compaction_turn INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "store_meta",
+        "sql": "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "usage_ledger",
+        "sql": "CREATE TABLE usage_ledger (\n    id                    TEXT PRIMARY KEY,\n    ts                    TEXT NOT NULL,\n    source_kind           TEXT NOT NULL,\n    source_class          TEXT NOT NULL,\n    source_ref            TEXT,\n    personality_id        TEXT,\n    bot_key               TEXT,\n    platform              TEXT,\n    session_id            TEXT,\n    session_key           TEXT,\n    trace_id              TEXT,\n    provider              TEXT NOT NULL,\n    model                 TEXT NOT NULL,\n    input_tokens          INTEGER NOT NULL,\n    output_tokens         INTEGER NOT NULL,\n    cache_read_tokens     INTEGER NOT NULL,\n    cache_creation_tokens INTEGER NOT NULL,\n    estimated_cost_usd    REAL    NOT NULL,\n    cost_basis            TEXT,\n    outcome               TEXT    NOT NULL\n  ) STRICT",
+        "type": "table"
+      },
+      {
+        "name": "messages_ad",
+        "sql": "CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN\n        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);\n      END",
+        "type": "trigger"
+      },
+      {
+        "name": "messages_ai",
+        "sql": "CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN\n        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);\n      END",
+        "type": "trigger"
+      },
+      {
+        "name": "messages_au",
+        "sql": "CREATE TRIGGER messages_au AFTER UPDATE OF content ON messages BEGIN\n        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);\n        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);\n      END",
+        "type": "trigger"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 1
+    }
+  },
+  "session-sqlite usage ledger": {
+    "ddl": [
+      {
+        "name": "idx_usage_ledger_bot",
+        "sql": "CREATE INDEX idx_usage_ledger_bot ON usage_ledger(bot_key, ts)",
+        "type": "index"
+      },
+      {
+        "name": "idx_usage_ledger_ts",
+        "sql": "CREATE INDEX idx_usage_ledger_ts  ON usage_ledger(ts)",
+        "type": "index"
+      },
+      {
+        "name": "sqlite_autoindex_usage_ledger_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "usage_ledger",
+        "sql": "CREATE TABLE usage_ledger (\n    id                    TEXT PRIMARY KEY,\n    ts                    TEXT NOT NULL,\n    source_kind           TEXT NOT NULL,\n    source_class          TEXT NOT NULL,\n    source_ref            TEXT,\n    personality_id        TEXT,\n    bot_key               TEXT,\n    platform              TEXT,\n    session_id            TEXT,\n    session_key           TEXT,\n    trace_id              TEXT,\n    provider              TEXT NOT NULL,\n    model                 TEXT NOT NULL,\n    input_tokens          INTEGER NOT NULL,\n    output_tokens         INTEGER NOT NULL,\n    cache_read_tokens     INTEGER NOT NULL,\n    cache_creation_tokens INTEGER NOT NULL,\n    estimated_cost_usd    REAL    NOT NULL,\n    cost_basis            TEXT,\n    outcome               TEXT    NOT NULL\n  ) STRICT",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 0
+    }
+  },
+  "web-api idempotency-store": {
+    "ddl": [
+      {
+        "name": "sqlite_autoindex_idempotency_cache_1",
+        "sql": null,
+        "type": "index"
+      },
+      {
+        "name": "idempotency_cache",
+        "sql": "CREATE TABLE idempotency_cache (\n        api_key_hash TEXT NOT NULL,\n        idempotency_key TEXT NOT NULL,\n        request_hash TEXT NOT NULL,\n        status INTEGER NOT NULL,\n        headers_json TEXT NOT NULL,\n        body TEXT NOT NULL,\n        created_at INTEGER NOT NULL,\n        PRIMARY KEY (api_key_hash, idempotency_key)\n      ) STRICT\n    ",
+        "type": "table"
+      }
+    ],
+    "pragmas": {
+      "busy_timeout": 5000,
+      "foreign_keys": 1,
+      "journal_mode": "wal",
+      "synchronous": 2,
+      "user_version": 0
+    }
+  }
+}
