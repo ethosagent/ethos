@@ -167,7 +167,7 @@ Expected. Discord caps outbound text at 2,000 characters; `chunkText` splits at 
 `channels.fetch(chatId)` will start returning 404. The adapter logs the delivery failure and the lane stays alive for other chats. Re-invite or wait. If the chat id is the wrong type altogether (e.g. a category), `'send' in channel` is false and the adapter returns `Channel not found or not sendable`.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character or wait 30 seconds.
 
 **Pairing code expired.**
 Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again — a new code is issued. Owners can `/communications approve-all` to approve every pending sender.

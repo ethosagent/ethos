@@ -165,7 +165,7 @@ Expected. The adapter caps outbound text at 3,000 characters per `chat.postMessa
 The inbound message had no `thread_ts`. Reply to one of the bot's existing messages in the thread to seed it, or include `thread_ts` when calling the gateway directly.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character or wait 30 seconds.
 
 **Pairing code expired.**
 Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again. Owners can `/communications approve-all` to approve every pending sender.

@@ -1220,9 +1220,8 @@ export interface GatewayConfig {
   /**
    * TTL for the outbound-message dedup cache (`MessageDedupCache`). Same
    * `(sessionId, content)` within this window is suppressed before reaching
-   * the adapter. Defaults to 30s. Set to 0 to disable. The
-   * `ETHOS_DEDUP_LEGACY=1` env var is a separate, hard-off switch — see
-   * `dedup.ts` and plan/phases/30-robustness.md § 30.4.
+   * the adapter. Defaults to 30s. Set to 0 to disable
+   * (`MessageDedupCache`, `dedup.ts`).
    */
   outboundDedupTtlMs?: number;
   /**

@@ -1,14 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { type DedupDropInfo, MessageDedupCache } from '../dedup';
 
 describe('MessageDedupCache', () => {
-  const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
-
-  afterEach(() => {
-    if (originalEnv === undefined) delete process.env.ETHOS_DEDUP_LEGACY;
-    else process.env.ETHOS_DEDUP_LEGACY = originalEnv;
-  });
-
   it('suppresses the same (sessionId, content) within ttl', () => {
     const cache = new MessageDedupCache({ ttlMs: 60_000 });
 
@@ -80,9 +73,8 @@ describe('MessageDedupCache', () => {
     expect(cache.shouldSend('a:b:c:d', 'hi')).toBe(false);
   });
 
-  it('ETHOS_DEDUP_LEGACY=1 disables the cache entirely', () => {
-    process.env.ETHOS_DEDUP_LEGACY = '1';
-    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+  it('ttl 0 disables the cache entirely', () => {
+    const cache = new MessageDedupCache({ ttlMs: 0 });
 
     expect(cache.shouldSend('s1', 'hello')).toBe(true);
     expect(cache.shouldSend('s1', 'hello')).toBe(true);
@@ -106,12 +98,6 @@ describe('MessageDedupCache', () => {
 });
 
 describe('MessageDedupCache — onDrop observability (P5.4)', () => {
-  const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
-  afterEach(() => {
-    if (originalEnv === undefined) delete process.env.ETHOS_DEDUP_LEGACY;
-    else process.env.ETHOS_DEDUP_LEGACY = originalEnv;
-  });
-
   it('fires onDrop exactly once per genuine duplicate — not on first send or empty content', () => {
     const drops: DedupDropInfo[] = [];
     const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (i) => drops.push(i) });
@@ -135,10 +121,9 @@ describe('MessageDedupCache — onDrop observability (P5.4)', () => {
     expect(drops).toHaveLength(1);
   });
 
-  it('does not fire onDrop on the disabled (legacy) path', () => {
-    process.env.ETHOS_DEDUP_LEGACY = '1';
+  it('does not fire onDrop on the disabled (ttl 0) path', () => {
     const drops: DedupDropInfo[] = [];
-    const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (i) => drops.push(i) });
+    const cache = new MessageDedupCache({ ttlMs: 0, onDrop: (i) => drops.push(i) });
 
     cache.shouldSend('s1', 'x');
     cache.shouldSend('s1', 'x');
@@ -158,12 +143,6 @@ describe('MessageDedupCache — onDrop observability (P5.4)', () => {
 });
 
 describe('MessageDedupCache — record() (W3.1 streaming-final + item 9 redelivery)', () => {
-  const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
-  afterEach(() => {
-    if (originalEnv === undefined) delete process.env.ETHOS_DEDUP_LEGACY;
-    else process.env.ETHOS_DEDUP_LEGACY = originalEnv;
-  });
-
   it('a recorded (sessionId, content) is then suppressed by shouldSend (REGRESSION)', () => {
     const cache = new MessageDedupCache({ ttlMs: 60_000 });
 
@@ -186,15 +165,14 @@ describe('MessageDedupCache — record() (W3.1 streaming-final + item 9 redelive
     expect(drops).toHaveLength(1);
   });
 
-  it('record is a no-op for empty content and on the legacy path', () => {
+  it('record is a no-op for empty content and on the disabled (ttl 0) path', () => {
     const cache = new MessageDedupCache({ ttlMs: 60_000 });
     cache.record('s1', '');
     expect(cache.shouldSend('s1', '')).toBe(true); // empty never deduped
 
-    process.env.ETHOS_DEDUP_LEGACY = '1';
-    const legacy = new MessageDedupCache({ ttlMs: 60_000 });
-    legacy.record('s1', 'final');
-    expect(legacy.shouldSend('s1', 'final')).toBe(true); // legacy disables dedup
+    const disabled = new MessageDedupCache({ ttlMs: 0 });
+    disabled.record('s1', 'final');
+    expect(disabled.shouldSend('s1', 'final')).toBe(true); // ttl 0 disables dedup
   });
 
   it('a warm entry never blocks a redelivery, but the redelivery re-arms it (item 9)', () => {
@@ -226,10 +204,6 @@ describe('MessageDedupCache — record() (W3.1 streaming-final + item 9 redelive
 });
 
 describe('MessageDedupCache — sessionId persists across `/new`', () => {
-  beforeEach(() => {
-    delete process.env.ETHOS_DEDUP_LEGACY;
-  });
-
   it('does not suppress identical content sent under a fresh session key', () => {
     const cache = new MessageDedupCache({ ttlMs: 60_000 });
 

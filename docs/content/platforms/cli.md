@@ -134,7 +134,6 @@ The TUI surface ships richer bindings (history navigation, palette, panes); the 
 | `ANTHROPIC_API_KEY` | Used by the Anthropic provider if `apiKey` is not in config. |
 | `OPENAI_API_KEY` | Used by the OpenAI-compatible provider (OpenRouter, Ollama, Gemini). |
 | `ETHOS_VERSION` | Override the version string at startup. The build-time `__ETHOS_VERSION__` define wins when present. |
-| `ETHOS_DEDUP_LEGACY` | Set to `1` to disable outbound message dedup in the gateway. One-release escape hatch — see `extensions/gateway/src/dedup.ts`. |
 | `HOME` | The CLI roots state at `${HOME}/.ethos/`. Override to run two installations side by side. |
 | `NODE_ENV` | Honoured by the runtime; no Ethos-specific switching. |
 

@@ -16,7 +16,7 @@ Entries follow the same Cause / Fix / Prevent shape as [Troubleshooting](../trou
 
 Cause · The [gateway](../getting-started/glossary.md#gateway) dedupes outbound messages with a 30-second TTL. A reply is keyed by `(sessionId, sha256(content), inbound message)`, so one reply sent twice is dropped while identical replies to two different messages both send (`replyDedupScope` in `extensions/gateway/src/index.ts`, pinned by `extensions/gateway/src/__tests__/dedup-reply-scope.test.ts`). Notices and agent-initiated sends (`send_message`) are keyed by `(sessionId, sha256(content))`: the same text to the same session within the window is silently dropped.
 
-Fix · For an intentional retransmission of a notice or `send_message`, vary the text or wait the TTL. To disable, set `GatewayConfig.outboundDedupTtlMs: 0` or `ETHOS_DEDUP_LEGACY=1` (one-release rollback hatch).
+Fix · For an intentional retransmission of a notice or `send_message`, vary the text or wait the TTL. To disable, set `GatewayConfig.outboundDedupTtlMs: 0`.
 
 Prevent · Do not roll adapter-local dedup. The gateway is the single dedup path; adapter dedup is a bug.
 

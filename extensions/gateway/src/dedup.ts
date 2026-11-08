@@ -55,10 +55,8 @@ function dedupKey(sessionId: string, contentHash: string, scope?: DedupScope): s
  * across instances. Today's single-instance model does not — do not assume
  * this cache is a cross-process idempotency guarantee.
  *
- * Rollback escape hatch: if `ETHOS_DEDUP_LEGACY=1` is set in the env at
- * cache construction, `shouldSend` always returns true (every send goes
- * through). This restores pre-30.4 behavior in case a regression surfaces
- * in a shipped adapter.
+ * Off switch: a `ttlMs` of 0 (`GatewayConfig.outboundDedupTtlMs: 0`) makes
+ * `shouldSend` always return true. Pinned by 'ttl 0' in `__tests__/dedup.test.ts`.
  */
 export class MessageDedupCache {
   private readonly entries = new Map<string, number>();
@@ -75,7 +73,7 @@ export class MessageDedupCache {
   ) {
     this.ttlMs = opts.ttlMs ?? 30_000;
     this.maxEntries = opts.maxEntries ?? 4096;
-    this.disabled = process.env.ETHOS_DEDUP_LEGACY === '1' || this.ttlMs <= 0;
+    this.disabled = this.ttlMs <= 0;
     this.onDrop = opts.onDrop;
   }
 

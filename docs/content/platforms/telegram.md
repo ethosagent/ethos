@@ -163,7 +163,7 @@ Telegram's Markdown is strict (unmatched `_` or `*` rejects the whole message). 
 Expected. Telegram caps outbound text at 4,096 characters; `chunkText` splits at newlines (>60% of the limit) or spaces. Streamed edits re-flow with `reflowChunks` — first chunks are edited, extras are appended, trailing chunks are deleted.
 
 **A message sent twice on purpose was answered only once.**
-The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable (one-release escape hatch — see `extensions/gateway/src/dedup.ts`).
+The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds for notices and `send_message` sends; a reply is only suppressed when the same reply to the same inbound message is sent twice. Change one character or wait 30 seconds.
 
 **Pairing code expired.**
 Codes live for the configured TTL in `pairing-store.ts`. If the user waited too long, ask them to DM again — a new code is issued. Owners can also `/communications approve-all` to approve every pending sender at once.

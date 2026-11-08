@@ -107,7 +107,7 @@ The gateway holds a `MessageDedupCache` in `extensions/gateway/src/dedup.ts` key
 
 If you find yourself writing `if (this.lastSentText !== text)` inside your adapter, stop. That is the cache's job. The gateway already routed the call through `cache.shouldSend` before invoking `adapter.send`. See [gateway dedup explanation](../../building/explanation/audience-boundary.md) for the design rationale and `extensions/gateway/src/__tests__/dedup.test.ts` for the cases that drive the TTL.
 
-The configuration knobs are at the gateway level: `GatewayConfig.outboundDedupTtlMs` (default 30,000), the env var `ETHOS_DEDUP_LEGACY=1` for one-release rollback. Nothing in the adapter touches these.
+The configuration knobs are at the gateway level: `GatewayConfig.outboundDedupTtlMs` (default 30,000) (`0` disables it). Nothing in the adapter touches these.
 
 The inbound side is different and adapter-local. If your platform delivers duplicate inbounds (webhook retries, polling overlap), set `InboundMessage.messageId` to a stable platform-native id; the gateway dedupes the inbound on `(platform, chatId, messageId)` and silently drops duplicates. The stdio adapter does not need this — terminal lines are not retried.
 
