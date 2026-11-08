@@ -34,9 +34,8 @@ export class ExecTimeoutError extends Error {
  * needs is forwarded and the caller's explicit `env` is layered on top.
  *
  * The same allowlist as `packages/core/src/scoped/scoped-process.ts`,
- * `extensions/tools-process/src/spawn.ts` and
- * `extensions/execution-process-backend/src/index.ts`, copied because this
- * package depends only on `@ethosagent/types`. The four change together.
+ * and `extensions/tools-process/src/spawn.ts`, copied because this
+ * package depends only on `@ethosagent/types`. The three change together.
  * Pinned by the 'LocalExecutionBackend env' cases in `__tests__/local.test.ts`
  * (UBP-048, V-ES-8).
  */

@@ -211,8 +211,8 @@ export class MergedSecretsResolver implements SecretsResolver {
  * already recorded). The host-env allowlists read that list and never forward
  * a name on it to a child process, whatever the name is (V-ES-8):
  * `minimalHostEnv` in packages/core/src/scoped/scoped-process.ts,
- * extensions/tools-process/src/spawn.ts, extensions/execution-local/src/index.ts
- * and extensions/execution-process-backend/src/index.ts. Pinned by
+ * extensions/tools-process/src/spawn.ts and extensions/execution-local/src/index.ts.
+ * Pinned by
  * `__tests__/env-secrets.test.ts`.
  */
 export function loadDotEnv(path: string): void {

@@ -1038,12 +1038,6 @@
       "toolResultText": "value"
     }
   },
-  "@ethosagent/execution-process-backend": {
-    "entry": "extensions/execution-process-backend/src/index.ts",
-    "exports": {
-      "default": "value"
-    }
-  },
   "@ethosagent/execution-ssh": {
     "entry": "extensions/execution-ssh/src/index.ts",
     "exports": {
@@ -3160,12 +3154,6 @@
       "resolveScopedPath": "value",
       "sensitiveDenyPaths": "value",
       "withRealPaths": "value"
-    }
-  },
-  "@ethosagent/storage-memory-backend": {
-    "entry": "extensions/storage-memory-backend/src/index.ts",
-    "exports": {
-      "default": "value"
     }
   },
   "@ethosagent/storage-s3": {

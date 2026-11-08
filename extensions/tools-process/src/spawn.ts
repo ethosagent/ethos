@@ -44,10 +44,8 @@ export interface SpawnResult {
  * must be passed explicitly via the tool's `env` arg, not inherited silently.
  *
  * Copied, not shared, into `packages/core/src/scoped/scoped-process.ts` (the
- * host `terminal`/`run_tests`/`lint` path),
- * `extensions/execution-local/src/index.ts` and
- * `extensions/execution-process-backend/src/index.ts`; the four change
- * together. Pinned by `__tests__/spawn.test.ts` ('allowlist (V-ES-8)').
+ * host `terminal`/`run_tests`/`lint` path) and
+ * `extensions/execution-local/src/index.ts`; the three change together. Pinned by `__tests__/spawn.test.ts` ('allowlist (V-ES-8)').
  */
 const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
   'PATH',

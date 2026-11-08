@@ -15,8 +15,7 @@
 // tell — pinned by `extensions/execution-docker/src/__tests__/attest.test.ts`),
 // `extensions/execution-ssh/src/index.ts:882` (one true field —
 // `noDockerSocket` — because ssh is remote-host trust, not confinement),
-// `extensions/execution-local/src/index.ts:156` and
-// `extensions/execution-process-backend/src/index.ts:138`.
+// and `extensions/execution-local/src/index.ts:156`.
 //
 // What has NOT shipped is a consumer on the composition path. The only
 // non-test importer of `isStrictAttestation` is

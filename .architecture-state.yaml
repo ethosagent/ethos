@@ -178,7 +178,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 152 packages: 11 at Tier 0, 28 at Tier 1, 113 at Tier 2.
+# apps/ carries a tier. 150 packages: 11 at Tier 0, 28 at Tier 1, 111 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -625,23 +625,6 @@ tiers:
     tier: 2
     assigned: 2026-08-12
 
-  # Demoted from Tier 1 by the 2026-08-12 non-docker execution-backends audit:
-  # it is a reference plugin with no production caller, no tests, and a name no
-  # resolution path can reach — `activate()` registers it as
-  # `<pluginId>/process` (packages/plugin-sdk/src/index.ts:606) while
-  # packages/wiring/src/compose-tools.ts resolves the literals `'docker'` (:831)
-  # and `'ssh'` (:580) and nothing else. The audit's original wording — "resolves
-  # the literal `'docker'` and nothing else" — was true on 2026-08-12 and stopped
-  # being true when the ssh execution lane landed `resolveSshExecutionBackend`;
-  # corrected 2026-09-05. The demotion is UNAFFECTED: neither literal is
-  # `<pluginId>/process`, so this package is still unreachable, and its own
-  # promotion condition is NOT met. Promote back the day a resolution path
-  # selects it.
-  extensions/execution-process-backend:
-    package: "@ethosagent/execution-process-backend"
-    tier: 2
-    assigned: 2026-08-12
-
   # Reads only the already-redacted observability.db (extensions/observability-sqlite,
   # Tier 1 — that store is the redaction boundary) and ships it to an operator-configured
   # third-party endpoint. Same shape as extensions/llm-anthropic and
@@ -866,11 +849,6 @@ tiers:
 
   extensions/session-cards:
     package: "@ethosagent/session-cards"
-    tier: 2
-    assigned: 2026-08-12
-
-  extensions/storage-memory-backend:
-    package: "@ethosagent/storage-memory-backend"
     tier: 2
     assigned: 2026-08-12
 

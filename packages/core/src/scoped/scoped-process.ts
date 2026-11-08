@@ -10,11 +10,11 @@ import type { ProcessResult, ScopedProcess, SpawnOpts } from '@ethosagent/types'
  *
  * The same allowlist (`PASSTHROUGH_ENV_KEYS`, `PASSTHROUGH_ENV_PREFIXES`,
  * `SECRET_ENV_NAME`, `isPassthroughEnvKey`) as
- * `extensions/tools-process/src/spawn.ts`,
- * `extensions/execution-local/src/index.ts` and
- * `extensions/execution-process-backend/src/index.ts`, copied rather than
- * imported (core cannot import extensions, and the extensions depend only on
- * types). The four change together. Pinned by `scoped-process-lifetime.test.ts`
+ * `extensions/tools-process/src/spawn.ts` and
+ * `extensions/execution-local/src/index.ts`, copied rather than
+ * imported (core cannot import extensions, and the extensions depend
+ * only on types). The three change together.
+ * Pinned by `scoped-process-lifetime.test.ts`
  * ('env allowlist (V-ES-8)').
  */
 const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
