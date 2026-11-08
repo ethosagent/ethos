@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { minimalHostEnv } from '@ethosagent/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LOG_MAX_BYTES, minimalHostEnv, rotateLogIfNeeded, spawnDetached } from '../spawn';
+import { LOG_MAX_BYTES, rotateLogIfNeeded, spawnDetached } from '../spawn';
 
 let dataDir: string;
 const spawnedPids: number[] = [];

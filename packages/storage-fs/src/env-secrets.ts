@@ -210,8 +210,8 @@ export class MergedSecretsResolver implements SecretsResolver {
  * name it set in `ETHOS_DOTENV_KEYS` (comma-separated, merged with any names
  * already recorded). The host-env allowlists read that list and never forward
  * a name on it to a child process, whatever the name is (V-ES-8):
- * `minimalHostEnv` in packages/core/src/scoped/scoped-process.ts,
- * extensions/tools-process/src/spawn.ts and extensions/execution-local/src/index.ts.
+ * `minimalHostEnv` in packages/core/src/scoped/scoped-process.ts, the one
+ * implementation (tools-process and execution-local import it).
  * Pinned by
  * `__tests__/env-secrets.test.ts`.
  */
