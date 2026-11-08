@@ -121,10 +121,3 @@ export function tokensToCssVariables(tokens: Tokens): string {
   --radius-full: ${radius.full}px;
 }`;
 }
-
-/**
- * @deprecated Use `tokensToCssVariables` — folds layout + surface into one
- * block so a single style injection covers all root-level vars. Kept as a
- * thin alias to avoid breaking external imports during the transition.
- */
-export const tokensToLayoutCss = tokensToCssVariables;

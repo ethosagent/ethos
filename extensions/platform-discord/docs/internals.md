@@ -17,7 +17,7 @@ src/
 ├── clarify-surface.ts        # exported clarify surface helpers
 │
 ├── events/
-│   ├── messages.ts           # messageCreate → mentionOnly triage → channel-mode gate → onMessage
+│   ├── messages.ts           # messageCreate → channel-mode gate → onMessage
 │   └── interactions.ts       # interactionCreate → command dispatch + approval routing + clarify modals
 │
 ├── commands/                 # slash command handlers (pure dispatch)
@@ -70,7 +70,7 @@ src/
 
 **Guild-scoped vs global command registration.** `registerSlashCommands()` uses `Routes.applicationGuildCommands(appId, guildId)` for a guild target (instant, takes effect in seconds) or `Routes.applicationCommands(appId)` for global (overwrites the entire application command set, takes up to one hour to propagate). Registration failures are non-fatal — the bot continues to work; slash commands just won't appear until registration succeeds. Prefer guild-scoped during development.
 
-**`mentionOnly` triage.** The message handler checks `mentionOnly` and the channel mode before emitting to `onMessage`. Messages that fail both checks are discarded at the adapter layer, before reaching the gateway or agent loop. This keeps the gateway clean of events it would drop anyway.
+**Channel-mode triage.** The message handler checks the channel mode before emitting to `onMessage`. Messages that fail the check are discarded at the adapter layer, before reaching the gateway or agent loop. This keeps the gateway clean of events it would drop anyway.
 
 **Chunk map and reflow.** `editMessage()` uses `reflowChunks` to keep edits coherent when the agent streams a growing response: it edits existing Discord messages in place when the chunk count is unchanged, appends new messages when the text grows beyond 2000 characters, and deletes trailing messages when the text shrinks. The chunk map (capped at 1024 entries, FIFO eviction) tracks which Discord message IDs belong to which logical response.
 
@@ -95,7 +95,7 @@ src/
 | `src/clarify-blocks.ts` | `clarifyModalPayload` builder for clarification modal cards. |
 | `src/clarify-interactions.ts` | Wiring for clarify interaction events. |
 | `src/clarify-surface.ts` | Exported helpers for the clarify surface contract. |
-| `src/events/messages.ts` | `messageCreate` handler — `mentionOnly` triage, channel-mode gate, receipt reaction, attachment ingestion. |
+| `src/events/messages.ts` | `messageCreate` handler — channel-mode gate, receipt reaction, attachment ingestion. |
 | `src/events/interactions.ts` | `interactionCreate` handler — slash command dispatch, approval button routing, clarify modal routing. |
 | `src/commands/` | Slash subcommand handlers (`ask`, `help`, `new`, `personality`, `memory`, `status`, `kanban`) + `dispatch`. |
 | `src/blocks/` | Pure Discord embed builders — no I/O, no discord.js client dependency. |

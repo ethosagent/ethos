@@ -38,8 +38,6 @@ A bot in a guild channel is in one of three modes. Default is `mention_only`.
 
 **Cost note for `all` mode.** A bot in `all` mode on a busy channel responds to every message, including ones that probably weren't meant for it. The adapter does not enforce rate limits. Choose this mode only for channels where all activity is directed at the bot.
 
-**`mentionOnly` adapter flag.** When `DiscordAdapterConfig.mentionOnly` is `true` (the default), inbound messages without a direct @mention of the bot are dropped before reaching the gateway, regardless of channel mode. Set it to `false` to let channel mode be the sole gating mechanism. This flag is a performance optimisation — it avoids waking the agent loop for messages that would be dropped anyway.
-
 ---
 
 ## Running multiple bots in one server
@@ -48,7 +46,7 @@ You can install multiple Discord applications into the same server — one per p
 
 - Each bot's lane key is `discord:<botKey>:<channelId>[:<threadId>]`. Conversations never cross bots.
 - `botKey` defaults to a 24-char `sha256(token)` prefix, or you can set `discord.apps.<n>.id` explicitly for a stable, log-friendly identifier.
-- A user can chat with multiple bots in the same channel; each sees only the messages addressed to it (per the channel mode and `mentionOnly` setting).
+- A user can chat with multiple bots in the same channel; each sees only the messages addressed to it (per the channel mode).
 
 ---
 
@@ -116,7 +114,7 @@ If something looks wrong after Step 5, work top-to-bottom — earlier rows block
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ethos gateway start` exits with `bind.name does not resolve` | A `discord.apps.<n>.bind.name` doesn't match any personality or team on disk | Run `ethos personality list` (and check `~/.ethos/teams/`); correct the `bind.name` |
-| Bot never replies in a guild channel | `mentionOnly: true` (default) and you didn't @mention the bot, or channel mode is `mention_only` | @mention the bot explicitly, or set `discord.apps.<n>.mentionOnly: false` and configure a permissive channel mode |
+| Bot never replies in a guild channel | channel mode is `mention_only` (the default) and you didn't @mention the bot | @mention the bot explicitly, or set a permissive channel mode |
 | `message.content` is empty / bot seems to receive messages but can't read them | **Message Content Intent** not enabled in the Developer Portal | Go to Developer Portal → your app → Bot → Privileged Gateway Intents → enable **Message Content Intent**; save; restart the gateway |
 | `/ethos` doesn't appear in the slash-command picker | `applicationId` or `registerCommandsTo` not set in config, or global commands haven't propagated yet | Set both config fields and restart; if using `registerCommandsTo: 'global'`, wait up to one hour for propagation |
 | Bot can't receive DMs | `Channel`, `Message`, or `Reaction` Partials missing — this is a code-level issue in custom forks | The adapter always initialises all three Partials; ensure you haven't stripped them from a fork |

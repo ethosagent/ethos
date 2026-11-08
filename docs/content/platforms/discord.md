@@ -132,7 +132,7 @@ Foreground-start the gateway and confirm `✓ Discord online`. The adapter's `he
 
 **Mention round-trips in a guild.**
 
-Post `@Ethos ping` in a channel the bot can see. Reply arrives in the same channel. A non-mentioned `ping` produces no reply when `mentionOnly: true`.
+Post `@Ethos ping` in a channel the bot can see. Reply arrives in the same channel. A non-mentioned `ping` produces no reply when the channel mode is `mention_only`.
 
 **DM round-trips.**
 

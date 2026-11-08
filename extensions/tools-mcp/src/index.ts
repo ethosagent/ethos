@@ -61,7 +61,6 @@ export type {
   CompleteOptions,
   CompleteResult,
   InstallFlowStatus,
-  McpInstallFlowDeps,
   McpInstallFlowOptions,
   PersonalityUpdater,
   StartOptions,

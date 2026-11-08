@@ -149,7 +149,7 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 | `not_available` | Tool listed in toolset but no scheduler wired (e.g. `ethos chat` profile) | Run from `ethos gateway` or `ethos serve` |
 | `input_invalid` | `active_hours` is not `HH:MM-HH:MM` or has equal start and end, or `create` sets it on a one-shot schedule | Use a window like `09:00-21:00`, or a recurring schedule |
 | `execution_failed` | `update` leaves a window on a one-shot schedule (the scheduler refuses it) | Clear the window with `active_hours: "off"`, or keep a recurring schedule |
-| `input_invalid` | Cron expression failed `isValidCronExpression` | Fix the 5-field syntax |
+| `input_invalid` | Schedule failed `isValidSchedule` | Fix the 5-field syntax |
 | `input_invalid` | Missing required field for the action | Provide it |
 | `input_invalid` | Any action called without personality context | Ensure a personality is active |
 | `input_invalid` | `Job not found: <id>` — the id does not exist or belongs to another personality | Use an id from `list` |

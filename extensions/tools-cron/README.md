@@ -20,7 +20,7 @@ The `@ethosagent/cron` package is the scheduler service — it owns `jobs.json` 
 
 `createCronTool(scheduler)` (`src/index.ts`) returns a single-element `Tool[]` containing the `cron` tool, closing over the `CronScheduler` instance. The scheduler is constructed in `apps/ethos/src/wiring.ts` and shared with the cron service so tool-driven mutations and tick-driven runs operate on the same `jobs.json`.
 
-The `action` field dispatches to per-action handlers. `create` validates the cron expression with `isValidCronExpression` from `@ethosagent/cron` and always pins the job to the caller's personality. `get` returns full job detail plus recent run timestamps. `read_run` reads the output of a specific historical run. `update` is not yet implemented (Phase C). `run` caps output at 10 KB via `maxResultChars`.
+The `action` field dispatches to per-action handlers. `create` validates the schedule through `CronScheduler.createJob` (`isValidSchedule`, `extensions/cron/src/schedule.ts`) and always pins the job to the caller's personality. `get` returns full job detail plus recent run timestamps. `read_run` reads the output of a specific historical run. `update` is not yet implemented (Phase C). `run` caps output at 10 KB via `maxResultChars`.
 
 A backward-compat alias `createCronTools` is also exported.
 

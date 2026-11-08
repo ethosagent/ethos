@@ -4,13 +4,8 @@ import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CronArmingBackend, CronJob, CronRunResult, CronSchedulerConfig } from '../index';
-import {
-  CRON_RUNNING_STALE_MS,
-  CronScheduler,
-  isValidCronExpression,
-  nextRun,
-  nextRunAfter,
-} from '../index';
+import { CRON_RUNNING_STALE_MS, CronScheduler } from '../index';
+import { isValidSchedule, nextRunForSchedule } from '../schedule';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,37 +60,37 @@ function makeScheduler(opts?: {
 // Cron expression helpers
 // ---------------------------------------------------------------------------
 
-describe('isValidCronExpression', () => {
+describe('isValidSchedule', () => {
   it('accepts valid expressions', () => {
-    expect(isValidCronExpression('0 8 * * *')).toBe(true);
-    expect(isValidCronExpression('0 8 * * 1-5')).toBe(true);
-    expect(isValidCronExpression('*/15 * * * *')).toBe(true);
-    expect(isValidCronExpression('0 0 1 * *')).toBe(true);
+    expect(isValidSchedule('0 8 * * *')).toBe(true);
+    expect(isValidSchedule('0 8 * * 1-5')).toBe(true);
+    expect(isValidSchedule('*/15 * * * *')).toBe(true);
+    expect(isValidSchedule('0 0 1 * *')).toBe(true);
   });
 
   it('rejects invalid expressions', () => {
-    expect(isValidCronExpression('not-a-cron')).toBe(false);
-    expect(isValidCronExpression('60 8 * * *')).toBe(false);
-    expect(isValidCronExpression('')).toBe(false);
+    expect(isValidSchedule('not-a-cron')).toBe(false);
+    expect(isValidSchedule('60 8 * * *')).toBe(false);
+    expect(isValidSchedule('')).toBe(false);
   });
 });
 
-describe('nextRun', () => {
+describe('nextRunForSchedule', () => {
   it('returns a future date for a valid expression', () => {
-    const result = nextRun('0 8 * * *');
+    const result = nextRunForSchedule('0 8 * * *', new Date());
     expect(result).toBeInstanceOf(Date);
     expect(result?.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('returns null for invalid expression', () => {
-    expect(nextRun('invalid')).toBeNull();
+    expect(nextRunForSchedule('invalid', new Date())).toBeNull();
   });
 });
 
-describe('nextRunAfter', () => {
+describe('nextRunForSchedule with an anchor', () => {
   it('returns a date strictly after the given anchor', () => {
     const anchor = new Date('2026-01-01T09:00:00Z'); // 9am UTC
-    const result = nextRunAfter('0 8 * * *', anchor); // daily at 8am
+    const result = nextRunForSchedule('0 8 * * *', anchor); // daily at 8am
     expect(result).toBeInstanceOf(Date);
     expect(result?.getTime()).toBeGreaterThan(anchor.getTime());
   });

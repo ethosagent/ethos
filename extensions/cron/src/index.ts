@@ -2015,25 +2015,6 @@ export {
   NoopArmingBackend,
 } from './trigger';
 
-// ---------------------------------------------------------------------------
-// Backward-compat helpers — delegate to the new schedule parser
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use `isValidSchedule` — this thin wrapper keeps existing callers working. */
-export function isValidCronExpression(expr: string): boolean {
-  return isValidSchedule(expr);
-}
-
-/** @deprecated Use `nextRunForSchedule` — this thin wrapper keeps existing callers working. */
-export function nextRun(schedule: string): Date | null {
-  return nextRunForSchedule(schedule, new Date()) ?? null;
-}
-
-/** @deprecated Use `nextRunForSchedule` — this thin wrapper keeps existing callers working. */
-export function nextRunAfter(schedule: string, after: Date): Date | null {
-  return nextRunForSchedule(schedule, after) ?? null;
-}
-
 /**
  * Reverse the timestamp encoding used by `executeJob` when persisting
  * output (`<ISO>.md` with `:` and `.` replaced by `-`). Returns the raw

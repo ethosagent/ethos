@@ -173,9 +173,6 @@ export interface McpInstallFlowOptions {
   now?: () => Date;
 }
 
-/** @deprecated Retained for backward compatibility with earlier wiring. */
-export type McpInstallFlowDeps = McpInstallFlowOptions;
-
 const DEFAULT_PENDING_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_TERMINAL_RETENTION_MS = 60 * 1000;
 

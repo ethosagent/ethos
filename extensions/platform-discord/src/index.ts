@@ -35,8 +35,6 @@ export type { DiscordAdapterConfig };
 
 interface DiscordAdapterConfig {
   token: string;
-  /** @deprecated Use `defaultChannelMode` instead. */
-  mentionOnly?: boolean;
   /** Stable bot identity, computed once in wiring (`deriveBotKey`). Required —
    *  the adapter no longer derives its own key, so routing (lane keys,
    *  `InboundMessage.botKey`) is stamped from this single source of truth. */
@@ -316,15 +314,7 @@ export class DiscordAdapter
     this.maxInboundMediaBytes = config.maxInboundMediaBytes;
     this.missedMessageBackfill = config.missedMessageBackfill;
 
-    // Gap 9: derive defaultChannelMode from deprecated mentionOnly when
-    // the caller hasn't set defaultChannelMode explicitly.
-    if (config.defaultChannelMode !== undefined) {
-      this.defaultChannelMode = config.defaultChannelMode;
-    } else if (config.mentionOnly !== undefined) {
-      this.defaultChannelMode = config.mentionOnly ? 'mention_only' : 'all';
-    } else {
-      this.defaultChannelMode = DEFAULT_CHANNEL_MODE;
-    }
+    this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
 
     if (config.storage) {
       const dir = config.discordDir ?? 'discord';

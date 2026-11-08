@@ -10,12 +10,11 @@ Ethos personalities can schedule recurring work (morning briefings, periodic syn
 
 - `CronScheduler` — the service. `start()` / `stop()` lifecycle, `createJob` / `listJobs` / `getJob` / `deleteJob` / `pauseJob` / `resumeJob` / `runJobNow` mutation methods. Constructor takes a `runJob` callback that the host (CLI wiring) supplies to actually execute the prompt against an `AgentLoop`.
 - `CronJob`, `CronRunResult`, `CronSchedulerConfig`, `MissedRunPolicy`, `JobStatus` — types consumed by `@ethosagent/tools-cron` and the CLI.
-- `isValidCronExpression(expr)` — predicate over `croner`'s `Cron` constructor.
-- `nextRun(schedule)` / `nextRunAfter(schedule, after)` — date helpers used both internally and by the CLI to display next-run hints.
+- Schedule parsing lives in `src/schedule.ts` (`isValidSchedule`, `nextRunForSchedule`); the old `isValidCronExpression` / `nextRun` / `nextRunAfter` wrappers were removed.
 
 ## How it works
 
-`start()` (`src/index.ts:98`) fires `tick()` immediately (so missed-run jobs catch up on launch) and then schedules `setInterval(tick, tickIntervalMs)`. `tick()` (`src/index.ts:179`) reads the current `jobs.json`, walks every active job, compares `nextRunAt` to now, and either skips (advancing `nextRunAt` via `nextRunAfter`) or executes via `executeJob`, depending on `missedRunPolicy`.
+`start()` (`src/index.ts:98`) fires `tick()` immediately (so missed-run jobs catch up on launch) and then schedules `setInterval(tick, tickIntervalMs)`. `tick()` (`src/index.ts:179`) reads the current `jobs.json`, walks every active job, compares `nextRunAt` to now, and either skips (advancing `nextRunAt` via `nextRunForSchedule`) or executes via `executeJob`, depending on `missedRunPolicy`.
 
 `executeJob` (`src/index.ts:220`) calls the host-supplied `runJob` callback, then writes the output to `<cronDir>/output/<job-id>/<timestamp>.md`. Timestamps in filenames have `:` and `.` replaced with `-` so they're safe on every filesystem.
 
@@ -42,5 +41,5 @@ Job ids are derived from `name` via `slugify` (`src/index.ts:305`) — lowercase
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | `CronScheduler` class, `withLock` helper, cron expression helpers (`isValidCronExpression`, `nextRun`, `nextRunAfter`), and the `CronJob` / `CronRunResult` / `CronSchedulerConfig` / `MissedRunPolicy` / `JobStatus` types. |
+| `src/index.ts` | `CronScheduler` class, `withLock` helper, and the `CronJob` / `CronRunResult` / `CronSchedulerConfig` / `MissedRunPolicy` / `JobStatus` types. |
 | `src/__tests__/` | Vitest coverage for tick behaviour, missed-run policies, and lock contention. |

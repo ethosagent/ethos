@@ -1824,21 +1824,6 @@ export class TelegramAdapter
     }
   }
 
-  /** @deprecated Back-compat shim — delegates to {@link sendVoiceNote}. */
-  async sendVoice(
-    chatId: string,
-    audio: Uint8Array,
-    opts?: { threadId?: string; caption?: string },
-  ): Promise<DeliveryResult> {
-    return this.sendVoiceNote(chatId, audio, {
-      format: 'opus',
-      mimeType: 'audio/ogg; codecs=opus',
-      filename: 'voice.ogg',
-      ...(opts?.threadId ? { threadId: opts.threadId } : {}),
-      ...(opts?.caption ? { caption: opts.caption } : {}),
-    });
-  }
-
   /**
    * Send playable audio that is NOT a voice note. This used to call
    * `sendDocument`, which is why TTS replies arrived as a downloadable file

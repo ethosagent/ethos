@@ -90,12 +90,6 @@ export function draftPluginGrant(input: DraftPluginGrantInput): {
 
 export interface PinPluginToPersonalityInput {
   storage: Storage;
-  /**
-   * @deprecated Unused since FU-1: the pin is the published tarball's digest,
-   * not a digest of a file under this prefix. Kept only so existing callers
-   * compile; remove once `PluginsService.install` stops passing it.
-   */
-  pluginsDir?: string;
   /** `<dataDir>/personalities/<id>`. */
   personalityDir: string;
   draft: PluginGrantDraft;

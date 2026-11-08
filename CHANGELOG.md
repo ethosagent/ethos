@@ -13,6 +13,8 @@ Material changes to `@ethosagent/cli` and its workspace packages. Release-versio
 
 - **BREAKING (env) — `ETHOS_DEDUP_LEGACY` is no longer read.** `MessageDedupCache` (`extensions/gateway/src/dedup.ts`) used to disable itself when the variable was `1`; that rollback hatch is gone. `GatewayConfig.outboundDedupTtlMs: 0` remains the off switch, pinned by the 'ttl 0' cases in `extensions/gateway/src/__tests__/dedup.test.ts`. The variable is also removed from `docs/content/` (platform pages, CLI reference, troubleshooting, adapter tutorial) and `.claude/rules/gateway-dedup.md`. **Behavior change:** a gateway process started with `ETHOS_DEDUP_LEGACY=1` now dedups outbound messages again.
 
+- **Internal `@deprecated` shims removed (no published package affected).** All are in `"private": true` workspace packages and had no non-test caller: `isValidCronExpression`, `nextRun` and `nextRunAfter` from `@ethosagent/cron` (use `isValidSchedule` / `nextRunForSchedule`, `extensions/cron/src/schedule.ts`); `TelegramAdapter.sendVoice` (use `sendVoiceNote`); `DiscordAdapterConfig.mentionOnly` and its mapping to `defaultChannelMode` (set `defaultChannelMode`); the `McpInstallFlowDeps` alias of `McpInstallFlowOptions` in `@ethosagent/tools-mcp`; `PinPluginToPersonalityInput.pluginsDir` in `@ethosagent/plugin-loader` (no caller passed it); `tokensToLayoutCss` in `@ethosagent/design-tokens` (alias of `tokensToCssVariables`). The `mentionOnly` prose is removed from the Discord docs. Not changed: the MCP `sse` transport, the cron `deliver` alias, `@ethosagent/plugin-sdk` and `packages/types/src/platform.ts`.
+
 ## 0.9.0 — 2026-09-29
 
 ### Fixed

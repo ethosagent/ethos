@@ -189,15 +189,6 @@ describe('TelegramAdapter.sendVoiceNote', () => {
 });
 
 describe('TelegramAdapter legacy audio methods', () => {
-  it('sendVoice delegates to the one sendVoiceNote implementation', async () => {
-    const a = mk();
-    const res = await a.sendVoice('123', AUDIO, { threadId: '5', caption: 'hi' });
-    expect(res).toEqual({ ok: true, messageId: '30' });
-    const [, input, opts] = mockApi.sendVoice.mock.calls[0] as [number, InputFileLike, SendOpts];
-    expect(input.filename).toBe('voice.ogg');
-    expect(opts).toEqual({ caption: 'hi', message_thread_id: 5 });
-  });
-
   it('sendAudio uses sendAudio, not sendDocument', async () => {
     const a = mk();
     const res = await a.sendAudio('123', AUDIO, 'reply.mp3', { mimeType: 'audio/mpeg' });
