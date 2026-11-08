@@ -3250,6 +3250,21 @@
       "writeRuntime": "value"
     }
   },
+  "@ethosagent/test-kit": {
+    "entry": "packages/test-kit/src/index.ts",
+    "exports": {
+      "FakeAdapter": "type",
+      "ScriptedLLM": "type",
+      "ScriptedLLMCall": "type",
+      "ScriptedStep": "type",
+      "ScriptedToolCall": "type",
+      "collect": "value",
+      "drain": "value",
+      "makeCtx": "value",
+      "makeFakeAdapter": "value",
+      "scriptedLLM": "value"
+    }
+  },
   "@ethosagent/tools-a2a": {
     "entry": "extensions/tools-a2a/src/index.ts",
     "exports": {

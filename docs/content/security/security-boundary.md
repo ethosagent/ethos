@@ -17,7 +17,7 @@ This page is the list. It has three parts: the **tiers** (which code is held to 
 
 ### The three tiers {#tiers}
 
-Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 150 packages: 11 at Tier 0, 28 at Tier 1, 111 at Tier 2.
+Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 151 packages: 11 at Tier 0, 28 at Tier 1, 112 at Tier 2.
 
 The assignment is committed **before** any report arrives. A tier decided in the same week a report lands against that module is evidence of nothing, and a reporter reading `git log` can say so with a timestamp.
 
@@ -43,7 +43,7 @@ The per-file lists for core and wiring are in the sidecar under `kernel_paths`. 
 | Data at rest and credentials | `session-sqlite`, `storage-crypto`, `secrets-aws`, `plugin-sdk`, `worker-router` |
 | Audit and delivery | `observability-sqlite`, `delivery-ledger` |
 
-**Tier 2 — extensions, not owned.** The remaining 111 packages. Best-effort. A bug is a bug, not a CVE. They inherit exactly what the kernel enforces and nothing more.
+**Tier 2 — extensions, not owned.** The remaining 112 packages. Best-effort. A bug is a bug, not a CVE. They inherit exactly what the kernel enforces and nothing more.
 
 > **The way to make a Tier 2 extension safe is not to review it harder. It is to make the kernel enforce the property.**
 

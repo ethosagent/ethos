@@ -1,0 +1,16 @@
+{
+  "name": "@ethosagent/test-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Canonical test helpers (drain, collect, makeCtx, scriptedLLM, makeFakeAdapter) that need nothing beyond @ethosagent/types. Test files only; never imported by shipped code.",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*"
+  }
+}
