@@ -83,3 +83,19 @@ describe('makeFakeAdapter', () => {
     expect(adapter.maxMessageLength).toBe(3000);
   });
 });
+
+describe('scriptedLLM call snapshots', () => {
+  it('does not change recorded calls when the caller mutates its arguments afterwards', async () => {
+    const llm = scriptedLLM(['x']);
+    const messages = [{ role: 'user' as const, content: 'q' }];
+    const tools = [{ name: 't', description: 'd', parameters: {} }];
+    const options = { maxTokens: 5 };
+    await collect(llm.complete(messages, tools, options));
+    messages.push({ role: 'user', content: 'later' });
+    tools.pop();
+    options.maxTokens = 99;
+    expect(llm.calls[0]?.messages).toHaveLength(1);
+    expect(llm.calls[0]?.tools).toHaveLength(1);
+    expect(llm.calls[0]?.options.maxTokens).toBe(5);
+  });
+});

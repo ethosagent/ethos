@@ -67,7 +67,8 @@ export type ScriptedLLM = LLMProvider & { readonly calls: ScriptedLLMCall[] };
  * An `LLMProvider` that answers each `complete()` call with the next step. A
  * text step ends the turn (`end_turn`); a tool-call step ends with `tool_use`.
  * Once the steps run out it answers `'ok'`, so a loop that keeps asking still
- * terminates. Every call's arguments are recorded on `calls`.
+ * terminates. Every call's arguments are recorded on `calls` as shallow snapshots, so later
+ * mutation of the caller's arrays does not rewrite history.
  */
 export function scriptedLLM(steps: ScriptedStep[] = []): ScriptedLLM {
   let i = 0;
@@ -80,7 +81,7 @@ export function scriptedLLM(steps: ScriptedStep[] = []): ScriptedLLM {
     supportsThinking: false,
     calls,
     async *complete(messages, tools, options): AsyncIterable<CompletionChunk> {
-      calls.push({ messages, tools, options });
+      calls.push({ messages: [...messages], tools: [...tools], options: { ...options } });
       const step = steps[i++];
       if (step === undefined || typeof step === 'string') {
         yield { type: 'text_delta', text: step ?? 'ok' };

@@ -42,6 +42,9 @@ interface WorkspacePackage {
   private: boolean;
 }
 
+/** Glob roots in pnpm-workspace.yaml that hold no packages today (no `plugins/` dir exists). */
+const OPTIONAL_GLOB_ROOTS = new Set(['plugins']);
+
 /** Package directories named by `pnpm-workspace.yaml`: `x/*` globs and literal paths. */
 function workspaceDirs(): string[] {
   const text = readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8');
@@ -60,7 +63,11 @@ function workspaceDirs(): string[] {
     }
     if (pattern.endsWith('/*') && !pattern.slice(0, -2).includes('*')) {
       const root = pattern.slice(0, -2);
-      if (!existsSync(join(REPO_ROOT, root))) continue;
+      if (!existsSync(join(REPO_ROOT, root))) {
+        // pnpm accepts a glob with no matches; only roots named here may be absent.
+        if (OPTIONAL_GLOB_ROOTS.has(root)) continue;
+        throw new Error(`pnpm-workspace.yaml glob "${pattern}" names a missing root "${root}"`);
+      }
       for (const d of readdirSync(join(REPO_ROOT, root)).sort()) dirs.push(`${root}/${d}`);
     } else if (!pattern.includes('*') && existsSync(join(REPO_ROOT, pattern))) {
       dirs.push(pattern);
