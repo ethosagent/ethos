@@ -1,4 +1,4 @@
-import type { ToolContext } from '@ethosagent/types';
+import { EthosError, type ToolContext } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   createDashboardAddPanelTool,
@@ -95,7 +95,11 @@ describe('dashboard_import surfaces store validation errors (WEB-004 4c)', () =>
 describe('dashboard SQL guard on the agent tool path', () => {
   const multi = 'SELECT 1; DELETE FROM dashboards';
   const refuse = () => {
-    throw new Error('SQL query must not contain multiple statements');
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: 'SQL query must not contain multiple statements',
+      action: 'Submit a single SELECT statement.',
+    });
   };
 
   it('dashboard_add_panel rejects a non-SELECT before reaching the store', async () => {
@@ -138,6 +142,7 @@ describe('dashboard SQL guard on the agent tool path', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('input_invalid');
+      expect(result).toMatchObject({ field: 'sql_query' });
       expect(result.error).toMatch(/multiple statements/);
     }
   });
@@ -149,7 +154,74 @@ describe('dashboard SQL guard on the agent tool path', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('input_invalid');
+      expect(result).toMatchObject({ field: 'sql_query' });
       expect(result.error).toMatch(/multiple statements/);
     }
+  });
+
+  it('dashboard_update_panel reports the SELECT refusal against sql_query', async () => {
+    const store = makeStore({
+      updatePanel: () => {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: 'SQL query must start with SELECT',
+          action: 'Submit a SELECT statement.',
+        });
+      },
+    });
+    const tool = createDashboardUpdatePanelTool(store);
+    const result = await tool.execute({ panel_id: 'panel1', sql_query: 'x' }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result).toMatchObject({ field: 'sql_query' });
+  });
+
+  it('dashboard_add_panel does not report a non-validation store failure as input_invalid', async () => {
+    const store = makeStore({
+      verifyOwner: () => true,
+      getNextRow: () => 0,
+      addPanel: () => {
+        throw new Error('SQLITE_FULL: database or disk is full');
+      },
+    });
+    const tool = createDashboardAddPanelTool(store);
+    await expect(
+      tool.execute(
+        {
+          dashboard_id: 'd1',
+          block_type: 'table',
+          content: '[]',
+          query_type: 'sql',
+          sql_query: 'SELECT 1',
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/SQLITE_FULL/);
+  });
+
+  it('dashboard_add_panel does not map a non-INVALID_INPUT EthosError to input_invalid', async () => {
+    const store = makeStore({
+      verifyOwner: () => true,
+      getNextRow: () => 0,
+      addPanel: () => {
+        throw new EthosError({
+          code: 'TOOL_EXECUTION_FAILED',
+          cause: 'disk full',
+          action: 'Free space.',
+        });
+      },
+    });
+    const tool = createDashboardAddPanelTool(store);
+    await expect(
+      tool.execute(
+        {
+          dashboard_id: 'd1',
+          block_type: 'table',
+          content: '[]',
+          query_type: 'sql',
+          sql_query: 'SELECT 1',
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/disk full/);
   });
 });

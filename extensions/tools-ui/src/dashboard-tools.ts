@@ -1,4 +1,4 @@
-import type { Tool, ToolResult } from '@ethosagent/types';
+import { EthosError, type Tool, type ToolResult } from '@ethosagent/types';
 
 export interface DashboardToolStore {
   createDashboard(params: {
@@ -270,12 +270,12 @@ export function createDashboardAddPanelTool(
           h,
         });
       } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : 'Invalid panel',
-          code: 'input_invalid',
-          field: 'sql_query',
-        };
+        // Only the store's typed validation refusals (interpolate-params.ts) are
+        // the agent's to fix; FK/SQLITE_FULL etc. must not read as bad SQL.
+        if (err instanceof EthosError && err.code === 'INVALID_INPUT') {
+          return { ok: false, error: err.message, code: 'input_invalid', field: 'sql_query' };
+        }
+        throw err;
       }
 
       let value = `Panel added: '${args.title ?? 'Untitled'}' (panel_id: ${result.id})\nGrid: col=${col}, row=${row}, w=${w}, h=${h}\nDashboard: /dashboards/${args.dashboard_id}`;
