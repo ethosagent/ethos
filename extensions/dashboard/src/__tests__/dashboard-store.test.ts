@@ -286,4 +286,65 @@ describe('DashboardStore', () => {
     const { panelId } = panelWithRegionSchema();
     expect(() => store.updatePanel(panelId, { paramDefaults: { region: 'eu' } })).not.toThrow();
   });
+
+  // ------------------------------------------------------------------------
+  // Panel SQL guard: the agent tools write through the store directly
+  // ------------------------------------------------------------------------
+
+  describe('panel SQL guard', () => {
+    function newPanel(sqlQuery: string): { id: string } {
+      const { id: dashboardId } = store.createDashboard({ userId: 'u1', title: 'T' });
+      return store.addPanel({
+        dashboardId,
+        blockType: 'table',
+        content: '[]',
+        queryType: 'sql',
+        sqlQuery,
+        col: 0,
+        row: 0,
+        w: 6,
+        h: 4,
+      });
+    }
+
+    const storedSql = (id: string): unknown =>
+      (
+        db.prepare('SELECT sql_query FROM dashboard_panels WHERE id = ?').get(id) as
+          | { sql_query: string }
+          | undefined
+      )?.sql_query;
+
+    it('addPanel refuses a multi-statement query', () => {
+      expect(() => newPanel('SELECT 1; DELETE FROM dashboards')).toThrow(/multiple statements/);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM dashboard_panels').get()).toEqual({ n: 0 });
+    });
+
+    it('addPanel refuses a non-SELECT query', () => {
+      expect(() => newPanel('DELETE FROM dashboards')).toThrow(/SELECT/);
+    });
+
+    it('addPanel accepts a single SELECT with a trailing semicolon', () => {
+      expect(() => newPanel('SELECT 1;')).not.toThrow();
+    });
+
+    it('updatePanel refuses a multi-statement query and leaves the stored SQL unchanged', () => {
+      const { id } = newPanel('SELECT 1');
+      expect(() => store.updatePanel(id, { sqlQuery: 'SELECT 1; DELETE FROM dashboards' })).toThrow(
+        /multiple statements/,
+      );
+      expect(storedSql(id)).toBe('SELECT 1');
+    });
+
+    it('updatePanel refuses a non-SELECT query even without queryType in the patch', () => {
+      const { id } = newPanel('SELECT 1');
+      expect(() => store.updatePanel(id, { sqlQuery: 'DROP TABLE dashboards' })).toThrow(/SELECT/);
+    });
+
+    it('updatePanel still accepts a SELECT and patches that omit sqlQuery', () => {
+      const { id } = newPanel('SELECT 1');
+      expect(() => store.updatePanel(id, { sqlQuery: 'SELECT 2' })).not.toThrow();
+      expect(() => store.updatePanel(id, { title: 'x' })).not.toThrow();
+      expect(storedSql(id)).toBe('SELECT 2');
+    });
+  });
 });

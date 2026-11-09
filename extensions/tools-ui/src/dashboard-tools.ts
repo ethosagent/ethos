@@ -251,22 +251,32 @@ export function createDashboardAddPanelTool(
       const w = args.w ?? 6;
       const h = args.h ?? 4;
 
-      const result = store.addPanel({
-        dashboardId: args.dashboard_id,
-        title: args.title,
-        blockType: args.block_type,
-        content: args.content,
-        queryType,
-        prompt: args.prompt,
-        sqlQuery: args.sql_query,
-        pluginId: args.plugin_id,
-        dataSourceId: args.data_source_id,
-        cronSchedule: args.cron_schedule,
-        col,
-        row,
-        w,
-        h,
-      });
+      let result: { id: string };
+      try {
+        result = store.addPanel({
+          dashboardId: args.dashboard_id,
+          title: args.title,
+          blockType: args.block_type,
+          content: args.content,
+          queryType,
+          prompt: args.prompt,
+          sqlQuery: args.sql_query,
+          pluginId: args.plugin_id,
+          dataSourceId: args.data_source_id,
+          cronSchedule: args.cron_schedule,
+          col,
+          row,
+          w,
+          h,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'Invalid panel',
+          code: 'input_invalid',
+          field: 'sql_query',
+        };
+      }
 
       let value = `Panel added: '${args.title ?? 'Untitled'}' (panel_id: ${result.id})\nGrid: col=${col}, row=${row}, w=${w}, h=${h}\nDashboard: /dashboards/${args.dashboard_id}`;
 
@@ -469,7 +479,8 @@ export function createDashboardUpdatePanelTool(
           ok: false,
           error: err instanceof Error ? err.message : 'Invalid panel update',
           code: 'input_invalid',
-          field: 'param_defaults',
+          field:
+            err instanceof Error && /SQL query/.test(err.message) ? 'sql_query' : 'param_defaults',
         };
       }
       return {

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type Database from '@ethosagent/sqlite';
 import { EthosError } from '@ethosagent/types';
-import { findInvalidParamKeys, type ParamDef, parseImportPayload } from './interpolate-params';
+import {
+  assertSelectOnlySql,
+  findInvalidParamKeys,
+  type ParamDef,
+  parseImportPayload,
+} from './interpolate-params';
 
 export interface CreateDashboardParams {
   userId: string;
@@ -55,6 +60,9 @@ export class DashboardStore {
   }
 
   addPanel(params: AddPanelParams): { id: string } {
+    // Panel SQL is executed by the refresh path, so the store itself refuses
+    // anything but a single SELECT: the agent tools reach this method directly.
+    if (params.sqlQuery) assertSelectOnlySql(params.sqlQuery);
     const id = randomUUID();
     const now = Date.now();
     this.db
@@ -123,6 +131,7 @@ export class DashboardStore {
       paramDefaults?: Record<string, string>;
     },
   ): void {
+    if (patch.sqlQuery) assertSelectOnlySql(patch.sqlQuery);
     // Panel `paramDefaults` is a resolution source for interpolateParams, so it
     // is a SQL-injection sink just like dashboard params. Vet it against the
     // owning dashboard's schema before persisting.
