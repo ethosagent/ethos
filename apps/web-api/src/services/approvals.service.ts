@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { sanitizeApprovalNote } from '@ethosagent/surface-kit';
 import { type ApprovalLease, EthosError, isLeaseActive } from '@ethosagent/types';
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import type { AllowlistRepository } from '../repositories/allowlist.repository';
@@ -43,7 +44,12 @@ export interface ApprovalRequestInput {
   hardline?: boolean;
 }
 
-export type ApprovalDecision = { decision: 'allow' } | { decision: 'deny'; reason: string };
+// Sibling of `apps/ethos/src/approval-coordinator.ts`: `note` is the user's
+// sanitized redirect text, set only by `ApprovalsService.deny`
+// (apps/web-api/src/__tests__/services/approvals.service.test.ts).
+export type ApprovalDecision =
+  | { decision: 'allow' }
+  | { decision: 'deny'; reason: string; note?: string };
 
 interface PendingApproval {
   resolve: (d: ApprovalDecision) => void;
@@ -205,7 +211,9 @@ export class ApprovalsService {
             // identical to a human deny. `take()` throws on an already-resolved
             // id, so a timer racing a decision must swallow — never an
             // unhandled rejection.
-            void this.deny(approvalId, 'approval timed out', SYSTEM_DECIDER).catch(() => {});
+            void this.denyWith(approvalId, 'approval timed out', undefined, SYSTEM_DECIDER).catch(
+              () => {},
+            );
           },
           Math.min(effectiveTimeout, MAX_TIMER_MS),
         );
@@ -299,11 +307,30 @@ export class ApprovalsService {
     this.emitter.emit('resolved', p.request.sessionId, approvalId, 'allow', decidedBy);
   }
 
-  async deny(approvalId: string, reason: string | undefined, decidedBy: string): Promise<void> {
+  /** A human deny. `note` is the client's `reason` field (the user's redirect
+   *  text); it is sanitized here and never recorded in the audit row, only its
+   *  size (approvals.service.test.ts 'deny audits a redirect without the note'). */
+  async deny(approvalId: string, note: string | undefined, decidedBy: string): Promise<void> {
+    await this.denyWith(approvalId, 'denied by user', sanitizeApprovalNote(note), decidedBy);
+  }
+
+  private async denyWith(
+    approvalId: string,
+    reason: string,
+    note: string | undefined,
+    decidedBy: string,
+  ): Promise<void> {
     const p = this.take(approvalId);
-    const denyReason = reason ?? 'denied by user';
-    this.audit(p.request, 'denied', decidedBy, denyReason, { approvalId });
-    p.resolve({ decision: 'deny', reason: denyReason });
+    this.audit(
+      p.request,
+      'denied',
+      decidedBy,
+      reason,
+      note !== undefined
+        ? { approvalId, redirected: true, noteChars: Array.from(note).length }
+        : { approvalId },
+    );
+    p.resolve({ decision: 'deny', reason, ...(note !== undefined ? { note } : {}) });
     this.emitter.emit('resolved', p.request.sessionId, approvalId, 'deny', decidedBy);
   }
 

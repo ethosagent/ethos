@@ -109,7 +109,29 @@ describe('tools.approve / tools.deny — full inversion loop', () => {
     const result: Partial<BeforeToolCallResult> = await hookFire;
     // The user's reason AND the specific danger reason — the agent needs the
     // latter to course-correct instead of retrying blindly.
-    expect(result.error).toBe('too risky — every terminal call requires approval (test rule)');
+    expect(result.error).toBe(
+      'denied by user — every terminal call requires approval (test rule)\nThe user did not allow this call and said what to do instead: too risky',
+    );
+  });
+
+  it('control characters in the deny reason never reach the tool_result', async () => {
+    const hookFire = loop.hooks.fireModifying('before_tool_call', {
+      sessionId: 'sess_ctl',
+      toolCallId: 'tc_ctl',
+      toolName: 'terminal',
+      args: { command: 'rm -rf /' },
+    } satisfies BeforeToolCallPayload);
+    const approvalId = await waitForPendingApproval(app, cookieHeader, 'sess_ctl');
+    const deny = await app.request('/rpc/tools/deny', {
+      method: 'POST',
+      headers: rpcHeaders(cookieHeader),
+      body: JSON.stringify({
+        json: { approvalId, clientId: 'tab-A', reason: 'ok\u001b[31m\u202e' },
+      }),
+    });
+    expect(deny.status).toBe(200);
+    const result: Partial<BeforeToolCallResult> = await hookFire;
+    expect(result.error?.endsWith('instead: ok[31m')).toBe(true);
   });
 
   it('approving an unknown approvalId returns INVALID_INPUT', async () => {

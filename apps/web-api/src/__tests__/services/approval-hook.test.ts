@@ -78,7 +78,10 @@ describe('createWebApprovalHook', () => {
     const result = await hookPromise;
     // The decision reason AND the specific danger reason — a generic
     // 'denied by user' tells the agent nothing it can course-correct on.
-    expect(result).toEqual({ error: 'no thanks — destructive command' });
+    expect(result).toEqual({
+      error:
+        'denied by user — destructive command\nThe user did not allow this call and said what to do instead: no thanks',
+    });
   });
 
   // A call the personality's allowlist refuses anyway (`notPermittedRefusal`,

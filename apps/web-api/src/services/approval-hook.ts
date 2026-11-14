@@ -1,3 +1,4 @@
+import { formatApprovalDenial } from '@ethosagent/surface-kit';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 import type { ApprovalsService } from './approvals.service';
 
@@ -61,6 +62,12 @@ export function createWebApprovalHook(opts: CreateApprovalHookOptions) {
     // Relay the SPECIFIC danger reason alongside the decision. `decision.reason`
     // alone is generic ('denied by user', 'approval timed out'), which tells the
     // agent nothing it can act on; the computed reason names what was dangerous.
-    return { error: `${decision.reason} — ${reason}` };
+    return {
+      error: formatApprovalDenial({
+        reason: decision.reason,
+        dangerReason: reason,
+        ...(decision.note !== undefined ? { note: decision.note } : {}),
+      }),
+    };
   };
 }

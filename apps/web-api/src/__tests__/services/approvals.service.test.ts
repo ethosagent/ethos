@@ -82,7 +82,7 @@ describe('ApprovalsService', () => {
     expect(await decision).toEqual({ decision: 'allow' });
   });
 
-  it('deny resolves with the supplied reason', async () => {
+  it('deny carries the client reason as a sanitized note', async () => {
     const pending = nextPending();
     const decision = approvals.requestApproval({
       sessionId: 'sess_1',
@@ -92,7 +92,25 @@ describe('ApprovalsService', () => {
     });
     const { approvalId } = await pending;
     await approvals.deny(approvalId, 'too risky', 'tab-A');
-    expect(await decision).toEqual({ decision: 'deny', reason: 'too risky' });
+    expect(await decision).toEqual({
+      decision: 'deny',
+      reason: 'denied by user',
+      note: 'too risky',
+    });
+  });
+
+  it('a reason over APPROVAL_NOTE_MAX_CHARS is capped, not rejected', async () => {
+    const pending = nextPending();
+    const decision = approvals.requestApproval({
+      sessionId: 'sess_1',
+      toolCallId: 'tc_1',
+      toolName: 'terminal',
+      args: {},
+    });
+    const { approvalId } = await pending;
+    await approvals.deny(approvalId, 'x'.repeat(5000), 'tab-A');
+    const d = await decision;
+    expect(d.decision === 'deny' ? d.note?.length : -1).toBe(1000);
   });
 
   it('deny falls back to "denied by user" when reason is omitted', async () => {
@@ -332,7 +350,22 @@ describe('ApprovalsService — safety audit trail', () => {
     expect(rows[0].decision).toBe('denied');
     expect(rows[0].code).toBe('approval.deny');
     expect(rows[0].severity).toBe('warn');
-    expect(rows[0].cause).toContain('too risky');
+    expect(rows[0].cause).toBe('terminal: denied by user');
+  });
+
+  it('deny audits a redirect without the note text', async () => {
+    const pending = nextPending();
+    const decision = approvals.requestApproval({
+      sessionId: 'sess_1',
+      toolCallId: 'tc_1',
+      toolName: 'terminal',
+      args: {},
+    });
+    const { approvalId } = await pending;
+    await approvals.deny(approvalId, 'too risky', 'tab-A');
+    await decision;
+    expect(rows[0].details).toMatchObject({ redirected: true, noteChars: 9 });
+    expect(JSON.stringify(rows[0])).not.toContain('too risky');
   });
 
   it('records an allowlist auto-allow — no human decided, so the trail must say so', async () => {
@@ -518,7 +551,7 @@ describe('ApprovalsService — auto-deny timeout', () => {
 
       expect(rejections).toEqual([]);
       expect(rows).toHaveLength(1);
-      expect(rows[0].cause).toContain('too risky');
+      expect(rows[0].cause).toBe('terminal: denied by user');
     } finally {
       process.off('unhandledRejection', onRejection);
     }

@@ -21,6 +21,7 @@ export const toolsRouter = {
   }),
 
   deny: os.tools.deny.handler(async ({ input, context }) => {
+    // `input.reason` is the user's redirect note (D3); the wire name is frozen.
     await context.approvals.deny(input.approvalId, input.reason, input.clientId);
     return { ok: true as const };
   }),
