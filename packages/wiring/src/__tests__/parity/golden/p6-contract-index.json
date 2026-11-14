@@ -352,6 +352,7 @@
     "sessions.list",
     "sessions.messages",
     "sessions.pin",
+    "sessions.rewind",
     "sessions.undoTurns",
     "sessions.unpin",
     "sessions.update"

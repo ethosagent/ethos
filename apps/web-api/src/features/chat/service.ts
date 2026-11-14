@@ -463,6 +463,11 @@ export class ChatService {
    * never suspend it. `AgentBridge.isRunning` is the real per-turn signal
    * (its `controller` is non-null only while a turn runs).
    */
+  /** Is a turn in flight for this session? The server-side guard for `sessions.rewind`. */
+  isTurnRunning(sessionId: string): boolean {
+    return this.bridges.get(sessionId)?.isRunning ?? false;
+  }
+
   hasActiveBridges(): boolean {
     for (const bridge of this.bridges.values()) {
       if (bridge.isRunning) return true;

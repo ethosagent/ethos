@@ -963,6 +963,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const sessionsService = new SessionsService({
     sessions: sessionsRepo,
     cards: cardStore,
+    // Resolved at call time: `chatService` is built later (below), after this service.
+    isTurnRunning: (id) => chatService.isTurnRunning(id),
     ...(opts.contextAnatomyFn ? { contextAnatomy: opts.contextAnatomyFn } : {}),
   });
   const sharedMcpJsonStore = new McpJsonStore(storage);

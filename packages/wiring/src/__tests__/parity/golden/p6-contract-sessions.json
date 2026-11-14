@@ -2679,6 +2679,197 @@
     },
     "route": {}
   },
+  "sessions.rewind": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "turnsBack": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "hadAttachments": {
+          "type": "boolean"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "session": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "incognito": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "parentSessionId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "personalityId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pinned": {
+              "type": "boolean"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "usage": {
+              "additionalProperties": false,
+              "properties": {
+                "apiCallCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "cacheCreationTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "cacheReadTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "compactionCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "estimatedCostUsd": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "inputTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "inputTokens",
+                "outputTokens",
+                "cacheReadTokens",
+                "cacheCreationTokens",
+                "estimatedCostUsd",
+                "apiCallCount",
+                "compactionCount"
+              ],
+              "type": "object"
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "workingDir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "key",
+            "platform",
+            "model",
+            "provider",
+            "personalityId",
+            "parentSessionId",
+            "workingDir",
+            "title",
+            "pinned",
+            "usage",
+            "createdAt",
+            "updatedAt",
+            "version"
+          ],
+          "type": "object"
+        },
+        "turnsBack": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "prompt",
+        "turnsBack",
+        "hadAttachments"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
   "sessions.undoTurns": {
     "input": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

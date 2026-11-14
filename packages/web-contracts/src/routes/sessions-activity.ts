@@ -77,6 +77,24 @@ const SessionForkInput = z.object({
 });
 const SessionForkOutput = z.object({ session: SessionSchema });
 
+const SessionRewindInput = z
+  .object({
+    id: z.string(),
+    /** Exact target: a persisted user message id. */
+    messageId: z.string().optional(),
+    /** Fallback when the client only has a local id: prompts back from the latest, 1-based. */
+    turnsBack: z.number().int().min(1).optional(),
+  })
+  .refine((v) => (v.messageId === undefined) !== (v.turnsBack === undefined), {
+    message: 'exactly one of messageId, turnsBack',
+  });
+const SessionRewindOutput = z.object({
+  session: SessionSchema,
+  prompt: z.string(),
+  turnsBack: z.number().int(),
+  hadAttachments: z.boolean(),
+});
+
 const SessionDeleteInput = z.object({
   id: z.string(),
   /** Optimistic-concurrency guard. v1 ignores this. */
@@ -128,6 +146,7 @@ export const sessions = {
   get: oc.input(SessionGetInput).output(SessionGetOutput),
   messages: oc.input(SessionMessagesInput).output(SessionMessagesOutput),
   fork: oc.input(SessionForkInput).output(SessionForkOutput),
+  rewind: oc.input(SessionRewindInput).output(SessionRewindOutput),
   delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
   update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),
   export: oc.input(SessionExportInput).output(SessionExportOutput),

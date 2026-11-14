@@ -9,7 +9,14 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { forkSession, forkSessionKey, isIncognitoSession } from '@ethosagent/wiring';
+import {
+  forkSession,
+  forkSessionKey,
+  isIncognitoSession,
+  type RewindPoint,
+  type RewindTarget,
+  rewindSession,
+} from '@ethosagent/wiring';
 
 // Thin wrapper over the `SessionStore` contract for the sessions feature.
 // Hides the store's exact method names and Date/string conversions from
@@ -248,6 +255,40 @@ export class SessionsRepository {
       ...(personalityOverride ? { personalityId: personalityOverride } : {}),
     });
 
+    await this.copyContextEvents(source.id, fresh.id, idMap);
+
+    return fresh;
+  }
+
+  /**
+   * Rewind: fork just before a chosen prompt (`rewindSession`, core), then copy
+   * the context events of the kept messages. Returns the branch, the prompt
+   * point and the kept messages so the service can copy their cards.
+   */
+  async rewind(
+    sourceId: string,
+    target: RewindTarget,
+  ): Promise<{ session: Session; point: RewindPoint; kept: StoredMessage[] }> {
+    const source = await this.store.getSession(sourceId);
+    if (!source) return Promise.reject(new Error(`session not found: ${sourceId}`));
+    const { session, idMap, point } = await rewindSession(this.store, source.id, {
+      key: forkSessionKey(source.key),
+      target,
+    });
+    await this.copyContextEvents(source.id, session.id, idMap);
+    return { session, point, kept: [...idMap.values()] };
+  }
+
+  /**
+   * Copy the source's context events onto a forked child, remapped through
+   * `idMap` (source message id -> child message). Events whose message was cut
+   * from the child are skipped.
+   */
+  private async copyContextEvents(
+    sourceId: string,
+    freshId: string,
+    idMap: Map<string, StoredMessage>,
+  ): Promise<void> {
     // Copy context events onto the child (plan/phases/model-visible-logged.md
     // D9) so `resolveContextAt` on the fork still reproduces what the parent
     // saw. `hash`/`kind`/`mode`/`meta` are copied UNCHANGED — the referenced
@@ -271,20 +312,18 @@ export class SessionsRepository {
     // on the fork reproduces the parent's per-turn history, not just its
     // final state.
     if (this.contextLog) {
-      const events = await this.contextLog.listForSession(source.id);
+      const events = await this.contextLog.listForSession(sourceId);
       for (const event of events) {
         const newMessage = idMap.get(event.messageId);
-        if (!newMessage) continue; // defensive; should not happen in practice
+        if (!newMessage) continue; // the event's message was cut from the child (rewind)
         await this.contextLog.append({
           ...event,
-          sessionId: fresh.id,
+          sessionId: freshId,
           messageId: newMessage.id,
           timestamp: newMessage.timestamp.getTime(),
         });
       }
     }
-
-    return fresh;
   }
 }
 

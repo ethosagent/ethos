@@ -1,4 +1,5 @@
 import type { CardStore } from '@ethosagent/session-cards';
+import { REWIND_BUSY } from '@ethosagent/surface-kit';
 import { EthosError } from '@ethosagent/types';
 import type {
   ContextAnatomyWire,
@@ -7,7 +8,7 @@ import type {
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
-import { isIncognitoSession } from '@ethosagent/wiring';
+import { isIncognitoSession, type RewindTarget } from '@ethosagent/wiring';
 import { exportFilename, formatAsMarkdown } from '../../services/sessions.export';
 import type { SessionsRepository } from './repository';
 
@@ -25,6 +26,10 @@ export interface SessionsServiceOptions {
   /** Durable UI-card store (ui-cards-canvas B2). Absent → `get` replays no
    *  cards, which is the pre-B2 behaviour tests and embedders rely on. */
   cards?: CardStore;
+  /** Is a turn in flight for this session? `sessions.rewind` refuses while one
+   *  is: an aborted turn still writes its tail, so a fork would snapshot a
+   *  half-written source. Absent → never busy (tests, onboarding). */
+  isTurnRunning?: (sessionId: string) => boolean;
 }
 
 /** Byte cap (message `content` + `toolCalls` JSON) on one `sessions.messages` page. */
@@ -141,6 +146,40 @@ export class SessionsService {
       // with its cards missing, so they come along.
       this.opts.cards?.copySession(id, fresh.id);
       return { session: toWireSession(fresh) };
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('session not found:')) {
+        throw notFound(id);
+      }
+      throw err;
+    }
+  }
+
+  /** Rewind: branch just before an earlier prompt and hand back its text so
+   *  the client can edit and resend it. Refused while a turn runs on `id`. */
+  async rewind(
+    id: string,
+    target: RewindTarget,
+  ): Promise<{ session: WireSession; prompt: string; turnsBack: number; hadAttachments: boolean }> {
+    if (this.opts.isTurnRunning?.(id)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: REWIND_BUSY,
+        action: 'Press Stop, then try again.',
+      });
+    }
+    try {
+      const { session, point, kept } = await this.opts.sessions.rewind(id, target);
+      const toolCallIds = kept.flatMap((m) => [
+        ...(m.toolCalls ?? []).map((c) => c.id),
+        ...(m.toolCallId ? [m.toolCallId] : []),
+      ]);
+      this.opts.cards?.copySession(id, session.id, { toolCallIds });
+      return {
+        session: toWireSession(session),
+        prompt: point.text,
+        turnsBack: point.turnsBack,
+        hadAttachments: point.hadAttachments,
+      };
     } catch (err) {
       if (err instanceof Error && err.message.startsWith('session not found:')) {
         throw notFound(id);

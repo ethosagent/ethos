@@ -445,6 +445,26 @@ describe('ChatService', () => {
     expect(service.hasActiveBridges()).toBe(false);
   });
 
+  it('isTurnRunning is false for an unknown session and true while that session streams', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = new ChatService({
+      loop: makeStubAgentLoop({ events: [{ type: 'done', text: 'ok', turnCount: 1 }], gate }),
+      sessions,
+      buffer,
+      activityBuffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+    });
+    expect(service.isTurnRunning('nope')).toBe(false);
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    await waitFor(() => service.isTurnRunning(result.sessionId));
+    expect(service.isTurnRunning('other')).toBe(false);
+    release();
+    await waitFor(() => !service.isTurnRunning(result.sessionId));
+  });
+
   it('hasActiveBridges is true while a turn runs and false again once it finishes', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
