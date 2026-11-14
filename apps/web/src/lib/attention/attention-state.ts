@@ -1,7 +1,7 @@
 import type { SseEvent } from '@ethosagent/web-contracts';
 
 // Pure state for "this chat needs the user" signals (pending approval,
-// clarify question, credential request). No DOM. The hook (Task 4) feeds it
+// clarify question, credential request). No DOM. The hook feeds it
 // from SSE and applies title/favicon/notification from the count.
 
 export type AttentionKind = 'approval' | 'clarify' | 'credential';
@@ -22,7 +22,7 @@ export interface AttentionState {
   dismissed: readonly string[];
 }
 
-export const DISMISSED_CAP = 200;
+const DISMISSED_CAP = 200;
 
 export const emptyAttention: AttentionState = { items: [], dismissed: [] };
 

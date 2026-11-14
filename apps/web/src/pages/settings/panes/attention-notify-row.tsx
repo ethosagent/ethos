@@ -16,11 +16,12 @@ import {
 import { SelfSaveMarker } from '../components/self-save-marker';
 import { SettingRow } from '../components/setting-row';
 
+const ENABLE_HELP =
+  'Show a system notification when a chat needs you and this tab is in the background. Stored in this browser only.';
+
 const HELP: Record<NotifySupport, string> = {
-  granted:
-    'Show a system notification when a chat needs you and this tab is in the background. Stored in this browser only.',
-  default:
-    'Show a system notification when a chat needs you and this tab is in the background. Stored in this browser only.',
+  granted: ENABLE_HELP,
+  default: ENABLE_HELP,
   denied:
     "Blocked in your browser's site settings; allow notifications for this site, then switch this on.",
   unsupported: 'This browser does not support notifications.',

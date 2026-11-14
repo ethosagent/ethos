@@ -18,8 +18,7 @@ import { subscribeToActivity, subscribeToSession } from '../sse';
 // on the favicon and optionally raise a system notification. Approvals and
 // clarifies arrive on the merged activity stream; credential_required is
 // excluded from it by design, so it comes from the active session's stream.
-// The active-session tracking duplicates usePushEventToasts on purpose
-// (extracting a shared hook is a follow-up).
+// The active-session tracking duplicates usePushEventToasts on purpose.
 
 interface FaviconSnapshot {
   link: HTMLLinkElement;
