@@ -58,6 +58,8 @@ export interface TUIOptions {
   readMemory: (scope: { personalityId: string; sessionKey: string }) => Promise<string | null>;
   /** `/fork`, `/branches`, `/branch <n>` over the host's session store (see `AppProps.branches`). */
   branches?: AppProps['branches'];
+  /** `/rewind [N]` and Esc Esc backtrack over the host's session store (see `AppProps.rewind`). */
+  rewind?: AppProps['rewind'];
   /**
    * Stores a plugin credential typed into the masked `credential_required`
    * modal — pass `PluginLoader.setCredential`, the one writer. Without it the
@@ -111,6 +113,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       onBackgroundComplete: opts.onBackgroundComplete,
       readMemory: opts.readMemory,
       ...(opts.branches ? { branches: opts.branches } : {}),
+      ...(opts.rewind ? { rewind: opts.rewind } : {}),
       setPluginCredential: opts.setPluginCredential,
       ...(opts.initialMessage ? { initialMessage: opts.initialMessage } : {}),
     }),

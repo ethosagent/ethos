@@ -89,7 +89,12 @@ import { formatRecap } from '../lib/recap';
 import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
 import { runBranchCommand } from '../lib/session-branches';
-import { commitRewind, type PendingRewind, prepareRewind } from '../lib/session-rewind';
+import {
+  commitRewind,
+  type PendingRewind,
+  prepareRewind,
+  rewindPointsFor,
+} from '../lib/session-rewind';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
 import {
   buildBaseRegistry,
@@ -577,14 +582,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       readMemory: (scope) => readFileMemorySnapshot(config, scope),
       // `/fork`, `/branches`, `/branch <n>` — the same handler the readline
       // fallback uses (lib/session-branches.ts), over this state dir's sessions.db.
-      branches: async (command, arg, sessionKey) => {
-        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-        const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
-        try {
-          return await runBranchCommand(store, command, arg, sessionKey);
-        } finally {
-          store.close();
-        }
+      branches: async (command, arg, sessionKey) =>
+        withSessionStore((store) => runBranchCommand(store, command, arg, sessionKey)),
+      // `/rewind [N]` and Esc Esc backtrack: read-only points, then the branch on send.
+      rewind: {
+        points: (key) => withSessionStore((store) => rewindPointsFor(store, key)),
+        commit: (key, id) => withSessionStore((store) => commitRewind(store, key, id)),
       },
       ...(onSkillProposed ? { onSkillProposed } : {}),
       // C5 — the TUI renders the readline branch's completion box and counts

@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from 'ink';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSkin } from '../skin';
 
 interface InputBoxProps {
@@ -49,7 +49,18 @@ export function InputBox({
   const [cursor, setCursor] = useState(value.length);
   const safeCursor = Math.min(cursor, value.length);
 
+  // A value the parent set (history recall, rewind prefill) puts the cursor at its
+  // end; one this box produced keeps the cursor `replace` computed.
+  const ownValue = useRef(value);
+  useEffect(() => {
+    if (value !== ownValue.current) {
+      ownValue.current = value;
+      setCursor(value.length);
+    }
+  }, [value]);
+
   const replace = (next: string, nextCursor: number) => {
+    ownValue.current = next;
     onChange(next);
     setCursor(Math.max(0, Math.min(next.length, nextCursor)));
   };

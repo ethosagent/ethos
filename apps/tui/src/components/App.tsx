@@ -1,7 +1,12 @@
 import { basename } from 'node:path';
 import type { AgentBridge, BridgeApprovalRequest } from '@ethosagent/agent-bridge';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
-import { describeChatError } from '@ethosagent/surface-kit';
+import {
+  describeChatError,
+  parseRewindArg,
+  REWIND_BUSY,
+  REWIND_NOTICE,
+} from '@ethosagent/surface-kit';
 import {
   answerSuffix,
   type BackgroundJob,
@@ -20,6 +25,7 @@ import {
 } from '../credential-prompt';
 import { buildHelpText, type ExternalSlashCommand } from '../help';
 import { type RebuiltLoop, switchLoop } from '../loop-switch';
+import { isDoubleEsc } from '../rewind-backtrack';
 import {
   BUILTIN_SKIN_NAMES,
   BUILTIN_SKINS,
@@ -43,6 +49,7 @@ import { IdentityPanel } from './IdentityPanel';
 import { InputBox } from './InputBox';
 import { KeymapOverlay } from './KeymapOverlay';
 import { ModelPickerModal } from './ModelPickerModal';
+import { RewindStrip, type RewindStripPoint } from './RewindStrip';
 import { SafetyLane } from './SafetyLane';
 import { SessionPickerModal } from './SessionPickerModal';
 import { Splash, type SplashInventory } from './Splash';
@@ -197,6 +204,23 @@ export interface AppProps {
    * opt in to one (`credentialPrompt` stays unset).
    */
   setPluginCredential?: SetPluginCredential;
+  /**
+   * `/rewind [N]` and Esc Esc backtrack over the host's session store. `points`
+   * lists the session's prompts newest first (read-only); `commit` creates the
+   * rewound branch when the edited prompt is sent. Absent → rewind reports it
+   * is unavailable.
+   */
+  rewind?: {
+    points: (
+      sessionKey: string,
+    ) => Promise<
+      Array<{ turnsBack: number; messageId: string; text: string; hadAttachments: boolean }>
+    >;
+    commit: (
+      sessionKey: string,
+      messageId: string,
+    ) => Promise<{ message: string; switchTo: { sessionKey: string; personalityId?: string } }>;
+  };
 }
 
 /**
@@ -238,7 +262,7 @@ function resolveMode(section: DetailsMode | null, global: DetailsMode): DetailsM
   return section ?? global;
 }
 
-type Modal = 'sessions' | 'models' | null;
+type Modal = 'sessions' | 'models' | 'rewind' | null;
 // Mirrors INCOGNITO_SCRUB_FAILED_NOTICE in apps/ethos/src/lib/chat-incognito.ts (an app; not importable).
 const INCOGNITO_SCRUB_FAILED_NOTICE =
   '[could not clear the incognito history now; it is cleared within 24 h]';
@@ -302,6 +326,7 @@ export function App({
   onBackgroundComplete,
   readMemory,
   branches,
+  rewind,
   setPluginCredential,
 }: AppProps) {
   const { exit } = useApp();
@@ -340,6 +365,9 @@ export function App({
     return effective;
   }, []);
   const [modal, setModal] = useState<Modal>(null);
+  const [lastEscAt, setLastEscAt] = useState<number | null>(null);
+  const [rewindPoints, setRewindPoints] = useState<RewindStripPoint[]>([]);
+  const [pendingRewind, setPendingRewind] = useState<{ messageId: string } | null>(null);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
   const [credentialRequest, setCredentialRequest] = useState<CredentialRequest | null>(null);
   // Tool calls waiting for Allow / Deny, oldest first; only the head is shown.
@@ -1005,6 +1033,7 @@ export function App({
     });
     if (value.startsWith('/')) {
       setInput('');
+      setPendingRewind(null);
       await handleSlashCommand(value);
       return;
     }
@@ -1014,8 +1043,31 @@ export function App({
       pushTimeline('warning', 'blocked prompt while readonly mode enabled');
       return;
     }
+    // A pending rewind creates its branch now, then the send goes to the new key
+    // (`setSessionKey` has not landed in this tick, hence `targetKey`).
+    let targetKey = sessionKey;
+    let targetPersonality = personality;
+    let rewound = false;
+    if (pendingRewind && rewind) {
+      try {
+        const outcome = await rewind.commit(sessionKey, pendingRewind.messageId);
+        bridge.resetSessionCost(sessionKey);
+        targetKey = outcome.switchTo.sessionKey;
+        if (outcome.switchTo.personalityId) targetPersonality = outcome.switchTo.personalityId;
+        setSessionKey(targetKey);
+        setPersonality(targetPersonality);
+        setPendingRewind(null);
+        setCompletedTools([]);
+        setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
+        rewound = true;
+      } catch (err) {
+        setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
+        return;
+      }
+    }
     setInput('');
-    setMessages((prev) => [...prev, { id: nextId(), role: 'user', text: value }]);
+    const userMessage: ChatMessage = { id: nextId(), role: 'user', text: value };
+    setMessages((prev) => (rewound ? [userMessage] : [...prev, userMessage]));
     pushTimeline('info', `user: ${value.slice(0, 80)}`);
     beginTurn();
     // Resolve @file/@url refs (and any other host preprocessing) before the
@@ -1028,7 +1080,7 @@ export function App({
         outgoing = value;
       }
     }
-    sendUserMessage(outgoing);
+    sendUserMessage(outgoing, targetKey, targetPersonality);
   };
 
   // The picked first task is an ordinary submit: transcript line, one turn.
@@ -1054,15 +1106,44 @@ export function App({
   // The one send for a user message: a typed one, and the resend after a
   // credential is stored. Opts in to `credential_required` only when this
   // TUI has a writer to answer it with.
-  const sendUserMessage = (outgoing: string) => {
+  const sendUserMessage = (
+    outgoing: string,
+    targetKey: string = sessionKey,
+    targetPersonality: string = personality,
+  ) => {
     bridge.send(outgoing, {
-      sessionKey,
-      personalityId: personality,
+      sessionKey: targetKey,
+      personalityId: targetPersonality,
       // A person typed it (plan personality-memory-boundary, the initiator table).
       initiator: 'user',
       ...(incognito ? { incognito: true } : {}),
       ...(setPluginCredential ? { credentialPrompt: true } : {}),
     });
+  };
+
+  // Prefill the composer with an earlier prompt; the branch is created on send.
+  const armRewind = (point: RewindStripPoint) => {
+    setInput(point.text);
+    setPendingRewind({ messageId: point.messageId });
+    const attachments = point.hadAttachments ? ' Attached files are not re-sent.' : '';
+    setStatusMsg(
+      `[Editing prompt ${point.turnsBack} back. Enter runs it on a new branch; Esc on an empty line cancels. ${REWIND_NOTICE}${attachments}]`,
+    );
+  };
+
+  const openBacktrack = async () => {
+    if (!rewind) return;
+    try {
+      const points = await rewind.points(sessionKey);
+      if (points.length === 0) {
+        setStatusMsg('[no earlier prompts]');
+        return;
+      }
+      setRewindPoints(points);
+      setModal('rewind');
+    } catch (err) {
+      setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
+    }
   };
 
   const handleSlashCommand = async (cmd: string) => {
@@ -1142,6 +1223,39 @@ export function App({
           } else {
             setStatusMsg(`[${outcome.message}]`);
           }
+        } catch (err) {
+          setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
+        }
+        break;
+      }
+      case 'rewind': {
+        if (!rewind) {
+          setStatusMsg('[rewind is not available here]');
+          break;
+        }
+        if (running) {
+          setStatusMsg(`[${REWIND_BUSY}]`);
+          break;
+        }
+        const parsed = parseRewindArg(args.join(' '));
+        if (!parsed.ok) {
+          setStatusMsg(`[${parsed.message}]`);
+          break;
+        }
+        try {
+          const points = await rewind.points(sessionKey);
+          if (points.length === 0) {
+            setStatusMsg('[no earlier prompts]');
+            break;
+          }
+          const point = points.find((p) => p.turnsBack === parsed.turnsBack);
+          if (!point) {
+            setStatusMsg(
+              `[Only ${points.length} prompt${points.length === 1 ? '' : 's'} in this session.]`,
+            );
+            break;
+          }
+          armRewind(point);
         } catch (err) {
           setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
         }
@@ -1696,6 +1810,16 @@ export function App({
         {completionVisible && (
           <CompletionPanel matches={completionMatches} selectedIndex={completionIndex} />
         )}
+        {modal === 'rewind' && (
+          <RewindStrip
+            points={rewindPoints}
+            onPick={(point) => {
+              setModal(null);
+              armRewind(point);
+            }}
+            onCancel={() => setModal(null)}
+          />
+        )}
         <InputBox
           value={input}
           disabled={running}
@@ -1747,7 +1871,20 @@ export function App({
               setInput('');
               return;
             }
+            if (pendingRewind && input === '') {
+              setPendingRewind(null);
+              setStatusMsg('[rewind cancelled]');
+              return;
+            }
             setHistoryIndex(null);
+            // Esc Esc on an empty composer opens the backtrack strip (a draft is
+            // never replaced; InputBox is inert while a turn runs, which is the busy guard).
+            if (rewind && input === '' && isDoubleEsc(lastEscAt, Date.now())) {
+              setLastEscAt(null);
+              void openBacktrack();
+              return;
+            }
+            setLastEscAt(Date.now());
           }}
         />
         <StatusBar

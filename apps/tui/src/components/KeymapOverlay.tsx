@@ -17,6 +17,7 @@ export function KeymapOverlay({ focusPane, running }: KeymapOverlayProps) {
       <Text>Ctrl+C abort turn or exit</Text>
       <Text>Enter submit input (input focus)</Text>
       <Text>Up/Down history or completion (input focus)</Text>
+      <Text>Esc Esc rewind: edit an earlier prompt (input focus)</Text>
       <Text>Tab slash completion when popup visible</Text>
       <Text>a / d approve or deny pending patch (files focus)</Text>
       <Text dimColor>Press ? or Esc to return.</Text>
