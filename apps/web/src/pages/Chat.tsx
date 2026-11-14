@@ -374,10 +374,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     async (id: string, text: string) => {
       const refreshBranches = () =>
         void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
-      // Also on a failed history load: the branch exists, so BranchSwitcher lists it.
+      // Fires once the branch exists, even if the history load then fails.
       const next = await rewindTo(id, text, refreshBranches);
       setEditingMessageId(null);
-      refreshBranches();
       setSearchParams({ session: next });
     },
     [rewindTo, queryClient, setSearchParams],
