@@ -428,6 +428,9 @@ importers:
       '@ethosagent/team-supervisor':
         specifier: workspace:*
         version: link:../../extensions/team-supervisor
+      '@ethosagent/test-kit':
+        specifier: workspace:*
+        version: link:../../packages/test-kit
       '@ethosagent/tools-a2a':
         specifier: workspace:*
         version: link:../../extensions/tools-a2a

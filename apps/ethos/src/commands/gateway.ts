@@ -3409,7 +3409,7 @@ export function wireApprovalFlow(
       if (event.decision === 'allow') {
         void coordinator.approve(event.approvalId, event.decidedBy);
       } else {
-        void coordinator.deny(event.approvalId, event.decidedBy);
+        void coordinator.deny(event.approvalId, event.decidedBy, event.note);
       }
     });
   }

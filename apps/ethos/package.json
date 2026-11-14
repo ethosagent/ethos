@@ -131,6 +131,7 @@
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
+    "@ethosagent/test-kit": "workspace:*",
     "@ethosagent/tools-a2a": "workspace:*",
     "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/voice-satellite": "workspace:*",

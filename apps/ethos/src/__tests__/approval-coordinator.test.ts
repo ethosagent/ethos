@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import type { Gateway, GatewayBotConfig } from '@ethosagent/gateway';
 import type {
+  ApprovalDecisionEvent,
   BeforeToolCallPayload,
   BeforeToolCallResult,
   PersonalityRegistry,
@@ -241,9 +242,95 @@ describe('ApprovalCoordinator', () => {
     await coordinator.approve(pending[1].approvalId, 'U1');
     expect((await d2).decision).toBe('allow');
   });
+  it('deny carries a sanitized note on the decision', async () => {
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: 'danger',
+    });
+    await coordinator.deny(pending[0].approvalId, 'U1', '  use \u202Estaging  ');
+    expect(await decision).toEqual({
+      decision: 'deny',
+      reason: 'denied by user',
+      note: 'use staging',
+    });
+  });
+
+  it('a blank note is a plain deny', async () => {
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: 'danger',
+    });
+    await coordinator.deny(pending[0].approvalId, 'U1', '  ');
+    expect(await decision).toEqual({ decision: 'deny', reason: 'denied by user' });
+  });
+
+  it("a bystander's deny-with-note neither settles nor leaks its note", async () => {
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: 'danger',
+      requesterUserId: 'U1',
+    });
+    await coordinator.deny(pending[0].approvalId, 'U2', 'do evil');
+    expect(coordinator.pendingCount()).toBe(1);
+    await coordinator.deny(pending[0].approvalId, 'U1');
+    expect(await decision).toEqual({ decision: 'deny', reason: 'denied by user' });
+  });
+
+  it('deny with a note after settle is a no-op', async () => {
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: 'danger',
+    });
+    await coordinator.approve(pending[0].approvalId, 'U1');
+    await coordinator.deny(pending[0].approvalId, 'U1', 'late');
+    expect(await decision).toEqual({ decision: 'allow' });
+  });
 });
 
 describe('ApprovalCoordinator — safety audit trail', () => {
+  it('audits a redirect without storing the note text', async () => {
+    const { rows, observability } = recordingSink();
+    const coordinator = new ApprovalCoordinator({ observability });
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: 'danger',
+    });
+    await coordinator.deny(pending[0].approvalId, 'U1', 'use staging');
+    await decision;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].details).toEqual(expect.objectContaining({ redirected: true, noteChars: 11 }));
+    expect(JSON.stringify(rows[0])).not.toContain('use staging');
+  });
+
   it('records an approval decision under audit.approval', async () => {
     const { rows, observability } = recordingSink();
     const coordinator = new ApprovalCoordinator({ observability });
@@ -437,6 +524,26 @@ describe('createSlackApprovalHook', () => {
     // Generic decision reason + the specific danger reason, so the agent can
     // course-correct instead of retrying blindly.
     expect(result?.error).toBe('denied by user — recursive force-delete');
+  });
+
+  it('a denied call with a note returns the redirect framing', async () => {
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    coordinator.onPending((p) => pending.push(p));
+    const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
+      coordinator,
+      isDangerous: async () => 'danger',
+      resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
+    });
+    const hookPromise = hook(toolCall());
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await coordinator.deny(pending[0].approvalId, 'U1', 'use staging');
+    expect(await hookPromise).toEqual({
+      error:
+        'denied by user — danger\nThe user did not allow this call and said what to do instead: use staging',
+    });
   });
 });
 
@@ -634,16 +741,20 @@ describe('wireApprovalFlow', () => {
     adapter: PlatformAdapter;
     posted: Promise<void>;
     calls: { updates: number };
+    decide: (note: string) => void;
   } {
     let signalPosted = () => {};
     const posted = new Promise<void>((resolve) => {
       signalPosted = resolve;
     });
     const calls = { updates: 0 };
+    let handler: ((event: ApprovalDecisionEvent) => void) | undefined;
+    let approvalId = '';
     const adapter = {
       id: 'slack:test',
       botKey: 'bot-1',
-      postApprovalCard: async () => {
+      postApprovalCard: async (input: { approvalId: string }) => {
+        approvalId = input.approvalId;
         signalPosted();
         // `postGate` stands in for a card post still on the wire.
         if (postGate) await postGate;
@@ -655,13 +766,24 @@ describe('wireApprovalFlow', () => {
         if (updateGate) await updateGate;
         return { ok: true };
       },
-      onApprovalDecision: () => {},
+      onApprovalDecision: (h: (event: ApprovalDecisionEvent) => void) => {
+        handler = h;
+      },
     } as unknown as PlatformAdapter;
-    return { adapter, posted, calls };
+    const decide = (note: string) =>
+      handler?.({
+        approvalId,
+        decision: 'deny',
+        decidedBy: 'U1',
+        channelId: 'C1',
+        messageTs: 'ts-1',
+        note,
+      });
+    return { adapter, posted, calls, decide };
   }
 
   function wire(approvalTimeoutMs?: number, updateGate?: Promise<void>, postGate?: Promise<void>) {
-    const { adapter, posted, calls } = stubAdapter(updateGate, postGate);
+    const { adapter, posted, calls, decide } = stubAdapter(updateGate, postGate);
     const hooks = new DefaultHookRegistry();
     const bots = [
       { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
@@ -681,7 +803,7 @@ describe('wireApprovalFlow', () => {
       ...(approvalTimeoutMs !== undefined ? { approvalTimeoutMs } : {}),
       ownerFor: () => undefined,
     });
-    return { flow, hooks, posted, calls };
+    return { flow, hooks, posted, calls, decide };
   }
 
   function fireDangerousCall(hooks: DefaultHookRegistry): Promise<Partial<BeforeToolCallResult>> {
@@ -699,6 +821,15 @@ describe('wireApprovalFlow', () => {
     // Auto-denied at the configured window, not the coordinator's 10-minute
     // default — which would have hung this test out to its timeout.
     expect(result.error).toContain('approval timed out');
+  });
+
+  it('an adapter deny event with a note reaches the hook error', async () => {
+    const { hooks, posted, decide } = wire(0);
+    const hookResult = fireDangerousCall(hooks);
+    await posted;
+    decide('use staging');
+    const result = await hookResult;
+    expect(result.error).toContain('said what to do instead: use staging');
   });
 
   it('returns a shutdown handle that drains pending approvals', async () => {

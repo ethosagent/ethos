@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { formatApprovalDenial, sanitizeApprovalNote } from '@ethosagent/surface-kit';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 
 // In-process state machine for tool approvals in the gateway profile —
@@ -23,7 +24,9 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 // Slack adapter. The gateway command wires the glue: `onPending` → post a
 // card, the adapter's button-click event → `approve()` / `deny()`.
 
-export type ApprovalDecision = { decision: 'allow' } | { decision: 'deny'; reason: string };
+export type ApprovalDecision =
+  | { decision: 'allow' }
+  | { decision: 'deny'; reason: string; note?: string };
 
 /** A pending approval surfaced to the `onPending` subscriber. */
 export interface PendingApproval {
@@ -188,9 +191,21 @@ export class ApprovalCoordinator {
     this.settle(approvalId, { decision: 'allow' }, decidedBy);
   }
 
-  /** Resolve a pending approval as denied. Idempotent (see `approve`). */
-  async deny(approvalId: string, decidedBy: string): Promise<void> {
-    this.settle(approvalId, { decision: 'deny', reason: 'denied by user' }, decidedBy);
+  /** Resolve a pending approval as denied. Idempotent (see `approve`).
+   *  An optional `note` (what to do instead) is sanitized here, before
+   *  `settle`; `settle`'s requester check still drops a bystander's decision,
+   *  note included. Pinned by approval-coordinator.test.ts. */
+  async deny(approvalId: string, decidedBy: string, note?: string): Promise<void> {
+    const clean = sanitizeApprovalNote(note);
+    this.settle(
+      approvalId,
+      {
+        decision: 'deny',
+        reason: 'denied by user',
+        ...(clean !== undefined ? { note: clean } : {}),
+      },
+      decidedBy,
+    );
   }
 
   /**
@@ -270,6 +285,11 @@ export class ApprovalCoordinator {
           toolName: request.toolName,
           decidedBy,
           ...(request.reason ? { reason: request.reason } : {}),
+          // Note text is deliberately not recorded (approval-coordinator.test.ts
+          // 'audits a redirect without storing the note text'); only its size.
+          ...(denied && decision.note !== undefined
+            ? { redirected: true, noteChars: Array.from(decision.note).length }
+            : {}),
         },
       });
     } catch {
@@ -411,6 +431,12 @@ export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
     // Relay the SPECIFIC danger reason alongside the decision. `decision.reason`
     // alone is generic ('denied by user', 'approval timed out'), which tells the
     // agent nothing it can act on; the computed reason names what was dangerous.
-    return { error: `${decision.reason} — ${reason}` };
+    return {
+      error: formatApprovalDenial({
+        reason: decision.reason,
+        dangerReason: reason,
+        note: decision.note,
+      }),
+    };
   };
 }
