@@ -679,6 +679,8 @@ const SLACK_HANDLER_DRIVERS: Record<string, HandlerDriver> = {
   },
   'action:ethos_approval_allow': buttonDriver('ethos_approval_allow'),
   'action:ethos_approval_deny': buttonDriver('ethos_approval_deny'),
+  // Opens the deny-with-note modal (`views.open`, visible only to the clicker).
+  'action:ethos_approval_deny_note': buttonDriver('ethos_approval_deny_note'),
   'action:ethos_clarify_choice': buttonDriver('ethos_clarify_choice', 'req-1:0'),
   'action:ethos_clarify_cancel': buttonDriver('ethos_clarify_cancel'),
   'action:ethos_clarify_answer': buttonDriver('ethos_clarify_answer'),
@@ -690,6 +692,29 @@ const SLACK_HANDLER_DRIVERS: Record<string, HandlerDriver> = {
   // missing input block, and on an empty answer. The previous payload tripped
   // all three, so this case asserted silence against a function that had
   // returned three lines in.
+  // `private_metadata` must carry the approval's coordinates or
+  // `handleApprovalNoteSubmission` returns before reaching the decision handler.
+  'view:ethos_approval_note': async (handler) => {
+    await handler({
+      ack,
+      body: {
+        user: { id: SLACK_INVOKER },
+        view: {
+          callback_id: 'ethos_approval_note',
+          private_metadata: JSON.stringify({
+            approvalId: 'req-1',
+            channelId: SLACK_CHANNEL,
+            messageTs: '1699000000.000100',
+          }),
+          state: {
+            values: {
+              ethos_approval_note_block: { ethos_approval_note_input: { value: 'use staging' } },
+            },
+          },
+        },
+      },
+    });
+  },
   'view:ethos_clarify_modal': async (handler) => {
     await handler({
       ack,
@@ -725,6 +750,7 @@ const SLACK_HANDLER_DRIVERS: Record<string, HandlerDriver> = {
 const SLACK_HANDLERS_NEEDING_REACH: ReadonlySet<string> = new Set([
   'action:ethos_approval_allow',
   'action:ethos_approval_deny',
+  'view:ethos_approval_note',
   'action:ethos_clarify_choice',
   'action:ethos_clarify_cancel',
   'action:ethos_clarify_answer',
@@ -746,6 +772,8 @@ const SLACK_INVISIBLE: ReadonlySet<string> = new Set([
   'respond(ephemeral)',
   'users.info',
   'views.publish',
+  // A modal opens for the clicker alone (the deny-with-note button).
+  'views.open',
 ]);
 
 /** Drive one registered handler in `mode`; report what the room could see, and

@@ -4,7 +4,7 @@ description: "What the approval prompt looks like in the CLI, web UI, chat bots 
 kind: how-to
 audience: user
 time: "5 min"
-updated: 2026-11-03
+updated: 2026-11-14
 ---
 
 ## Task
@@ -38,6 +38,7 @@ Type `y` or `yes` to run the call. Anything else — `n`, an empty Enter, any ot
 
 The gate is `wireTerminalApprovalGate` in that file. It uses the same danger check as the web UI and the chat cards (`createApprovalDangerPredicate`), so the same calls are flagged, and it reuses the chat cards' coordinator for the timeout and the audit trail. It is pinned by `apps/ethos/src/__tests__/terminal-approval.test.ts` and `apps/tui/src/__tests__/approval-modal.test.ts`.
 
+- **Deny and redirect (TUI).** Press `r`, type what the agent should do instead, and press Enter. The call is refused and the agent reads your note (see [Deny with a note](#deny-with-a-note)). Esc in note mode goes back to the prompt, and an empty note does nothing. The readline REPL keeps `y`/`N` only. Pinned by `apps/tui/src/__tests__/approval-modal.test.ts`.
 - **Parallel calls queue.** When a turn flags two calls, you answer them one at a time, oldest first. The TUI shows how many more are waiting.
 - **Piped output still shows the prompt.** When stdout is not a terminal (`ethos chat | tee chat.log`) but stdin is, the question and its preview are written to stderr, so you see what you are answering.
 - **Ctrl-C refuses.** In the readline REPL, Ctrl-C refuses every waiting call and aborts the turn.
@@ -69,6 +70,8 @@ The web UI ships the full flow. A `dangerous` call posts an approval card anchor
 
 A stored grant belongs to the personality whose call you approved: another personality asking for the same tool still gets a card (`AllowlistRepository.matches`, pinned by `apps/web-api/src/__tests__/services/approvals-scoping.test.ts`). Grants saved before this scoping existed are kept in `allowlist.json` but match nothing, so each one asks once more.
 
+**Deny and redirect.** **Deny and redirect…** swaps the buttons for a text box. Type what the agent should do instead and send it as **Deny with note**; the button stays disabled until the note has text, and **Back** restores Allow. The note travels as the `reason` field of `tools.deny`, which keeps the existing wire contract. A plain **Deny** sends no reason. Pinned by `apps/web/src/components/__tests__/approval-modal-redirect.test.ts` and `apps/web-api/src/__tests__/services/approvals.service.test.ts`.
+
 Allow or Deny resolves the suspended `before_tool_call` hook. The card updates in place to show the outcome.
 
 Hardline commands (a `terminal` or `process_start` command on the blocklist, such as `rm -rf /`) are different on the web: the web profile asks rather than blocks, so they do reach the card — but it offers only **Just this command**. No stored grant and no one-hour lease can approve a hardline command; you approve each one yourself, every time (`ApprovalsService.requestApproval` and `ApprovalsService.approve`, pinned by `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`).
@@ -83,7 +86,31 @@ These adapters implement `ApprovalCapableAdapter` and post an interactive approv
 
 `resolveApprovalTarget` in `wireApprovalFlow` picks the decider, pinned by `apps/ethos/src/commands/__tests__/approval-target.test.ts`. The card updates in place to show who decided what.
 
+**Deny with note (Slack and Discord).** Each card has a third button, **Deny with note…**, which opens a modal with a text field. Submitting it denies the call and sends the text to the agent. The click goes through the same decider check as Allow and Deny: Slack ignores a modal submission whose metadata does not match, and Discord re-checks the role gate on submit (`approval-adapter.test.ts` and `approval.test.ts` in `extensions/platform-slack/src/__tests__/`, `approval-note-interactions.test.ts` in `extensions/platform-discord/src/__tests__/`). The resolved card still reads "Denied by <user>" and does not echo the note. Telegram has no modal, so its card keeps Allow / Deny only; deny-with-note on Telegram is not built yet.
+
 Threads work on Slack (the card posts in the same thread as the inbound message). On Telegram the card posts as a reply to the triggering message.
+
+### Deny with a note
+
+Refusing a call and saying what to do instead takes one gesture, so the agent changes course without a second message. The note reaches the model as the blocked call's error result:
+
+```
+denied by user — terminal requires explicit approval (command substitution)
+The user did not allow this call and said what to do instead: use `lsof -t -i:3000` first and show me the PIDs
+```
+
+| Rule | Detail | Enforced by |
+|---|---|---|
+| Cleaned | Control and hidden characters are stripped; newlines stay. | `sanitizeApprovalNote` in `packages/surface-kit/src/approval-note.ts`, pinned by `packages/surface-kit/src/__tests__/approval-note.test.ts` |
+| Capped | 1000 characters (`APPROVAL_NOTE_MAX_CHARS`); a longer note is cut and ends with `…`. | `sanitizeApprovalNote`, same test |
+| Empty means plain deny | A note with nothing visible left is dropped. | `sanitizeApprovalNote`; `ApprovalCoordinator.deny` in `apps/ethos/src/approval-coordinator.ts` |
+| Only the bound decider counts | A bystander's deny-with-note neither settles the card nor leaks its note. | `ApprovalCoordinator.settle`, pinned by "a bystander's deny-with-note neither settles nor leaks its note" in `apps/ethos/src/__tests__/approval-coordinator.test.ts` |
+| Reaches the model | The note becomes the blocked call's `tool_result`. | `formatApprovalDenial`, pinned by `apps/ethos/src/__tests__/deny-redirect-tool-result.test.ts` |
+| Still counts as a denial | Three denials in a row, redirects included, stop the turn (`MAX_CONSECUTIVE_DENIALS` in `packages/core/src/agent-loop/budgets.ts`). | Same constant, existing circuit-breaker tests |
+
+**Limitation: the note text is stored.** The note is kept in the session transcript as the blocked call's `tool_result`, and in the `tool_blocked` safety record's `cause` (`refuse` in `packages/core/src/agent-loop/stages/per-call-enforcement.ts`). The approval audit row records only `redirected: true` and `noteChars`, never the text (`ApprovalCoordinator.requestApproval` and `ApprovalsService.deny`, pinned by "audits a redirect without storing the note text" and "deny audits a redirect without the note"). No enforcer redacts the note from the transcript or the safety record, so do not type a secret into it.
+
+**Hidden characters are shown, not hidden.** A bidi override, zero-width or tag character in a flagged call's arguments (or its reason) shows as `⟨U+XXXX⟩` on every surface, so what you read is what runs. The web modal and the TUI also print a warning with the count (`hidden character(s) shown as ⟨U+…⟩`). The Slack, Discord and Telegram cards show the markers through the shared `formatApprovalArgs` without a warning line. The detector is `revealHiddenChars` in `packages/surface-kit/src/hidden-chars.ts`; a drift test pins it against the `bidi-override` and `zero-width` rules in `packages/safety/injection/src/pattern-check.ts`. A zero-width joiner (U+200D) is included, so an emoji sequence in arguments also shows `⟨U+200D⟩`.
 
 ### WhatsApp, email and webhook bots
 
@@ -112,4 +139,5 @@ This also holds with no bot configured. `ethos gateway start` then runs channel-
 ## See also
 
 - [Set up approval gates](../set-up-approval-gates.md) — steps 1-4 and the rest of the troubleshooting table.
+- [Glossary](../../../getting-started/glossary.md) — approval, audience boundary and other terms used above.
 - [Security overview](../../../security/overview.md) — where approval gates sit in the trust model.

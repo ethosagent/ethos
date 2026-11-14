@@ -9,9 +9,7 @@ describe('approval note', () => {
     expect(sanitizeApprovalNote('​‮﻿')).toBeUndefined();
   });
   it('strips C0/C1 controls and hidden code points but keeps newlines', () => {
-    expect(sanitizeApprovalNote('use \u001b[2Jstaging‮\r\nDB\u0085')).toBe(
-      'use [2Jstaging\nDB',
-    );
+    expect(sanitizeApprovalNote('use \u001b[2Jstaging‮\r\nDB\u0085')).toBe('use [2Jstaging\nDB');
   });
   it('turns tabs into spaces', () => {
     expect(sanitizeApprovalNote('a\tb')).toBe('a b');
