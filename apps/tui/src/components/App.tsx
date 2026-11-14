@@ -365,7 +365,7 @@ export function App({
     return effective;
   }, []);
   const [modal, setModal] = useState<Modal>(null);
-  const [lastEscAt, setLastEscAt] = useState<number | null>(null);
+  const lastEscAtRef = useRef<number | null>(null);
   const [rewindPoints, setRewindPoints] = useState<RewindStripPoint[]>([]);
   const [pendingRewind, setPendingRewind] = useState<{ messageId: string } | null>(null);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
@@ -1879,12 +1879,12 @@ export function App({
             setHistoryIndex(null);
             // Esc Esc on an empty composer opens the backtrack strip (a draft is
             // never replaced; InputBox is inert while a turn runs, which is the busy guard).
-            if (rewind && input === '' && isDoubleEsc(lastEscAt, Date.now())) {
-              setLastEscAt(null);
+            if (rewind && input === '' && isDoubleEsc(lastEscAtRef.current, Date.now())) {
+              lastEscAtRef.current = null;
               void openBacktrack();
               return;
             }
-            setLastEscAt(Date.now());
+            lastEscAtRef.current = Date.now();
           }}
         />
         <StatusBar

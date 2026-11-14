@@ -7,12 +7,7 @@ import {
   rewindSession,
 } from '@ethosagent/wiring';
 
-export interface PendingRewind {
-  messageId: string;
-  text: string;
-  hadAttachments: boolean;
-  turnsBack: number;
-}
+export type PendingRewind = RewindPoint;
 
 const NOTHING_TO_REWIND = 'Nothing to rewind yet — send a message first.';
 
@@ -48,12 +43,7 @@ export async function prepareRewind(
   const attachments = point.hadAttachments ? ' Attached files are not re-sent.' : '';
   return {
     message: `Editing prompt ${point.turnsBack} back. Enter runs it on a new branch; an empty line or any /command cancels. ${REWIND_NOTICE}${attachments}`,
-    pending: {
-      messageId: point.messageId,
-      text: point.text,
-      hadAttachments: point.hadAttachments,
-      turnsBack: point.turnsBack,
-    },
+    pending: point,
   };
 }
 
