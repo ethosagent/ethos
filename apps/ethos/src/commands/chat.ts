@@ -19,6 +19,7 @@ import {
   describeChatError,
   type EventTranslatorCredentialRequired,
   parseSlashCommand,
+  REWIND_BUSY,
   slashCommandsForSurface,
 } from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
@@ -88,6 +89,7 @@ import { formatRecap } from '../lib/recap';
 import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
 import { runBranchCommand } from '../lib/session-branches';
+import { commitRewind, type PendingRewind, prepareRewind } from '../lib/session-rewind';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
 import {
   buildBaseRegistry,
@@ -238,6 +240,10 @@ interface ChatState {
   draining: boolean;
   /** FW-15/16 — set by handleSlashCommand when a skill/quick command wants to run a turn. */
   pendingTurn?: string;
+  /** `/rewind` picked a prompt; the next plain line commits the branch (lib/session-rewind.ts). */
+  pendingRewind?: PendingRewind;
+  /** Single-line prompt `/rewind` wants typed into the input after the next reprompt. */
+  rewindPrefill?: string;
   /** The one owner of the next typed line for every one-line prompt below
    *  (consent, clarify, approval, masked credential): one prompt at a time,
    *  the rest FIFO (`createLineArbiter`, lib/line-arbiter.ts). */
@@ -1041,6 +1047,10 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
     const input = raw.trim();
     if (!input) {
+      if (state.pendingRewind) {
+        state.pendingRewind = undefined;
+        out(`${c.dim}[rewind cancelled]${c.reset}\n`);
+      }
       reprompt();
       return;
     }
@@ -1084,6 +1094,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
           if (!state.draining && !state.abort) {
             rl.setPrompt(promptString(state));
             reprompt();
+            if (state.rewindPrefill !== undefined) {
+              const prefill = state.rewindPrefill;
+              state.rewindPrefill = undefined;
+              if (!rlClosed && state.pendingRewind) rl.write(prefill);
+            }
           }
         })
         .catch((err) => {
@@ -1101,8 +1116,14 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     }
 
     state.draining = true;
-    resolveAtRefs(input, process.cwd())
-      .then((resolved) => runTurn(resolved, state, activeLoop))
+    commitPendingRewind(state, activeLoop, slashCtx)
+      .then((committed) =>
+        committed
+          ? resolveAtRefs(input, process.cwd()).then((resolved) =>
+              runTurn(resolved, state, activeLoop),
+            )
+          : undefined,
+      )
       .then(() => {
         const drainNext = () => {
           const next = state.inputQueue.shift();
@@ -1934,6 +1955,56 @@ export async function performModelSwitch<T>(
   }
 }
 
+/** One opener for the `/fork`, `/branch` and `/rewind` paths. */
+async function openSessionStore() {
+  const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+  return new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+}
+
+/** Re-key the REPL onto another session (fork, branch, rewind) and reset the per-session state `/new` resets. */
+function applySwitch(
+  state: ChatState,
+  loop: AgentLoop,
+  ctx: SlashHandlerContext,
+  switchTo: { sessionKey: string; personalityId?: string },
+): void {
+  loop.resetSessionCost(state.sessionKey);
+  ctx.notificationRouter.deregister(state.sessionKey);
+  state.sessionKey = switchTo.sessionKey;
+  if (switchTo.personalityId) state.personalityId = switchTo.personalityId;
+  ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
+  state.contextTokens = 0;
+  state.contextInputTokens = 0;
+  state.messageCount = 0;
+  state.startedAt = Date.now();
+}
+
+/**
+ * Commit a pending `/rewind`: create the branch and re-key onto it. Resolves
+ * false (turn must not run, source session kept) when the commit throws.
+ */
+async function commitPendingRewind(
+  state: ChatState,
+  loop: AgentLoop,
+  ctx: SlashHandlerContext,
+): Promise<boolean> {
+  const pending = state.pendingRewind;
+  if (!pending) return true;
+  state.pendingRewind = undefined;
+  const store = await openSessionStore();
+  try {
+    const outcome = await commitRewind(store, state.sessionKey, pending.messageId);
+    applySwitch(state, loop, ctx, outcome.switchTo);
+    out(`${c.dim}${outcome.message}${c.reset}\n`);
+    return true;
+  } catch (err) {
+    out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+    return false;
+  } finally {
+    store.close();
+  }
+}
+
 async function handleSlashCommand(
   raw: string,
   state: ChatState,
@@ -1944,6 +2015,11 @@ async function handleSlashCommand(
   ctx: SlashHandlerContext,
 ): Promise<void> {
   const { name, arg } = parseSlashCommand(raw);
+
+  if (name !== 'rewind' && state.pendingRewind) {
+    state.pendingRewind = undefined;
+    out(`${c.dim}[rewind cancelled]${c.reset}\n`);
+  }
 
   switch (name) {
     case 'help':
@@ -1985,25 +2061,42 @@ async function handleSlashCommand(
       break;
     }
 
+    case 'rewind': {
+      if (state.draining || state.abort) {
+        out(`${c.dim}${REWIND_BUSY}${c.reset}\n`);
+        break;
+      }
+      const store = await openSessionStore();
+      try {
+        const outcome = await prepareRewind(store, arg, state.sessionKey);
+        out(`${c.dim}${outcome.message}${c.reset}\n`);
+        if (outcome.pending) {
+          state.pendingRewind = outcome.pending;
+          const { text } = outcome.pending;
+          if (text.includes('\n')) {
+            // rl.write('...\n...') would submit the first line, so show the
+            // original instead and let the next typed line be the new prompt.
+            out(`${c.dim}[multi-line prompt — type or paste the new one]\n${text}${c.reset}\n`);
+          } else {
+            // Written by the line handler once the prompt is redrawn.
+            state.rewindPrefill = text;
+          }
+        }
+      } catch (err) {
+        out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+      } finally {
+        store.close();
+      }
+      break;
+    }
+
     case 'fork':
     case 'branches':
     case 'branch': {
-      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      const store = await openSessionStore();
       try {
         const outcome = await runBranchCommand(store, name, arg, state.sessionKey);
-        if (outcome.switchTo) {
-          // Re-key the REPL onto the branch, resetting what `/new` resets.
-          loop.resetSessionCost(state.sessionKey);
-          ctx.notificationRouter.deregister(state.sessionKey);
-          state.sessionKey = outcome.switchTo.sessionKey;
-          if (outcome.switchTo.personalityId) state.personalityId = outcome.switchTo.personalityId;
-          ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
-          state.contextTokens = 0;
-          state.contextInputTokens = 0;
-          state.messageCount = 0;
-          state.startedAt = Date.now();
-        }
+        if (outcome.switchTo) applySwitch(state, loop, ctx, outcome.switchTo);
         out(`${c.dim}${outcome.message}${c.reset}\n`);
       } catch (err) {
         out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
