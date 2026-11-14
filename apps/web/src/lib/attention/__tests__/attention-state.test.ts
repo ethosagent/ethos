@@ -149,11 +149,12 @@ describe('activityToAttentionAction', () => {
         label: 'GitHub token',
         pendingUserMessage: 'my private message',
       }),
+      7,
     );
     expect(action).toEqual({
       type: 'add',
       item: {
-        key: 'credential:sess:gh:token',
+        key: 'credential:sess:gh:token:7',
         kind: 'credential',
         sessionId: 'sess',
         personalityId: 'pers',

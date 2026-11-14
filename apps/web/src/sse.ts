@@ -67,7 +67,15 @@ export interface StreamSubscriberOptions<T> {
 }
 
 export type SseSubscriberOptions = StreamSubscriberOptions<SseEvent>;
-export type ActivitySubscriberOptions = StreamSubscriberOptions<ActivityEvent>;
+export interface ActivitySubscriberOptions extends StreamSubscriberOptions<ActivityEvent> {
+  /**
+   * Optional registry-key suffix. A caller that must not share the common
+   * connection for this scope (so its own `sinceSeq` is honoured and it
+   * is unaffected by another subscriber's) passes a distinct channel; callers
+   * with the same channel still share one connection. Omitted = unchanged.
+   */
+  channel?: string;
+}
 
 export interface SseSubscription {
   close(): void;
@@ -140,7 +148,7 @@ export function subscribeToActivity(
   const base = opts.apiBase ?? import.meta.env.VITE_API_URL ?? '';
   return subscribeShared(
     activityConnections,
-    `${base}|activity|${personalityId ?? 'global'}`,
+    `${base}|activity|${personalityId ?? 'global'}${opts.channel ? `|${opts.channel}` : ''}`,
     () => {
       const url = new URL(`${base}/sse/activity`, window.location.origin);
       if (personalityId) url.searchParams.set('personalityId', personalityId);

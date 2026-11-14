@@ -7,7 +7,7 @@ import type { SseEvent } from '@ethosagent/web-contracts';
 export type AttentionKind = 'approval' | 'clarify' | 'credential';
 
 export interface AttentionItem {
-  /** 'approval:<approvalId>' | 'clarify:<requestId>' | 'credential:<sessionId>:<pluginId>:<credentialKey>' */
+  /** 'approval:<approvalId>' | 'clarify:<requestId>' | 'credential:<sessionId>:<pluginId>:<credentialKey>:<seq>' */
   key: string;
   kind: AttentionKind;
   sessionId: string;
@@ -72,13 +72,18 @@ export function attentionCount(state: AttentionState): number {
 /**
  * Map one activity envelope to a reducer action. `credential_required` has no
  * `sessionId` field, so the session comes from the envelope (the hook builds
- * one from the active session subscription).
+ * one from the active session subscription). `seq` is the SSE frame seq: it
+ * makes a credential key unique per request while a replay of the same frame
+ * (same seq) still hits its tombstone.
  */
-export function activityToAttentionAction(envelope: {
-  sessionId: string;
-  personalityId: string | null;
-  event: SseEvent;
-}): AttentionAction | null {
+export function activityToAttentionAction(
+  envelope: {
+    sessionId: string;
+    personalityId: string | null;
+    event: SseEvent;
+  },
+  seq?: number,
+): AttentionAction | null {
   const { sessionId, personalityId, event } = envelope;
   switch (event.type) {
     case 'tool.approval_required':
@@ -111,7 +116,7 @@ export function activityToAttentionAction(envelope: {
       return {
         type: 'add',
         item: {
-          key: `credential:${sessionId}:${event.pluginId}:${event.credentialKey}`,
+          key: `credential:${sessionId}:${event.pluginId}:${event.credentialKey}${seq === undefined ? '' : `:${seq}`}`,
           kind: 'credential',
           sessionId,
           personalityId,

@@ -19,6 +19,9 @@ import { SettingRow } from '../components/setting-row';
 const ENABLE_HELP =
   'Show a system notification when a chat needs you and this tab is in the background. Stored in this browser only.';
 
+const SAVE_ERROR =
+  'Could not save this setting (browser storage is full or blocked). It is shown as currently stored.';
+
 const HELP: Record<NotifySupport, string> = {
   granted: ENABLE_HELP,
   default: ENABLE_HELP,
@@ -33,20 +36,28 @@ export function AttentionNotifyRow() {
     () => notificationSupport() === 'granted' && getAttentionNotifyPref(),
   );
 
+  const [saveError, setSaveError] = useState(false);
+
   async function onChange(next: boolean) {
+    setSaveError(false);
     if (!next) {
-      setAttentionNotifyPref(false);
-      setOn(false);
+      const wrote = setAttentionNotifyPref(false);
+      // The Switch shows what is actually stored, not what was asked for.
+      const stored = getAttentionNotifyPref();
+      setOn(stored);
+      if (!wrote || stored) setSaveError(true);
       return;
     }
     const result = await enableAttentionNotifications();
     setSupport(notificationSupport());
-    // Switch reflects the resolved outcome: on only when permission was granted.
-    setOn(result === 'granted');
+    // On only when permission was granted AND the preference really stored.
+    const stored = result === 'granted' && getAttentionNotifyPref();
+    setOn(stored);
+    if (result === 'granted' && !stored) setSaveError(true);
   }
 
   return (
-    <SettingRow label="Browser notifications" help={HELP[support]}>
+    <SettingRow label="Browser notifications" help={saveError ? SAVE_ERROR : HELP[support]}>
       <SelfSaveMarker />
       <Switch checked={on} disabled={support === 'unsupported'} onChange={onChange} />
     </SettingRow>

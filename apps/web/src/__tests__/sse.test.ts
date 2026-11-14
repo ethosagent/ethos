@@ -196,6 +196,19 @@ describe('subscribeToActivity', () => {
     expect(FakeEventSource.instances).toHaveLength(2);
   });
 
+  it('a distinct channel gets its own connection; sinceSeq subscriber keeps its own URL', () => {
+    subscribeToActivity(null, { onEvent: vi.fn(), channel: 'attention' });
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    subscribeToActivity(null, { onEvent: vi.fn(), sinceSeq: 42 });
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances[1]?.url).toContain('lastEventId=42');
+    expect(FakeEventSource.instances[0]?.url).not.toContain('lastEventId');
+
+    subscribeToActivity(null, { onEvent: vi.fn(), channel: 'attention' });
+    expect(FakeEventSource.instances).toHaveLength(2);
+  });
+
   it('does not collide with a session connection of the same name', () => {
     subscribeToActivity('activity', { onEvent: vi.fn() });
     subscribeToSession('activity', { onEvent: vi.fn() });

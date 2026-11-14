@@ -30,6 +30,13 @@ function findIconLink(): HTMLLinkElement | null {
   return document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
 }
 
+/**
+ * A fresh connection replays the server's activity buffer, so a request can
+ * arrive just before its resolved event. Notify only if still pending after
+ * this window.
+ */
+export const NOTIFY_DELAY_MS = 1500;
+
 export function useAttentionSignals(): void {
   const [state, dispatch] = useReducer(attentionReducer, emptyAttention);
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
@@ -45,6 +52,9 @@ export function useAttentionSignals(): void {
   const dotRef = useRef<string | null>(null);
   const dotPendingRef = useRef(false);
   const notifiedRef = useRef<Set<string>>(new Set());
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Visibility.
   useEffect(() => {
@@ -64,9 +74,11 @@ export function useAttentionSignals(): void {
     };
   }, []);
 
-  // Effect A: approvals + clarifies, every session, one shared connection.
+  // Effect A: approvals + clarifies, every session. Own channel so the
+  // Activity page's sinceSeq replay is not swallowed by this earlier opener.
   useEffect(() => {
     const sub = subscribeToActivity(null, {
+      channel: 'attention',
       onEvent: (envelope) => {
         const action = activityToAttentionAction(envelope);
         if (action) dispatch(action);
@@ -79,9 +91,9 @@ export function useAttentionSignals(): void {
   useEffect(() => {
     if (!sessionId) return;
     const sub = subscribeToSession(sessionId, {
-      onEvent: (event) => {
+      onEvent: (event, seq) => {
         if (event.type !== 'credential_required') return;
-        const action = activityToAttentionAction({ sessionId, personalityId: null, event });
+        const action = activityToAttentionAction({ sessionId, personalityId: null, event }, seq);
         if (action) dispatch(action);
       },
     });
@@ -113,19 +125,43 @@ export function useAttentionSignals(): void {
   // Restore on unmount.
   useEffect(() => () => restore(baseTitleRef, faviconRef), []);
 
-  // Notify once per item, only when it arrives while the tab is hidden.
+  // Notify once per item that arrives while hidden, after a short delay and
+  // only if it is still pending then (drops replayed request/resolved pairs).
   useEffect(() => {
     const seen = notifiedRef.current;
+    const timers = timersRef.current;
+    for (const [key, timer] of timers) {
+      if (!state.items.some((i) => i.key === key)) {
+        clearTimeout(timer);
+        timers.delete(key);
+      }
+    }
     for (const item of state.items) {
       if (seen.has(item.key)) continue;
       seen.add(item.key);
-      if (!visibleRef.current) {
-        showAttentionNotification(item, (it) =>
-          navigate(sessionOpenPath(it.sessionId, it.personalityId)),
-        );
-      }
+      if (visibleRef.current) continue;
+      timers.set(
+        item.key,
+        setTimeout(() => {
+          timers.delete(item.key);
+          const pending = stateRef.current.items.find((i) => i.key === item.key);
+          if (!pending || visibleRef.current) return;
+          showAttentionNotification(pending, (it) =>
+            navigate(sessionOpenPath(it.sessionId, it.personalityId)),
+          );
+        }, NOTIFY_DELAY_MS),
+      );
     }
   }, [state.items, navigate]);
+
+  // Cancel any pending notification timers on unmount.
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
 }
 
 function applyDot(

@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ATTENTION_NOTIFY_KEY } from '../../lib/attention/notify';
-import { useAttentionSignals } from '../useAttentionSignals';
+import { NOTIFY_DELAY_MS, useAttentionSignals } from '../useAttentionSignals';
 
 const DOT = 'data:image/png;base64,DOT';
 
@@ -19,9 +19,13 @@ vi.mock('../../lib/attention/favicon', () => ({
 }));
 
 interface Handlers<T> {
-  onEvent: (e: T) => void;
+  onEvent: (e: T, seq: number) => void;
 }
-const activity = { handlers: null as Handlers<ActivityEvent> | null, close: vi.fn() };
+const activity = {
+  handlers: null as Handlers<ActivityEvent> | null,
+  close: vi.fn(),
+  opts: null as { channel?: string; sinceSeq?: number } | null,
+};
 const session = {
   handlers: null as Handlers<SseEvent> | null,
   id: null as string | null,
@@ -29,8 +33,12 @@ const session = {
 };
 
 vi.mock('../../sse', () => ({
-  subscribeToActivity: (_p: string | null, opts: Handlers<ActivityEvent>) => {
+  subscribeToActivity: (
+    _p: string | null,
+    opts: Handlers<ActivityEvent> & { channel?: string; sinceSeq?: number },
+  ) => {
     activity.handlers = opts;
+    activity.opts = opts;
     return { close: activity.close, lastSeq: 0, connectionState: 'open' };
   },
   subscribeToSession: (id: string, opts: Handlers<SseEvent>) => {
@@ -68,6 +76,12 @@ function setVisibility(state: 'visible' | 'hidden'): void {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
   act(() => {
     document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
+function advance(ms: number): void {
+  act(() => {
+    vi.advanceTimersByTime(ms);
   });
 }
 
@@ -118,9 +132,9 @@ function clarify(id: string): ActivityEvent {
   };
 }
 
-function emit(e: ActivityEvent): void {
+function emit(e: ActivityEvent, seq = 1): void {
   act(() => {
-    activity.handlers?.onEvent(e);
+    activity.handlers?.onEvent(e, seq);
   });
 }
 
@@ -146,6 +160,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
@@ -244,10 +259,11 @@ describe('useAttentionSignals', () => {
     localStorage.setItem(ATTENTION_NOTIFY_KEY, 'on');
     stubNotification('granted');
     vi.spyOn(window, 'focus').mockImplementation(() => undefined);
+    vi.useFakeTimers();
     mount('/settings');
     setVisibility('hidden');
     emit(approvalRequired('a1'));
-    await flush();
+    advance(NOTIFY_DELAY_MS);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.opts.tag).toBe('approval:a1');
     act(() => notifications[0]?.onclick?.());
@@ -256,11 +272,84 @@ describe('useAttentionSignals', () => {
 
   it('pref off -> zero Notifications', async () => {
     stubNotification('granted');
+    vi.useFakeTimers();
     mount('/settings');
     setVisibility('hidden');
     emit(approvalRequired('a1'));
-    await flush();
+    advance(NOTIFY_DELAY_MS);
     expect(notifications).toHaveLength(0);
+  });
+
+  it('a replayed request resolved inside the window never notifies', () => {
+    localStorage.setItem(ATTENTION_NOTIFY_KEY, 'on');
+    stubNotification('granted');
+    vi.useFakeTimers();
+    mount('/settings');
+    setVisibility('hidden');
+    emit(approvalRequired('a1'));
+    advance(NOTIFY_DELAY_MS - 100);
+    emit(approvalResolved('a1'));
+    advance(NOTIFY_DELAY_MS * 2);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it('a still-pending request notifies exactly once after the window', () => {
+    localStorage.setItem(ATTENTION_NOTIFY_KEY, 'on');
+    stubNotification('granted');
+    vi.useFakeTimers();
+    mount('/settings');
+    setVisibility('hidden');
+    emit(approvalRequired('a1'));
+    advance(NOTIFY_DELAY_MS - 100);
+    expect(notifications).toHaveLength(0);
+    advance(100);
+    advance(NOTIFY_DELAY_MS * 2);
+    expect(notifications).toHaveLength(1);
+  });
+
+  it('unmount cancels pending notification timers', () => {
+    localStorage.setItem(ATTENTION_NOTIFY_KEY, 'on');
+    stubNotification('granted');
+    vi.useFakeTimers();
+    mount('/settings');
+    setVisibility('hidden');
+    emit(approvalRequired('a1'));
+    act(() => root.unmount());
+    advance(NOTIFY_DELAY_MS * 2);
+    expect(notifications).toHaveLength(0);
+    root = createRoot(container);
+  });
+
+  it('subscribes on its own activity channel', () => {
+    mount('/settings');
+    expect(activity.opts?.channel).toBe('attention');
+    expect(activity.opts?.sinceSeq).toBeUndefined();
+  });
+
+  it('a second credential request after the first was viewed is counted again', async () => {
+    localStorage.setItem('ethos.lastSessionId', 's1');
+    mount('/p/coder/chat?session=s1');
+    setVisibility('hidden');
+    const cred = {
+      type: 'credential_required' as const,
+      pluginId: 'gh',
+      credentialKey: 'token',
+      kind: 'api_key' as const,
+      label: 'GitHub',
+      pendingUserMessage: 'private',
+    };
+    act(() => session.handlers?.onEvent(cred, 3));
+    await flush();
+    expect(document.title).toBe('(1) Ethos');
+    setVisibility('visible');
+    expect(document.title).toBe('Ethos');
+    setVisibility('hidden');
+    act(() => session.handlers?.onEvent(cred, 3)); // replay of the same frame
+    await flush();
+    expect(document.title).toBe('Ethos');
+    act(() => session.handlers?.onEvent(cred, 9)); // genuine second request
+    await flush();
+    expect(document.title).toBe('(1) Ethos');
   });
 
   it('restores the base title captured at first signal even if the app changed it meanwhile', async () => {
@@ -278,14 +367,17 @@ describe('useAttentionSignals', () => {
     mount('/settings');
     setVisibility('hidden');
     act(() => {
-      session.handlers?.onEvent({
-        type: 'credential_required',
-        pluginId: 'gh',
-        credentialKey: 'token',
-        kind: 'api_key',
-        label: 'GitHub',
-        pendingUserMessage: 'private',
-      });
+      session.handlers?.onEvent(
+        {
+          type: 'credential_required',
+          pluginId: 'gh',
+          credentialKey: 'token',
+          kind: 'api_key',
+          label: 'GitHub',
+          pendingUserMessage: 'private',
+        },
+        1,
+      );
     });
     await flush();
     expect(document.title).toBe('(1) Ethos');
