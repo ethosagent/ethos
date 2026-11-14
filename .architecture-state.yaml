@@ -118,7 +118,7 @@ register_anchors:
     - { path: extensions/observability-sqlite/src/store.ts, line: 344, contains: "redactJson(span.attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 397, contains: "redactJson(attrs, extraRedactPatterns)" }
     - { path: extensions/observability-sqlite/src/store.ts, line: 527, contains: "redactJson(event.details, extraRedactPatterns)" }
-    - { path: packages/surface-kit/src/approval-args.ts, line: 41, contains: "export function formatApprovalArgs" }
+    - { path: packages/surface-kit/src/approval-args.ts, line: 42, contains: "export function formatApprovalArgs" }
 
   G-APP:
     - { path: packages/wiring/src/danger-predicate.ts, line: 451, contains: "mode === 'smart' && opts.smartApprove" }
