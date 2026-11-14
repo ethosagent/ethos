@@ -60,7 +60,7 @@ function makeStdin() {
 /** A source whose requests the test raises and whose decisions it records. */
 function fakeSource() {
   const emitter = new EventEmitter();
-  const decisions: Array<{ approvalId: string; decision: 'allow' | 'deny' }> = [];
+  const decisions: Array<{ approvalId: string; decision: 'allow' | 'deny'; note?: string }> = [];
   const source: BridgeApprovalSource = {
     onRequest: (listener) => {
       emitter.on('request', listener);
@@ -70,17 +70,18 @@ function fakeSource() {
       emitter.on('settled', listener);
       return () => emitter.off('settled', listener);
     },
-    decide: (approvalId, decision) => {
-      decisions.push({ approvalId, decision });
+    decide: (approvalId, decision, note) => {
+      decisions.push({ approvalId, decision, ...(note !== undefined ? { note } : {}) });
       emitter.emit('settled', approvalId, decision, 'tui');
     },
   };
-  const request = (approvalId: string, command: string): void => {
+  const request = (approvalId: string, command: string, hiddenChars?: number): void => {
     const req: BridgeApprovalRequest = {
       approvalId,
       toolName: 'terminal',
       reason: 'terminal requires explicit approval',
       argsPreview: JSON.stringify({ command }),
+      ...(hiddenChars !== undefined ? { hiddenChars } : {}),
     };
     emitter.emit('request', req);
   };
@@ -156,8 +157,8 @@ async function mounted() {
   if (!m) throw new Error('mount did not run');
   const { fake, stdout, stdin } = m;
   /** Raise a request; resolves once the modal it opens is rendered and listening. */
-  const request = (approvalId: string, command: string) =>
-    act(async () => fake.request(approvalId, command));
+  const request = (approvalId: string, command: string, hiddenChars?: number) =>
+    act(async () => fake.request(approvalId, command, hiddenChars));
   /** Settle a request elsewhere; resolves once the App has re-rendered. */
   const settleElsewhere = (approvalId: string) => act(async () => fake.settleElsewhere(approvalId));
   return { fake, stdout, stdin, request, settleElsewhere };
@@ -214,5 +215,53 @@ describe('TUI — tool approval modal', () => {
     await settleElsewhere('a1');
     await waitFor(() => !stdout.last.includes('approval needed'), 'the modal closed');
     expect(fake.decisions).toEqual([]);
+  });
+
+  it('"r" then text then Enter denies with the note', async () => {
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'ls -la');
+    await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
+    await pressKeys(stdin, 'r');
+    await waitFor(() => stdout.last.includes('Enter deny with note'), 'note mode');
+    await pressKeys(stdin, 'use staging');
+    await waitFor(() => stdout.last.includes('use staging'), 'the typed note');
+    await pressKeys(stdin, '\r');
+    await waitFor(() => fake.decisions.length === 1, 'a decision');
+    expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'deny', note: 'use staging' }]);
+  });
+
+  it('Esc in note mode goes back instead of denying', async () => {
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'ls -la');
+    await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
+    await pressKeys(stdin, 'r');
+    await waitFor(() => stdout.last.includes('Esc back'), 'note mode');
+    await pressKeys(stdin, '\u001b');
+    await waitFor(() => stdout.last.includes('r deny and redirect'), 'choice mode');
+    expect(fake.decisions).toEqual([]);
+    await pressKeys(stdin, 'y');
+    await waitFor(() => fake.decisions.length === 1, 'a decision');
+    expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'allow' }]);
+  });
+
+  it('Enter on an empty note does nothing', async () => {
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'ls -la');
+    await waitFor(() => stdout.last.includes('approval needed'), 'the modal rendered');
+    await pressKeys(stdin, 'r');
+    await waitFor(() => stdout.last.includes('Esc back'), 'note mode');
+    await pressKeys(stdin, '\r');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(fake.decisions).toEqual([]);
+    expect(stdout.last).toContain('Esc back');
+  });
+
+  it('shows the hidden-character warning when the host counted any', async () => {
+    const { stdout, request } = await mounted();
+    await request('a1', 'ls', 2);
+    await waitFor(
+      () => stdout.last.includes('2 hidden character(s) shown as ⟨U+…⟩'),
+      'the warning',
+    );
   });
 });

@@ -38,6 +38,7 @@
 // lease must never cover a hardline call anyway.
 
 import type { BridgeApprovalSource } from '@ethosagent/agent-bridge';
+import { revealHiddenChars } from '@ethosagent/surface-kit';
 import type {
   BeforeToolCallPayload,
   BeforeToolCallResult,
@@ -165,17 +166,27 @@ const PREVIEW_MAX_CHARS = 300;
 
 /**
  * The args preview a terminal prompt shows: compact JSON, secrets redacted
- * (`redactString`, @ethosagent/safety-redact), cut at 300 characters.
+ * (`redactString`, @ethosagent/safety-redact), hidden characters made visible
+ * (`revealHiddenChars`, @ethosagent/surface-kit), cut at 300 characters.
+ * `hidden` counts the characters revealed.
  */
-export function formatApprovalArgsPreview(args: unknown): string {
+export function buildApprovalArgsPreview(args: unknown): { preview: string; hidden: number } {
   let text: string;
   try {
     text = JSON.stringify(args) ?? String(args);
   } catch {
     text = String(args);
   }
-  text = redactString(text);
-  return text.length > PREVIEW_MAX_CHARS ? `${text.slice(0, PREVIEW_MAX_CHARS - 1)}…` : text;
+  const revealed = revealHiddenChars(redactString(text));
+  const preview =
+    revealed.text.length > PREVIEW_MAX_CHARS
+      ? `${revealed.text.slice(0, PREVIEW_MAX_CHARS - 1)}…`
+      : revealed.text;
+  return { preview, hidden: revealed.hidden };
+}
+
+export function formatApprovalArgsPreview(args: unknown): string {
+  return buildApprovalArgsPreview(args).preview;
 }
 
 /**
@@ -191,19 +202,24 @@ export function createTerminalApprovalSource(
 ): BridgeApprovalSource {
   return {
     onRequest: (listener) =>
-      coordinator.onPending((pending) =>
+      coordinator.onPending((pending) => {
+        const reason = revealHiddenChars(
+          redactString(pending.reason ?? `${pending.toolName} requires explicit approval`),
+        );
+        const args = buildApprovalArgsPreview(pending.args);
         listener({
           approvalId: pending.approvalId,
           toolName: pending.toolName,
-          reason: redactString(pending.reason ?? `${pending.toolName} requires explicit approval`),
-          argsPreview: formatApprovalArgsPreview(pending.args),
-        }),
-      ),
+          reason: reason.text,
+          argsPreview: args.preview,
+          hiddenChars: reason.hidden + args.hidden,
+        });
+      }),
     onSettled: (listener) => coordinator.onResolved(listener),
-    decide: (approvalId, decision) => {
+    decide: (approvalId, decision, note) => {
       void (decision === 'allow'
         ? coordinator.approve(approvalId, decidedBy)
-        : coordinator.deny(approvalId, decidedBy));
+        : coordinator.deny(approvalId, decidedBy, note));
     },
   };
 }

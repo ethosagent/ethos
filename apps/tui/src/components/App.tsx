@@ -1448,9 +1448,9 @@ export function App({
         <ApprovalModal
           request={approvalHead}
           queued={approvalQueue.length - 1}
-          onDecide={(decision) => {
+          onDecide={(decision, note) => {
             setApprovalQueue((q) => q.filter((r) => r.approvalId !== approvalHead.approvalId));
-            bridge.respondToApproval(approvalHead.approvalId, decision);
+            bridge.respondToApproval(approvalHead.approvalId, decision, note);
           }}
         />
       </SkinContext.Provider>

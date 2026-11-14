@@ -26,6 +26,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ApprovalCoordinator } from '../approval-coordinator';
 import { attachCliApprovalPrompt } from '../lib/cli-approval-prompt';
 import {
+  buildApprovalArgsPreview,
   createTerminalApprovalSource,
   formatApprovalArgsPreview,
   wireTerminalApprovalGate,
@@ -297,6 +298,64 @@ describe('terminal approval gate — CLI prompt', () => {
     expect(preview).not.toContain('sk-ant-api03-aaaa');
     expect(preview.length).toBeLessThanOrEqual(300);
     expect(preview.endsWith('…')).toBe(true);
+  });
+
+  it('the args preview reveals hidden characters and the source counts them', async () => {
+    expect(buildApprovalArgsPreview({ command: 'ls\u200b' })).toEqual({
+      preview: '{"command":"ls⟨U+200B⟩"}',
+      hidden: 1,
+    });
+    const coordinator = new ApprovalCoordinator({ timeoutMs: 0 });
+    const source = createTerminalApprovalSource(coordinator, 'tui');
+    const seen: Array<{ approvalId: string; argsPreview: string; hiddenChars?: number }> = [];
+    source.onRequest((r) => seen.push(r));
+    const hooks = loopHooks();
+    const unwire = wireTerminalApprovalGate(hooks, {
+      usageMeter: { meter: (p) => p },
+      personalities: registry(),
+      getProvider: async () => {
+        throw new Error('no provider in this test');
+      },
+      model: 'test-model',
+      executionPostureFor: () => LOCAL,
+      coordinator,
+      nonInteractive: 'no terminal',
+    });
+    const result = fire(hooks, 'ls\u200b');
+    await tick();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.argsPreview).toContain('⟨U+200B⟩');
+    expect(seen[0]?.hiddenChars).toBeGreaterThanOrEqual(1);
+    source.decide(seen[0]?.approvalId ?? '', 'deny');
+    await result;
+    unwire();
+  });
+
+  it('the terminal source forwards a deny note to the coordinator', async () => {
+    const coordinator = new ApprovalCoordinator({ timeoutMs: 0 });
+    const source = createTerminalApprovalSource(coordinator, 'tui');
+    const ids: string[] = [];
+    source.onRequest((r) => ids.push(r.approvalId));
+    const hooks = loopHooks();
+    const unwire = wireTerminalApprovalGate(hooks, {
+      usageMeter: { meter: (p) => p },
+      personalities: registry(),
+      getProvider: async () => {
+        throw new Error('no provider in this test');
+      },
+      model: 'test-model',
+      executionPostureFor: () => LOCAL,
+      coordinator,
+      nonInteractive: 'no terminal',
+    });
+    const result = fire(hooks, 'ls -la');
+    await tick();
+    expect(ids).toHaveLength(1);
+    source.decide(ids[0] as string, 'deny', 'use staging');
+    expect((await result).error).toMatch(
+      /\nThe user did not allow this call and said what to do instead: use staging$/,
+    );
+    unwire();
   });
 });
 

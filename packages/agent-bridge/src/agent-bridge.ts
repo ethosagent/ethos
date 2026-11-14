@@ -65,6 +65,9 @@ export interface BridgeApprovalRequest {
   reason: string;
   /** The call's arguments, redacted and truncated by the host. */
   argsPreview: string;
+  /** How many hidden characters the host replaced with `⟨U+…⟩` markers in
+   *  `reason` and `argsPreview`. Absent or 0 → none. */
+  hiddenChars?: number;
 }
 
 /**
@@ -80,8 +83,9 @@ export interface BridgeApprovalSource {
   onSettled(
     listener: (approvalId: string, decision: 'allow' | 'deny', decidedBy: string) => void,
   ): () => void;
-  /** Answer one pending call. Unknown or already-settled ids are ignored. */
-  decide(approvalId: string, decision: 'allow' | 'deny'): void;
+  /** Answer one pending call. Unknown or already-settled ids are ignored.
+   *  `note` is the optional redirect text of a deny; the host sanitizes it. */
+  decide(approvalId: string, decision: 'allow' | 'deny', note?: string): void;
 }
 
 export interface BridgeOptions {
@@ -270,8 +274,8 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   }
 
   /** Answer a pending approval relayed by `approval_request`. No source → no-op. */
-  respondToApproval(approvalId: string, decision: 'allow' | 'deny'): void {
-    this.approvalSource?.decide(approvalId, decision);
+  respondToApproval(approvalId: string, decision: 'allow' | 'deny', note?: string): void {
+    this.approvalSource?.decide(approvalId, decision, note);
   }
 
   get queueDepth(): number {
