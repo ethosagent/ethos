@@ -2292,10 +2292,15 @@ export {
 // modules reach it through the composition layer (Law 5); it lives in core so
 // the gateway extension, below wiring, can call it too.
 export {
+  editablePromptText,
   type ForkSessionResult,
   forkSession,
   forkSessionKey,
   listBranches,
+  listRewindPoints,
+  type RewindPoint,
+  type RewindTarget,
+  rewindSession,
 } from '@ethosagent/core';
 export {
   type CreateApprovalDangerPredicateOptions,

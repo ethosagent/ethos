@@ -323,6 +323,14 @@ export {
   forkSessionKey,
   listBranches,
 } from './session-fork';
+export {
+  editablePromptText,
+  listRewindPoints,
+  type RewindPoint,
+  type RewindSessionResult,
+  type RewindTarget,
+  rewindSession,
+} from './session-rewind';
 export { SimpleCompletionImpl } from './simple-completion';
 export type { SpokenStyleInjectorOptions } from './spoken-style-injector';
 export { createSpokenStyleInjector, SPOKEN_STYLE_BLOCK } from './spoken-style-injector';
