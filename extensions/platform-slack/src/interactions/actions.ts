@@ -7,7 +7,13 @@
 // `commands/index.ts`.
 
 import type { ApprovalDecisionEvent } from '@ethosagent/types';
-import { APPROVE_ACTION_ID, DENY_ACTION_ID } from '../blocks/approval';
+import {
+  APPROVAL_NOTE_BLOCK_ID,
+  APPROVAL_NOTE_CALLBACK_ID,
+  APPROVAL_NOTE_INPUT_ID,
+  APPROVE_ACTION_ID,
+  DENY_ACTION_ID,
+} from '../blocks/approval';
 
 export type { ApprovalDecisionEvent } from '@ethosagent/types';
 
@@ -57,6 +63,61 @@ export async function handleApprovalAction(
       decidedBy: payload.userId,
       channelId: payload.channelId,
       messageTs: payload.messageTs,
+    });
+  } catch {
+    // Stale / already-resolved approval — expected, not exceptional.
+  }
+}
+
+export interface ApprovalNoteSubmissionPayload {
+  callbackId: string;
+  /** JSON `{ approvalId, channelId, messageTs }` set by `approvalNoteModal`. */
+  privateMetadata: string;
+  userId: string;
+  values: Record<string, Record<string, { value?: string }>>;
+}
+
+function parseNoteMetadata(
+  raw: string,
+): { approvalId: string; channelId: string; messageTs: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null; // tampered or missing metadata: ignore the submission
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { approvalId, channelId, messageTs } = parsed as Record<string, unknown>;
+  if (typeof approvalId !== 'string' || !approvalId) return null;
+  if (typeof channelId !== 'string' || typeof messageTs !== 'string') return null;
+  return { approvalId, channelId, messageTs };
+}
+
+/**
+ * Route a note-modal submission as a deny carrying the note. Authorization is
+ * NOT decided here: the coordinator drops a decision from anyone but the bound
+ * approver (`ApprovalCoordinator.settle`, pinned by the gateway test
+ * "a bystander's deny-with-note neither settles nor leaks its note"). A stale
+ * approval (settled or timed out while the modal was open) makes the handler
+ * throw or no-op; that is swallowed.
+ */
+export async function handleApprovalNoteSubmission(
+  payload: ApprovalNoteSubmissionPayload,
+  handlers: ApprovalActionHandlers,
+): Promise<void> {
+  if (payload.callbackId !== APPROVAL_NOTE_CALLBACK_ID) return;
+  if (!payload.userId) return;
+  const meta = parseNoteMetadata(payload.privateMetadata);
+  if (!meta) return;
+  const note = payload.values[APPROVAL_NOTE_BLOCK_ID]?.[APPROVAL_NOTE_INPUT_ID]?.value ?? '';
+  try {
+    await handlers.onDecision({
+      approvalId: meta.approvalId,
+      decision: 'deny',
+      decidedBy: payload.userId,
+      channelId: meta.channelId,
+      messageTs: meta.messageTs,
+      note,
     });
   } catch {
     // Stale / already-resolved approval — expected, not exceptional.

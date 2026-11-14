@@ -7,12 +7,20 @@
 // approval without parsing anything out of the message itself.
 
 import { formatApprovalArgs } from '@ethosagent/surface-kit';
+import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import { context, escapeMrkdwn, header, type SlackBlock, section } from './shared';
 
 /** `action_id` for the Allow button. The interaction handler matches on this. */
 export const APPROVE_ACTION_ID = 'ethos_approval_allow';
 /** `action_id` for the Deny button. */
 export const DENY_ACTION_ID = 'ethos_approval_deny';
+
+/** `action_id` for the Deny with note… button (opens the note modal). */
+export const DENY_NOTE_ACTION_ID = 'ethos_approval_deny_note';
+/** `callback_id` of the note modal; its `view_submission` carries the note. */
+export const APPROVAL_NOTE_CALLBACK_ID = 'ethos_approval_note';
+export const APPROVAL_NOTE_BLOCK_ID = 'ethos_approval_note_block';
+export const APPROVAL_NOTE_INPUT_ID = 'ethos_approval_note_input';
 
 /** Slack section `text` caps at 3000 chars — keep the args preview well under. */
 const ARGS_PREVIEW_MAX = 2500;
@@ -66,6 +74,12 @@ export function approvalPendingBlocks(input: ApprovalPendingInput): SlackBlock[]
       },
       {
         type: 'button',
+        action_id: DENY_NOTE_ACTION_ID,
+        text: { type: 'plain_text', text: 'Deny with note…', emoji: true },
+        value: input.approvalId,
+      },
+      {
+        type: 'button',
         action_id: DENY_ACTION_ID,
         text: { type: 'plain_text', text: 'Deny', emoji: true },
         style: 'danger',
@@ -74,6 +88,38 @@ export function approvalPendingBlocks(input: ApprovalPendingInput): SlackBlock[]
     ],
   });
   return blocks;
+}
+
+export interface ApprovalNoteModalInput {
+  approvalId: string;
+  channelId: string;
+  messageTs: string;
+}
+
+/** The "Deny and redirect" modal. The approval's coordinates ride in
+ *  `private_metadata`; the submission handler re-validates them. */
+export function approvalNoteModal(input: ApprovalNoteModalInput): Record<string, unknown> {
+  return {
+    type: 'modal',
+    callback_id: APPROVAL_NOTE_CALLBACK_ID,
+    title: { type: 'plain_text', text: 'Deny and redirect' },
+    submit: { type: 'plain_text', text: 'Deny' },
+    close: { type: 'plain_text', text: 'Cancel' },
+    private_metadata: JSON.stringify(input),
+    blocks: [
+      {
+        type: 'input',
+        block_id: APPROVAL_NOTE_BLOCK_ID,
+        label: { type: 'plain_text', text: 'What should it do instead?' },
+        element: {
+          type: 'plain_text_input',
+          action_id: APPROVAL_NOTE_INPUT_ID,
+          multiline: true,
+          max_length: APPROVAL_NOTE_MAX_CHARS,
+        },
+      },
+    ],
+  };
 }
 
 export interface ApprovalResolvedInput {

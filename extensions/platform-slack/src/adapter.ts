@@ -30,10 +30,13 @@ import type {
 } from '@ethosagent/types';
 import type { App, HTTPReceiver } from '@slack/bolt';
 import {
+  APPROVAL_NOTE_CALLBACK_ID,
   APPROVE_ACTION_ID,
+  approvalNoteModal,
   approvalPendingBlocks,
   approvalResolvedBlocks,
   DENY_ACTION_ID,
+  DENY_NOTE_ACTION_ID,
 } from './blocks/approval';
 import {
   CLARIFY_ANSWER_ACTION_ID,
@@ -62,7 +65,11 @@ import { registerMemberEvents } from './events/members';
 import { type EnvelopeMeta, registerMessageEvents } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
-import { type ApprovalActionPayload, handleApprovalAction } from './interactions/actions';
+import {
+  type ApprovalActionPayload,
+  handleApprovalAction,
+  handleApprovalNoteSubmission,
+} from './interactions/actions';
 import {
   type ClarifyActionEvent,
   type ClarifyActionPayload,
@@ -909,6 +916,73 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     };
     this.app.action(APPROVE_ACTION_ID, onApprovalButton);
     this.app.action(DENY_ACTION_ID, onApprovalButton);
+
+    // "Deny with note…" opens a modal; it never decides. Opening is not
+    // authorization: whose submission counts is decided by the coordinator's
+    // approver binding (approval-coordinator.ts settle; pinned by the gateway
+    // test "a bystander's deny-with-note neither settles nor leaks its note").
+    this.app.action(DENY_NOTE_ACTION_ID, async (raw: unknown): Promise<void> => {
+      const evt = (raw ?? {}) as {
+        ack?: unknown;
+        body?: {
+          channel?: { id?: string };
+          message?: { ts?: string };
+          trigger_id?: string;
+        };
+        action?: { value?: string };
+      };
+      if (typeof evt.ack === 'function') {
+        try {
+          await (evt.ack as () => Promise<void>)();
+        } catch {
+          // best-effort ack — proceed regardless
+        }
+      }
+      const approvalId = evt.action?.value;
+      const triggerId = evt.body?.trigger_id;
+      if (!approvalId || !triggerId) return;
+      await this.openClarifyModal({
+        triggerId,
+        view: approvalNoteModal({
+          approvalId,
+          channelId: evt.body?.channel?.id ?? '',
+          messageTs: evt.body?.message?.ts ?? '',
+        }),
+      });
+    });
+
+    this.app.view(APPROVAL_NOTE_CALLBACK_ID, async (raw) => {
+      const evt = raw as {
+        ack?: unknown;
+        body?: {
+          user?: { id?: string };
+          view?: {
+            callback_id?: string;
+            private_metadata?: string;
+            state?: { values?: Record<string, Record<string, { value?: string }>> };
+          };
+        };
+      };
+      if (typeof evt.ack === 'function') {
+        try {
+          await (evt.ack as () => Promise<void>)();
+        } catch {
+          // best-effort ack
+        }
+      }
+      const handler = this.approvalDecisionHandler;
+      const view = evt.body?.view;
+      if (!handler || !view) return;
+      await handleApprovalNoteSubmission(
+        {
+          callbackId: view.callback_id ?? '',
+          privateMetadata: view.private_metadata ?? '',
+          userId: evt.body?.user?.id ?? '',
+          values: view.state?.values ?? {},
+        },
+        { onDecision: async (event) => handler(event) },
+      );
+    });
 
     // Clarify-card button clicks. Bolt delivers `block_actions` events here
     // for the choice/cancel/answer buttons; we narrow the raw payload to

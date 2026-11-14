@@ -1,9 +1,15 @@
+import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
+  APPROVAL_NOTE_BLOCK_ID,
+  APPROVAL_NOTE_CALLBACK_ID,
+  APPROVAL_NOTE_INPUT_ID,
   APPROVE_ACTION_ID,
+  approvalNoteModal,
   approvalPendingBlocks,
   approvalResolvedBlocks,
   DENY_ACTION_ID,
+  DENY_NOTE_ACTION_ID,
 } from '../blocks/approval';
 import { plaintextFallback } from '../blocks/shared';
 
@@ -262,5 +268,58 @@ describe('blocks/approval — resolved', () => {
       decidedBy: 'U07AB12CD',
     });
     expect(plaintextFallback(blocks)).not.toContain('<@U999>');
+  });
+});
+
+describe('blocks/approval — deny with note', () => {
+  it('pending card offers Deny with note… carrying the approvalId', () => {
+    const blocks = approvalPendingBlocks({
+      approvalId: 'a1',
+      toolName: 'terminal',
+      reason: 'danger',
+      args: {},
+    });
+    const actions = blocks.find((b) => b.type === 'actions') as
+      | {
+          elements: Array<{
+            action_id: string;
+            value: string;
+            style?: string;
+            text: { text: string };
+          }>;
+        }
+      | undefined;
+    expect(actions?.elements.map((e) => e.action_id)).toEqual([
+      APPROVE_ACTION_ID,
+      DENY_NOTE_ACTION_ID,
+      DENY_ACTION_ID,
+    ]);
+    const note = actions?.elements[1];
+    expect(note?.text.text).toBe('Deny with note…');
+    expect(note?.value).toBe('a1');
+    expect(note?.style).toBeUndefined();
+  });
+
+  it('approvalNoteModal caps the input at APPROVAL_NOTE_MAX_CHARS and round-trips metadata', () => {
+    const input = { approvalId: 'a1', channelId: 'C1', messageTs: '1700000000.9' };
+    const view = approvalNoteModal(input) as {
+      type: string;
+      callback_id: string;
+      private_metadata: string;
+      blocks: Array<{
+        block_id: string;
+        label: { text: string };
+        element: { action_id: string; multiline: boolean; max_length: number };
+      }>;
+    };
+    expect(view.type).toBe('modal');
+    expect(view.callback_id).toBe(APPROVAL_NOTE_CALLBACK_ID);
+    expect(JSON.parse(view.private_metadata)).toEqual(input);
+    const block = view.blocks[0];
+    expect(block?.block_id).toBe(APPROVAL_NOTE_BLOCK_ID);
+    expect(block?.label.text).toBe('What should it do instead?');
+    expect(block?.element.action_id).toBe(APPROVAL_NOTE_INPUT_ID);
+    expect(block?.element.multiline).toBe(true);
+    expect(block?.element.max_length).toBe(APPROVAL_NOTE_MAX_CHARS);
   });
 });

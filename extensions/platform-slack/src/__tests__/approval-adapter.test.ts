@@ -1,5 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APPROVE_ACTION_ID, DENY_ACTION_ID } from '../blocks/approval';
+import {
+  APPROVAL_NOTE_BLOCK_ID,
+  APPROVAL_NOTE_CALLBACK_ID,
+  APPROVAL_NOTE_INPUT_ID,
+  APPROVE_ACTION_ID,
+  DENY_ACTION_ID,
+  DENY_NOTE_ACTION_ID,
+} from '../blocks/approval';
 import type { ApprovalDecisionEvent } from '../interactions/actions';
 import { loadSlackSdk } from '../sdk';
 
@@ -15,6 +22,8 @@ beforeAll(async () => {
 const postMessage = vi.fn();
 const update = vi.fn();
 const authTest = vi.fn().mockResolvedValue({ user_id: 'UBOT' });
+const viewsOpen = vi.fn();
+const viewHandlers = new Map<string, (args: unknown) => Promise<void>>();
 const actionHandlers = new Map<string, (args: unknown) => Promise<void>>();
 
 vi.mock('@slack/bolt', () => {
@@ -22,13 +31,16 @@ vi.mock('@slack/bolt', () => {
     client = {
       chat: { postMessage, update },
       auth: { test: authTest },
+      views: { open: viewsOpen },
     };
     async start() {}
     async stop() {}
     command() {}
     event() {}
     message() {}
-    view() {}
+    view(id: string, handler: (args: unknown) => Promise<void>) {
+      viewHandlers.set(id, handler);
+    }
     action(id: string, handler: (args: unknown) => Promise<void>) {
       actionHandlers.set(id, handler);
     }
@@ -51,6 +63,8 @@ beforeEach(() => {
   postMessage.mockReset().mockResolvedValue({ ts: '1700000000.9' });
   update.mockReset().mockResolvedValue({ ok: true });
   actionHandlers.clear();
+  viewHandlers.clear();
+  viewsOpen.mockReset().mockResolvedValue({ ok: true });
 });
 
 describe('SlackAdapter.postApprovalCard', () => {
@@ -180,5 +194,80 @@ describe('SlackAdapter approval button interactions', () => {
     expect(ack).toHaveBeenCalled();
     expect(events[0]?.decision).toBe('deny');
     expect(events[0]?.decidedBy).toBe('U2');
+  });
+});
+
+describe('SlackAdapter deny-with-note modal', () => {
+  it('a Deny with note… click opens the note modal and emits no decision', async () => {
+    const adapter = makeAdapter();
+    const events: ApprovalDecisionEvent[] = [];
+    adapter.onApprovalDecision((e) => events.push(e));
+    await adapter.start();
+
+    const ack = vi.fn().mockResolvedValue(undefined);
+    await actionHandlers.get(DENY_NOTE_ACTION_ID)?.({
+      ack,
+      body: {
+        user: { id: 'U1' },
+        channel: { id: 'C1' },
+        message: { ts: '1700000000.9' },
+        trigger_id: 'T1',
+      },
+      action: { action_id: DENY_NOTE_ACTION_ID, value: 'a1' },
+    });
+
+    expect(ack).toHaveBeenCalled();
+    expect(viewsOpen).toHaveBeenCalledTimes(1);
+    expect(viewsOpen.mock.calls[0]?.[0].trigger_id).toBe('T1');
+    expect(events).toEqual([]);
+  });
+
+  function submission(note: string, privateMetadata?: string) {
+    return {
+      ack: vi.fn().mockResolvedValue(undefined),
+      body: {
+        user: { id: 'U1' },
+        view: {
+          callback_id: APPROVAL_NOTE_CALLBACK_ID,
+          private_metadata:
+            privateMetadata ??
+            JSON.stringify({ approvalId: 'a1', channelId: 'C1', messageTs: '1700000000.9' }),
+          state: {
+            values: { [APPROVAL_NOTE_BLOCK_ID]: { [APPROVAL_NOTE_INPUT_ID]: { value: note } } },
+          },
+        },
+      },
+    };
+  }
+
+  it('submitting the note modal forwards a deny with the note', async () => {
+    const adapter = makeAdapter();
+    const events: ApprovalDecisionEvent[] = [];
+    adapter.onApprovalDecision((e) => events.push(e));
+    await adapter.start();
+
+    await viewHandlers.get(APPROVAL_NOTE_CALLBACK_ID)?.(submission('use staging'));
+
+    expect(events).toEqual([
+      {
+        approvalId: 'a1',
+        decision: 'deny',
+        decidedBy: 'U1',
+        channelId: 'C1',
+        messageTs: '1700000000.9',
+        note: 'use staging',
+      },
+    ]);
+  });
+
+  it('a note submission with tampered metadata is ignored', async () => {
+    const adapter = makeAdapter();
+    const events: ApprovalDecisionEvent[] = [];
+    adapter.onApprovalDecision((e) => events.push(e));
+    await adapter.start();
+
+    await viewHandlers.get(APPROVAL_NOTE_CALLBACK_ID)?.(submission('x', 'not json'));
+
+    expect(events).toEqual([]);
   });
 });
