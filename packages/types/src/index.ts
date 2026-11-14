@@ -49,6 +49,7 @@ export * from './plugin';
 export * from './plugin-llm';
 export * from './plugin-panel';
 export * from './plugin-ui';
+export * from './prompt-annotations';
 export * from './retention';
 export * from './safety';
 export * from './sandbox';

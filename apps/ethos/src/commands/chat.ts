@@ -1070,6 +1070,15 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // Slash commands are always dispatched immediately — even mid-turn — except
     // /busy and /steer which have special busy-state semantics handled below.
     const isBusySlash = input.startsWith('/busy') || input.startsWith('/steer');
+    // Any `/`-prefixed line cancels a pending `/rewind` prefill, including the
+    // busy-slashes that skip `handleSlashCommand` (which does the same for the
+    // rest). A new `/rewind` sets its own pending afterwards. Pinned by
+    // __tests__/chat-rewind-readline.test.ts.
+    if (input.startsWith('/') && state.pendingRewind && !/^\/rewind(\s|$)/.test(input)) {
+      state.pendingRewind = undefined;
+      state.rewindPrefill = undefined;
+      out(`${c.dim}[rewind cancelled]${c.reset}\n`);
+    }
     if (input.startsWith('/') && !isBusySlash) {
       handleSlashCommand(input, state, activeLoop, rl, config, registry, slashCtx)
         .then(() => {

@@ -3,7 +3,7 @@
 // without driving the REPL.
 import { basename } from 'node:path';
 import type { SessionStore } from '@ethosagent/types';
-import { isIncognitoSession } from '@ethosagent/wiring';
+import { familyRootKey, isIncognitoSession } from '@ethosagent/wiring';
 
 export const INCOGNITO_PROMPT_TAG = '[incognito]';
 
@@ -19,6 +19,10 @@ export function incognitoSessionKey(cwd: string = process.cwd(), now: number = D
  * Blank an incognito session (and its descendants) now. Fail-open: the hourly
  * sweep (lib/incognito-retention.ts) retries, so a locked db must not block
  * `/new` or the process exit. Returns whether a scrub ran.
+ *
+ * Scrubs from the family root (`familyRootKey`): `/rewind` moves the current
+ * key onto a `<root>:fork:` branch, and the incognito source must go with it.
+ * Pinned by __tests__/chat-incognito.test.ts.
  */
 export async function scrubIncognitoSession(
   store: Pick<SessionStore, 'scrubIncognito'>,
@@ -26,7 +30,7 @@ export async function scrubIncognitoSession(
 ): Promise<boolean> {
   if (!store.scrubIncognito) return false;
   try {
-    await store.scrubIncognito({ sessionKey });
+    await store.scrubIncognito({ sessionKey: familyRootKey(sessionKey) });
     return true;
   } catch {
     return false;

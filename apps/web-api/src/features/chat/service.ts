@@ -10,7 +10,7 @@ import type { CardStore } from '@ethosagent/session-cards';
 import { EthosError } from '@ethosagent/types';
 import type { ActivityEvent, CardEnvelope, SseEvent } from '@ethosagent/web-contracts';
 import { ACTIVITY_EVENT_TYPES } from '@ethosagent/web-contracts';
-import { incognitoSessionMetadata, isIncognitoSession } from '@ethosagent/wiring';
+import { familyRootKey, incognitoSessionMetadata, isIncognitoSession } from '@ethosagent/wiring';
 import type { SystemEventBus } from '../../services/system-event-bus';
 import { gateStructuredCard } from './card-gate';
 import type { ChatRepository } from './repository';
@@ -393,9 +393,22 @@ export class ChatService {
         );
       }
     }
-    const { messages } = await this.opts.sessions.scrubIncognito(session.key);
+    // Scrub from the family root: a rewind moves the open session onto a
+    // `<root>:fork:` branch and leaves the incognito source behind (pinned by
+    // __tests__/incognito.test.ts, "rewound branch"). The root's rows, cards
+    // and attachment cache go with it.
+    const rootKey = familyRootKey(session.key);
+    const root =
+      rootKey === session.key || !session.parentSessionId
+        ? null
+        : await this.opts.sessions.get(session.parentSessionId);
+    const { messages } = await this.opts.sessions.scrubIncognito(rootKey);
     this.opts.cardStore?.deleteSession(sessionId);
     await this.opts.attachmentCache?.clear(session.key);
+    if (root && root.key === rootKey) {
+      this.opts.cardStore?.deleteSession(root.id);
+      await this.opts.attachmentCache?.clear(root.key);
+    }
     return { scrubbed: messages };
   }
 
@@ -451,6 +464,11 @@ export class ChatService {
     return bridge.steer(text);
   }
 
+  /** Is a turn in flight for this session? The server-side guard for `sessions.rewind`. */
+  isTurnRunning(sessionId: string): boolean {
+    return this.bridges.get(sessionId)?.isRunning ?? false;
+  }
+
   /**
    * Is any web-chat turn currently in flight? The busy predicate the idle
    * watcher reads for this surface.
@@ -463,11 +481,6 @@ export class ChatService {
    * never suspend it. `AgentBridge.isRunning` is the real per-turn signal
    * (its `controller` is non-null only while a turn runs).
    */
-  /** Is a turn in flight for this session? The server-side guard for `sessions.rewind`. */
-  isTurnRunning(sessionId: string): boolean {
-    return this.bridges.get(sessionId)?.isRunning ?? false;
-  }
-
   hasActiveBridges(): boolean {
     for (const bridge of this.bridges.values()) {
       if (bridge.isRunning) return true;

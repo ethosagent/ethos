@@ -40,6 +40,19 @@ export function forkSessionKey(prefix: string, now: number = Date.now()): string
   return `${prefix}:fork:${now}-${randomBytes(4).toString('hex')}`;
 }
 
+/**
+ * The key a fork family descends from: `key` up to its first `:fork:`. A rewind
+ * or fork key is always `<root>:fork:<ts>-<hex>`, nested forks append further
+ * `:fork:` segments, so one prefix scrub of the root covers the whole family.
+ * Incognito scrubbing starts here, not at the current key, because a rewind
+ * moves the current key onto the branch and leaves the incognito source behind.
+ * Pinned by packages/core/src/__tests__/session-fork.test.ts.
+ */
+export function familyRootKey(key: string): string {
+  const i = key.indexOf(':fork:');
+  return i === -1 ? key : key.slice(0, i);
+}
+
 export interface ForkSessionResult {
   session: Session;
   /**

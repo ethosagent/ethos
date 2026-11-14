@@ -94,7 +94,11 @@ export interface UseChatResult {
    * Branch before `messageId`'s prompt and send `text` there. Resolves to the
    * new session id. Rejects on refusal; the current session is left untouched.
    */
-  rewindTo: (messageId: string, text: string) => Promise<string>;
+  rewindTo: (
+    messageId: string,
+    text: string,
+    onBranchCreated?: (branchId: string) => void,
+  ) => Promise<string>;
   /**
    * Drop the current session entirely — wipes reducer state and clears
    * `currentSessionId`. The next `sendMessage` will create a fresh
@@ -642,16 +646,24 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     [resetPaging],
   );
 
-  // Rejects (session untouched) when the target is gone or the server refuses —
+  // `onBranchCreated` fires once `sessions.rewind` succeeded, before the history
+  // fetch. Rejects (session untouched) when the target is gone or the server refuses —
   // the branch exists only once `sessions.rewind` has succeeded. The cut history
   // is loaded and shown BEFORE the edit is sent, so the edited prompt lands on
   // the branch the user sees.
   const rewindTo = useCallback(
-    async (messageId: string, text: string): Promise<string> => {
+    async (
+      messageId: string,
+      text: string,
+      onBranchCreated?: (branchId: string) => void,
+    ): Promise<string> => {
       if (!currentSessionId) throw new Error('There is no session to rewind.');
       const target = rewindTargetFor(stateRef.current.messages, messageId);
       if (!target) throw new Error('That message can no longer be edited — reload the chat.');
       const { session } = await rpc.sessions.rewind({ id: currentSessionId, ...target });
+      // The branch exists from here on; tell the caller before the history fetch
+      // (which can fail) so the branch switcher lists it even if we stay put.
+      onBranchCreated?.(session.id);
       const page = await rpc.sessions.messages({ id: session.id });
       resetPaging(session.id, page.nextCursor);
       failedSendsRef.current.clear();

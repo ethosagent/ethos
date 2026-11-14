@@ -1,7 +1,9 @@
 // Lane E1 (plan incognito-sessions §8) — `ethos chat --incognito`.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { Session } from '@ethosagent/types';
+import { incognitoSessionMetadata } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import {
   INCOGNITO_ENTRY_LINE,
@@ -14,6 +16,7 @@ import {
   scrubIncognitoSession,
   scrubWithNotice,
 } from '../lib/chat-incognito';
+import { commitRewind } from '../lib/session-rewind';
 
 const sessionWith = (metadata: Record<string, unknown>): Session => ({ metadata }) as Session;
 
@@ -57,6 +60,59 @@ describe('scrubIncognitoSession', () => {
     };
     await expect(scrubIncognitoSession(throwing, 'k')).resolves.toBe(false);
     await expect(scrubIncognitoSession({}, 'k')).resolves.toBe(false);
+  });
+});
+
+describe('scrubIncognitoSession after a rewind (family root)', () => {
+  it('scrubs from the root key when handed a branch key', async () => {
+    const scrubIncognito = vi.fn(async () => ({ messages: 0, sessionIds: [] }));
+    await scrubIncognitoSession({ scrubIncognito }, 'cli:proj:1:fork:2-abcd');
+    expect(scrubIncognito).toHaveBeenCalledWith({ sessionKey: 'cli:proj:1' });
+  });
+
+  it('blanks the incognito source AND the rewound branch (real SQLite)', async () => {
+    const store = new SQLiteSessionStore(':memory:');
+    try {
+      const usage = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0,
+        apiCallCount: 0,
+        compactionCount: 0,
+      };
+      const src = await store.createSession({
+        key: 'cli:proj:900',
+        platform: 'cli',
+        model: 'm',
+        provider: 'p',
+        metadata: incognitoSessionMetadata(),
+        usage,
+      });
+      for (const [role, content] of [
+        ['user', 'secret one'],
+        ['assistant', 'reply one'],
+        ['user', 'secret two'],
+        ['assistant', 'reply two'],
+      ] as const) {
+        await store.appendMessage({ sessionId: src.id, role, content });
+      }
+      const target = (await store.getMessages(src.id))[2];
+      const { switchTo } = await commitRewind(store, src.key, target?.id ?? '');
+      const branch = await store.getSessionByKey(switchTo.sessionKey);
+      expect(branch).not.toBeNull();
+      // The branch kept the first turn, so there is text to blank on both sides.
+      expect((await store.getMessages(branch?.id ?? '')).length).toBe(2);
+
+      // /new scrubs the CURRENT key, which is now the branch.
+      await expect(scrubIncognitoSession(store, switchTo.sessionKey)).resolves.toBe(true);
+
+      expect((await store.getMessages(src.id)).every((m) => m.content === '')).toBe(true);
+      expect((await store.getMessages(branch?.id ?? '')).every((m) => m.content === '')).toBe(true);
+    } finally {
+      store.close();
+    }
   });
 });
 

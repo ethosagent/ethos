@@ -3,7 +3,7 @@ import { EthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { isIncognitoSession } from '../chat-audience';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
-import { forkSession } from '../session-fork';
+import { familyRootKey, forkSession, forkSessionKey } from '../session-fork';
 
 const zeroUsage = {
   inputTokens: 0,
@@ -367,5 +367,17 @@ describe('forkSession — room audience (verification round B15)', () => {
     const { session } = await forkSession(store, source.id, { key: 'cli:incog:fork:1' });
     expect(session.metadata).toEqual({ roomAudience: 'shared', incognito: true });
     expect(isIncognitoSession(session)).toBe(true);
+  });
+});
+
+describe('familyRootKey', () => {
+  it('returns a plain key unchanged', () => {
+    expect(familyRootKey('cli:proj:123')).toBe('cli:proj:123');
+  });
+
+  it('strips one or many :fork: segments back to the root', () => {
+    const first = forkSessionKey('cli:proj:123');
+    expect(familyRootKey(first)).toBe('cli:proj:123');
+    expect(familyRootKey(forkSessionKey(first))).toBe('cli:proj:123');
   });
 });

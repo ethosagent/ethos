@@ -1,3 +1,4 @@
+import { editablePromptText } from '@ethosagent/surface-kit';
 import { ContentRenderer, type FenceRendererResolver } from '@ethosagent/ui-components';
 import { useQuery } from '@tanstack/react-query';
 import { memo } from 'react';
@@ -55,11 +56,14 @@ export const UserBubble = memo(function UserBubble({
 }) {
   const attachments = message.attachments ?? [];
   if (editing && onRerun && onEditCancel) {
+    // A reloaded prompt keeps its `<attachments>` annotation in `content` (the
+    // history parser leaves it); strip it so the editor holds only what was typed.
+    const editable = editablePromptText(message.content);
     return (
       <div className="message-row message-row-user">
         <RewindEditor
-          initialText={message.content}
-          hadAttachments={attachments.length > 0}
+          initialText={editable.text}
+          hadAttachments={editable.hadAttachments || attachments.length > 0}
           onRerun={(text) => onRerun(message.id, text)}
           onCancel={onEditCancel}
         />

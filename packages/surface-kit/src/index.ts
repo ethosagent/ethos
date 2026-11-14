@@ -11,6 +11,7 @@
 // `@ethosagent/safety-redact` (security kernel), so any surface (app or
 // extension) can import it without introducing a cycle.
 
+export { editablePromptText } from '@ethosagent/types';
 export {
   type ApprovalArgsFormat,
   formatApprovalArgs,

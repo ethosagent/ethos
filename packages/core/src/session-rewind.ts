@@ -1,7 +1,6 @@
 import type { Session, SessionStore, StoredMessage } from '@ethosagent/types';
-import { EthosError } from '@ethosagent/types';
+import { EthosError, editablePromptText } from '@ethosagent/types';
 import { forkSession } from './session-fork';
-import { VOICE_ORIGIN_TAG } from './voice-origin';
 
 export interface RewindPoint {
   /** 1 = the latest `role: 'user'` row; `user_steer` rows are not prompts. */
@@ -13,46 +12,15 @@ export interface RewindPoint {
   hadAttachments: boolean;
 }
 
+// The annotation stripper lives in contracts so the browser can use it too.
+export { editablePromptText };
+
 export type RewindTarget = { messageId: string } | { turnsBack: number };
 
 export interface RewindSessionResult {
   session: Session;
   idMap: Map<string, StoredMessage>;
   point: RewindPoint;
-}
-
-// Shapes written by buildAttachmentAnnotation (attachment-annotation.ts) and
-// buildVoiceOriginAnnotation (voice-origin.ts); the context assembler joins each
-// annotation to the next part with a blank line.
-const ATTACHMENTS_BLOCK = /^<attachments>\n[\s\S]*?\n<\/attachments>(?:\n\n|$)/;
-const VOICE_BLOCK = new RegExp(`^<${VOICE_ORIGIN_TAG} [^\\n]*/>\\n[^\\n]*(?:\\n\\n|$)`);
-
-/**
- * The text a user would edit: the stored prompt without the leading
- * `<attachments>` and voice-origin annotation blocks, trimmed. Inline
- * attachment text after the annotations stays in `text`.
- */
-export function editablePromptText(
-  content: string,
-  contentBlocks?: readonly unknown[],
-): { text: string; hadAttachments: boolean } {
-  let rest = content;
-  let hadAttachments = (contentBlocks?.length ?? 0) > 0;
-  for (;;) {
-    const att = ATTACHMENTS_BLOCK.exec(rest);
-    if (att) {
-      hadAttachments = true;
-      rest = rest.slice(att[0].length);
-      continue;
-    }
-    const voice = VOICE_BLOCK.exec(rest);
-    if (voice) {
-      rest = rest.slice(voice[0].length);
-      continue;
-    }
-    break;
-  }
-  return { text: rest.trim(), hadAttachments };
 }
 
 /**

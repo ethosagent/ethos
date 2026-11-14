@@ -33,4 +33,13 @@ describe('Chat /rewind', () => {
   it('offers Edit & rerun only when idle and not in takeover', () => {
     expect(src).toContain('!state.isStreaming && !takeoverActive');
   });
+
+  it('refuses /rewind during a takeover, and closes the open editor when the edit gate closes', () => {
+    expect(handleSend).toContain('Finish the takeover first');
+    const effect = src.indexOf(
+      'if (state.isStreaming || takeoverActive) setEditingMessageId(null)',
+    );
+    expect(effect).toBeGreaterThan(-1);
+    expect(src.slice(effect, effect + 120)).toContain('[state.isStreaming, takeoverActive]');
+  });
 });

@@ -372,9 +372,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   const handleEditCancel = useCallback(() => setEditingMessageId(null), []);
   const handleRerun = useCallback(
     async (id: string, text: string) => {
-      const next = await rewindTo(id, text);
+      const refreshBranches = () =>
+        void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
+      // Also on a failed history load: the branch exists, so BranchSwitcher lists it.
+      const next = await rewindTo(id, text, refreshBranches);
       setEditingMessageId(null);
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
+      refreshBranches();
       setSearchParams({ session: next });
     },
     [rewindTo, queryClient, setSearchParams],
@@ -499,6 +502,10 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         notification.info({ message: REWIND_BUSY });
         return;
       }
+      if (takeoverActive) {
+        notification.info({ message: 'Finish the takeover first, then rewind.' });
+        return;
+      }
       const parsed = parseRewindArg(trimmed.replace(/^\/rewind\s*/i, ''));
       if (!parsed.ok) {
         notification.info({ message: parsed.message });
@@ -608,6 +615,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   useEffect(() => {
     if (!takeoverActive) setTakeoverStageOpen(false);
   }, [takeoverActive]);
+  // The inline editor is offered only while idle and outside a takeover; close
+  // it when that gate shuts, or it would reopen with stale text when the gate
+  // reopens.
+  useEffect(() => {
+    if (state.isStreaming || takeoverActive) setEditingMessageId(null);
+  }, [state.isStreaming, takeoverActive]);
   const takeoverVisible = takeoverActive && takeoverStageOpen;
 
   // Live state for the delegated-run cards anchored in the transcript (§4.1).

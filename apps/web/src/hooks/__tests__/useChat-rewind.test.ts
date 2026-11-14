@@ -183,6 +183,40 @@ describe('useChat.rewindTo', () => {
     expect(latest?.state.messages).toHaveLength(2);
   });
 
+  it('reports the branch even when loading its history fails, so the switcher can show it', async () => {
+    sessionsMessages
+      .mockResolvedValueOnce({
+        messages: [row(SESSION_ID, 'u1', 'user', 1000), row(SESSION_ID, 'a1', 'assistant', 2000)],
+        cards: [],
+        decisions: [],
+        nextCursor: null,
+      })
+      .mockRejectedValueOnce(new Error('history fetch failed'));
+    sessionsRewind.mockResolvedValue({
+      session: { id: 'branch-1' },
+      prompt: 'user u1',
+      turnsBack: 1,
+      hadAttachments: false,
+    });
+    await mount();
+    const target = latest?.state.messages.find((m) => m.role === 'user');
+    if (!target) throw new Error('no user bubble');
+    const onBranchCreated = vi.fn();
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await latest?.rewindTo(target.id, 'x', onBranchCreated);
+      } catch (err) {
+        caught = err;
+      }
+    });
+    expect(caught).toBeInstanceOf(Error);
+    expect(onBranchCreated).toHaveBeenCalledWith('branch-1');
+    expect(latest?.currentSessionId).toBe(SESSION_ID);
+    expect(chatSend).not.toHaveBeenCalled();
+  });
+
   it('throws before any RPC when the bubble is unknown', async () => {
     sessionsMessages.mockResolvedValue({
       messages: [],

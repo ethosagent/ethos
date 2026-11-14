@@ -8,7 +8,7 @@ import type {
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
-import { isIncognitoSession, type RewindTarget } from '@ethosagent/wiring';
+import { isIncognitoSession, isSharedSession, type RewindTarget } from '@ethosagent/wiring';
 import { exportFilename, formatAsMarkdown } from '../../services/sessions.export';
 import type { SessionsRepository } from './repository';
 
@@ -165,6 +165,17 @@ export class SessionsService {
         code: 'INVALID_INPUT',
         cause: REWIND_BUSY,
         action: 'Press Stop, then try again.',
+      });
+    }
+    // Shared-room and channel-lane sessions are not rewindable (plan ux-3-rewind
+    // decision 6): the gateway owns their history. Pinned by
+    // __tests__/services/sessions-rewind-rpc.test.ts.
+    const source = await this.opts.sessions.get(id);
+    if (source && isSharedSession(source)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'Shared-room and channel sessions cannot be rewound.',
+        action: 'Use /fork or start a new chat instead.',
       });
     }
     try {

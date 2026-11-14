@@ -5,6 +5,7 @@ import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
 import { incognitoSessionMetadata, isIncognitoSession } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeStubAgentLoop } from '../../../__tests__/test-helpers';
+import { SessionsRepository } from '../../sessions/repository';
 import { ChatRepository } from '../repository';
 import { ChatService } from '../service';
 
@@ -117,6 +118,40 @@ describe('ChatService incognito', () => {
     expect(deleteSession).toHaveBeenCalledWith(sessionId);
     const row = await sessions.get(sessionId);
     expect(clear).toHaveBeenCalledWith(row?.key);
+  });
+
+  it('endIncognito on a rewound branch also scrubs the incognito source and its cards', async () => {
+    const deleteSession = vi.fn();
+    const clear = vi.fn(async () => {});
+    const service = makeService({
+      cardStore: { deleteSession } as unknown as NonNullable<
+        ConstructorParameters<typeof ChatService>[0]['cardStore']
+      >,
+      attachmentCache: { clear } as unknown as NonNullable<
+        ConstructorParameters<typeof ChatService>[0]['attachmentCache']
+      >,
+    });
+    const { sessionId } = await service.send({ clientId: 't', text: 'secret', incognito: true });
+    await settle();
+    await store.appendMessage({ sessionId, role: 'user', content: 'secret plans' });
+    await store.appendMessage({ sessionId, role: 'assistant', content: 'secret reply' });
+    await store.appendMessage({ sessionId, role: 'user', content: 'secret follow-up' });
+    const source = await sessions.get(sessionId);
+    const prompts = (await store.getMessages(sessionId)).filter((m) => m.role === 'user');
+    const second = prompts[prompts.length - 1];
+
+    const { session: branch } = await new SessionsRepository(store).rewind(sessionId, {
+      messageId: second?.id ?? '',
+    });
+    expect((await store.getMessages(branch.id)).length).toBeGreaterThan(0);
+
+    await service.endIncognito(branch.id);
+
+    expect((await store.getMessages(sessionId)).every((m) => m.content === '')).toBe(true);
+    expect((await store.getMessages(branch.id)).every((m) => m.content === '')).toBe(true);
+    expect(deleteSession).toHaveBeenCalledWith(sessionId);
+    expect(deleteSession).toHaveBeenCalledWith(branch.id);
+    expect(clear).toHaveBeenCalledWith(source?.key);
   });
 
   it('endIncognito waits for the aborted turn, so a late write cannot land after the scrub', async () => {

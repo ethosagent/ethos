@@ -184,4 +184,26 @@ describe('UserBubble Edit & rerun', () => {
     });
     expect(container.querySelector('textarea')?.value).toBe('orig');
   });
+
+  it('strips a reloaded <attachments> block from the editor text and warns files are not re-sent', async () => {
+    const { UserBubble } = await import('../MessageBubble');
+    act(() => {
+      root.render(
+        createElement(UserBubble, {
+          message: {
+            id: 'u1',
+            role: 'user',
+            content: '<attachments>\n- ref=abc mime=image/png\n</attachments>\n\nwhat is this',
+            timestamp: 1,
+          },
+          editing: true,
+          onEditStart: vi.fn(),
+          onEditCancel: vi.fn(),
+          onRerun: vi.fn(() => Promise.resolve()),
+        }),
+      );
+    });
+    expect(container.querySelector('textarea')?.value).toBe('what is this');
+    expect(container.textContent).toContain('Attached files are not re-sent.');
+  });
 });

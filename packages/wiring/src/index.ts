@@ -853,6 +853,7 @@ export {
   INCOGNITO_REFUSAL,
   incognitoSessionMetadata,
   isIncognitoSession,
+  isSharedSession,
   type PrivateChatSet,
   privateChatSetFrom,
   targetAudience,
@@ -2294,6 +2295,7 @@ export {
 export {
   editablePromptText,
   type ForkSessionResult,
+  familyRootKey,
   forkSession,
   forkSessionKey,
   listBranches,

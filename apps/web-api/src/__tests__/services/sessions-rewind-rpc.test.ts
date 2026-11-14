@@ -83,6 +83,41 @@ describe('sessions.rewind', () => {
     expect(await store.listSessions({ parentSessionId: sessionId })).toEqual([]);
   });
 
+  it('refuses a shared-room session with INVALID_INPUT and creates nothing', async () => {
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      apiCallCount: 0,
+      compactionCount: 0,
+    };
+    const stamped = await store.createSession({
+      key: 'web:shared-room',
+      platform: 'web',
+      model: 'm',
+      provider: 'p',
+      metadata: { roomAudience: 'shared' },
+      usage,
+    });
+    const group = await store.createSession({
+      key: 'telegram:main:-1001234567',
+      platform: 'telegram',
+      model: 'm',
+      provider: 'p',
+      usage,
+    });
+    for (const s of [stamped, group]) {
+      await store.appendMessage({ sessionId: s.id, role: 'user', content: 'hello room' });
+      await expect(service.rewind(s.id, { turnsBack: 1 })).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+        cause: expect.stringContaining('cannot be rewound'),
+      });
+      expect(await store.listSessions({ parentSessionId: s.id })).toEqual([]);
+    }
+  });
+
   it('maps an unknown session to SESSION_NOT_FOUND', async () => {
     await expect(service.rewind('nope', { turnsBack: 1 })).rejects.toMatchObject({
       code: 'SESSION_NOT_FOUND',

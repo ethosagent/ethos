@@ -67,7 +67,7 @@ const POINTS = [
   { turnsBack: 2, messageId: 'm1', text: 'first', hadAttachments: false },
 ];
 
-async function setup(withRewind: boolean) {
+async function setup(withRewind: boolean, branches?: AppProps['branches']) {
   const session = new InMemorySessionStore();
   const loop = new AgentLoop({ llm: makeStubLLM(), session, safety: createTestSafety() });
   const bridge = new AgentBridge(loop);
@@ -97,6 +97,7 @@ async function setup(withRewind: boolean) {
         initialSessionKey: 'cli:proj',
         readMemory: async () => null,
         ...(withRewind ? { rewind } : {}),
+        ...(branches ? { branches } : {}),
       }),
       {
         stdout: stdout as never,
@@ -173,6 +174,27 @@ describe('TUI rewind', () => {
       await act(() => bridge.whenIdle());
       expect(commitCalls).toEqual([]);
       expect(sentWith.at(-1)).toMatchObject({ sessionKey: 'cli:proj', text: 'plain' });
+    } finally {
+      unmount();
+    }
+  });
+
+  it('a session switch drops the pending rewind: the next line sends on the new key, no commit', async () => {
+    const { bridge, stdin, sentWith, commitCalls, unmount } = await setup(true, async () => ({
+      message: 'switched',
+      switchTo: { sessionKey: 'cli:proj:fork:other' },
+    }));
+    try {
+      await pressKeys(stdin, '/rewind');
+      await pressKeys(stdin, '\r'); // prefills the latest prompt, rewind pending
+      await pressKeys(stdin, '\u0015'); // clear the prefill so the next input is ours
+      await pressKeys(stdin, '/branch 1');
+      await pressKeys(stdin, '\r');
+      await pressKeys(stdin, 'plain');
+      await pressKeys(stdin, '\r');
+      await act(() => bridge.whenIdle());
+      expect(commitCalls).toEqual([]);
+      expect(sentWith.at(-1)).toMatchObject({ sessionKey: 'cli:proj:fork:other', text: 'plain' });
     } finally {
       unmount();
     }

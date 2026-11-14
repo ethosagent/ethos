@@ -319,6 +319,7 @@ export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './s
 export {
   type ForkSessionOptions,
   type ForkSessionResult,
+  familyRootKey,
   forkSession,
   forkSessionKey,
   listBranches,

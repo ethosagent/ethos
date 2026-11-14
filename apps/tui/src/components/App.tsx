@@ -368,6 +368,13 @@ export function App({
   const lastEscAtRef = useRef<number | null>(null);
   const [rewindPoints, setRewindPoints] = useState<RewindStripPoint[]>([]);
   const [pendingRewind, setPendingRewind] = useState<{ messageId: string } | null>(null);
+  // A pending rewind names a message of THIS session; any switch (slash command,
+  // sessions modal, /new, personality rotation) makes it foreign. Pinned by
+  // __tests__/rewind.test.ts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionKey is the trigger, not a read
+  useEffect(() => {
+    setPendingRewind(null);
+  }, [sessionKey]);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
   const [credentialRequest, setCredentialRequest] = useState<CredentialRequest | null>(null);
   // Tool calls waiting for Allow / Deny, oldest first; only the head is shown.
