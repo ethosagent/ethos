@@ -13,6 +13,7 @@ import {
 import { getClientId } from '../lib/clientId';
 import { broadcastTurnAborted } from '../lib/lastSession';
 import { isTerminalRun } from '../lib/pi-run-reducer';
+import { rewindTargetFor } from '../lib/rewind';
 import { rpc } from '../rpc';
 import { subscribeToSession } from '../sse';
 
@@ -89,6 +90,11 @@ export interface UseChatResult {
    * new session's history fetches.
    */
   switchSession: (sessionId: string) => void;
+  /**
+   * Branch before `messageId`'s prompt and send `text` there. Resolves to the
+   * new session id. Rejects on refusal; the current session is left untouched.
+   */
+  rewindTo: (messageId: string, text: string) => Promise<string>;
   /**
    * Drop the current session entirely — wipes reducer state and clears
    * `currentSessionId`. The next `sendMessage` will create a fresh
@@ -461,8 +467,10 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   // as an id, so the callback is only rebuilt when the turn changes, not on
   // every delta.
   const interruptedTurnId = state.currentTurn?.id ?? null;
-  const sendMessage = useCallback(
+  // `targetId === null` creates the session on the server (a fresh chat).
+  const sendToSession = useCallback(
     async (
+      targetId: string | null,
       text: string,
       attachments?: AttachmentPreview[],
       opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
@@ -491,15 +499,15 @@ export function useChat(opts: UseChatOptions): UseChatResult {
       // wire, so without this the separately-subscribed drawer keeps drawing
       // `running` rows for calls the footer has already settled (contract §4,
       // one trail two renderers). Nothing in flight, nothing to announce.
-      if (currentSessionId && interruptedTurnId) broadcastTurnAborted(currentSessionId);
+      if (targetId && interruptedTurnId) broadcastTurnAborted(targetId);
 
       try {
         const response = await rpc.chat.send({
-          ...(currentSessionId ? { sessionId: currentSessionId } : {}),
+          ...(targetId ? { sessionId: targetId } : {}),
           clientId: getClientId(),
           text: trimmed,
           ...(personalityId ? { personalityId } : {}),
-          ...(!currentSessionId && startIncognito ? { incognito: true } : {}),
+          ...(!targetId && startIncognito ? { incognito: true } : {}),
           // Talk-mode marks its turns so the server can annotate them as
           // spoken. Typed sends omit it entirely.
           ...(opts?.origin === 'voice' ? { origin: 'voice' as const } : {}),
@@ -514,7 +522,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
               }
             : {}),
         });
-        if (!currentSessionId && response.sessionId !== currentSessionId) {
+        if (targetId === null) {
           // We just created this session locally — the user message lives in
           // optimistic state and the assistant response will arrive via SSE.
           // Mark history as "loaded" BEFORE setCurrentSessionId so the
@@ -539,7 +547,16 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         });
       }
     },
-    [currentSessionId, personalityId, startIncognito, onSessionCreated, interruptedTurnId],
+    [personalityId, startIncognito, onSessionCreated, interruptedTurnId],
+  );
+
+  const sendMessage = useCallback(
+    (
+      text: string,
+      attachments?: AttachmentPreview[],
+      opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
+    ): Promise<void> => sendToSession(currentSessionId, text, attachments, opts),
+    [sendToSession, currentSessionId],
   );
 
   // W1 — Retry re-submits the failed send's own text and attachments; the
@@ -625,6 +642,39 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     [resetPaging],
   );
 
+  // Rejects (session untouched) when the target is gone or the server refuses —
+  // the branch exists only once `sessions.rewind` has succeeded. The cut history
+  // is loaded and shown BEFORE the edit is sent, so the edited prompt lands on
+  // the branch the user sees.
+  const rewindTo = useCallback(
+    async (messageId: string, text: string): Promise<string> => {
+      if (!currentSessionId) throw new Error('There is no session to rewind.');
+      const target = rewindTargetFor(stateRef.current.messages, messageId);
+      if (!target) throw new Error('That message can no longer be edited — reload the chat.');
+      const { session } = await rpc.sessions.rewind({ id: currentSessionId, ...target });
+      const page = await rpc.sessions.messages({ id: session.id });
+      resetPaging(session.id, page.nextCursor);
+      failedSendsRef.current.clear();
+      dispatch({ kind: 'action', action: { type: 'reset' } });
+      dispatch({
+        kind: 'action',
+        action: {
+          type: 'history-loaded',
+          messages: page.messages,
+          cards: page.cards,
+          decisions: page.decisions,
+        },
+      });
+      // Before setCurrentSessionId, so the load effect does not refetch over the
+      // optimistic bubble the send below adds (same rule as a created session).
+      historyLoadedFor.current = session.id;
+      setCurrentSessionId(session.id);
+      await sendToSession(session.id, text);
+      return session.id;
+    },
+    [currentSessionId, resetPaging, sendToSession],
+  );
+
   const resetSession = useCallback(() => {
     resetPaging(null, null);
     failedSendsRef.current.clear();
@@ -694,6 +744,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     steerMessage,
     abortTurn,
     switchSession,
+    rewindTo,
     resetSession,
     undoTurns,
     compact,
