@@ -56,7 +56,8 @@ export function formatApprovalArgs(args: unknown, format: ApprovalArgsFormat): s
     }
   }
   // Reveal before `neutralize` so a neutralizer's own inserted U+200B (Slack,
-  // Discord) is never shown as a marker. Pinned by approval-args.test.ts.
+  // Discord) is never shown as a marker. Pinned by "does not mark the neutralizer own U+200B"
+  // in approval-args.test.ts (a reversed order fails it).
   text = revealHiddenChars(text).text;
   if (format.neutralize) text = format.neutralize(text);
   return truncateWithMarker(text, format.maxChars);

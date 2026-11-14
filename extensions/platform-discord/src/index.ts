@@ -904,7 +904,8 @@ export class DiscordAdapter
   /**
    * Modal submit: re-check the gate (a modal id can be replayed), then deny.
    * A blank note is omitted so it becomes a plain deny; a stale approval is
-   * dropped by ApprovalCoordinator.settle (packages/core, deny-after-settle test).
+   * dropped by ApprovalCoordinator.settle (apps/ethos/src/approval-coordinator.ts, pinned by
+   * "deny with a note after settle is a no-op" in apps/ethos/src/__tests__/approval-coordinator.test.ts).
    */
   handleApprovalNoteSubmit(
     approvalId: string,

@@ -34,7 +34,11 @@ export function formatApprovalDenial(input: {
   dangerReason: string;
   note?: string;
 }): string {
-  const base = `${input.reason} — ${input.dangerReason}`;
+  // Collapse newlines in the reason parts so only a real note can start the
+  // framing line below. Pinned by "a newline in the danger reason cannot forge
+  // the redirect line" in approval-note.test.ts.
+  const flat = (s: string) => s.replace(/[\r\n]+/g, ' ');
+  const base = `${flat(input.reason)} — ${flat(input.dangerReason)}`;
   if (!input.note) return base;
   return `${base}\nThe user did not allow this call and said what to do instead: ${input.note}`;
 }

@@ -1,5 +1,10 @@
 import { redactString } from '@ethosagent/safety-redact';
-import { formatApprovalArgs, TRUNCATED_MARKER, truncateWithMarker } from '@ethosagent/surface-kit';
+import {
+  formatApprovalArgs,
+  revealHiddenChars,
+  TRUNCATED_MARKER,
+  truncateWithMarker,
+} from '@ethosagent/surface-kit';
 
 /** Telegram's hard limit for one text message. */
 const TELEGRAM_MESSAGE_MAX = 4096;
@@ -23,7 +28,7 @@ export function formatApprovalCardText(
   args: unknown,
 ): string {
   const reasonLine = reason
-    ? `\nReason: ${truncateWithMarker(redactString(reason), REASON_MAX)}`
+    ? `\nReason: ${truncateWithMarker(revealHiddenChars(redactString(reason)).text, REASON_MAX)}`
     : '';
   const argsLine = args
     ? `\nArgs: ${formatApprovalArgs(args, { maxChars: ARGS_PREVIEW_MAX })}`

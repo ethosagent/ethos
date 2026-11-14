@@ -230,6 +230,25 @@ describe('TUI — tool approval modal', () => {
     expect(fake.decisions).toEqual([{ approvalId: 'a1', decision: 'deny', note: 'use staging' }]);
   });
 
+  it('the next queued approval opens in choice mode with an empty note', async () => {
+    const { fake, stdout, stdin, request } = await mounted();
+    await request('a1', 'echo first');
+    await request('a2', 'echo second');
+    await waitFor(() => stdout.last.includes('echo first'), 'the first request');
+    await pressKeys(stdin, 'r');
+    await waitFor(() => stdout.last.includes('Esc back'), 'note mode');
+    await pressKeys(stdin, 'use staging');
+    await pressKeys(stdin, '\r');
+    await waitFor(() => fake.decisions.length === 1, 'the first decision');
+    await waitFor(() => stdout.last.includes('echo second'), 'the second request');
+    expect(stdout.last).toContain('r deny and redirect');
+    expect(stdout.last).not.toContain('Esc back');
+    expect(stdout.last).not.toContain('use staging');
+    await pressKeys(stdin, '\r');
+    await waitFor(() => fake.decisions.length === 2, 'the second decision');
+    expect(fake.decisions[1]).toEqual({ approvalId: 'a2', decision: 'deny' });
+  });
+
   it('Esc in note mode goes back instead of denying', async () => {
     const { fake, stdout, stdin, request } = await mounted();
     await request('a1', 'ls -la');

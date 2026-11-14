@@ -61,4 +61,13 @@ describe('formatApprovalArgs hidden characters', () => {
     expect(text).toContain('⟨U+202E⟩');
     expect(text).not.toContain('‮');
   });
+
+  it('does not mark the neutralizer own U+200B (reveal runs before neutralize)', () => {
+    const text = formatApprovalArgs('```x', {
+      maxChars: 2500,
+      neutralize: (t) => t.replace(/`+/g, (r) => r.split('').join('\u200b')),
+    });
+    expect(text).toContain('\u200b');
+    expect(text).not.toContain('⟨U+200B⟩');
+  });
 });

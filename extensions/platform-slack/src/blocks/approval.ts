@@ -6,7 +6,7 @@
 // so the interaction handler can correlate the click back to the pending
 // approval without parsing anything out of the message itself.
 
-import { formatApprovalArgs } from '@ethosagent/surface-kit';
+import { formatApprovalArgs, revealHiddenChars } from '@ethosagent/surface-kit';
 import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import { context, escapeMrkdwn, header, type SlackBlock, section } from './shared';
 
@@ -59,7 +59,7 @@ export function approvalPendingBlocks(input: ApprovalPendingInput): SlackBlock[]
     section(`\`${escapeMrkdwn(input.toolName)}\` wants to run.`),
   ];
   if (input.reason) {
-    blocks.push(section(`*Why:* ${escapeMrkdwn(input.reason)}`));
+    blocks.push(section(`*Why:* ${escapeMrkdwn(revealHiddenChars(input.reason).text)}`));
   }
   blocks.push(section(`\`\`\`${formatArgs(input.args)}\`\`\``));
   blocks.push({

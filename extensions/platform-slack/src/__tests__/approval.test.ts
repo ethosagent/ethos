@@ -39,6 +39,18 @@ describe('blocks/approval — pending', () => {
     expect(text).not.toContain('\u202e');
   });
 
+  it('pending card reveals a hidden bidi override in the reason', () => {
+    const blocks = approvalPendingBlocks({
+      approvalId: 'a1',
+      toolName: 'terminal',
+      reason: 'denied by reviewer: ok\u202e',
+      args: {},
+    });
+    const text = plaintextFallback(blocks);
+    expect(text).toContain('⟨U+202E⟩');
+    expect(text).not.toContain('\u202e');
+  });
+
   it('includes Allow and Deny buttons carrying the approvalId', () => {
     const blocks = approvalPendingBlocks({
       approvalId: 'a1',

@@ -1,4 +1,4 @@
-import { formatApprovalArgs } from '@ethosagent/surface-kit';
+import { formatApprovalArgs, revealHiddenChars } from '@ethosagent/surface-kit';
 import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import {
   actionRow,
@@ -27,7 +27,7 @@ export interface ApprovalPendingInput {
 export function approvalPendingEmbed(input: ApprovalPendingInput): DiscordEmbed {
   const desc = [`\`${escapeMarkdown(input.toolName)}\` wants to run.`];
   if (input.reason) {
-    desc.push(`**Why:** ${escapeMarkdown(input.reason)}`);
+    desc.push(`**Why:** ${escapeMarkdown(revealHiddenChars(input.reason).text)}`);
   }
   desc.push(`\`\`\`json\n${formatArgs(input.args)}\n\`\`\``);
   return embed({ title: 'Approval Required', description: truncate(desc.join('\n\n'), 4096) });

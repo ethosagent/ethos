@@ -1446,6 +1446,7 @@ export function App({
     return (
       <SkinContext.Provider value={tokens}>
         <ApprovalModal
+          key={approvalHead.approvalId}
           request={approvalHead}
           queued={approvalQueue.length - 1}
           onDecide={(decision, note) => {

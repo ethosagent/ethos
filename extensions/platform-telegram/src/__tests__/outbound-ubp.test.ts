@@ -115,6 +115,19 @@ describe('UBP-050 approval card args', () => {
     expect(text).toContain('curl');
   });
 
+  it('reveals a hidden bidi override in the reason', async () => {
+    await makeAdapter().postApprovalCard({
+      chatId: '100',
+      approvalId: 'a1',
+      toolName: 'terminal',
+      reason: 'denied by reviewer: ok\u202e',
+      args: {},
+    });
+    const text = postedText();
+    expect(text).toContain('⟨U+202E⟩');
+    expect(text).not.toContain('\u202e');
+  });
+
   it('keeps a very long reason inside the limit too', async () => {
     await makeAdapter().postApprovalCard({
       chatId: '100',

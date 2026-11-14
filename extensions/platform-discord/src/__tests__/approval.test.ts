@@ -23,6 +23,17 @@ describe('blocks/approval', () => {
     expect(embed.description).toContain('Destructive operation');
   });
 
+  it('pending embed reveals a hidden bidi override in the reason', () => {
+    const embed = approvalPendingEmbed({
+      approvalId: 'abc123',
+      toolName: 'bash',
+      reason: 'denied by reviewer: ok\u202e',
+      args: {},
+    });
+    expect(embed.description).toContain('⟨U+202E⟩');
+    expect(embed.description).not.toContain('\u202e');
+  });
+
   it('pending embed handles null reason', () => {
     const embed = approvalPendingEmbed({
       approvalId: 'abc123',
