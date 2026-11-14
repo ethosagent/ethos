@@ -200,6 +200,60 @@ describe('forkSession', () => {
     expect((err as EthosError).code).toBe('INVALID_INPUT');
   });
 
+  it('beforeMessageId copies strictly before that message', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedSource(store);
+    const rows = await append(store, source.id, [
+      ...TOOL_TURN,
+      { role: 'user', content: 'next' },
+      { role: 'assistant', content: 'after' },
+    ]);
+    const { session } = await forkSession(store, source.id, {
+      key: 'k',
+      beforeMessageId: rows[5]?.id,
+    });
+    expect((await store.getMessages(session.id)).map((m) => m.content)).toEqual(
+      TOOL_TURN.map((m) => m.content),
+    );
+  });
+
+  it('beforeMessageId at the first row forks an empty history', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedSource(store);
+    const rows = await append(store, source.id, [{ role: 'user', content: 'first' }]);
+    const { session, idMap } = await forkSession(store, source.id, {
+      key: 'k',
+      beforeMessageId: rows[0]?.id,
+    });
+    expect(await store.getMessages(session.id)).toEqual([]);
+    expect(idMap.size).toBe(0);
+  });
+
+  it('refuses upToMessageId together with beforeMessageId and creates nothing', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedSource(store);
+    const rows = await append(store, source.id, TOOL_TURN);
+    const err = await forkSession(store, source.id, {
+      key: 'k',
+      upToMessageId: rows[4]?.id,
+      beforeMessageId: rows[4]?.id,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EthosError);
+    expect((err as EthosError).code).toBe('INVALID_INPUT');
+    expect(await store.listSessions({ parentSessionId: source.id })).toEqual([]);
+    expect(await store.getSessionByKey('k')).toBeNull();
+  });
+
+  it('parentSessionId overrides the lineage', async () => {
+    const store = new InMemorySessionStore();
+    const source = await seedSource(store);
+    const { session } = await forkSession(store, source.id, {
+      key: 'k',
+      parentSessionId: 'root-x',
+    });
+    expect(session.parentSessionId).toBe('root-x');
+  });
+
   it('deletes the half-built fork when a copy fails midway, then rethrows', async () => {
     const store = new InMemorySessionStore();
     const source = await seedSource(store);

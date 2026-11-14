@@ -15,6 +15,10 @@ export interface ForkSessionOptions {
    * `tool_result` sits after the cut.
    */
   upToMessageId?: string;
+  /** Copy history strictly BEFORE this message. Mutually exclusive with upToMessageId. */
+  beforeMessageId?: string;
+  /** Lineage for the child. Absent = the source's id (today's behaviour). */
+  parentSessionId?: string;
 }
 
 /**
@@ -54,7 +58,8 @@ export interface ForkSessionResult {
  *
  * The fork inherits `platform/model/provider/personalityId/workingDir/title/
  * metadata` (with the `'shared'` room stamp added when the source is shared by
- * `isSharedSession`), points `parentSessionId` at the source, and starts with zero
+ * `isSharedSession`), points `parentSessionId` at the source (or at
+ * `opts.parentSessionId` when given), and starts with zero
  * usage. History is replayed in order with no limit, and every `StoredMessage`
  * field is carried over except the three the store owns (`id`, `sessionId`,
  * `timestamp`) and `usage` — copied generically, so a field added to
@@ -63,7 +68,10 @@ export interface ForkSessionResult {
  * timestamp (`SQLiteSessionStore.usageAggregate`, behind `ethos usage`, the
  * per-bot daily cap and web Usage), so a copied cost would bill the source's
  * turns a second time. The fork's session rollup starts at zero to match.
- * Pinned by extensions/session-sqlite/src/__tests__/usage-aggregate.test.ts. The decision rows the copied history anchors come
+ * Pinned by extensions/session-sqlite/src/__tests__/usage-aggregate.test.ts.
+ * The history is cut by `upToMessageId` (through that message) or
+ * `beforeMessageId` (strictly before it); both together throw INVALID_INPUT
+ * before the child exists. The decision rows the copied history anchors come
  * along (`copyDecisions`), as web-api copies a fork's cards. Pinned by
  * packages/core/src/__tests__/session-fork.test.ts.
  *
@@ -86,7 +94,19 @@ export async function forkSession(
 
   // No `limit`: both shipped stores return the whole history, oldest first.
   const all = await store.getMessages(source.id);
-  const history = opts.upToMessageId ? cutHistory(all, opts.upToMessageId) : all;
+  if (opts.upToMessageId !== undefined && opts.beforeMessageId !== undefined) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: 'upToMessageId and beforeMessageId are mutually exclusive',
+      action: 'Pass only one of upToMessageId or beforeMessageId.',
+    });
+  }
+  const history =
+    opts.upToMessageId !== undefined
+      ? cutHistory(all, opts.upToMessageId, 'through')
+      : opts.beforeMessageId !== undefined
+        ? cutHistory(all, opts.beforeMessageId, 'before')
+        : all;
 
   const personalityId = opts.personalityId ?? source.personalityId;
   // A fork of a shared session is shared (plan personality-memory-boundary G1,
@@ -103,7 +123,7 @@ export async function forkSession(
     model: source.model,
     provider: source.provider,
     ...(personalityId ? { personalityId } : {}),
-    parentSessionId: source.id,
+    parentSessionId: opts.parentSessionId ?? source.id,
     ...(source.workingDir ? { workingDir: source.workingDir } : {}),
     ...(source.title ? { title: source.title } : {}),
     ...(metadata ? { metadata } : {}),
@@ -171,16 +191,20 @@ async function copyDecisions(
   for (const row of rows) await store.appendDecision(forkId, row.event);
 }
 
-function cutHistory(all: StoredMessage[], upToMessageId: string): StoredMessage[] {
-  const index = all.findIndex((m) => m.id === upToMessageId);
+function cutHistory(
+  all: StoredMessage[],
+  messageId: string,
+  mode: 'through' | 'before',
+): StoredMessage[] {
+  const index = all.findIndex((m) => m.id === messageId);
   if (index === -1) {
     throw new EthosError({
       code: 'INVALID_INPUT',
-      cause: `message ${upToMessageId} is not in this session`,
+      cause: `message ${messageId} is not in this session`,
       action: 'Pick a message from the session being forked.',
     });
   }
-  const kept = all.slice(0, index + 1);
+  const kept = all.slice(0, index + (mode === 'through' ? 1 : 0));
 
   // Anthropic requires every tool_use to be answered by a tool_result in the
   // next user message. A call left unanswered inside the kept prefix is a split
@@ -192,14 +216,14 @@ function cutHistory(all: StoredMessage[], upToMessageId: string): StoredMessage[
   for (const m of kept)
     for (const call of m.toolCalls ?? []) if (!answered.has(call.id)) pending.add(call.id);
   const split = all
-    .slice(index + 1)
+    .slice(kept.length)
     .some(
       (m) => m.role === 'tool_result' && m.toolCallId !== undefined && pending.has(m.toolCallId),
     );
   if (split) {
     throw new EthosError({
       code: 'INVALID_INPUT',
-      cause: `forking at message ${upToMessageId} would separate a tool call from its result`,
+      cause: `forking at message ${messageId} would separate a tool call from its result`,
       action: 'Fork at the last tool result of that step, or at the message before the tool call.',
     });
   }
