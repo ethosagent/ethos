@@ -55,6 +55,7 @@ describe('SLASH_COMMANDS registry', () => {
       'commands',
       'learn',
       'undo',
+      'rewind',
       'title',
       'attach',
       'dry-run',
@@ -64,6 +65,13 @@ describe('SLASH_COMMANDS registry', () => {
       'goal',
       'goals',
     ]);
+  });
+
+  it('advertises /rewind on cli, tui and web but never on the gateway', () => {
+    expect(slashCommandsForSurface('gateway').map((c) => c.name)).not.toContain('rewind');
+    for (const s of ['cli', 'tui', 'web'] as const) {
+      expect(slashCommandsForSurface(s).map((c) => c.name)).toContain('rewind');
+    }
   });
 
   it('exposes gateway-only commands', () => {
@@ -97,6 +105,7 @@ describe('TUI surface tag (C5)', () => {
       'budget',
       'verbose',
       'learn',
+      'rewind',
       'exit',
       'sessions',
       'readonly',

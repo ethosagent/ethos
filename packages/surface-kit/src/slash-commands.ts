@@ -185,6 +185,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     usage: '/undo [N]',
     surfaces: ['cli'],
   },
+  // No gateway: a chat platform has no composer to prefill (plan ux-3-rewind, Open decision 6).
+  {
+    name: 'rewind',
+    description: 'Edit an earlier prompt and rerun it on a new branch',
+    usage: '/rewind [N]',
+    surfaces: ['cli', 'tui', 'web'],
+  },
   // --- CLI chat commands the table was missing (C5, added by the chat wave) ---
   {
     name: 'title',

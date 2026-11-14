@@ -46,6 +46,7 @@ export {
   type RevealResult,
   revealHiddenChars,
 } from './hidden-chars';
+export { parseRewindArg, REWIND_BUSY, REWIND_NOTICE, REWIND_USAGE } from './rewind';
 export {
   getSlashCommand,
   type ParsedSlashCommand,
