@@ -1,6 +1,8 @@
+import { revealHiddenChars } from '@ethosagent/surface-kit';
+import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { getClientId } from '../../lib/clientId';
 import { rpc } from '../../rpc';
@@ -19,7 +21,11 @@ import { rpc } from '../../rpc';
 //      lease-1h instead: the widest answer it can have is one hour. A
 //      hardline command (`request.hardline`) gets once only: the server
 //      stores nothing for one whatever scope is sent (`ApprovalsService.approve`).
-//   3. Allow / Deny buttons that fire the matching RPC. The reducer
+//   3. Allow / Deny buttons that fire the matching RPC, plus "Deny and
+//      redirect…": a note (what to do instead) sent as the deny `reason`.
+//      The server sanitizes and frames it (`tools.deny` in apps/web-api).
+//      Args and reason render through `revealHiddenChars` so a bidi or
+//      zero-width character shows as ⟨U+XXXX⟩ with a warning. The reducer
 //      drops the request from `pendingApprovals` on the SSE
 //      `approval.resolved` event so the modal closes naturally; we
 //      don't manage open/closed state locally.
@@ -68,12 +74,19 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
   const [scope, setScope] = useState<ApprovalScope>('once');
   const [submitting, setSubmitting] = useState<'allow' | 'deny' | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'decide' | 'redirect'>('decide');
+  const [note, setNote] = useState('');
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   // W5 — an alertdialog owns focus: first control on open (the `once` radio),
   // back to wherever the user was when `approval.resolved` unmounts it.
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef);
 
-  const handle = async (decision: 'allow' | 'deny') => {
+  useEffect(() => {
+    if (mode === 'redirect') noteRef.current?.focus();
+  }, [mode]);
+
+  const handle = async (decision: 'allow' | 'deny', reason?: string) => {
     setSubmitting(decision);
     setSubmitError(null);
     try {
@@ -87,6 +100,7 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
         await rpc.tools.deny({
           approvalId: request.approvalId,
           clientId: getClientId(),
+          ...(reason ? { reason } : {}),
         });
       }
       // The SSE `approval.resolved` event drops this request from
@@ -98,6 +112,10 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
       setSubmitError(message);
     }
   };
+
+  const args = revealHiddenChars(formatArgs(request.args));
+  const reasonText = request.reason ? revealHiddenChars(request.reason) : null;
+  const hidden = args.hidden + (reasonText?.hidden ?? 0);
 
   return (
     <div
@@ -117,27 +135,47 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
         </h2>
       </header>
 
-      {request.reason ? <p className="approval-modal-reason">{request.reason}</p> : null}
+      {reasonText ? <p className="approval-modal-reason">{reasonText.text}</p> : null}
 
-      <pre className="approval-modal-args">{formatArgs(request.args)}</pre>
+      <pre className="approval-modal-args">{args.text}</pre>
 
-      <fieldset className="approval-modal-scope">
-        <legend className="approval-modal-scope-legend">Scope</legend>
-        {scopeOptions(request).map((opt) => (
-          <label key={opt.value} className="approval-modal-scope-option">
-            <input
-              type="radio"
-              name="scope"
-              value={opt.value}
-              checked={scope === opt.value}
-              onChange={() => setScope(opt.value)}
-              disabled={submitting !== null}
-            />
-            <span className="approval-modal-scope-label">{opt.label}</span>
-            <span className="approval-modal-scope-hint">{opt.hint}</span>
-          </label>
-        ))}
-      </fieldset>
+      {hidden > 0 ? (
+        <p className="approval-modal-hidden" role="note">
+          {hidden} hidden character(s) shown as ⟨U+…⟩ — what runs may differ from what you read.
+        </p>
+      ) : null}
+
+      {mode === 'redirect' ? (
+        <textarea
+          ref={noteRef}
+          className="approval-modal-note"
+          aria-label="What should it do instead?"
+          placeholder="What should it do instead?"
+          maxLength={APPROVAL_NOTE_MAX_CHARS}
+          rows={3}
+          value={note}
+          disabled={submitting !== null}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      ) : (
+        <fieldset className="approval-modal-scope">
+          <legend className="approval-modal-scope-legend">Scope</legend>
+          {scopeOptions(request).map((opt) => (
+            <label key={opt.value} className="approval-modal-scope-option">
+              <input
+                type="radio"
+                name="scope"
+                value={opt.value}
+                checked={scope === opt.value}
+                onChange={() => setScope(opt.value)}
+                disabled={submitting !== null}
+              />
+              <span className="approval-modal-scope-label">{opt.label}</span>
+              <span className="approval-modal-scope-hint">{opt.hint}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       {submitError ? (
         <div className="approval-modal-error" role="alert">
@@ -146,21 +184,42 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
       ) : null}
 
       <div className="approval-modal-actions">
-        <Button
-          type="primary"
-          loading={submitting === 'allow'}
-          disabled={submitting !== null}
-          onClick={() => void handle('allow')}
-        >
-          Allow
-        </Button>
-        <Button
-          loading={submitting === 'deny'}
-          disabled={submitting !== null}
-          onClick={() => void handle('deny')}
-        >
-          Deny
-        </Button>
+        {mode === 'redirect' ? (
+          <>
+            <Button
+              type="primary"
+              loading={submitting === 'deny'}
+              disabled={submitting !== null || note.trim() === ''}
+              onClick={() => void handle('deny', note.trim())}
+            >
+              Deny with note
+            </Button>
+            <Button disabled={submitting !== null} onClick={() => setMode('decide')}>
+              Back
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              type="primary"
+              loading={submitting === 'allow'}
+              disabled={submitting !== null}
+              onClick={() => void handle('allow')}
+            >
+              Allow
+            </Button>
+            <Button
+              loading={submitting === 'deny'}
+              disabled={submitting !== null}
+              onClick={() => void handle('deny')}
+            >
+              Deny
+            </Button>
+            <Button disabled={submitting !== null} onClick={() => setMode('redirect')}>
+              Deny and redirect…
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

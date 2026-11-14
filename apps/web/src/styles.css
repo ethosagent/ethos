@@ -4145,6 +4145,27 @@ textarea {
   word-break: break-word;
 }
 
+.approval-modal-hidden {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warning);
+}
+
+.approval-modal-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ethos-text);
+  background: var(--ethos-code-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  resize: vertical;
+}
+
 .approval-modal-scope {
   border: none;
   margin: 0;
