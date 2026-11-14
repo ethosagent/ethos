@@ -51,8 +51,16 @@ export interface CardStore {
    * page of history never loads the whole session's cards.
    */
   listForToolCalls(sessionId: string, toolCallIds: readonly string[]): SessionCard[];
-  /** Copy a session's cards onto another session, appended in source order. */
-  copySession(fromSessionId: string, toSessionId: string): void;
+  /**
+   * Copy a session's cards onto another session, appended in source order.
+   * With `opts.toolCallIds` only the listed tool calls' cards are copied (a cut
+   * fork keeps a prefix of the history); absent, every card is copied.
+   */
+  copySession(
+    fromSessionId: string,
+    toSessionId: string,
+    opts?: { toolCallIds?: readonly string[] },
+  ): void;
   /** Drop every card for a session. */
   deleteSession(sessionId: string): void;
   close(): void;
@@ -178,7 +186,11 @@ export class SQLiteCardStore implements CardStore {
     return cards;
   }
 
-  copySession(fromSessionId: string, toSessionId: string): void {
+  copySession(
+    fromSessionId: string,
+    toSessionId: string,
+    opts?: { toolCallIds?: readonly string[] },
+  ): void {
     // Session fork replays the source's whole message history into the new
     // session, tool messages and their `toolCallId`s included. Leaving the
     // cards behind would render that identical history one card poorer, so a
@@ -190,10 +202,12 @@ export class SQLiteCardStore implements CardStore {
         'SELECT tool_call_id, envelope FROM session_cards WHERE session_id = ? ORDER BY seq ASC',
       )
       .all(fromSessionId) as Array<{ tool_call_id: string; envelope: string }>;
-    if (rows.length === 0) return;
+    const keep = opts?.toolCallIds ? new Set(opts.toolCallIds) : undefined;
+    const kept = keep ? rows.filter((r) => keep.has(r.tool_call_id)) : rows;
+    if (kept.length === 0) return;
 
     const copy = this.db.transaction((): void => {
-      for (const row of rows) {
+      for (const row of kept) {
         this.insertRow(toSessionId, row.tool_call_id, row.envelope);
       }
     });

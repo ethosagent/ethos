@@ -138,6 +138,16 @@ describe('SQLiteCardStore', () => {
     expect(s.list('sess-a')).toHaveLength(2);
     expect(s.append('sess-fork', 'call-3', textCard('three'))).toBe(2);
   });
+
+  it('copySession with toolCallIds copies only the listed cards', () => {
+    const s = open();
+    s.append('s1', 't1', textCard('one'));
+    s.append('s1', 't2', textCard('two'));
+    s.copySession('s1', 's2', { toolCallIds: ['t1'] });
+    expect(s.list('s2').map((c) => c.toolCallId)).toEqual(['t1']);
+    s.copySession('s1', 's3', { toolCallIds: [] });
+    expect(s.list('s3')).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
