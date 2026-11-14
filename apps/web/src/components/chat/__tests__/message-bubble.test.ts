@@ -126,3 +126,62 @@ describe('AssistantBubble', () => {
     expect(container.querySelector('.message-assistant')?.textContent).toBe('');
   });
 });
+
+describe('UserBubble Edit & rerun', () => {
+  it('shows Edit & rerun on a sent prompt but not on a steer or a failed send', async () => {
+    const { UserBubble } = await import('../MessageBubble');
+    const onEditStart = vi.fn();
+    const mk = (extra: Record<string, unknown>, id: string) =>
+      createElement(UserBubble, {
+        message: { id, role: 'user', content: 'hi', timestamp: 1, ...extra },
+        onEditStart,
+      });
+    act(() => {
+      root.render(
+        createElement(
+          'div',
+          null,
+          mk({}, 'u1'),
+          mk({ isSteer: true }, 'u2'),
+          mk({ status: 'failed', error: 'x' }, 'u3'),
+        ),
+      );
+    });
+    const btns = container.querySelectorAll(
+      'button[aria-label="Edit this prompt and rerun from here"]',
+    );
+    expect(btns).toHaveLength(1);
+    expect(btns[0]?.textContent).toBe('Edit & rerun');
+    act(() => (btns[0] as HTMLButtonElement).click());
+    expect(onEditStart).toHaveBeenCalledWith('u1');
+  });
+
+  it('renders no action without onEditStart', async () => {
+    const { UserBubble } = await import('../MessageBubble');
+    act(() => {
+      root.render(
+        createElement(UserBubble, {
+          message: { id: 'u1', role: 'user', content: 'hi', timestamp: 1 },
+        }),
+      );
+    });
+    expect(container.querySelector('button')).toBeNull();
+  });
+
+  it('swaps the bubble for the editor while editing', async () => {
+    const { UserBubble } = await import('../MessageBubble');
+    const onRerun = vi.fn(() => Promise.resolve());
+    act(() => {
+      root.render(
+        createElement(UserBubble, {
+          message: { id: 'u1', role: 'user', content: 'orig', timestamp: 1 },
+          editing: true,
+          onEditStart: vi.fn(),
+          onEditCancel: vi.fn(),
+          onRerun,
+        }),
+      );
+    });
+    expect(container.querySelector('textarea')?.value).toBe('orig');
+  });
+});

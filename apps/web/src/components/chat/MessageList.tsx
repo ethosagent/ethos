@@ -46,6 +46,12 @@ export interface MessageListProps {
   onRetryMessage?: (messageId: string) => void;
   /** W1 — discard a failed message's bubble. Must be referentially stable. */
   onDiscardMessage?: (messageId: string) => void;
+  /** Edit & rerun — the user bubble currently open in the inline editor. */
+  editingMessageId?: string | null;
+  /** Stable. Its presence shows the "Edit & rerun" hover action. */
+  onEditStart?: (messageId: string) => void;
+  onEditCancel?: () => void;
+  onRerun?: (messageId: string, text: string) => Promise<void>;
   /** Puts a suggested prompt in the composer (`recommend_actions` pills).
    *  Must be referentially stable, or every history bubble re-renders. */
   onSuggestPrompt?: (prompt: string) => void;
@@ -77,6 +83,10 @@ export function MessageList({
   turnMeta,
   onRetryMessage,
   onDiscardMessage,
+  editingMessageId,
+  onEditStart,
+  onEditCancel,
+  onRerun,
   onSuggestPrompt,
   onTryVoice,
   runSurface,
@@ -260,6 +270,10 @@ export function MessageList({
             message={m}
             {...(onRetryMessage ? { onRetry: onRetryMessage } : {})}
             {...(onDiscardMessage ? { onDiscard: onDiscardMessage } : {})}
+            {...(onEditStart ? { onEditStart } : {})}
+            {...(onEditCancel ? { onEditCancel } : {})}
+            {...(onRerun ? { onRerun } : {})}
+            {...(editingMessageId === m.id ? { editing: true } : {})}
           />
         ) : (
           <AssistantHistoryRow

@@ -1,4 +1,4 @@
-import type { ChatMessage } from './chat-reducer';
+import type { ChatMessage, UserMessage } from './chat-reducer';
 
 /** A local id is the `user-<ms>` minted in `useChat.sendMessage`; the server has never seen it. */
 export function isLocalUserMessageId(id: string): boolean {
@@ -28,4 +28,20 @@ export function rewindTargetFor(
     if (m && isPrompt(m)) turnsBack += 1;
   }
   return { turnsBack };
+}
+
+/** The `turnsBack`-th prompt from the latest (1 = last), over the bubbles the server counts. */
+export function rewindPromptAt(
+  messages: readonly ChatMessage[],
+  turnsBack: number,
+): UserMessage | null {
+  let seen = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m && m.role === 'user' && isPrompt(m)) {
+      seen += 1;
+      if (seen === turnsBack) return m;
+    }
+  }
+  return null;
 }

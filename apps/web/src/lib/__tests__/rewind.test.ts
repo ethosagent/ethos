@@ -53,3 +53,13 @@ describe('rewindTargetFor', () => {
     expect(rewindTargetFor(msgs, 'user-3')).toBeNull();
   });
 });
+
+describe('rewindPromptAt', () => {
+  it('picks the Nth prompt from the end, skipping steers and failed sends', async () => {
+    const { rewindPromptAt } = await import('../rewind');
+    const msgs = [user('u1', 'a'), asst(), steer('s1'), failed('f1'), user('u2', 'b'), asst()];
+    expect(rewindPromptAt(msgs, 1)?.id).toBe('u2');
+    expect(rewindPromptAt(msgs, 2)?.id).toBe('u1');
+    expect(rewindPromptAt(msgs, 3)).toBeNull();
+  });
+});

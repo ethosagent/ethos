@@ -1,3 +1,4 @@
+import { parseRewindArg, REWIND_BUSY } from '@ethosagent/surface-kit';
 import { resolveCallTreatment } from '@ethosagent/types';
 import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
 import { useQueryClient } from '@tanstack/react-query';
@@ -63,6 +64,7 @@ import { retryTurnText } from '../lib/chat-retry';
 import { INCOGNITO_PARAM, INCOGNITO_PLACEHOLDER } from '../lib/incognito';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
+import { rewindPromptAt } from '../lib/rewind';
 import { accentVars, personalityTheme } from '../lib/theme';
 import { buildTeamPath } from '../lib/workspaceRoutes';
 import { mostRecentSessionIdForPersonality, shouldRestoreLastSession } from '../lib/workspaceScope';
@@ -168,6 +170,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     clearError,
     retryMessage,
     discardMessage,
+    rewindTo,
   } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
@@ -361,6 +364,21 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     },
     [retryMessage],
   );
+  // Edit & rerun: the bubble open in the inline editor. A rerun forks a branch
+  // before that prompt (useChat.rewindTo), then navigates to it as a push so
+  // Back returns to the original branch, like BranchSwitcher.onSelect.
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const handleEditStart = useCallback((id: string) => setEditingMessageId(id), []);
+  const handleEditCancel = useCallback(() => setEditingMessageId(null), []);
+  const handleRerun = useCallback(
+    async (id: string, text: string) => {
+      const next = await rewindTo(id, text);
+      setEditingMessageId(null);
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
+      setSearchParams({ session: next });
+    },
+    [rewindTo, queryClient, setSearchParams],
+  );
   const handleDiscardMessage = useCallback(
     (messageId: string) => {
       const draft = discardMessage(messageId);
@@ -471,6 +489,27 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
             ? ''
             : '. Summaries disabled — set auxiliary.compression.model to enable.'),
       });
+      return;
+    }
+
+    // `/rewind [N]` opens the inline editor on the Nth prompt back; it never
+    // steers and never sends.
+    if (/^\/rewind(\s|$)/i.test(trimmed)) {
+      if (state.isStreaming) {
+        notification.info({ message: REWIND_BUSY });
+        return;
+      }
+      const parsed = parseRewindArg(trimmed.replace(/^\/rewind\s*/i, ''));
+      if (!parsed.ok) {
+        notification.info({ message: parsed.message });
+        return;
+      }
+      const target = rewindPromptAt(state.messages, parsed.turnsBack);
+      if (!target) {
+        notification.info({ message: 'Nothing to rewind yet.' });
+        return;
+      }
+      setEditingMessageId(target.id);
       return;
     }
 
@@ -1125,6 +1164,14 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         turnMeta={turnMeta}
         onRetryMessage={handleRetryMessage}
         onDiscardMessage={handleDiscardMessage}
+        {...(!state.isStreaming && !takeoverActive
+          ? {
+              onEditStart: handleEditStart,
+              onEditCancel: handleEditCancel,
+              onRerun: handleRerun,
+              editingMessageId,
+            }
+          : {})}
         personalityId={personalityId}
         personalityName={coordinatorName}
         model={model}

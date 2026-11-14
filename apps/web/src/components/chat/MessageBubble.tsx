@@ -15,6 +15,7 @@ import { HtmlBlock } from './HtmlBlock';
 import { ImageBlock } from './ImageBlock';
 import { PdfBlock } from './PdfBlock';
 import { PlayButton } from './PlayButton';
+import { RewindEditor } from './RewindEditor';
 import { RunAnchor, type RunSurface } from './RunCard';
 import { Trail } from './Trail';
 
@@ -35,14 +36,37 @@ export const UserBubble = memo(function UserBubble({
   message,
   onRetry,
   onDiscard,
+  editing,
+  onEditStart,
+  onEditCancel,
+  onRerun,
 }: {
   message: UserMessage;
   /** W1 — re-send this failed message verbatim. Stable, keyed by id here. */
   onRetry?: (messageId: string) => void;
   /** W1 — drop the failed bubble; the hook restores the draft. */
   onDiscard?: (messageId: string) => void;
+  /** Edit & rerun — the inline editor replaces the bubble while true. */
+  editing?: boolean;
+  /** Stable, keyed by id. Its presence is what shows the hover action. */
+  onEditStart?: (messageId: string) => void;
+  onEditCancel?: () => void;
+  onRerun?: (messageId: string, text: string) => Promise<void>;
 }) {
   const attachments = message.attachments ?? [];
+  if (editing && onRerun && onEditCancel) {
+    return (
+      <div className="message-row message-row-user">
+        <RewindEditor
+          initialText={message.content}
+          hadAttachments={attachments.length > 0}
+          onRerun={(text) => onRerun(message.id, text)}
+          onCancel={onEditCancel}
+        />
+      </div>
+    );
+  }
+  const canEdit = onEditStart !== undefined && !message.isSteer && message.status !== 'failed';
   return (
     <div className="message-row message-row-user">
       {message.isSteer && <div className="message-steer-label">↗ Steering</div>}
@@ -56,6 +80,18 @@ export const UserBubble = memo(function UserBubble({
         </div>
       )}
       {message.content ? <div className="message-user">{message.content}</div> : null}
+      {canEdit ? (
+        <div className="message-user-actions">
+          <button
+            type="button"
+            className="message-user-action"
+            aria-label="Edit this prompt and rerun from here"
+            onClick={() => onEditStart(message.id)}
+          >
+            Edit &amp; rerun
+          </button>
+        </div>
+      ) : null}
       {attachments.length > 0 ? (
         <div className="message-attachments">
           {attachments.map((a) => (
