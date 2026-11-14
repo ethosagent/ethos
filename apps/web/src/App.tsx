@@ -31,6 +31,7 @@ import { SupervisorStatus } from './components/team/SupervisorStatus';
 import { useConfig, useOnboardingState } from './features/config/api/queries';
 import { useGoalDetail } from './features/goals/api/queries';
 import { useSessionGet } from './features/sessions/api/queries';
+import { useAttentionSignals } from './hooks/useAttentionSignals';
 import { useCrossHighlight } from './hooks/useCrossHighlight';
 import { useNewSessionModal } from './hooks/useNewSessionModal';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
@@ -194,6 +195,7 @@ function AppShell() {
   useDesktopThemeSync();
   useOnboardingRedirect();
   usePushEventToasts();
+  useAttentionSignals();
   useSessionTitleSync();
   const { data: config } = useConfig();
   const { open: newSessionOpen, closeNewSessionModal } = useNewSessionModal();
