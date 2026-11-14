@@ -51,3 +51,14 @@ describe('formatApprovalArgs (V-GC-7)', () => {
     expect(truncateWithMarker('0123456789ab', 10)).toBe(`0123456789${TRUNCATED_MARKER}`);
   });
 });
+
+describe('formatApprovalArgs hidden characters', () => {
+  it('reveals hidden characters before the platform neutralizer runs', () => {
+    const text = formatApprovalArgs('a‮b', {
+      maxChars: 2500,
+      neutralize: (t) => t.replace(/`+/g, (r) => r.split('').join('​')),
+    });
+    expect(text).toContain('⟨U+202E⟩');
+    expect(text).not.toContain('‮');
+  });
+});

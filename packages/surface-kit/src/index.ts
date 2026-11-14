@@ -40,6 +40,12 @@ export {
   type ToolCallState,
 } from './event-translator';
 export {
+  HIDDEN_CODE_POINT_RANGES,
+  isHiddenCodePoint,
+  type RevealResult,
+  revealHiddenChars,
+} from './hidden-chars';
+export {
   getSlashCommand,
   type ParsedSlashCommand,
   parseSlashCommand,

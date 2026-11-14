@@ -4,6 +4,7 @@
 // and, where its markup needs it, its own code-fence neutralizer.
 
 import { redactJson, redactString } from '@ethosagent/safety-redact';
+import { revealHiddenChars } from './hidden-chars';
 
 /** Appended wherever a card cuts text short, so a reader knows it was cut. */
 export const TRUNCATED_MARKER = '\n… (truncated)';
@@ -54,6 +55,9 @@ export function formatApprovalArgs(args: unknown, format: ApprovalArgsFormat): s
       text = redactString(String(args));
     }
   }
+  // Reveal before `neutralize` so a neutralizer's own inserted U+200B (Slack,
+  // Discord) is never shown as a marker. Pinned by approval-args.test.ts.
+  text = revealHiddenChars(text).text;
   if (format.neutralize) text = format.neutralize(text);
   return truncateWithMarker(text, format.maxChars);
 }

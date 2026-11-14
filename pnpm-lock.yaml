@@ -2766,6 +2766,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
+    devDependencies:
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../safety/injection
 
   packages/test-kit:
     dependencies:
