@@ -5,6 +5,7 @@ import { Checkbox, Form, InputNumber, Select, Switch } from 'antd';
 import { AdvancedBlock } from '../components/advanced';
 import { SectionHeading } from '../components/section-heading';
 import { SettingRow } from '../components/setting-row';
+import { AttentionNotifyRow } from './attention-notify-row';
 
 export function ChatPane() {
   return (
@@ -75,6 +76,8 @@ export function ChatPane() {
           />
         </Form.Item>
       </SettingRow>
+
+      <AttentionNotifyRow />
 
       <AdvancedBlock>
         <SettingRow

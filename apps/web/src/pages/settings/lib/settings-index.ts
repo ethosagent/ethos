@@ -416,6 +416,14 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
     },
   ]),
   ...group('chat', 'display', [
+    {
+      key: null,
+      label: 'Browser notifications',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Per-browser preference in localStorage (ethos.attentionNotifications); not a config.yaml key.',
+    },
     { key: 'verbosity', formName: 'verbosity', label: 'Verbosity' },
     { key: 'display.streaming_edits', formName: 'streamingEdits', label: 'Stream draft edits' },
     { key: 'display.verbosity', formName: 'displayVerbosity', label: 'Surface verbosity' },

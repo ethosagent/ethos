@@ -15,6 +15,7 @@ import { modelRegistryKeys } from '../lib/model-registry';
 import { SETTINGS_INDEX } from '../lib/settings-index';
 import type { SettingsPaneContext } from '../pane-context';
 import { BackupPane } from '../panes/backup';
+import { ChatPane } from '../panes/chat';
 import { GeneralPane } from '../panes/general';
 import { KeysPane } from '../panes/keys';
 import { ModelsPane } from '../panes/models';
@@ -249,6 +250,7 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
     expect(SELF_SAVE_PAIRS).toEqual([
       'backup/archives',
       'backup/status',
+      'chat/display',
       'desktop/connection',
       'desktop/keychain-and-auth',
       'desktop/retention',
@@ -274,6 +276,10 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
 describe('every self-saving section renders SelfSaveMarker', () => {
   it('general/onboarding — the setup-wizard button', () => {
     expect(markup(GeneralPane)).toContain(MARKER_TEXT);
+  });
+
+  it('chat/display — the browser notifications switch', () => {
+    expect(sectionBlock(markup(ChatPane), 'display')).toContain(MARKER_TEXT);
   });
 
   it('voice/wake-routes — WakePanel', () => {
