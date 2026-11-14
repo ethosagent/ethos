@@ -1,4 +1,5 @@
 import { formatApprovalArgs } from '@ethosagent/surface-kit';
+import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import {
   actionRow,
   button,
@@ -11,6 +12,8 @@ import {
 
 export const APPROVE_CUSTOM_ID_PREFIX = 'ethos:approve:';
 export const DENY_CUSTOM_ID_PREFIX = 'ethos:deny:';
+export const DENY_NOTE_CUSTOM_ID_PREFIX = 'ethos:denynote:';
+export const APPROVAL_NOTE_INPUT_ID = 'ethos_approval_note_input';
 
 const ARGS_PREVIEW_MAX = 2500;
 
@@ -33,8 +36,46 @@ export function approvalPendingEmbed(input: ApprovalPendingInput): DiscordEmbed 
 export function approvalPendingButtons(approvalId: string): DiscordActionRow {
   return actionRow(
     button('Allow', `${APPROVE_CUSTOM_ID_PREFIX}${approvalId}`, 3),
+    button('Deny with note…', `${DENY_NOTE_CUSTOM_ID_PREFIX}${approvalId}`, 2),
     button('Deny', `${DENY_CUSTOM_ID_PREFIX}${approvalId}`, 4),
   );
+}
+
+/** Modal opened by the "Deny with note…" button; same shape as `clarifyModalPayload` plus `max_length`. */
+export function approvalNoteModalPayload(approvalId: string): {
+  custom_id: string;
+  title: string;
+  components: Array<{
+    type: 1;
+    components: Array<{
+      type: 4;
+      custom_id: string;
+      label: string;
+      style: 1 | 2;
+      required: boolean;
+      max_length?: number;
+    }>;
+  }>;
+} {
+  return {
+    custom_id: `${DENY_NOTE_CUSTOM_ID_PREFIX}${approvalId}`,
+    title: 'Deny and redirect',
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 4,
+            custom_id: APPROVAL_NOTE_INPUT_ID,
+            label: 'What should it do instead?',
+            style: 2,
+            required: true,
+            max_length: APPROVAL_NOTE_MAX_CHARS,
+          },
+        ],
+      },
+    ],
+  };
 }
 
 export interface ApprovalResolvedInput {

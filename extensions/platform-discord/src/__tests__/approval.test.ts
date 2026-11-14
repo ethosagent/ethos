@@ -1,10 +1,13 @@
+import { APPROVAL_NOTE_MAX_CHARS } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   APPROVE_CUSTOM_ID_PREFIX,
+  approvalNoteModalPayload,
   approvalPendingButtons,
   approvalPendingEmbed,
   approvalResolvedEmbed,
   DENY_CUSTOM_ID_PREFIX,
+  DENY_NOTE_CUSTOM_ID_PREFIX,
 } from '../blocks/approval';
 
 describe('blocks/approval', () => {
@@ -33,9 +36,22 @@ describe('blocks/approval', () => {
 
   it('pending buttons encode approvalId in customId', () => {
     const row = approvalPendingButtons('req-456');
-    expect(row.components).toHaveLength(2);
+    expect(row.components).toHaveLength(3);
     expect(row.components[0].custom_id).toBe(`${APPROVE_CUSTOM_ID_PREFIX}req-456`);
-    expect(row.components[1].custom_id).toBe(`${DENY_CUSTOM_ID_PREFIX}req-456`);
+    expect(row.components[1].custom_id).toBe(`${DENY_NOTE_CUSTOM_ID_PREFIX}req-456`);
+    expect(row.components[1].label).toBe('Deny with note…');
+    expect(row.components[2].custom_id).toBe(`${DENY_CUSTOM_ID_PREFIX}req-456`);
+  });
+
+  it('note modal caps input at APPROVAL_NOTE_MAX_CHARS', () => {
+    const modal = approvalNoteModalPayload('req-456');
+    expect(modal.custom_id).toBe(`${DENY_NOTE_CUSTOM_ID_PREFIX}req-456`);
+    expect(modal.title).toBe('Deny and redirect');
+    const input = modal.components[0].components[0];
+    expect(input.label).toBe('What should it do instead?');
+    expect(input.style).toBe(2);
+    expect(input.required).toBe(true);
+    expect(input.max_length).toBe(APPROVAL_NOTE_MAX_CHARS);
   });
 
   it('custom_id stays within 100-char limit', () => {

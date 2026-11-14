@@ -15,6 +15,7 @@ import type {
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
 import type { Client, Interaction } from 'discord.js';
+import { approvalNoteModalPayload } from './blocks/approval';
 import { chunkText, reflowChunks } from './chunking';
 import type { clarifyModalPayload } from './clarify-blocks';
 import type { CommandContext, CommandPayload } from './commands';
@@ -395,6 +396,12 @@ export class DiscordAdapter
         onCommand: (payload, interaction) => this.handleCommand(payload, interaction),
         onApprovalDecision: (approvalId, decision, userId, interaction) => {
           this.handleApprovalDecision(approvalId, decision, userId, interaction);
+        },
+        onApprovalNoteRequest: (approvalId, userId, interaction) => {
+          this.handleApprovalNoteRequest(approvalId, userId, interaction);
+        },
+        onApprovalNoteSubmit: (approvalId, userId, note, interaction) => {
+          this.handleApprovalNoteSubmit(approvalId, userId, note, interaction);
         },
       });
     }
@@ -814,15 +821,19 @@ export class DiscordAdapter
     }
   }
 
-  private handleApprovalDecision(
-    approvalId: string,
-    decision: 'allow' | 'deny',
-    userId: string,
+  /**
+   * Authorization: default-deny unless the user passes the configured policy.
+   * Shared by the click, the deny-note button and the modal submit, so a
+   * role-less user can neither open the note modal nor submit one.
+   * Pinned by __tests__/approval-note-interactions.test.ts.
+   */
+  private passesApprovalPolicy(
     interaction: Interaction,
-  ): void {
-    if (!interaction.isButton()) return;
+    approvalId: string,
+    userId: string,
+  ): boolean {
+    if (!interaction.isButton() && !interaction.isModalSubmit()) return false;
 
-    // Authorization: default-deny unless the user passes the configured policy.
     if (this.approvalPolicy === 'role_gate') {
       if (this.approvalRoleIds.length === 0) {
         // No roles configured → no one can approve. This is intentional:
@@ -837,7 +848,7 @@ export class DiscordAdapter
         interaction
           .reply({ content: 'Approval roles not configured. No one can approve.', ephemeral: true })
           .catch(() => {});
-        return;
+        return false;
       }
       const member = interaction.member;
       const memberRoles =
@@ -856,9 +867,20 @@ export class DiscordAdapter
         interaction
           .reply({ content: 'You do not have permission to approve/deny.', ephemeral: true })
           .catch(() => {});
-        return;
+        return false;
       }
     }
+    return true;
+  }
+
+  private handleApprovalDecision(
+    approvalId: string,
+    decision: 'allow' | 'deny',
+    userId: string,
+    interaction: Interaction,
+  ): void {
+    if (!interaction.isButton()) return;
+    if (!this.passesApprovalPolicy(interaction, approvalId, userId)) return;
 
     interaction.deferUpdate().catch(() => {});
     this.approvalDecisionHandler?.({
@@ -867,6 +889,41 @@ export class DiscordAdapter
       decidedBy: userId,
       channelId: interaction.channelId ?? '',
       messageTs: interaction.message.id,
+    });
+  }
+
+  /** Deny-with-note button: gate, then open the modal (must be the first response). */
+  handleApprovalNoteRequest(approvalId: string, userId: string, interaction: Interaction): void {
+    if (!interaction.isButton()) return;
+    if (!this.passesApprovalPolicy(interaction, approvalId, userId)) return;
+    interaction.showModal(buildModal(approvalNoteModalPayload(approvalId))).catch(() => {
+      // The click expired or the modal was rejected; nothing was decided.
+    });
+  }
+
+  /**
+   * Modal submit: re-check the gate (a modal id can be replayed), then deny.
+   * A blank note is omitted so it becomes a plain deny; a stale approval is
+   * dropped by ApprovalCoordinator.settle (packages/core, deny-after-settle test).
+   */
+  handleApprovalNoteSubmit(
+    approvalId: string,
+    userId: string,
+    note: string,
+    interaction: Interaction,
+  ): void {
+    if (!interaction.isModalSubmit()) return;
+    if (!this.passesApprovalPolicy(interaction, approvalId, userId)) return;
+    interaction.deferUpdate().catch(() => {
+      // Interaction already acknowledged or expired; the decision still goes through.
+    });
+    this.approvalDecisionHandler?.({
+      approvalId,
+      decision: 'deny',
+      decidedBy: userId,
+      channelId: interaction.channelId ?? '',
+      messageTs: interaction.message?.id ?? '',
+      ...(note ? { note } : {}),
     });
   }
 

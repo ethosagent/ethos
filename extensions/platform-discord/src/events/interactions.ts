@@ -6,6 +6,7 @@ import type {
   ModalBuilder,
   TextInputBuilder,
 } from 'discord.js';
+import { APPROVAL_NOTE_INPUT_ID, DENY_NOTE_CUSTOM_ID_PREFIX } from '../blocks/approval';
 import { CLARIFY_MODAL_INPUT_ID, type clarifyModalPayload } from '../clarify-blocks';
 import {
   type ClarifyButtonPayload,
@@ -27,7 +28,18 @@ interface InteractionContext {
     userId: string,
     interaction: Interaction,
   ) => void;
+  onApprovalNoteRequest?: (approvalId: string, userId: string, interaction: Interaction) => void;
+  onApprovalNoteSubmit?: (
+    approvalId: string,
+    userId: string,
+    note: string,
+    interaction: Interaction,
+  ) => void;
 }
+
+type ModalInput = ReturnType<typeof clarifyModalPayload> & {
+  components: Array<{ components: Array<{ max_length?: number }> }>;
+};
 
 export function registerInteractionHandler(
   client: { on: (event: string, handler: (interaction: Interaction) => void) => void },
@@ -42,6 +54,16 @@ export function registerInteractionHandler(
 
       if (interaction.isButton()) {
         const customId = interaction.customId;
+
+        // Deny-with-note opens a modal; checked first so it can never be read as a plain deny.
+        if (customId.startsWith(DENY_NOTE_CUSTOM_ID_PREFIX)) {
+          ctx.onApprovalNoteRequest?.(
+            customId.slice(DENY_NOTE_CUSTOM_ID_PREFIX.length),
+            interaction.user.id,
+            interaction,
+          );
+          return;
+        }
 
         // Approval buttons
         if (customId.startsWith('ethos:approve:') || customId.startsWith('ethos:deny:')) {
@@ -76,6 +98,16 @@ export function registerInteractionHandler(
       }
 
       if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith(DENY_NOTE_CUSTOM_ID_PREFIX)) {
+          const note = interaction.fields.getTextInputValue(APPROVAL_NOTE_INPUT_ID)?.trim() ?? '';
+          ctx.onApprovalNoteSubmit?.(
+            interaction.customId.slice(DENY_NOTE_CUSTOM_ID_PREFIX.length),
+            interaction.user.id,
+            note,
+            interaction,
+          );
+          return;
+        }
         if (!ctx.onClarifyInteraction) return;
         const answer = interaction.fields.getTextInputValue(CLARIFY_MODAL_INPUT_ID)?.trim() ?? '';
         const payload: ClarifyModalPayload = {
@@ -129,19 +161,19 @@ function handleSlashCommand(interaction: Interaction, ctx: InteractionContext): 
   ctx.onCommand?.(payload, interaction);
 }
 
-export function buildModal(input: ReturnType<typeof clarifyModalPayload>): ModalBuilder {
+export function buildModal(input: ModalInput): ModalBuilder {
   const { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = discord();
   const modal = new ModalBuilder().setCustomId(input.custom_id).setTitle(input.title);
   for (const row of input.components) {
     const arBuilder = new ActionRowBuilder<TextInputBuilder>();
     for (const el of row.components) {
-      arBuilder.addComponents(
-        new TextInputBuilder()
-          .setCustomId(el.custom_id)
-          .setLabel(el.label)
-          .setStyle(el.style === 1 ? TextInputStyle.Short : TextInputStyle.Paragraph)
-          .setRequired(el.required),
-      );
+      const input = new TextInputBuilder()
+        .setCustomId(el.custom_id)
+        .setLabel(el.label)
+        .setStyle(el.style === 1 ? TextInputStyle.Short : TextInputStyle.Paragraph)
+        .setRequired(el.required);
+      if (el.max_length !== undefined) input.setMaxLength(el.max_length);
+      arBuilder.addComponents(input);
     }
     modal.addComponents(arBuilder);
   }
