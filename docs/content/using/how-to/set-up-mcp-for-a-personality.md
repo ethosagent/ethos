@@ -186,5 +186,5 @@ ethos mcp login <name> --personality <id>
 - [MCP config reference](../reference/mcp-config.md) — field-by-field reference for `~/.ethos/mcp.json`, token storage, and the CLI workflow.
 - [Use Ethos as an MCP server](use-as-mcp-server.md) — the inverse direction: exposing Ethos to MCP clients.
 - [Personality config](../reference/personality-yaml.md) — the `mcp_servers:` attachment list in `config.yaml`.
-- [Slash commands reference](../reference/slash-commands.md#slash-mcp) — `/mcp login` to sign in from a chat DM.
+- [Slash commands reference](../reference/slash-commands/mcp-sign-in.md#slash-mcp) — `/mcp login` to sign in from a chat DM.
 - [Use the web dashboard](use-web-dashboard.md) — full guide to the web management surface, including the MCP tab.

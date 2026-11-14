@@ -278,7 +278,9 @@ const sidebars: SidebarsConfig = {
               '/tools-and-context',
               '/safety-voice-display',
             ]),
-            'using/reference/slash-commands',
+            splitDoc('using/reference/slash-commands', 'Slash commands reference', [
+              '/mcp-sign-in',
+            ]),
           ],
         },
         {

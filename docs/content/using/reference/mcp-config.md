@@ -87,7 +87,7 @@ This calls the revocation endpoint (if configured) and removes the stored token 
 | Surface | Entry point | Requirements |
 |---|---|---|
 | Web dashboard | **Sign in with a code** button on an OAuth server's row in the MCP tab. Shows the code, the verification URL and a countdown. | The server offers the device grant. Otherwise the modal says the server does not support code sign-in; use **Sign in**. |
-| Chat (gateway) | `/mcp login <server>` in a direct message to the bot. See [`/mcp`](slash-commands.md#slash-mcp). | `channel_filter.<platform>.ownerUserId` set in `config.yaml`; server listed in the personality's `mcp_servers:`. |
+| Chat (gateway) | `/mcp login <server>` in a direct message to the bot. See [`/mcp`](slash-commands/mcp-sign-in.md#slash-mcp). | `channel_filter.<platform>.ownerUserId` set in `config.yaml`; server listed in the personality's `mcp_servers:`. |
 
 Sources: [`McpDeviceLoginModal.tsx`](https://github.com/ethosagent/ethos/blob/main/apps/web/src/components/mcp/McpDeviceLoginModal.tsx), [`handleMcpCommand`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts).
 
