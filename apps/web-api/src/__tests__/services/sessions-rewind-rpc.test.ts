@@ -1,5 +1,6 @@
 import { SQLiteCardStore } from '@ethosagent/session-cards';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { REWIND_BUSY } from '@ethosagent/surface-kit';
 import type { CardEnvelope } from '@ethosagent/web-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionsRepository } from '../../features/sessions/repository';
@@ -79,6 +80,7 @@ describe('sessions.rewind', () => {
     const busy = new SessionsService({ sessions: repo, isTurnRunning: () => true });
     await expect(busy.rewind(sessionId, { turnsBack: 1 })).rejects.toMatchObject({
       code: 'INVALID_INPUT',
+      cause: REWIND_BUSY,
     });
     expect(await store.listSessions({ parentSessionId: sessionId })).toEqual([]);
   });

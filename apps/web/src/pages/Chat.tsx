@@ -60,6 +60,7 @@ import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
+import { isTurnBusy } from '../lib/chat-reducer';
 import { retryTurnText } from '../lib/chat-retry';
 import { INCOGNITO_PARAM, INCOGNITO_PLACEHOLDER } from '../lib/incognito';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
@@ -367,6 +368,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // Edit & rerun: the bubble open in the inline editor. A rerun forks a branch
   // before that prompt (useChat.rewindTo), then navigates to it as a push so
   // Back returns to the original branch, like BranchSwitcher.onSelect.
+  // `state.isStreaming` only flips on the first stream event; rewind must also
+  // refuse in the gap between send and that event.
+  const turnBusy = isTurnBusy(state);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const handleEditStart = useCallback((id: string) => setEditingMessageId(id), []);
   const handleEditCancel = useCallback(() => setEditingMessageId(null), []);
@@ -497,7 +501,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     // `/rewind [N]` opens the inline editor on the Nth prompt back; it never
     // steers and never sends.
     if (/^\/rewind(\s|$)/i.test(trimmed)) {
-      if (state.isStreaming) {
+      if (turnBusy) {
         notification.info({ message: REWIND_BUSY });
         return;
       }
@@ -618,8 +622,8 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // it when that gate shuts, or it would reopen with stale text when the gate
   // reopens.
   useEffect(() => {
-    if (state.isStreaming || takeoverActive) setEditingMessageId(null);
-  }, [state.isStreaming, takeoverActive]);
+    if (turnBusy || takeoverActive) setEditingMessageId(null);
+  }, [turnBusy, takeoverActive]);
   const takeoverVisible = takeoverActive && takeoverStageOpen;
 
   // Live state for the delegated-run cards anchored in the transcript (§4.1).
@@ -1176,7 +1180,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         turnMeta={turnMeta}
         onRetryMessage={handleRetryMessage}
         onDiscardMessage={handleDiscardMessage}
-        {...(!state.isStreaming && !takeoverActive
+        {...(!turnBusy && !takeoverActive
           ? {
               onEditStart: handleEditStart,
               onEditCancel: handleEditCancel,

@@ -31,15 +31,19 @@ describe('Chat /rewind', () => {
   });
 
   it('offers Edit & rerun only when idle and not in takeover', () => {
-    expect(src).toContain('!state.isStreaming && !takeoverActive');
+    expect(src).toContain('!turnBusy && !takeoverActive');
   });
 
   it('refuses /rewind during a takeover, and closes the open editor when the edit gate closes', () => {
     expect(handleSend).toContain('Finish the takeover first');
-    const effect = src.indexOf(
-      'if (state.isStreaming || takeoverActive) setEditingMessageId(null)',
-    );
+    const effect = src.indexOf('if (turnBusy || takeoverActive) setEditingMessageId(null)');
     expect(effect).toBeGreaterThan(-1);
-    expect(src.slice(effect, effect + 120)).toContain('[state.isStreaming, takeoverActive]');
+    expect(src.slice(effect, effect + 120)).toContain('[turnBusy, takeoverActive]');
+  });
+
+  it('gates rewind on the whole turn (isTurnBusy), not only isStreaming, which lags the first event', () => {
+    expect(src).toContain('const turnBusy = isTurnBusy(state)');
+    const guard = handleSend.indexOf('REWIND_BUSY');
+    expect(handleSend.slice(guard - 80, guard)).toContain('turnBusy');
   });
 });

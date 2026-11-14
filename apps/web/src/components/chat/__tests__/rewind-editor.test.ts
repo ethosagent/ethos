@@ -4,7 +4,7 @@
 // notice, Rerun / Cancel, Cmd/Ctrl+Enter and Esc, and a refusal that keeps the
 // editor open with the error.
 
-import { REWIND_NOTICE } from '@ethosagent/surface-kit';
+import { REWIND_BUSY, REWIND_NOTICE } from '@ethosagent/surface-kit';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -106,12 +106,12 @@ describe('RewindEditor', () => {
   });
 
   it('a refused rerun keeps the editor open with the error and the text', async () => {
-    const onRerun = vi.fn(() => Promise.reject(new Error('A turn is running. Stop it first.')));
+    const onRerun = vi.fn(() => Promise.reject(new Error(REWIND_BUSY)));
     mount({ initialText: 'keep me', onRerun });
     await act(async () => {
       button('Rerun').click();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('A turn is running');
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(REWIND_BUSY);
     expect(textarea().value).toBe('keep me');
     expect(button('Rerun').disabled).toBe(false);
   });

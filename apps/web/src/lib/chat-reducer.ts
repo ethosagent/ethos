@@ -484,6 +484,14 @@ const TURN_ADVANCING_EVENTS = new Set<SseEventType>([
   'done',
 ]);
 
+/** A turn is in flight from the moment the prompt is sent (`phase: 'received'`)
+ *  until a terminal transition clears it — `isStreaming` alone only flips on
+ *  the first stream event, leaving a gap in which Stop is absent and a rewind
+ *  would be refused by the server. */
+export function isTurnBusy(state: ChatState): boolean {
+  return state.isStreaming || state.phase !== null;
+}
+
 export function applyEvent(state: ChatState, event: SseEvent, now: number): ChatState {
   // One guard, one place: a turn the user stopped stays stopped.
   if (state.abortedTurn && TURN_ADVANCING_EVENTS.has(event.type)) return state;
