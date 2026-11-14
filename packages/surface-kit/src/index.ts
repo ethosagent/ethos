@@ -17,6 +17,7 @@ export {
   TRUNCATED_MARKER,
   truncateWithMarker,
 } from './approval-args';
+export { formatApprovalDenial, sanitizeApprovalNote } from './approval-note';
 export { BRANCH_USAGE, formatBranchList, pickBranch } from './branches';
 export {
   CHAT_ERROR_MAP,

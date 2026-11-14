@@ -232,6 +232,11 @@ export interface PlatformAdapter {
 // here so multiple adapters can implement it without cross-platform imports.
 // ---------------------------------------------------------------------------
 
+/** Longest deny-and-redirect note any surface sends. Enforced by
+ *  `sanitizeApprovalNote` (packages/surface-kit/src/approval-note.ts), called in
+ *  `ApprovalCoordinator.deny` and `ApprovalsService.deny`. */
+export const APPROVAL_NOTE_MAX_CHARS = 1000;
+
 /** The decision event forwarded by an adapter when a user clicks Approve or Deny. */
 export interface ApprovalDecisionEvent {
   approvalId: string;
@@ -239,6 +244,8 @@ export interface ApprovalDecisionEvent {
   decidedBy: string;
   channelId: string;
   messageTs: string;
+  /** What the agent should do instead. Meaningful only for 'deny'. */
+  note?: string;
 }
 
 /**
