@@ -15,7 +15,7 @@
     "@ethosagent/voice-session": "workspace:*",
     "@ethosagent/voice-text": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
-    "ws": "^8.20.0"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@ethosagent/storage-fs": "workspace:*"

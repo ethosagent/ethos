@@ -20,7 +20,7 @@
     "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "ws": "^8.20.0"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@ethosagent/kanban-store": "workspace:*",
