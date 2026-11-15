@@ -193,7 +193,7 @@ describe('runZero exit-code propagation (G5)', () => {
       return run;
     }
 
-    function useStdin(stream: NodeJS.ReadableStream, kind: 'fifo' | 'file' | 'char'): void {
+    function stubStdin(stream: NodeJS.ReadableStream, kind: 'fifo' | 'file' | 'char'): void {
       vi.spyOn(process, 'stdin', 'get').mockReturnValue(stream as never);
       vi.mocked(fstatSync).mockImplementationOnce(
         () =>
@@ -207,7 +207,7 @@ describe('runZero exit-code propagation (G5)', () => {
     it('does not read stdin that is not a pipe or a file', async () => {
       const run = mockLoop();
       // Never ends: reading it would hang the test until it times out.
-      useStdin(new PassThrough(), 'char');
+      stubStdin(new PassThrough(), 'char');
 
       await runZero(['-z', 'hello']);
       expect(run).toHaveBeenCalledTimes(1);
@@ -227,7 +227,7 @@ describe('runZero exit-code propagation (G5)', () => {
 
     it.each(['fifo', 'file'] as const)('reads stdin that is a %s', async (kind) => {
       const run = mockLoop();
-      useStdin(Readable.from([Buffer.from('piped text')]), kind);
+      stubStdin(Readable.from([Buffer.from('piped text')]), kind);
 
       await runZero(['-z', 'hello']);
       const prompt = String(run.mock.calls[0]?.[0]);

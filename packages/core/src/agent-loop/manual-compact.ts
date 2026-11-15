@@ -124,7 +124,7 @@ export function reconstructFromWatermark(
   // idx === -1 → the boundary scrolled off the top of the window: every loaded
   // message is already in the kept region, so keep them all. idx > 0 → drop the
   // raw summarized prefix. idx === 0 → nothing older in the window to drop.
-  const cut = idx > 0 ? idx : 0;
+  const cut = Math.max(idx, 0);
   const kept = history.slice(cut);
   const ghosts =
     opts?.skillMarkers && cut > 0

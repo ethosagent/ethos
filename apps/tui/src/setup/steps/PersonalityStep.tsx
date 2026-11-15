@@ -63,7 +63,7 @@ export function PersonalityStep() {
   const { answers, accent, dispatch } = useWizardContext();
   const [selected, setSelected] = useState(() => {
     const idx = PERSONALITIES.findIndex((p) => p.id === answers.personality);
-    return idx >= 0 ? idx : 0;
+    return Math.max(idx, 0);
   });
   const [previewing, setPreviewing] = useState(false);
 

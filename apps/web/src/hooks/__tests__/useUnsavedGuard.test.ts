@@ -103,17 +103,17 @@ describe('useUnsavedGuard — in-app navigation', () => {
   });
 });
 
+function GuardOnly({ dirty }: { dirty: boolean | (() => boolean) }) {
+  useUnsavedGuard(dirty);
+  return null;
+}
+
 // Two sibling guards on one page (Memory renders two MemoryEditor tabs, both
 // mounted once visited). The old per-hook wrap/restore broke here: sibling
 // cleanups run first-to-last, so A restored the original and B restored A's
 // DEAD wrapper — an unmounted, dirty A then prompted on every navigation until
 // reload. The fix ref-counts one shared patch per navigator.
 describe('useUnsavedGuard — two sibling guards', () => {
-  function GuardOnly({ dirty }: { dirty: boolean | (() => boolean) }) {
-    useUnsavedGuard(dirty);
-    return null;
-  }
-
   function renderSiblings(guards: Array<boolean | (() => boolean)>): void {
     act(() => {
       root.render(

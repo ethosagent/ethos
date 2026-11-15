@@ -14,7 +14,7 @@ export function MemoryStep() {
   const { answers, accent, dispatch } = useWizardContext();
   const [selected, setSelected] = useState<number>(() => {
     const idx = OPTIONS.findIndex((o) => o.id === answers.memory);
-    return idx >= 0 ? idx : 0;
+    return Math.max(idx, 0);
   });
 
   useInput((_input, key) => {

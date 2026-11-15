@@ -199,7 +199,7 @@ describe('SQLiteChannelTranscriptStore', () => {
       for (let step = 0; step < 4; step++) {
         const page = await store.readSince(lane, cursor, { limit: 3 });
         drained.push(...page.messages.map((m) => m.text));
-        cursor = page.messages.reduce((max, m) => (m.id > max ? m.id : max), cursor);
+        cursor = page.messages.reduce((max, m) => Math.max(m.id, max), cursor);
       }
       expect(drained).toEqual(Array.from({ length: 10 }, (_, i) => `msg-${i}`));
       expect((await store.readSince(lane, cursor)).messages).toEqual([]);
@@ -616,7 +616,7 @@ describe('pruneChannelTranscript', () => {
     // The digest consumes the lane and stores the greatest id it was handed.
     const digested = await store.readSince(lane, 0);
     expect(digested.messages).toHaveLength(3);
-    const watermark = digested.messages.reduce((max, m) => (m.id > max ? m.id : max), 0);
+    const watermark = digested.messages.reduce((max, m) => Math.max(m.id, max), 0);
     expect(watermark).toBe(3);
     store.close();
 

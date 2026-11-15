@@ -967,7 +967,7 @@ export class TelegramAdapter
     const ids = this.pendingReactions.get(key);
     if (!ids || ids.length === 0) return undefined;
     const wanted = replyToId !== undefined ? ids.indexOf(Number(replyToId)) : -1;
-    const [taken] = ids.splice(wanted >= 0 ? wanted : 0, 1);
+    const [taken] = ids.splice(Math.max(wanted, 0), 1);
     if (ids.length === 0) this.pendingReactions.delete(key);
     return taken;
   }

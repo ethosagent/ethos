@@ -931,7 +931,7 @@ async function digestWatchedLanes(
       }
 
       const fresh = [...page.messages].sort((a, b) => a.sentAt - b.sentAt);
-      const nextCursor = page.messages.reduce((max, m) => (m.id > max ? m.id : max), cursor);
+      const nextCursor = page.messages.reduce((max, m) => Math.max(m.id, max), cursor);
 
       // Charged BEFORE the call, not after it. The cap bounds what a run may
       // SPEND, and a turn that throws or comes back empty was billed like any

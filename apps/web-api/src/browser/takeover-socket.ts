@@ -888,8 +888,8 @@ function mouseParams(
   lane: Lane,
   frame: Extract<BrowserTakeoverClientFrame, { t: 'mouse' }>,
 ): Record<string, unknown> {
-  const width = lane.pageWidth > 0 ? lane.pageWidth : 0;
-  const height = lane.pageHeight > 0 ? lane.pageHeight : 0;
+  const width = Math.max(lane.pageWidth, 0);
+  const height = Math.max(lane.pageHeight, 0);
   return {
     type: frame.type,
     x: Math.round(frame.x * width),

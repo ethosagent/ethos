@@ -18,7 +18,7 @@ export function ProviderStep() {
 
   const [selected, setSelected] = useState(() => {
     const idx = PROVIDER_CATALOG.findIndex((e) => e.id === (answers.provider ?? 'anthropic'));
-    return idx >= 0 ? idx : 0;
+    return Math.max(idx, 0);
   });
 
   useInput((input, key) => {

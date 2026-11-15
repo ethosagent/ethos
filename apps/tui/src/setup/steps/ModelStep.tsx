@@ -47,7 +47,7 @@ function LocalModelStep() {
       if (reachable && served.length > 0) {
         setModels(served);
         const idx = answers.model ? served.indexOf(answers.model) : -1;
-        setSelected(idx >= 0 ? idx : 0);
+        setSelected(Math.max(idx, 0));
         setPhase('list');
       } else {
         setPhase('manual');

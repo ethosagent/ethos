@@ -33,7 +33,7 @@ interface ModelPickerModalProps {
 export function ModelPickerModal({ current, onSelect, onCancel }: ModelPickerModalProps) {
   const [models] = useState(knownModels);
   const initial = models.findIndex((m) => m.id === current);
-  const [selected, setSelected] = useState(initial >= 0 ? initial : 0);
+  const [selected, setSelected] = useState(Math.max(initial, 0));
 
   useInput((_input, key) => {
     if (key.escape) {

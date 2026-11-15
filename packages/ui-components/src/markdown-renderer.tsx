@@ -173,31 +173,36 @@ const OVERRIDES = {
   ),
 };
 
+interface FenceHost {
+  resolver: FenceRendererResolver | undefined;
+  streaming: boolean;
+}
+
+const FenceHostContext = createContext<FenceHost>({ resolver: undefined, streaming: false });
+
 /**
  * `<pre>` is emitted for fenced blocks only, so this is where a fence can be
- * offered to the host resolver. Built per (resolver, streaming) pair rather
- * than inline in the render body: a fresh element type per render would make
- * React unmount and remount the whole markdown subtree on every streamed
- * token.
+ * offered to the host resolver. Defined once at module level and fed the
+ * (resolver, streaming) pair through context: a fresh element type per render
+ * would make React unmount and remount the whole markdown subtree on every
+ * streamed token.
  */
-function makePreOverride(resolver: FenceRendererResolver | undefined, streaming: boolean) {
-  return function PreOverride({
-    children,
-    node,
-  }: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
-    const fence = resolver ? readFence(node) : null;
-    const result = fence ? resolver?.({ ...fence, streaming }) : null;
-    if (result?.kind === 'replace') return <>{result.node}</>;
-    return (
-      <>
-        <pre className="my-2 overflow-x-auto rounded border border-border bg-muted p-3 text-sm">
-          <InsideFence.Provider value={true}>{children}</InsideFence.Provider>
-        </pre>
-        {result?.kind === 'annotate' ? result.notice : null}
-      </>
-    );
-  };
+function PreOverride({ children, node }: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const { resolver, streaming } = useContext(FenceHostContext);
+  const fence = resolver ? readFence(node) : null;
+  const result = fence ? resolver?.({ ...fence, streaming }) : null;
+  if (result?.kind === 'replace') return <>{result.node}</>;
+  return (
+    <>
+      <pre className="my-2 overflow-x-auto rounded border border-border bg-muted p-3 text-sm">
+        <InsideFence.Provider value={true}>{children}</InsideFence.Provider>
+      </pre>
+      {result?.kind === 'annotate' ? result.notice : null}
+    </>
+  );
 }
+
+const COMPONENTS = { ...OVERRIDES, pre: PreOverride };
 
 export function MarkdownRenderer({
   content,
@@ -205,8 +210,8 @@ export function MarkdownRenderer({
   fenceRenderers,
   streaming = false,
 }: MarkdownRendererProps) {
-  const components = useMemo(
-    () => ({ ...OVERRIDES, pre: makePreOverride(fenceRenderers, streaming) }),
+  const fenceHost = useMemo(
+    () => ({ resolver: fenceRenderers, streaming }),
     [fenceRenderers, streaming],
   );
   return (
@@ -216,9 +221,11 @@ export function MarkdownRenderer({
         className,
       )}
     >
-      <Markdown remarkPlugins={[remarkGfm]} components={components}>
-        {content}
-      </Markdown>
+      <FenceHostContext.Provider value={fenceHost}>
+        <Markdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
+          {content}
+        </Markdown>
+      </FenceHostContext.Provider>
     </div>
   );
 }
