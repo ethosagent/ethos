@@ -63,7 +63,7 @@
     "@aws-sdk/client-s3": "^3.800.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
     "@aws-sdk/credential-providers": "^3.800.0",
-    "@hono/node-server": "^2.0.0",
+    "@hono/node-server": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@orpc/contract": "^1.14.3",
     "@orpc/openapi": "^1.14.0",
