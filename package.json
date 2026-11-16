@@ -42,7 +42,7 @@
     "arch:baseline-shrinks": "node scripts/check-archcheck-baseline.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.6",
+    "@biomejs/biome": "^2.6.7",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "archcheck": "0.3.1",
