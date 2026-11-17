@@ -28,7 +28,7 @@ import { foldForDeny } from './deny-fold';
  * (or any other personality) any tool on its next turn.
  *
  * It must cover every path `FilePersonalityRegistry.loadOne` fingerprints
- * (`extensions/personalities/src/index.ts`) — those are the files whose change
+ * (`extensions/personalities/src/registry.ts`) — those are the files whose change
  * alters the loaded personality. `ETHOS.md` is on top of that list: it is not
  * fingerprinted, but it is identity text shipped beside `SOUL.md`. So are
  * `.expression-history/`, whose snapshots `FilePersonalityRegistry.revertExpression`

@@ -8,7 +8,7 @@ import type { WizardAnswers } from '../reducer';
 // copy of the picked built-in. The copy is the default; keeping the built-in is
 // the secondary choice and skips naming and connectors (built-ins are
 // read-only, so they can run neither the first-chat introduction nor take
-// connectors — `requireMutable` in extensions/personalities/src/index.ts).
+// connectors — `requireMutable` in extensions/personalities/src/registry.ts).
 
 function errorCode(err: unknown): string | undefined {
   if (typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string') {

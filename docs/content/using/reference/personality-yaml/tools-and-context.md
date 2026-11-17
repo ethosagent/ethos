@@ -92,7 +92,7 @@ context_layering.cap_total_chars: 12000
 
 Per-personality skill learning: whether this personality drafts skill candidates, and where and how a drafted skill may go live. Every draft becomes a candidate in the [learning inbox](../../explanation/learning-inbox.md); no key here writes a live skill file. The built-in `engineer` personality sets `enabled: true`, `min_tool_calls: 5` and `cooldown_minutes: 60`.
 
-Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts), parsed by `buildSkillEvolution` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts).
+Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts), parsed by `buildSkillEvolution` in [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts).
 
 | Field | Type | Default | Description |
 |---|---|---|---|

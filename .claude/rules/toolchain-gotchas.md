@@ -19,7 +19,7 @@ Biome v2: files.includes uses trailing slash for folder negation
 "!dist/" (with trailing slash) ignores the dist directory. "!**/dist/**" also works but "!dist" (no slash) does not — Biome v2 changed this. The pattern is already correct in biome.json; don't "fix" it.
 
 import.meta.dirname for locating built-in data files
-extensions/personalities/src/index.ts uses join(import.meta.dirname, '..', 'data') to find the built-in personality data directory. import.meta.dirname is available in Node 21.2+ (and therefore Node 24). Don't replace with fileURLToPath(new URL(..., import.meta.url)) — that's the Node 18/20 workaround and adds noise.
+extensions/personalities/src/registry.ts uses join(import.meta.dirname, '..', 'data') to find the built-in personality data directory. import.meta.dirname is available in Node 21.2+ (and therefore Node 24). Don't replace with fileURLToPath(new URL(..., import.meta.url)) — that's the Node 18/20 workaround and adds noise.
 
 tsx + extensionless imports: why we don't use --experimental-strip-types
 Node 24's --experimental-strip-types requires explicit file extensions in imports (.js or .ts). This conflicts with TypeScript's extensionless import convention. tsx handles extensionless imports and tsconfig path aliases correctly. The decision to keep tsx was made explicitly — don't try to migrate to --experimental-strip-types without also adding extensions to every internal import.

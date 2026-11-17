@@ -352,7 +352,7 @@ function mergeSlot(
 
 /** `web_search`'s typed, non-secret fields. On any other key they are not a
  *  binding field: `parseToolsYaml` skips them (`NON_SECRET_FIELDS`,
- *  extensions/personalities/src/index.ts), so accepting one here would render a
+ *  extensions/personalities/src/tools-yaml.ts), so accepting one here would render a
  *  tools.yaml line that never reads back. Refused at this write boundary. */
 const WEB_SEARCH_ONLY_FIELDS = new Set(['provider', 'recency']);
 

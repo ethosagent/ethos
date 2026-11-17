@@ -30,7 +30,7 @@ import { c } from './doctor-shared';
  * Known limitations, stated rather than implied:
  * - An invalid site mode in a personality's config.yaml (PD12) is NOT
  *   reported: the personality loader (`buildDecisionsConfig` in
- *   extensions/personalities/src/index.ts) drops it silently, so the site
+ *   extensions/personalities/src/config-builders.ts) drops it silently, so the site
  *   reads as undeclared (`off`) here and on the character sheet.
  */
 export interface DecisionLayerReport {

@@ -91,7 +91,7 @@ Notes:
 
 Type: dotted block · Default: unset (every surface draws the generated mark)
 
-How this personality looks where its name is shown. Both keys are sub-keys of one identity block, so they do not move `.personality-field-count`. Parsed by `buildDisplayConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts); the type is `PersonalityConfig.display` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts).
+How this personality looks where its name is shown. Both keys are sub-keys of one identity block, so they do not move `.personality-field-count`. Parsed by `buildDisplayConfig` in [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts); the type is `PersonalityConfig.display` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts).
 
 | Field | Type | Description |
 |---|---|---|
@@ -111,7 +111,7 @@ Notes:
 
 ## mcp_export.\* {#mcp-export}
 
-Type: dotted block · Default: unset (not exported). Lets `ethos mcp serve --personality <id>` export this personality as one `ask` tool — walkthrough in [Use Ethos as an MCP server](../../how-to/use-as-mcp-server.md). Parsed by `buildMcpExportConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts). A value outside a key's vocabulary is ignored and the fail-closed default stands — `expose_memory: Scoped` resolves to `none`.
+Type: dotted block · Default: unset (not exported). Lets `ethos mcp serve --personality <id>` export this personality as one `ask` tool — walkthrough in [Use Ethos as an MCP server](../../how-to/use-as-mcp-server.md). Parsed by `buildMcpExportConfig` in [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts). A value outside a key's vocabulary is ignored and the fail-closed default stands — `expose_memory: Scoped` resolves to `none`.
 
 | Field | Default | Description |
 |---|---|---|

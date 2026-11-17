@@ -57,7 +57,7 @@ Type: dotted block in the personality's `config.yaml` · Default: unset (`capabi
 
 Filters which skills from the global pool this personality sees. Skills in the personality's own `skills/` directory are never filtered. Walkthrough: [Add a skill](../how-to/add-a-skill.md).
 
-Source: `skills` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts) (shape `IngestConfig`, `packages/types/src/skill.ts`), parsed by `buildSkillsConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts), applied by [`extensions/skills/src/ingest-filter.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/ingest-filter.ts).
+Source: `skills` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts) (shape `IngestConfig`, `packages/types/src/skill.ts`), parsed by `buildSkillsConfig` in [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts), applied by [`extensions/skills/src/ingest-filter.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/ingest-filter.ts).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -78,7 +78,7 @@ skills.global_ingest.deny: claude-code/auto-commit
 
 Type: enum in the personality's `config.yaml` · Default: `index`
 
-How global-pool skills enter the system prompt. Parsed by `buildSkillsConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts), read by `SkillsInjector` in [`extensions/skills/src/skills-injector.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/skills-injector.ts) and by `usesSkillIndexMode` in [`packages/core/src/agent-loop/ghost-skills.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop/ghost-skills.ts).
+How global-pool skills enter the system prompt. Parsed by `buildSkillsConfig` in [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts), read by `SkillsInjector` in [`extensions/skills/src/skills-injector.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/skills-injector.ts) and by `usesSkillIndexMode` in [`packages/core/src/agent-loop/ghost-skills.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop/ghost-skills.ts).
 
 | Value | Meaning |
 |---|---|

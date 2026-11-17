@@ -82,7 +82,7 @@ From the agent's perspective, MCP tools look like any other tool — they show u
 
 `toolset.yaml` does not gate MCP tools. Its allowlist applies to built-in tools only: `DefaultToolRegistry.toDefinitions` and `executeParallel` in `packages/core/src/tool-registry.ts` skip it for any `mcp__` name. Listing `mcp__<server>__<tool>` there neither grants nor narrows anything. By default, an attached server exposes every tool it lists; the `mcp_servers:` attachment is the gate.
 
-To narrow an attached server to specific tools, or switch it off for this personality, write the personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/index.ts`). Use bare tool names:
+To narrow an attached server to specific tools, or switch it off for this personality, write the personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/mcp-yaml.ts`). Use bare tool names:
 
 ```yaml
 servers:

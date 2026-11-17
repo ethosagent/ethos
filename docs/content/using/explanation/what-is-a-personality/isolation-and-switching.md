@@ -88,7 +88,7 @@ When you see `~/.ethos/personalities/<id>/` in code or docs, that is what is mea
 
 `PersonalityConfig` is declared in `packages/types/src/personality.ts`. It has zero runtime dependencies — the type-only package can be imported from anywhere in the monorepo without dragging in concrete code. This is the same property that lets `LLMProvider`, `SessionStore`, and `MemoryProvider` be implemented in any package: the contract lives in a place that costs nothing to depend on.
 
-The registry that resolves a personality lives at `extensions/personalities/src/index.ts`. It implements the `PersonalityRegistry` interface, loads from disk via a `Storage` (the abstraction over filesystem I/O), and caches by file fingerprint. Tests use an `InMemoryStorage` to populate fixtures without touching disk; production uses `FsStorage`.
+The registry that resolves a personality lives at `extensions/personalities/src/registry.ts`. It implements the `PersonalityRegistry` interface, loads from disk via a `Storage` (the abstraction over filesystem I/O), and caches by file fingerprint. Tests use an `InMemoryStorage` to populate fixtures without touching disk; production uses `FsStorage`.
 
 The shape of this layering — interface in `@ethosagent/types`, default implementation in `extensions/`, injection at the wiring layer — is a recurring pattern. The personality is one example of it; the LLM provider, session store, and memory provider are the others. Read one and you have read the shape of all four.
 

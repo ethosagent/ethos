@@ -61,7 +61,7 @@ The `skill_evolution` block on `PersonalityConfig` turns drafting on. With `enab
 
 Nothing drafted goes live directly. Every draft becomes a candidate in the [learning inbox](../../../using/explanation/learning-inbox.md) (`extensions/learning-inbox`). A candidate is promoted on a human approval, or on a `pass` replay when the auto-promotion rules allow it. Those rules (`autoPromotionDecision` in `extensions/learning-inbox/src/auto-promotion.ts`) never auto-promote a shared skill: a replay tests one personality, and a shared skill reaches all of them.
 
-Expression revisions keep their history in the personality directory. `FilePersonalityRegistry.evolveExpression` (`extensions/personalities/src/index.ts`) snapshots the previous Expression to `.expression-history/<revision-id>.md` before it rewrites `SOUL.md`, and `revertExpression` restores from those snapshots.
+Expression revisions keep their history in the personality directory. `FilePersonalityRegistry.evolveExpression` (`extensions/personalities/src/registry.ts`) snapshots the previous Expression to `.expression-history/<revision-id>.md` before it rewrites `SOUL.md`, and `revertExpression` restores from those snapshots.
 
 Ethos does not track skill usage per personality, and nothing ranks or recommends skills by use. The observability store counts skill exposures and `get_skill` invocations for the whole deployment, grouped by skill with no personality breakdown (`skillCounts` in `extensions/observability-sqlite/src/store.ts`, read by `ethos usage`). No code feeds those counts back into which skills load.
 

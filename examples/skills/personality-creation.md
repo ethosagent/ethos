@@ -48,7 +48,7 @@ For a packaged personality (npm or local plugin), use `api.registerPersonality({
 | `platform` | no | Restrict to a platform (`cli`, `telegram`). |
 | `capabilities` | no | Comma-separated mesh roles, e.g. `code, review`. Advisory; not the same as `toolset`. |
 
-The parser is `parseConfigYaml()` in `extensions/personalities/src/index.ts`. It supports `key: value` lines and dotted keys (`model.default`, `memory.provider`) — no lists, no multiline. Nesting any key other than `safety` fails the load. Quotes around values are stripped.
+The parser is `parseConfigYaml()` in `extensions/personalities/src/config-yaml.ts`. It supports `key: value` lines and dotted keys (`model.default`, `memory.provider`) — no lists, no multiline. Nesting any key other than `safety` fails the load. Quotes around values are stripped.
 
 ## `toolset.yaml` schema (flat YAML list)
 
@@ -123,7 +123,8 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 
 ## Where to look for help
 
-- `extensions/personalities/src/index.ts` — `FilePersonalityRegistry`, `parseConfigYaml`, `parseToolsetYaml`, `loadFromDirectory`
+- `extensions/personalities/src/registry.ts` — `FilePersonalityRegistry`, `loadFromDirectory`
+- `extensions/personalities/src/config-yaml.ts` — `parseConfigYaml`
 - `extensions/personalities/data/<built-in>/` — the loaded built-ins; retired ones sit under `data/archived/`, which the loader skips
 - `packages/types/src/personality.ts` — `PersonalityConfig` interface
 - `extensions/skills/src/skills-injector.ts` — how `skillsDirs` and `~/.ethos/skills/` are merged and injected

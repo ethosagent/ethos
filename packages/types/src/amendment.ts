@@ -157,7 +157,7 @@ export interface AmendmentHistoryEntry {
  * The stored proposal, `learning/amendments/<id>/proposal.json`.
  *
  * Hashes are sha256, lowercase hex, over UTF-8 text — the same function as
- * `hashDefinitionBytes` (extensions/personalities/src/index.ts), so a
+ * `hashDefinitionBytes` (extensions/personalities/src/registry.ts), so a
  * `baseHash` recorded here is the `expectedHash` `writeDefinitionBytes`
  * compares against.
  */

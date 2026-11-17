@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // O-D2 — `outbound_policy.channels` names the platforms the approval gate
 // applies to, and the gate lives inside `send_message`. The two rosters are
 // therefore the same roster, held in two places on purpose:
-// `OUTBOUND_POLICY_PLATFORMS` (extensions/personalities/src/index.ts) and
+// `OUTBOUND_POLICY_PLATFORMS` (extensions/personalities/src/config-builders.ts) and
 // `SEND_MESSAGE_PLATFORMS` (extensions/tools-messaging/src/index.ts) are
 // sibling extensions, and neither may import the other. `packages/wiring` is
 // the lowest layer that can see both, so the pin lives here.

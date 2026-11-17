@@ -55,7 +55,7 @@ The friction is deliberate. The schema is the load-bearing surface — it is the
 
 ### Concretely, what `loadFromDirectory` does
 
-The mechanical loader lives at `extensions/personalities/src/index.ts`. `FilePersonalityRegistry.loadFromDirectory(dir)` walks the immediate subdirectories of `dir`, reads each one's files, and produces a `PersonalityConfig` for each directory that qualifies.
+The mechanical loader lives at `extensions/personalities/src/registry.ts`. `FilePersonalityRegistry.loadFromDirectory(dir)` walks the immediate subdirectories of `dir`, reads each one's files, and produces a `PersonalityConfig` for each directory that qualifies.
 
 A directory qualifies when it holds a `config.yaml` or a `SOUL.md` (`buildConfig` in the same file). Everything else has a fallback: `name` defaults to the title-cased directory id, and a missing `toolset.yaml` leaves the personality with no toolset filter, so every registered tool is visible to it. A directory with neither file is skipped silently — no error, no warning — so a directory holding only a misspelled `config.yml` produces no personality at all. Missing files are never a load-time error; some malformed content is, such as nesting a key `parseConfigYaml` does not allow to nest, which throws naming the key.
 
@@ -71,7 +71,7 @@ Three things you cannot get from a prompt string.
 
 **Atomic switching.** When you go from `engineer` to `reviewer` in chat, the model swap, the toolset swap, the memory scope swap, and the prompt swap happen as one operation. There is no transient state where the engineer's write tools are exposed under the reviewer's prompt. The atomicity is what makes "the reviewer cannot edit" credible — it cannot become "the reviewer cannot edit, except for one stray turn during the switch".
 
-**Legibility.** A personality is plain text. You can `cat SOUL.md`, `grep` your toolsets, `diff` two versions, and commit the directory to a repo. The reviewer your team uses for code review is in source control next to the code it reviews. Memory you cannot read is memory you cannot trust; the same logic applies to identity. The `FilePersonalityRegistry` at `extensions/personalities/src/index.ts` is one implementation of the `PersonalityRegistry` interface; a remote registry, a database-backed one, or a hot-reloading network share are straight ports of the contract.
+**Legibility.** A personality is plain text. You can `cat SOUL.md`, `grep` your toolsets, `diff` two versions, and commit the directory to a repo. The reviewer your team uses for code review is in source control next to the code it reviews. Memory you cannot read is memory you cannot trust; the same logic applies to identity. The `FilePersonalityRegistry` at `extensions/personalities/src/registry.ts` is one implementation of the `PersonalityRegistry` interface; a remote registry, a database-backed one, or a hot-reloading network share are straight ports of the contract.
 
 ### The three user-facing built-ins are not three prompt presets
 
@@ -102,7 +102,7 @@ Each rejection has the same shape: the property is real, but the personality is 
 
 ### Hot reload as a property of the file format
 
-`FilePersonalityRegistry.loadFromDirectory()` fingerprints each personality directory by the `mtime` of six paths: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml` and the `skills/` directory (`loadOne` in `extensions/personalities/src/index.ts`). Calling it on every turn is cheap when nothing changed; when any of them changes on disk, the next turn sees the new content. No restart, no session loss, no cache to invalidate by hand.
+`FilePersonalityRegistry.loadFromDirectory()` fingerprints each personality directory by the `mtime` of six paths: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml` and the `skills/` directory (`loadOne` in `extensions/personalities/src/registry.ts`). Calling it on every turn is cheap when nothing changed; when any of them changes on disk, the next turn sees the new content. No restart, no session loss, no cache to invalidate by hand.
 
 This is the property that lets you tune a personality interactively. Edit `SOUL.md`, send the next message, watch the voice change. Edit `toolset.yaml`, ask the agent to do something it now cannot do, see the rejection. The fast feedback loop is the difference between "I can iterate on this personality" and "I have to restart the process to see if my edit worked".
 

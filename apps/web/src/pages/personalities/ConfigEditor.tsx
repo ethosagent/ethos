@@ -88,7 +88,7 @@ export function ConfigEditor({
   // The model declaration lives outside the Antd form too. `null` = untouched:
   // the patch then omits `model`, and `update` keeps the stored value
   // (`patch.model ?? config.model` in FilePersonalityRegistry.update,
-  // extensions/personalities/src/index.ts), so a tier map or an unrecognized
+  // extensions/personalities/src/registry.ts), so a tier map or an unrecognized
   // id survives a save of some other field.
   const [modelChoice, setModelChoice] = useState<string | null>(null);
   // Voice lives outside the Antd form: `PersonalityVoiceFields` is a controlled

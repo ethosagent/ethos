@@ -149,7 +149,7 @@ Fix · Pick a different id, or remove the existing user copy first.
 
 ### Personality is not hot-reloading {#personality-not-reloading}
 
-Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on six fingerprinted paths per personality directory: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, and the `skills/` directory (the list is owned by `loadOne` in `extensions/personalities/src/index.ts`). A change to any of them is picked up on the next turn or command. The `skills/` entry is the directory's own mtime, which moves when a file is added, removed, or renamed — not when an existing skill file is edited in place.
+Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on six fingerprinted paths per personality directory: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml`, and the `skills/` directory (the list is owned by `loadOne` in `extensions/personalities/src/registry.ts`). A change to any of them is picked up on the next turn or command. The `skills/` entry is the directory's own mtime, which moves when a file is added, removed, or renamed — not when an existing skill file is edited in place.
 
 Fix ·
 1. Confirm the file you edited is one of the six fingerprinted paths. Edits elsewhere in the directory are not watched.

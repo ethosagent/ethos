@@ -6,7 +6,7 @@ import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
  * schema enum the model sees and the rejection message a bad call gets are
  * both derived from it, so the two can never disagree about what is supported.
  *
- * `OUTBOUND_POLICY_PLATFORMS` in `extensions/personalities/src/index.ts` — the
+ * `OUTBOUND_POLICY_PLATFORMS` in `extensions/personalities/src/config-builders.ts` — the
  * platforms `outbound_policy.channels` may name — is a deliberate COPY of this
  * list, not shared code, because `@ethosagent/personalities` must not import a
  * sibling extension (O-D2). The two are pinned equal by

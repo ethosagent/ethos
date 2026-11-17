@@ -772,14 +772,14 @@
       "lines": 1173
     },
     {
-      "path": "extensions/personalities/src/index.ts",
-      "kind": "source",
-      "lines": 3532
-    },
-    {
       "path": "extensions/personalities/src/permission-surface.ts",
       "kind": "source",
       "lines": 892
+    },
+    {
+      "path": "extensions/personalities/src/registry.ts",
+      "kind": "source",
+      "lines": 1556
     },
     {
       "path": "extensions/platform-callcapture/src/__tests__/daemon.test.ts",

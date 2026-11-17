@@ -3,7 +3,7 @@
 // auto-detection cannot see), read by `detectContainerized`
 // (packages/wiring/src/resolve-execution-posture.ts) as its explicit config
 // signal. The retired `execution: local` personality value tells operators to
-// set it (`RETIRED_EXECUTION_VALUES`, extensions/personalities/src/index.ts),
+// set it (`RETIRED_EXECUTION_VALUES`, extensions/personalities/src/config-builders.ts),
 // so it must parse — and must not be reported as a key with no effect.
 
 import { join } from 'node:path';

@@ -77,7 +77,7 @@ export type McpExportDesktopEntryWire = z.infer<typeof McpExportDesktopEntrySche
 
 /**
  * The stored `mcp_export` block as parsed (`PersonalityMcpExportConfig`,
- * `buildMcpExportConfig` in `extensions/personalities/src/index.ts`). The
+ * `buildMcpExportConfig` in `extensions/personalities/src/config-builders.ts`). The
  * export section's form pre-fills from this, not from `scope`: the resolved
  * slice cannot tell `expose_tools: all` from a list, drops the memory tools and
  * the out-of-reach names, and is null while export is off. Loose on purpose —

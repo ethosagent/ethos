@@ -136,7 +136,7 @@ personality "deploy-bot" has approvalMode: off but is bound to channel "telegram
        This combination is not configurable; it is rejected at config load.
 ```
 
-The check lives in [extensions/personalities/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts) and runs every time the personality loads. There is no flag to override it. A bot that takes input from strangers and auto-approves destructive actions is the catastrophic combination; the framework refuses to boot it.
+The check lives in [extensions/personalities/src/config-builders.ts](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts) and runs every time the personality loads. There is no flag to override it. A bot that takes input from strangers and auto-approves destructive actions is the catastrophic combination; the framework refuses to boot it.
 
 Step 5, what approval looks like on each surface, continues in [approval surfaces](set-up-approval-gates/approval-surfaces.md).
 

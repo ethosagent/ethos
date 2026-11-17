@@ -16,7 +16,7 @@ The queue is durable SQLite at `~/.ethos/outbox.db`. The agent's [tool](../../ge
 | Concern | Where it lives |
 |---|---|
 | Field type | [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts) — `OutboundPolicyConfig`, `PersonalityConfig.outbound_policy` |
-| Parse + validation | [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts) — `buildOutboundPolicy`, `parseOutboundChannels`, `OUTBOUND_POLICY_PLATFORMS` |
+| Parse + validation | [`extensions/personalities/src/config-builders.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/config-builders.ts) — `buildOutboundPolicy`, `parseOutboundChannels`, `OUTBOUND_POLICY_PLATFORMS` |
 | The gate | [`extensions/tools-messaging/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-messaging/src/index.ts) — `gateSend` inside `executeSendMessage` |
 | Gate construction | [`packages/wiring/src/compose-tools.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/compose-tools.ts) — `createOutboxGate` |
 | Store, lifecycle, hash | [`extensions/outbox/src/`](https://github.com/ethosagent/ethos/tree/main/extensions/outbox/src) — `SQLiteOutboxStore`, `OutboxService`, `computeContentHash` |

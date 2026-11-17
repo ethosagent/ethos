@@ -17,7 +17,7 @@
  *
  * Callers decide what an ABSENT or EMPTY file means before calling this: the
  * loader treats both as "no toolset declared" (every registered built-in tool,
- * `FilePersonalityRegistry` in extensions/personalities/src/index.ts), which is
+ * `FilePersonalityRegistry` in extensions/personalities/src/registry.ts), which is
  * not the same as an empty allowlist.
  */
 export function parseToolsetYaml(src: string): string[] {

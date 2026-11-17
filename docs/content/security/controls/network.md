@@ -44,7 +44,7 @@ The set of hosts a tool can reach is the intersection of what the tool declares 
 
 With no allow list, a `['*']` tool reaches any public host, but only over `http(s)`: private, loopback, link-local and cloud-metadata destinations stay refused by `safeFetch` (`validateUrl` in `packages/safety/network/src/safe-fetch.ts`; see [SSRF protection](#ssrf-protection)). Declare an `allow` list on any personality whose web tools should reach only named hosts.
 
-- Source: `PersonalitySafetyConfig.network` in `packages/types/src/personality.ts`; parsed in `extensions/personalities/src/index.ts`
+- Source: `PersonalitySafetyConfig.network` in `packages/types/src/personality.ts`; parsed in `extensions/personalities/src/config-builders.ts`
 - Tests: `packages/wiring/src/__tests__/personality-network-policy.test.ts`; `packages/core/src/__tests__/capability-resolver.test.ts` (`'*' tool on a personality with no allow list — real safeFetch`); `packages/safety/network/src/__tests__/policy.test.ts` and `safe-fetch.test.ts`
 
 ### SSRF protection {#ssrf-protection}

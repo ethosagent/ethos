@@ -150,7 +150,7 @@ key, endpoint, model, budgets and thresholds stayed in
 party is still the operator's: with no `decisions.provider` or no key,
 nothing is sent. Which personality uses it, and at which sites, is the
 personality's. The field is parsed and round-tripped by
-`buildDecisionsConfig` in `extensions/personalities/src/index.ts`, and every
+`buildDecisionsConfig` in `extensions/personalities/src/config-builders.ts`, and every
 site resolves its mode per call with `resolvePersonalityDecisionSite` in
 `packages/config/src/decisions.ts`. A global `decisions.sites.*` line is
 never read.

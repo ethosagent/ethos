@@ -1,5 +1,5 @@
 // `safety.observability.storeToolBodies` is parsed and validated
-// (`buildSafetyConfig`, extensions/personalities/src/index.ts) but RESERVED:
+// (`buildSafetyConfig`, extensions/personalities/src/config-builders.ts) but RESERVED:
 // no write path stores a tool's result body. The tool_call span is opened with
 // the (redaction-governed) args and closed with `result_size_bytes` and
 // `durationMs` only (`processTools`,

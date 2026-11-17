@@ -165,7 +165,7 @@ export interface PersonalityMemoryConfig {
  * `packages/wiring/src/__tests__/mcp-export-scope.test.ts`.
  *
  * Written in `config.yaml` as flat dotted keys (`mcp_export.enabled: true`),
- * parsed by `buildMcpExportConfig` (`extensions/personalities/src/index.ts`).
+ * parsed by `buildMcpExportConfig` (`extensions/personalities/src/config-builders.ts`).
  * A value outside the unions below is IGNORED there, leaving the fail-closed
  * default — `mcp_export.expose_memory: Scoped` resolves to `none`.
  *
@@ -465,7 +465,7 @@ export type PersonalityDecisionSiteMode = 'off' | 'shadow' | 'on';
  *
  * Parsed from the dotted `decisions.provider` / `decisions.sites.<site>` keys
  * of the personality's `config.yaml` by `buildDecisionsConfig`
- * (`extensions/personalities/src/index.ts`), which drops a mode outside
+ * (`extensions/personalities/src/config-builders.ts`), which drops a mode outside
  * `off | shadow | on` and keeps `provider` verbatim (a name this machine has
  * not configured is not a load failure).
  *
@@ -639,7 +639,7 @@ export interface PersonalityConfig {
    *     (`apps/ethos/src/commands/nightly.ts`). Default: off.
    *   `promotion`, `scope`, `evolve_existing` — documented on each key below.
    *   `min_tool_calls`, `cooldown_minutes`, `model` — parsed and written back
-   *     by `extensions/personalities/src/index.ts`, but READ BY NOTHING: their
+   *     by `extensions/personalities/src/config-builders.ts` and `config-yaml.ts`, but READ BY NOTHING: their
    *     one reader, the per-turn skill-evolver auto-trigger, was deleted
    *     (L-T6). Limitation: setting them has no effect.
    *
@@ -800,7 +800,7 @@ export interface PersonalityConfig {
    * `channels` names platforms (`slack`, `telegram`, `discord`, `whatsapp`,
    * `email`); absent means every platform. An unknown name FAILS the
    * personality load — `buildOutboundPolicy`
-   * (extensions/personalities/src/index.ts) — so a typo cannot silently leave
+   * (extensions/personalities/src/config-builders.ts) — so a typo cannot silently leave
    * a platform ungated. `approve_before_send: false` ignores `channels` at
    * runtime, but a bad name in it is still refused at load.
    *

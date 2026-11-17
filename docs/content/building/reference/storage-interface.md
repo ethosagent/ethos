@@ -174,7 +174,7 @@ throw new BoundaryError('read', '/etc/passwd', ['/home/me/.ethos/']);
 |---|---|
 | `apps/ethos/src/wiring.ts` | Constructs `FsStorage` and threads it into every consumer. |
 | `packages/core/src/agent-loop.ts` | Wraps the base `Storage` with `ScopedStorage` per turn and passes it via `ToolContext.storage`. |
-| `extensions/personalities/src/index.ts` | `FilePersonalityRegistry` uses the base `Storage` to read personality directories. |
+| `extensions/personalities/src/registry.ts` | `FilePersonalityRegistry` uses the base `Storage` to read personality directories. |
 | `extensions/memory-markdown/src/index.ts` | Reads / writes `MEMORY.md` and `USER.md`. |
 | `extensions/tools-file/src/` | Tool execution; catches `BoundaryError` and translates. |
 | `extensions/observability-sqlite/src/` | Uses raw `node:fs` for SQLite (allowed exception). |

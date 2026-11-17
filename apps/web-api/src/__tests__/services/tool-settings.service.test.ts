@@ -659,7 +659,7 @@ describe('ToolSettingsService', () => {
 
     // `provider` / `recency` are web_search's typed fields. On any other key
     // tools.yaml's parser skips them (NON_SECRET_FIELDS,
-    // extensions/personalities/src/index.ts), so the write side refuses them
+    // extensions/personalities/src/tools-yaml.ts), so the write side refuses them
     // too rather than rendering a line that never reads back.
     it('refuses provider / recency as binding fields on a non-web_search key', async () => {
       await service.setForPersonality('mine', {

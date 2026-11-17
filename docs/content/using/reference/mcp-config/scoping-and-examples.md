@@ -46,7 +46,7 @@ mcp__stripe__list_customers
 `toolset.yaml` does not gate MCP tools. The toolset allowlist applies to built-in tools only. `DefaultToolRegistry.toDefinitions` and `executeParallel` in `packages/core/src/tool-registry.ts` skip it for any `mcp__` name. Listing `mcp__<name>__<tool>` in `toolset.yaml` therefore neither grants nor narrows anything. Two gates decide which MCP tools a personality gets:
 
 1. **Server attachment.** A tool surfaces only if its server is in the personality's `mcp_servers:` list (`passesFilter`, same file).
-2. **Per-tool allowlist (optional).** The personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/index.ts`) can narrow an attached server to named tools, or switch it off:
+2. **Per-tool allowlist (optional).** The personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/mcp-yaml.ts`) can narrow an attached server to named tools, or switch it off:
 
 ```yaml
 servers:

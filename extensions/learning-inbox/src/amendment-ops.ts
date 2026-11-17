@@ -155,7 +155,7 @@ const IDENTITY_ORDER: Record<IdentityAmendmentOp['op'], number> = {
  * A name or vibe line must survive the `config.yaml` round trip byte for byte
  * and show a reviewer every character it carries: one line, and no `"` or `\`
  * (the loader's flat parser strips surrounding quotes but does not unescape,
- * `parseConfigYaml` in extensions/personalities/src/index.ts). A leading or
+ * `parseConfigYaml` in extensions/personalities/src/config-yaml.ts). A leading or
  * trailing `'` is refused for the same reason. Refused, not escaped — the
  * same rule `TOOL_NAME` applies to a tool.
  *
