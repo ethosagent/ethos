@@ -15,7 +15,7 @@ import { AdminPanelGate } from '../panes/security';
 // The wrong fix: react to the LIVE value alone (`Form.useWatch`/`shouldUpdate`).
 // That shows the button the instant the box is ticked, and the button navigates
 // to `/admin` — but the server gate (`admin.service.ts:18` →
-// `ConfigService.adminEnabled()` → `config.service.ts:1672`–`:1674`) reads
+// `ConfigService.adminEnabled()` → `ConfigService.adminEnabled` in apps/web-api/src/services/config.service.ts) reads
 // `admin.enabled` from the CONFIG FILE, not the browser's form store. A
 // live-value button is a button that 403s.
 //

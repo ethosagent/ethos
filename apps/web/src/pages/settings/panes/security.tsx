@@ -167,7 +167,7 @@ export function SecurityPane() {
 // ---------------------------------------------------------------------------
 // Admin panel gate (§8.g). The button follows the SAVED value — the server
 // gate (`admin.service.ts:18` → `ConfigService.adminEnabled()` →
-// `config.service.ts:1672`–`:1674`) reads `admin.enabled` from the config FILE,
+// `ConfigService.adminEnabled` in apps/web-api/src/services/config.service.ts) reads `admin.enabled` from the config FILE,
 // not the browser's form store, so a button driven by the live value would
 // navigate to a panel the server 403s. The note follows the LIVE value, so
 // ticking the box is acknowledged the instant it happens — honestly, without

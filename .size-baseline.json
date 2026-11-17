@@ -319,7 +319,7 @@
     {
       "path": "apps/web-api/src/services/config.service.ts",
       "kind": "source",
-      "lines": 3667
+      "lines": 1507
     },
     {
       "path": "apps/web-api/src/services/model-registry.service.ts",
