@@ -144,7 +144,10 @@ jobs:
       - name: Source size limits and shrink-only baseline
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: bash scripts/check-source-size.sh --base "$BASE_SHA"
+        run: bash scripts/check-source-size.sh --base "$BASE_SHA" --verbose
+      - name: Size report to job summary
+        if: always()
+        run: if [ -f .logs/source-size.log ]; then { echo '```'; cat .logs/source-size.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
 
   lint:
     name: lint

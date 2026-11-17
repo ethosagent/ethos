@@ -2,13 +2,18 @@
 // Size gate for source, test and doc files, with a shrink-only .size-baseline.json.
 // Usage: node scripts/check-source-size.mjs [--root <dir>] [--prune] [--base <sha>] [--verbose]
 //                                           [--write-initial]
-//   (default)        fail on a file over its limit that the baseline does not list
+//   (default)        fail on a file over its limit that the baseline does not list, and on a
+//                    baselined file grown past max(baseline lines, its count at the base commit)
 //   --prune          rewrite the baseline: drop fixed or deleted entries, lower counts, never raise
 //   --base [<sha>]   also fail when the baseline grew since <sha> and no commit carries the trailer
 //                    `Size-Baseline-Approved-By: <name>` (same base fallback as
-//                    scripts/check-archcheck-baseline.mjs: merge-base with origin/main, else HEAD~1)
+//                    scripts/check-archcheck-baseline.mjs: merge-base with origin/main, else HEAD~1;
+//                    an unreachable <sha> takes the same fallback, with a one-line notice)
 //   --verbose        list baselined files that are over their limit
 //   --write-initial  create the baseline from the current tree; refuses if it already exists
+// The base commit is the --base <sha> when given, else the fallback above; with no base the
+// ceiling is the baseline count alone. The count at the base grandfathers files that were
+// already over their baseline when the ratchet landed: only growth since the base fails.
 // Exit 0 clean, 1 on violations (stderr, one per line).
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -91,14 +96,35 @@ function growth(before, after) {
   return grown;
 }
 
-function checkBase() {
+// The base commit as a full sha, or null. Called once, from main(); prints the unreachable-base
+// notice.
+function resolveBase() {
   const next = flagValue('--base');
   // A bare `--base` (no value, or another flag next) means: use the fallback base.
   const given = next?.startsWith('--') ? undefined : next;
-  const base =
-    given && !/^0+$/.test(given)
-      ? given
-      : (tryGit(['merge-base', 'HEAD', 'origin/main']) ?? tryGit(['rev-parse', 'HEAD~1']));
+  const commitOf = (ref) => tryGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const usable = given && !/^0+$/.test(given);
+  const base = usable ? commitOf(given) : null;
+  if (usable && base === null) {
+    // e.g. a force-pushed `github.event.before` that the checkout never fetched: treat it like the
+    // all-zeros sha GitHub sends when there is no previous commit.
+    console.log(`source-size: base ${given} is unreachable; using the fallback base instead.`);
+  }
+  return base ?? tryGit(['merge-base', 'HEAD', 'origin/main']) ?? commitOf('HEAD~1');
+}
+
+// Line count of `path` at `commit`, or null when the file is absent there.
+function linesAt(commit, path) {
+  try {
+    // Not tryGit: it trims, which would drop trailing blank lines that lineCount counts.
+    return lineCount(git(root, ['show', `${commit}:./${path}`]));
+  } catch {
+    // `commit` is already verified, so this only means the file was added since: no grandfathering.
+    return null;
+  }
+}
+
+function checkBase(base) {
   if (!base) {
     console.log('source-size baseline: no base commit to compare against, skipping.');
     return 0;
@@ -171,7 +197,8 @@ function main() {
     return 0;
   }
 
-  const baselined = new Set(readBaseline().map((e) => e.path));
+  const base = resolveBase();
+  const baselineLines = new Map(readBaseline().map((e) => [e.path, e.lines]));
   const failures = [];
   const baselinedOver = Object.fromEntries(KINDS.map((k) => [k, 0]));
   const listed = [];
@@ -179,14 +206,24 @@ function main() {
   for (const f of files) {
     if (f.kind === 'source' && f.lines > SOURCE_WARN) warn++;
     if (!overLimit(f)) continue;
-    if (baselined.has(f.path)) {
-      baselinedOver[f.kind]++;
-      listed.push(`warn ${f.kind} ${f.path}: ${f.lines} lines > ${LIMITS[f.kind]} (baselined)`);
-    } else {
+    const ceiling = baselineLines.get(f.path);
+    if (ceiling === undefined) {
       failures.push(
         `SIZE ${f.kind} ${f.path}: ${f.lines} lines > ${LIMITS[f.kind]} (not in ${BASELINE})`,
       );
+      continue;
     }
+    // The base count is looked up only for a file past its baseline.
+    const atBase = f.lines > ceiling && base ? linesAt(base, f.path) : null;
+    if (f.lines > Math.max(ceiling, atBase ?? 0)) {
+      const was = atBase === null ? '' : ` (${atBase} at ${base.slice(0, 10)})`;
+      failures.push(
+        `GROWN ${f.kind} ${f.path}: ${f.lines} lines > baseline ${ceiling}${was}; split it or shrink it`,
+      );
+      continue;
+    }
+    baselinedOver[f.kind]++;
+    listed.push(`warn ${f.kind} ${f.path}: ${f.lines} lines > ${LIMITS[f.kind]} (baselined)`);
   }
   for (const line of failures) console.error(line);
   if (verbose) for (const line of listed) console.log(line);
@@ -195,7 +232,7 @@ function main() {
     `source-size: ${failures.length} failures; ${warn} warn>${SOURCE_WARN}; ${split} baselined (${KINDS.join('+')})`,
   );
   const sizeCode = failures.length === 0 ? 0 : 1;
-  return args.includes('--base') ? Math.max(sizeCode, checkBase()) : sizeCode;
+  return args.includes('--base') ? Math.max(sizeCode, checkBase(base)) : sizeCode;
 }
 
 process.exit(main());

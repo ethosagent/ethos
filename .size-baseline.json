@@ -279,7 +279,7 @@
     {
       "path": "apps/web-api/src/__tests__/services/recipes.test.ts",
       "kind": "test",
-      "lines": 1178
+      "lines": 1177
     },
     {
       "path": "apps/web-api/src/__tests__/services/tool-settings.service.test.ts",
@@ -484,7 +484,7 @@
     {
       "path": "apps/web/src/pages/Skills.tsx",
       "kind": "source",
-      "lines": 912
+      "lines": 911
     },
     {
       "path": "apps/web/src/pages/__tests__/activity-page.test.ts",
@@ -539,7 +539,7 @@
     {
       "path": "extensions/cron/src/__tests__/cron.test.ts",
       "kind": "test",
-      "lines": 2408
+      "lines": 2403
     },
     {
       "path": "extensions/cron/src/__tests__/run-integrity.test.ts",
@@ -549,7 +549,7 @@
     {
       "path": "extensions/cron/src/index.ts",
       "kind": "source",
-      "lines": 2109
+      "lines": 2090
     },
     {
       "path": "extensions/dashboard/src/__tests__/dashboards.service.test.ts",
@@ -849,7 +849,7 @@
     {
       "path": "extensions/platform-telegram/src/index.ts",
       "kind": "source",
-      "lines": 2221
+      "lines": 2206
     },
     {
       "path": "extensions/platform-voice/src/__tests__/sip-webhook.test.ts",
@@ -1039,7 +1039,7 @@
     {
       "path": "extensions/tools-mcp/src/install-flow.ts",
       "kind": "source",
-      "lines": 805
+      "lines": 803
     },
     {
       "path": "extensions/tools-mcp/src/oauth.ts",
@@ -1159,7 +1159,7 @@
     {
       "path": "packages/config/src/index.ts",
       "kind": "source",
-      "lines": 11100
+      "lines": 11067
     },
     {
       "path": "packages/core/src/__tests__/agent-loop-injection.test.ts",
@@ -1409,7 +1409,7 @@
     {
       "path": "packages/wiring/src/backup/restore.ts",
       "kind": "source",
-      "lines": 1316
+      "lines": 1273
     },
     {
       "path": "packages/wiring/src/build-agent-loop.ts",
