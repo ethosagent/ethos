@@ -42,11 +42,6 @@
       "lines": 568
     },
     {
-      "path": "apps/ethos/src/__tests__/gateway-platform-webhook-wiring.test.ts",
-      "kind": "test",
-      "lines": 629
-    },
-    {
       "path": "apps/ethos/src/__tests__/listen-command.test.ts",
       "kind": "test",
       "lines": 857
@@ -114,7 +109,7 @@
     {
       "path": "apps/ethos/src/commands/boot.ts",
       "kind": "source",
-      "lines": 2886
+      "lines": 2188
     },
     {
       "path": "apps/ethos/src/commands/chat.ts",

@@ -15,6 +15,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { isEthosError } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readBootSources } from '../commands/__tests__/boot-sources';
 import { type ChannelSpeakers, createCronDeliver } from '../lib/cron-deliver';
 
 /** A gateway with `adapterIds` running. `notifyTracked` confirms when `ok`. */
@@ -279,7 +280,10 @@ describe('createCronDeliver under CronScheduler', () => {
 describe('both gateway-role commands use the one factory', () => {
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} builds its cron deliver with createCronDeliver`, () => {
-      const src = readFileSync(join(import.meta.dirname, '..', 'commands', file), 'utf-8');
+      const src =
+        file === 'boot.ts'
+          ? readBootSources()
+          : readFileSync(join(import.meta.dirname, '..', 'commands', file), 'utf-8');
       expect(src).toContain('cronDeliverFn = createCronDeliver({');
       // The hand-rolled copy this replaced.
       expect(src).not.toContain('await gateway.sendTo(job.origin');

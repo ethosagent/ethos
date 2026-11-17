@@ -30,6 +30,7 @@ import {
   wireUnattendedApprovalGate,
 } from '../../unattended-approval-gate';
 import { wireApprovalFlow } from '../gateway';
+import { bootFileWith } from './boot-sources';
 
 vi.mock('@ethosagent/wiring', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@ethosagent/wiring')>();
@@ -182,7 +183,7 @@ describe('hosts hand the seams the default-config build’s site (source text)',
   });
 
   it('ethos boot: the shared build’s approverDecision reaches the bot seams and the web API', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf-8');
+    const src = bootFileWith('const approvalSeams = {', 'buildServeWebApi({');
     expect(src).toMatch(
       /const approvalSeams = \{[\s\S]*?\.\.\.\(shared\.approverDecision \? \{ decision: shared\.approverDecision \} : \{\}\),\s*\};/,
     );

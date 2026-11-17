@@ -28,6 +28,7 @@ import type {
 } from '@ethosagent/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { wireApprovalFlow } from '../gateway';
+import { bootFileWith, readBootSources } from './boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
@@ -286,13 +287,21 @@ describe('every bot-loop host goes through wireApprovalFlow, without the D12 key
   });
 
   it('ethos boot: cold boot, hot-add, webhook bots and replacements all use registerBotLive', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
-    const seams = src.indexOf('const approvalSeams = {');
-    expect(src.slice(seams, src.indexOf('};', seams))).not.toContain(
+    // Every boot module; the two ordering reads come from the one holding them.
+    const src = readBootSources();
+    const seamsFile = bootFileWith('const approvalSeams = {');
+    const seams = seamsFile.indexOf('const approvalSeams = {');
+    expect(seamsFile.slice(seams, seamsFile.indexOf('};', seams))).not.toContain(
       'allowUnattendedDangerousTools',
     );
-    const registerLive = src.indexOf('const registerBotLive = async (');
-    const flowCall = src.indexOf('wireApprovalFlow(gateway, [bot], adaptersSlice, approvalSeams)');
+    const wiringFile = bootFileWith(
+      'const registerBotLive = async (',
+      'wireApprovalFlow(gateway, [bot], adaptersSlice, approvalSeams)',
+    );
+    const registerLive = wiringFile.indexOf('const registerBotLive = async (');
+    const flowCall = wiringFile.indexOf(
+      'wireApprovalFlow(gateway, [bot], adaptersSlice, approvalSeams)',
+    );
     expect(flowCall).toBeGreaterThan(registerLive);
     // The only call in the file: nothing wires a bot loop around it.
     expect(src.split('wireApprovalFlow(gateway').length - 1).toBe(1);

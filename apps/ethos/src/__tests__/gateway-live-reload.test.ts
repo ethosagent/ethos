@@ -15,6 +15,7 @@ import { type EthosConfig, ethosDir, loadConfigStrict } from '@ethosagent/config
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import { type AdapterModuleLoader, buildAdapters } from '../commands/gateway';
 import { hotAddRefusalReason, sliceConfigForBot } from '../config-reload';
 
@@ -252,7 +253,9 @@ describe('WhatsApp pairing outside cold boot (§3 hazard)', () => {
 });
 
 describe('boot.ts reconciler wiring (source assertions)', () => {
-  const read = () => readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
+  // Every boot module (`runBoot` delegates phases to commands/boot-*.ts);
+  // ordering guards read `bootFileWith`, the one module holding their anchors.
+  const read = async () => readBootSources();
 
   it('applies the outstanding bots work through addAdapter / removeAdapter', async () => {
     const src = await read();
@@ -275,7 +278,8 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
   // executor. Only the store sweep sees them, so a swap runs it.
   it('runs the undelivered-jobs sweep after a bot swap', async () => {
     const src = await read();
-    const swap = src.slice(src.indexOf('const changeBotLive = async'));
+    const file = bootFileWith('const changeBotLive = async');
+    const swap = file.slice(file.indexOf('const changeBotLive = async'));
     expect(swap.slice(0, swap.indexOf('\n  };\n'))).toMatch(
       /afterSwap: \(\) => sweepInterruptedJobs\(id\)/,
     );
@@ -293,9 +297,10 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
       ['await changeBotLive(id, source);', "markApplied(applied, source, 'bot', id);"],
     ];
     for (const [call, mark] of pairs) {
-      const at = src.indexOf(call);
+      const file = bootFileWith(call);
+      const at = file.indexOf(call);
       expect(at).toBeGreaterThan(0);
-      expect(src.slice(at, at + 200)).toContain(mark);
+      expect(file.slice(at, at + 200)).toContain(mark);
     }
     // A failure keeps the unit pending, and pending outranks the mtime gate.
     expect(src).toMatch(/reconcilePending\(applied, liveConfig\)/);
@@ -336,9 +341,13 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
     expect(src).toMatch(/has no channel_filter\.\$\{platform\} config[\s\S]*?process\.exit\(1\)/);
     // The runtime path refuses one unit by name and never exits.
     expect(src).toMatch(/\$\{kind\} "\$\{id\}" not applied/);
-    const reconciler = src.slice(
-      src.indexOf('--- Phase A reconciler'),
-      src.indexOf("const configFilePath = join(dir, 'config.yaml');"),
+    const file = bootFileWith(
+      '--- Phase A reconciler',
+      "const configFilePath = join(dir, 'config.yaml');",
+    );
+    const reconciler = file.slice(
+      file.indexOf('--- Phase A reconciler'),
+      file.indexOf("const configFilePath = join(dir, 'config.yaml');"),
     );
     expect(reconciler.length).toBeGreaterThan(500);
     const code = reconciler
@@ -425,18 +434,24 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
   it('stops and AWAITS the reload before shutdown tears down what it manages', async () => {
     const src = await read();
     expect(src).toMatch(/createReloadRunner\(reloadConfig,/);
-    const at = src.indexOf("await guard('config-reload'");
+    const shutdown = bootFileWith(
+      "await guard('config-reload'",
+      "'web-server',",
+      "await step('adapters'",
+      "await guard('platform-webhook-server'",
+    );
+    const at = shutdown.indexOf("await guard('config-reload'");
     expect(at).toBeGreaterThan(0);
     // Awaited — through `disposeBeforeExit`, which bounds it (F06): a reconcile
     // retiring a bot disposes that bot's loop, and shutdown must not wait on
     // it forever.
-    const step = src.slice(at, at + 600);
+    const step = shutdown.slice(at, at + 600);
     expect(step).toContain('await disposeBeforeExit(');
     expect(step).toContain('() => configReloadRunner.stop()');
     // …and it runs BEFORE every step that tears down a reload-managed resource.
-    expect(at).toBeLessThan(src.indexOf("'web-server',"));
-    expect(at).toBeLessThan(src.indexOf("await step('adapters'"));
-    expect(at).toBeLessThan(src.indexOf("await guard('platform-webhook-server'"));
+    expect(at).toBeLessThan(shutdown.indexOf("'web-server',"));
+    expect(at).toBeLessThan(shutdown.indexOf("await step('adapters'"));
+    expect(at).toBeLessThan(shutdown.indexOf("await guard('platform-webhook-server'"));
     // A bare `clearInterval` alone is what let a running reconcile outlive it.
     expect(src).not.toMatch(/^\s*clearInterval\(configReloadTimer\);\n\s*clearInterval\(a2a/m);
   });
@@ -447,11 +462,15 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
     expect(src).toMatch(/const releasePlatformWebhookServerIfIdle = \(\): void =>/);
     // Called from the reconcile tail, so every path that empties a route table
     // is covered by one call rather than each removal remembering to.
-    const at = src.indexOf(
+    const tail = bootFileWith(
+      'releaseWebhookServerIfIdle();\n      releasePlatformWebhookServerIfIdle();',
+      'await applyWebhookPlan(plan.webhooks, liveConfig)',
+    );
+    const at = tail.indexOf(
       'releaseWebhookServerIfIdle();\n      releasePlatformWebhookServerIfIdle();',
     );
     expect(at).toBeGreaterThan(0);
-    expect(src.indexOf('await applyWebhookPlan(plan.webhooks, liveConfig)')).toBeLessThan(at);
+    expect(tail.indexOf('await applyWebhookPlan(plan.webhooks, liveConfig)')).toBeLessThan(at);
   });
 
   it('does not smuggle Phase B in: no setChannelFilter anywhere', async () => {

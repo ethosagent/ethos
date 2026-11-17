@@ -13,6 +13,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -34,7 +35,10 @@ describe('channel presence wiring', () => {
 
   it('both hosts expose identity() on the personality directory seam', async () => {
     for (const file of ['gateway.ts', 'boot.ts']) {
-      const src = await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
+      const src =
+        file === 'boot.ts'
+          ? bootFileWith('identity: (id: string) => {')
+          : await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
       expect(src, file).toContain('identity: (id: string) => {');
       expect(src, file).toContain(
         '? { name: p.name, ...(p.display?.emoji ? { emoji: p.display.emoji } : {}) }',

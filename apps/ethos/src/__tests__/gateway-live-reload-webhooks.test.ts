@@ -17,12 +17,12 @@
 // real here, exactly as Phase A did it.
 
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type EthosConfig, ethosDir, loadConfigStrict } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import { afterEach, describe, expect, it } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import { buildPlatformWebhookMounts, type PlatformWebhookMounts } from '../commands/gateway';
 import {
   platformWebhookKeysFor,
@@ -32,8 +32,6 @@ import {
   unmountPlatformWebhook,
 } from '../config-reload';
 import { createWebhookServer, type WebhookConfig } from '../webhook-server';
-
-const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 
 const BASE = ['provider: anthropic', 'model: claude-a', 'apiKey: sk-x', 'personality: researcher'];
 
@@ -304,7 +302,9 @@ describe('unmountPlatformWebhook', () => {
 // ---------------------------------------------------------------------------
 
 describe('boot.ts Phase C wiring (source assertions)', () => {
-  const read = () => readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
+  // Every boot module (`runBoot` delegates phases to commands/boot-*.ts);
+  // ordering guards read `bootFileWith`, the one module holding their anchors.
+  const read = async () => readBootSources();
 
   it('hands the webhook server the live route table, not a config snapshot', async () => {
     const src = await read();
@@ -315,7 +315,10 @@ describe('boot.ts Phase C wiring (source assertions)', () => {
   });
 
   it('starts a hot-added adapter and mounts its route as one sequence', async () => {
-    const src = await read();
+    const src = bootFileWith(
+      '--- Phase A reconciler',
+      "const configFilePath = join(dir, 'config.yaml');",
+    );
     const reconciler = src.slice(
       src.indexOf('--- Phase A reconciler'),
       src.indexOf("const configFilePath = join(dir, 'config.yaml');"),

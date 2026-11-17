@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { disposeBeforeExit } from '../../lib/dispose-before-exit';
 import { closeListener, listenWithFallback } from '../serve-listen';
+import { bootFileWith, readBootSources } from './boot-sources';
 
 // F06 (plan architecture-suggestions-2026-09-10) — every runtime `ethos serve`,
 // `ethos gateway` and `ethos boot` build is disposed on the way out: the web
@@ -143,7 +144,10 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
   });
 
   it('boot disposes the web API, the live bot loops and the system loop, last', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    // Anchored on `runtime-dispose` only: the `await guard(\n 'web-server'`
+    // anchor below matches nothing since that step became `step(...)`, so
+    // `bootFileWith` would refuse it (pre-existing; assertion kept as it was).
+    const src = bootFileWith("await guard('runtime-dispose'");
     const step = src.indexOf("await guard('runtime-dispose'");
     expect(step).toBeGreaterThan(src.indexOf("await guard(\n        'web-server'"));
     expect(src.slice(step, step + 600)).toContain("['system loop', shared.dispose]");
@@ -153,19 +157,24 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
   // `close()`, which waits on every open `/sse/system` stream: SIGTERM with a
   // tab open hung until SIGKILL.
   it('boot closes its web listener with closeListener, after closing chat', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = readBootSources();
     expect(src).toContain('() => closeListener(webServer),');
     expect(src).not.toContain('webServer.close(() => resolve())');
-    const settle = src.indexOf("await guard('force-settle-approvals'");
-    const chat = src.indexOf("await guard('close-chat', () => created.closeChat());");
-    const web = src.indexOf("'web-server',");
+    const shutdown = bootFileWith(
+      "await guard('force-settle-approvals'",
+      "await guard('close-chat', () => created.closeChat());",
+      "'web-server',",
+    );
+    const settle = shutdown.indexOf("await guard('force-settle-approvals'");
+    const chat = shutdown.indexOf("await guard('close-chat', () => created.closeChat());");
+    const web = shutdown.indexOf("'web-server',");
     expect(settle).toBeGreaterThan(-1);
     expect(chat).toBeGreaterThan(settle);
     expect(web).toBeGreaterThan(chat);
   });
 
   it('boot closes its own five sessions.db handles and the observability store, last', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = bootFileWith("await guard('runtime-dispose'");
     const step = src.indexOf("await guard('runtime-dispose'");
     const tail = src.slice(step, step + 1500);
     for (const handle of [
@@ -194,7 +203,7 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
   });
 
   it('boot closes the a2a task store and the observe-mode transcript handle', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = readBootSources();
     expect(src).toContain("['a2a tasks.db', async () => a2a.taskStore.close()],");
     expect(src).toContain('channelTranscript.close();');
   });
@@ -218,14 +227,14 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
   });
 
   it('boot closes the Slack App Home session handles too', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = readBootSources();
     expect(src).toContain('closeSlackSessionStores();');
   });
 
   it('boot hands every hot-add commit the prepared loop to release on failure', async () => {
     // `commitHotAdd` runs `release` whichever step throws — pinned in
     // apps/ethos/src/__tests__/config-reload-transactions.test.ts.
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = readBootSources();
     expect(src.match(/commitHotAdd\(\{/g) ?? []).toHaveLength(2);
     expect(src).toContain('release: () => releaseBotLoops(wiring, id),');
     expect(src).toContain('release: () => releaseBotLoops(prepared.wiring, ');

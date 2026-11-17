@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import type { BusySource } from '@ethosagent/idle-watcher';
 import { CallCaptureOwnershipManager } from '@ethosagent/platform-callcapture';
 import { afterEach, describe, expect, it } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import { dedupeBusySources } from '../wiring';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -48,7 +49,8 @@ describe('ethos boot — command + mode wiring', () => {
 
 describe('ethos boot — §3b construction order', () => {
   it('constructs the AgentLoop exactly once (§11 OQ1)', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    // Every boot module: a phase moved out of boot.ts must not hide a second.
+    const src = readBootSources();
     // One shared loop for BOTH roles. Two would each get their own
     // BackgroundExecutor, and `onComplete` / `onRunUpdate` are in-memory
     // per-instance subscriber lists — a job claimed by one executor would
@@ -222,10 +224,13 @@ describe('ethos boot — idle watcher', () => {
   });
 
   it('builds its busy sources from BOTH role builders, not from new closures', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    // Every boot module for the whole-source guards; the ordering pair reads
+    // the one module holding both builders.
+    const src = readBootSources();
     expect(src).toMatch(/sources: dedupeBusySources\(\[/);
-    const gateway = src.indexOf('...buildGatewayBusySources({');
-    const serve = src.indexOf('...buildServeBusySources({');
+    const sources = bootFileWith('...buildGatewayBusySources({', '...buildServeBusySources({');
+    const gateway = sources.indexOf('...buildGatewayBusySources({');
+    const serve = sources.indexOf('...buildServeBusySources({');
     expect(gateway).toBeGreaterThan(-1);
     expect(serve).toBeGreaterThan(-1);
     // Gateway half first: `dedupeBusySources` keeps the first source per name,

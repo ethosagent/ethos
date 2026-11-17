@@ -20,12 +20,14 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readBootSources } from '../commands/__tests__/boot-sources';
 
 const CLI_ROOT = join(import.meta.dirname, '..');
 const COMMANDS = join(CLI_ROOT, 'commands');
 const read = (name: string) => readFileSync(join(COMMANDS, name), 'utf8');
 const gateway = read('gateway.ts');
-const boot = read('boot.ts');
+// Every boot module: `runBoot` delegates phases (the hot-add paths) to boot-*.ts.
+const boot = readBootSources();
 const serve = read('serve.ts');
 
 const ROOTS: ReadonlyArray<readonly [string, string]> = [

@@ -26,6 +26,7 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 import {
   type BuildGatewayOptions,
   buildGateway,
@@ -212,7 +213,11 @@ describe('the idle gateway bot', () => {
 
   it('both hosts make the system loop the idle bot only when no bot is configured', async () => {
     const gw = await read('apps/ethos/src/commands/gateway.ts');
-    const boot = await read('apps/ethos/src/commands/boot.ts');
+    const boot = bootFileWith(
+      'const coldBuilt = await buildGatewayBots(',
+      'const shared = await createAgentLoop(cfg, {',
+      'idleGatewayBotLoopOpts(gatewayTurnOrigin(',
+    );
     for (const src of [gw, boot]) {
       expect(src).toMatch(
         /\.\.\.\(bots\.length === 0\s*\?\s*idleGatewayBotLoopOpts\(gatewayTurnOrigin\(\(\) => gatewayRef\)\)\s*: \{\}\),/,

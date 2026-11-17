@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from './boot-sources';
 
 // F05 (plan architecture-suggestions-2026-09-10) — every loop-construction
 // branch of `ethos serve` forwards the goal store + executor pair its loop was
@@ -32,7 +33,7 @@ describe('serve.ts — goal backend forwarding', () => {
   it('hands the pair to createWebApi from serve and from boot', async () => {
     const serve = await read('apps/ethos/src/commands/serve.ts');
     expect(serve).toContain('...(goals ? { goals } : {}),');
-    const boot = await read('apps/ethos/src/commands/boot.ts');
+    const boot = bootFileWith('goals: shared.goals,');
     expect(boot).toContain('goals: shared.goals,');
   });
 });

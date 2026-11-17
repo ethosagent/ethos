@@ -11,11 +11,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from './boot-sources';
 
 const COMMANDS = join(import.meta.dirname, '..');
 
 describe.each(['boot.ts', 'serve.ts'])('%s cron runJob', (name) => {
-  const source = readFileSync(join(COMMANDS, name), 'utf8');
+  const source =
+    name === 'boot.ts'
+      ? bootFileWith('await runCronTurn({')
+      : readFileSync(join(COMMANDS, name), 'utf8');
   const start = source.indexOf('await runCronTurn({');
   const body = source.slice(start, source.indexOf('\n    },\n', start));
 

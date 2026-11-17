@@ -5118,7 +5118,7 @@ export interface BuildGatewayOptions {
   channelTranscript: GatewayConfig['channelTranscript'];
   /**
    * The channel digest's in-app feed. Optional because only `ethos boot` has
-   * one — see `channelDigestFeed` in `./boot` and the field's doc on
+   * one — see `channelDigestFeed` in `./boot-digest` and the field's doc on
    * `GatewayConfig`.
    */
   channelDigestFeed?: GatewayConfig['channelDigestFeed'];

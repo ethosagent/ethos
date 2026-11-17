@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONFIG_INVALID_EXIT_CODE } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import {
   adapterStartFailureExitCode,
   adapterStartRetryDelayMs,
@@ -303,7 +304,10 @@ describe('startAdaptersIsolated', () => {
 
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} starts its adapters through startAdaptersIsolated`, () => {
-      const src = readFileSync(join(import.meta.dirname, '..', 'commands', file), 'utf-8');
+      const src =
+        file === 'boot.ts'
+          ? readBootSources()
+          : readFileSync(join(import.meta.dirname, '..', 'commands', file), 'utf-8');
       expect(src).toContain('await startAdaptersIsolated(adapters,');
       // Retries are armed and stopped with the process (V-CC-4).
       expect(src).toContain('signal: adapterStartRetry.signal');
@@ -313,7 +317,7 @@ describe('startAdaptersIsolated', () => {
   }
 
   it('boot keeps its other services up when every adapter failed (V2-RT-5)', () => {
-    const src = readFileSync(join(import.meta.dirname, '..', 'commands', 'boot.ts'), 'utf-8');
+    const src = bootFileWith("allFailed: 'continue'");
     expect(src).toContain("allFailed: 'continue'");
   });
 

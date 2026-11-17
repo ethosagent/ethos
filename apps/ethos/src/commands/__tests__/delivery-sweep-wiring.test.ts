@@ -12,13 +12,17 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from './boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
 describe('delivery-ledger periodic sweep wiring', () => {
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} arms gateway.startDeliverySweep() after the adapters start`, async () => {
-      const src = await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
+      const src =
+        file === 'boot.ts'
+          ? bootFileWith('await startAdaptersIsolated(adapters, {', 'gateway.startDeliverySweep();')
+          : await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
       const started = src.indexOf('await startAdaptersIsolated(adapters, {');
       const armed = src.indexOf('gateway.startDeliverySweep();');
       expect(started).toBeGreaterThan(-1);

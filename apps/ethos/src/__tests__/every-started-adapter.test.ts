@@ -16,6 +16,7 @@ import type { EthosConfig } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import type { ChannelContext, PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import { type BuildGatewayOptions, buildGateway, everyStartedAdapter } from '../commands/gateway';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 
@@ -165,7 +166,7 @@ describe('everyStartedAdapter — what a host shutdown stops', () => {
   });
 
   it('boot reports health from the live adapter list, not the boot-time snapshot', async () => {
-    const boot = await read('apps/ethos/src/commands/boot.ts');
+    const boot = readBootSources();
     expect(boot).not.toContain('buildGatewayHeartbeat(adapters,');
     // The heartbeat writer, `/healthz`, and `/readyz`'s adapter check (R6).
     expect(boot.match(/buildGatewayHeartbeat\(gateway\.listAdapters\(\),/g)).toHaveLength(3);
@@ -176,12 +177,12 @@ describe('everyStartedAdapter — what a host shutdown stops', () => {
     expect(gw).toMatch(
       /boundedShutdownStep\(\s*'adapters stop',\s*\(\) => Promise\.allSettled\(everyStartedAdapter\(adapters, gateway\)\.map\(\(a\) => a\.stop\(\)\)\),/,
     );
-    const boot = await read('apps/ethos/src/commands/boot.ts');
+    const boot = bootFileWith("await step('adapters', () =>");
     expect(boot).toMatch(
       /await step\('adapters', \(\) =>\s*Promise\.allSettled\(everyStartedAdapter\(adapters, gateway\)\.map\(\(a\) => a\.stop\(\)\)\),/,
     );
     // Neither host still stops only its own built-in list.
     expect(gw).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
-    expect(boot).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
+    expect(readBootSources()).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
   });
 });

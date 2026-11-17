@@ -14,6 +14,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import {
   applyPauseCorrections,
   buildPauseCorrectionTargets,
@@ -148,7 +149,7 @@ describe('every long-running command registers the mid-run resume handler', () =
     'apps/ethos/src/commands/serve.ts',
   ]) {
     it(`${file} subscribes to onResume`, async () => {
-      const src = await read(file);
+      const src = file.endsWith('/boot.ts') ? readBootSources() : await read(file);
       // Optional-called: `NoopPauseLifecycle` has no `onResume`, so a deployment
       // that never enabled `pauseClockCorrection` must not crash on boot.
       expect(src).toMatch(/pauseLifecycle\.onResume\?\.\(|onPauseResume\?\.\(/);
@@ -179,7 +180,7 @@ describe('every long-running command registers the mid-run resume handler', () =
   });
 
   it('boot.ts re-arms the idle watcher on the mid-run resume, not only at boot', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = bootFileWith('onPauseResume?.((pauseDurationMs)');
     // Without this the watcher latches after its one handoff and a
     // snapshot-restored process suspends exactly once, ever.
     const handler = src.slice(src.indexOf('onPauseResume?.((pauseDurationMs)'));

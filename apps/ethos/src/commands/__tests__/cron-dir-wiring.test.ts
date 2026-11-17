@@ -23,6 +23,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { countCronJobs } from '../status';
+import { bootFileWith, readBootSources } from './boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
@@ -102,7 +103,9 @@ describe('cron directory — resolved from the state dir', () => {
   it.each(HOSTS)(
     '%s passes ethosCronDir() and ethosScriptsDir() to every CronScheduler',
     async (host) => {
-      const src = await readFile(join(ROOT, host), 'utf8');
+      const src = host.endsWith('/boot.ts')
+        ? readBootSources()
+        : await readFile(join(ROOT, host), 'utf8');
       const configs = schedulerConfigs(src);
       expect(configs.length).toBeGreaterThan(0);
       for (const config of configs) {
@@ -123,7 +126,9 @@ describe('cron directory — resolved from the state dir', () => {
 
   it('webhook prefilters resolve scripts from the state dir too', async () => {
     for (const host of ['apps/ethos/src/commands/gateway.ts', 'apps/ethos/src/commands/boot.ts']) {
-      const src = await readFile(join(ROOT, host), 'utf8');
+      const src = host.endsWith('/boot.ts')
+        ? bootFileWith('runScriptFile(\n')
+        : await readFile(join(ROOT, host), 'utf8');
       const at = src.indexOf('runScriptFile(\n');
       expect(at).toBeGreaterThan(-1);
       expect(src.slice(at, src.indexOf('    );', at))).toContain('scriptsDir: ethosScriptsDir(),');

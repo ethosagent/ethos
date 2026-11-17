@@ -20,6 +20,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { GatewayConfig } from '@ethosagent/gateway';
 import type { PlatformAdapter } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 import { type BuildGatewayOptions, buildGateway } from '../commands/gateway';
 
 const captured = vi.hoisted(() => [] as GatewayConfig[]);
@@ -162,6 +163,7 @@ describe('production hosts build the gateway from the loaded config', () => {
     ['ethos gateway start', 'apps/ethos/src/commands/gateway.ts', /buildGateway\(\{\s*config,/],
     ['ethos boot', 'apps/ethos/src/commands/boot.ts', /buildGateway\(\{\s*config: cfg,/],
   ])('%s', async (_host, file, pattern) => {
-    expect(await read(file)).toMatch(pattern);
+    const src = file.endsWith('/boot.ts') ? bootFileWith('buildGateway({') : await read(file);
+    expect(src).toMatch(pattern);
   });
 });

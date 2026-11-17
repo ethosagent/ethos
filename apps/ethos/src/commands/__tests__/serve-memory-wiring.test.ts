@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from './boot-sources';
 
 // F04 (plan architecture-suggestions-2026-09-10) — every loop-construction
 // branch of `ethos serve` forwards the memory bundle its loop was built with,
@@ -34,7 +35,7 @@ describe('serve.ts — memory bundle forwarding', () => {
     const serve = await read('apps/ethos/src/commands/serve.ts');
     expect(serve).not.toContain('createMemoryProvider(');
     expect(serve).not.toContain('memoryBackend:');
-    const boot = await read('apps/ethos/src/commands/boot.ts');
+    const boot = bootFileWith('memoryBundle: shared.memoryBundle,');
     expect(boot).toContain('memoryBundle: shared.memoryBundle,');
   });
 });

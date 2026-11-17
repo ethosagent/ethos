@@ -13,6 +13,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 
 const root = join(import.meta.dirname, '..', '..', '..', '..');
 const read = (rel: string) => readFile(join(root, rel), 'utf8');
@@ -33,11 +34,15 @@ describe('in-process hosts wire the browser-takeover lane', () => {
   });
 
   it('boot.ts attaches and closes it too, through the shared buildServeWebApi', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = bootFileWith(
+      'buildServeWebApi({',
+      'created.takeoverSocket.attach(target);',
+      'created.takeoverSocket.close(),',
+    );
     // The options come from `buildServeWebApi`, so boot does NOT build its own
     // registry — one assembler, one answer for both profiles.
     expect(src).toContain('buildServeWebApi({');
-    expect(src).not.toContain('browserTakeoverSessions');
+    expect(readBootSources()).not.toContain('browserTakeoverSessions');
     // `attachWebSockets` re-runs on a live `web.port` rebind; a lane left on
     // the previous server is a lane nobody can reach.
     expect(src).toContain('created.takeoverSocket.attach(target);');

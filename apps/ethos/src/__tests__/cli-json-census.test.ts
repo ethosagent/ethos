@@ -10,9 +10,15 @@ const COMMANDS_DIR = join(__dirname, '..', 'commands');
 const DOCTOR_SPLIT =
   'internal library of `ethos doctor`, split out of doctor.ts; --json is handled in doctor.ts';
 
+const BOOT_SPLIT = 'internal library of `ethos boot`, split out of boot.ts; no CLI output';
+
 const JSON_EXEMPT: Record<string, string> = {
   acp: 'long-running ACP server',
   boot: 'process bootstrap helper, no user output',
+  'boot-constants': BOOT_SPLIT,
+  'boot-context': BOOT_SPLIT,
+  'boot-digest': BOOT_SPLIT,
+  'boot-reload': BOOT_SPLIT,
   dashboard: 'launches the web UI (long-running)',
   gateway: 'start/setup are long-running; `status --json` lives in gateway-status.ts',
   'run-all': 'long-running multi-service launcher',

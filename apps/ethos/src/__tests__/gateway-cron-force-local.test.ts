@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import type { CronEngine } from '@ethosagent/cron';
 import { buildCronTriggers, HttpFireTrigger, LocalIntervalTrigger } from '@ethosagent/cron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const read = (rel: string) => readFile(join(ROOT, rel), 'utf8');
@@ -109,7 +110,9 @@ describe('ethos serve / ethos boot honour cron.fireUrl and say so at boot', () =
 
   for (const file of ['apps/ethos/src/commands/serve.ts', 'apps/ethos/src/commands/boot.ts']) {
     it(`${file} passes hasHttpSurface: true and prints the notices`, async () => {
-      const src = await read(file);
+      const src = file.endsWith('/boot.ts')
+        ? bootFileWith('hasHttpSurface: true,', 'for (const notice of cronTriggers.notices)')
+        : await read(file);
       expect(src).toContain('hasHttpSurface: true,');
       expect(src).toContain('for (const notice of cronTriggers.notices)');
     });

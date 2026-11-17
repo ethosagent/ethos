@@ -22,6 +22,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { GatewayObservability } from '@ethosagent/gateway';
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 import { type BuildGatewayOptions, buildGateway, gatewayObservability } from '../commands/gateway';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -199,7 +200,7 @@ describe('production hosts pass the sink', () => {
     ['ethos gateway start', 'apps/ethos/src/commands/gateway.ts'],
     ['ethos boot', 'apps/ethos/src/commands/boot.ts'],
   ])('%s builds its Gateway with gatewayObservability()', async (_name, file) => {
-    const src = await read(file);
+    const src = file.endsWith('/boot.ts') ? bootFileWith('buildGateway({') : await read(file);
     const call = src.slice(src.indexOf('buildGateway({'));
     const body = call.slice(0, call.indexOf('\n  });'));
     expect(body).toMatch(/\n\s+observability: gatewayObservability\(\),/);

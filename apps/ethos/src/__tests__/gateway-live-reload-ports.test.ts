@@ -22,6 +22,7 @@ import { type EthosConfig, ethosDir, loadConfigStrict } from '@ethosagent/config
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { Logger } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
 import { listenWithFallback } from '../commands/serve-listen';
 import {
   planWebRebind,
@@ -264,12 +265,14 @@ describe('boot.ts wiring (source)', () => {
   });
 
   it('reconciles the web bind without reaching for any other subsystem', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
-    const start = src.indexOf('const applyWebBindDiff');
-    const end = src.indexOf('const configFilePath', start);
+    // Every boot module; the slice comes from the one holding both anchors.
+    const src = readBootSources();
+    const file = bootFileWith('const applyWebBindDiff', 'const configFilePath');
+    const start = file.indexOf('const applyWebBindDiff');
+    const end = file.indexOf('const configFilePath', start);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
-    const body = src.slice(start, end);
+    const body = file.slice(start, end);
     expect(body).toContain('planWebRebind');
     expect(body).toContain('rebindWebServer');
     for (const forbidden of [

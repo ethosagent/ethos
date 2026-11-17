@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import type { EthosConfig } from '@ethosagent/config';
 import { acquireGatewayLock, GATEWAY_LOCK_EXIT_CODE } from '@ethosagent/wiring';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 import {
   INBOUND_SPOOL_DEAD_RETENTION_MS,
   INBOUND_SPOOL_RETENTION_MS,
@@ -159,7 +160,21 @@ describe('startInboundSpoolReplay', () => {
 
 describe('both adapter-owning commands take the lock and the spool', () => {
   it('ethos boot: lock first, then stores; spool into the Gateway; replay after adapters start; close then release', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = bootFileWith(
+      'export async function runBoot(',
+      'await takeGatewayLockOrExit(dir)',
+      'createSessionStore(',
+      'await createAgentLoop(',
+      'await buildGatewayAdapters(',
+      'new SQLiteDeliveryLedger(',
+      'openInboundSpool(cfg, dir)',
+      'buildGateway({',
+      'await startAdaptersIsolated(adapters, {',
+      'startInboundSpoolReplay(gateway,',
+      'await runBootReconciliation(',
+      'inboundSpool.close();',
+      'releaseGatewayLock();',
+    );
     const body = src.slice(src.indexOf('export async function runBoot('));
     const at = (needle: string) => {
       const i = body.indexOf(needle);

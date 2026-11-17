@@ -23,6 +23,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -60,7 +61,7 @@ describe('the composition roots thread the LOOP registry, not a fresh one', () =
   });
 
   it('boot forwards the system loop registry through the same seam', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
+    const src = bootFileWith('executionBackends: shared.executionBackends,');
     expect(src).toContain('executionBackends: shared.executionBackends,');
   });
 

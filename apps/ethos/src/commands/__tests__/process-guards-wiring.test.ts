@@ -10,6 +10,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bootFileWith } from './boot-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 const read = (file: string) => readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
@@ -17,7 +18,10 @@ const read = (file: string) => readFile(join(ROOT, 'apps/ethos/src/commands', fi
 describe('process guards wiring', () => {
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} installs them with its bounded shutdown, once shutdown exists`, async () => {
-      const src = await read(file);
+      const src =
+        file === 'boot.ts'
+          ? bootFileWith("process.on('SIGTERM', () => void shutdown());", 'installProcessGuards({')
+          : await read(file);
       const signals = src.indexOf("process.on('SIGTERM', () => void shutdown());");
       const guards = src.indexOf('installProcessGuards({');
       expect(signals).toBeGreaterThan(-1);

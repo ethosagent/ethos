@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CONFIG_INVALID_EXIT_CODE, GATEWAY_LOCK_EXIT_CODE } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
+import { bootFileWith } from '../commands/__tests__/boot-sources';
 import { exitIfConfigInvalid } from '../lib/config-exit';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -41,7 +42,13 @@ describe('exitIfConfigInvalid', () => {
 
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} routes its parse and binding errors through it`, async () => {
-      const src = await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
+      const src =
+        file === 'boot.ts'
+          ? bootFileWith(
+              "exitIfConfigInvalid('Config parse errors'",
+              "exitIfConfigInvalid('Bot binding errors'",
+            )
+          : await readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
       expect(src).toMatch(/exitIfConfigInvalid\('Config parse errors', loaded\.parseErrors\)/);
       expect(src).toMatch(/exitIfConfigInvalid\('Bot binding errors', bindErrors\)/);
     });

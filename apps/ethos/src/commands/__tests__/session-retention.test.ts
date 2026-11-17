@@ -11,6 +11,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { pruneExpiredSessions } from '../../lib/session-retention';
+import { bootFileWith } from './boot-sources';
 
 const DAY_MS = 86_400_000;
 const NOW = Date.parse('2026-09-25T00:00:00Z');
@@ -55,7 +56,7 @@ describe('session retention wiring', () => {
   });
 
   it('boot.ts prunes sessions on its hourly prune timer', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
+    const src = bootFileWith('pruneExpiredSessions(');
     expect(src).toContain('pruneExpiredSessions(');
   });
 });
