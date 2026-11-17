@@ -32,7 +32,7 @@ WSL2 has two filesystems. Where you put files matters for performance and correc
 Keep `~/.ethos/` and your projects on the Linux side. Operations on `/mnt/c/` cross a 9P network bridge and are 10–100x slower than native ext4. File watchers (`inotify`) across that bridge are unreliable.
 
 :::warning Never put `~/.ethos/` on `/mnt/c/`
-Ethos keeps its sessions, delivery ledger and inbound spool in SQLite databases under `~/.ethos/`. SQLite's file locking is not reliable over 9P, so a state directory on `/mnt/c/` (or set there with `ETHOS_STATE_DIR`) can corrupt those databases. The same applies to Docker Desktop bind mounts from a Windows path. `ethos doctor` warns under **Data directory** when the state directory sits on 9p, FUSE, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor.ts)).
+Ethos keeps its sessions, delivery ledger and inbound spool in SQLite databases under `~/.ethos/`. SQLite's file locking is not reliable over 9P, so a state directory on `/mnt/c/` (or set there with `ETHOS_STATE_DIR`) can corrupt those databases. The same applies to Docker Desktop bind mounts from a Windows path. `ethos doctor` warns under **Data directory** when the state directory sits on 9p, FUSE, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor-storage.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor-storage.ts)).
 :::
 
 To open a WSL2 directory in Windows Explorer:

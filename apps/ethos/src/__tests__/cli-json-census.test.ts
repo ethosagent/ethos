@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 // the lists cannot silently rot.
 const COMMANDS_DIR = join(__dirname, '..', 'commands');
 
+const DOCTOR_SPLIT =
+  'internal library of `ethos doctor`, split out of doctor.ts; --json is handled in doctor.ts';
+
 const JSON_EXEMPT: Record<string, string> = {
   acp: 'long-running ACP server',
   boot: 'process bootstrap helper, no user output',
@@ -21,6 +24,15 @@ const JSON_EXEMPT: Record<string, string> = {
   'serve-listen': 'internal helper of serve (long-running)',
   'cron-turn': 'internal cron turn runner, no CLI output',
   'cache-attribution': 'internal library, no CLI output',
+  'doctor-decisions': DOCTOR_SPLIT,
+  'doctor-reports': DOCTOR_SPLIT,
+  'doctor-sdks': DOCTOR_SPLIT,
+  'doctor-secrets': DOCTOR_SPLIT,
+  'doctor-shared': DOCTOR_SPLIT,
+  'doctor-skills': DOCTOR_SPLIT,
+  'doctor-spool': DOCTOR_SPLIT,
+  'doctor-storage': DOCTOR_SPLIT,
+  'doctor-voice': DOCTOR_SPLIT,
   'mcp-export': 'internal library, no CLI output',
   'mcp-preset-args': 'internal library, no CLI output',
   'mcp-presets-check': 'internal library of `mcp presets --check`; --json is handled in mcp.ts',

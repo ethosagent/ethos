@@ -13,7 +13,7 @@
 // rebuild. The first result is memoised, INCLUDING `undefined` for a missing
 // or blank key (today's read-once semantics): every site then takes today's
 // path, and `ethos doctor` names the missing ref (`checkDecisionLayer`,
-// apps/ethos/src/commands/doctor.ts). Pinned by `__tests__/decision-wiring.test.ts`.
+// apps/ethos/src/commands/doctor-decisions.ts). Pinned by `__tests__/decision-wiring.test.ts`.
 
 import { DECISIONS_API_KEY_REF, type ResolvedDecisionsConfig } from '@ethosagent/config';
 import type { DecisionBreakerEvent } from '@ethosagent/decision-typesafe';

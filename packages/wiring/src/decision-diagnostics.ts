@@ -29,7 +29,7 @@ import type { PersonalityConfig, SecretsResolver } from '@ethosagent/types';
  * The vault is read only when the personality names the provider the operator
  * configured — a personality that cannot send anything costs no secret read.
  * An unreadable vault counts as no key, the posture `checkDecisionLayer` in
- * `apps/ethos/src/commands/doctor.ts` already takes.
+ * `apps/ethos/src/commands/doctor-decisions.ts` already takes.
  *
  * `inertApprovalMode` mirrors the approver's own gate: the smart approver is
  * consulted only when `safety.approvalMode` is `smart`, defaulting to `manual`

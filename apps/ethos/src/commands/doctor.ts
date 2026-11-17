@@ -14,25 +14,17 @@
 // in CI / health checks. Everything else is informational (skill-prereq gaps
 // are warn-only — the user opted into the skill, not the doctor).
 
-import { spawnSync } from 'node:child_process';
-// Raw `node:fs` for the same reasons `runDoctorFix` already reaches for
-// `chmod`: Storage has no permissions API, and the integrity check hands a raw
-// path to SQLite (the documented store carve-out in AGENTS.md). `statfsSync`
-// likewise: Storage has no filesystem-type API (`checkStateDirFilesystem`).
-import { existsSync, readdirSync, type StatsFs, statfsSync, statSync } from 'node:fs';
+// Raw `node:fs` `existsSync` for the inbound-spool.db path (a raw path handed to
+// SQLite — the store carve-out documented in doctor-storage.ts).
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   configParseNotices,
-  DECISIONS_API_KEY_REF,
-  deriveBotKey,
-  describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
-  nearestKey,
   readConfig,
   readRawConfig,
-  resolveDecisionsConfig,
   secretRefForConfigKey,
 } from '@ethosagent/config';
 import { resolveSttProvider, resolveTtsProvider } from '@ethosagent/core';
@@ -42,114 +34,103 @@ import {
   type ModelDiscovery,
   unsupportedModelMessage,
 } from '@ethosagent/llm-codex';
-import type { CharacterSheetDecisionSite } from '@ethosagent/personalities';
-import {
-  type CallCaptureDependencyCheckResult,
-  callCaptureHealthPath,
-} from '@ethosagent/platform-callcapture';
+import { callCaptureHealthPath } from '@ethosagent/platform-callcapture';
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
-import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
-import type { FtsProbe, IntegrityClass } from '@ethosagent/wiring';
-import {
-  buildExecutionPosture,
-  type ContainerizedDetectionInput,
-  resolveCharacterSheetDecisions,
-} from '@ethosagent/wiring';
-import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
-import { FTS_DOWN_CONSEQUENCE } from '../lib/sessions-db-advice';
-import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
+import type { PersonalityConfig, SecretsResolver } from '@ethosagent/types';
 import { buildVersionInfo } from '../version-info';
-import { createLLM, getSecretsResolver, getStorage } from '../wiring';
+import { getSecretsResolver, getStorage } from '../wiring';
+import {
+  checkDecisionLayer,
+  checkDockerSandbox,
+  decisionLayerLines,
+  dockerSandboxLines,
+} from './doctor-decisions';
+import {
+  runDoctorFix,
+  runFunnelReport,
+  runProviderProbe,
+  runRecentErrorsReport,
+} from './doctor-reports';
+import { CHANNEL_SDKS, CORE_SDKS, checkSdk, printRow, type RowResult } from './doctor-sdks';
+import type { CodexModelCheck, SecretCheckResult } from './doctor-secrets';
+import { isSet, SECRET_REF_RE } from './doctor-secrets';
+import { c, type Storage } from './doctor-shared';
+import {
+  configuredGatewayBotKeys,
+  describeInboundSpool,
+  type InboundSpoolReport,
+} from './doctor-spool';
+import {
+  checkDatabaseIntegrity,
+  checkSecretsDirMode,
+  checkSessionsDb,
+  checkSkillsDir,
+  checkStateDirFilesystem,
+  checkTeamsDir,
+  describeSecretsDirMode,
+  integrityAdvice,
+  sessionsFtsOf,
+} from './doctor-storage';
+import type {
+  CallCaptureCheckResult,
+  CallCaptureDaemonHealthResult,
+  CheckCallCaptureOptions,
+} from './doctor-voice';
+import { telephonyReport } from './doctor-voice';
+
+export type {
+  CallCaptureCheckResult,
+  CallCaptureDaemonHealthResult,
+  CheckCallCaptureOptions,
+} from './doctor-voice';
+
+import { isOnPath, readExternalCliRequirements, type SkillPrereqIssue } from './doctor-skills';
 import { formatResolvedLines, resolveEffective } from './status';
 
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  cyan: '\x1b[36m',
-};
+export {
+  checkDecisionLayer,
+  checkDockerSandbox,
+  type DecisionLayerReport,
+  type DecisionPersonalityReport,
+  type DockerSandboxReport,
+  decisionLayerLines,
+  dockerSandboxLines,
+} from './doctor-decisions';
+export {
+  formatFunnelDuration,
+  type ProviderProbeResult,
+  runFunnelReport,
+  suggestProvider,
+} from './doctor-reports';
+export type { CodexModelCheck, SecretCheckResult } from './doctor-secrets';
+export {
+  configuredGatewayBotKeys,
+  describeInboundSpool,
+  type InboundSpoolReport,
+} from './doctor-spool';
+export {
+  checkDatabaseIntegrity,
+  checkSecretsDirMode,
+  checkSessionsDb,
+  checkSkillsDir,
+  checkStateDirFilesystem,
+  checkTeamsDir,
+  type DbCheckResult,
+  type DirSanityIssue,
+  describeSecretsDirMode,
+  type IntegrityResult,
+  integrityAdvice,
+  type SessionsFtsDrift,
+  type StateDirFilesystemResult,
+  sessionsFtsOf,
+  type VaultModeResult,
+} from './doctor-storage';
+export { telephonyReport } from './doctor-voice';
 
 declare const __ETHOS_VERSION__: string;
 const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
-
-interface SdkRow {
-  label: string;
-  module: string;
-  /**
-   * Loads `module`. A literal `import()` per row, never a computed one, so the module graph
-   * stays readable; dynamic because the channel SDKs are optionalDependencies of the CLI.
-   */
-  load: () => Promise<unknown>;
-  required: boolean;
-  /** Config keys that, if set, mean this SDK is "in use" — missing is a hard error. */
-  configuredWhen?: (cfg: EthosConfig) => boolean;
-}
-
-const CORE_SDKS: SdkRow[] = [
-  {
-    label: 'Anthropic provider',
-    module: '@anthropic-ai/sdk',
-    load: () => import('@anthropic-ai/sdk'),
-    required: true,
-  },
-  {
-    label: 'OpenAI-compat provider',
-    module: 'openai',
-    load: () => import('openai'),
-    required: true,
-  },
-];
-
-const CHANNEL_SDKS: SdkRow[] = [
-  {
-    label: 'Telegram',
-    module: 'grammy',
-    load: () => import('grammy'),
-    required: false,
-    configuredWhen: (cfg) => Boolean(cfg.telegramToken),
-  },
-  {
-    label: 'Discord',
-    module: 'discord.js',
-    load: () => import('discord.js'),
-    required: false,
-    configuredWhen: (cfg) => Boolean(cfg.discordToken),
-  },
-  {
-    label: 'Slack',
-    module: '@slack/bolt',
-    load: () => import('@slack/bolt'),
-    required: false,
-    configuredWhen: (cfg) =>
-      Boolean(cfg.slackBotToken && cfg.slackAppToken && cfg.slackSigningSecret),
-  },
-  {
-    label: 'Email (IMAP)',
-    module: 'imapflow',
-    load: () => import('imapflow'),
-    required: false,
-    configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
-  },
-  {
-    label: 'Email (parser)',
-    module: 'mailparser',
-    load: () => import('mailparser'),
-    required: false,
-    configuredWhen: (cfg) => Boolean(cfg.emailImapHost && cfg.emailUser && cfg.emailPassword),
-  },
-  {
-    label: 'Email (SMTP)',
-    module: 'nodemailer',
-    load: () => import('nodemailer'),
-    required: false,
-    configuredWhen: (cfg) => Boolean(cfg.emailSmtpHost && cfg.emailUser && cfg.emailPassword),
-  },
-];
 
 /**
  * A credential the config names. Checked WHERE THE CONFIG POINTS: the
@@ -202,21 +183,6 @@ const SECRET_CHECKS: SecretCheckRow[] = [
   },
 ];
 
-export interface SecretCheckResult {
-  key: string;
-  present: boolean;
-  required: boolean;
-  applicable: boolean;
-  fillWith: string;
-}
-
-const SECRET_REF_RE = /\$\{secrets:([^}]+)\}/g;
-
-async function isSet(secrets: SecretsResolver, ref: string): Promise<boolean> {
-  const val = await secrets.get(ref);
-  return val !== null && val.trim().length > 0;
-}
-
 /** Exported for tests; `secrets` is injectable so they never touch a real vault. */
 export async function checkSecrets(
   config: EthosConfig | null,
@@ -259,13 +225,6 @@ export async function checkSecrets(
 // Codex model check — is the configured model on this ChatGPT account's roster?
 // ---------------------------------------------------------------------------
 
-export type CodexModelCheck =
-  | { status: 'skipped' }
-  | { status: 'unauthorized' }
-  | { status: 'unverified'; model: string }
-  | { status: 'ok'; model: string }
-  | { status: 'unsupported'; model: string; supported: string[] };
-
 /** `discover` is injectable so tests never reach the real models endpoint. */
 export async function checkCodexModel(
   config: EthosConfig | null,
@@ -296,39 +255,6 @@ function codexModelLine(check: CodexModelCheck): string | null {
     case 'unsupported':
       return `  ${c.yellow}⚠${c.reset}  ${unsupportedModelMessage(check.model, check.supported)}`;
   }
-}
-
-async function checkSdk(row: SdkRow): Promise<{ ok: boolean; error?: string }> {
-  try {
-    await row.load();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-interface RowResult {
-  row: SdkRow;
-  ok: boolean;
-  inUse: boolean;
-}
-
-function printRow(r: RowResult): void {
-  const tag = r.ok
-    ? `${c.green}✓${c.reset}`
-    : r.row.required || r.inUse
-      ? `${c.red}✗${c.reset}`
-      : `${c.dim}–${c.reset}`;
-  const label = r.row.label.padEnd(24);
-  const module = `${c.dim}${r.row.module}${c.reset}`;
-  const note = r.ok
-    ? ''
-    : r.row.required
-      ? `  ${c.red}(required — ethos will not work)${c.reset}`
-      : r.inUse
-        ? `  ${c.red}(configured but SDK missing — install with ${c.cyan}npm install -g ${r.row.module}${c.reset}${c.red})${c.reset}`
-        : `  ${c.dim}(not installed; not in use)${c.reset}`;
-  console.log(`  ${tag}  ${label} ${module}${note}`);
 }
 
 async function checkAwsSecrets(
@@ -420,303 +346,6 @@ export function computeDoctorExit(f: DoctorFailFlags): number {
   return 0;
 }
 
-type Storage = ReturnType<typeof getStorage>;
-
-export interface DbCheckResult {
-  /** false only when the DB exists but cannot be opened/queried. */
-  ok: boolean;
-  /** true when the file has not been created yet — a healthy fresh-install state. */
-  absent: boolean;
-  error?: string;
-}
-
-export async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
-  const dbPath = join(ethosDir(), 'sessions.db');
-  if (!(await storage.exists(dbPath))) {
-    return { ok: true, absent: true };
-  }
-  const { default: Database } = await import('@ethosagent/sqlite');
-  let db: InstanceType<typeof Database> | undefined;
-  try {
-    // A raw open, never `SQLiteSessionStore`: that constructor runs `migrate()`,
-    // and a NEWER binary's doctor migrating sessions.db is what leaves the
-    // rolled-back binary unable to open it (`ethos upgrade`'s health gate runs
-    // exactly that doctor — plan openclaw-9.5-adoption D24). Read-write for the
-    // same reason as `checkDatabaseIntegrity` below; a SELECT writes nothing.
-    // Pinned by __tests__/diagnostics-never-migrate.test.ts.
-    db = new Database(dbPath);
-    // Trivial query — exercises open + read path; surfaces WAL/corruption.
-    db.prepare('SELECT 1 FROM sessions LIMIT 1').all();
-    return { ok: true, absent: false };
-  } catch (err) {
-    return { ok: false, absent: false, error: err instanceof Error ? err.message : String(err) };
-  } finally {
-    db?.close();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Store integrity, vault permissions, skills/teams sanity (plan
-// agent-state-backup §4)
-// ---------------------------------------------------------------------------
-
-export interface IntegrityResult {
-  /** `dataDir`-relative database path. */
-  database: string;
-  status: 'ok' | 'absent' | 'failed';
-  /** What `PRAGMA integrity_check` said, or why it could not be run. */
-  detail?: string;
-  /**
-   * Set only for a failed `sessions.db`: which repair class the verdict is
-   * (`classifyIntegrity`). `fts`/`index` are fixed by `ethos sessions repair`;
-   * `heap`/`unknown` need a restore. Pinned by doctor-status-stores.test.ts.
-   */
-  kind?: Exclude<IntegrityClass, 'ok'>;
-  /**
-   * Set only for an `ok` `sessions.db` that has an FTS index: row-set drift
-   * between `messages` and `messages_fts_docsize`, probed on the same handle as
-   * the integrity check. A heuristic that NEVER changes `computeDoctorExit` (D4,
-   * pinned by doctor-json.test.ts "exit stays 0 with drift > 0").
-   */
-  fts?: SessionsFtsDrift;
-  /**
-   * Set only for an `ok` `sessions.db` whose drift probe threw: the probe could
-   * not run, so no drift verdict exists. Never affects `computeDoctorExit`.
-   * Pinned by doctor-status-stores.test.ts ("a throwing drift probe is surfaced").
-   */
-  ftsProbeError?: string;
-}
-
-export type SessionsFtsDrift = Omit<FtsProbe, 'ftsPresent'>;
-
-/** What one `WAL_STORES` pattern names on THIS machine. */
-interface StoreExpansion {
-  paths: string[];
-  /** Set when the directory is there but could not be listed. Carries the errno. */
-  error?: string;
-}
-
-/**
- * Expand one `WAL_STORES` location into the paths it names on THIS machine.
- * `*` matches one directory segment (`teams/*​/board.db`).
- *
- * A directory that is ABSENT expands to nothing — those stores do not exist
- * here, which is the truth. Any other failure is "I could not look", and
- * returning nothing for it would delete registered databases from the
- * integrity report and let `doctor` pass without having checked them. That
- * becomes a failed result instead, so it is printed and counts toward the exit.
- */
-function expandStorePath(dataDir: string, pattern: string): StoreExpansion {
-  const star = pattern.indexOf('*');
-  if (star < 0) return { paths: [pattern] };
-  const before = pattern.slice(0, star).replace(/\/$/, '');
-  const after = pattern.slice(star + 1).replace(/^\//, '');
-  const dir = join(dataDir, before);
-  try {
-    return {
-      paths: readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isDirectory())
-        .map((e) => `${before}/${e.name}/${after}`)
-        .sort(),
-    };
-  } catch (err) {
-    const code = err instanceof Error && 'code' in err ? String(err.code) : 'unknown';
-    if (code === 'ENOENT') return { paths: [] };
-    return { paths: [], error: `cannot list ${before}/ (${code})` };
-  }
-}
-
-/**
- * Run `PRAGMA integrity_check` over every database the repo declares.
- *
- * The list is `WAL_STORES` — the same registry the backup scope table is built
- * from and the drift gate holds to the repo — rather than a hardcoded name, so
- * a store added anywhere is covered here the moment it is classified. Excluded
- * stores (delivery-ledger, inbound-dedup, notify-queue) are checked too:
- * whether a database is worth backing up and whether it is corrupt are
- * different questions.
- */
-export async function checkDatabaseIntegrity(dataDir: string): Promise<IntegrityResult[]> {
-  const { WAL_STORES, classifyIntegrity, integrityVerdict, probeMessagesFts } = await import(
-    '@ethosagent/wiring'
-  );
-  const { default: Database } = await import('@ethosagent/sqlite');
-
-  const paths = new Set<string>();
-  const unreadable: IntegrityResult[] = [];
-  for (const store of WAL_STORES) {
-    for (const pattern of [store.database, ...(store.alsoAt ?? [])]) {
-      const expansion = expandStorePath(dataDir, pattern);
-      for (const path of expansion.paths) paths.add(path);
-      if (expansion.error !== undefined) {
-        unreadable.push({ database: pattern, status: 'failed', detail: expansion.error });
-      }
-    }
-  }
-
-  const out: IntegrityResult[] = [...unreadable];
-  for (const rel of [...paths].sort()) {
-    const full = join(dataDir, rel);
-    if (!existsSync(full)) {
-      out.push({ database: rel, status: 'absent' });
-      continue;
-    }
-    let db: InstanceType<typeof Database> | undefined;
-    try {
-      // Opened read-WRITE on purpose. A read-only open of a WAL database whose
-      // `-shm` index is absent cannot create one and fails outright, which
-      // would report a healthy store as corrupt. `integrity_check` itself
-      // writes nothing.
-      db = new Database(full);
-      const handle = db;
-      const verdict = integrityVerdict(handle);
-      if (verdict.trim() === 'ok') {
-        let drift: DriftProbe | undefined;
-        if (rel === 'sessions.db') {
-          // Plan D6: the probe is read-only SQL; query_only makes that a guarantee.
-          // Set after integrity_check, on a handle that closes right after.
-          handle.exec('PRAGMA query_only = ON');
-          drift = driftOf(() => probeMessagesFts(handle));
-        }
-        out.push({
-          database: rel,
-          status: 'ok',
-          ...(drift?.fts ? { fts: drift.fts } : {}),
-          ...(drift?.error ? { ftsProbeError: drift.error } : {}),
-        });
-      } else {
-        const result: IntegrityResult = {
-          database: rel,
-          status: 'failed',
-          detail: verdict.split('\n')[0] || 'no result',
-        };
-        if (rel === 'sessions.db') {
-          const kind = classifyIntegrity(verdict, handle);
-          if (kind !== 'ok') result.kind = kind;
-        }
-        out.push(result);
-      }
-    } catch (err) {
-      out.push({
-        database: rel,
-        status: 'failed',
-        detail: err instanceof Error ? err.message : String(err),
-        ...(rel === 'sessions.db' ? { kind: 'unknown' as const } : {}),
-      });
-    } finally {
-      db?.close();
-    }
-  }
-  return out;
-}
-
-/**
- * FTS drift from a probe on the already-open `sessions.db` handle: undefined when there is
- * no FTS table, `{ error }` when the probe threw (surfaced, never swallowed). Read-only SQL on the caller's raw handle, never
- * `SQLiteSessionStore`, so it cannot migrate or write (pinned by
- * diagnostics-never-migrate.test.ts).
- */
-function driftOf(probe: () => FtsProbe): DriftProbe | undefined {
-  try {
-    const p = probe();
-    if (!p.ftsPresent) return undefined;
-    return {
-      fts: {
-        messages: p.messages,
-        indexedDocs: p.indexedDocs,
-        unindexed: p.unindexed,
-        dangling: p.dangling,
-      },
-    };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-interface DriftProbe {
-  fts?: SessionsFtsDrift;
-  error?: string;
-}
-
-/** The `sessions.db` FTS drift carried by a `checkDatabaseIntegrity` result, or null. */
-export function sessionsFtsOf(results: readonly IntegrityResult[]): SessionsFtsDrift | null {
-  return results.find((r) => r.database === 'sessions.db')?.fts ?? null;
-}
-
-/**
- * The advice lines under a failed store-integrity check: `ethos sessions repair`
- * for an fts/index class, a backup restore for anything else. Pure; pinned by
- * doctor-status-stores.test.ts ("integrityAdvice ...").
- */
-export function integrityAdvice(results: readonly IntegrityResult[]): string[] {
-  const broken = results.filter((r) => r.status === 'failed');
-  const repairable = broken.filter((r) => r.kind === 'fts' || r.kind === 'index');
-  const lines: string[] = [];
-  if (repairable.some((r) => r.kind === 'fts')) lines.push(FTS_DOWN_CONSEQUENCE);
-  if (repairable.length > 0) {
-    lines.push('Run `ethos sessions repair --apply` (a verbatim copy is taken first)');
-  }
-  if (broken.some((r) => !repairable.includes(r))) {
-    lines.push('Restore from a backup: `ethos import <archive>`');
-  }
-  return lines;
-}
-
-// ---------------------------------------------------------------------------
-// Inbound spool (plan reach-and-containment §2.6)
-// ---------------------------------------------------------------------------
-
-export interface InboundSpoolReport {
-  /** `absent` — no spool file yet (no gateway has run), not a failure. */
-  status: 'absent' | 'ok' | 'failed';
-  error?: string;
-  counts?: {
-    received: number;
-    processing: number;
-    done: number;
-    dead: number;
-    interrupted: number;
-  };
-  /** Age of the oldest owed (`received`) row, ms. */
-  oldestReceivedAgeMs?: number;
-  /** `received` rows for a botKey the config no longer names. `null` when the
-   *  configured bots could not be determined. */
-  orphaned?: Array<{ id: string; platform: string; botKey: string; chatId: string }> | null;
-  dead?: Array<{
-    id: string;
-    platform: string;
-    chatId: string;
-    attempts: number;
-    lastError: string | null;
-  }>;
-  /** Cut after a tool had started, so never replayed (plan openclaw-9.5-adoption
-   *  D5): waiting on the user's `retry`, or an operator's replay/discard. */
-  interrupted?: Array<{
-    id: string;
-    platform: string;
-    chatId: string;
-    lastError: string | null;
-  }>;
-}
-
-/** The botKeys a gateway started from `config` would serve — the same
- *  derivations `ethos gateway start` uses. Legacy scalars are included. */
-export async function configuredGatewayBotKeys(config: EthosConfig): Promise<string[]> {
-  const { discordBotKey, emailBotKey, whatsAppBotKey } = await import('./gateway');
-  const keys = new Set<string>();
-  for (const b of config.telegram?.bots ?? []) keys.add(deriveBotKey(b));
-  for (const a of config.slack?.apps ?? []) keys.add(deriveBotKey(a));
-  for (const w of config.whatsapp ?? []) keys.add(whatsAppBotKey(w));
-  if (config.telegramToken) keys.add(deriveBotKey({ token: config.telegramToken }));
-  if (config.discordToken) keys.add(discordBotKey(config.discordToken));
-  if (config.emailUser && config.emailImapHost) {
-    keys.add(emailBotKey(config.emailUser, config.emailImapHost));
-  }
-  // The idle single-loop gateway (no platform) files everything under 'default'.
-  keys.add('default');
-  return [...keys];
-}
-
 /**
  * Open the spool (only if it exists — a doctor run must not create one) and
  * report counts, the oldest owed row, orphans, dead letters and interrupted rows.
@@ -778,60 +407,6 @@ export async function checkInboundSpool(
   }
 }
 
-/** The human lines for the "Inbound spool" block (colour-free; the caller
- *  prefixes marks). Up to 10 dead rows are listed, then a count. */
-export function describeInboundSpool(report: InboundSpoolReport): string[] {
-  if (report.status === 'absent')
-    return ['–  No inbound spool yet (created by ethos gateway start).'];
-  if (report.status === 'failed') return [`✗  inbound-spool.db failed to open: ${report.error}`];
-  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
-  const lines = [
-    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead · ${n.interrupted} interrupted`,
-  ];
-  if (report.oldestReceivedAgeMs !== undefined) {
-    lines.push(
-      `   oldest owed message: ${Math.round(report.oldestReceivedAgeMs / 60_000)} min old`,
-    );
-  }
-  if (report.orphaned === null) {
-    lines.push('   orphaned rows: unknown (configured bots could not be read)');
-  } else if (report.orphaned && report.orphaned.length > 0) {
-    lines.push(
-      `⚠  ${report.orphaned.length} owed message(s) for a bot no longer configured — re-add the bot to deliver them:`,
-    );
-    for (const o of report.orphaned.slice(0, 10)) {
-      lines.push(`   ${o.id}  ${o.platform}:${o.chatId}  bot ${o.botKey}`);
-    }
-  }
-  const dead = report.dead ?? [];
-  if (dead.length > 0) {
-    lines.push(`⚠  ${dead.length} dead letter(s):`);
-    for (const d of dead.slice(0, 10)) {
-      lines.push(
-        `   ${d.id}  ${d.platform}:${d.chatId}  attempts ${d.attempts}  ${d.lastError ?? ''}`,
-      );
-    }
-    if (dead.length > 10) lines.push(`   … and ${dead.length - 10} more`);
-    lines.push(
-      '   Replay with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
-    );
-  }
-  const interrupted = report.interrupted ?? [];
-  if (interrupted.length > 0) {
-    lines.push(
-      `⚠  ${interrupted.length} interrupted message(s) — cut after an action started, so not replayed; each chat was asked to reply \`retry\`:`,
-    );
-    for (const r of interrupted.slice(0, 10)) {
-      lines.push(`   ${r.id}  ${r.platform}:${r.chatId}  ${r.lastError ?? ''}`);
-    }
-    if (interrupted.length > 10) lines.push(`   … and ${interrupted.length - 10} more`);
-    lines.push(
-      '   Re-run anyway with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
-    );
-  }
-  return lines;
-}
-
 async function inboundSpoolReportFor(config: EthosConfig | null): Promise<InboundSpoolReport> {
   let botKeys: string[] | null = null;
   if (config) {
@@ -842,164 +417,6 @@ async function inboundSpoolReportFor(config: EthosConfig | null): Promise<Inboun
     }
   }
   return checkInboundSpool(ethosDir(), botKeys);
-}
-
-export interface VaultModeResult {
-  path: string;
-  present: boolean;
-  /** Octal permission bits, e.g. `'700'`. Absent when the directory is not there. */
-  mode?: string;
-  /** True when group or other hold ANY bit on the vault directory. */
-  tooOpen: boolean;
-}
-
-/**
- * `~/.ethos/secrets/` holds credential files; nothing but the owner may reach
- * it. `FileSecretsResolver` already chmods the directory to 0700 on every
- * `set`, so anything else here was done to it from outside.
- *
- * The test is "group or other hold any bit", not "the mode is exactly 0700" —
- * 0500 is tighter, not looser, and calling it a failure would be wrong.
- */
-/**
- * The one sentence `doctor` says about the vault's mode. Exported for the same
- * reason `computeDoctorExit` is: the claim is the thing under test.
- *
- * It prints the mode that was READ. The line this replaces printed a constant
- * `0700` for every mode that passed, which is a false statement about the
- * tighter ones the check deliberately accepts.
- */
-export function describeSecretsDirMode(result: VaultModeResult): string {
-  if (!result.present) return 'secrets/ not created yet.';
-  return result.tooOpen
-    ? `secrets/ is mode ${result.mode}, not owner-only`
-    : `secrets/ is mode ${result.mode} (owner only)`;
-}
-
-export function checkSecretsDirMode(dataDir: string): VaultModeResult {
-  const path = join(dataDir, 'secrets');
-  if (!existsSync(path)) return { path, present: false, tooOpen: false };
-  const mode = statSync(path).mode & 0o777;
-  return {
-    path,
-    present: true,
-    mode: mode.toString(8).padStart(3, '0'),
-    tooOpen: (mode & 0o077) !== 0,
-  };
-}
-
-/**
- * Linux `statfs(2)` `f_type` magic numbers (linux/magic.h, fs/smb/client) for
- * the filesystems SQLite's WAL locking is not safe on. virtiofs and Docker
- * Desktop's gRPC-FUSE both mount through the FUSE superblock and so report
- * FUSE_SUPER_MAGIC; Docker Desktop on Windows and WSL2's `/mnt/c` are 9p.
- */
-const UNSAFE_STATE_FS: ReadonlyMap<number, string> = new Map([
-  [0x65735546, 'fuse'],
-  [0x01021997, '9p'],
-  [0x6969, 'nfs'],
-  [0x517b, 'smb'],
-  [0xff534d42, 'cifs'],
-  [0xfe534d42, 'smb2'],
-]);
-
-export interface StateDirFilesystemResult {
-  path: string;
-  /** `unknown` = this platform's statfs gives no filesystem identity to test. */
-  status: 'ok' | 'warn' | 'unknown' | 'absent';
-  /** Name of the unsafe filesystem, set only on `warn`. */
-  fsType?: string;
-  message: string;
-}
-
-/**
- * Warns when the state directory sits on a FUSE or network filesystem, where
- * SQLite's locking can corrupt the databases (R4). Only Linux is classified:
- * Node's `statfs` exposes `f_type` and no filesystem name, and on macOS that
- * field is `vfc_typenum`, a registration-order number with no stable meaning
- * (APFS reads 0x1a on one machine and could read otherwise on another). The
- * case this exists for — a container on Docker Desktop — is Linux inside.
- */
-export function checkStateDirFilesystem(
-  dataDir: string,
-  deps: { statfs?: (path: string) => StatsFs; platform?: NodeJS.Platform } = {},
-): StateDirFilesystemResult {
-  const statfs = deps.statfs ?? statfsSync;
-  const platform = deps.platform ?? process.platform;
-  let type: number;
-  try {
-    type = statfs(dataDir).type >>> 0;
-  } catch {
-    return { path: dataDir, status: 'absent', message: 'state directory not created yet.' };
-  }
-  if (platform !== 'linux') {
-    return {
-      path: dataDir,
-      status: 'unknown',
-      message: `filesystem type not checked on ${platform} (statfs reports no filesystem name).`,
-    };
-  }
-  const fsType = UNSAFE_STATE_FS.get(type);
-  if (!fsType) {
-    return { path: dataDir, status: 'ok', message: 'state directory is on a local filesystem.' };
-  }
-  return {
-    path: dataDir,
-    status: 'warn',
-    fsType,
-    message: `state directory is on ${fsType} — SQLite locking is unsafe there and the databases can corrupt. Use a Docker named volume or a local disk.`,
-  };
-}
-
-export interface DirSanityIssue {
-  /** `dataDir`-relative path the issue is about. */
-  path: string;
-  message: string;
-}
-
-/**
- * `skills/<id>/SKILL.md`, or `skills/<scope>/<slug>/SKILL.md` — the two layouts
- * `UniversalScanner` reads. A directory matching neither is a skill that will
- * never load, which is worth saying before the user wonders why.
- */
-export function checkSkillsDir(dataDir: string): DirSanityIssue[] {
-  const root = join(dataDir, 'skills');
-  if (!existsSync(root)) return [];
-  const issues: DirSanityIssue[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-    const dir = join(root, entry.name);
-    if (existsSync(join(dir, 'SKILL.md'))) continue;
-    const nested = readdirSync(dir, { withFileTypes: true }).some(
-      (sub) => sub.isDirectory() && existsSync(join(dir, sub.name, 'SKILL.md')),
-    );
-    if (!nested) {
-      issues.push({
-        path: `skills/${entry.name}`,
-        message: `no SKILL.md in skills/${entry.name}/ or any subdirectory — this skill will not load`,
-      });
-    }
-  }
-  return issues;
-}
-
-/**
- * A team's data lives at `teams/<name>/`, its manifest at `teams/<name>.yaml`.
- * A data directory with no manifest is a team nothing can start.
- */
-export function checkTeamsDir(dataDir: string): DirSanityIssue[] {
-  const root = join(dataDir, 'teams');
-  if (!existsSync(root)) return [];
-  const issues: DirSanityIssue[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-    if (existsSync(join(root, `${entry.name}.yaml`))) continue;
-    issues.push({
-      path: `teams/${entry.name}`,
-      message: `teams/${entry.name}/ has no teams/${entry.name}.yaml manifest — this team cannot start`,
-    });
-  }
-  return issues;
 }
 
 interface GatewayHealthResult {
@@ -1030,11 +447,6 @@ async function checkGatewayHealth(storage: Storage): Promise<GatewayHealthResult
   } catch {
     return { status: 'down', adapters: [], lastHeartbeatAgeSec: null };
   }
-}
-
-export interface CallCaptureDaemonHealthResult {
-  status: 'ok' | 'stale' | 'down';
-  lastHeartbeatAgeSec: number | null;
 }
 
 /** Mirrors `checkGatewayHealth`'s exact shape/semantics (30s staleness), for
@@ -1160,221 +572,6 @@ export function providerChainLines(config: EthosConfig): string[] {
     );
   }
   return lines;
-}
-
-/**
- * The decision layer as `ethos doctor` reports it (plan decision-provider-jev
- * §7 / D7 / C4; plan decision-provider-personality §8): which provider and
- * which HOST data is sent to, then — per personality that declares a
- * `decisions` block — which sites run and why a site runs less than it asked
- * for. Each personality row is `resolveCharacterSheetDecisions`
- * (packages/wiring/src/decision-diagnostics.ts), the function the character
- * sheet renders `## Decisions` from, so doctor and the sheet cannot disagree.
- *
- * Personalities with no `decisions` block are not listed. With no
- * `decisions.provider` and no personality declaring one, the text form prints
- * nothing (today's behaviour).
- *
- * Known limitations, stated rather than implied:
- * - An invalid site mode in a personality's config.yaml (PD12) is NOT
- *   reported: the personality loader (`buildDecisionsConfig` in
- *   extensions/personalities/src/index.ts) drops it silently, so the site
- *   reads as undeclared (`off`) here and on the character sheet.
- */
-export interface DecisionLayerReport {
-  configured: boolean;
-  provider?: string;
-  /** `new URL(decisions.baseUrl).host` — where request bodies go. */
-  host?: string;
-  model?: string;
-  /** The vault ref the API key is read from, and whether a value is stored there. */
-  apiKeyRef?: string;
-  apiKeyPresent?: boolean;
-  /** One row per personality that declares a `decisions` block, sorted by id. */
-  personalities: DecisionPersonalityReport[];
-  /** The ⚠ lines, uncoloured, in the order the text form prints them. */
-  warnings: string[];
-}
-
-export interface DecisionPersonalityReport {
-  id: string;
-  /** The personality's `decisions.provider`, verbatim. */
-  provider?: string;
-  /** The operator configured that provider on this machine. */
-  configured: boolean;
-  sites: CharacterSheetDecisionSite[];
-}
-
-/** One site as a doctor row shows it: `injection shadow`, R6's sentence, or `x shadow → off`. */
-function decisionSiteText(s: CharacterSheetDecisionSite): string {
-  if (s.reason === 'threshold-missing') {
-    return `${s.site} ${describeDecisionSiteDowngrade(s.missingThresholds)}`;
-  }
-  if (s.effective !== s.requested) return `${s.site} ${s.requested} → ${s.effective}`;
-  return `${s.site} ${s.requested}`;
-}
-
-export async function checkDecisionLayer(
-  config: EthosConfig | null,
-  secrets: Pick<SecretsResolver, 'get'>,
-  personalities: readonly PersonalityConfig[] = [],
-): Promise<DecisionLayerReport> {
-  const warnings: string[] = [];
-  const rows: DecisionPersonalityReport[] = [];
-  const globalProvider = config?.decisions?.provider;
-  for (const p of [...personalities].sort((a, b) => a.id.localeCompare(b.id))) {
-    const d = await resolveCharacterSheetDecisions(p, config, secrets);
-    if (!d) continue;
-    const sites = [...d.sites];
-    rows.push({
-      id: p.id,
-      ...(d.provider !== undefined ? { provider: d.provider } : {}),
-      configured: d.configured,
-      sites,
-    });
-    const enabled = sites.filter((s) => s.requested !== 'off').map((s) => s.site);
-    if (d.provider !== undefined && !d.configured) {
-      warnings.push(
-        `decisions: ${p.id} names decision model "${d.provider}", but ~/.ethos/config.yaml ` +
-          (globalProvider ? `configures "${globalProvider}"` : 'has no decisions.provider') +
-          ' — its sites run off.',
-      );
-    } else if (d.provider === undefined && enabled.length > 0) {
-      warnings.push(
-        `decisions: ${p.id} enables ${enabled.join(', ')} but names no decisions.provider — ` +
-          'its sites run off. Add decisions.provider to its config.yaml.',
-      );
-    }
-    const approver = sites.find((s) => s.site === 'approver');
-    if (approver?.inertApprovalMode !== undefined) {
-      warnings.push(
-        `decisions: ${p.id} enables the approver site, but approvalMode is ` +
-          `${approver.inertApprovalMode} — the approver runs only under smart.`,
-      );
-    }
-  }
-
-  if (!config?.decisions) {
-    return { configured: false, personalities: rows, warnings };
-  }
-  const r = resolveDecisionsConfig(config.decisions);
-  const key = await secrets.get(DECISIONS_API_KEY_REF).catch(() => null);
-  const apiKeyPresent = key !== null && key.trim().length > 0;
-  // plan §7: with no key stored every site runs today's path — say which ref.
-  if (!apiKeyPresent) {
-    warnings.push(
-      `decisions: no key at vault ref ${DECISIONS_API_KEY_REF} — every site runs today's path.`,
-    );
-  }
-  return {
-    configured: true,
-    provider: r.provider,
-    // `buildDecisionsConfig` only keeps a baseUrl `new URL` accepts.
-    host: new URL(r.baseUrl).host,
-    model: r.model,
-    apiKeyRef: DECISIONS_API_KEY_REF,
-    apiKeyPresent,
-    personalities: rows,
-    warnings,
-  };
-}
-
-/** The Config-section lines for {@link checkDecisionLayer}; empty when there is nothing to say. */
-export function decisionLayerLines(report: DecisionLayerReport): string[] {
-  if (!report.configured && report.personalities.length === 0) return [];
-  const lines = [
-    report.configured
-      ? `     decisions:   ${report.provider} → ${report.host} · model ${report.model}`
-      : '     decisions:   no decisions.provider in config.yaml',
-  ];
-  const width = Math.max(...report.personalities.map((p) => p.id.length)) + 1;
-  for (const p of report.personalities) {
-    const enabled = p.sites.filter((s) => s.requested !== 'off');
-    const text =
-      enabled.length > 0 ? enabled.map(decisionSiteText).join(' · ') : 'no sites enabled';
-    lines.push(`                  ${`${p.id}:`.padEnd(width)} ${text}`);
-  }
-  for (const w of report.warnings) {
-    const fix = w.startsWith('decisions: no key at vault ref')
-      ? ` ${c.dim}ethos secrets set ${report.apiKeyRef} <value>${c.reset}`
-      : '';
-    lines.push(`  ${c.yellow}⚠${c.reset}  ${w}${fix}`);
-  }
-  return lines;
-}
-
-/**
- * Docker sandbox readiness: which personalities resolve to the `docker`
- * posture on this machine, and whether `execution.docker.image` gives them an
- * image to run in. Without one every exec tool those personalities call
- * refuses (`MissingDockerImageError`, extensions/execution-docker) — this is
- * the command whose job is to say so before a turn finds out.
- *
- * The posture is `buildExecutionPosture` (packages/wiring), the same resolver
- * the character sheet prints, fed the image the config owner kept (an
- * unpinned value was already dropped and reported as a parse warning). A
- * warning, not a hard failure: a deployment may carry exec-bearing built-ins
- * it never runs, and doctor's exit code is read by CI.
- */
-export interface DockerSandboxReport {
-  /** The pinned image, when configured. */
-  image?: string;
-  /** Ids whose posture is `docker`, sorted. */
-  dockerPersonalities: string[];
-  /** The refusal those personalities' exec tools return — set only when there is no image AND at least one docker personality. */
-  missingMessage?: string;
-}
-
-export async function checkDockerSandbox(
-  config: EthosConfig | null,
-  personalities: readonly PersonalityConfig[],
-  containerized?: ContainerizedDetectionInput,
-): Promise<DockerSandboxReport> {
-  const image = config?.execution?.docker?.image;
-  // The same explicit `execution.containerized` signal the compose path and
-  // the character sheet forward, so doctor agrees with where exec runs.
-  const detect: ContainerizedDetectionInput | undefined =
-    config?.execution?.containerized === true
-      ? { ...containerized, containerizedConfig: true }
-      : containerized;
-  const ids: string[] = [];
-  let missingMessage: string | undefined;
-  for (const p of personalities) {
-    let posture: Awaited<ReturnType<typeof buildExecutionPosture>>;
-    try {
-      posture = await buildExecutionPosture({
-        personality: p,
-        substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
-        ...(detect ? { containerized: detect } : {}),
-        sshConfigured: config?.execution?.ssh?.host !== undefined,
-        dockerImage: image,
-      });
-    } catch {
-      // A personality whose mounts cannot be derived is reported by the
-      // character sheet; it costs this row, never the doctor run.
-      continue;
-    }
-    if (posture.backend !== 'docker') continue;
-    ids.push(p.id);
-    missingMessage ??= posture.dockerImageMissing?.message;
-  }
-  ids.sort();
-  return {
-    ...(image ? { image } : {}),
-    dockerPersonalities: ids,
-    ...(missingMessage ? { missingMessage } : {}),
-  };
-}
-
-/** The Config-section lines for {@link checkDockerSandbox}; empty when nothing runs in docker. */
-export function dockerSandboxLines(report: DockerSandboxReport): string[] {
-  if (report.dockerPersonalities.length === 0) return [];
-  const who = report.dockerPersonalities.join(', ');
-  if (report.image) return [`     docker:      ${report.image} ${c.dim}(${who})${c.reset}`];
-  return [
-    `  ${c.yellow}⚠${c.reset}  docker posture, no image configured → exec tools will fail for: ${who}`,
-    `     ${c.dim}${report.missingMessage ?? ''}${c.reset}`,
-  ];
 }
 
 /**
@@ -2044,411 +1241,6 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   console.log(`${c.green}✓ Healthy.${c.reset}`);
 }
 
-// ---------------------------------------------------------------------------
-// --fix: auto-repair common issues
-// ---------------------------------------------------------------------------
-
-/**
- * B7 — the provider suggestion for `doctor --fix`'s unknown-provider repair.
- * Damerau-Levenshtein against the catalog ids (the same `nearestKey` helper
- * as B2's unknown-config-key suggestion), replacing the first-letter guess
- * that offered 'azure' for 'antropic'. Falls back to 'anthropic' when nothing
- * is within two edits. Exported for `__tests__/doctor-funnel.test.ts`.
- */
-export function suggestProvider(input: string, knownIds: readonly string[]): string {
-  return nearestKey(input, knownIds) ?? 'anthropic';
-}
-
-async function runDoctorFix(): Promise<void> {
-  // chmod stays raw node:fs — Storage has no permissions API (keys.json /
-  // config.yaml owner-restriction is the whole point of this repair step).
-  const { chmod } = await import('node:fs/promises');
-  const storage = getStorage();
-  const dir = ethosDir();
-  let exitCode = 0;
-
-  console.log('');
-  console.log(`${c.bold}ethos doctor --fix${c.reset}`);
-  console.log('');
-
-  // 1. Ensure the directories every surface expects exist. `backups/` is where
-  //    `ethos backup` and the scheduled job write; the rest are read by the
-  //    personality registry, the skill scanner and the team supervisor.
-  for (const name of ['personalities', 'skills', 'teams', 'backups']) {
-    const path = join(dir, name);
-    if (!(await storage.exists(path))) {
-      await storage.mkdir(path);
-      console.log(`  ${c.green}✓ Fixed:${c.reset}  Created ${path}`);
-    } else {
-      console.log(`  ${c.green}✓${c.reset}  ${path} exists`);
-    }
-  }
-
-  // 2. Seed MEMORY.md and USER.md
-  for (const filename of ['MEMORY.md', 'USER.md']) {
-    const path = join(dir, filename);
-    if (!(await storage.exists(path))) {
-      await storage.write(path, '');
-      console.log(`  ${c.green}✓ Fixed:${c.reset}  Created ${path}`);
-    } else {
-      console.log(`  ${c.green}✓${c.reset}  ${path} exists`);
-    }
-  }
-
-  // 3. Fix keys.json permissions (should be 0o600)
-  const keysPath = join(dir, 'keys.json');
-  if (await storage.exists(keysPath)) {
-    try {
-      await chmod(keysPath, 0o600);
-      console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${keysPath} to 0600`);
-    } catch {
-      console.log(`  ${c.yellow}⚠${c.reset}  Could not chmod ${keysPath}`);
-      exitCode = 1;
-    }
-  }
-
-  // 4. Fix config.yaml permissions (may contain secret refs; restrict to owner)
-  const configPath = join(dir, 'config.yaml');
-  if (await storage.exists(configPath)) {
-    try {
-      await chmod(configPath, 0o600);
-      console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${configPath} to 0600`);
-    } catch {
-      console.log(`  ${c.yellow}⚠${c.reset}  Could not chmod ${configPath}`);
-      exitCode = 1;
-    }
-  }
-
-  // 5. Tighten ~/.ethos/secrets/ to 0700 (owner only)
-  const secretsPath = join(dir, 'secrets');
-  if (await storage.exists(secretsPath)) {
-    try {
-      await chmod(secretsPath, 0o700);
-      console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${secretsPath} to 0700`);
-    } catch {
-      console.log(`  ${c.yellow}⚠${c.reset}  Could not chmod ${secretsPath}`);
-      exitCode = 1;
-    }
-  }
-
-  // 6. Validate provider in config
-  const config = await readRawConfig(storage);
-  if (config) {
-    const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
-    const knownIds = PROVIDER_CATALOG.map((p) => p.id);
-    if (!knownIds.includes(config.provider)) {
-      const closest = suggestProvider(config.provider, knownIds);
-      console.log(
-        `  ${c.yellow}→ Action needed:${c.reset}  Unknown provider '${config.provider}'. Did you mean '${closest}'?`,
-      );
-      console.log(`  ${c.dim}  Edit ~/.ethos/config.yaml and set provider: ${closest}${c.reset}`);
-      exitCode = 1;
-    } else {
-      console.log(`  ${c.green}✓${c.reset}  Provider '${config.provider}' is valid`);
-    }
-  } else {
-    console.log(
-      `  ${c.yellow}→ Action needed:${c.reset}  No config found. Run: ${c.cyan}ethos setup${c.reset}`,
-    );
-    exitCode = 1;
-  }
-
-  console.log('');
-  if (exitCode === 0) {
-    console.log(`${c.green}✓ All auto-repairs complete.${c.reset}`);
-  } else {
-    console.log(
-      `${c.yellow}⚠ Some issues need manual action. Try: ${c.cyan}ethos doctor --fix → ethos setup auth → ethos setup model${c.reset}`,
-    );
-    process.exit(exitCode);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// --check-provider: live connectivity probe against the configured LLM
-// ---------------------------------------------------------------------------
-
-export interface ProviderProbeResult {
-  provider: string;
-  model: string;
-  reachable: boolean;
-  latencyMs: number | null;
-  error: string | null;
-  exit: number;
-}
-
-async function runProviderProbe(jsonMode: boolean): Promise<void> {
-  const storage = getStorage();
-  const config = await readRawConfig(storage);
-
-  if (!config) {
-    const result: ProviderProbeResult = {
-      provider: 'unknown',
-      model: 'unknown',
-      reachable: false,
-      latencyMs: null,
-      error: 'No config found — run ethos setup',
-      exit: 1,
-    };
-    if (jsonMode) {
-      process.stdout.write(`${JSON.stringify(result)}\n`);
-    } else {
-      console.log(
-        `Provider connectivity: ${c.red}✗${c.reset} No config found — run ${c.cyan}ethos setup${c.reset}`,
-      );
-    }
-    process.exit(1);
-  }
-
-  const provider = config.provider;
-  const model = config.model;
-
-  let reachable = false;
-  let latencyMs: number | null = null;
-  let error: string | null = null;
-
-  try {
-    // Lane 0 (D16) — doctor probes the served window LIVE and rewrites the
-    // probe cache, so its numbers are never stale.
-    const llm = await createLLM(config, { probeWindowRefresh: true });
-    const start = performance.now();
-    // Consume the async iterable — we only need to confirm the provider responds.
-    // Using max 1 token keeps the call as cheap as possible.
-    for await (const _chunk of llm.complete([{ role: 'user', content: 'ping' }], [], {
-      maxTokens: 1,
-    })) {
-      // drain
-    }
-    latencyMs = Math.round(performance.now() - start);
-    reachable = true;
-  } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
-  }
-
-  const exit = reachable ? 0 : 1;
-  const result: ProviderProbeResult = { provider, model, reachable, latencyMs, error, exit };
-
-  if (jsonMode) {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-  } else if (reachable) {
-    console.log(
-      `Provider connectivity: ${c.green}✓${c.reset} ${provider} (${model}) — ${latencyMs}ms`,
-    );
-  } else {
-    console.log(`Provider connectivity: ${c.red}✗${c.reset} ${provider} (${model}) — ${error}`);
-  }
-
-  if (exit > 0) process.exit(exit);
-}
-
-// ---------------------------------------------------------------------------
-// --funnel: local adoption-funnel report (W4.2)
-// ---------------------------------------------------------------------------
-
-/** Format a millisecond delta as a compact human duration, e.g. "2m 8s". */
-export function formatFunnelDuration(ms: number): string {
-  const totalSec = Math.round(ms / 1000);
-  if (totalSec < 60) return `${totalSec}s`;
-  const totalMin = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  if (totalMin < 60) return sec > 0 ? `${totalMin}m ${sec}s` : `${totalMin}m`;
-  const hours = Math.floor(totalMin / 60);
-  const min = totalMin % 60;
-  return min > 0 ? `${hours}h ${min}m` : `${hours}h`;
-}
-
-export async function runFunnelReport(jsonMode: boolean): Promise<void> {
-  // Local palette honoring NO_COLOR (plan requirement for all funnel surfaces).
-  const noColor = Boolean(process.env.NO_COLOR);
-  const fc = noColor
-    ? { reset: '', dim: '', bold: '', green: '' }
-    : { reset: c.reset, dim: c.dim, bold: c.bold, green: c.green };
-
-  // `readFunnelState`, not `getFunnelTracker().readState()`: the tracker's
-  // constructor opens the observability store, whose constructor migrates
-  // observability.db (plan openclaw-9.5-adoption D24).
-  const { readFunnelState } = await import('@ethosagent/wiring');
-  const state = await readFunnelState(getStorage(), ethosDir());
-
-  if (jsonMode) {
-    process.stdout.write(`${JSON.stringify(state ?? {})}\n`);
-    return;
-  }
-
-  console.log(`\n${fc.bold}ethos doctor --funnel${fc.reset}\n`);
-
-  // Legacy / pre-tracking install: no setup stamp means every recorded time
-  // is meaningless for TTFM — say so instead of printing garbage numbers.
-  if (!state || state.setupCompletedAt === undefined) {
-    console.log('No funnel data — this install predates funnel tracking (legacy).');
-    if (state?.firstReplyAt !== undefined) {
-      console.log(
-        `${fc.dim}(a first reply was recorded on ${new Date(state.firstReplyAt).toLocaleString()} after upgrading — excluded from TTFM stats)${fc.reset}`,
-      );
-    }
-    console.log('');
-    return;
-  }
-
-  const setupAt = state.setupCompletedAt;
-  const setupMeta = [
-    state.setupWizardPath ? `${state.setupWizardPath} wizard` : null,
-    state.setupProvider ? `provider ${state.setupProvider}` : null,
-    state.setupChannels && state.setupChannels.length > 0
-      ? `channels: ${state.setupChannels.join(', ')}`
-      : 'no channels configured',
-  ]
-    .filter(Boolean)
-    .join(', ');
-
-  console.log(
-    `Setup completed:      ${fc.green}✓${fc.reset} ${new Date(setupAt).toLocaleString()} ${fc.dim}(${setupMeta})${fc.reset}`,
-  );
-
-  if (state.firstReplyAt !== undefined) {
-    console.log(
-      `First reply:          ${fc.green}✓${fc.reset} ${new Date(state.firstReplyAt).toLocaleString()} ${fc.dim}(+${formatFunnelDuration(state.firstReplyAt - setupAt)} after setup)${fc.reset}`,
-    );
-  } else {
-    console.log(`First reply:          ${fc.dim}not yet recorded${fc.reset}`);
-  }
-
-  // Plan keyless-first-run D22: the headline metric is first launch → first answer.
-  if (state.firstLaunchAt !== undefined && state.firstReplyAt !== undefined) {
-    console.log(
-      `First launch → first answer: ${fc.green}✓${fc.reset} ${formatFunnelDuration(state.firstReplyAt - state.firstLaunchAt)}`,
-    );
-  }
-  if (state.keylessPath !== undefined) {
-    console.log(`Keyless path:         ${state.keylessPath}`);
-  }
-
-  const channels = Object.entries(state.channelFirstReplyAt ?? {});
-  if (channels.length > 0) {
-    for (const [platform, ts] of channels) {
-      console.log(
-        `First channel reply:  ${fc.green}✓${fc.reset} ${platform} — ${new Date(ts).toLocaleString()} ${fc.dim}(+${formatFunnelDuration(ts - setupAt)} after setup)${fc.reset}`,
-      );
-    }
-  } else {
-    console.log(`First channel reply:  ${fc.dim}not yet recorded${fc.reset}`);
-  }
-  console.log('');
-}
-
-// ---------------------------------------------------------------------------
-// --recent-errors: grouped summary of ~/.ethos/logs/errors.jsonl
-// ---------------------------------------------------------------------------
-
-function runRecentErrorsReport(): void {
-  console.log('');
-  console.log(`${c.bold}ethos doctor${c.reset}  ${c.dim}recent errors${c.reset}`);
-  console.log('');
-
-  if (!errorLogExists()) {
-    console.log(`  ${c.dim}No error log yet (${errorLogPath()}).${c.reset}`);
-    console.log(`  ${c.dim}This is a healthy state — nothing has failed.${c.reset}`);
-    console.log('');
-    return;
-  }
-
-  const recent = readRecentErrors(50);
-  if (recent.length === 0) {
-    console.log(`  ${c.dim}Log file is present but empty: ${errorLogPath()}${c.reset}`);
-    console.log('');
-    return;
-  }
-
-  // Group by code, count, keep newest occurrence per code for the timestamp.
-  const byCode = new Map<string, { count: number; latest: string; sample: string }>();
-  for (const e of recent) {
-    const existing = byCode.get(e.code);
-    if (existing) {
-      existing.count += 1;
-      // recent[] is newest-first; keep the first timestamp seen.
-    } else {
-      byCode.set(e.code, { count: 1, latest: e.ts, sample: e.cause });
-    }
-  }
-
-  const rows = [...byCode.entries()].sort((a, b) => b[1].count - a[1].count);
-
-  console.log(`  ${c.dim}From ${errorLogPath()} (last ${recent.length} entries)${c.reset}`);
-  console.log('');
-  console.log(`  ${c.bold}${'Count'.padStart(5)}  ${'Code'.padEnd(28)}  Most-recent at${c.reset}`);
-  for (const [code, info] of rows) {
-    const count = String(info.count).padStart(5);
-    const codeCol = code.padEnd(28);
-    console.log(`  ${count}  ${c.cyan}${codeCol}${c.reset}  ${c.dim}${info.latest}${c.reset}`);
-    console.log(`         ${c.dim}↳ ${info.sample}${c.reset}`);
-  }
-  console.log('');
-  console.log(`  ${c.dim}File a bug? Attach the relevant lines from ${errorLogPath()}.${c.reset}`);
-  console.log('');
-}
-
-// ---------------------------------------------------------------------------
-// Skill prerequisite check — reads `ethos.prerequisites.external_cli` from
-// each bundled skill's frontmatter and verifies the binary is on PATH.
-// `coding-agent` lists multiple CLI alternatives — at least one must be
-// present (it routes to whichever is installed).
-// ---------------------------------------------------------------------------
-
-interface SkillPrereqIssue {
-  skill: string;
-  cli: string;
-}
-
-function readExternalCliRequirements(skill: Skill): { all: string[]; anyOf: string[] } {
-  const ethos = skill.rawFrontmatter.ethos as
-    | { prerequisites?: { external_cli?: unknown } }
-    | undefined;
-  const raw = ethos?.prerequisites?.external_cli;
-  if (!Array.isArray(raw)) return { all: [], anyOf: [] };
-  const all: string[] = [];
-  const anyOf: string[] = [];
-  for (const item of raw) {
-    if (typeof item === 'string') {
-      all.push(item);
-    } else if (item && typeof item === 'object' && 'any_of' in item) {
-      const list = (item as { any_of: unknown }).any_of;
-      if (Array.isArray(list)) {
-        for (const candidate of list) {
-          if (typeof candidate === 'string') anyOf.push(candidate);
-        }
-      }
-    }
-  }
-  return { all, anyOf };
-}
-
-function isOnPath(bin: string): boolean {
-  return spawnSync('which', [bin], { stdio: 'ignore' }).status === 0;
-}
-
-export interface CallCaptureCheckResult {
-  /** Whether `callCapture.personalityId` is set at all — an unconfigured
-   *  deployment reports nothing further, same "don't warn about an unused
-   *  feature" rule the Channel SDKs section follows. */
-  configured: boolean;
-  ok: boolean;
-  missing: string[];
-  errors: string[];
-  /** Daemon liveness (see `checkCallCaptureDaemonHealth`) — present only
-   *  when `configured` is true. Absent, not a placeholder value, when
-   *  unconfigured: a deployment that never enabled call capture must see
-   *  nothing new from `ethos doctor`. */
-  daemon?: CallCaptureDaemonHealthResult;
-}
-
-export interface CheckCallCaptureOptions {
-  /** Overrides the dependency preflight call. Tests must supply this — a
-   *  fake — instead of exercising the real capture-offer-card/native-binary
-   *  presence on the machine running the test suite. Mirrors
-   *  `telephonyReport`'s injectable `resolveMedia` option. */
-  checkDependencies?: () => Promise<CallCaptureDependencyCheckResult>;
-}
-
 /**
  * Call-capture dependency diagnostics (plan/phases/call-capture-extension.md,
  * "Preflight" §6 / T5). Structured result — text mode and `--json` mode each
@@ -2548,117 +1340,6 @@ async function voiceReport(config: EthosConfig | null): Promise<string[]> {
   // "absent" three ways.
   if (voice) lines.push(...(await telephonyReport(voice)));
   else lines.push(`  ${c.dim}–  Telephony not configured (no voice.*).${c.reset}`);
-  return lines;
-}
-
-/**
- * Telephony rows — everything an operator needs to know BEFORE they dial.
- *
- * This replaced a single line ("N voice bot(s); LiveKit configured; SIP trunk
- * configured") that answered none of the questions a person actually has when a
- * call does not work: is the webhook listener even running, is the control plane
- * constructible, did the media SDK load, who gets through, and which number
- * reaches which personality. Each of those has its own failure and its own fix,
- * so each gets its own row.
- *
- * Two rules, both load-bearing:
- *
- *   - NOTHING here changes doctor's exit code. `computeDoctorExit` takes
- *     `DoctorFailFlags`, which has no telephony member and gains none — a
- *     deployment that does not do telephony is not unhealthy, and one that does
- *     is not unhealthy for lacking an optional native package.
- *   - An unrun probe reports SKIPPED, never passed (the `listen doctor` rule).
- *     The only thing actually exercised here is the media import; the control
- *     plane and the gates are reported as CONFIGURED, which is a different and
- *     weaker claim than "verified".
- */
-export async function telephonyReport(
-  voice: NonNullable<EthosConfig['voice']>,
-  deps: { resolveMedia?: () => Promise<LiveKitMediaResolution> } = {},
-): Promise<string[]> {
-  const lines: string[] = [];
-  const trunk = voice.trunk;
-  const livekit = voice.livekit;
-
-  // --- Trunk -------------------------------------------------------------
-  if (!trunk) {
-    lines.push(`  ${c.dim}–  SIP trunk not configured (no voice.trunk.*).${c.reset}`);
-  } else {
-    lines.push(
-      `  ${c.green}✓${c.reset}  SIP trunk ${c.cyan}${trunk.provider}${c.reset} ${c.dim}(trunkId ${trunk.trunkId}${trunk.fromNumber ? `, from ${trunk.fromNumber}` : ''})${c.reset}`,
-    );
-    lines.push(
-      trunk.webhookSecret
-        ? `  ${c.green}✓${c.reset}  Inbound webhook secret set ${c.dim}(listener mounts at ${trunk.webhookPath ?? '/sip/inbound'})${c.reset}`
-        : `  ${c.yellow}⚠${c.reset}  ${c.dim}voice.trunk.webhookSecret is unset — the inbound call listener stays off. An unsigned webhook is an open line anyone who learns the URL can ring.${c.reset}`,
-    );
-  }
-
-  // --- LiveKit control plane ---------------------------------------------
-  // Signed JWT + HTTPS, no SDK: present credentials mean the SIP trunk client
-  // and the token minter are CONSTRUCTIBLE. Not that the server answered —
-  // nothing here dials it.
-  if (!livekit) {
-    lines.push(
-      trunk
-        ? `  ${c.red}✗${c.reset}  LiveKit control plane absent ${c.dim}(voice.livekit.url/apiKey/apiSecret) — a trunk without it has no SIP control plane; telephony is unavailable.${c.reset}`
-        : `  ${c.dim}–  LiveKit control plane not configured (no voice.livekit.*).${c.reset}`,
-    );
-  } else {
-    lines.push(
-      `  ${c.green}✓${c.reset}  LiveKit control plane ${c.dim}(${livekit.url}; token minter + SIP trunk client constructible — not dialled from here)${c.reset}`,
-    );
-  }
-
-  // --- LiveKit media ------------------------------------------------------
-  // The one thing this report actually runs. `@livekit/rtc-node` is not a repo
-  // dependency (per-arch native binary), so an operator installs it themselves;
-  // without it every other row can be green and a call still carries no audio.
-  const resolveMedia = deps.resolveMedia ?? (() => resolveLiveKitMedia());
-  const media = await resolveMedia();
-  if (media.ok) {
-    lines.push(
-      `  ${c.green}✓${c.reset}  LiveKit media ${c.cyan}@livekit/rtc-node${media.version ? ` ${media.version}` : ''}${c.reset} ${c.dim}(calls can carry audio)${c.reset}`,
-    );
-  } else if (trunk || livekit) {
-    lines.push(
-      `  ${c.yellow}⚠${c.reset}  LiveKit media unavailable: ${c.dim}${media.reason}${c.reset}`,
-    );
-    lines.push(
-      `  ${c.dim}   Calls are answered, screened and logged, but carry no audio until it loads.${c.reset}`,
-    );
-  } else {
-    lines.push(`  ${c.dim}–  LiveKit media not needed (no trunk, no LiveKit).${c.reset}`);
-  }
-
-  // --- Inbound gates ------------------------------------------------------
-  const inbound = voice.inbound;
-  lines.push(
-    `  ${c.dim}   Inbound gates: concurrency ${inbound?.concurrencyCap ?? '2 (default)'}` +
-      `; per-caller/hour ${inbound?.perCallerPerHour ?? 'unlimited'}` +
-      `; daily budget ${inbound?.dailyBudgetUsd !== undefined ? `$${inbound.dailyBudgetUsd}` : 'unlimited'}` +
-      `; prewarm ${inbound?.prewarm ?? 'allowlisted (default)'}${c.reset}`,
-  );
-  lines.push(
-    `  ${c.dim}   Allowlist ${inbound?.allowlist?.length ?? 0} pattern(s)` +
-      `; receptionist ${inbound?.receptionist ?? 'not configured'}` +
-      `; owner ${inbound?.owner ? `${inbound.owner.platform}:${inbound.owner.chatId}` : 'not configured — call summaries have nowhere to go'}${c.reset}`,
-  );
-
-  // --- Number → bot → personality ----------------------------------------
-  if (voice.bots.length === 0) {
-    lines.push(
-      `  ${c.dim}–  No voice bots configured — no number maps to a personality (voice.bots[]).${c.reset}`,
-    );
-  } else {
-    for (const bot of voice.bots) {
-      const key = bot.id ?? `sha256(${bot.match})`;
-      lines.push(
-        `  ${c.dim}   ${bot.match} → ${key} → ${bot.bind.type} ${bot.bind.name}${c.reset}`,
-      );
-    }
-  }
-
   return lines;
 }
 

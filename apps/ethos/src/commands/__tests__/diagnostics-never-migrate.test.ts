@@ -384,7 +384,20 @@ describe('diagnostic surfaces never construct a migrating store', () => {
     }
   });
 
-  for (const surface of ['doctor.ts', 'gateway-status.ts']) {
+  // doctor.ts plus every sibling module it was split into: the SQLite-opening
+  // checks live in doctor-storage.ts, so the guard scans the directory rather
+  // than a hand-kept list.
+  const commandsDir = join(import.meta.dirname, '..');
+  const doctorSurfaces = readdirSync(commandsDir)
+    .filter((f) => /^doctor(-[a-z-]+)?\.ts$/.test(f))
+    .sort();
+
+  it('scans doctor.ts and doctor-storage.ts', () => {
+    expect(doctorSurfaces).toContain('doctor.ts');
+    expect(doctorSurfaces).toContain('doctor-storage.ts');
+  });
+
+  for (const surface of [...doctorSurfaces, 'gateway-status.ts']) {
     it(`${surface} references none of them`, () => {
       const text = code(readFileSync(join(import.meta.dirname, '..', surface), 'utf-8'));
       const hits = [...classes.keys(), ...INDIRECT_OPENERS].filter((name) =>

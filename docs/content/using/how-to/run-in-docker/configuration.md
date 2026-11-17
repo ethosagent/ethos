@@ -53,7 +53,7 @@ The gateway service connects to each configured channel bot and routes inbound m
 Both Compose files declare a named volume `ethos-data`, mounted at `/home/ethos/.ethos`. This volume holds `config.yaml`, the session database, personality data, and memory files.
 
 :::warning Keep state off Docker Desktop bind mounts
-On Docker Desktop (macOS and Windows), a host directory mounted into the container is a virtiofs or gRPC-FUSE mount (macOS) or a 9p mount (Windows). SQLite's file locking is not reliable on those filesystems, and the databases in the state directory can corrupt. Keep the default named volume there. `ethos doctor` inside the container warns under **Data directory** when the state directory sits on FUSE, 9p, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor.ts)).
+On Docker Desktop (macOS and Windows), a host directory mounted into the container is a virtiofs or gRPC-FUSE mount (macOS) or a 9p mount (Windows). SQLite's file locking is not reliable on those filesystems, and the databases in the state directory can corrupt. Keep the default named volume there. `ethos doctor` inside the container warns under **Data directory** when the state directory sits on FUSE, 9p, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor-storage.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor-storage.ts)).
 :::
 
 If you run native Docker on Linux and want the state in a host directory, set `ETHOS_DATA_DIR` in `docker/.env` to its path. Compose then bind-mounts that path instead of the volume.
