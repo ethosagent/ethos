@@ -52,7 +52,7 @@ memory.provider: <plugin-id>/postgres
 memory.options.connectionString: postgres://localhost/ethos_dev
 ```
 
-Know what this switches. Context assembly resolves `personality.memory.provider` for the turn-start `prefetch` and its `search` fallback, and nothing else (`packages/core/src/agent-loop/stages/context-assembly.ts`). The `memory_read` and `memory_write` tools stay bound to the deployment backend (`createMemoryTools(memory, session)` in `packages/wiring/src/build-agent-loop.ts`), and the deployment-wide `memory:` key in `~/.ethos/config.yaml` accepts only `markdown`, `vector` or `vault` (`packages/config/src/index.ts`). Your backend therefore feeds the prompt; writes the agent makes mid-turn still land in the deployment store. Populate your rows from your own pipeline, or treat this as a read path.
+Know what this switches. Context assembly resolves `personality.memory.provider` for the turn-start `prefetch` and its `search` fallback, and nothing else (`packages/core/src/agent-loop/stages/context-assembly.ts`). The `memory_read` and `memory_write` tools stay bound to the deployment backend (`createMemoryTools(memory, session)` in `packages/wiring/src/build-agent-loop.ts`), and the deployment-wide `memory:` key in `~/.ethos/config.yaml` accepts only `markdown`, `vector` or `vault` (`parseConfigYaml` in `packages/config/src/parse.ts`). Your backend therefore feeds the prompt; writes the agent makes mid-turn still land in the deployment store. Populate your rows from your own pipeline, or treat this as a read path.
 
 ### 5. Cover the contract with tests
 

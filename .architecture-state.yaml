@@ -375,7 +375,7 @@ tiers:
   # target (:862); `ExecutionBackendConfig.ssh` gained `knownHostsFile`,
   # `strictHostKeys` and `remoteWorkdir`; and packages/config parses the whole
   # block from `execution.ssh.*` in ~/.ethos/config.yaml
-  # (packages/config/src/index.ts:4471) and writes it back (:2751-2757).
+  # (`buildExecutionConfig`, packages/config/src/builders/execution.ts) and writes it back (`serializeConfigLines`).
   # Tier 1 for the same reason execution-docker is: it sits ON a trust boundary.
   # A different one — remote-host TRUST, not mount-confinement — which is why
   # the composition path refuses it under a `requireSandbox` / `forbidLocal`

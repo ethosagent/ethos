@@ -26,7 +26,7 @@ import {
   type ModelRegistryEntry,
   parseModelDeclaration as parseDeclarationAgainstAliases,
 } from '@ethosagent/types';
-import { deriveProviderKey, type ProviderChainEntry } from './index';
+import { deriveProviderKey, type ProviderChainEntry } from './provider-chain';
 
 // ---------------------------------------------------------------------------
 // D25 — the config-shaped wrapper over the one declaration parser

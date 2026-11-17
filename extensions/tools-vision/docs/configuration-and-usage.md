@@ -19,7 +19,7 @@ auxiliary.vision.apiKey:   sk-ant-vision-... # defaults to top-level apiKey
 auxiliary.vision.baseUrl:  https://...       # defaults to top-level baseUrl
 ```
 
-Mirror of `auxiliary.compression.*` — see [`packages/config/src/index.ts`](../../../packages/config/src/index.ts) `AuxiliaryVisionConfig`.
+Mirror of `auxiliary.compression.*` — see [`packages/config/src/section-types.ts`](../../../packages/config/src/section-types.ts) `AuxiliaryVisionConfig`.
 
 ### Personality opt-in
 

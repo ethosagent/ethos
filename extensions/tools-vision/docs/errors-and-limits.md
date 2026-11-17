@@ -41,5 +41,5 @@ Tool failures carry a domain-code prefix in the `error` string so callers can pa
 
 - [`docs/content/building/reference/vision-tools.md`](../../../docs/content/building/reference/vision-tools.md) — reference page in the Ethos docs site.
 - [`packages/wiring/src/index.ts`](../../../packages/wiring/src/index.ts) — `createVisionTools` registration site; mirrors the auxiliary-compression pattern.
-- [`packages/config/src/index.ts`](../../../packages/config/src/index.ts) — `AuxiliaryVisionConfig` and the `auxiliary.vision.*` config-yaml shape.
+- [`packages/config/src/section-types.ts`](../../../packages/config/src/section-types.ts) — `AuxiliaryVisionConfig` and the `auxiliary.vision.*` config-yaml shape.
 

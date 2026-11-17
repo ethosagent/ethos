@@ -56,7 +56,7 @@ Type: `none` | `auto` · Default: `none`
 | `none` | **(default)** No OS confinement. The host can read the vault files under `~/.ethos/`. |
 | `auto` | Wrap each host in macOS `sandbox-exec` or Linux `bwrap`, with a profile that denies the vault paths. If no wrapper is available the host does not start (`PLUGIN_HOST_SANDBOX_UNAVAILABLE`, `extensions/plugin-host/src/sandbox.ts`). |
 
-`auto` limits file access. It does not give per-hostname network control, and Ethos does not attest it as a security boundary. The value is parsed by `buildPluginIsolation` in `packages/config/src/index.ts`; any other value is a warning and `none` is kept.
+`auto` limits file access. It does not give per-hostname network control, and Ethos does not attest it as a security boundary. The value is parsed by `buildPluginIsolation` in `packages/config/src/builders/tools.ts`; any other value is a warning and `none` is kept.
 
 ```yaml
 plugins.host.sandbox: auto

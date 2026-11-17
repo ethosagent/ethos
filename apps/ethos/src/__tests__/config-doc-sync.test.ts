@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
-const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'index.ts');
+const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'config-types.ts');
 const PERSONALITY_SRC = join(REPO_ROOT, 'packages', 'types', 'src', 'personality.ts');
 // New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md
 // (an index) plus its subpages under using/reference/config-yaml/*.md;
@@ -86,7 +86,7 @@ interface FieldEntry {
 /**
  * Interface field name → the on-disk key the reference page documents, where
  * the two spellings differ. `parseConfigYaml` / `serializeConfigLines` in
- * packages/config/src/index.ts own the real mapping; this table mirrors only
+ * packages/config/src/parse.ts and serialize.ts own the real mapping; this table mirrors only
  * the entries the doc-sync check needs.
  */
 const DOC_KEY_ALIASES: Record<string, string> = {
@@ -422,7 +422,7 @@ describe('config surface doc-sync', () => {
             `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it,\n` +
             `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`, or\n` +
             `  (c) a \`## ${field.name}\` reference section (the config-field schema).\n` +
-            `If \`${field.name}\` is not user-facing, mark it with \`@internal\` in packages/config/src/index.ts.`,
+            `If \`${field.name}\` is not user-facing, mark it with \`@internal\` in packages/config/src/config-types.ts.`,
         ).toBe(true);
       });
     }

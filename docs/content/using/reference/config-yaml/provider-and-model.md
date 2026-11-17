@@ -34,7 +34,7 @@ provider: anthropic
 
 Type: string · Default: `claude-opus-5-5` · Required (effectively)
 
-Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser (`parseConfigYaml` in `packages/config/src/index.ts`) falls back to `claude-opus-5-5`, the catalog's Anthropic default, when the line is absent; the two are pinned equal by `packages/wiring/src/__tests__/config-default-model.test.ts`. `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`).
+Model id to pass to the provider. Format depends on the provider — Anthropic uses raw model names, OpenRouter uses `vendor/model`. The parser (`parseConfigYaml` in `packages/config/src/parse.ts`) falls back to `claude-opus-5-5`, the catalog's Anthropic default, when the line is absent; the two are pinned equal by `packages/wiring/src/__tests__/config-default-model.test.ts`. `ethos setup` defaults to the selected provider's catalog default (`getDefaultModel` in `packages/wiring/src/model-catalog.ts`).
 
 ```yaml
 model: claude-sonnet-5
@@ -44,7 +44,7 @@ model: claude-sonnet-5
 
 Type: secret reference · Default: empty · Required
 
-Primary provider API key, as a `${secrets:<ref>}` reference. `ethos setup` stores the value in the vault under `providers/<provider>/apiKey` and writes the reference here; rotate it with `ethos secrets set providers/<provider>/apiKey <value>`. Every write refuses a recognizable plaintext key in this field (`validateNoPlaintextSecrets` in `packages/config/src/index.ts`). For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
+Primary provider API key, as a `${secrets:<ref>}` reference. `ethos setup` stores the value in the vault under `providers/<provider>/apiKey` and writes the reference here; rotate it with `ethos secrets set providers/<provider>/apiKey <value>`. Every write refuses a recognizable plaintext key in this field (`validateNoPlaintextSecrets` in `packages/config/src/secrets.ts`). For multi-key rotation, leave this set to the most-trusted key and add fallbacks via `ethos keys add` (which writes `~/.ethos/keys.json`). The `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` env vars override this at wiring time when set.
 
 ```yaml
 apiKey: ${secrets:providers/anthropic/apiKey}

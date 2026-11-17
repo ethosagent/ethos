@@ -92,7 +92,7 @@ session — you hold the stack and call `createSession()` yourself.
 `auxiliary.tts.outputFormat`, `auxiliary.tts.timeout`, `auxiliary.tts.maxTextLength`
 and `auxiliary.asr.timeout` used to be matched by the parser and then dropped — the
 factories read them, nothing supplied them. They are lifted now: parser →
-`EthosConfig` → `providerConfigFrom()` → the provider (`packages/config/src/index.ts`,
+`EthosConfig` → `providerConfigFrom()` → the provider (`packages/config/src/parse.ts`,
 `packages/wiring/src/voice-stack.ts`, `packages/wiring/src/build-agent-loop.ts`).
 A garbage value (`timeout: soon`, `outputFormat: flac`) is dropped, so the provider
 default stands.

@@ -34,7 +34,9 @@ describe('webBaseUrl reaches the ClarifyBridge', () => {
   });
 
   it('EthosConfig.webBaseUrl is the existing key, resolved ETHOS_PUBLIC_URL-first', async () => {
-    const src = await read('packages/config/src/index.ts');
+    const src =
+      (await read('packages/config/src/config-types.ts')) +
+      (await read('packages/config/src/parse.ts'));
     expect(src).toMatch(/^\s{2}webBaseUrl\?: string;$/m);
     expect(src).toContain('webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined');
   });

@@ -160,7 +160,7 @@ Replay never runs on `agent_done`. It costs minutes and money, and the end of a 
 | `ethos learning replay <id>`, or **Run replay** on the Learning page | On demand. Both go through `LearningInbox.replay`, which refuses with `replay_unavailable` when `learningReplay.enabled` is false. |
 | `--auto-approve` on `ethos eval --evolve` or `ethos evolve` | Replays each new candidate synchronously inside that command. |
 
-The operator settings live in `~/.ethos/config.yaml` (`resolveLearningReplay`, `packages/config/src/index.ts`; full reference at [`learningReplay.*`](../reference/config-yaml.md#learning-replay)):
+The operator settings live in `~/.ethos/config.yaml` (`resolveLearningReplay`, `packages/config/src/builders/learning.ts`; full reference at [`learningReplay.*`](../reference/config-yaml.md#learning-replay)):
 
 | Key | Default | Meaning |
 |---|---|---|

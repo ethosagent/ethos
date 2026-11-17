@@ -58,7 +58,7 @@ Notes:
 
 Type: boolean · Default: `true`
 
-The "Thinking…" placeholder message the Discord adapter posts while a turn runs, so a channel is not silent between the user's message and the reply. `false` disables it — no placeholder is posted, and the reply arrives as the first message. Parsed into `EthosConfig.discordPostThinkingPlaceholder` ([`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)); a value that is neither `true` nor `false` is dropped and reads as unset.
+The "Thinking…" placeholder message the Discord adapter posts while a turn runs, so a channel is not silent between the user's message and the reply. `false` disables it — no placeholder is posted, and the reply arrives as the first message. Parsed into `EthosConfig.discordPostThinkingPlaceholder` ([`packages/config/src/config-types.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/config-types.ts)); a value that is neither `true` nor `false` is dropped and reads as unset.
 
 ```yaml
 discord.post_thinking_placeholder: false

@@ -337,8 +337,8 @@ export interface ProviderExtraFieldSpec {
 }
 
 /**
- * The provider-entry lines only some provider TYPES read — `ProviderEntry` in
- * packages/config/src/index.ts: azure reads `apiVersion` (default
+ * The provider-entry lines only some provider TYPES read — `ProviderChainEntry` in
+ * packages/config/src/provider-chain.ts: azure reads `apiVersion` (default
  * `AZURE_DEFAULT_API_VERSION`, extensions/llm-azure), bedrock reads `region`
  * (default `us-east-1`) and `awsProfile` (extensions/llm-bedrock). Every
  * other type ignores them. A Map, so a type named like an Object.prototype

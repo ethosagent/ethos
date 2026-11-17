@@ -91,7 +91,7 @@ export interface ModelRegistryEntry {
    * `modelId` and differ only here (`opus-deep` / `opus-quick`), and a
    * personality picks one by name through `PersonalityConfig.model`. An
    * unknown value is dropped with a notice by `buildModelRegistry`
-   * (`packages/config/src/index.ts`); absent → the provider's own default.
+   * (`packages/config/src/model-registry-config.ts`); absent → the provider's own default.
    */
   effort?: ReasoningEffort;
   /** USD per 1k input tokens. Display and future budgeting; nothing bills on it. */

@@ -105,7 +105,7 @@ voice.defaultMode: all
 
 Type: boolean, keyed by platform id · Default: unset (the platform follows [`voice.defaultMode`](#voice-default-mode))
 
-Which channels may speak their replies. Accepted platform ids are `telegram`, `slack`, `discord`, `whatsapp`, and `email` (`VOICE_CHANNEL_PLATFORMS` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)); an unknown id or a non-boolean value is dropped on read, so a typo cannot invent a channel entry no adapter will act on.
+Which channels may speak their replies. Accepted platform ids are `telegram`, `slack`, `discord`, `whatsapp`, and `email` (`VOICE_CHANNEL_PLATFORMS` in [`packages/config/src/voice.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/voice.ts)); an unknown id or a non-boolean value is dropped on read, so a typo cannot invent a channel entry no adapter will act on.
 
 An explicit `false` is an operator decision and outranks the conversation's mode — `/voice all` in a silenced Slack channel still produces text only. An explicit `true` changes nothing on its own; the conversation's mode still decides when to speak.
 

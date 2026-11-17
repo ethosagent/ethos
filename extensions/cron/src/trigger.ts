@@ -102,7 +102,7 @@ export class NoopArmingBackend implements CronArmingBackend {
 /** Structural shape of the `cron:` top-level config section. Kept separate
  *  from `@ethosagent/config`'s `EthosConfig['cron']` type (duck-typed, not
  *  imported) so this package doesn't take a dependency on the config layer.
- *  Its counterpart is `CronTopLevelConfig` in `packages/config/src/index.ts`;
+ *  Its counterpart is `CronTopLevelConfig` in `packages/config/src/builders/cron-background.ts`;
  *  the two shapes are kept in sync by hand. */
 export interface CronDeploymentConfig {
   /** Where an external scheduler reaches this process's `POST /cron/fire`.

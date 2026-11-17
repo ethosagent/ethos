@@ -51,7 +51,7 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 | `OPENAI_API_KEY` | OpenAI / OpenAI-compat provider key. |
 | `OPENROUTER_API_KEY` | OpenRouter key. |
 | `ETHOS_DEBUG` | `1` prints hook events, token counts, and prompt diagnostics. |
-| `ETHOS_STATE_DIR` | Override the `~/.ethos/` location entirely. Read by `ethosDir()` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). |
+| `ETHOS_STATE_DIR` | Override the `~/.ethos/` location entirely. Read by `ethosDir()` in [`packages/config/src/paths.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/paths.ts). |
 | `ETHOS_VERSION` | Override the reported version string (dev runs). |
 | `ETHOS_MANAGED` | `1` runs in managed mode — skip interactive setup, exit `2` if config is missing. Used by systemd units and orchestration playbooks. |
 | `ETHOS_BINARY` | Override the ethos binary path in `ethos systemd-unit` output. |

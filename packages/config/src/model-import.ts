@@ -20,12 +20,8 @@
 // registry is `validateModelRegistry`'s question, asked by each writer.
 
 import { MODEL_ROLE_NAMES, type ModelRegistry, type ModelRegistryEntry } from '@ethosagent/types';
-import {
-  deriveProviderKey,
-  type ProviderChainEntry,
-  renderModelRegistryPairs,
-  renderProviderChain,
-} from './index';
+import { renderModelRegistryPairs } from './model-registry-config';
+import { deriveProviderKey, type ProviderChainEntry, renderProviderChain } from './provider-chain';
 
 /**
  * The slice of a config the importer reads. Both `EthosConfig` (the CLI) and

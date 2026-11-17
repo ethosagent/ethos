@@ -14,7 +14,7 @@ Keys that schedule learning and evolution jobs. Part of the [config.yaml referen
 
 Type: object · Default: every field at its default below · Required: no
 
-Settings for the replay that measures a learned skill or Expression change against frozen past tasks before it can go live. Absent keys take `LEARNING_REPLAY_DEFAULTS`, applied by `resolveLearningReplay` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). Every number is validated as the whole string, so a value with trailing text (`8 cases`, `0.5usd`) is a parse error, not the leading number.
+Settings for the replay that measures a learned skill or Expression change against frozen past tasks before it can go live. Absent keys take `LEARNING_REPLAY_DEFAULTS`, applied by `resolveLearningReplay` in [`packages/config/src/builders/learning.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/learning.ts). Every number is validated as the whole string, so a value with trailing text (`8 cases`, `0.5usd`) is a parse error, not the leading number.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

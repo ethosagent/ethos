@@ -46,7 +46,7 @@ Notes:
 - If you pulled through a mirror (`docker pull mirror.gcr.io/library/node:24-bookworm`), use the `RepoDigests` value it reports (`mirror.gcr.io/library/node@sha256:…`). A `node@sha256:…` ref does not resolve locally under `--pull=never` when only the mirror name exists.
 - The container runs as your host uid with all capabilities dropped, no network unless the personality's `safety.network` allows it, and only the personality's `fs_reach` paths mounted. The image needs no user account for that uid.
 - Check the result: `ethos doctor` lists every docker-posture personality and flags a missing image; `ethos personality show <id>` prints the image (or `NOT CONFIGURED`) under `## Execution`.
-- Source: `dockerImageRefError` in [packages/config/src/index.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts); `MissingDockerImageError` in [extensions/execution-docker/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/execution-docker/src/index.ts).
+- Source: `dockerImageRefError` in [packages/config/src/builders/execution.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/execution.ts); `MissingDockerImageError` in [extensions/execution-docker/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/execution-docker/src/index.ts).
 
 ## verbose {#verbose}
 

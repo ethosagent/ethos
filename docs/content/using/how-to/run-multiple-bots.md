@@ -27,7 +27,7 @@ Configure two or more channel bots — across Telegram and Slack — in a single
 
 ## Source
 
-- [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts) — `telegram.bots` / `slack.apps` schema, `deriveBotKey()`, `validateBotBindings()`.
+- [`packages/config/src/builders/platforms.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/platforms.ts) — `telegram.bots` / `slack.apps` schema; [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts) — `deriveBotKey()`, `validateBotBindings()`.
 - [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts) — the per-bot routing table and lane-key construction.
 
 ## Parts

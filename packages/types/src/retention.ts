@@ -50,7 +50,7 @@ export interface RetentionConfig {
  * are byte-identical to this and must change with it.
  *
  * Checked on the config-load path by `buildRetentionConfig`
- * (`packages/config/src/index.ts`), which drops a value that fails and warns.
+ * (`packages/config/src/builders/retention.ts`), which drops a value that fails and warns.
  * Guarded by `packages/types/src/__tests__/retention-duration.test.ts`, which
  * pins this pattern against `parseDuration`'s own accept/reject set.
  */

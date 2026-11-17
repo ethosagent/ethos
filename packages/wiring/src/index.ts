@@ -1488,7 +1488,7 @@ async function createLLMFromRegistry(
         // IS the retry policy, so hops get `maxRetries: 0`. An explicit
         // operator `maxRetries` still wins — it is documented as global, one
         // value for every resolved provider (`EthosConfig.maxRetries` in
-        // packages/config/src/index.ts). A single provider keeps the SDK
+        // packages/config/src/config-types.ts). A single provider keeps the SDK
         // default. Pinned by `provider-chain-wiring.test.ts`. A pinned call
         // cannot fail over (D21), so `ChainedProvider.complete` gives it a
         // bounded retry of its own entry instead (`PINNED_MAX_ATTEMPTS` in

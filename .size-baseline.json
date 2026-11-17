@@ -1147,9 +1147,19 @@
       "lines": 1258
     },
     {
-      "path": "packages/config/src/index.ts",
+      "path": "packages/config/src/config-types.ts",
       "kind": "source",
-      "lines": 11067
+      "lines": 1540
+    },
+    {
+      "path": "packages/config/src/parse.ts",
+      "kind": "source",
+      "lines": 1888
+    },
+    {
+      "path": "packages/config/src/serialize.ts",
+      "kind": "source",
+      "lines": 933
     },
     {
       "path": "packages/core/src/__tests__/agent-loop-injection.test.ts",

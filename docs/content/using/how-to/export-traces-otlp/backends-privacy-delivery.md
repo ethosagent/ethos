@@ -26,7 +26,7 @@ Apply the sections you need, in any order. Each ends with the config lines to se
 
 ## Authenticate to a hosted backend
 
-Every `telemetry.export.otlp.headers.<Name>` value is treated as a credential, whatever the header name. It must be a `${secrets:telemetry/export/otlp/headers/<Name>}` [secret ref](../../../getting-started/glossary.md#secret-ref) (a pointer into the secrets vault, resolved at startup). A plaintext value fails the config load (`validateNoPlaintextSecrets` in [packages/config/src/index.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)). A config saved by Ethos itself vaults the value for you.
+Every `telemetry.export.otlp.headers.<Name>` value is treated as a credential, whatever the header name. It must be a `${secrets:telemetry/export/otlp/headers/<Name>}` [secret ref](../../../getting-started/glossary.md#secret-ref) (a pointer into the secrets vault, resolved at startup). A plaintext value fails the config load (`validateNoPlaintextSecrets` in [packages/config/src/secrets.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/secrets.ts)). A config saved by Ethos itself vaults the value for you.
 
 Store the value in the vault, then reference it. For a Honeycomb-style header:
 

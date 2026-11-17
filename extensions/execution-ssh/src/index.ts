@@ -523,7 +523,7 @@ const NON_PERSISTENT_KNOWN_HOSTS = new Set(['none', '/dev/null', 'nul']);
  * because it is the ACTUAL attack (see {@link SshDestinationInvalidError}) and
  * an operator reading `invalid characters` would not learn that.
  *
- * Duplicated — not imported — in `packages/config/src/index.ts`
+ * Duplicated — not imported — in `packages/config/src/builders/execution.ts`
  * (`sshDestinationError`), which applies the same grammar at config-parse time
  * so a bad target is fatal at boot rather than at first tool call. `config` is
  * a lower layer than `extensions` and cannot import from one (ARCHITECTURE.md
@@ -562,7 +562,7 @@ export function sshDestinationError(ssh: SshTarget): string | null {
  * creates the file on the first connection, which is the ordinary way an
  * operator adopts a dedicated `knownHostsFile`.
  *
- * Duplicated — not imported — in `packages/config/src/index.ts`
+ * Duplicated — not imported — in `packages/config/src/builders/execution.ts`
  * (`sshKnownHostsError`), which applies the same rule at config-parse time so a
  * non-persistent target is fatal at boot rather than silently trusting whatever
  * key is offered at the first tool call. `config` is a lower layer than

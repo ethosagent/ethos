@@ -67,7 +67,7 @@ telemetry.export.otlp.intervalMs: 3000
 | `telemetry.export.otlp.includeContent` | `false` | Also export tool arguments and event cause/details. See [Content stays local by default](export-traces-otlp/backends-privacy-delivery.md#content-stays-local-by-default). |
 | `telemetry.export.otlp.backlogMaxAgeMs` | `86400000` (24h) | Unexported traces older than this are dropped, not shipped. |
 
-The keys and their parsing live in `TelemetryOtlpExportConfig` in [packages/config/src/index.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts).
+The keys and their parsing live in `TelemetryOtlpExportConfig` in [packages/config/src/section-types.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/section-types.ts).
 
 ## 3. Start a long-running host
 

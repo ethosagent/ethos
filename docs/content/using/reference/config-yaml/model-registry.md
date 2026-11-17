@@ -14,7 +14,7 @@ Keys that describe models and chain providers for failover. Part of the [config.
 
 Type: dotted block · Default: unset (the legacy [`model`](provider-and-model.md#model) serves)
 
-The deployment's roster of model **aliases**. A personality's [`model`](../personality-yaml.md#model) names an alias or a role, and the registry turns it into a provider entry and a vendor model id. Parsed by `buildModelRegistry` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts); the type is `ModelRegistryEntry` in [`packages/types/src/model-registry.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/model-registry.ts).
+The deployment's roster of model **aliases**. A personality's [`model`](../personality-yaml.md#model) names an alias or a role, and the registry turns it into a provider entry and a vendor model id. Parsed by `buildModelRegistry` in [`packages/config/src/model-registry-config.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/model-registry-config.ts); the type is `ModelRegistryEntry` in [`packages/types/src/model-registry.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/model-registry.ts).
 
 | Field | Type | Description |
 |---|---|---|

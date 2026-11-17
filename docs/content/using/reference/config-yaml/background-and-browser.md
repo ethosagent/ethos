@@ -98,13 +98,13 @@ Managed by `ethos set personality <id>` / `ethos set team <name>`. The runtime w
 
 Notes:
 
-- `activeContext.type: personality` is deprecated for one release: on load it is migrated to `personality: <name>` and the file is rewritten automatically, with a warning saying no action is needed (`migrateActiveContextPersonality` in `packages/config/src/index.ts`). The team form is unchanged — `activeContext` now only names a team.
+- `activeContext.type: personality` is deprecated for one release: on load it is migrated to `personality: <name>` and the file is rewritten automatically, with a warning saying no action is needed (`migrateActiveContextPersonality` in `packages/config/src/io.ts`). The team form is unchanged — `activeContext` now only names a team.
 
 ## File location and permissions {#file-location}
 
 `~/.ethos/config.yaml` is written by `ethos setup` and `ethos personality set`. The companion `~/.ethos/keys.json` (chmod 600) holds the rotation pool — manage it through `ethos keys`, not by hand.
 
-The directory can be relocated with the `ETHOS_STATE_DIR` env var, read by `ethosDir()` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts).
+The directory can be relocated with the `ETHOS_STATE_DIR` env var, read by `ethosDir()` in [`packages/config/src/paths.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/paths.ts).
 
 ## See also {#see-also}
 
