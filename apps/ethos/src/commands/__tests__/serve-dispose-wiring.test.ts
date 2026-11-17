@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { disposeBeforeExit } from '../../lib/dispose-before-exit';
 import { closeListener, listenWithFallback } from '../serve-listen';
 import { bootFileWith, readBootSources } from './boot-sources';
+import { readServeSources, serveFileWith } from './serve-sources';
 
 // F06 (plan architecture-suggestions-2026-09-10) — every runtime `ethos serve`,
 // `ethos gateway` and `ethos boot` build is disposed on the way out: the web
@@ -27,7 +28,7 @@ function cleanupAfter(src: string, from: number): string {
 
 describe('serve.ts — runtime disposal', () => {
   it('takes dispose off every loop-construction branch', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src.match(/disposeLoop = result\.dispose;/g) ?? []).toHaveLength(2);
     expect(src).toContain('dispose: teamDispose,');
     expect(src).toContain('disposeLoop = teamDispose;');
@@ -36,7 +37,7 @@ describe('serve.ts — runtime disposal', () => {
   });
 
   it('disposes the web API, then the loop, then its own sessions.db, on shutdown', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toMatch(/\['web api', webDispose\],\n\s+\['agent loop', disposeLoop\],/);
     // Both branches close their own sessions.db handles, after the loop.
     expect(
@@ -47,7 +48,7 @@ describe('serve.ts — runtime disposal', () => {
   });
 
   it('closes its listener with closeListener in both branches — never a bare server.close()', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain('const webShutdown = () => closeListener(server);');
     expect(src).toContain(']).then(() => closeListener(server));');
     expect(src).not.toMatch(/server\.close\(\(\) => resolve\(\)\)/);
@@ -85,7 +86,11 @@ describe('serve.ts — runtime disposal', () => {
   });
 
   it('onboarding mode disposes the loop it booted lazily, after any boot in flight', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = serveFileWith(
+      'if (config === null) {',
+      'disposeRealLoop = agentResult.dispose;',
+      'const cleanup = async (): Promise<void> => {',
+    );
     const onboarding = src.indexOf('if (config === null) {');
     expect(onboarding).toBeGreaterThan(-1);
     expect(src.indexOf('disposeRealLoop = agentResult.dispose;', onboarding)).toBeGreaterThan(-1);
@@ -104,7 +109,11 @@ describe('serve.ts — runtime disposal', () => {
 // listed the top level of `.ethos`).
 describe('serve.ts — the a2a task store and the signal guard', () => {
   it('clears the a2a retention timer and closes tasks.db on the way out', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = serveFileWith(
+      'clearInterval(a2a.retentionTimer);',
+      "['agent loop', disposeLoop],",
+      "['a2a tasks.db'",
+    );
     expect(src).toContain('clearInterval(a2a.retentionTimer);');
     expect(src).toContain("['a2a tasks.db', async () => a2a.taskStore.close()],");
     // After the runtimes that write through it, like the other host stores.
@@ -113,7 +122,7 @@ describe('serve.ts — the a2a task store and the signal guard', () => {
   });
 
   it('closes the team notify queue it opened', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     // Opened by the host, not inside the ACP builder, so the host can close it.
     expect(src).toContain(
       "const notifyQueue = teamFlag ? new SQLiteNotifyQueue(join(dir, 'notify-queue.db')) : undefined;",
@@ -122,7 +131,7 @@ describe('serve.ts — the a2a task store and the signal guard', () => {
   });
 
   it('runs its shutdown once however many signals arrive (both branches)', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     // The same memoised shape `boot.ts` uses: one promise, every caller awaits it.
     expect(src.match(/shuttingDown \?\?= \(async \(\) => \{/g) ?? []).toHaveLength(2);
     // …and both signals still reach it — the guard is in `cleanup`, not in
@@ -193,7 +202,7 @@ describe('gateway.ts / boot.ts — runtime disposal', () => {
   });
 
   it('serve closes chat before its listener in both branches', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(
       src.match(
         /await created\.closeChat\(\);\n(?:\s*\/\/.*\n)*\s*(?:if \(webShutdown\) \{\n\s*)?await boundedShutdownStep\('web listener', webShutdown,/g,

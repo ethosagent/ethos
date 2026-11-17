@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 // F04 (plan architecture-suggestions-2026-09-10) — every loop-construction
 // branch of `ethos serve` forwards the memory bundle its loop was built with,
@@ -17,12 +18,12 @@ const read = (path: string): Promise<string> => readFile(join(root, path), 'utf8
 
 describe('serve.ts — memory bundle forwarding', () => {
   it('takes the bundle from createAgentLoop in both non-team branches', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src.match(/memoryBundle = result\.memoryBundle;/g) ?? []).toHaveLength(2);
   });
 
   it('takes the bundle from createTeamAgentLoop in the coordinator branch', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain('memoryBundle: teamMemoryBundle,');
     expect(src).toContain('memoryBundle = teamMemoryBundle;');
     const wiring = await read('apps/ethos/src/wiring.ts');
@@ -32,7 +33,7 @@ describe('serve.ts — memory bundle forwarding', () => {
   });
 
   it('never hands the web API a markdown-only editor', async () => {
-    const serve = await read('apps/ethos/src/commands/serve.ts');
+    const serve = readServeSources();
     expect(serve).not.toContain('createMemoryProvider(');
     expect(serve).not.toContain('memoryBackend:');
     const boot = bootFileWith('memoryBundle: shared.memoryBundle,');
@@ -47,7 +48,7 @@ describe('serve.ts — onboarding mode keeps one memory selection', () => {
   // out-of-band edit could, and the two would disagree until restart — so the
   // lazily booted loop is pinned to the startup selection instead.
   it('builds the onboarding bundle for the default backend and boots the loop on it', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain(
       'memoryBundle: createMemoryBundle({ config: {}, dataDir: dir, storage: getStorage() }),',
     );

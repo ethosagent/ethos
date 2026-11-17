@@ -31,6 +31,7 @@ import {
 } from '../../unattended-approval-gate';
 import { wireApprovalFlow } from '../gateway';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 vi.mock('@ethosagent/wiring', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@ethosagent/wiring')>();
@@ -193,7 +194,7 @@ describe('hosts hand the seams the default-config build’s site (source text)',
   });
 
   it('ethos serve --team: the coordinator build’s approverDecision is used', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/serve.ts'), 'utf-8');
+    const src = readServeSources();
     expect(src).toMatch(
       /approverDecision: teamApproverDecision,\s*\} = await createTeamAgentLoop\(/,
     );

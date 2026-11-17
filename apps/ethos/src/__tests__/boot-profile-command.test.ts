@@ -20,6 +20,7 @@ import type { BusySource } from '@ethosagent/idle-watcher';
 import { CallCaptureOwnershipManager } from '@ethosagent/platform-callcapture';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readServeSources } from '../commands/__tests__/serve-sources';
 import { dedupeBusySources } from '../wiring';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -330,7 +331,7 @@ describe('dedupeBusySources', () => {
 
 describe('ethos boot — `gateway` and `serve` are untouched (plan §2, §10)', () => {
   it('serve.ts still calls listenWithFallback without a reserved-port set', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     const calls = [...src.matchAll(/await listenWithFallback\(([\s\S]*?)\n\s*\);/g)];
     expect(calls).toHaveLength(2);
     for (const [, argsText] of calls) {

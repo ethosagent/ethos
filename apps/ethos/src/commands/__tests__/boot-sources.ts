@@ -12,10 +12,7 @@
 //     across two modules this throws, instead of comparing offsets from two
 //     different files and passing by accident.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const COMMANDS = join(import.meta.dirname, '..');
+import { fileWith, readCommandSource, readSources } from './command-sources';
 
 /** `runBoot` first, then the modules it delegates phases to. */
 export const BOOT_SOURCE_FILES = [
@@ -27,25 +24,16 @@ export const BOOT_SOURCE_FILES = [
 ] as const;
 
 export function readBootSource(file: (typeof BOOT_SOURCE_FILES)[number]): string {
-  return readFileSync(join(COMMANDS, file), 'utf8');
+  return readCommandSource(file);
 }
 
 /** Every boot module, concatenated. For whole-source guards only. */
 export function readBootSources(): string {
-  return BOOT_SOURCE_FILES.map(readBootSource).join('\n');
+  return readSources(BOOT_SOURCE_FILES);
 }
 
 /** The single boot module containing every anchor. Throws when none does, or
  *  when more than one does (an ambiguous anchor). */
 export function bootFileWith(...anchors: string[]): string {
-  const hits = BOOT_SOURCE_FILES.filter((file) => {
-    const src = readBootSource(file);
-    return anchors.every((anchor) => src.includes(anchor));
-  });
-  if (hits.length !== 1) {
-    throw new Error(
-      `expected exactly one boot module holding ${JSON.stringify(anchors)}, found ${JSON.stringify(hits)}`,
-    );
-  }
-  return readBootSource(hits[0] as (typeof BOOT_SOURCE_FILES)[number]);
+  return fileWith('boot', BOOT_SOURCE_FILES, ...anchors);
 }

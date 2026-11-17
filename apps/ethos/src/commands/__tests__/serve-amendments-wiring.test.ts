@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 // plan personality-memory-boundary-and-self-amendment G2 (D30) — every
 // in-process web-API host hands `createWebApi` the loop's self-amendment
@@ -18,7 +19,7 @@ const read = (path: string): Promise<string> => readFile(join(root, path), 'utf8
 
 describe('createWebApi hosts — amendments injection', () => {
   it('ethos serve: both createAgentLoop branches and the team branch assign it', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src.match(/amendments = result\.amendments;/g) ?? []).toHaveLength(2);
     expect(src).toMatch(/amendments: teamAmendments,/);
     expect(src).toMatch(/amendments = teamAmendments;/);
@@ -29,7 +30,7 @@ describe('createWebApi hosts — amendments injection', () => {
   });
 
   it('buildServeWebApi forwards it to createWebApi; ethos boot passes the shared loop’s', async () => {
-    const serve = await read('apps/ethos/src/commands/serve.ts');
+    const serve = readServeSources();
     expect(serve).toMatch(/Self-amendments, read-only \(D30\)[^\n]*\n\s+amendments,\n/);
     const boot = bootFileWith('amendments: shared.amendments,');
     expect(boot).toContain('amendments: shared.amendments,');

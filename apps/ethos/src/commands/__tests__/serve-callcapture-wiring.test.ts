@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readServeSources as readAllServeSources } from './serve-sources';
 
 // `runServe()` is a long-running composition root (opens two servers, a
 // cron scheduler, a mesh registration, and never returns while healthy) —
@@ -13,8 +12,7 @@ import { describe, expect, it } from 'vitest';
 // `watcherWake` closure (not a duplicate), and torn down on shutdown.
 
 async function readServeSource(): Promise<string> {
-  const root = join(import.meta.dirname, '..', '..', '..', '..', '..');
-  return readFile(join(root, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+  return readAllServeSources();
 }
 
 describe('serve.ts — call-capture daemon wiring', () => {

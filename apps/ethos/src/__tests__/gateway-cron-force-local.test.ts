@@ -25,6 +25,7 @@ import type { CronEngine } from '@ethosagent/cron';
 import { buildCronTriggers, HttpFireTrigger, LocalIntervalTrigger } from '@ethosagent/cron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootFileWith } from '../commands/__tests__/boot-sources';
+import { readServeSources } from '../commands/__tests__/serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const read = (rel: string) => readFile(join(ROOT, rel), 'utf8');
@@ -112,14 +113,14 @@ describe('ethos serve / ethos boot honour cron.fireUrl and say so at boot', () =
     it(`${file} passes hasHttpSurface: true and prints the notices`, async () => {
       const src = file.endsWith('/boot.ts')
         ? bootFileWith('hasHttpSurface: true,', 'for (const notice of cronTriggers.notices)')
-        : await read(file);
+        : readServeSources();
       expect(src).toContain('hasHttpSurface: true,');
       expect(src).toContain('for (const notice of cronTriggers.notices)');
     });
   }
 
   it('serve.ts hands the fire trigger to createWebApi unconditionally (D2)', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain('cronFireTrigger: cronTriggers.external,');
     // The conditional spread is dead code now that `external` is non-nullable.
     expect(src).not.toContain('cronTriggers.external ?');

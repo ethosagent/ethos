@@ -15,6 +15,7 @@ import {
   nextBackoff,
   pruneRestarts,
 } from '../run-all';
+import { readServeSources } from './serve-sources';
 
 describe('run-all — pure helpers', () => {
   describe('defaultChildSpecs', () => {
@@ -185,7 +186,7 @@ describe('run-all — pure helpers', () => {
       // serve.ts has five call sites across its two branches (onboarding: one;
       // full: four); the longer branch is four steps. Its listener step
       // includes `LISTENER_FLUSH_MS`, so the flush adds nothing on top.
-      expect(await steps('apps/ethos/src/commands/serve.ts')).toBe(5);
+      expect((readServeSources().match(/boundedShutdownStep\(/g) ?? []).length).toBe(5);
       const serve =
         (await constant('apps/web-api/src/features/chat/service.ts', 'CLOSE_GRACE_MS')) +
         4 * step +

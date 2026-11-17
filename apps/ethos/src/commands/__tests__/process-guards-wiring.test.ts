@@ -11,6 +11,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 const read = (file: string) => readFile(join(ROOT, 'apps/ethos/src/commands', file), 'utf8');
@@ -33,7 +34,7 @@ describe('process guards wiring', () => {
   }
 
   it('serve.ts uses the same helper and registers no handlers of its own', async () => {
-    const src = await read('serve.ts');
+    const src = readServeSources();
     expect(src).toContain("installProcessGuards({ command: 'serve'");
     expect(src).not.toContain("process.on('unhandledRejection'");
     expect(src).not.toContain("process.on('uncaughtException'");

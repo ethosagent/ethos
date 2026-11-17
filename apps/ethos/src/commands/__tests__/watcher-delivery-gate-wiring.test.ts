@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
+import { serveFileWith } from './serve-sources';
 
 const COMMANDS = join(import.meta.dirname, '..');
 const read = (name: string) => readFileSync(join(COMMANDS, name), 'utf8');
@@ -38,7 +39,14 @@ const ROOTS: ReadonlyArray<readonly [string, string, string]> = [
     ),
     '\n  const personalities = await createPersonalityRegistry({',
   ],
-  ['serve.ts', read('serve.ts'), '\n  const personalities = await createPersonalityRegistry({'],
+  [
+    'serve.ts',
+    serveFileWith(
+      'new WatcherManager({',
+      '\n  const personalities = await createPersonalityRegistry({',
+    ),
+    '\n  const personalities = await createPersonalityRegistry({',
+  ],
 ];
 
 describe.each(ROOTS)('%s', (_name, source, registryDecl) => {

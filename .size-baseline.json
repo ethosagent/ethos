@@ -154,7 +154,7 @@
     {
       "path": "apps/ethos/src/commands/serve.ts",
       "kind": "source",
-      "lines": 2630
+      "lines": 2422
     },
     {
       "path": "apps/ethos/src/config-reload.ts",
@@ -1290,11 +1290,6 @@
       "path": "packages/wiring/src/__tests__/amendments.test.ts",
       "kind": "test",
       "lines": 1190
-    },
-    {
-      "path": "packages/wiring/src/__tests__/approval-seams.test.ts",
-      "kind": "test",
-      "lines": 518
     },
     {
       "path": "packages/wiring/src/__tests__/backup-schedule.test.ts",

@@ -1,16 +1,15 @@
 // Constants and import-free helpers for `ethos boot` (./boot.ts), split out so
-// boot.ts and its phase modules (./boot-reload.ts) share one copy. No module
+// boot.ts and its phase modules (./boot-reload.ts) share one copy. The ones that
+// serve and gateway also need live in ./_shared and are re-exported here. No module
 // state: every export here is a constant or a pure function.
 
-import { join } from 'node:path';
-import { ethosDir } from '@ethosagent/config';
-
-export const ACP_PORT_DEFAULT = 3001;
-export const WEB_PORT_FALLBACK_ATTEMPTS = 5;
-export const HEARTBEAT_INTERVAL_MS = 10_000;
-/** Same cadence gateway.ts and serve.ts already use for the call-capture
- *  ownership retry — do not invent a second interval. */
-export const CALL_CAPTURE_HEARTBEAT_INTERVAL_MS = 10_000;
+export {
+  ACP_PORT_DEFAULT,
+  CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
+  gatewayHealthPath,
+  HEARTBEAT_INTERVAL_MS,
+  WEB_PORT_FALLBACK_ATTEMPTS,
+} from './_shared';
 /** How often `ethos boot` re-reads `~/.ethos/config.yaml` to diff it against
  *  the running config (plan/phases/gateway-live-reload.md §1, open question
  *  §7.1 — DECIDED: a dedicated constant, not `HEARTBEAT_INTERVAL_MS`). The two
@@ -31,7 +30,3 @@ export const c = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
 };
-
-export function gatewayHealthPath(): string {
-  return join(ethosDir(), 'gateway-health.json');
-}

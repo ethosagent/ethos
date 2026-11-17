@@ -15,6 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readServeSources, serveFileWith } from '../commands/__tests__/serve-sources';
 import {
   applyPauseCorrections,
   buildPauseCorrectionTargets,
@@ -149,7 +150,11 @@ describe('every long-running command registers the mid-run resume handler', () =
     'apps/ethos/src/commands/serve.ts',
   ]) {
     it(`${file} subscribes to onResume`, async () => {
-      const src = file.endsWith('/boot.ts') ? readBootSources() : await read(file);
+      const src = file.endsWith('/boot.ts')
+        ? readBootSources()
+        : file.endsWith('/serve.ts')
+          ? readServeSources()
+          : await read(file);
       // Optional-called: `NoopPauseLifecycle` has no `onResume`, so a deployment
       // that never enabled `pauseClockCorrection` must not crash on boot.
       expect(src).toMatch(/pauseLifecycle\.onResume\?\.\(|onPauseResume\?\.\(/);
@@ -174,7 +179,7 @@ describe('every long-running command registers the mid-run resume handler', () =
   });
 
   it('serve.ts corrects the kanban board, the highest-stakes gate in the pass', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = serveFileWith('void applyPauseCorrections(', 'bumpKanbanHeartbeats(boardPath');
     const call = src.slice(src.indexOf('void applyPauseCorrections('));
     expect(call).toContain('bumpKanbanHeartbeats(boardPath');
   });

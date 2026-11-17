@@ -19,6 +19,7 @@ import type { BeforeToolCallPayload, HookRegistry } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { wireUnattendedApprovalGate } from '../../unattended-approval-gate';
 import { readBootSources } from './boot-sources';
+import { serveFileWith } from './serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
@@ -79,7 +80,7 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
   it('ethos boot: the idle bot shares the web loop, which never takes the D12 opt-in', async () => {
     // Every boot module: a hot-add path in boot-reload.ts builds bot loops too.
     const boot = readBootSources();
-    const serve = await readFile(join(ROOT, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+    const serve = serveFileWith('export function buildServeDangerPredicate(');
     // No unattended gate, and no opt-in threaded anywhere in boot…
     expect(boot).not.toContain('wireUnattendedApprovalGate(');
     expect(boot).not.toContain('allowAutoApproveDangerousTools');

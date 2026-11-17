@@ -24,6 +24,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from '../commands/__tests__/boot-sources';
+import { readServeSources } from '../commands/__tests__/serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -52,7 +53,7 @@ describe('the composition roots thread the LOOP registry, not a fresh one', () =
   // `@ethosagent/acp-server`), which is why every test covering it asserts
   // against its source — see boot-profile-extraction.test.ts.
   it('serve assigns the loop result and forwards it to createWebApi', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+    const src = readServeSources();
     expect(src).toContain('executionBackends = result.executionBackends;');
     // Spread, not `executionBackends: undefined`: absent means the service is
     // built without a registry and answers `backend_unresolved` with the

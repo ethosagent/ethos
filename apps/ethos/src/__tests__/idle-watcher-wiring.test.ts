@@ -12,7 +12,7 @@
 //      the boot path, guarded by the opt-in, and torn down on shutdown — the
 //      shape `no-raw-fs.test.ts` / `no-raw-throw.test.ts` already use here.
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EthosConfig } from '@ethosagent/config';
@@ -21,8 +21,6 @@ import { NoopPauseLifecycle } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildGatewayBusySources } from '../commands/gateway';
 import { buildServeBusySources, deriveIdleWatcherCapabilities } from '../wiring';
-
-const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 
 /** An empty teams dir — `hasLiveTeamProcesses` reports "no teams" for it. */
 let teamsPidDir: string;
@@ -434,59 +432,4 @@ describe('deriveIdleWatcherCapabilities', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The boot path itself
-// ---------------------------------------------------------------------------
-
-describe('idle watcher construction on the production boot path', () => {
-  const commands: Array<{ file: string; builder: string; teardown: string }> = [
-    {
-      file: join(REPO_ROOT, 'apps', 'ethos', 'src', 'commands', 'gateway.ts'),
-      builder: 'buildGatewayBusySources(',
-      teardown: 'idleWatcher?.stop();',
-    },
-    {
-      file: join(REPO_ROOT, 'apps', 'ethos', 'src', 'commands', 'serve.ts'),
-      builder: 'buildServeBusySources(',
-      teardown: 'idleWatcher?.stop();',
-    },
-  ];
-
-  for (const command of commands) {
-    describe(command.file.split('/').slice(-1)[0] ?? command.file, () => {
-      let source: string;
-
-      beforeEach(async () => {
-        source = await readFile(command.file, 'utf-8');
-      });
-
-      it('constructs the manager exactly once, from its own busy sources', () => {
-        expect(source.split('new IdleWatcherManager(').length - 1).toBe(1);
-        expect(source).toContain(command.builder);
-      });
-
-      it('gates construction on the explicit opt-in (arming gate 1)', () => {
-        const guard = source.indexOf('if (config.idleWatcher?.enabled === true) {');
-        expect(guard).toBeGreaterThan(-1);
-        expect(guard).toBeLessThan(source.indexOf('new IdleWatcherManager('));
-      });
-
-      it('starts it — the whole point of wiring it', () => {
-        expect(source).toContain('idleWatcher.start();');
-      });
-
-      it('stops it on the existing shutdown path, so SIGTERM leaves no interval', () => {
-        expect(source).toContain(command.teardown);
-        expect(source.indexOf(command.teardown)).toBeLessThan(
-          source.indexOf('new IdleWatcherManager('),
-        );
-      });
-
-      it('constructs it after the signal handlers — nothing else is wired later', () => {
-        expect(source.indexOf("process.on('SIGTERM'")).toBeLessThan(
-          source.indexOf('new IdleWatcherManager('),
-        );
-      });
-    });
-  }
-});
+// The boot path itself: idle-watcher-wiring.construction.test.ts.

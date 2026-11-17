@@ -7,6 +7,7 @@ import { INCOGNITO_MAX_AGE_MS } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import { scrubExpiredIncognito } from '../../lib/incognito-retention';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 const NOW = Date.parse('2026-11-04T00:00:00Z');
 
@@ -47,7 +48,7 @@ describe('incognito sweep wiring', () => {
   });
 
   it('serve.ts runs an hourly sweep and stops it on shutdown', async () => {
-    const src = await read('serve.ts');
+    const src = readServeSources();
     expect(src).toContain('scrubExpiredIncognito(session)');
     expect(src).toContain('const incognitoSweepTimer = setInterval(sweepIncognito, 3_600_000);');
     expect(src).toContain('clearInterval(incognitoSweepTimer);');

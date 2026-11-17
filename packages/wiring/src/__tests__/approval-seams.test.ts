@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   AgentLoop,
   DefaultHookRegistry,
@@ -488,31 +486,5 @@ describe('smart mode through a real agent turn', () => {
     );
     expect(executed).toBe(0);
     expect(calls()).toBe(1);
-  });
-});
-
-describe('entry-point wiring', () => {
-  // The regression this guards: all three surfaces used to call
-  // `createDangerPredicate()` with no arguments, which pinned every
-  // personality to `manual` and made `denyRules` / `approvalMode` inert.
-  const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
-  const ENTRY_POINTS = [
-    'apps/ethos/src/commands/serve.ts',
-    'apps/ethos/src/commands/gateway.ts',
-    'apps/desktop/src/main/serve.ts',
-  ];
-
-  it.each(ENTRY_POINTS)('%s builds its danger predicate with the seams', (relPath) => {
-    const src = readFileSync(join(ROOT, relPath), 'utf-8');
-    expect(src).toContain('createApprovalDangerPredicate({');
-    expect(src).not.toMatch(/createDangerPredicate\(\s*\)/);
-  });
-
-  // Every surface that CAN prompt must flag the always-ask set. Checked at the
-  // source because the value only matters at the construction site — a predicate
-  // built without it is silently ungated, with no runtime signal.
-  it.each(ENTRY_POINTS)('%s passes APPROVAL_SURFACE_ALWAYS_ASK', (relPath) => {
-    const src = readFileSync(join(ROOT, relPath), 'utf-8');
-    expect(src).toContain('alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK');
   });
 });

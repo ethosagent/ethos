@@ -226,6 +226,11 @@ import {
   getStorage,
   loadTeamManifest,
 } from '../wiring';
+import {
+  CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
+  gatewayHealthPath,
+  HEARTBEAT_INTERVAL_MS,
+} from './_shared';
 import { createCronRunJob, cronContextAudience, cronFiringAudience } from './cron-turn';
 import {
   ensureTeamSupervisors,
@@ -238,7 +243,6 @@ import { isPidAlive } from './team-runtime';
 // Gateway heartbeat
 // ---------------------------------------------------------------------------
 
-const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 /** How long a CONFIRMED delivery obligation is kept before it is pruned. The
  *  rows hold message bodies, so an unbounded ledger is a privacy and disk
@@ -330,10 +334,6 @@ export function gatewaySqliteStorePaths(dataDir: string): string[] {
   return ['sessions.db', 'delivery-ledger.db', 'inbound-dedup.db', 'inbound-spool.db'].map((file) =>
     join(dataDir, file),
   );
-}
-
-function gatewayHealthPath(): string {
-  return join(ethosDir(), 'gateway-health.json');
 }
 
 /**
@@ -2251,7 +2251,6 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // 10s cadence is reused below as the ownership-claim retry interval too
   // (P0, plan/phases/call-capture-desktop-ux.md — don't invent a second
   // interval).
-  const CALL_CAPTURE_HEARTBEAT_INTERVAL_MS = 10_000;
   let callCaptureOwnershipManager: CallCaptureOwnershipManager | undefined;
   let callCaptureState: { kind: string } = { kind: 'idle' };
   if (

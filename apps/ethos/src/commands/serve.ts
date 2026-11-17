@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve as pathResolve } from 'node:path';
+import { join } from 'node:path';
 import {
   type A2aAuditSink,
   A2aDelegationGuard,
@@ -15,7 +14,6 @@ import {
   StorageA2aAllowlist,
   StorageA2aPeerStore,
 } from '@ethosagent/a2a';
-import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   configParseNotices,
@@ -81,11 +79,8 @@ import {
   WebTokenRepository,
 } from '@ethosagent/web-api';
 import {
-  APPROVAL_SURFACE_ALWAYS_ASK,
   buildA2aPeeringService,
-  createApprovalDangerPredicate,
   createBrowserTakeoverRegistry,
-  createLazyProvider,
   createMemoryBundle,
   createOutboundPolicyGate,
   createProjectContextInjector,
@@ -100,7 +95,6 @@ import {
   seedAllSystemJobs,
   systemJobProblem,
 } from '@ethosagent/wiring';
-import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
@@ -133,9 +127,15 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
+import {
+  ACP_PORT_DEFAULT,
+  CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
+  WEB_PORT_FALLBACK_ATTEMPTS,
+} from './_shared';
 import { cronContextAudience, cronFiringAudience, runCronTurn } from './cron-turn';
 import { buildBotSpeakers } from './gateway';
 import { createA2aRunner } from './serve-a2a-runner';
+import { buildServeAcpServer } from './serve-acp';
 import {
   a2aZeroSkillsWarning,
   parseFlagValue,
@@ -151,6 +151,19 @@ import {
   isLoopbackHost,
   listenWithFallback,
 } from './serve-listen';
+import {
+  buildServeDangerPredicate,
+  SERVE_LOOP_PROFILE,
+  type ServeLoopOptions,
+  type ServePersonalityRegistry,
+} from './serve-loop';
+import { listRegisteredTeams, locateWebDist } from './serve-util';
+import type { BuildServeWebApiOptions, ServeVoiceConfig } from './serve-web-api';
+
+export { type BuildServeAcpServerOptions, buildServeAcpServer } from './serve-acp';
+export { buildServeDangerPredicate } from './serve-loop';
+export { locateWebDist } from './serve-util';
+export type { BuildServeWebApiOptions } from './serve-web-api';
 
 // `ethos serve` boots:
 //   • ACP server on `--port` (default 3001) + mesh registration
@@ -159,29 +172,10 @@ import {
 // Both servers share one `SessionStore` so chat from web and from ACP land
 // in the same database. SIGINT / SIGTERM cleans up both before exiting.
 
-const ACP_PORT_DEFAULT = 3001;
-const WEB_PORT_FALLBACK_ATTEMPTS = 5;
-
 /** Where a timed-out or failed `boundedShutdownStep` on `cleanup` is reported. */
 const shutdownStepReporting = {
   sink: () => getEthosObservability(),
   warn: (message: string) => console.warn(message),
-};
-
-/** The voice slice `createAgentLoop`/`createTeamAgentLoop` hands back, as
- *  `runServe` holds it and as `buildServeWebApi` below receives it. */
-type ServeVoiceConfig = {
-  sttProviderName?: string;
-  sttProviderConfig: Record<string, unknown>;
-  ttsProviderName?: string;
-  ttsProviderConfig: Record<string, unknown>;
-  ttsRoster?: Record<string, import('@ethosagent/types').TtsProviderEntry>;
-  sttRoster?: Record<string, import('@ethosagent/types').SttProviderEntry>;
-  realtimeRoster?: Record<string, import('@ethosagent/types').RealtimeProviderEntry>;
-  realtimeDefault?: string;
-  tier?: 'pipeline' | 'realtime';
-  realtimeSessionBudgetUsd?: number;
-  trustedVoicePlugins?: ReadonlySet<string>;
 };
 
 export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
@@ -1201,7 +1195,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // (mirrors the gateway's own `gateway-health.json` heartbeat) — same 10s
   // cadence is reused below as the ownership-claim retry interval too (P0,
   // plan/phases/call-capture-desktop-ux.md — don't invent a second interval).
-  const CALL_CAPTURE_HEARTBEAT_INTERVAL_MS = 10_000;
   let callCaptureOwnershipManager: CallCaptureOwnershipManager | undefined;
   // Last known daemon state, for the idle watcher's `callCaptureActive`
   // busy-source below — a call actually in progress right now, not a
@@ -1686,49 +1679,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   await new Promise(() => {});
 }
 
-/**
- * Resolve the absolute path to the built SPA. Search order:
- *   1. `--web-dist <path>` flag (explicit, wins).
- *   2. Sibling to the bundled CLI: `<cliDist>/web/index.html` (the
- *      pre-publish hook that bundles the web app drops it here, per
- *      CEO finding 9.1).
- *   3. Monorepo dev path: `apps/web/dist/index.html` resolved up from
- *      `import.meta.dirname`.
- * Returns null when no candidate exists; the server skips the static
- * mount and prints a hint pointing devs at `pnpm dev:web`.
- */
-export function locateWebDist(explicit: string | undefined): string | null {
-  if (explicit) {
-    const abs = pathResolve(explicit);
-    return existsSync(join(abs, 'index.html')) ? abs : null;
-  }
-  const candidates = [
-    pathResolve(import.meta.dirname, '..', 'web'),
-    pathResolve(import.meta.dirname, '..', '..', '..', '..', 'apps', 'web', 'dist'),
-    pathResolve(import.meta.dirname, '..', '..', '..', 'apps', 'web', 'dist'),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'index.html'))) return candidate;
-  }
-  return null;
-}
-
-/**
- * Enumerate registered team names for `GET /v1/models`. Scoped to the
- * `dataDir` the server is actually using (not `~/.ethos/teams` blindly),
- * so isolated/test installations report only their own teams. Manifest
- * files live at `<dataDir>/teams/<name>.yaml`; `.runtime.yaml` is the
- * supervisor's runtime state, not a manifest.
- */
-function listRegisteredTeams(dataDir: string): string[] {
-  const teamsPath = join(dataDir, 'teams');
-  if (!existsSync(teamsPath)) return [];
-  return readdirSync(teamsPath, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.yaml') && !e.name.endsWith('.runtime.yaml'))
-    .map((e) => e.name.slice(0, -'.yaml'.length))
-    .sort();
-}
-
 // ---------------------------------------------------------------------------
 // Serve-role construction seams
 // ---------------------------------------------------------------------------
@@ -1740,21 +1690,10 @@ function listRegisteredTeams(dataDir: string): string[] {
 // `runServe` calls in place of the inline code — behavior-identical, same
 // order, same arguments.
 //
-// They live in THIS file rather than a sibling module because
-// `packages/wiring/src/__tests__/approval-seams.test.ts` asserts against the
-// SOURCE TEXT of `apps/ethos/src/commands/serve.ts` that the danger predicate
-// is built with its seams (`createApprovalDangerPredicate({` …
-// `alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK`) — that construction site is inside
-// the web-api option assembly, so moving it to another file would break that
-// gate.
-
-type ServePersonalityRegistry = Awaited<ReturnType<typeof createPersonalityRegistry>>;
-
-type ServeLoopOptions = NonNullable<Parameters<typeof createAgentLoop>[1]>;
-
-/** Every `ethos serve` loop runs the web profile: no terminal guard — the web
- *  approval hook is the gate for dangerous calls. */
-const SERVE_LOOP_PROFILE = 'web' as const;
+// `serveLoopOptions` stays in THIS file because it needs `meshRegistryPath` from
+// `@ethosagent/agent-mesh`, an app-to-extension import that archcheck rule
+// `l5-apps-through-wiring` baselines for this file's path and would refuse in a
+// new module.
 
 /**
  * The `createAgentLoop` options of an `ethos serve` loop, shared by the normal
@@ -1782,101 +1721,6 @@ export function serveLoopOptions(opts: {
     ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
   };
-}
-
-/**
- * The danger check behind the web approval modal, shared by the normal web API
- * and the loop onboarding binds after boot. Same `checkCommand` rules the CLI
- * guard uses, surfaced through the modal instead of a hard block; threaded
- * with the turn's personality (learned from the loop's `session_start`) so
- * `approvalMode` is enforced, plus a lazy provider handle for
- * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
- * actually reaches the reviewer. `decision` is the smart reviewer's decision
- * site from the same build as `loop` (`CreateAgentLoopResult.approverDecision`,
- * plan decision-provider-jev §8.2); absent, the reviewer is the LLM path only.
- */
-export function buildServeDangerPredicate(
-  loop: AgentLoop,
-  personalities: ServePersonalityRegistry,
-  config: EthosConfig,
-  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'],
-  usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>,
-  decision?: SmartApproverDecisionSite,
-): ReturnType<typeof createApprovalDangerPredicate> {
-  return createApprovalDangerPredicate({
-    hooks: [loop.hooks],
-    personalities,
-    getProvider: createLazyProvider(() => createLLM(config)),
-    model: config.model,
-    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
-    ...(decision ? { decision } : {}),
-    executionPostureFor,
-    usageMeter,
-  });
-}
-type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
-
-export interface BuildServeAcpServerOptions {
-  loop: AcpServerOptions['runner'];
-  session: AcpServerOptions['session'];
-  mesh: AcpServerOptions['mesh'];
-  personalities: ServePersonalityRegistry;
-  activePersonality: string;
-  /** `--team <name>`; absent on a solo serve. */
-  teamFlag: string | undefined;
-  /** Team boards only — the passive `notify`-mode delivery queue. Opened by
-   *  the CALLER so it also closes it (F06); absent on a solo serve. */
-  notifyQueue?: SQLiteNotifyQueue;
-  mcpManager: McpManager | undefined;
-  jobStore: AcpServerOptions['jobStore'];
-  backgroundExecutor: AcpServerOptions['backgroundExecutor'];
-  teamAuthToken: string | undefined;
-  /** Where the ACP server reports failures with no response left to carry them. */
-  logger?: AcpServerOptions['logger'];
-}
-
-/**
- * Construct the ACP server (plan §3b step 4, "ACP server construction").
- *
- * Construction only — `startHttp()` stays at the call site. `serve.ts` binds
- * ACP first on purpose ("kept first so any breakage is obvious"), and plan §3b's
- * callout / §11 Open Question 8 leaves that ordering undecided for the merged
- * profile; keeping the bind out of this function means neither answer is
- * pre-empted here.
- */
-export function buildServeAcpServer(opts: BuildServeAcpServerOptions): AcpServer {
-  const {
-    loop,
-    session,
-    mesh,
-    personalities,
-    activePersonality,
-    teamFlag,
-    mcpManager,
-    jobStore,
-    backgroundExecutor,
-    teamAuthToken,
-    logger,
-  } = opts;
-  // The MCP session-grant wiring is omitted on the team-coordinator path,
-  // which has no McpManager — `session/registerMcpServers` then fails closed.
-  return new AcpServer({
-    runner: loop,
-    session,
-    mesh,
-    personalityId: activePersonality,
-    // Lane C (kanban-hooks-notify-parity, Phase 2) — passive `notify`-mode
-    // delivery needs somewhere to land, which only exists for a team board.
-    // A solo (non-team) `ethos serve` just no-ops that path.
-    ...(teamFlag && opts.notifyQueue ? { teamId: teamFlag, notifyQueue: opts.notifyQueue } : {}),
-    ...(mcpManager
-      ? createAcpMcpWiring({ mcpManager, personalities, defaultPersonalityId: activePersonality })
-      : {}),
-    ...(jobStore ? { jobStore } : {}),
-    ...(backgroundExecutor ? { backgroundExecutor } : {}),
-    ...(teamAuthToken ? { authToken: teamAuthToken } : {}),
-    ...(logger ? { logger } : {}),
-  });
 }
 
 export interface BuildServeA2aCoreOptions {
@@ -2230,90 +2074,6 @@ export function buildServeA2aSurface(opts: {
     console.log('  a2a mesh:     enabled (un-advertised mesh mode; audit active)');
   }
   return { routeModules: a2aRouteModules, peering: a2aPeering, setA2aEnabled };
-}
-
-export interface BuildServeWebApiOptions {
-  config: EthosConfig;
-  /** `~/.ethos` (or the `--data-dir` override). */
-  dir: string;
-  loop: AgentLoop;
-  /** `CreateAgentLoopResult.approverDecision` of the build `loop` came from. */
-  approverDecision?: SmartApproverDecisionSite;
-  /** `CreateAgentLoopResult.executionPostureFor` of the build `loop` came from. */
-  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
-  /** `CreateAgentLoopResult.usageMeter` of the build `loop` came from. */
-  usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>;
-  session: ReturnType<typeof createSessionStore>;
-  contextLog: SQLiteContextLog;
-  personalities: ServePersonalityRegistry;
-  identityMap: IdentityMap;
-  attachmentCache: FsAttachmentCache;
-  apiKeys: SqliteApiKeyStore;
-  idempotencyStore: IdempotencyStore;
-  /** The concrete registry — the character sheet's `mcpExport` seam resolves
-   *  `mcp_export` against it, which needs `toolNamesForPersonality`. */
-  toolRegistry: DefaultToolRegistry | undefined;
-  mcpManager: McpManager | undefined;
-  pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
-  notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
-  cronScheduler: CronScheduler | null;
-  cronTriggers: CronTriggers;
-  /** The loop's goal store + executor pair. Undefined → web goal create/resume is refused. */
-  goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
-  /** The loop's memory surfaces (`CreateAgentLoopResult.memoryBundle`) — the
-   *  web editor, Timeline, restore and approve queue on its configured backend. */
-  memoryBundle: import('@ethosagent/wiring').MemoryBundle;
-  /** The loop's self-amendment service (`CreateAgentLoopResult.amendments`).
-   *  The web holds only its reads (`AmendmentReader`, D30). */
-  amendments: import('@ethosagent/web-api').AmendmentReader;
-  jobStore: import('@ethosagent/types').JobStore | undefined;
-  jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
-  jobControl: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'] | undefined;
-  backgroundExecutor:
-    | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
-    | undefined;
-  setOnSkillProposed: ((fn: (skillId: string, personalityId: string) => void) => void) | undefined;
-  onMemoryCaptured:
-    | import('@ethosagent/wiring').CreateAgentLoopResult['onMemoryCaptured']
-    | undefined;
-  refreshLoopPersonalities: (() => Promise<void>) | undefined;
-  skillsInjector: import('@ethosagent/skills').SkillsInjector | undefined;
-  /**
-   * The LOOP's execution-backend registry. Web-api's `ExecutionService` probes
-   * `get('ssh')` on it, and because `resolve()` memoises that is the instance
-   * `compose-tools` built for the tools — the probe tests what executes.
-   * Undefined on the team-coordinator path (`createTeamAgentLoop` exposes no
-   * registry) and in onboarding mode: the probe then answers
-   * `backend_unresolved` with the reason, never a guessed `unreachable`.
-   */
-  executionBackends: import('@ethosagent/types').ExecutionBackendRegistry | undefined;
-  skillsCatalogDir: ReturnType<typeof resolveSkillsCatalogDir>;
-  sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
-  ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
-  realtimeProviders: import('@ethosagent/types').RealtimeVoiceProviderRegistry | undefined;
-  voiceConfig: ServeVoiceConfig | undefined;
-  voiceStack: import('@ethosagent/wiring').VoiceStack | undefined;
-  titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
-  corsOrigins: ReturnType<typeof resolveCorsOrigins>;
-  allowedOrigins: string[] | undefined;
-  trustProxy: boolean;
-  /** Drives the `Secure` cookie flag together with `config.webBaseUrl`. */
-  isLoopbackBind: boolean;
-  webDist: ReturnType<typeof locateWebDist>;
-  metricsText: ReturnType<typeof createMetricsTextProvider>;
-  recordHttpRequest: (method: string, status: number) => void;
-  a2aRouteModules: RouteModule[];
-  a2aPeering: ReturnType<typeof buildA2aPeeringService>;
-  isA2aEnabled: () => boolean;
-  setA2aEnabled: (enabled: boolean) => Promise<void>;
-  /**
-   * Team-scoped loop factory for web chat (teams-as-a-scope D4). Optional so
-   * the merged `ethos boot` profile, which does not build team loops, is
-   * unchanged.
-   */
-  createTeamLoop?: (teamName: string) => Promise<TeamLoopHandle>;
-  /** `--team <name>` — the team `loop` already runs as; the registry skips it. */
-  mainLoopTeam?: string;
 }
 
 /**

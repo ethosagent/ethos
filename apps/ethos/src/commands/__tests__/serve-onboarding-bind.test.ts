@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { serveLoopOptions } from '../serve';
+import { readServeSources } from './serve-sources';
 
 // Onboarding-mode `ethos serve` (no config.yaml) builds its web API before any
 // loop exists. It crashed at startup (a hookless stub), and once that was fixed
@@ -13,8 +12,7 @@ import { serveLoopOptions } from '../serve';
 // onboarding-bind-loop.test.ts. `runServe` never returns while healthy, so the
 // wiring is read from source, like serve-callcapture-wiring.test.ts.
 
-const root = join(import.meta.dirname, '..', '..', '..', '..', '..');
-const readServe = () => readFile(join(root, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+const readServe = () => readServeSources();
 
 describe('serveLoopOptions', () => {
   it('builds the web profile with the mesh registry, and cron/watchers only when given', () => {

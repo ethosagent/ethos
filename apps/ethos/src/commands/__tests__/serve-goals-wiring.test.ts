@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
+import { readServeSources } from './serve-sources';
 
 // F05 (plan architecture-suggestions-2026-09-10) — every loop-construction
 // branch of `ethos serve` forwards the goal store + executor pair its loop was
@@ -16,12 +17,12 @@ const read = (path: string): Promise<string> => readFile(join(root, path), 'utf8
 
 describe('serve.ts — goal backend forwarding', () => {
   it('assigns the pair from createAgentLoop in both non-team branches', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src.match(/goals = result\.goals;/g) ?? []).toHaveLength(2);
   });
 
   it('assigns the pair from createTeamAgentLoop in the coordinator branch', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toMatch(/goals: teamGoals,/);
     expect(src).toMatch(/goals = teamGoals;/);
     const wiring = await read('apps/ethos/src/wiring.ts');
@@ -31,7 +32,7 @@ describe('serve.ts — goal backend forwarding', () => {
   });
 
   it('hands the pair to createWebApi from serve and from boot', async () => {
-    const serve = await read('apps/ethos/src/commands/serve.ts');
+    const serve = readServeSources();
     expect(serve).toContain('...(goals ? { goals } : {}),');
     const boot = bootFileWith('goals: shared.goals,');
     expect(boot).toContain('goals: shared.goals,');
@@ -44,7 +45,7 @@ describe('serve.ts — goal backend forwarding', () => {
 // pair per personality the same way it resolves the loop.
 describe('serve.ts — team loops carry their goal pair', () => {
   it('hands the team loop’s pair to the web API through TeamLoopHandle', async () => {
-    const serve = await read('apps/ethos/src/commands/serve.ts');
+    const serve = readServeSources();
     expect(serve).toMatch(/return \{\s*loop: team\.loop,[\s\S]*?goals: team\.goals,/);
     const handle = await read('apps/web-api/src/features/chat/team-loops.ts');
     expect(handle).toMatch(/goals\?: GoalsBackend;/);

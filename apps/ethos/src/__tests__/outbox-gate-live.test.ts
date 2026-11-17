@@ -21,6 +21,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readBootSources } from '../commands/__tests__/boot-sources';
+import { readServeSources, serveFileWith } from '../commands/__tests__/serve-sources';
 
 const CLI_ROOT = join(import.meta.dirname, '..');
 const COMMANDS = join(CLI_ROOT, 'commands');
@@ -28,7 +29,7 @@ const read = (name: string) => readFileSync(join(COMMANDS, name), 'utf8');
 const gateway = read('gateway.ts');
 // Every boot module: `runBoot` delegates phases (the hot-add paths) to boot-*.ts.
 const boot = readBootSources();
-const serve = read('serve.ts');
+const serve = readServeSources();
 
 const ROOTS: ReadonlyArray<readonly [string, string]> = [
   ['ethos gateway start', gateway],
@@ -115,16 +116,24 @@ describe('ethos serve — the proposal side, and nothing that delivers', () => {
   });
 
   it('gives the outbox the audit sink', () => {
-    const call = serve.slice(serve.indexOf('createOutboxProposalSide({'));
+    const serveMain = serveFileWith(
+      'createOutboxProposalSide({',
+      'recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o)',
+    );
+    const call = serveMain.slice(serveMain.indexOf('createOutboxProposalSide({'));
     expect(call.slice(0, call.indexOf('\n  });'))).toContain(
       'recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o)',
     );
   });
 
   it('drains reviews before the loop is disposed, and closes the store', () => {
-    const drain = serve.indexOf("boundedShutdownStep('outbox drain', () => outboxSide.drain()");
+    const ordered = serveFileWith(
+      "boundedShutdownStep('outbox drain', () => outboxSide.drain()",
+      "['agent loop', disposeLoop]",
+    );
+    const drain = ordered.indexOf("boundedShutdownStep('outbox drain', () => outboxSide.drain()");
     expect(drain).toBeGreaterThan(-1);
-    expect(drain).toBeLessThan(serve.indexOf("['agent loop', disposeLoop]"));
+    expect(drain).toBeLessThan(ordered.indexOf("['agent loop', disposeLoop]"));
     expect(serve).toContain('outboxSide.close()');
   });
 });

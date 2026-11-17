@@ -8,18 +8,13 @@
 //
 // A source scan, the shape watcher-delivery-gate-wiring.test.ts already uses.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from './boot-sources';
-
-const COMMANDS = join(import.meta.dirname, '..');
+import { serveFileWith } from './serve-sources';
 
 describe.each(['boot.ts', 'serve.ts'])('%s cron runJob', (name) => {
   const source =
-    name === 'boot.ts'
-      ? bootFileWith('await runCronTurn({')
-      : readFileSync(join(COMMANDS, name), 'utf8');
+    name === 'boot.ts' ? bootFileWith('await runCronTurn({') : serveFileWith('await runCronTurn({');
   const start = source.indexOf('await runCronTurn({');
   const body = source.slice(start, source.indexOf('\n    },\n', start));
 

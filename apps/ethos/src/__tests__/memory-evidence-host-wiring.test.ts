@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readBootSources } from '../commands/__tests__/boot-sources';
+import { readServeSources } from '../commands/__tests__/serve-sources';
 
 // ---------------------------------------------------------------------------
 // Plan openclaw-9.5-adoption item 3 — every CLI host routes approval-`off`
@@ -80,7 +81,9 @@ describe('CLI createAgentLoop — memoryCapture.evidenceSessions reaches the com
     const src =
       file === 'commands/boot.ts'
         ? readBootSources()
-        : readFileSync(join(import.meta.dirname, '..', file), 'utf8');
+        : file === 'commands/serve.ts'
+          ? readServeSources()
+          : readFileSync(join(import.meta.dirname, '..', file), 'utf8');
     expect(src).toMatch(/\bcreateAgentLoop\b/);
     // No host imports the package's createAgentLoop itself.
     expect(src).not.toMatch(

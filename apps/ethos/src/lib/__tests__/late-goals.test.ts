@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { describe, expect, it } from 'vitest';
+import { readServeSources } from '../../commands/__tests__/serve-sources';
 import { createLateBoundGoals } from '../late-goals';
 
 // F05 follow-up — onboarding-mode `ethos serve` builds its web API before any
@@ -65,8 +64,7 @@ describe('createLateBoundGoals', () => {
 
 describe('serve.ts onboarding branch — goal pair', () => {
   it('hands the web API the late-bound pair and binds the booted loop into it', async () => {
-    const root = join(import.meta.dirname, '..', '..', '..', '..', '..');
-    const src = await readFile(join(root, 'apps/ethos/src/commands/serve.ts'), 'utf8');
+    const src = readServeSources();
     expect(src).toContain('const lateGoals = createLateBoundGoals();');
     // Bound (and on failure unbound) by adoptBootedLoop — lib/onboarding-boot.ts.
     expect(src).toMatch(/adoptBootedLoop\(agentResult, \{\s*goals: lateGoals,/);

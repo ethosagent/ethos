@@ -14,13 +14,14 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readServeSources } from '../commands/__tests__/serve-sources';
 
 const root = join(import.meta.dirname, '..', '..', '..', '..');
 const read = (rel: string) => readFile(join(root, rel), 'utf8');
 
 describe('in-process hosts wire the browser-takeover lane', () => {
   it('serve.ts hands the socket the tool lock registry, not a policy lookup', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain('browserTakeoverSessions: createBrowserTakeoverRegistry(),');
     // The registry is the ONLY lookup the socket gets. A `findActiveSession`
     // closure here would be the policy re-lookup the design forbids.
@@ -28,7 +29,7 @@ describe('in-process hosts wire the browser-takeover lane', () => {
   });
 
   it('serve.ts attaches and closes the takeover lane alongside the other two', async () => {
-    const src = await read('apps/ethos/src/commands/serve.ts');
+    const src = readServeSources();
     expect(src).toContain('created.takeoverSocket.attach(server);');
     expect(src).toContain('created.takeoverSocket.close(),');
   });
