@@ -53,7 +53,7 @@ const CHILD_SEGMENTS = [':sub:', ':moa:', ':job:', ':mesh:'];
 const BACKGROUND_JOB_UNTRUSTED_TAG = /<untrusted\b[^>]*\btool="background_job_summary"/;
 
 /**
- * Anchored match for the wake-notice envelope `Gateway.buildWakeNotice`
+ * Anchored match for the wake-notice envelope `WakeReviews.buildWakeNotice` (extensions/gateway/src/wake-review.ts)
  * (extensions/gateway/src/index.ts) emits today, in all three shapes:
  * `background job <id> ["<label>" ]finished`, `… failed — ethos process logs <id>`,
  * and `… was interrupted by a restart or config change`. The done/failed
@@ -66,7 +66,7 @@ const WAKE_NOTICE_PREFIX = /^background job \S+ /;
 
 /**
  * A synthetic background-job wake is a `background job … finished|failed|was
- * interrupted` envelope (see `Gateway.buildWakeNotice`), wrapping the child's
+ * interrupted` envelope (see `WakeReviews.buildWakeNotice` (extensions/gateway/src/wake-review.ts)), wrapping the child's
  * summary in an `<untrusted tool="background_job_summary">` block for the
  * done/failed shapes. The wake body is untrusted child output.
  *

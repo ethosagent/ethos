@@ -12,7 +12,7 @@ import type { ChannelPresence } from '@ethosagent/core';
 // `MessageDedupCache.shouldSend` and before the delivery ledger writes its
 // `pending` row, so the dedup key, the ledger row and a sweep redelivery all
 // carry the same bytes — and a redelivery sends the stored row as-is
-// (`Gateway.sweepDeliveriesOnce` never calls this), so nothing is prefixed
+// (`DeliveryLedgerSweep.sweepDeliveriesOnce` in ./delivery-ledger-sweep never calls this), so nothing is prefixed
 // twice. Adapters never add it. Pinned by `__tests__/reply-prefix.test.ts`.
 // ---------------------------------------------------------------------------
 

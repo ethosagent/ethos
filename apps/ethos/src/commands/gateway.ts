@@ -5038,7 +5038,7 @@ export function gatewayTurnOrigin(gateway: () => Gateway | null): GatewayTurnOri
  * personality with `/personality` switching allowed (what the legacy `loop`
  * shorthand gave it), plus that loop's job store and background executor so
  * its background jobs announce through the normal tracked path
- * (`Gateway.deliverCompletion` / `claimWake`, resolved by `adapterForBot`).
+ * (`Gateway.deliverCompletion` / `WakeReviews.claimWake` in extensions/gateway/src/wake-review.ts, resolved by `adapterForBot`).
  */
 export function idleGatewayBot(
   loop: AgentLoop,

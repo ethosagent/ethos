@@ -195,7 +195,7 @@ export class MessageDedupCache {
 
   /**
    * Un-arm a key armed by {@link shouldSend} whose send then failed (V-GC-1).
-   * A send with no ledger behind it (`Gateway.sendThrough`) RESERVES the key
+   * A send with no ledger behind it (`OutboundSend.sendThrough` in ./outbound-send) RESERVES the key
    * with `shouldSend` — so a second identical send while the first is still
    * in flight is a duplicate, not a second platform call — then commits it
    * with {@link record} once the platform confirmed, or releases it here so a

@@ -371,7 +371,7 @@ describe('EmailAdapter.processMessage sender authentication', () => {
 
   it('the resolved identity survives the inbound spool serialization (raw dropped, JSON round-trip)', async () => {
     const { msg } = await deliver(rawMail([]));
-    // Mirrors `serializeInbound` in extensions/gateway/src/index.ts: the spool
+    // Mirrors `serializeInbound` in extensions/gateway/src/gateway-pure.ts: the spool
     // stores the message as delivered, minus `raw`, and replay parses it back.
     const { raw: _raw, ...rest } = msg;
     const replayed = JSON.parse(JSON.stringify(rest)) as InboundMessage;

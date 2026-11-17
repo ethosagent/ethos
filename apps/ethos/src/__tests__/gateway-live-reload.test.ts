@@ -9,7 +9,7 @@
 // executed for real below) and why the reconciler's own wiring is asserted
 // against SOURCE, the same way every other boot-side suite does it.
 
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type EthosConfig, ethosDir, loadConfigStrict } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
@@ -476,7 +476,14 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
   it('does not smuggle Phase B in: no setChannelFilter anywhere', async () => {
     const src = await read();
     expect(src).not.toMatch(/setChannelFilter/);
-    const gatewaySrc = await readFile(join(ROOT, 'extensions/gateway/src/index.ts'), 'utf8');
+    // Every gateway source module, not only index.ts: the Gateway class's
+    // collaborators live beside it since the Context Budget 3 split.
+    const gatewayDir = join(ROOT, 'extensions/gateway/src');
+    const gatewayFiles = (await readdir(gatewayDir)).filter((f) => f.endsWith('.ts'));
+    expect(gatewayFiles).toContain('index.ts');
+    const gatewaySrc = (
+      await Promise.all(gatewayFiles.map((f) => readFile(join(gatewayDir, f), 'utf8')))
+    ).join('\n');
     expect(gatewaySrc).not.toMatch(/setChannelFilter/);
   });
 });

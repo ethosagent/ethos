@@ -27,7 +27,7 @@ It is also wrong, for three independent reasons:
 - **The voice may have moved.** Between the failed send and the sweep — which is typically a process restart — the personality's `voice.tts_voice` may have been edited, the deployment's TTS roster may point somewhere else, or the language-specific voice may now resolve differently.
 - **The reply may no longer be what was said.** The obligation's `content` is the *sanitized, possibly truncated* speech text, not the original reply. Re-synthesizing re-derives a recording from a lossy intermediate.
 
-Put together: a user who was owed one answer would receive an answer they can *hear* is not the one that was lost. So the recording, not the text, is the obligation's payload. `redeliverVoiceObligation` in `extensions/gateway/src/index.ts` reads the stored bytes and refuses to fall back to anything else — including sending the spoken text as a plain message, which would deliver the same answer twice, since the written reply already went out under its own obligation.
+Put together: a user who was owed one answer would receive an answer they can *hear* is not the one that was lost. So the recording, not the text, is the obligation's payload. `redeliverVoiceObligation` in `extensions/gateway/src/delivery-ledger-sweep.ts` reads the stored bytes and refuses to fall back to anything else — including sending the spoken text as a plain message, which would deliver the same answer twice, since the written reply already went out under its own obligation.
 
 ### What schema v3 added
 

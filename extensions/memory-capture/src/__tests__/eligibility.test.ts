@@ -71,7 +71,7 @@ describe('evaluateEligibility', () => {
     expect(res).toEqual({ eligible: false, reason: 'wake-turn' });
   });
 
-  // The three shapes `Gateway.buildWakeNotice` emits today (H6 — a human
+  // The three shapes `WakeReviews.buildWakeNotice` (extensions/gateway/src/wake-review.ts) emits today (H6 — a human
   // sentence, no brackets). Done/failed also carry the untrusted tag; the
   // aborted one-liner does not, so the prefix is its only marker.
   it('excludes the current done wake shape', () => {

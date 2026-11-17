@@ -639,7 +639,7 @@
     {
       "path": "extensions/gateway/src/index.ts",
       "kind": "source",
-      "lines": 9220
+      "lines": 5940
     },
     {
       "path": "extensions/goal-runner/src/__tests__/execution.test.ts",

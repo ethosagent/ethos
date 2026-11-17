@@ -3,7 +3,7 @@ paths:
   - "packages/core/src/**"
   - "packages/wiring/src/**"
   - "extensions/tools-kanban/**"
-  - "extensions/gateway/src/index.ts"
+  - "extensions/gateway/src/*.ts"
 ---
 
 # AgentLoop, hooks and single-owner contracts

@@ -105,7 +105,7 @@ export interface DeliveryObligation {
   /**
    * Earliest time a sweep may try this row again (schema v6), or `undefined`
    * for a row never refused by a sweep — due at once. The gateway's sweep
-   * skips a row before this time (`Gateway.sweepDeliveriesOnce`).
+   * skips a row before this time (`DeliveryLedgerSweep.sweepDeliveriesOnce`, extensions/gateway/src/delivery-ledger-sweep.ts).
    */
   nextAttemptAt?: number;
   /** Why an `abandoned` row was given up on (schema v6), when the caller said.
@@ -225,7 +225,7 @@ export interface DeliveryLedger {
    * redelivery: `attempts` goes up by one and the row is not due again until
    * `nextAttemptAt`. Returns the new attempt count, or `null` when the row was
    * not `redelivering` (nothing changed). The schedule is the caller's policy
-   * (`Gateway.sweepDeliveriesOnce`); the ledger only stores it.
+   * (`DeliveryLedgerSweep.sweepDeliveriesOnce`, extensions/gateway/src/delivery-ledger-sweep.ts); the ledger only stores it.
    */
   deferRetry(id: string, nextAttemptAt: number): Promise<number | null>;
   /**

@@ -172,7 +172,7 @@ export interface DeliveryResult {
    * Set with `ok: false` when the platform refused in a way no retry can fix —
    * the bot was blocked or removed, the chat or channel no longer exists. The
    * gateway's delivery sweep abandons such an obligation at once instead of
-   * retrying it on a backoff (`Gateway.sweepDeliveriesOnce`). Absent means
+   * retrying it on a backoff (`DeliveryLedgerSweep.sweepDeliveriesOnce`, extensions/gateway/src/delivery-ledger-sweep.ts). Absent means
    * "possibly transient"; an adapter sets it only on a failure it can
    * positively identify.
    */

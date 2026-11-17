@@ -75,7 +75,7 @@ Synopsis: `/memory`
 
 Run one agent turn that distills something into memory, a skill proposal, or both. With no argument it learns from the current conversation; with text it learns from that text. A `remember:` prefix routes the result to memory only; a `skill:` prefix routes it to a skill proposal only (`parseLearnArgs`, [`packages/core/src/learn.ts`](../../../../packages/core/src/learn.ts)). Available in both surfaces, and in channel chats through the gateway.
 
-Memory learning is private. In a group chat or any other shared room the gateway runs no turn and replies with a pointer to a direct message instead (`LEARN_SHARED_ROOM_REPLY`, [`extensions/gateway/src/index.ts`](../../../../extensions/gateway/src/index.ts)); see [Keep memory out of group chats](../how-to/group-chat-memory.md).
+Memory learning is private. In a group chat or any other shared room the gateway runs no turn and replies with a pointer to a direct message instead (`LEARN_SHARED_ROOM_REPLY`, [`extensions/gateway/src/gateway-pure.ts`](../../../../extensions/gateway/src/gateway-pure.ts)); see [Keep memory out of group chats](../how-to/group-chat-memory.md).
 
 Synopsis: `/learn [remember: | skill:] [<text>]`
 

@@ -1,6 +1,6 @@
 // `/cmd@bot` — a command addressed to one bot, the form Telegram's command
 // menu sends in a group. The gateway reads `/cmd@<its own handle>` as `/cmd`
-// and ignores `/cmd@<another bot>` (`commandForThisBot` in ../index.ts). The
+// and ignores `/cmd@<another bot>` (`commandForThisBot` in ../gateway-pure.ts). The
 // handle comes from the adapter's optional `senderHandle`; without one the
 // text is matched exactly, as before.
 

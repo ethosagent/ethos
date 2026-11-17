@@ -163,7 +163,7 @@ const PERSONALITY_REQUIRED: ToolResult = fail('watchers require a personality co
 // `watcher_create`, `watcher_resume` and `watcher_delete` refuse unless
 // `ToolContext.initiator === 'user'` — the same strict reading as `gateRefusal`
 // in `packages/wiring/src/amendments.ts`: a watcher wake (`initiator: 'system'`,
-// `initiatorFor` in `extensions/gateway/src/index.ts` and `runWatcherWakeTurn`
+// `initiatorFor` in `extensions/gateway/src/gateway-pure.ts` and `runWatcherWakeTurn`
 // in `apps/ethos/src/lib/watcher-wake.ts`), a cron turn
 // (`apps/ethos/src/commands/cron-turn.ts`) and any surface that does not say
 // who started it are all refused. `watcher_pause` and `watcher_list` stay open:
