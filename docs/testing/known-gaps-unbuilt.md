@@ -10,10 +10,11 @@ It declares `voice.tts_voice: af_bella`, `voice.tier: pipeline`, a fast-lane
 nothing that writes to disk or runs a shell (consequential work leaves the
 spoken lane through `delegate_task`).
 
-Its static prompt is budget-gated at ~2k tokens (latency decision L5) by
-`extensions/personalities/src/__tests__/voice-personality.test.ts` — SOUL.md
-plus the spoken-style injector measure ~2.3k chars / ~580 tokens today, so
-there is headroom, and the test is what stops it being spent silently.
+Its static prompt has a ~2k-token budget (latency decision L5). No test pins
+it: SOUL.md plus the spoken-style injector (whose placement is covered by
+`packages/core/src/__tests__/spoken-style-injector.test.ts`) measure ~2.3k
+chars / ~580 tokens today, so there is headroom, but nothing stops it being
+spent silently.
 
 ### 7. Not built at all
 

@@ -1,10 +1,12 @@
 // Constants and small helpers shared across the command modules, so each has
 // one copy instead of one per command:
 //   - port, retry and heartbeat constants and `gatewayHealthPath()` for the
-//     daemon commands (serve, gateway, boot via ./boot-constants.ts, and the
-//     gateway-* modules split out of gateway.ts);
-//   - the ANSI colour object `c` for terminal output (doctor, listen, audit,
-//     fallback, trace, run-all and gateway);
+//     daemon commands (serve, gateway, boot via ./boot-constants.ts, the
+//     gateway-* modules split out of gateway.ts, and listen, whose heartbeat
+//     is the gateway's cadence);
+//   - the ANSI colour object `c` for terminal output (audit, fallback, trace,
+//     run-all, gateway-*, listen; doctor-shared.ts re-exports it for the
+//     doctor modules);
 //   - `WARN_EXIT`, the exit code for "ran, but found something to warn about"
 //     (doctor, listen, listen-preflight);
 //   - `isOnPath(bin)`, the `which` probe `ethos doctor` and `ethos listen`

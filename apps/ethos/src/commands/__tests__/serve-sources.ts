@@ -13,6 +13,10 @@
 //     across two modules this throws, instead of comparing offsets from two
 //     different files and passing by accident.
 //
+// `_shared.ts` is on the list because the port, retry and heartbeat constants
+// `runServe` uses moved there; the boot and gateway lists include it too,
+// so the three helpers agree.
+//
 import { fileWith, readCommandSource, readSources } from './command-sources';
 
 // The list holds `runServe` and the modules split out of serve.ts. It does NOT

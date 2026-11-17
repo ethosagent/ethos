@@ -72,17 +72,17 @@ export function systemJobSpecs(config: EthosConfig, surface: SystemJobSurface): 
     // `apps/ethos/src/wiring.ts:182`). It therefore inherits this table's
     // weakest property, and the weakness is worth stating where the schedule
     // is: every spec here is created with `missedRunPolicy: 'skip'`
-    // (`CronScheduler.reconcileSystemJob`, `extensions/cron/src/index.ts:815`),
+    // (`CronScheduler.reconcileSystemJob`, `extensions/cron/src/index.ts`),
     // and a `skip` job overdue by more than one tick is rolled forward
-    // undelivered (`extensions/cron/src/index.ts:917`). A machine that is
+    // undelivered (the missed-run `skip` roll-forward in `CronScheduler`, `extensions/cron/src/index.ts`). A machine that is
     // asleep or off at 03:00 — the `ethos boot` laptop target — therefore
     // prunes nothing, indefinitely, with no operator-visible symptom.
     //
     // There is deliberately no startup prune here to compensate: this table
     // only DECLARES jobs, and a prune-at-boot belongs beside the handler (the
-    // precedent is `attachmentCache.pruneOlderThan` at
-    // `apps/ethos/src/commands/serve.ts:249`, and the a2a task store's
-    // boot-then-hourly at `serve.ts:1564`). Documented as a limitation in
+    // precedent is `attachmentCache.pruneOlderThan` in `runServe`
+    // (`apps/ethos/src/commands/serve.ts`), and the a2a task store's
+    // boot-then-hourly `failNonTerminal` there). Documented as a limitation in
     // `docs/content/using/reference/config-yaml.md` under `retention.*` until
     // one lands.
     {

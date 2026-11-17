@@ -1,7 +1,7 @@
 // plan/phases/webhook-subscriptions.md Phase 2 — the WIRING lane for delivery
 // fan-out: config → adapter map → real `relayToTargets` → real ledger.
 //
-// Same two idioms as `gateway-platform-webhook-wiring.test.ts`:
+// Same two idioms as `gateway-platform-webhook-wiring.source.test.ts`/`.mounts.test.ts`:
 //
 //   - RUNTIME, for the whole chain. The relay seam this phase adds is built
 //     INSIDE `runGatewayStart`, a ~700-line function that boots a process and

@@ -3,14 +3,8 @@
 // an import cycle.
 import type { getStorage } from '../wiring';
 
-export const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  cyan: '\x1b[36m',
-};
+// The ANSI colour table lives in ./_shared (one copy for every command); doctor
+// modules keep importing it from here.
+export { c } from './_shared';
 
 export type Storage = ReturnType<typeof getStorage>;

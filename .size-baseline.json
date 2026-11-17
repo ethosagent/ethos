@@ -129,7 +129,7 @@
     {
       "path": "apps/ethos/src/commands/listen.ts",
       "kind": "source",
-      "lines": 1734
+      "lines": 1721
     },
     {
       "path": "apps/ethos/src/commands/mcp.ts",

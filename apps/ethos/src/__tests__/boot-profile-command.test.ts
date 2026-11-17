@@ -185,7 +185,7 @@ describe('ethos boot — §3b construction order', () => {
 // as deliberately unwired, this one IS wired here.
 describe('ethos boot — idle watcher', () => {
   it('constructs an IdleWatcherManager exactly once, behind the explicit opt-in', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    const src = readBootSources();
     const constructions = src.match(/new IdleWatcherManager\(\{/g) ?? [];
     expect(constructions).toHaveLength(1);
     // Default-off: on a laptop or a bare-metal box there is no host to suspend

@@ -64,9 +64,9 @@ const STEP_ORDER: readonly BootReconciliationStep[] = [
 // path and this one MUST correct the same set of gates, and a duplicated field
 // list is how they would quietly stop doing so.
 export interface BootReconciliationDeps extends PauseCorrectionTargets {
-  /** `CronEngine` — `extensions/cron/src/index.ts:446` (`CronScheduler.fire`). */
+  /** `CronEngine` — `CronScheduler.fire` in `extensions/cron/src/index.ts`. */
   cronEngine?: { fire(): Promise<void> | void };
-  /** `BackgroundExecutor.bootSweep` — `extensions/job-runner/src/index.ts:442`.
+  /** `BackgroundExecutor.bootSweep` — `extensions/job-runner/src/index.ts`.
    *  NOTE: that method is currently `private`, so the real executor is not
    *  assignable to this shape until it is made public. */
   backgroundExecutor?: { bootSweep(): Promise<void> };
@@ -82,7 +82,8 @@ export interface BootReconciliationDeps extends PauseCorrectionTargets {
   /** `A2aTaskStore.failNonTerminal` — returns the number of rows reconciled
    *  (`packages/a2a/src/sqlite-task-store.ts:236`), hence `Promise<unknown>`. */
   a2aTaskStore?: { failNonTerminal(reason: string): Promise<unknown> };
-  /** Both sweeps return a `{ ... }` summary (`extensions/gateway/src/index.ts:3098,3344`),
+  /** Both sweeps return a `{ ... }` summary (`Gateway.sweepPendingDeliveries` / `Gateway.sweepUndeliveredJobs`,
+   *  delegating to `DeliveryLedgerSweep` in `extensions/gateway/src/delivery-ledger-sweep.ts` and the wake collaborator),
    *  hence `Promise<unknown>`. */
   gateway?: {
     sweepPendingDeliveries(): Promise<unknown>;
@@ -142,9 +143,9 @@ const FAIL_NON_TERMINAL_REASON = 'boot reconciliation';
  *
  * **Second-call behaviour of the underlying steps** (verified against source):
  * cron `fire()` re-checks each job's `nextRunAt` under a compare-and-swap claim
- * (`extensions/cron/src/index.ts:1133-1152`); `bootSweep()`'s `reclaimStale`/
+ * (`CronScheduler.fire` in `extensions/cron/src/index.ts`); `bootSweep()`'s `reclaimStale`/
  * `expireQueued` are threshold-filtered UPDATEs and its `claimLoop` is
- * re-entrancy guarded (`extensions/job-runner/src/index.ts:479-503`);
+ * re-entrancy guarded (`BackgroundExecutor.claimLoop` in `extensions/job-runner/src/index.ts`);
  * `failNonTerminal` and both gateway sweeps select only rows in a specific
  * state and claim them atomically. `ClarifyBridge.hydrate()` is idempotent by
  * construction rather than by a latch — it re-reads the persisted rows each

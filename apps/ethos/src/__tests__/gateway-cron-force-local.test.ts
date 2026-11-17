@@ -8,7 +8,7 @@
 // request. `buildCronTriggers` forces the local interval on for any process
 // that says `hasHttpSurface: false`, and records why in `notices`.
 //
-// Two idioms, following `gateway-platform-webhook-wiring.test.ts`:
+// Two idioms, following `gateway-platform-webhook-wiring.source.test.ts`/`.mounts.test.ts`:
 //
 //  - RUNTIME, for the policy itself. `buildCronTriggers` is a pure function of
 //    (engine, config, opts), so the gateway's answer and serve/boot's answer

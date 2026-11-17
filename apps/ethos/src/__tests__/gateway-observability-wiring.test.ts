@@ -12,7 +12,7 @@
 //    (runtime);
 //  - both production call sites pass `gatewayObservability()` (source text —
 //    `runGatewayStart` and `runBoot` boot whole processes and cannot be invoked
-//    from a unit test; see `gateway-platform-webhook-wiring.test.ts` for the
+//    from a unit test; see `gateway-platform-webhook-wiring.source.test.ts`/`.mounts.test.ts` for the
 //    same idiom and why).
 
 import { readFile } from 'node:fs/promises';

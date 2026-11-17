@@ -76,7 +76,7 @@ server-side.
 
 The gateway does detect the language of an inbound voice note, but only against
 the personality's OWN `voice.languages` keys
-(`extensions/gateway/src/index.ts:2069`, tested in
+(`detectLanguage` in `extensions/gateway/src/index.ts`, tested in
 `extensions/gateway/src/__tests__/voice-language.test.ts`): a personality with no
 language map produces no guess and its default voice stands, which is the
 behaviour that existed before. Detection is on the voice-note path only — a typed

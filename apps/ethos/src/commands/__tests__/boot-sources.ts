@@ -11,6 +11,10 @@
 //     the ONE module holding every anchor. If an extraction splits a pair
 //     across two modules this throws, instead of comparing offsets from two
 //     different files and passing by accident.
+//
+// `_shared.ts` is on the list because the port, retry and heartbeat constants
+// `runBoot` uses moved there (via boot-constants.ts); the serve and gateway lists include it too,
+// so the three helpers agree.
 
 import { fileWith, readCommandSource, readSources } from './command-sources';
 
@@ -21,6 +25,7 @@ export const BOOT_SOURCE_FILES = [
   'boot-context.ts',
   'boot-constants.ts',
   'boot-digest.ts',
+  '_shared.ts',
 ] as const;
 
 export function readBootSource(file: (typeof BOOT_SOURCE_FILES)[number]): string {

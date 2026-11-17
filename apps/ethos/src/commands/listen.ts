@@ -118,7 +118,7 @@ import { createStdinPcmDevice, STDIN_DEVICE_ID } from '../lib/stdin-pcm-device';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { getSecretsResolver, getStorage } from '../wiring';
-import { WARN_EXIT } from './_shared';
+import { c, HEARTBEAT_INTERVAL_MS, WARN_EXIT } from './_shared';
 import {
   authCookie,
   type ListenDaemonContext,
@@ -189,16 +189,6 @@ export {
 export { probeHealthz, probeSatelliteLane, type SatelliteLaneProbe } from './listen-probes';
 export { EMPTY_TABLE_WARNING, readSatelliteVadTuning, resolveRoutePin } from './listen-routes';
 
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  cyan: '\x1b[36m',
-};
-
 export const USAGE = `Usage: ethos listen [doctor] [options]
 
   (no subcommand)   run the wake satellite in the foreground
@@ -254,9 +244,6 @@ const CAPTURE_SAMPLE_RATE = 16_000;
 
 /** Frame length. 20ms is `EnergyVad`'s unit and the wake seam's. */
 const CAPTURE_FRAME_MS = 20;
-
-/** Same cadence as the gateway heartbeat — the readers are the same readers. */
-const HEARTBEAT_INTERVAL_MS = 10_000;
 
 /**
  * How the daemon leaves when its capture pipe closes under it.

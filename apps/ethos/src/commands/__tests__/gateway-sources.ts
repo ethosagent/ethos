@@ -15,7 +15,10 @@
 //
 // The list holds `runGatewayStart` and the modules split out of gateway.ts. It
 // does NOT hold the commands that were already separate (gateway-status). A
-// module split out of gateway.ts later must be appended here.
+// module split out of gateway.ts later must be appended here. `_shared.ts` is
+// on the list because the port, retry and heartbeat constants and the colour
+// table `runGatewayStart` uses moved there; the boot and serve lists include it
+// too, so the three helpers agree.
 
 import { fileWith, readCommandSource, readSources } from './command-sources';
 
@@ -28,6 +31,7 @@ export const GATEWAY_SOURCE_FILES = [
   'gateway-platform-readers.ts',
   'gateway-adapters.ts',
   'gateway-wiring.ts',
+  '_shared.ts',
 ] as const;
 
 export function readGatewaySource(file: (typeof GATEWAY_SOURCE_FILES)[number]): string {
