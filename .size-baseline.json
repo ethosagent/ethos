@@ -462,11 +462,6 @@
       "lines": 908
     },
     {
-      "path": "apps/web/src/pages/Personalities.tsx",
-      "kind": "source",
-      "lines": 3170
-    },
-    {
       "path": "apps/web/src/pages/PersonalityDetail.tsx",
       "kind": "source",
       "lines": 1163

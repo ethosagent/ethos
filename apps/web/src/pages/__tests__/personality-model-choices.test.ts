@@ -8,7 +8,7 @@
 // `renderToStaticMarkup` needs no DOM; the registry query is seeded into the
 // cache so the control renders as it does against a configured deployment.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ModelRegistryEntryView, ModelRegistryListResult } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -84,8 +84,19 @@ const values = (groups: ReturnType<typeof modelDeclarationGroups>) =>
 
 const src = (...path: string[]) => readFileSync(join(import.meta.dirname, '..', ...path), 'utf8');
 
+// The page and the components split out of it (`pages/personalities/`): the model
+// control lives in the create wizard's Config tab and in `ConfigEditor`.
+const pageSource = () =>
+  [
+    src('Personalities.tsx'),
+    ...readdirSync(join(import.meta.dirname, '..', 'personalities'))
+      .filter((file) => /\.tsx?$/.test(file))
+      .sort()
+      .map((file) => src('personalities', file)),
+  ].join('\n');
+
 describe('the personality model control', () => {
-  const page = src('Personalities.tsx');
+  const page = pageSource();
   const voiceFields = src('..', 'components', 'personality', 'PersonalityVoiceFields.tsx');
   const control = src('..', 'components', 'personality', 'ModelDeclarationSelect.tsx');
 
