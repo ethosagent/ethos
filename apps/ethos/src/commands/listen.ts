@@ -83,13 +83,8 @@
 // connects, reports the local table as a hint and says out loud that the
 // effective one is only knowable once connected.
 
-import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { connect as netConnect, type Socket } from 'node:net';
-import { hostname } from 'node:os';
-import { dirname, join } from 'node:path';
-import { connect as tlsConnect } from 'node:tls';
-import { ethosDir, loadConfigStrict, type WakeRouteConfig } from '@ethosagent/config';
+import { join } from 'node:path';
+import { ethosDir, loadConfigStrict } from '@ethosagent/config';
 import { resolveSttProvider } from '@ethosagent/core';
 import {
   EthosError,
@@ -108,13 +103,10 @@ import {
   createEnergyFrameVad,
   createSatelliteClient,
   createSherpaWakeEngineFactory,
-  type DoctorProbeRow,
   encodeUtteranceWav,
   type PlaybackDevice,
-  type PlaybackFormat,
   runSatelliteDoctor,
   SatellitePlayout,
-  type SatelliteSocketFactory,
   transcriptWakeEngineFactory,
   type WakeEngine,
   type WakeEngineFactory,
@@ -122,11 +114,80 @@ import {
   type WakeRoute,
   wakePhraseKey,
 } from '@ethosagent/voice-satellite';
-import { SATELLITE_SOCKET_PATH } from '@ethosagent/web-contracts';
 import { createStdinPcmDevice, STDIN_DEVICE_ID } from '../lib/stdin-pcm-device';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { getSecretsResolver, getStorage } from '../wiring';
+import {
+  authCookie,
+  type ListenDaemonContext,
+  type ListenHeartbeat,
+  protocolState,
+} from './listen-daemon';
+import {
+  AUDIO_GOES_UP,
+  capabilityRows,
+  EDGE_STT_OFF,
+  EDGE_UTTERANCE_MAX_BYTES,
+  type EdgeSttResolution,
+  edgeSttReport,
+} from './listen-edge-stt';
+import { createCommandPlaybackDevice, resolvePlayer } from './listen-player';
+import {
+  computeListenExit,
+  deriveListenFailFlags,
+  deriveListenUrls,
+  isFatalRow,
+  LANE_PROBE_NAME,
+  type ListenPreflight,
+  type ListenStartOptions,
+  type ListenUrls,
+  resolveListenNodeId,
+  WARN_EXIT,
+  withLaneProbeName,
+  withPipeCaveat,
+} from './listen-preflight';
+import { probeSatelliteLane } from './listen-probes';
+import {
+  EMPTY_TABLE_WARNING,
+  readSatelliteVadTuning,
+  readWakeRoutes,
+  resolveRoutePin,
+} from './listen-routes';
+
+export type { ListenHeartbeat } from './listen-daemon';
+
+export {
+  capabilityRows,
+  type EdgeSttReport,
+  type EdgeSttResolution,
+  edgeSttReport,
+} from './listen-edge-stt';
+export {
+  type CommandPlaybackDeviceOptions,
+  createCommandPlaybackDevice,
+  type PlayerKind,
+  type PlayerProcess,
+  type PlayerReport,
+  type PlayerResolution,
+  playerArgv,
+  resolvePlayer,
+} from './listen-player';
+export {
+  computeListenExit,
+  deriveListenFailFlags,
+  deriveListenUrls,
+  LANE_PROBE_NAME,
+  type ListenFailFlags,
+  type ListenPreflight,
+  type ListenStartOptions,
+  type ListenUrls,
+  resolveListenNodeId,
+  withLaneProbeName,
+  withPipeCaveat,
+} from './listen-preflight';
+export { probeHealthz, probeSatelliteLane, type SatelliteLaneProbe } from './listen-probes';
+export { EMPTY_TABLE_WARNING, readSatelliteVadTuning, resolveRoutePin } from './listen-routes';
 
 const c = {
   reset: '\x1b[0m',
@@ -227,69 +288,6 @@ function listDevicesHint(): string {
  */
 const DEFAULT_IDLE_WINDOW_MS = 30_000;
 
-/** `ethos serve --web-port` default. Mirrors WEB_PORT_DEFAULT in serve-helpers.ts. */
-const DEFAULT_WEB_PORT = 3000;
-
-/**
- * What this host calls the reachability row — in the printed row, the `--json`
- * probe name, and the prose.
- *
- * NOT `gateway`, which is what the shared satellite doctor still names it. That
- * name was true when the row probed `/healthz`; it stopped being true when the
- * probe was repointed at `/satellite/ws` (see `probeSatelliteLane`), and a row
- * labelled `gateway` sends an operator whose satellite cannot connect off to
- * look at their Telegram bot. The rename happens once, in `realPreflight`, so
- * everything downstream — the row, the flags, the JSON — agrees.
- */
-export const LANE_PROBE_NAME = 'satellite-lane';
-
-/** The shared doctor's name for the row `LANE_PROBE_NAME` replaces. */
-const SHARED_DOCTOR_LANE_PROBE_NAME = 'gateway';
-
-/** The shared doctor's rows, under the names this host prints and reports. */
-export function withLaneProbeName(probes: readonly DoctorProbeRow[]): DoctorProbeRow[] {
-  return probes.map((p) =>
-    p.name === SHARED_DOCTOR_LANE_PROBE_NAME ? { ...p, name: LANE_PROBE_NAME } : p,
-  );
-}
-
-/**
- * What a passing `microphone` row on a pipe-fed host does NOT prove.
- *
- * The probe asks the device to enumerate, and this device enumerates on one
- * fact: stdin is not a TTY. That is true and nearly useless — a pipe with a
- * healthy `ffmpeg` behind it and a pipe whose `ffmpeg` died on a bad `-i :2`
- * are byte-identical from here, and only consuming bytes could tell them apart,
- * which a preflight must not do to audio the daemon is about to need. So the
- * row keeps its ✓ (a working pipeline is genuinely fine) and says what it
- * cannot see, rather than letting `1 input device(s)` read as proven capture.
- */
-const PIPE_PROVES_ONLY_A_PIPE =
-  'stdin is a pipe, which is ALL this proves: whether anything is WRITING to it ' +
-  'cannot be known without consuming the audio, so a capture command that died on ' +
-  'startup looks identical here. `ethos listen` reports it the moment the pipe closes.';
-
-/**
- * The `microphone` row with the caveat this host — and only this host — can add.
- *
- * Applied here rather than in the shared doctor because the caveat is a fact
- * about THIS device: a desktop enumerating real inputs through a real binding
- * has genuinely proven something, and would be made to apologize for it.
- */
-export function withPipeCaveat(probes: readonly DoctorProbeRow[]): DoctorProbeRow[] {
-  return probes.map((p) =>
-    p.name === 'microphone' && p.ok && p.skipped !== true
-      ? {
-          ...p,
-          detail: `${p.detail === undefined ? '' : `${p.detail} — `}${PIPE_PROVES_ONLY_A_PIPE}`,
-        }
-      : p,
-  );
-}
-
-/** How a local server is started. Named wherever a probe says one is missing. */
-const START_THE_SERVER = 'Start it with `ethos serve`.';
-
 /**
  * The one sentence every surface that talks about routes without a connection
  * has to say. Written once so the doctor row, the `--json` object, and the
@@ -359,333 +357,6 @@ export function parseListenFlags(args: string[]): ListenFlags {
   return flags;
 }
 
-// ---------------------------------------------------------------------------
-// Audio OUT — the loudspeaker this host used to declare it did not have
-// ---------------------------------------------------------------------------
-
-/**
- * Which player this host will spawn.
- *
- * `custom` is an operator's own `--play` template, run through `sh -c` so their
- * quoting and pipelines survive (the same contract `command-tts` gives its
- * template). The other three are argv this file builds itself, which is what
- * lets it vary the flags by codec — see {@link playerArgv}.
- */
-export type PlayerKind = 'ffplay' | 'aplay' | 'play' | 'custom';
-
-export interface PlayerReport {
-  kind: PlayerKind;
-  /** The command as the operator sees it, `{rate}` / `{channels}` intact. */
-  command: string;
-}
-
-export interface PlayerResolution {
-  /** What will be spawned, or null when this host cannot make a sound. */
-  player: PlayerReport | null;
-  /**
-   * Which player was found, or the REAL reason there is none. Never empty —
-   * "no output device" was the old answer and it taught an operator nothing
-   * about which command to install.
-   */
-  detail: string;
-}
-
-/**
- * PATH probe order, and the command each one gets.
- *
- * `ffplay` first because it is the only one of the three that can play what the
- * server usually sends: every first-party TTS provider except a `pcm`-mode
- * `command-tts` synthesizes opus or mp3, which reaches this node as
- * `codec: 'encoded'` and needs a demuxer. `aplay` and `play` take raw samples
- * only — they are still worth probing (a deployment wired to local PCM has
- * them and not ffmpeg), but a node holding one of them refuses an encoded
- * playout rather than blasting an ogg header at a speaker.
- */
-const PLAYER_PROBES: ReadonlyArray<{ kind: Exclude<PlayerKind, 'custom'>; command: string }> = [
-  {
-    kind: 'ffplay',
-    command: 'ffplay -nodisp -autoexit -loglevel error -f s16le -ar {rate} -ac {channels} -i -',
-  },
-  { kind: 'aplay', command: 'aplay -q -f S16_LE -r {rate} -c {channels} -t raw' },
-  { kind: 'play', command: 'play -q -t raw -r {rate} -e signed -b 16 -c {channels} -' },
-];
-
-/** Is this binary runnable from here? The same probe `ethos doctor` uses. */
-function isOnPath(bin: string): boolean {
-  return spawnSync('which', [bin], { stdio: 'ignore' }).status === 0;
-}
-
-/**
- * Decide how this host will make a sound — by ASKING, never by assuming.
- *
- * The flag wins and is taken at face value: an operator who typed a command
- * knows their machine better than a probe does, and second-guessing it would
- * mean refusing to start a player that works. Absent the flag, PATH is probed
- * in {@link PLAYER_PROBES} order and the first hit is used; finding nothing
- * returns a null player and the sentence that says which three commands were
- * looked for, because "install one of these" is the actionable half.
- */
-export function resolvePlayer(
-  flag: string | undefined,
-  onPath: (bin: string) => boolean = isOnPath,
-): PlayerResolution {
-  const requested = flag?.trim();
-  if (requested !== undefined && requested !== '') {
-    return {
-      player: { kind: 'custom', command: requested },
-      detail: `--play: ${requested} (run through \`sh -c\`; reply audio is written to its stdin)`,
-    };
-  }
-  for (const candidate of PLAYER_PROBES) {
-    if (!onPath(candidate.kind)) continue;
-    return {
-      player: { kind: candidate.kind, command: candidate.command },
-      detail:
-        `${candidate.kind} on PATH — ${candidate.command}` +
-        (candidate.kind === 'ffplay'
-          ? ''
-          : `. Raw PCM only: an encoded reply (opus/mp3, what most TTS providers ` +
-            `synthesize) cannot be played by this command. Install ffmpeg for ffplay, or set ` +
-            `auxiliary.tts.outputFormat: pcm`),
-    };
-  }
-  return {
-    player: null,
-    detail:
-      'none of ffplay, aplay or play is on PATH, so nothing here can make a sound — ' +
-      'wake turns answer as TEXT ONLY (the ‹ line). Install ffmpeg (for ffplay), ' +
-      'alsa-utils (aplay) or sox (play), or name your own with --play "<command>".',
-  };
-}
-
-/**
- * The argv for one playout, or the refusal that names what this player cannot open.
- *
- * A REFUSAL IS NOT A FAILURE TO REPORT LATER. `aplay` handed an ogg stream does
- * not error — it plays the container bytes as samples, which is a burst of
- * noise in somebody's kitchen at whatever hour the agent answered. So the
- * codec is checked before a process is spawned and the turn degrades to text
- * with a sentence saying which of the two ends to change.
- */
-export function playerArgv(
-  player: PlayerReport,
-  format: PlaybackFormat,
-): { argv: string[]; refusal?: undefined } | { argv?: undefined; refusal: string } {
-  const rate = String(format.sampleRate);
-  const channels = String(format.channels);
-  const substitute = (template: string): string =>
-    template.replace(/\{rate\}/g, rate).replace(/\{channels\}/g, channels);
-
-  if (player.kind === 'custom') {
-    // `sh -c` rather than a hand-rolled tokenizer: the operator's template may
-    // hold quoting, a pipeline, or an environment variable, and the same
-    // contract already governs `command-tts`.
-    return { argv: ['sh', '-c', substitute(player.command)] };
-  }
-  if (player.kind === 'ffplay') {
-    // Raw needs the format spelled out (PCM carries no header); encoded carries
-    // its own and ffplay's demuxer must be left to find it.
-    return {
-      argv:
-        format.codec === 'pcm_s16le'
-          ? [
-              'ffplay',
-              '-nodisp',
-              '-autoexit',
-              '-loglevel',
-              'error',
-              '-f',
-              's16le',
-              '-ar',
-              rate,
-              '-ac',
-              channels,
-              '-i',
-              '-',
-            ]
-          : ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'error', '-i', '-'],
-    };
-  }
-  if (format.codec !== 'pcm_s16le') {
-    return {
-      refusal:
-        `${player.kind} plays RAW PCM only and the server sent ${format.mimeType} — ` +
-        'playing the container bytes as samples would be noise, so this reply stays text.',
-    };
-  }
-  return {
-    argv:
-      player.kind === 'aplay'
-        ? ['aplay', '-q', '-f', 'S16_LE', '-r', rate, '-c', channels, '-t', 'raw']
-        : ['play', '-q', '-t', 'raw', '-r', rate, '-e', 'signed', '-b', '16', '-c', channels, '-'],
-  };
-}
-
-/**
- * The slice of a spawned player this device uses.
- *
- * Narrow on purpose: a test drives a fake with three methods and no process,
- * and the device's staleness discipline is then testable without a sound card.
- */
-export interface PlayerProcess {
-  /** Feed the player. Must not throw — a player that died is a `end()` problem. */
-  write(chunk: Uint8Array): void;
-  /** Close stdin and resolve once the process has actually exited. */
-  end(): Promise<void>;
-  /** Kill it now, mid-sentence. */
-  kill(): void;
-}
-
-/**
- * Spawn one player and wrap it.
- *
- * `end()` waits for EXIT, not for the write to flush, and that is the whole
- * point of this device: a player's stdin drains in milliseconds while the sound
- * it describes takes seconds to leave the speaker. Only the process ending says
- * the room went quiet — which is what `playback_done` claims and what the
- * microphone's re-arm depends on.
- */
-function spawnPlayerProcess(argv: string[]): PlayerProcess {
-  const [bin, ...args] = argv;
-  const child = spawn(bin ?? '', args, { stdio: ['pipe', 'ignore', 'ignore'] });
-  let failure: Error | null = null;
-  let exited = false;
-  child.once('error', (err: Error) => {
-    failure = err;
-    exited = true;
-  });
-  child.once('close', () => {
-    exited = true;
-  });
-  // A player that exits early (a wrong format, a busy sound card) turns the
-  // next write into an EPIPE the host has no way to handle. Swallowed here and
-  // surfaced by `end()`, which is the one place a playout failure can still be
-  // narrated without dropping the re-arm.
-  child.stdin?.on('error', (err: Error) => {
-    failure ??= err;
-  });
-  return {
-    write(chunk: Uint8Array): void {
-      if (exited) return;
-      child.stdin?.write(chunk);
-    },
-    async end(): Promise<void> {
-      child.stdin?.end();
-      if (!exited) {
-        await new Promise<void>((resolve) => {
-          child.once('close', () => resolve());
-          child.once('error', () => resolve());
-        });
-      }
-      const err = failure;
-      if (err !== null) throw err;
-    },
-    kill(): void {
-      if (exited) return;
-      child.kill();
-    },
-  };
-}
-
-export interface CommandPlaybackDeviceOptions {
-  player: PlayerReport;
-  /** Injected so tests drive a fake process. Production leaves it unset. */
-  spawnPlayer?: (argv: string[]) => PlayerProcess;
-}
-
-/**
- * A `PlaybackDevice` that is one spawned command per utterance.
- *
- * ONE PROCESS PER UTTERANCE, not one long-lived player. A player fed a
- * continuous stream has no way to say "this utterance finished" — its stdin
- * never closes, so nothing ever reports the speaker draining and the re-arm
- * would be back to guessing. Exiting at EOF is the receipt.
- *
- * Every method checks the utterance id first. Audio for anything but the
- * playout in flight is DROPPED: by the time a stale chunk arrives the room has
- * moved on, and playing it would answer a question nobody is still asking.
- */
-export function createCommandPlaybackDevice(opts: CommandPlaybackDeviceOptions): PlaybackDevice {
-  const spawnPlayer = opts.spawnPlayer ?? spawnPlayerProcess;
-  let active: { utteranceId: string; proc: PlayerProcess } | null = null;
-
-  return {
-    async start(utteranceId: string, format: PlaybackFormat): Promise<void> {
-      // A playout still running here means the lane moved on without a
-      // `turn_end`; killing it is cheaper than two players over one sound card.
-      const previous = active;
-      active = null;
-      previous?.proc.kill();
-      const built = playerArgv(opts.player, format);
-      if (built.refusal !== undefined) {
-        throw new EthosError({
-          code: 'CONFIG_INVALID',
-          cause: built.refusal,
-          action:
-            'Install ffmpeg — its ffplay demuxes opus and mp3 — or set ' +
-            'auxiliary.tts.outputFormat: pcm so the server synthesizes raw samples, ' +
-            'or name a player that can with `ethos listen --play "<command>"`.',
-        });
-      }
-      active = { utteranceId, proc: spawnPlayer(built.argv) };
-    },
-
-    write(utteranceId: string, pcm: Uint8Array): void {
-      const current = active;
-      if (current === null || current.utteranceId !== utteranceId) return;
-      current.proc.write(pcm);
-    },
-
-    async end(utteranceId: string): Promise<void> {
-      const current = active;
-      if (current === null || current.utteranceId !== utteranceId) return;
-      active = null;
-      await current.proc.end();
-    },
-
-    cancel(utteranceId: string): void {
-      const current = active;
-      if (current === null || current.utteranceId !== utteranceId) return;
-      active = null;
-      current.proc.kill();
-    },
-
-    async list(): Promise<AudioDeviceInfo[]> {
-      return [{ id: opts.player.kind, label: opts.player.command, isDefault: true }];
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Edge STT — the recognizer that keeps the room's audio on the machine
-// ---------------------------------------------------------------------------
-
-/** What `voice.wake.edgeStt` actually got, once something tried to build it. */
-export interface EdgeSttResolution {
-  /** The recognizer that will run HERE, or null when there is none. */
-  provider: SttProvider | null;
-  /** Registered provider id, whenever a name resolved — refused ones included. */
-  providerId?: string;
-  /** Why there is no on-device recognizer. Absent when there is one. */
-  reason?: string;
-}
-
-/** The serializable half, for the doctor row and the `--json` object. */
-export interface EdgeSttReport {
-  /** `voice.wake.edgeStt` is set. */
-  requested: boolean;
-  /** A LOCAL recognizer resolved: this node transcribes and sends only words. */
-  enabled: boolean;
-  providerId?: string;
-  /** Which recognizer resolved, or the specific reason none did. Never empty. */
-  detail: string;
-}
-
-/** Said the same way wherever the audio path is described, so it cannot drift. */
-const AUDIO_GOES_UP =
-  'audio WILL be streamed to the server, which transcribes it there — the ' +
-  '"no audio leaves the machine" guarantee does not hold on this host.';
-
 /**
  * Resolve the on-device recognizer from an already-built registry.
  *
@@ -748,21 +419,6 @@ export async function resolveEdgeSttFrom(
 }
 
 /**
- * How much of one utterance is held in memory for on-device transcription.
- *
- * The audio path never needed a cap — frames go out as they arrive — but the
- * edge path ACCUMULATES, and an appliance in a room full of continuous talk
- * would otherwise grow a buffer until the Pi ran out. The number is the lane's
- * own `maxUtteranceBytes`, so an utterance too long to transcribe here is
- * exactly an utterance too long to transcribe there: one limit, one behaviour,
- * whichever end is doing the work.
- */
-const EDGE_UTTERANCE_MAX_BYTES = 8 * 1024 * 1024;
-
-/** `voice.wake.edgeStt` is off. Not a fault — just the other audio path. */
-const EDGE_STT_OFF = `voice.wake.edgeStt is off, so every utterance is transcribed by the server: ${AUDIO_GOES_UP}`;
-
-/**
  * The production resolver: gate on the config flag, then build the registry.
  *
  * The registry import is LAZY and only happens when edge STT was actually
@@ -795,290 +451,12 @@ async function resolveEdgeStt(input: {
   });
 }
 
-/**
- * The two rows that say what this host can DO with a turn: make a sound, and
- * keep the audio at home.
- *
- * NEITHER MOVES THE EXIT CODE — `deriveListenFailFlags` names the rows it
- * reads, and these are not among them. A host with no loudspeaker and a host
- * whose audio is transcribed by the server are both fully working satellites;
- * they just do less than the operator may have assumed, and a preflight that
- * failed over it would be refusing to start the deployment that shipped for
- * months. The rows are where the assumption gets corrected, not where the boot
- * gets blocked.
- *
- * The `edge-stt` row is SKIPPED rather than ticked when nothing was asked for.
- * A green tick there would read as "your audio stays here", which is the
- * opposite of what an unset `voice.wake.edgeStt` means — and the doctor's rule
- * is that an unrun probe reports skipped, never passed.
- */
-export function capabilityRows(player: PlayerResolution, edgeStt: EdgeSttReport): DoctorProbeRow[] {
-  return [
-    { name: 'speaker', ok: player.player !== null, detail: player.detail },
-    edgeStt.requested
-      ? { name: 'edge-stt', ok: edgeStt.enabled, detail: edgeStt.detail }
-      : { name: 'edge-stt', ok: true, skipped: true, detail: `skipped — ${edgeStt.detail}` },
-  ];
-}
-
-/** The resolution as the doctor and the JSON see it. */
-export function edgeSttReport(requested: boolean, resolution: EdgeSttResolution): EdgeSttReport {
-  if (resolution.provider !== null) {
-    return {
-      requested,
-      enabled: true,
-      ...(resolution.providerId === undefined ? {} : { providerId: resolution.providerId }),
-      detail:
-        `on-device: ${resolution.providerId ?? 'unnamed'} (caps.local) — this node transcribes ` +
-        'the utterance itself and sends only the WORDS upstream. No captured audio leaves ' +
-        'this machine.',
-    };
-  }
-  return {
-    requested,
-    enabled: false,
-    ...(resolution.providerId === undefined ? {} : { providerId: resolution.providerId }),
-    detail: resolution.reason ?? EDGE_STT_OFF,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Preflight result — everything both the doctor and the banner render
-// ---------------------------------------------------------------------------
-
-export interface ListenPreflight {
-  /** One row per probe, straight from `runSatelliteDoctor`. */
-  probes: DoctorProbeRow[];
-  /** `voice.wake.engine`, normalized to the engine's own name. */
-  configuredEngine: string;
-  /**
-   * True when `transcriptWakeEngineFactory` probed OK — the dependency-free
-   * engine every build is supposed to have.
-   *
-   * The daemon does not run it (it runs the open-mic engine and the SERVER
-   * matches phrases), but its probe is the floor: it loads no binding and no
-   * model, so a failure there means the satellite package itself is broken on
-   * this host and nothing about the wake stack can be believed. That is the
-   * one failure this command refuses to start through.
-   */
-  transcriptEngineOk: boolean;
-  /**
-   * True when the configured engine reads model files. The shared doctor probes
-   * the model directory unconditionally because most satellite hosts run an
-   * acoustic engine; this host knows which engine it will run, so it — not the
-   * shared probe — decides whether an empty model directory is fatal.
-   */
-  modelsRequired: boolean;
-  /** Satellite lane URL the daemon would connect to. */
-  url: string;
-  /** HTTP health URL the lane probe falls back to. */
-  healthUrl: string;
-  /**
-   * Why the `satellite-lane` row failed, in a form a script can branch on: the
-   * errno where the failure had one (`ECONNREFUSED`, `ENOTFOUND`, `ETIMEDOUT`),
-   * or a probe token where it did not (`NO_SATELLITE_LANE`, `HTTP_500`).
-   *
-   * Carried beside the probes rather than on them because `DoctorProbeRow` is
-   * the satellite wire shape — `{name, ok, detail}` and nothing else — and the
-   * shared doctor drops any field it does not know. Absent when the lane is
-   * reachable, or when no probe ran.
-   */
-  laneFailureCode?: string;
-  /** Stable across restarts. See `resolveListenNodeId`. */
-  nodeId: string;
-  /**
-   * Enabled `voice.wake.routes` entries from the LOCAL config, id-ordered.
-   *
-   * A HINT, NOT THE TABLE. The effective table is the server's — it merges
-   * these with a synthesized `auto:<personalityId>` route per unprivileged
-   * personality and pushes the result on connect — so an empty list here says
-   * nothing about what this deployment answers to. The daemon resolves its
-   * route against the pushed table; this field only tells the operator what
-   * their own file contributes.
-   */
-  routes: WakeRoute[];
-  /** `--route`, unresolved: only the pushed table can validate the pin. */
-  requestedRoute?: string;
-  /**
-   * Whether an on-device recognizer resolved, and which one — the answer to
-   * "does this room's audio leave the machine?". Probed, never read off the
-   * config flag: `voice.wake.edgeStt` is an intent and this is the outcome.
-   */
-  edgeStt: EdgeSttReport;
-  /** The player that would be spawned for a reply, or the reason there is none. */
-  player: PlayerResolution;
-  /** The capture device that would be opened, or null when there is none. */
-  device: AudioDeviceInfo | null;
-  sampleRate: number;
-  /**
-   * `voice.wake.idleTimeout`, in ms. Ends LISTENING only, never the session.
-   * Absent when the operator set none — `CaptureMachine` owns that default.
-   */
-  idleTimeoutMs?: number;
-  /**
-   * `voice.bargeIn.satellite`, in the shape `EnergyVad` takes.
-   *
-   * Absent when the operator tuned nothing — the VAD owns its own defaults, so
-   * an untuned host behaves exactly as it did before this field existed. Only
-   * the two fields the detector HAS are carried: `silenceMs` has no counterpart
-   * here, because `CaptureMachine` ends an utterance on a count of silent
-   * FRAMES and a frame is only a duration once the device says how long it is.
-   */
-  vadTuning?: { threshold?: number; minSpeechMs?: number };
-  /** Setup failures that are not probes: no config, bad `--url`, unknown `--device`. */
-  errors: string[];
-  /** Config deprecations, surfaced before anything else runs. */
-  deprecations: string[];
-}
-
-export interface ListenStartOptions {
-  /** Fired once the daemon is fully up, before the keep-alive. Test seam. */
-  onReady?: () => void;
-  /**
-   * Transport for the satellite client. Test seam — production leaves it unset
-   * and gets the `ws` socket. Supplying it also skips the auth-cookie lookup:
-   * an injected transport is not talking to a real `/satellite/ws`, and the
-   * lookup lazily pulls in the whole web-api module graph.
-   */
-  createSocket?: SatelliteSocketFactory;
-}
-
 /** The seam that makes the sub-router drivable without booting anything. */
 export interface ListenCommandDeps {
   /** Runs every probe and resolves the context they describe. Never throws. */
   preflight(flags: ListenFlags): Promise<ListenPreflight>;
   /** Boots the daemon. Returns only on shutdown. */
   start(preflight: ListenPreflight, flags: ListenFlags): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Exit codes — a sibling of `computeDoctorExit`, not a reshaping of it
-// ---------------------------------------------------------------------------
-
-/**
- * `ethos doctor`'s flag shape is about SDKs, secrets, and channel tokens; none
- * of its seven fields name a thing this preflight probes, and widening it so a
- * missing wake model could be squeezed into `configuredMissing` would make both
- * commands harder to read. So the 0/1/2 CONTRACT is reused verbatim and the
- * flags are local.
- */
-export interface ListenFailFlags {
-  /** A configured engine's probe failed, or its import threw. */
-  engineFailed: boolean;
-  /** The configured engine needs model files and they are missing or unreadable. */
-  modelsMissing: boolean;
-  /** Nothing to capture from right now. Recoverable: plug a pipe in. */
-  micUnavailable: boolean;
-  /** The server is not up. Recoverable: it reconnects with backoff. */
-  serverUnreachable: boolean;
-  /** No config, bad `--url`, unknown `--device`. */
-  setupError: boolean;
-}
-
-const WARN_EXIT = 2;
-
-/**
- * Hard failures (1) are the ones a human must fix on this machine before the
- * satellite can ever work: a wake stack that will not load, a model that is not
- * there, a command line that does not resolve. The warn code (2) is for the two
- * conditions that are TRUE RIGHT NOW and may not be in a minute — no pipe
- * attached yet, server not started yet — because a CI check must tell "this
- * host will never hear you" from "nothing is talking to it at the moment".
- */
-export function computeListenExit(f: ListenFailFlags): number {
-  if (f.setupError || f.engineFailed || f.modelsMissing) return 1;
-  if (f.micUnavailable || f.serverUnreachable) return WARN_EXIT;
-  return 0;
-}
-
-export function deriveListenFailFlags(pre: ListenPreflight): ListenFailFlags {
-  const failed = (name: string): boolean =>
-    pre.probes.some((p) => p.name === name && !p.ok && p.skipped !== true);
-  return {
-    engineFailed: pre.probes.some(
-      (p) => p.name.startsWith('engine:') && !p.ok && p.skipped !== true,
-    ),
-    modelsMissing: pre.modelsRequired && failed('models'),
-    micUnavailable: failed('microphone'),
-    serverUnreachable: failed(LANE_PROBE_NAME),
-    setupError: pre.errors.length > 0,
-  };
-}
-
-/** Is this probe row a hard failure, given what the host will actually run? */
-function isFatalRow(row: DoctorProbeRow, pre: ListenPreflight): boolean {
-  if (row.ok || row.skipped === true) return false;
-  if (row.name === 'models') return pre.modelsRequired;
-  return row.name.startsWith('engine:');
-}
-
-// ---------------------------------------------------------------------------
-// URL derivation
-// ---------------------------------------------------------------------------
-
-export interface ListenUrls {
-  socket: string;
-  health: string;
-}
-
-/**
- * Where the satellite lane lives, from the operator's own base URL.
- *
- * An `--url` override is taken as given except for a bare origin, which gets
- * the lane path appended: pasting `ws://pi.local:3000` and getting a silent
- * connection failure at `/` teaches nothing.
- */
-export function deriveListenUrls(webBaseUrl: string | undefined, override?: string): ListenUrls {
-  const base = override ?? webBaseUrl ?? `http://127.0.0.1:${DEFAULT_WEB_PORT}`;
-  const parsed = new URL(base);
-  const secure = parsed.protocol === 'https:' || parsed.protocol === 'wss:';
-  const path =
-    parsed.pathname === '' || parsed.pathname === '/' ? SATELLITE_SOCKET_PATH : parsed.pathname;
-  const socket = `${secure ? 'wss:' : 'ws:'}//${parsed.host}${path}`;
-  const health = `${secure ? 'https:' : 'http:'}//${parsed.host}/healthz`;
-  return { socket, health };
-}
-
-// ---------------------------------------------------------------------------
-// Node id
-// ---------------------------------------------------------------------------
-
-/**
- * The satellite's stable identity, generated once and then read forever.
- *
- * A PER-BOOT RANDOM ID WOULD FORK THE CONVERSATION EVERY RESTART. The server's
- * lane key is `voice:<node>:<personality>`, so a new id on every start means a
- * new lane: the kitchen Pi comes back from a power cut as a different node,
- * and the conversation it was having is orphaned in the store under a key
- * nothing will ever ask for again.
- *
- * The COMPOSED id is what is persisted, not the uuid alone. The hostname is in
- * there so the Settings → Voice row is legible ("pi-kitchen-1a2b3c4d" rather
- * than a bare uuid), but reading the hostname again on every boot would hand
- * the same fork back the moment somebody renames the machine.
- */
-export async function resolveListenNodeId(
-  storage: Storage,
-  path: string,
-  generate: () => string = defaultNodeId,
-): Promise<string> {
-  const existing = (await storage.read(path))?.trim();
-  if (existing) return existing;
-  const id = generate();
-  // The file's OWN parent, not `ethosDir()`: the path is a parameter so tests
-  // (and a relocated data dir) write where they were told to.
-  await storage.mkdir(dirname(path));
-  await storage.writeAtomic(path, `${id}\n`);
-  return id;
-}
-
-function defaultNodeId(): string {
-  const host = hostname()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const suffix = randomUUID().slice(0, 8);
-  return host.length > 0 ? `${host}-${suffix}` : `satellite-${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1516,59 +894,6 @@ async function realPreflight(
 }
 
 /**
- * `voice.bargeIn.satellite` as `EnergyVad` wants it — or nothing at all.
- *
- * Returns undefined rather than an empty object when the operator tuned neither
- * field, so the preflight carries no key and the daemon hands the detector no
- * config: "not tuned" and "tuned to the default" stay distinguishable all the
- * way down.
- */
-export function readSatelliteVadTuning(
-  tuning: { energyThreshold?: number; minSpeechMs?: number } | undefined,
-): ListenPreflight['vadTuning'] {
-  if (tuning?.energyThreshold === undefined && tuning?.minSpeechMs === undefined) return undefined;
-  return {
-    ...(tuning.energyThreshold === undefined ? {} : { threshold: tuning.energyThreshold }),
-    ...(tuning.minSpeechMs === undefined ? {} : { minSpeechMs: tuning.minSpeechMs }),
-  };
-}
-
-/** `voice.wake.routes` as the wake seam wants them: disabled entries dropped. */
-function readWakeRoutes(raw: Record<string, WakeRouteConfig> | undefined): WakeRoute[] {
-  if (!raw) return [];
-  return Object.entries(raw)
-    .filter(([, r]) => r.enabled !== false)
-    .map(([id, r]) => ({
-      id,
-      phrase: r.phrase,
-      personalityId: r.personality,
-      privileged: r.privileged === true,
-      enabled: true,
-    }))
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-}
-
-/**
- * Why the personality the operator was looking for is not in the pushed table.
- *
- * Said the SAME WAY wherever a route cannot be resolved, because the two
- * refusals — a `--route` that matched nothing, and a table with nothing in it —
- * have the same cause and drifting into two phrasings of it is how one of them
- * ends up stale.
- *
- * It states the RULE, never which personalities were withheld: the client is
- * not told, the wake surface deliberately does not enumerate privileged
- * personalities, and a message that guessed would be accusing a table it cannot
- * see. Do not make the server send the excluded list to improve this string.
- */
-const WHY_A_PERSONALITY_IS_ABSENT =
-  'A personality is absent from this table when it is privileged — its toolset can reach a ' +
-  'tool the approval layer would stop and ask about, and the default wake surface excludes ' +
-  'those by design (no toolset.yaml means every tool, so that counts). Opt one in with an ' +
-  'explicit route in ~/.ethos/config.yaml: voice.wake.routes.<id>.phrase / .personality / ' +
-  '.privileged: true.';
-
-/**
  * One entry in the `Addressable here` line.
  *
  * A default route's phrase IS the personality's name, so printing
@@ -1591,394 +916,9 @@ export function addressableEntry(route: WakeRoute): string {
   );
 }
 
-/**
- * Resolve `--route` — the PIN — against the table the SERVER pushed, never
- * against the local config, which is one contributor to that table and not the
- * table itself.
- *
- * WHAT `--route` MEANS NOW. It used to be compulsory and it used to mean "send
- * every utterance as this personality", because the daemon had no way to tell
- * one addressee from another. The server matches phrases now, so the phrase
- * picks the personality and the flag is optional. What is left for it is the
- * one thing a phrase cannot say: WHICH PHRASES THIS MICROPHONE ANSWERS TO. A
- * pinned host is dedicated to one route — say the pinned phrase and it answers,
- * say another agent's and it does not.
- *
- * It is NOT a way to skip the gate. Pinning that also meant "and no phrase
- * needed" would make one flag quietly re-open the hole the gate closed, on the
- * host most likely to be left running in a room unattended.
- *
- * No pin resolves to `{ route: null }` with no problem: that is the ordinary
- * case, and it means every enabled route may address this host.
- */
-export function resolveRoutePin(
-  pushed: readonly WakeRoute[],
-  requested: string | undefined,
-): { route: WakeRoute | null; problem?: string } {
-  if (requested === undefined) return { route: null };
-  const routes = pushed.filter((r) => r.enabled);
-  // Matched by whole id and nothing else: a synthesized id is
-  // `auto:<personalityId>`, and `:` is outside the charset a config id may
-  // use, so there is never an ambiguity between the two kinds.
-  const found = routes.find((r) => r.id === requested);
-  if (found) return { route: found };
-  return {
-    route: null,
-    problem:
-      `the server's wake route table has no enabled route '${requested}' — ` +
-      (routes.length > 0
-        ? `it pushed: ${routes.map((r) => `${r.id} ("${r.phrase}" → ${r.personalityId})`).join(', ')}. ` +
-          'A synthesized route is named auto:<personalityId>. '
-        : 'it pushed an empty table. ') +
-      WHY_A_PERSONALITY_IS_ABSENT,
-  };
-}
-
-/**
- * Why an empty pushed table is a warning and no longer a refusal.
- *
- * It used to stop the boot: the daemon had to pick one route up front, and
- * there was none to pick. Now the daemon picks nothing — the server matches
- * each transcript against whatever table it holds at that moment — and a
- * Settings save pushes a new one down the open socket. Refusing to start would
- * mean an operator who fixes their config still has to walk to the Pi.
- */
-export const EMPTY_TABLE_WARNING =
-  'the server pushed an EMPTY wake route table — no phrase can address this deployment ' +
-  'yet, so every utterance will be transcribed and discarded. Every unprivileged ' +
-  'personality gets a synthesized route for its own NAME automatically, so an empty table ' +
-  `means there are none. ${WHY_A_PERSONALITY_IS_ABSENT} ` +
-  'A Settings save reaches this daemon without a restart.';
-
-export interface SatelliteLaneProbe {
-  ok: boolean;
-  /**
-   * Why, in one line. NEVER EMPTY — an empty detail is the defect this contract
-   * exists to forbid: the row printed `…/satellite/ws: ;` and taught the
-   * operator nothing at all.
-   */
-  detail: string;
-  /** See `ListenPreflight.laneFailureCode`. Absent when the lane is reachable. */
-  code?: string;
-}
-
-/**
- * Is the thing this satellite actually needs reachable?
- *
- * IT IS THE WEBSOCKET LANE, NOT `/healthz`. `/healthz` folds the CHANNEL
- * gateway's status into its own — a healthy `ethos serve` with no Telegram or
- * Slack adapter running answers 503 — and a satellite does not use the channel
- * gateway for anything. Probing it made this row lie on every deployment that
- * simply had no chat bots attached.
- *
- * So the first probe is an upgrade request against `/satellite/ws` itself, WITH
- * NO AUTH COOKIE, which is the cheapest thing that tests the real dependency:
- *   • 401/403 — the lane is mounted and refused an unauthenticated probe. That
- *     is the expected answer, and it never creates a lane or a registry row.
- *   • 101 — accepted (a deployment with auth off); torn down immediately.
- *   • 404 — this server has no satellite lane at all, which `/healthz` could
- *     never have told us.
- * An unexpected status, or an upgrade a proxy mangled, is INCONCLUSIVE rather
- * than wrong: the host answered something, so `/healthz` is asked as well.
- *
- * ONE CAUSE, SAID ONCE. But when the connection itself never came up, there is
- * nothing for `/healthz` to add — it dials the same host and port over the same
- * transport, so it can only fail the same way — and asking it anyway is what
- * produced the unreadable `a; b` line this exists to kill. So a connect-level
- * errno short-circuits, and even on the fallback path a health failure matching
- * the upgrade's own code is reported once rather than twice.
- */
-export async function probeSatelliteLane(
-  socketUrl: string,
-  healthUrl: string,
-): Promise<SatelliteLaneProbe> {
-  const upgrade = await probeUpgrade(socketUrl);
-  if (upgrade.status === 101) {
-    return { ok: true, detail: `${socketUrl} accepted the upgrade` };
-  }
-  if (upgrade.status === 401 || upgrade.status === 403) {
-    return {
-      ok: true,
-      detail: `${socketUrl} is mounted — answered ${upgrade.status} to a probe sent with no auth cookie, which is the expected refusal`,
-    };
-  }
-  if (upgrade.status === 404) {
-    return {
-      ok: false,
-      code: 'NO_SATELLITE_LANE',
-      detail: `${socketUrl} answered 404 — this server has no satellite lane. Is it an older \`ethos serve\`?`,
-    };
-  }
-  if (upgrade.code !== undefined && CONNECT_NEVER_ESTABLISHED.has(upgrade.code)) {
-    return { ok: false, code: upgrade.code, detail: `${socketUrl}: ${upgrade.error}` };
-  }
-
-  const why = upgrade.status === undefined ? upgrade.error : `answered ${upgrade.status}`;
-  const health = await probeHealthz(healthUrl);
-  if (health.ok) {
-    return { ok: true, detail: `${socketUrl}: ${why}; ${health.detail}` };
-  }
-  if (health.code !== undefined && health.code === upgrade.code) {
-    // Both ends died of the same thing. The reader needs the diagnosis, not it
-    // twice.
-    return { ok: false, code: health.code, detail: `${socketUrl}: ${why}` };
-  }
-  return {
-    ok: false,
-    ...(health.code === undefined ? {} : { code: health.code }),
-    detail: `${socketUrl}: ${why}; ${health.detail}`,
-  };
-}
-
-/**
- * Errnos that mean the connection was never established, so a second probe over
- * the same transport is guaranteed to say the same thing.
- */
-const CONNECT_NEVER_ESTABLISHED = new Set([
-  'ECONNREFUSED',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ETIMEDOUT',
-  'EACCES',
-]);
-
-/**
- * The error Node is actually reporting, dug out from under whatever wrapped it.
- *
- * Two wrappers hide it here and both are the everyday case:
- *   • `fetch` rejects with a bare `TypeError: fetch failed` — undici's opaque
- *     lid — and puts the real socket error on `.cause`.
- *   • `net.connect` to a dual-stack name such as `localhost` rejects with an
- *     `AggregateError` whose OWN `message` is the EMPTY STRING and whose
- *     `.errors` holds one refusal per address family. That empty string is
- *     precisely what printed `ws://localhost:3000/satellite/ws: ;`.
- *
- * So the walk takes the DEEPEST non-empty message and the deepest errno, and
- * falls back to the code (and then to a fixed phrase) rather than ever handing
- * back nothing.
- */
-function rootCauseOf(err: unknown): { code?: string; message: string } {
-  let code: string | undefined;
-  let message = '';
-  let current: unknown = err;
-  for (let depth = 0; depth < 8 && typeof current === 'object' && current !== null; depth++) {
-    const node = current as {
-      code?: unknown;
-      message?: unknown;
-      cause?: unknown;
-      errors?: unknown;
-    };
-    if (typeof node.code === 'string' && node.code !== '') code = node.code;
-    if (typeof node.message === 'string' && node.message !== '') message = node.message;
-    const nested = Array.isArray(node.errors) ? node.errors[0] : node.cause;
-    if (nested === undefined || nested === null) break;
-    current = nested;
-  }
-  if (message === '') {
-    const raw = typeof err === 'string' ? err : String(err);
-    message = raw.trim() === '' ? (code ?? 'no reason reported') : raw;
-  }
-  return code === undefined ? { message } : { code, message };
-}
-
-/**
- * An errno turned into a sentence an operator can act on.
- *
- * The overwhelmingly common one is `ECONNREFUSED`, and for it the message names
- * the remedy: a satellite that cannot reach the lane is, nine times in ten,
- * a satellite started before its server.
- */
-function explainFailure(err: unknown): { code?: string; message: string } {
-  const { code, message } = rootCauseOf(err);
-  const clause = ((): string => {
-    switch (code) {
-      case 'ECONNREFUSED':
-        return `connection refused (ECONNREFUSED) — nothing is listening there, so the server is not running. ${START_THE_SERVER}`;
-      case 'ENOTFOUND':
-        return 'the hostname does not resolve (ENOTFOUND) — check webBaseUrl in ~/.ethos/config.yaml, or --url.';
-      case 'EAI_AGAIN':
-        return 'DNS lookup failed (EAI_AGAIN) — this machine could not resolve the hostname.';
-      case 'ETIMEDOUT':
-      case 'UND_ERR_CONNECT_TIMEOUT':
-        return `timed out (${code}) — the address is routable but nothing answered. Check a firewall, or whether the server is bound to that interface.`;
-      case 'EHOSTUNREACH':
-      case 'ENETUNREACH':
-        return `no route to that host (${code}) — check this machine's network.`;
-      case 'ECONNRESET':
-        return 'the connection was reset (ECONNRESET) — something answered and hung up. A proxy in front of the lane?';
-      case 'EACCES':
-        return 'refused locally (EACCES) — a sandbox or firewall on this machine blocked the connection.';
-      default:
-        return code === undefined ? message : `${message} (${code})`;
-    }
-  })();
-  return code === undefined ? { message: clause } : { code, message: clause };
-}
-
-/**
- * `/healthz`, read for what it says rather than for its status code.
- *
- * A 503 whose body is `{status: 'degraded', gateway: {...}}` means the CHANNEL
- * gateway is down or stale — nothing a satellite depends on. The web-api
- * answered, which is the fact this probe is after, so that shape is reported as
- * reachable and says which subsystem was the one that was down.
- */
-export async function probeHealthz(
-  url: string,
-): Promise<{ ok: boolean; detail: string; code?: string }> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) return { ok: true, detail: `${url} answered ${res.status}` };
-    const body: unknown = await res.json().catch(() => null);
-    if (isGatewayDegraded(body)) {
-      return {
-        ok: true,
-        detail: `${url} answered ${res.status} — the web-api is up and only the channel gateway is down, which a satellite does not need`,
-      };
-    }
-    return { ok: false, code: `HTTP_${res.status}`, detail: `${url} answered ${res.status}` };
-  } catch (err) {
-    // `err.message` here is `fetch failed` — undici's lid over the real socket
-    // error, which is on `.cause`. Reporting the lid is reporting nothing.
-    const failure = explainFailure(err);
-    return {
-      ok: false,
-      ...(failure.code === undefined ? {} : { code: failure.code }),
-      detail: `${url}: ${failure.message}`,
-    };
-  }
-}
-
-/** The exact `/healthz` shape that means "only the channel gateway is down". */
-function isGatewayDegraded(body: unknown): boolean {
-  if (typeof body !== 'object' || body === null) return false;
-  const record = body as { status?: unknown; gateway?: unknown };
-  if (record.status !== 'degraded') return false;
-  const gateway = record.gateway;
-  if (typeof gateway !== 'object' || gateway === null) return false;
-  const status = (gateway as { status?: unknown }).status;
-  return status === 'down' || status === 'stale';
-}
-
-/** How long an upgrade probe waits for a status line before giving up. */
-const UPGRADE_PROBE_TIMEOUT_MS = 3000;
-
-/**
- * Either a status line came back, or a reason did. `error` is REQUIRED on the
- * failure arm so no branch can resolve a failure and say nothing about it —
- * that is how an ECONNREFUSED reached the row as the empty string.
- */
-type UpgradeProbe =
-  | { status: number; error?: undefined; code?: undefined }
-  | { status?: undefined; error: string; code?: string };
-
-/**
- * Send one WebSocket upgrade request and read the status line back.
- *
- * The handshake is deliberately NOT completed: no cookie is sent, so the server
- * refuses with 401 and no lane, no registry row, and no phantom satellite is
- * created by the act of checking.
- */
-function probeUpgrade(socketUrl: string): Promise<UpgradeProbe> {
-  let parsed: URL;
-  try {
-    parsed = new URL(socketUrl);
-  } catch {
-    return Promise.resolve({ error: `not a URL: ${socketUrl}` });
-  }
-  const secure = parsed.protocol === 'wss:' || parsed.protocol === 'https:';
-  const port = Number(parsed.port) || (secure ? 443 : 80);
-  const path = `${parsed.pathname}${parsed.search}`;
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result: UpgradeProbe): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(result);
-    };
-    const timer = setTimeout(
-      () => finish({ error: `no response within ${UPGRADE_PROBE_TIMEOUT_MS}ms` }),
-      UPGRADE_PROBE_TIMEOUT_MS,
-    );
-    const socket: Socket = secure
-      ? tlsConnect({ host: parsed.hostname, port, servername: parsed.hostname })
-      : netConnect({ host: parsed.hostname, port });
-
-    socket.once(secure ? 'secureConnect' : 'connect', () => {
-      socket.write(
-        `GET ${path} HTTP/1.1\r\n` +
-          `Host: ${parsed.host}\r\n` +
-          'Upgrade: websocket\r\n' +
-          'Connection: Upgrade\r\n' +
-          `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\n` +
-          'Sec-WebSocket-Version: 13\r\n\r\n',
-      );
-    });
-    socket.once('data', (chunk: Buffer) => {
-      const match = /^HTTP\/1\.\d (\d{3})/.exec(chunk.toString('latin1'));
-      finish(match?.[1] ? { status: Number(match[1]) } : { error: 'no HTTP status line' });
-    });
-    // NOT `err.message`: a dual-stack `localhost` refusal arrives as an
-    // `AggregateError` whose own message is the empty string. See `rootCauseOf`.
-    socket.once('error', (err: Error) => {
-      const failure = explainFailure(err);
-      finish({
-        error: failure.message,
-        ...(failure.code === undefined ? {} : { code: failure.code }),
-      });
-    });
-    socket.once('close', () => finish({ error: 'closed with no response' }));
-  });
-}
-
 // ---------------------------------------------------------------------------
 // The daemon
 // ---------------------------------------------------------------------------
-
-/**
- * Same shape as `GatewayHeartbeat`, on purpose.
- *
- * The desktop lane derives satellite status from this file, and it already
- * reads `gateway-health.json`; one reader shape for both is the difference
- * between a status panel and two status panels. `captureState` is the one
- * addition, and it is additive — a reader that only knows the gateway fields
- * still works.
- */
-export interface ListenHeartbeat {
-  pid: number;
-  startedAt: string;
-  updatedAt: string;
-  adapters: Array<{ name: string; ok: boolean }>;
-  captureState: CaptureState;
-}
-
-interface ListenDaemonContext extends ListenStartOptions {
-  storage: Storage;
-  device: CaptureDevice;
-  /**
-   * Where the reply is played. Unset is the ORDINARY case, not a test-only one:
-   * the daemon builds a command player from `pre.player` when there is one, and
-   * a host with neither declares `playback: false` and answers as text.
-   */
-  playbackDevice?: PlaybackDevice;
-  /**
-   * The on-device recognizer the preflight constructed. Used only when
-   * `pre.edgeStt.enabled` — the two are set from the same resolution, and a
-   * daemon that had one without the other would be declaring a capability it
-   * cannot perform.
-   */
-  edgeSttProvider?: SttProvider;
-  /**
-   * How the process leaves, once the shutdown path has run. Test seam — a test
-   * that drove the real `process.exit` would take the runner down with it.
-   */
-  exit?: (code: number) => void;
-}
 
 /**
  * The OPEN-MIC engine: it opens an utterance on speech, and matches nothing.
@@ -2791,41 +1731,4 @@ export async function startListenDaemon(
 
   ctx.onReady?.();
   await new Promise(() => {});
-}
-
-/** `CaptureState` has more states than the wire does; collapse honestly. */
-function protocolState(state: CaptureState): 'listening' | 'muted' | 'speaking' | 'degraded' {
-  switch (state) {
-    case 'muted':
-      return 'muted';
-    case 'speaking':
-      return 'speaking';
-    case 'degraded':
-      return 'degraded';
-    default:
-      // idle / listening / capturing / thinking are all "the microphone is
-      // armed and this node is in a turn" as far as the indicator is concerned.
-      return 'listening';
-  }
-}
-
-/**
- * The `ethos_auth` cookie the web-api gates `/satellite/ws` behind.
- *
- * Read through `WebTokenRepository` — the same abstraction `ethos serve` and
- * the desktop main process use — so there is exactly one place that knows how
- * the token is minted, stored, and chmod'd. Imported lazily so `listen doctor`
- * does not pay for the web-api module graph.
- */
-async function authCookie(storage: Storage): Promise<{ authCookie?: string }> {
-  try {
-    const { WebTokenRepository } = await import('@ethosagent/web-api');
-    const token = await new WebTokenRepository({ dataDir: ethosDir(), storage }).getOrCreate();
-    return { authCookie: `ethos_auth=${token}` };
-  } catch {
-    // No token yet (the web-api has never run here). The upgrade will be
-    // refused and the client will retry — which is the right outcome, and a
-    // clearer one than a satellite that never says why it cannot connect.
-    return {};
-  }
 }

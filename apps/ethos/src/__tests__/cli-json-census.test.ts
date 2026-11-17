@@ -12,6 +12,9 @@ const DOCTOR_SPLIT =
 
 const BOOT_SPLIT = 'internal library of `ethos boot`, split out of boot.ts; no CLI output';
 
+const LISTEN_SPLIT =
+  'internal library of `ethos listen`, split out of listen.ts; --json is handled in listen.ts';
+
 const JSON_EXEMPT: Record<string, string> = {
   acp: 'long-running ACP server',
   boot: 'process bootstrap helper, no user output',
@@ -44,6 +47,12 @@ const JSON_EXEMPT: Record<string, string> = {
   'doctor-spool': DOCTOR_SPLIT,
   'doctor-storage': DOCTOR_SPLIT,
   'doctor-voice': DOCTOR_SPLIT,
+  'listen-edge-stt': LISTEN_SPLIT,
+  'listen-probes': LISTEN_SPLIT,
+  'listen-preflight': LISTEN_SPLIT,
+  'listen-routes': LISTEN_SPLIT,
+  'listen-daemon': LISTEN_SPLIT,
+  'listen-player': LISTEN_SPLIT,
   'mcp-export': 'internal library, no CLI output',
   'mcp-preset-args': 'internal library, no CLI output',
   'mcp-presets-check': 'internal library of `mcp presets --check`; --json is handled in mcp.ts',
